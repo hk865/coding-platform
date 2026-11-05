@@ -16,8 +16,9 @@
 
 - `role-line-allocation-reader.ts` — `role-lines/allocation` 的读：一次 `readMany` 读四个 `RoleLineAllocation` 和 `ProjectRoleLimits`，缺键是零占用/默认额度、其它读失败是 `unavailable`；holder 的 `name` 和 `creator` 由同一份角色事实经 `creatorOf` 派生，完整交接沿每个涉及 workspace 的一次 completed 操作枚举得到后继；`createRoleLineAllocationReader` 是入口，依赖 `RoleLineAllocationReaderDependenciesV1`，`RoleLineContactFactsV1` 是一条 holder 的读时事实形状。
 - `role-line-operations-read.ts` — `role-lines/operations` 的读 `createRoleLineOperationsRead`（`RoleLineOperationReadPort`）：按工作区和五个记录阶段翻唯一的操作索引，`role_line` 一行带记录阶段、`actionPhase`、步骤、结果和冷启动的可选字段，`member_create` 一行带 `progress`；坏记录是 `unavailable`，不跳过、不补字段。
-- `work-line-reader.ts` — 工作线列表/归档/详情/分区页的唯一组装路径；线摘要也被悬停复用。线的最早未消费等待取自一次 Session facts 读（`readSessionFacts` 的 `wait`/`waits`），不再从最新 Run 的 continuation 读，也不再读 `TaskLease` 和等待消息。消息分节对每条消息调一次 `deriveMessageDelivery`：事实取记录的 `status`/`release`/`withdrawnAt`/`acceptedInputs`，收件线的 `archived`/`retired` 取 `resolveLine` 已读线头的 `lifecycle === 'archived'`/`health === 'unavailable'`，不另开读取；`release` 取记录的字段，一次结果填 `delivery`/`deliveredTo`/`evidence`/`reason`/`disposition`（记录上存的 `delivery` 仍不读），`undelivered` 仍是“未送达的回复”，不是推导出的投递状态。
-- `node-detail-reader.ts` — 图悬停（只用已读数据）与单节点分区详情。
+- `role-line-read.ts` — `role-lines/read` 的读口 `createRoleLineRead`（`RoleLineReadPort`）：每行是 2C 的线行加有效范围数组、创建者、席位和 O2 的位置；席位只从 allocation 的 holders 得 `held`、不是 holder 是 `none`（`reserved` 留类型不落行）；范围或位置读失败整次读失败，不折成 `[]`。`createRoleFactsRead`（`RoleFactsReadPort`）是存名的一次批量读：一次 `readMany`，缺记录是没有存名、损坏是 `unavailable`，空输入回空 Map（唯一实现，读法同 allocation reader）。
+- `work-line-reader.ts` — 工作线列表/归档/详情/分区页的唯一组装路径；线摘要也被悬停复用。线的最早未消费等待取自一次 Session facts 读（`readSessionFacts` 的 `wait`/`waits`），不再从最新 Run 的 continuation 读，也不再读 `TaskLease` 和等待消息。消息分节对每条消息调一次 `deriveMessageDelivery`：事实取记录的 `status`/`release`/`withdrawnAt`/`acceptedInputs`，收件线的 `archived`/`retired` 取 `resolveLine` 已读线头的 `lifecycle === 'archived'`/`health === 'unavailable'`，不另开读取；`release` 取记录的字段，一次结果填 `delivery`/`deliveredTo`/`evidence`/`reason`/`disposition`（记录上存的 `delivery` 仍不读），`undelivered` 仍是“未送达的回复”，不是推导出的投递状态。存名由可选的 `roleFacts` 一次读完这一页的线头，`deriveName` 的存名分支排在最前；缺省时与旧路径相同。
+- `node-detail-reader.ts` — 图悬停（只用已读数据）与单节点分区详情；目标负责人含目标的参谋线（每条开着的 Goal 负责链接，经 O4a 的完整读并按 duty 过滤）、线摘要按各 Session 自己的工作区装配（一个工作区一次），任务读带 `adviserWait`（O4b 的 resolver，`asker: null`，同一目标同一模块一次读；已结束的任务不读）。
 - `graph-context-reader.ts` — 上下文事实、图 look/find、注意力图的唯一只读视图；look/find 的 `goalRef` 为 `null` 时读项目分支（架构 module、项目 Session、请求点名的 Goal 只读），需要 Goal 的节点/关系拒绝。
 - `pointer-facts.ts` — `createGoalPointerFacts`：一次读取 Goal 理解指针的版本、CAS 地址与同次读取水位；缺失为 `'none'`/null 版本期待，失败不当缺失。
 - `track-read-model.ts` — 轨道条读模型：Run、验收轮、Query 区间的有界分页。Run 条带 `attempt.ordinal`（第几次尝试，`attemptOrdinalOf`）；重新入队时 `attempt.requeue` 另带 `failureClass`、`goalResume`、`requestedAt` 与 `interruption`。Query 条带带各自的 `QueryActivity` 视图。每个选中 Session 自己的 Query 先按它的 provenance 定画法（`queryOwnScanOf`）：普通 Session 画自己的 turn（按轨道 Goal 过滤）；只读副本画成从来源被问的 consultation，不按 Goal 过滤；来源也被选中时由来源的副本流画，副本自己不画——与 `sessionRefs` 顺序无关。`dedupeQueryBarsByRunRef` 只是按完整 `QueryRunRef` 的身份防重；`queryBarAskedOf` 优先取记录的正式被问 Session、否则取副本来源。
@@ -84,15 +85,17 @@
 
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
-| `createWorkLineReader` | `src/core/work-graph/views/work-line-reader.ts:3052` | 工作线列表、归档分页、线详情、分区页、会话源的读端口 | 要工作线或线详情时；不要另写一套组装 |
+| `createWorkLineReader` | `src/core/work-graph/views/work-line-reader.ts:3065` | 工作线列表、归档分页、线详情、分区页、会话源的读端口 | 要工作线或线详情时；不要另写一套组装 |
 | `deriveMessageDelivery` | `src/core/work-graph/model/communication-contracts.ts:128` | 消息投递与读 `disposition` 的唯一推导：accepted input → `delivered`（`accepted`）；read/responded → `delivered`（`legacy_unknown`）；否则收件线 archived/retired → `undelivered` 与原因；剩下 `queued`；withdrawn/未放行优先决定 `disposition`。只读记录的 `status`/`release`/`withdrawnAt`/`acceptedInputs`，不读存的 `delivery` | 工作线消息分节及任何要判投递/读 `disposition` 的消息读；不要另写投递判断 |
 | `createConsumableSessions` | `src/core/work-graph/views/consumable-sessions.ts:71` | 所有 Session 的可消费视图：一次有界的目录走查，按候选给出可用性、busy 原因与可提供的输入种类；`after`/`next` 是 Session 键。自己的 `intervention_planning` Query 在 `claimed`/`prepared` 时 busy 仍为 `query`，但按 `sourceMessageRef` 经 `offerOf` 提供一条 `nextMessage`（仅当收件人是本线；不排 `offersOf`）；`entering`/`entered` 不提供 | Host 心跳挑要打开的 Session；不要另写 busy/offer 规则 |
 | `assembleLineBriefs` | `src/core/work-graph/views/work-line-reader.ts:239` | 把线头批量投影成 `LineBriefV1`，与 `lines/list` 同一路径 | 其他读要线摘要、且必须与列表逐字节一致时 |
-| `resolveContinuationLine` | `src/core/work-graph/views/work-line-reader.ts:1433` | 沿 continuation 后继找线头；分支返回全部头，环返回成员，最多 32 步 | 从线中任一 Session 找头时；不要另写遍历 |
+| `resolveContinuationLine` | `src/core/work-graph/views/work-line-reader.ts:1442` | 沿 continuation 后继找线头；分支返回全部头，环返回成员，最多 32 步 | 从线中任一 Session 找头时；不要另写遍历 |
 | `secretaryOrdinals` | `src/core/work-graph/views/work-line-reader.ts:275` | 秘书线名“秘书 N”的 N：本工作区秘书 Session 按 `createdAt`、同刻按 Session 键排，从 1 数（纯函数；一次读只算一回，归档的也算，只读副本不算；有 Session 的职责读不到、或 RoleSpec 角色的职责为 unknown 时整张编号读不到，秘书线名只给“秘书”并带问题；旧模板角色为 unknown 的肯定不是秘书，跳过） |
-| `secretaryNumbering` | `src/core/work-graph/views/work-line-reader.ts:296` | 由每个非副本 Session 的角色种类和职责得出编号：秘书才算；旧模板角色为 unknown 跳过；RoleSpec 角色为 unknown 时编号读不到（纯函数） | 编号读取的唯一判定；不要另写 unknown 的处理 | 线名；不要另排秘书顺序 |
-| `readLatestQueryGoal` | `src/core/work-graph/views/work-line-reader.ts:1352` | 线头最近一次 Query 的目标，读法与线自己的一致 | 图悬停的 Goal owners 过滤；不要拿线名判断 |
-| `createNodeDetailReader` | `src/core/work-graph/views/node-detail-reader.ts:1504` | 悬停与单节点分区详情的读端口 | 图悬停、节点面板 |
+| `secretaryNumbering` | `src/core/work-graph/views/work-line-reader.ts:301` | 由每个非副本 Session 的角色种类和职责得出编号：秘书才算；旧模板角色为 unknown 跳过；RoleSpec 角色为 unknown 时编号读不到（纯函数） | 编号读取的唯一判定；不要另写 unknown 的处理 | 线名；不要另排秘书顺序 |
+| `readLatestQueryGoal` | `src/core/work-graph/views/work-line-reader.ts:1361` | 线头最近一次 Query 的目标，读法与线自己的一致 | 图悬停的 Goal owners 过滤；不要拿线名判断 |
+| `createNodeDetailReader` | `src/core/work-graph/views/node-detail-reader.ts:1581` | 悬停与单节点分区详情的读端口 | 图悬停、节点面板 |
+| `createRoleLineRead` | `src/core/work-graph/views/role-line-read.ts:71` | `role-lines/read` 的唯一读口：每行是 2C 线行加有效范围、创建者、席位和 O2 位置；范围/位置失败整次失败 | 要角色线读时；不要另走一遍线列表、分配或位置 |
+| `createRoleFactsRead` | `src/core/work-graph/views/role-line-read.ts:42` | 存名的一次批量读（`RoleFactsReadPort`）：一次 `readMany`，缺记录是没有存名、损坏是 `unavailable` | 线读要存名时；不要另读 `SessionRoleFacts` 或另写解码 |
 | `createGraphContextReader` | `src/core/work-graph/views/graph-context-reader.ts:475` | 上下文事实、图 look/find、注意力图的只读视图；无 Goal 的 look/find 走项目分支 | 上下文组装、图页、注意力扫描、秘书轮的项目视图 |
 | `createGoalPointerFacts` | `src/core/work-graph/views/pointer-facts.ts:23` | 返回 Goal 理解指针及同次读取的水位，缺失保留必须不存在的版本期待 | 组合根向三版本读取器注入指针端口时 |
 | `createContextExtensionsReader` | `src/core/work-graph/views/context-extensions.ts:256` | 图读取的可选 extensions：异常锚点、决定队列提示、记忆材料；无 Goal 的请求只投影项目理解和 norms，其余 Goal 专属行跳过；读失败原样返回 | 组装上下文、需要这些扩展行时 |
@@ -183,6 +186,6 @@
 - 不写记录、不提交、不发事件、不调用状态迁移；状态只经 `state/`（`AGENTS.md` 第 9 条）。
 - 不 import `app/`、`business/`、`composition/`、`agent-runtime/`，也不让下层 import 本层。
 - 不把失败的读当成空事实、0 或 `not_found`；`unavailable`/`not_ready`/`incomplete` 原样返回（FP-05、M1-12、MH-06）。
-- 不在本层再复制时钟或 claimedAt：`latestActivityAt`、`readClaimedAtForRun` 的正本在 `src/core/work-graph/state/session-activity.ts:25`、`src/core/work-graph/tasks/line-clock.ts:190`；本层 `src/core/work-graph/views/work-line-reader.ts:1239`、`src/core/work-graph/views/work-line-reader.ts:1266` 只调用正本，不要再写第二份（FP-06、FP-18）。
+- 不在本层再复制时钟或 claimedAt：`latestActivityAt`、`readClaimedAtForRun` 的正本在 `src/core/work-graph/state/session-activity.ts:25`、`src/core/work-graph/tasks/line-clock.ts:190`；本层 `src/core/work-graph/views/work-line-reader.ts:1248`、`src/core/work-graph/views/work-line-reader.ts:1275` 只调用正本，不要再写第二份（FP-06、FP-18）。
 - 不另写通知排序、分页合并、线摘要组装或卡片分页；上述唯一实现只留一处（M1-13）。
 - 不猜：不按名字猜 module，不把未知文件或缺失足迹说成“无冲突”，不把 `possiblyIncomplete` 改成 exact。

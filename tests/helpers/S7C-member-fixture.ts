@@ -430,6 +430,8 @@ export function createS7C1MemberService(world: S6AHostWorld): MemberServiceV1 {
     lines: { ensureLine: lineCreation.ensureLine }, requests: { ownerOf: world.platform.requestFacts.ownerOf },
     secretaryRuns: createSecretaryQueryRun({ records, duties: sessionDuty, bodies }),
     duties: duty, executions: world.platform.executions,
+    advisers: { resolveResponsibilityRecipient: (ctx, input) => world.platform.recipients.resolveRecipient(ctx, input) },
+    messages: world.platform.messages,
     // The direct seam names the one explicit Role the M rows exercise; the platform's own member owner
     // resolves the Role through the Task's served binding.
     executorRole: async () => ({ status: 'ready', value: structuredClone(CREATE_ROLE) }),

@@ -7,8 +7,10 @@
  */
 import type { CommitCursor } from './command-event.js';
 import type { ControlIntentRef } from './control-intent.js';
+import type { CoreCallContext } from './core/call-context.js';
 import type { ModuleRef, SessionRef, VersionPin, WorkLinkRelation, WorkLinkTarget } from './core/identity.js';
-import type { CoreError } from './core/results.js';
+import type { OperationRef } from './core/operations.js';
+import type { CoreError, ReadResult } from './core/results.js';
 import type {
   MessageDeliveryStateV1, MessageReadDispositionV1, MessageReleaseV1, SessionMessageRef,
 } from './core/session-message.js';
@@ -21,6 +23,7 @@ import type { NoteAnchorV1, NoteKind, NoteSectionsV1, NoteSourceV1, NoteState } 
 import type { Disposition, Phase, PlanRevisionRef } from './plan.js';
 import type { PlatformDutyV1 } from './platform-duty.js';
 import type { QueryExecutionStateV1, QueryRunRef, QueryRunV1 } from './query-job.js';
+import type { SessionRoleFactsV1 } from './role-lines.js';
 import type { SessionAnomalyViewV1 } from './session-anomaly.js';
 import type { TaskPhaseCauseV1 } from './task-failure.js';
 import type { VerificationRoundRef } from './verification.js';
@@ -133,6 +136,17 @@ export type ArchivedLinePageV1 = {
   withoutArchivedAt: LineCountV1;                                          // 没有归档时间、不在这个列表里的已归档 Session（L5）
 };
 
+export type RoleLineSeatV1 =
+  | { status: 'held'; since: CommitCursor }
+  | { status: 'reserved'; operation: OperationRef }                        // an open operation's pre-registration step
+  | { status: 'none' };
+
+/** One batch read of the stored names; a failed read is `unavailable`, never an empty map. */
+export type RoleFactsReadPort = {
+  readRoleFacts(ctx: CoreCallContext, input: { sessions: readonly SessionRef[] }):
+    Promise<ReadResult<ReadonlyMap<string, SessionRoleFactsV1>>>;
+};
+
 export type LineChainEntryV1 = {
   session: SessionRef; provenance: SessionProvenanceV1 | null;
   lifecycle: 'active' | 'archived'; health: 'available' | 'recoverable' | 'unavailable';
@@ -216,7 +230,7 @@ export type TaskDisplayFactsV1 = {
   neverRanTerminal: 'cancelled' | 'superseded' | null;
   anomaly: { label: '中断，待核对'; next: LineReasonV1; pending: LineCountV1 } | null;
   attention: LineAttentionV1 | null;
-  // TaskDisplayFactsV1 (:213): the task read's one adviser wait; the literal is the book's (:847).
+  // TaskDisplayFactsV1: the task read's one adviser wait; the literal is the book's (:847).
   // Additive optional: the existing `deriveTaskDisplayFacts` producers keep compiling; the two task reads assign it.
   adviserWait?: 'waiting for an adviser' | null;
 };
@@ -233,7 +247,7 @@ export type GroupHoverV1 = {                                               // �
   neverRanTerminal: LineCountV1;
   participatedLines: LineCountV1;                                           // 做过这里的任务的线
   workingLines: LineCountV1; pausedLines: LineCountV1;
-  owners: LineBriefV1[];                                                    // 目标：秘书线（L20 的口径）；阶段：空（原型：阶段没有单一的线）
+  owners: LineBriefV1[];                                                    // 目标：秘书线（L20 的口径）和目标的参谋线（L34）；阶段：空（原型：阶段没有单一的线）
 };
 export type ModuleHoverV1 = {                                              // 每个架构目录里的模块，含子模块
   module: ModuleRef; parent: ModuleRef | null; undivided: boolean; name: string; paths: string[]; responsibility: string;

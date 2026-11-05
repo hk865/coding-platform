@@ -86,6 +86,9 @@ async function parentFactsOf(
   }
   if (parent.action.kind === 'member_create') {
     const caller = parent.action.input.caller;
+    if (caller.kind === 'secretary_query') {
+      return { status: 'ready', value: { kind: 'secretary_create', caller: { session: caller.session } } };
+    }
     return { status: 'ready', value: { kind: 'member_create',
       caller: caller.kind === 'host_pick' ? null : { session: caller.session } } };
   }

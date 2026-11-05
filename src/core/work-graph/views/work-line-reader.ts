@@ -40,7 +40,7 @@ import type { PlanTaskPort } from '../model/plan-contracts.js';
 import type {
   LineBriefV1, LineChainEntryV1, LineConversationSourceV1, LineCountV1, LineExecutionItemV1,
   LineGateCheckV1, LineMessageStateV1, LineNameV1, LineParticipationV1,
-  LineRowV1, LineSegmentV1, WorkLineDetailV1, WorkLineListV1, WorkLineSectionPageV1,
+  LineRowV1, LineSegmentV1, RoleFactsReadPort, WorkLineDetailV1, WorkLineListV1, WorkLineSectionPageV1,
 } from '../../../contracts/work-line.js';
 import type { QueryExecutionStateV1, QueryRunRef } from '../../../contracts/query-job.js';
 import type { RoundSnapshot, VerificationRoundRef } from '../../../contracts/verification.js';
@@ -78,7 +78,7 @@ import {
   S2C_CLOSED_TASK_LINKS_LOOKUP, S2C_OPEN_LINKS_BY_SESSION_LOOKUP, S2C_SESSION_ARCHIVED_AT_LOOKUP,
   S2C_SESSION_BY_KIND_FROM_LOOKUP, S2C_SESSION_BY_LIFECYCLE_KIND_LOOKUP,
   SESSION_BY_WORKSPACE_LIFECYCLE_LOOKUP, SESSION_BY_WORKSPACE_LOOKUP, SESSION_WORK_LINKS_LOOKUP,
-  decodeSessionRecord, decodeSessionWorkLink, plainSessionRefToAggregate, sessionAggregateRefKey,
+  decodeSessionRecord, decodeSessionWorkLink, plainSessionRefKey, plainSessionRefToAggregate, sessionAggregateRefKey,
 } from '../sessions/session-record-codecs.js';
 import {
   cardLineKeys, deriveAttentionAll, deriveLineControls, deriveLineStatus, lineRunningCapOf, lineSortKey, type LineCardFactV1, type LineCardInputV1,
@@ -122,6 +122,9 @@ export type WorkLineReaderDeps = {
    * false` (rule 5). The composition root injects the real read model.
    */
   decisions?: Pick<DecisionReadPort, 'queryDecisionQueue'>;
+  /** The stored name is one branch ahead of 2C's chain: one batch read for the page's
+   *  heads, never per row. Optional so every existing caller compiles; absent = null. */
+  roleFacts?: RoleFactsReadPort;
   /**
    * The page width of the read loops that page a 200-wide lookup to the end
    * (default 200). Only the batch size changes; no total cap returns.
@@ -432,11 +435,14 @@ async function assembleLineRows(
     if (read.status !== 'ready') return rejectionOf(read);
     copiesIndex = read.value;
   }
+  const names = deps.roleFacts === undefined ? null : await deps.roleFacts.readRoleFacts(ctx, { sessions: heads });
+  if (names !== null && names.status !== 'ready') return names;
   const rows: LineRowV1[] = [];
   const facts = new Map<string, LineFactsV1>();
   for (const head of heads) {
     const state = readBudgetState(deps, budgetValue);
-    const row = await assembleOneLine(deps, ctx, workspace, head, state, shared, queue, copiesIndex);
+    const storedName = names?.value.get(plainSessionRefKey(head))?.name ?? null;
+    const row = await assembleOneLine(deps, ctx, workspace, head, state, shared, queue, copiesIndex, storedName);
     if (row.status === 'rejected') return row;
     if (row.status === 'ready') {
       rows.push(row.value.row);
@@ -469,6 +475,8 @@ async function assembleOneLine(
   shared: SharedReads,
   queue: QueueRead,
   activeCopies: ActiveCopies,
+  /** The stored name read once for the page's heads; null = no stored name. */
+  storedName: string | null,
   /** T5x: true on the single consistency reread, so an occupied ended execution is not retried forever. */
   reread = false,
 ): Promise<ReadResult<{ row: LineRowV1; facts: LineFactsV1 }>> {
@@ -505,7 +513,7 @@ async function assembleOneLine(
     || (holder.kind === 'query' && holder.query.run.executionState?.phase === 'settled'));
   if (inconsistentOccupancy && !reread) {
     const fresh = readBudgetState(deps, deps.historyReadBudget ?? LINE_HISTORY_READ_BUDGET);
-    return assembleOneLine(deps, ctx, workspace, headRef, fresh, shared, queue, activeCopies, true);
+    return assembleOneLine(deps, ctx, workspace, headRef, fresh, shared, queue, activeCopies, storedName, true);
   }
   const latestWork = earlyProblem === null && holder === null
     ? await readLatestWork(deps.records, workspace, headRecord, ctx, lineState) : null;
@@ -656,7 +664,7 @@ async function assembleOneLine(
     problem,
   };
   const status = deriveLineStatus(facts);
-  const name = deriveName(duty, holder, latestWork, latestQuery, responsibleOpen, taskFacts, headRecord, secretaryOrdinal);
+  const name = deriveName(duty, holder, latestWork, latestQuery, responsibleOpen, taskFacts, headRecord, storedName, secretaryOrdinal);
   const sessionCount: LineCountV1 = omitted.status === 'exact'
     ? { status: 'exact', value: chain.length }
     : { status: 'partial', atLeast: chain.length + 1, reason: 'the chain exceeds 32 predecessors (L2)' };
@@ -1823,9 +1831,13 @@ function deriveName(
   responsibleOpen: readonly LineTaskFactV1[],
   taskFacts: Map<string, LineTaskFactV1>,
   head: SessionRecord,
+  /** The stored name read once for the page's heads; null = no stored name. */
+  storedName: string | null,
   /** The secretary's number; null for other duties or when it could not be read. */
   secretaryOrdinal: number | null,
 ): LineNameV1 {
+  if (storedName !== null) return { source: 'stored_name', primary: storedName, ordinal: null,
+    extraCount: 0, tasks: [], goalRef: null, complete: true };
   const titleOf = (task: TaskTriple): string => taskFacts.get(taskCanonicalKey(task))?.title ?? task.taskId;
   if (duty === 'secretary') {
     // The Goal of the secretary's latest Query stays on the name: the graph's

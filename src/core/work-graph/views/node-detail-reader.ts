@@ -6,8 +6,10 @@
  * Both build their lines through the one shared `assembleLineBriefs` from
  * `work-line-reader.ts`: every read resolves its heads once with
  * `resolveContinuationLine` (L2/N2: either lifecycle, branch-aware) and calls
- * the assembly exactly once, so the hover's `owners` are byte-identical to
- * `lines/list` by construction (P4) and no shared Goal/task read is repeated.
+ * the assembly once per workspace of the Sessions it needs (a role line lives
+ * in the main workspace, a Goal may not), so the hover's `owners` are
+ * byte-identical to `lines/list` by construction (P4) and no shared Goal/task
+ * read is repeated.
  *
  * The `GoalExecutedFilesPort` mapping is frozen here (L15): a `not_available`
  * port answer becomes `unavailable`/`not_recorded` (never an empty list), a
@@ -44,11 +46,12 @@ import type { ModuleMaintainerPort } from '../model/module-maintainer-contracts.
 import type { ArchitectureCatalogPort } from '../architecture/catalog-contracts.js';
 import type { SessionAnomalyPort } from '../tasks/session-anomaly-service.js';
 import {
-  decodeSessionRecord, decodeSessionWorkLink, SESSION_LINKS_BY_TASK_LOOKUP,
+  decodeSessionRecord, decodeSessionWorkLink, plainSessionRefKey, SESSION_LINKS_BY_TASK_LOOKUP,
   SESSION_BY_WORKSPACE_LIFECYCLE_LOOKUP,
 } from '../sessions/session-record-codecs.js';
-import { laterCursor, readCanonicalTaskFacts, RUN_BY_TASK_INDEX } from '../tasks/plan-readers.js';
+import { laterCursor, readCanonicalTaskFacts, readOpenResponsibilityLines, RUN_BY_TASK_INDEX } from '../tasks/plan-readers.js';
 import { decodeDispatchOutboxEntry, dispatchOutboxRefKey } from '../tasks/claim-record-codecs.js';
+import type { ResponsibilityRecipientPort, ResponsibilityRecipientV1 } from '../tasks/responsibility-recipient.js';
 import { decodeRun } from '../materials/run-snapshot-decoder.js';
 import { storeFailureCode } from '../persistence/read-result-failures.js';
 import { deriveTaskDisplayFacts, type LineTaskArchiveNextV1, type LineTaskFactV1 } from '../state/line-status.js';
@@ -82,6 +85,8 @@ export type NodeDetailReaderDeps = {
   maintainerOf: ModuleMaintainerPort['maintainerOf'];
   /** The `notes/list` read (the same `platform.notes` surface). */
   notes?: NodeNotesLookup;
+  /** L42/L35: the task read's responsible adviser; `asker: null` reads neither the creator nor the person. */
+  advisers?: Pick<ResponsibilityRecipientPort, 'resolveResponsibilityRecipient'>;
 };
 
 const PAGE = 200;
@@ -394,9 +399,12 @@ async function readGoalAnomalyIndex(
 
 const NO_ANCHOR_FACT: TaskAnomalyFact = { count: 0, next: null, problem: null };
 
+/** One read's responsible-adviser answers by task module (v4 :6039): one Goal per read, so the module is the key. */
+type AdviserMemo = Map<string, Promise<ReadResult<ResponsibilityRecipientV1>>>;
+
 async function displayOf(
   deps: NodeDetailReaderDeps, ctx: CoreCallContext, row: TaskRow, runs: readonly RunSnapshot[],
-  planOrder: number, goalDesiredState: GoalDesiredState, anomalyFact?: TaskAnomalyFact,
+  planOrder: number, goalDesiredState: GoalDesiredState, adviserMemo: AdviserMemo, anomalyFact?: TaskAnomalyFact,
 ): Promise<{ display: TaskDisplayFactsV1; problem: { code: CoreError; reason: string } | null }> {
   const fact = anomalyFact ?? anomalyFactOfRead(await deps.anomalies.readTaskArchiveState(ctx, row.ref));
   const anomaly: LineTaskFactV1['anomaly'] = fact.problem === null && fact.count > 0
@@ -410,7 +418,30 @@ async function displayOf(
     everRan: runs.length > 0, terminal: terminalOf(row), lastRequeue: lastRequeueOf(row),
     module: moduleOf(row), anomaly, anomalyComplete: true, cards: [],
   });
-  return { display, problem: fact.problem };
+  // A finished, cancelled or superseded task waits for nobody and reads nothing.
+  if (terminalOf(row)) return { display: { ...display, adviserWait: null }, problem: fact.problem };
+  // L42/L35: the task's responsible adviser (O4b's resolver, `asker: null`: neither the creator nor the person),
+  // asked once per module of this read; a failed read is the task's problem, never a silent "waiting".
+  const moduleRef = moduleOf(row);
+  const memoKey = moduleRef === null ? '' : keyOf(moduleRef);
+  let pending = adviserMemo.get(memoKey);
+  if (pending === undefined && deps.advisers !== undefined) {
+    pending = deps.advisers.resolveResponsibilityRecipient(ctx, {
+      projectId: row.ref.projectId,
+      goalRef: { aggregateType: 'Goal', projectId: row.ref.projectId, goalId: row.ref.goalId },
+      moduleRef, kind: 'technical', asker: null,
+    });
+    adviserMemo.set(memoKey, pending);
+  }
+  const adviserRead = pending === undefined ? null : await pending;
+  if (adviserRead !== null && adviserRead.status !== 'ready') {
+    return { display: { ...display, adviserWait: null },
+      problem: adviserRead.status === 'rejected'
+        ? { code: adviserRead.code, reason: adviserRead.reason }
+        : { code: 'unavailable', reason: 'the responsible adviser could not be read' } };
+  }
+  const hasAdviser = adviserRead !== null && adviserRead.value.kind === 'session';
+  return { display: { ...display, adviserWait: hasAdviser ? null : 'waiting for an adviser' as const }, problem: fact.problem };
 }
 
 /** The open `responsible` Sessions of one Task. */
@@ -574,6 +605,39 @@ async function assembleSessionBriefs(
   return { status: 'ready', value: { bySession, byHead } };
 }
 
+/** O5a-03 (book :278): a role line lives in the main workspace while its Goal may not, so each Session's heads and
+ *  briefs are read in that Session's own workspace (one assembly per workspace), then merged into the one index. */
+async function briefsInOwnWorkspaces(
+  records: WorkLineStore, line: WorkLineReaderDeps, ctx: CoreCallContext, projectId: string,
+  sessions: Iterable<SessionRef>, cache: HeadCache,
+): Promise<ReadResult<SessionBriefIndex>> {
+  const byKey = new Map<string, SessionRef>();
+  for (const session of sessions) byKey.set(plainSessionRefKey(session), session);
+  if (byKey.size === 0) return { status: 'ready', value: { bySession: new Map(), byHead: new Map() } };
+  const read = await records.readMany([...byKey.keys()]);
+  if (read.status !== 'ready') return storeRejection(read);
+  const groups = new Map<string, SessionRef[]>();
+  for (const record of read.value.records) {
+    const session = byKey.get(record.refKey);
+    const decoded = decodeSessionRecord(record);
+    // As the line read itself (`work-line-reader.ts:787`): an undecodable Session is not a line here.
+    if (session === undefined || decoded.status !== 'decoded') continue;
+    groups.set(decoded.value.workspaceId, [...(groups.get(decoded.value.workspaceId) ?? []), session]);
+  }
+  const bySession = new Map<string, LineBriefV1[]>();
+  const byHead = new Map<string, LineBriefV1>();
+  for (const [workspaceId, group] of groups) {
+    const scope = { projectId, workspaceId } as WorkspaceScope;
+    const resolved = await resolveSessionHeads(records, scope, group, cache);
+    if (resolved.status !== 'ready') return resolved;
+    const assembled = await assembleSessionBriefs(line, ctx, scope, resolved.value);
+    if (assembled.status !== 'ready') return assembled;
+    for (const [key, briefs] of assembled.value.bySession) bySession.set(key, briefs);
+    for (const [key, brief] of assembled.value.byHead) byHead.set(key, brief);
+  }
+  return { status: 'ready', value: { bySession, byHead } };
+}
+
 function dedupeBriefs(briefs: Iterable<LineBriefV1>): LineBriefV1[] {
   const seen = new Map<string, LineBriefV1>();
   for (const brief of briefs) seen.set(keyOf(brief.key), brief);
@@ -676,9 +740,19 @@ async function buildLineIndexes(
     addAll(secretary.value);
   }
 
-  const resolved = await resolveSessionHeads(deps.records, scope, allSessions.values(), headCache);
-  if (resolved.status !== 'ready') return resolved;
-  const assembled = await assembleSessionBriefs(line, ctx, scope, resolved.value);
+  // L34 (book :896): the Goal's advisers are every open responsible Goal link whose line's duty is adviser, through
+  // the one complete Goal link read (all pages, decoded duty); a failed read is the Goal's problem, never a shorter list.
+  const adviserSessions: SessionRef[] = [];
+  const adviserLines = await readOpenResponsibilityLines(deps.records, ctx, { goalRef }, line.dutyFor);
+  if (adviserLines.status !== 'ready') {
+    const problem = storeRejection(adviserLines);
+    problems.push({ node: { kind: 'goal', ref: goalRef }, code: problem.code, reason: problem.reason });
+  } else {
+    for (const entry of adviserLines.value) if (entry.duty === 'adviser') adviserSessions.push(entry.session);
+  }
+  addAll(adviserSessions);
+
+  const assembled = await briefsInOwnWorkspaces(deps.records, line, ctx, scope.projectId, allSessions.values(), headCache);
   if (assembled.status !== 'ready') return assembled;
   const { bySession } = assembled.value;
   const briefsOf = (session: SessionRef): LineBriefV1[] => bySession.get(keyOf(session)) ?? [];
@@ -714,6 +788,11 @@ async function buildLineIndexes(
         if (latestGoal.value === goalRef.goalId) goalOwners.set(headKey, brief);
       }
     }
+  }
+
+  // L34: the Goal's adviser lines join the secretary owners in the one list, deduped by line head.
+  for (const session of adviserSessions) {
+    for (const brief of briefsOf(session)) if (brief.duty === 'adviser') goalOwners.set(keyOf(brief.key), brief);
   }
 
   return { status: 'ready', value: {
@@ -941,12 +1020,13 @@ async function assembleHover(deps: NodeDetailReaderDeps, ctx: CoreCallContext, g
   const anomalyIndex = await readGoalAnomalyIndex(deps, ctx, goalRef);
 
   const tasks: TaskHoverV1[] = [];
+  const adviserMemo: AdviserMemo = new Map();
   for (const row of graph.rows) {
     const taskRuns = runs.get(row.ref.taskId) ?? [];
     const participated = participationIndex.get(keyOf(row.ref)) ?? [];
     const failure = participationProblem.get(keyOf(row.ref));
     const anomalyFact = anomalyIndex === null ? undefined : (anomalyIndex.get(keyOf(row.ref)) ?? NO_ANCHOR_FACT);
-    const display = await displayOf(deps, ctx, row, taskRuns, graph.rows.indexOf(row), goal.desiredState, anomalyFact);
+    const display = await displayOf(deps, ctx, row, taskRuns, graph.rows.indexOf(row), goal.desiredState, adviserMemo, anomalyFact);
     if (display.problem !== null) problems.push({ node: { kind: 'task', ref: row.ref, planRef: graph.plan.ref }, ...display.problem });
     tasks.push({ task: row.ref, planRef: graph.plan.ref, title: row.definition.title, phase: row.effectivePhase,
       phaseCause: row.phaseCause ?? null, disposition: row.disposition, display: display.display,
@@ -1283,7 +1363,7 @@ async function readSummary(deps: NodeDetailReaderDeps, ctx: CoreCallContext, inp
       .sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : keyOf(left.runRef) < keyOf(right.runRef) ? -1 : 1)));
     const risks = fileRisksView(row, graph.rows, runs, facts, graph.plan);
     const owners = ownerIndex.get(keyOf(row.ref)) ?? [];
-    const display = await displayOf(deps, ctx, row, taskRuns, graph.rows.indexOf(row), goal.desiredState);
+    const display = await displayOf(deps, ctx, row, taskRuns, graph.rows.indexOf(row), goal.desiredState, new Map());
     if (display.problem !== null) return { status: 'rejected', code: display.problem.code, reason: display.problem.reason };
     return { status: 'ready', value: {
       section: 'summary', node: input.node, pin: pinOf(row.ref),

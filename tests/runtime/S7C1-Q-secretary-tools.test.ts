@@ -26,6 +26,7 @@ import { adoptS6BPlan, createS6BLine, holdS6BRequestRound } from '../helpers/S6B
 import { openS7B2RoundWorld } from '../helpers/S7B2-secretary-rounds.js';
 import { openS7BL46World } from '../helpers/S7B-L46-fixture.js';
 import { jsonOf } from '../helpers/S7C-member-fixture.js';
+import { openLink } from '../helpers/S7D1-role-line-world.js';
 import { s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
 import { platformRoleProfile } from '../../src/core/agent-runtime/role-profiles.js';
 import { sessionOf, setS7AAutonomy } from '../helpers/S7A-fixture.js';
@@ -111,7 +112,10 @@ describe('Q-secretary-tools-service: the secretary request round', () => {
     const main = s6aCardsWorkspace(world, S6A_SCOPE);
     const { tasks } = await adoptS6BPlan(main, world.goals.first, { label: 'q-service-member',
       role: S6A_WORK_ROLE.templateId, taskIds: ['q-service-member-task'] });
-    await createS6BLine(main, { label: 'q-service-member-adviser', role: platformRoleProfile('adviser').template });
+    const adviser = await sessionOf(world, await createS6BLine(main, {
+      label: 'q-service-member-adviser', role: platformRoleProfile('adviser').template }));
+    await openLink(world, { line: adviser, target: { kind: 'goal', ref: world.goals.first },
+      requestId: 'q-service-adviser-goal' });
     const round = await runRound(world, { label: 'q-service', goalId: world.goals.first.goalId,
       first: [
         { kind: 'calls', calls: [{ callId: 'q-service-member', name: 'create_member', args: {

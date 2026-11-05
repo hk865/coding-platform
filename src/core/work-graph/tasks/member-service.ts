@@ -31,6 +31,7 @@ import type { DecisionSourceV1 } from '../../../contracts/goal-decisions.js';
 import { decisionSourceKey } from '../../../contracts/goal-decisions.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
+import type { CapacityAtCapDetailV1 } from '../../../contracts/role-lines.js';
 import { OperationRefShape, SessionMessageRefShape } from '../../../contracts/data-format-refs.js';
 import { messageOf } from '../../../contracts/error-message.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
@@ -40,7 +41,7 @@ import type {
   EncodedRecord, GoalRecordTransactionPort, RecordCommitIdentityPort, RecordGuard,
 } from '../../record-store/ports.js';
 import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
-import type { RequestOwnerReadPort } from '../model/communication-contracts.js';
+import type { RequestOwnerReadPort, SessionMailboxPort } from '../model/communication-contracts.js';
 import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
 import type { SecretaryQueryRunPort } from '../model/secretary-query-run-contracts.js';
 import type { SessionDirectoryPort, SessionOperationRecord, SessionOperationRecordOf } from '../model/session-contracts.js';
@@ -49,7 +50,7 @@ import type { DutyRecipientPort } from '../sessions/duty-recipient.js';
 import { sessionRegisterIdentityKey, stableSessionCreationIdentity } from '../sessions/session-directory.js';
 import {
   CORE_OPERATION_MEMBER_BY_GOAL_LOOKUP, decodeSessionOperationRecord, encodeSessionOperationRecord,
-  memberCreationAcceptedCodec, memberCreationDecidedCodec, operationRefKey, plainSessionRefKey,
+  memberCreationAcceptedCodec, memberCreationDecidedCodec, operationRefKey, plainSessionRef, plainSessionRefKey,
 } from '../sessions/session-record-codecs.js';
 import type { MemberCallerV1, MemberCreateActionV1, MemberCreationStepV1 } from '../state/member-creation.js';
 import { acceptedMemberCreation, advancedMemberCreation, memberCreateInputProblem } from '../state/member-creation.js';
@@ -57,6 +58,7 @@ import { decisionActionPolicy } from '../state/decision-policy.js';
 import { matchAutonomyRule } from '../state/autonomy-rules.js';
 import { openLimitOf, type createAllocationRead } from '../sessions/allocation-read.js';
 import type { AutonomyRulePort, AutonomyRuleViewV1 } from './autonomy-rule-service.js';
+import type { ResponsibilityRecipientPort } from './responsibility-recipient.js';
 import { commandIdentity, commandKeys, executeWriteCommand } from '../persistence/command-executor.js';
 import {
   agentActorOf, toolCommitLookupResult, toolCommitLookupUnknownTool, toolCommitRequestId,
@@ -145,7 +147,7 @@ export type MemberLineCreationInputV1 = {
 export type MemberLineCreationResultV1 =
   | { status: 'created' | 'replayed'; session: SessionRef }
   | { status: 'accepted'; operationRef: OperationRef }
-  | { status: 'capacity_blocked'; duty: string }
+  | { status: 'capacity_blocked'; duty: string; detail: CapacityAtCapDetailV1 | null }
   | { status: 'rejected'; code: string; reason: string };
 
 export interface MemberLineCreationPortV1 {
@@ -159,6 +161,12 @@ export type MemberServiceDependenciesV1 = {
   requests: RequestOwnerReadPort;
   secretaryRuns: SecretaryQueryRunPort;
   duties: DutyRecipientPort;
+  /** L42/L35 (book :846): the one responsible-adviser read behind both checks; `asker: null` keeps out the creator
+   *  and the person, so a `human` answer is `invalid/no_responsible_adviser`. */
+  advisers: Pick<ResponsibilityRecipientPort, 'resolveResponsibilityRecipient'>;
+  /** D-18 (book :850): the responsible adviser's one notice per operation, through the mailbox's own send;
+   *  a Host system `notify` opens no model turn (decision 98-4). */
+  messages: Pick<SessionMailboxPort, 'sendMessage'>;
   /**
    * The one real Run read; the Work caller's accepted envelope supplies both its admission (`create_member` and
    * `createMember: true`) and the child Session's delegation ceiling. A secretary caller never reads it.
@@ -391,6 +399,32 @@ type DecisionChoice = { kind: 'creating' | 'reject' | 'stale'; guards: RecordGua
 export function createMemberService(deps: MemberServiceDependenciesV1): MemberServiceV1 {
   const now = deps.now;
 
+  // O4b's resolver is the only Goal→region read; `asker:null` forbids the creator and the person, so a `human`
+  // answer is `invalid/no_responsible_adviser`, never a substitution.
+  async function responsibleAdviserOf(
+    ctx: CoreCallContext, task: TaskTriple, plan: PlanRevisionSnapshot | null,
+  ): Promise<SessionRef | null | CoreRejection> {
+    const row = plan === null ? undefined : plan.tasks.find((candidate) => candidate.taskId === task.taskId);
+    const moduleRef = row !== undefined && row.scope.kind === 'module'
+      ? { projectId: task.projectId, moduleId: row.scope.moduleRef } : null;
+    const input = { projectId: task.projectId, goalRef: goalRefFor(task.projectId, task.goalId),
+      moduleRef, asker: null };
+    // L42's order: the Goal's adviser first, the task module's region adviser only when that is empty.
+    // `general` is the goal-only arm (`asker:null` removes the creator); `technical` keeps its own region-first order.
+    const goalRead = await deps.advisers.resolveResponsibilityRecipient(systemContext(ctx), { ...input, kind: 'general' });
+    if (goalRead.status !== 'ready') {
+      return goalRead.status === 'rejected' ? goalRead
+        : rejected('unavailable', 'the responsible adviser could not be read');
+    }
+    if (goalRead.value.kind === 'session') return goalRead.value.session;
+    const regionRead = await deps.advisers.resolveResponsibilityRecipient(systemContext(ctx), { ...input, kind: 'technical' });
+    if (regionRead.status !== 'ready') {
+      return regionRead.status === 'rejected' ? regionRead
+        : rejected('unavailable', 'the responsible adviser could not be read');
+    }
+    return regionRead.value.kind === 'session' ? regionRead.value.session : null;
+  }
+
   async function readMemberOperation(ref: OperationRef): Promise<MemberOperationRecordV1 | null | CoreRejection> {
     const read = await readOwnerRecord({
       store: deps.records,
@@ -540,18 +574,9 @@ export function createMemberService(deps: MemberServiceDependenciesV1): MemberSe
     // Sessions, so they run in the same trusted system context as the child creation. The caller's own ctx stays on
     // the round resolution above and on every command identity/write.
     const trusted = systemContext(ctx);
-    let adviser;
-    try {
-      adviser = await deps.duties.resolveDutyRecipient(trusted, { workspace: workspaceOf(ctx), duty: 'adviser' });
-    } catch (error) {
-      return rejected('unavailable', `the responsible adviser could not be read: ${messageOf(error)}`);
-    }
-    if (adviser.status !== 'ready') {
-      if (adviser.status === 'not_found') return rejected('unavailable', 'the responsible adviser is not readable');
-      if (adviser.status === 'not_ready') return rejected('unavailable', 'the responsible adviser is not readable');
-      return rejected(adviser.code, adviser.reason);
-    }
-    if (adviser.value === null) return rejected('invalid', 'no_responsible_adviser');
+    const adviser = await responsibleAdviserOf(ctx, task, plan);
+    if (adviser !== null && 'status' in adviser) return adviser;
+    if (adviser === null) return rejected('invalid', 'no_responsible_adviser');
     // The special name belongs only to an absent adviser; a missing plan with an adviser is a plain invalid.
     if (window.status !== 'ready') return rejected('invalid', window.reason);
     let owner;
@@ -791,7 +816,7 @@ export function createMemberService(deps: MemberServiceDependenciesV1): MemberSe
   type CreationOutcome =
     | { kind: 'done'; session: SessionRef; proofReceipt?: DecisionApplicationReceiptV1 }
     | { kind: 'pending' }
-    | { kind: 'failed'; code: string; reason: string }
+    | { kind: 'failed'; code: string; reason: string; detail?: CapacityAtCapDetailV1 }
     | CoreRejection;
 
   /** One progress write through the shared executor; a replay answers the current operation, never a rebuilt one. */
@@ -880,6 +905,19 @@ export function createMemberService(deps: MemberServiceDependenciesV1): MemberSe
     ctx: CoreCallContext, operation: MemberOperationRecordV1, requireProof: boolean, recovery: boolean,
     ceiling?: MemberDelegationCeilingV1,
   ): Promise<CreationOutcome> {
+    // D-18: the adviser this create notifies; set only on the secretary path, by the check below.
+    let adviserToNotify: SessionRef | null = null;
+    // L42: the ONE create/dispatch path re-reads the responsible adviser before dispatching, so a changed or absent
+    // adviser refuses instead of dispatching on the earlier read (request, approved card and Host recovery alike).
+    if (operation.action.input.caller.kind === 'secretary_query') {
+      const task = operation.action.input.scope.task;
+      const window = await readGoalPlanWindow(deps.records, goalRefFor(task.projectId, task.goalId));
+      if (window.status !== 'ready' && window.code !== 'not_found') return rejected(window.code, window.reason);
+      const adviser = await responsibleAdviserOf(ctx, task, window.status === 'ready' ? window.plan : null);
+      if (adviser !== null && 'status' in adviser) return adviser;
+      if (adviser === null) return rejected('invalid', 'no_responsible_adviser');
+      adviserToNotify = adviser;
+    }
     const input = await lineInputOf(ctx, operation, ceiling);
     if ('status' in input) return input;
     let line;
@@ -889,9 +927,11 @@ export function createMemberService(deps: MemberServiceDependenciesV1): MemberSe
       return rejected('unavailable', `the member line creation did not complete: ${messageOf(error)}`);
     }
     if (line.status === 'capacity_blocked' || line.status === 'rejected') {
+      const detail = line.status === 'capacity_blocked' ? line.detail! : undefined;   // the one narrowing
       const code = line.status === 'capacity_blocked' ? 'capacity' : line.code;
       const reason = line.status === 'capacity_blocked'
-        ? `line capacity is full for ${line.duty}` : line.reason;
+        ? `at_cap: ${line.detail!.duty} has ${line.detail!.holders} holder(s) and ${line.detail!.reservations} reservation(s) against open limit ${line.detail!.open}`
+        : line.reason;
       if (recovery) {
         // The recovery keeps the original child and the creating stage; only the refusal fact is written back.
         const written = await writeStage(
@@ -900,7 +940,7 @@ export function createMemberService(deps: MemberServiceDependenciesV1): MemberSe
           [],
         );
         if (written.status === 'rejected') return written;
-        return { kind: 'failed', code, reason };
+        return { kind: 'failed', code, reason, ...(detail === undefined ? {} : { detail }) };
       }
       const written = await writeStage(
         ctx, stageCommand(operation.ref, operation.revision + 1, 'rejected'), operation, 'rejected',
@@ -908,9 +948,22 @@ export function createMemberService(deps: MemberServiceDependenciesV1): MemberSe
         [],
       );
       if (written.status === 'rejected') return written;
-      return { kind: 'failed', code, reason };
+      return { kind: 'failed', code, reason, ...(detail === undefined ? {} : { detail }) };
     }
     if (line.status === 'accepted') return { kind: 'pending' };
+    if (adviserToNotify !== null) {
+      // One `notify` per operation (终稿 :1821): the request id is the operation's, so a replay, an approval or a
+      // recovery re-sends the same identity and the mailbox restores its receipt (mailbox-send.ts:353–:356). It is sent
+      // before `done`: only `creating` resumes, so a crash in between resends instead of losing it. A changed
+      // adviser on recovery meets the first notice's identity (`idempotency_conflict`): the first notice stands.
+      const notice = await deps.messages.sendMessage(systemContext(ctx), {
+        input: { recipient: plainSessionRef(adviserToNotify), intent: 'notify',
+          text: `秘书新建了执行线：任务 ${operation.action.input.scope.task.taskId}，执行线 ${line.session.sessionId}。` },
+        meta: { requestId: `member:${operation.ref.operationId}`, expected: [] },
+      });
+      if (notice.status !== 'committed'
+        && !(notice.status === 'rejected' && notice.code === 'idempotency_conflict')) return notice;
+    }
     let proofReceipt: DecisionApplicationReceiptV1 | null = null;
     if (requireProof) {
       const receipt = await creationReceipt(ctx.projectId, childCommandIdOf(operation.ref));
@@ -1043,7 +1096,8 @@ export function createMemberService(deps: MemberServiceDependenciesV1): MemberSe
       };
     }
     if (outcome.kind === 'pending') return { status: 'pending', operation: structuredClone(operation.ref) };
-    return rejected(coreErrorOf(outcome.code), outcome.reason);
+    return { status: 'rejected', code: coreErrorOf(outcome.code), reason: outcome.reason,
+      ...(outcome.detail === undefined ? {} : { detail: outcome.detail }) };
   }
 
   async function readDecisionFacts(
@@ -1126,7 +1180,8 @@ export function createMemberService(deps: MemberServiceDependenciesV1): MemberSe
           receipt: outcome.proofReceipt!,
         };
       }
-      return rejected(coreErrorOf(outcome.code), outcome.reason);
+      return { status: 'rejected', code: coreErrorOf(outcome.code), reason: outcome.reason,
+        ...(outcome.detail === undefined ? {} : { detail: outcome.detail }) };
     }
 
     let built: MemberOperationRecordV1 | null = null;
@@ -1270,7 +1325,10 @@ export function createMemberService(deps: MemberServiceDependenciesV1): MemberSe
       for (const record of found.records) {
         if (record.action.progress.stage !== 'creating' || record.action.progress.createChild === null) continue;
         const outcome = await runCreation(ctx, record, false, true);
-        if (!('kind' in outcome)) return outcome;
+        if (!('kind' in outcome)) {
+          left.push({ operation: structuredClone(record.ref), code: outcome.code, reason: outcome.reason });
+          continue;
+        }
         if (outcome.kind === 'done') {
           resumed.push({
             operation: structuredClone(record.ref), child: structuredClone(record.action.progress.createChild),

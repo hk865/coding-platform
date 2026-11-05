@@ -246,6 +246,20 @@ export async function openS7CHandoffWorld(options: { backend?: S6ABackend;
     // The responsible adviser the secretary's `create_member` admission resolves; its Run comes after the round.
     const adviserLine = await sessionOf(world, await createS6BLine(main, { label: 's7c-handoff-adviser',
       role: ADVISER_ROLE }));
+    // The Goal link the admission's responsible-adviser read needs; the card's revision and the link's revision
+    // (0 when absent) are the two pins, the same step `linkTask` takes.
+    const adviserCard = await world.readSession(adviserLine.ref);
+    const adviserTarget = { kind: 'goal' as const, ref: goal };
+    const adviserGoalLink = adviserCard.links.find(candidate => candidate.ref.relation === 'responsible'
+      && candidate.ref.target.kind === 'goal' && candidate.ref.target.ref.goalId === goal.goalId);
+    committed(await world.post('sessions/link', graphWrite(S6A_SCOPE, {
+      sessionRef: { projectId: adviserCard.record.ref.projectId, sessionId: adviserCard.record.ref.sessionId },
+      target: adviserTarget, relation: 'responsible', active: true,
+    }, 's7c-handoff-adviser-goal', [
+      { ref: adviserCard.record.ref, revision: adviserCard.record.revision },
+      { ref: adviserGoalLink?.ref ?? { ...adviserCard.record.ref, aggregateType: 'SessionWorkLink' as const,
+        target: adviserTarget, relation: 'responsible' as const }, revision: adviserGoalLink?.revision ?? 0 },
+    ])), 'the adviser goal link');
 
     // The secretary Query child on t1: the real `create_member` path, with the pin and no ceiling.
     await setAutonomy(world, goal, 'after_plan_confirmation');

@@ -64,13 +64,16 @@ describe('G2-first-accept', () => {
         && link.until === null && link.ref.target.kind === 'task');
       expect(heldTasks).toHaveLength(seed.tasks.length);
 
-      // No successor exists yet, so no second line may hold the goal or module scope.
+      // No successor exists yet, so no second line may hold the goal or module scope. The adviser's own responsible
+      // Goal link is the world's (the handoff fixture gives it one so a secretary's member creation has a responsible
+      // adviser, O5a-2); it is not a successor.
       const cards = await seed.world.world.listSessions();
       const goalHolders = cards.filter(card => openLinkOf(card, 'goal') !== undefined
         && canonicalKey(openLinkOf(card, 'goal')!.ref.target) === canonicalKey(seed.targets.goal));
       const moduleHolders = cards.filter(card => openLinkOf(card, 'module') !== undefined
         && canonicalKey(openLinkOf(card, 'module')!.ref.target) === canonicalKey(seed.targets.module));
-      expect(goalHolders.map(card => card.record.ref.sessionId)).toEqual([seed.source.ref.sessionId]);
+      expect(goalHolders.map(card => card.record.ref.sessionId).sort())
+        .toEqual([seed.source.ref.sessionId, seed.adviser.ref.sessionId].sort());
       expect(moduleHolders.map(card => card.record.ref.sessionId)).toEqual([seed.adviser.ref.sessionId]);
       expect(cards.some(card => card.record.provenance.kind === 'handoff'
         && card.record.provenance.from.sessionId === seed.source.ref.sessionId)).toBe(false);

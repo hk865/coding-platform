@@ -1990,6 +1990,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       requests: { ownerOf: (ctx, input) => rawRequestFacts.ownerOf(ctx, input) },
       secretaryRuns: secretaryQueryRun,
       duties: dutyRecipient,
+      // L42/D-18: the ONE L35 resolver (O4b-2's late binding) and the mailbox's own send for the adviser's one notice.
+      advisers: lateRecipients,
+      messages: mailbox,
       executions: executionReader,
       executorRole: async (_ctx, { workspace, task }) => {
         const window = await readGoalPlanWindow(backend.records,
@@ -3918,6 +3921,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // module summary pass its line refs through their one brief assembly.
       maintainerOf: moduleMaintainers.maintainerOf,
       notes: listNotes,
+      // The task read's responsible adviser (L42), the same L35 resolver.
+      advisers: lateRecipients,
     });
     const lineSettings: WorkLineSettingsPort = createLineSettingsService({
       records: backend.records,
