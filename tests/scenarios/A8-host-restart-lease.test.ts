@@ -41,7 +41,8 @@ import {
 import {
   assertInvariants, assertInvariantsAt, cleanupScenarios, hostCtx, openHostScenario, type InvariantTarget,
 } from './harness.js';
-import { NO_REDRIVE, execution, lockLedgerAfter, openWorkRoot, putKernelBack, stepOf } from './support/common.js';
+import { NO_REDRIVE, execution, lastEventType, openWorkRoot, putKernelBack, stepOf } from './support/common.js';
+import { failCommitOf } from './support/receipts.js';
 import { expectQuietHarnessRestart, expectQuietRestart, kernelTurnOf, ledgerEvents, recordedInterruptions } from './support/restart.js';
 
 afterEach(cleanupScenarios);
@@ -213,24 +214,33 @@ it('A8-Q3 (Q-03, QRR-03, SES-08): the Kernel answered the Query and the answer w
   await assertInvariants(h, 'a8-q3 claimed', stepOf(h, 'other', 'a8-q3 claimed'));
   // The crash point (§12.10 step 1, 故障注入; the Host has no seam inside one Runtime call): a composition root on the
   // same files with the Host's query binding prepares and starts the QueryRun; during its one model call the test arms
-  // the lock, so right after the call's usage write the ledger is locked: the Kernel answers in its own store and the
-  // Query's observed commit fails.
+  // the injected failure, so right after the call's usage write the Query's observed commit fails inside its transaction
+  // (`support/receipts.ts` `failCommitOf`): the Kernel answers in its own store and nothing is booked.
   let armed = false;
-  const lock = lockLedgerAfter(h.database, last => armed && last === 'QueryExecutionRecorded');
+  const observed: { fault: ReturnType<typeof failCommitOf> | null } = { fault: null };
+  const observer = {
+    started() { /* the head is not needed */ },
+    committed() {
+      if (observed.fault === null && armed && lastEventType(h.database) === 'QueryExecutionRecorded') {
+        observed.fault = failCommitOf(h.database, 'QueryExecutionRecorded');
+      }
+    },
+  };
   const queryModel = createScriptedModel([{ kind: 'text', text: A8_Q3_ANSWER }], async () => { armed = true; });
-  const root = await openWorkRoot(h, createScriptedModel([]), lock.observer, queryModel);
+  const root = await openWorkRoot(h, createScriptedModel([]), observer, queryModel);
   let started: unknown;
   try {
     const prepared = await root.runtime.prepareQuery!(hostCtx(), { queryRunRef: refs.queryRunRef, requestId: 'a8-q3-prepare' });
     if (prepared.status !== 'ready') throw new Error(`the Query must be prepared: ${JSON.stringify(prepared)}`);
     started = await root.runtime.startQuery!(hostCtx(), { prepared: prepared.value, consumerId: AG2B_CONSUMER_ID, requestId: 'a8-q3-start' });
   } finally {
-    lock.release();
+    observed.fault?.drop();
     await root.close();
   }
-  expect(lock.locked(), 'the lock was taken after the call\'s usage write').toBe(true);
+  expect(String((started as { reason?: unknown }).reason), 'the observed commit failed inside its transaction')
+    .toContain('scenario: the Host stopped before COMMIT');
   expect(started).toMatchObject({ status: 'rejected', code: 'unavailable' });
-  expect(JSON.stringify(started)).toContain('database is locked');
+  expect(JSON.stringify(started)).toContain('scenario: the Host stopped before COMMIT');
   expect(queryModel.calls()).toBe(1);
   await assertInvariants(h, 'a8-q3 answered in the Kernel, not booked', stepOf(h, 'other', 'a8-q3 answered in the Kernel, not booked'));
   const entered = await readQuery(h.host, refs.queryJobRef);

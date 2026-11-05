@@ -35,9 +35,10 @@ import {
 } from './harness.js';
 import { crashMidTurn } from './support/restart.js';
 import {
-  driveChecked, execution, lockLedgerAfter, openWorkRoot, operatorRequeue, preparedOf, readCall, redrivePolicy,
+  driveChecked, execution, openWorkRoot, operatorRequeue, preparedOf, readCall, redrivePolicy,
   requiredBriefOf, textReply,
 } from './support/common.js';
+import { failCommitOf } from './support/receipts.js';
 
 afterEach(cleanupScenarios);
 
@@ -124,20 +125,22 @@ async function openAttestedEnteringRun(flowId: string): Promise<AttestedEntering
   if (run2Ref === null || toStart.next === null) throw new Error('Run 2 must be claimed and prepared');
   const run2 = await execution(h, run2Ref);
   expect(run2.run).toMatchObject({ status: 'starting', requeueRef: h.lastWorld?.requeues.at(-1)?.ref });
-  // 2. The A8-2d crash point: start Run 2 through a composition root; the ledger lock lands right after the
-  //    begin, so the Kernel Turn starts but the entered fact is never booked.
+  // 2. The A8-2d crash point: start Run 2 through a composition root; the begin commits, then the entered commit fails
+  //    inside its transaction (`support/receipts.ts` `failCommitOf`), so the Kernel Turn starts but the entered fact is
+  //    never booked.
   const prepared = preparedOf(toStart.next);
-  const lock = lockLedgerAfter(h.database, 'ExecutionEntryBegun');
+  const enteredFault = failCommitOf(h.database, 'ExecutionEntryEntered');
   const model = createScriptedModel([]);
-  const root = await openWorkRoot(h, model, lock.observer);
+  const root = await openWorkRoot(h, model);
   let started: unknown;
   try {
     started = await root.runtime.startRun(hostCtx(), { prepared, consumerId: AG2B_CONSUMER_ID, requestId: `${flowId}-start` });
   } finally {
-    lock.release();
+    enteredFault.drop();
     await root.close();
   }
-  expect(lock.locked(), 'the lock was taken right after the begin').toBe(true);
+  expect(String((started as { reason?: unknown }).reason), 'the entered commit failed inside its transaction')
+    .toContain('scenario: the Host stopped before COMMIT');
   expect(started).toMatchObject({ status: 'rejected', code: 'unavailable' });
   expect(model.calls(), 'the Turn stopped before its first model call').toBe(0);
   const entering = await execution(h, run2Ref);

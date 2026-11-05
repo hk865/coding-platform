@@ -57,7 +57,8 @@ import {
   assertInvariants, cleanupScenarios, eventTypesIn, hostCtx, openHostScenario, SCENARIO_OPERATOR, type HostScenario,
   type ScenarioCounts,
 } from './harness.js';
-import { draftFrom, execution, lockLedgerAfter, openWorkRoot, preparedOf } from './support/common.js';
+import { draftFrom, execution, openWorkRoot, preparedOf } from './support/common.js';
+import { failCommitOf } from './support/receipts.js';
 import { c7Case, cleanupPlan, hostGraph, raceWindow, type RaceWindow, type RaceWriter } from './support/plan.js';
 
 const {
@@ -487,23 +488,23 @@ it('C7 TASK-19 against the selected Run\'s pointer ControlIntent moving in its w
   const h: HostScenario = await openHostScenario({ check: 'pass', automation: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'off' } });
   await assertInvariants(h, 'seeded');
   // The selected Run ends completed with a person's pause still queued as its pointer (A8-3h's crash point: a composition
-  // root runs the Run, the pause is submitted during the final model call, which no safe point follows, and the ledger is
-  // locked right after the terminal commit, so the pause is never settled in process).
+  // root runs the Run, the pause is submitted during the final model call, which no safe point follows, and the ack that
+  // would settle the pause fails inside its transaction (`support/receipts.ts` `failCommitOf`), so it is never settled in process).
   const toStart = await h.advance(h.select('c7-pointer', T), { stopBefore: (input) => input.kind === 'perform' && input.operation.kind === 'start' });
   const prepared = preparedOf(toStart.next);
-  const lock = lockLedgerAfter(h.database, 'ExecutionRunResultRecorded');
+  const ackFault = failCommitOf(h.database, 'ControlIntentObserved');
   let pauseRef: ControlIntentSnapshotV1['ref'] | undefined;
   const model = createScriptedModel([{ kind: 'text', text: 'C7 pointer: done' }], async () => {
     const runRef = (await h.taskRow(T)).execution;
     if (runRef === null) throw new Error('the work Task must have a Run');
     pauseRef = (await submitControl(h.host, runRef, 'pause', 'C7: a person pauses too late', 'c7-pointer-pause')).intent.ref;
   });
-  const root = await openWorkRoot(h, model, lock.observer);
+  const root = await openWorkRoot(h, model);
   try {
     expect(await root.runtime.startRun(hostCtx(), { prepared, consumerId: AG2B_CONSUMER_ID, requestId: 'c7-pointer-start' }))
       .toMatchObject({ status: 'ready', value: { run: { status: 'ended', outcome: 'completed' } } });
   } finally {
-    lock.release();
+    ackFault.drop();
     await root.close();
   }
   const runRef = (await h.taskRow(T)).execution;

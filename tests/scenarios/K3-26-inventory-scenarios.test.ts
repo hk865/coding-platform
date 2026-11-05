@@ -45,7 +45,8 @@ import { shellSeam } from '../helpers/K3-tool-seams.js';
 import {
   AG2B_CONSUMER_ID, AG2B_QUERY_ROLE, AG2B_SCOPE, AG2B_WORK_TASK_ID, createAG2bSession, graphWrite, plain,
 } from '../helpers/AG2b-collaboration-fixture.js';
-import { lockLedgerAfter, openWorkRoot, preparedOf, redrivePolicy, WORK_TARGET } from './support/common.js';
+import { openWorkRoot, preparedOf, redrivePolicy, WORK_TARGET } from './support/common.js';
+import { failCommitOf } from './support/receipts.js';
 import { kernelTurnOf } from './support/restart.js';
 import { openShellWorkRoot, prepareOn } from './support/shell-work-root.js';
 import { driveReviewUntil, openReviewWorkRoot } from './support/review-work-root.js';
@@ -262,30 +263,32 @@ describe('K3-26 the attestation inventory through the Host entry', () => {
       [{ target: WORK_TARGET, relation: 'participates' }])).sessionRef;
     send.args.recipient = { projectId: recipient.projectId, sessionId: recipient.sessionId };
     // The A8-3b crash point: the wait message is saved and the Kernel yields, but
-    // the observer's yielded-terminal write fails (the ledger and Kernel stores
-    // are locked), so the Run is still `running` at the restart.
+    // the observer's yielded-terminal commit fails inside its transaction
+    // (`support/receipts.ts` `failCommitOf`), so the Run is still `running` at the restart.
     const toStart = await h.advance(h.select('k3-26-two', AG2B_WORK_TASK_ID), { stopBefore: performs('start') });
     const prepared = preparedOf(toStart.next);
     const runRef = prepared.claim.runRef;
-    const lock = lockLedgerAfter(h.database, 'SessionMessageSent');
+    const terminalFault = failCommitOf(h.database, 'ExecutionRunResultRecorded');
     const model = createScriptedModel([{ kind: 'calls', calls: [send] }]);
-    const root = await openWorkRoot(h, model, lock.observer);
+    const root = await openWorkRoot(h, model);
+    let started: unknown;
     try {
-      await root.runtime.startRun(hostCtx(), { prepared, consumerId: AG2B_CONSUMER_ID,
+      started = await root.runtime.startRun(hostCtx(), { prepared, consumerId: AG2B_CONSUMER_ID,
         requestId: 'k3-26-two-start' });
     } finally {
-      lock.release();
+      terminalFault.drop();
       await root.close();
     }
-    expect(lock.locked()).toBe(true);
+    expect(String((started as { reason?: unknown }).reason), 'the yielded-terminal commit failed inside its transaction')
+      .toContain('scenario: the Host stopped before COMMIT');
     const running = await readExecution(h.host, runRef);
     expect(running.run).toMatchObject({ status: 'running', outcome: null });
     const binding = running.run.executionAuthorization;
     if (binding === undefined || !('schemaVersion' in binding) || binding.kernel === null) {
       throw new Error('the Run must hold its Kernel binding');
     }
-    // The blocked Kernel write lands once the lock is released; wait for the
-    // yielded terminal the crashing Host recorded in its own store (A8-3b).
+    // The Kernel records its yield in its own store; wait for the yielded
+    // terminal the crashing Host recorded there (A8-3b).
     let events: string[] = [];
     for (let attempt = 0; attempt < 200; attempt += 1) {
       events = kernelTurnOf(h.database, binding.kernel.runId)?.eventTypes ?? [];

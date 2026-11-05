@@ -21,7 +21,7 @@
  * - A8-1a requeue variant (W-01, W-24): a requeue Run claimed and never prepared is re-prepared by the start-up
  *   re-drive; its brief is assembled then, from the workspace as it is.
  * - A8-2d (W-08): the begin committed and the Kernel Turn started, the entered fact never booked (a composition
- *   root runs the start and the ledger is locked right after the begin, support/common.ts `lockLedgerAfter`);
+ *   root runs the start and the entered commit fails inside its transaction, support/receipts.ts `failCommitOf`);
  *   the restart classifies the Turn by the W-11 rule and records the entry facts in the same commit; its start-up
  *   maintenance then closes the open Kernel Turn (K KA1) and the Session is available again, not archived.
  *
@@ -41,9 +41,10 @@ import { AG2B_CONSUMER_ID, AG2B_GOAL_REF, AG2B_SCOPE, AG2B_WORK_TASK_ID, graphWr
 import { answer, post, readControl } from '../helpers/A2-restart-fixture.js';
 import { assertInvariants, cleanupScenarios, hostCtx, openHostScenario, performs, waitFor, type HostScenario } from './harness.js';
 import {
-  authorizeWithoutBegin, codeOf, editThenText, execution, lockLedgerAfter, openWorkRoot, preparedOf, putKernelBack, redrivePolicy,
+  authorizeWithoutBegin, codeOf, editThenText, execution, openWorkRoot, preparedOf, putKernelBack, redrivePolicy,
   removeKernelFiles, requiredBriefOf, sourceDigestOf, startWithKernelAside, stepOf,
 } from './support/common.js';
+import { failCommitOf } from './support/receipts.js';
 import {
   countsAllowingStartWrites, expectQuietHarnessRestart, kernelTurnOf, reworkNoticesSince, RUN1_WITHOUT_FILE, sessionLineRef,
 } from './support/restart.js';
@@ -471,21 +472,22 @@ it('A8-2d (W-08, W-11, RUN-19, ATT-31..34, LA-1): the begin committed and the Ke
   const toStart = await h.advance(h.select('a8-2d', AG2B_WORK_TASK_ID), { stopBefore: performs('start') });
   const prepared = preparedOf(toStart.next);
   // The crash point (§12.10 step 1, 故障注入; the Host has no seam inside one Runtime call): a composition root on the
-  // same files starts the prepared Run; right after the begin commits (RUN-04) the test takes the ledger's write lock,
-  // so the Kernel starts the Turn and the `before_model` entered commit fails: the Runtime pauses the Turn there.
-  const lock = lockLedgerAfter(h.database, 'ExecutionEntryBegun');
+  // same files starts the prepared Run; the begin commits (RUN-04), then the `before_model` entered commit fails inside
+  // its transaction (`support/receipts.ts` `failCommitOf`): the Kernel started the Turn and the Runtime pauses it there.
+  const enteredFault = failCommitOf(h.database, 'ExecutionEntryEntered');
   const model = createScriptedModel([]);
-  const root = await openWorkRoot(h, model, lock.observer);
+  const root = await openWorkRoot(h, model);
   let started: unknown;
   try {
     started = await root.runtime.startRun(hostCtx(), { prepared, consumerId: AG2B_CONSUMER_ID, requestId: 'a8-2d-start' });
   } finally {
-    lock.release();
+    enteredFault.drop();
     await root.close();
   }
-  expect(lock.locked(), 'the lock was taken right after the begin').toBe(true);
+  expect(String((started as { reason?: unknown }).reason), 'the entered commit failed inside its transaction')
+    .toContain('scenario: the Host stopped before COMMIT');
   expect(started).toMatchObject({ status: 'rejected', code: 'unavailable' });
-  expect(JSON.stringify(started)).toContain('database is locked');
+  expect(JSON.stringify(started)).toContain('scenario: the Host stopped before COMMIT');
   expect(model.calls(), 'the Turn stopped before its first model call').toBe(0);
   await assertInvariants(h, 'a8-2d begun, entry not booked', stepOf(h, 'entry_authorized', 'a8-2d begun, entry not booked'));
   const runRef = (await h.taskRow()).execution;

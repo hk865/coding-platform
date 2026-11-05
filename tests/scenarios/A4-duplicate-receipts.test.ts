@@ -65,10 +65,10 @@ import {
   AG2B_QUERY_ROLE, AG2B_SCOPE, AG2B_WORK_TASK_ID, createAG2bSession, graphWrite, plain,
 } from '../helpers/AG2b-collaboration-fixture.js';
 import {
-  assertInvariants, cleanupScenarios, openHostScenario, performs, SCENARIO_OPERATOR, workRunCtx, type HostScenario,
+  assertInvariants, cleanupScenarios, openHostScenario, performs, SCENARIO_OPERATOR, workRunCtx,
 } from './harness.js';
 import {
-  NO_REDRIVE, WORK_TARGET, committedOutcomesOf, editThenText, execution, lockLedger, openWorkRoot, replayOf, requeueBodyOf, selectedRun,
+  NO_REDRIVE, WORK_TARGET, committedOutcomesOf, editThenText, execution, openWorkRoot, replayOf, requeueBodyOf, selectedRun,
   stepOf, textReply,
 } from './support/common.js';
 import {
@@ -492,20 +492,17 @@ it('A4 (发信 by an Agent): the running Run\'s `send_session_message` write, fa
 }, 120_000);
 
 it('A4 (记录结果): the Runtime\'s result write that failed (the ledger locked while the Kernel ended the Turn) is retried with the same identity by the re-sent start: the terminal is written once, no Kernel Turn or model call is added, a further copy writes nothing', async () => {
-  let scenario: HostScenario | undefined;
-  let ledger: { release(): void } | undefined;
-  const h = await openHostScenario({ automation: NO_REDRIVE, check: 'pass', script: { replies: editThenText('a4-result'),
-    // During the final model call the test takes the ledger's write lock (as A8-3a): the Kernel writes the Turn's
-    // terminal in its own store and the observer's `recordRunResult` fails after the store's busy wait.
-    duringReply: async (index) => { if (index === 1 && scenario !== undefined) ledger = lockLedger(scenario.database); } } });
-  scenario = h;
+  const h = await openHostScenario({ automation: NO_REDRIVE, check: 'pass', script: { replies: editThenText('a4-result') } });
   const toStart = await h.advance(h.select('a4-result', W), { stopBefore: performs('start') });
   if (toStart.next === null) throw new Error('the Workflow must reach the start');
+  // The result commit fails inside its transaction (`support/receipts.ts` `failCommitOf`): the Kernel writes the Turn's
+  // terminal in its own store and the observer's `recordRunResult` appends nothing.
+  const resultFault = failCommitOf(h.database, 'ExecutionRunResultRecorded');
   let failed: Record<string, unknown>;
   try {
     failed = await h.answer('workflow/advance', plain(AG2B_SCOPE, toStart.next));
   } finally {
-    ledger?.release();
+    resultFault.drop();
   }
   expect(failed).toMatchObject({ status: 'ready', value: { receipt: { kind: 'start', result: { status: 'rejected', code: 'unavailable' } } } });
   const runRef = await selectedRun(h);

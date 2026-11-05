@@ -7,9 +7,9 @@
  * archive request is then registered on that claim Session through the public
  * `sessions/archive-line` route (an operator `drop` of the work Task). The
  * follow-up stop the archive composition would submit is prevented from moving
- * the Run's control pointer: the scenario's commit observer takes the ledger's
- * write lock right after the `SessionArchiveRequested` commit, so the cancel
- * submit fails and the request stays pending with a clean pointer.
+ * the Run's control pointer: its commit fails inside the transaction
+ * (`support/receipts.ts` `failCommitOf`), so the cancel submit fails and the
+ * request stays pending with a clean pointer.
  *
  * The crash restart's reconcile then reads G4 as clean and G7 false: the Host
  * report line is `W-13` / `unknown` with
@@ -28,7 +28,8 @@ import {
   AG2B_CONSUMER_ID, AG2B_QUERY_ROLE, AG2B_SCOPE, AG2B_WORK_TASK_ID, createAG2bSession, graphWrite, plain,
 } from '../helpers/AG2b-collaboration-fixture.js';
 import { cleanupScenarios, HostScenario, hostCtx, performs } from './harness.js';
-import { lockLedger, lockLedgerAfter, openWorkRoot, preparedOf, redrivePolicy, WORK_TARGET } from './support/common.js';
+import { lockLedgerAfter, openWorkRoot, preparedOf, redrivePolicy, WORK_TARGET } from './support/common.js';
+import { failCommitOf } from './support/receipts.js';
 
 afterEach(async () => { await cleanupScenarios(); await cleanupRestart(); });
 
@@ -43,26 +44,16 @@ async function readSessionCard(h: HostScenario, sessionRef: SessionRef): Promise
 
 describe('K3 R1 session_not_closable (K3-21 G7)', () => {
   it('K3-21 session_not_closable: a pending archive request on the claim Session blocks RUN-25 with W-13 and blockedBy session_not_closable', async () => {
-    // The commit observer fires after the Host commits the archive request; it
-    // takes the ledger's write lock so the archive's follow-up stop cannot move
-    // the Run pointer.
-    let database: string | undefined;
-    const archiveLock: { current: { release(): void } | null } = { current: null };
-    const releaseArchiveLock = (): void => {
-      const held = archiveLock.current;
-      archiveLock.current = null;
-      held?.release();
+    // The stop commit is the step after the request: it fails inside the
+    // transaction (`support/receipts.ts` `failCommitOf`), so the archive answers
+    // `partial` with the request pending and a clean control pointer.
+    let stopFault: ReturnType<typeof failCommitOf> | null = null;
+    const releaseStopFault = (): void => {
+      const held = stopFault;
+      stopFault = null;
+      held?.drop();
     };
-    const h = await HostScenario.open({
-      gitWorkspace: true, automation: redrivePolicy(false), check: 'pass',
-      commitObserver: (batch) => {
-        if (database !== undefined && archiveLock.current === null
-          && batch.events.some(event => event.eventType === 'SessionArchiveRequested')) {
-          archiveLock.current = lockLedger(database);
-        }
-      },
-    });
-    database = h.database;
+    const h = await HostScenario.open({ gitWorkspace: true, automation: redrivePolicy(false), check: 'pass' });
     try {
       // --- K3-01's crash shape: a committed send without a Kernel result. ----
       const recipient = (await createAG2bSession(h.host, 'k3-21-nc-recipient', AG2B_QUERY_ROLE,
@@ -87,17 +78,18 @@ describe('K3 R1 session_not_closable (K3-21 G7)', () => {
         sessionRef, reason: 'k3-21 session_not_closable: an archive request is pending at the crash',
         tasks: [{ target: WORK_TARGET, disposition: { kind: 'drop' } }], wait: null, confirmUnknownStopped: false,
       };
+      stopFault = failCommitOf(h.database, 'ControlIntentSubmitted');
       const started = await h.post<ReadResult<{ state: string }>>('sessions/archive-line',
         graphWrite(AG2B_SCOPE, request, 'k3-21-nc-archive',
           [{ ref: before.record.ref, revision: before.record.revision }]));
       try {
-        // The request commits; the stop the archive would submit is refused by
-        // the held ledger lock, so the composition answers `partial` with the
-        // request pending and the Run's control pointer untouched.
+        // The request commits; the stop the archive would submit fails inside
+        // its commit, so the composition answers `partial` with the request
+        // pending and the Run's control pointer untouched.
         expect(started.status).toBe('ready');
         expect(started.status === 'ready' ? started.value.state : null, 'the archive composition stopped before the stop')
           .toBe('partial');
-      } finally { releaseArchiveLock(); }
+      } finally { releaseStopFault(); }
 
       // The request is really on that Session.
       const after = await readSessionCard(h, sessionRef);
@@ -110,6 +102,6 @@ describe('K3 R1 session_not_closable (K3-21 G7)', () => {
       expect(report).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: { runs: [
         { ref: JSON.stringify(prepared.claim.runRef), row: 'W-13', status: 'reconciled', reason: 'unknown',
           autoCleanup: { applied: false, blockedBy: 'session_not_closable' } }] } });
-    } finally { releaseArchiveLock(); }
+    } finally { releaseStopFault(); }
   }, 180_000);
 });
