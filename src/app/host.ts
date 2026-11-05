@@ -44,7 +44,7 @@ import type { RecordCommitNotice, RecordCommitObserver } from '../composition/co
 import type { WorkspaceHostBindings } from '../core/workspace/access.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { SessionRef, WorkspaceScope } from '../contracts/core/identity.js';
-import type { NoteScribeTodoPort } from '../core/work-graph/model/note-contracts.js';
+import type { NoteScopeV1, NoteScribeTodoPort } from '../core/work-graph/model/note-contracts.js';
 import { NOTE_LINK_VERIFY_MAX } from '../core/work-graph/model/note-contracts.js';
 import type {
   HostOutboxItemV1, HostOutboxKeysetV1, HostOutboxSourceV1, HostOutboxStoredItemV1,
@@ -232,9 +232,8 @@ export type LocalWorkbenchHostOptions = {
   /** Slice 4C-2 §11.5/U-4: the narrow scribe to-do read the reminder check
    * uses; absent falls back to the platform's `notes.readScribeTodos`. */
   noteScribeTodos?: NoteScribeTodoPort;
-  /** Slice 4C-2 §11.5: the one scribe-recipient resolver (7D replaces it);
-   * absent falls back to the platform's project-scribe resolver. */
-  resolveScribeRecipient?: (ctx: CoreCallContext) => Promise<ReadResult<SessionRef | null>>;
+  /** The one recipient of a note scope (BK-09); absent falls back to the platform's `notes.resolveScribeRecipient`. */
+  resolveScribeRecipient?: (ctx: CoreCallContext, scope: NoteScopeV1) => Promise<ReadResult<SessionRef | null>>;
   /** Slice 4C-2 §11.5: the scribe reminder heartbeat period; default 60_000 ms. */
   scribeReminderPeriodMs?: number;
   /** How long the platform must have had no Run or QueryRun in flight before the
@@ -378,7 +377,7 @@ function localWorkbenchBudget(model: HostSettingsStoredModel): typeof LOCAL_WORK
 }
 
 /** The local grant's read tools: the Kernel file read and the read-only graph
- * and link-check tools. The local secretary gets these only. */
+ * and link-check tools. The read tools every built-in duty starts from. */
 const LOCAL_READ_TOOL_NAMES: readonly string[] = ['read', ...GRAPH_TOOL_NAMES, ...LINK_CHECK_TOOL_NAMES];
 
 /** The local secretary's tools: the read tools (including `check_links`) plus the note writer and the six coordination
@@ -388,47 +387,58 @@ const LOCAL_SECRETARY_TOOL_NAMES: readonly string[] = [...LOCAL_READ_TOOL_NAMES,
   'send_session_message', 'ack_session_message', 'respond_session_message', 'withdraw_session_message',
   'create_member', 'read_requests'];
 
+// Each built-in duty's tools (book §3.8 item 6; O5b rulings 4, 5, 7, 32): the names its two skill templates
+// (`platform-work` and its own) put in a tool block, the frozen v4 names and what the tested duty bindings grant,
+// every one a name a Work Run knows; `read` brings `search` and `code_index` with it. The reviewer's are
+// read-only, without `record_note` (PL's rule).
+const LOCAL_ADVISER_TOOL_NAMES: readonly string[] = [...LOCAL_READ_TOOL_NAMES, ...NOTE_TOOL_NAMES,
+  'query_task_graph', 'query_ready_tasks', 'propose_future_plan', 'find_related_sessions', 'send_session_message',
+  'create_member', 'assign_module_maintainer', 'propose_role_split', 'propose_architecture_revision'];
+const LOCAL_SCRIBE_TOOL_NAMES: readonly string[] = [...LOCAL_READ_TOOL_NAMES, ...NOTE_TOOL_NAMES,
+  'find_related_sessions', 'send_session_message'];
+const LOCAL_REVIEWER_TOOL_NAMES: readonly string[] = [...LOCAL_READ_TOOL_NAMES, 'run_readonly_command'];
+
 /** The local workbench secretary's binding identity. Its Role is the exact
  * platform secretary legacy template, which the Session duty resolver reads as
  * `secretary`; the local binding keeps its own identity and policy revision. */
 const LOCAL_SECRETARY_ROLE_BINDING_ID = 'local-workbench-secretary-binding';
-
-function localSecretaryRoleBinding(): WorkbenchQueryProfile['roleBinding'] {
-  const template = platformRoleProfile('secretary').template;
-  return {
-    schemaVersion: 1, bindingId: LOCAL_SECRETARY_ROLE_BINDING_ID,
-    templateId: template.templateId, templateRevision: template.templateRevision,
-    bindingVersion: 1, policyRevision: 'legacy-template',
-  };
+const LOCAL_ADVISER_ROLE_BINDING_ID = 'local-workbench-adviser-binding';
+const LOCAL_SCRIBE_ROLE_BINDING_ID = 'local-workbench-scribe-binding';
+const LOCAL_REVIEWER_ROLE_BINDING_ID = 'local-workbench-reviewer-binding';
+/** One Role-binding builder for every built-in duty: the exact platform duty legacy template under the duty's own
+ *  local binding identity. */
+function localDutyRoleBinding(duty: 'secretary' | 'adviser' | 'scribe' | 'reviewer',
+  bindingId: string): WorkbenchQueryProfile['roleBinding'] {
+  const template = platformRoleProfile(duty).template;
+  return { schemaVersion: 1, bindingId, templateId: template.templateId,
+    templateRevision: template.templateRevision, bindingVersion: 1, policyRevision: 'legacy-template' };
 }
 
-/** The local secretary's grant: the local grant's model and budget with its read
- * tools (including `check_links`) and the note writer, the platform secretary duty and the secretary behavior. It
- * never carries a write scope, a command tool or command access. */
-function localSecretaryGrant(localGrant: WorkbenchRuntimeBinding['grant']): WorkbenchRuntimeBinding['grant'] {
-  const template = platformRoleProfile('secretary').template;
+/** The secretary grant's one generalization: the same fields, the duty's Role/behaviour and a passed tool list. The
+ *  adviser's `create_member` needs the delegation (the member service admits a caller Run only with it); the
+ *  reviewer keeps the workspace's read-only command access, already switched by `localWorkbenchGrant`. */
+function localDutyGrant(localGrant: WorkbenchRuntimeBinding['grant'],
+  duty: 'secretary' | 'adviser' | 'scribe' | 'reviewer', tools: readonly string[]): WorkbenchRuntimeBinding['grant'] {
+  const template = platformRoleProfile(duty).template;
   return {
     budget: structuredClone(localGrant.budget),
-    hostTemplate: {
-      templateId: template.templateId, revision: template.templateRevision,
-      digest: sha256Hex(PLATFORM_PROMPT_PACK_V1.templates['skill-platform-secretary']),
-    },
-    tools: [...LOCAL_SECRETARY_TOOL_NAMES],
-    writeScope: [],
-    skills: { bundle: 'platform', behaviors: ['secretary'] },
-    systemInstruction: null,
-    deniedPrefixes: [],
-    processSandboxOptions: {},
-    materialBasis: null,
-    platformDuty: 'secretary',
+    hostTemplate: { templateId: template.templateId, revision: template.templateRevision,
+      digest: sha256Hex(PLATFORM_PROMPT_PACK_V1.templates[`skill-platform-${duty}`]) },
+    tools: [...tools], writeScope: [], skills: { bundle: 'platform', behaviors: [duty] },
+    systemInstruction: null, deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
+    platformDuty: duty,
+    ...(duty === 'adviser' ? { createMember: true } : {}),
+    ...(duty === 'reviewer' && localGrant.readonlyCommandAccess !== undefined
+      ? { readonlyCommandAccess: localGrant.readonlyCommandAccess } : {}),
     ...(localGrant.contextResidentBytes === undefined ? {} : { contextResidentBytes: localGrant.contextResidentBytes }),
   };
 }
 
 /** One Host configuration version over the explicit resolved fields: a change
  * to the duty, resident bytes, tools, write scope or model is a new version.
- * The prefix separates the local workbench's two bindings. */
-function localBindingRevision(prefix: 'local-workbench' | 'local-secretary', scope: CoreScope,
+ * The prefix separates the local workbench's five bindings. */
+function localBindingRevision(prefix: 'local-workbench' | 'local-secretary' | 'local-adviser' | 'local-scribe'
+  | 'local-reviewer', scope: CoreScope,
   grant: WorkbenchRuntimeBinding['grant'], model: WorkbenchModelConfiguration): string {
   return `${prefix}:s3@${sha256Hex(canonicalJson({
     scope: { projectId: scope.projectId, workspaceId: scope.workspaceId },
@@ -1462,7 +1472,19 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
 
   function localSecretaryProfile(scope: CoreScope, bindingId: string, model: HostSettingsStoredModel): WorkbenchQueryProfile {
     return builtinQueryProfile(scope, bindingId, 'local-secretary-query', 'Local secretary',
-      platformRoleProfile('secretary').template, localSecretaryRoleBinding(), model);
+      platformRoleProfile('secretary').template, localDutyRoleBinding('secretary', LOCAL_SECRETARY_ROLE_BINDING_ID), model);
+  }
+  function localAdviserProfile(scope: CoreScope, bindingId: string, model: HostSettingsStoredModel): WorkbenchQueryProfile {
+    return builtinQueryProfile(scope, bindingId, 'local-adviser-query', 'Local adviser',
+      platformRoleProfile('adviser').template, localDutyRoleBinding('adviser', LOCAL_ADVISER_ROLE_BINDING_ID), model);
+  }
+  function localScribeProfile(scope: CoreScope, bindingId: string, model: HostSettingsStoredModel): WorkbenchQueryProfile {
+    return builtinQueryProfile(scope, bindingId, 'local-scribe-query', 'Local scribe',
+      platformRoleProfile('scribe').template, localDutyRoleBinding('scribe', LOCAL_SCRIBE_ROLE_BINDING_ID), model);
+  }
+  function localReviewerProfile(scope: CoreScope, bindingId: string, model: HostSettingsStoredModel): WorkbenchQueryProfile {
+    return builtinQueryProfile(scope, bindingId, 'local-reviewer-query', 'Local reviewer',
+      platformRoleProfile('reviewer').template, localDutyRoleBinding('reviewer', LOCAL_REVIEWER_ROLE_BINDING_ID), model);
   }
 
   function settingsModelBinding(model: HostSettingsStoredModel): WorkbenchModelConfiguration {
@@ -1531,7 +1553,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       // profile, so a request written there finds a secretary binding while the
       // local profile stays first for every caller that takes one profile.
       const secretaryBindingId = `local-secretary-binding-${sha256Hex(key).slice(0, 16)}`;
-      const secretaryGrant = localSecretaryGrant(grant);
+      const secretaryGrant = localDutyGrant(grant, 'secretary', LOCAL_SECRETARY_TOOL_NAMES);
       nextBindings.push({
         id: secretaryBindingId,
         label: 'Local secretary',
@@ -1543,6 +1565,27 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       });
       nextProfiles.push(localWorkbenchProfile(workspace.scope, bindingId, selected));
       nextProfiles.push(localSecretaryProfile(workspace.scope, secretaryBindingId, selected));
+      // After the secretary, the same directory publishes the built-in adviser, scribe and reviewer (book §3.8
+      // item 6; O5b ruling 5), so a role line of any of them opened there finds its binding; the local profile
+      // stays first.
+      for (const [duty, label, tools, profileOf] of [
+        ['adviser', 'Local adviser', LOCAL_ADVISER_TOOL_NAMES, localAdviserProfile],
+        ['scribe', 'Local scribe', LOCAL_SCRIBE_TOOL_NAMES, localScribeProfile],
+        ['reviewer', 'Local reviewer', LOCAL_REVIEWER_TOOL_NAMES, localReviewerProfile],
+      ] as const) {
+        const dutyBindingId = `local-${duty}-binding-${sha256Hex(key).slice(0, 16)}`;
+        const dutyGrant = localDutyGrant(grant, duty, tools);
+        nextBindings.push({
+          id: dutyBindingId,
+          label,
+          scope: { projectId: workspace.scope.projectId, workspaceId: workspace.scope.workspaceId },
+          role: platformRoleProfile(duty).template,
+          configurationRevision: localBindingRevision(`local-${duty}`, workspace.scope, dutyGrant, boundModel),
+          model: boundModel,
+          grant: dutyGrant,
+        });
+        nextProfiles.push(profileOf(workspace.scope, dutyBindingId, selected));
+      }
     }
     return { schemaVersion: 1, bindings: nextBindings, queryProfiles: nextProfiles };
   }
@@ -2287,8 +2330,9 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     lastCheckAtMs: number;
     /** `undefined` = no check computed yet; otherwise the cursor of the last check. */
     computedAtCursor: string | null | undefined;
-    pendingSend: SessionMessageSendInputV1 | null;
-    sentRequestId: string | null;
+    /** BK-09: one pending send and one last-sent request id per recipient, keyed by the recipient's `sessionId`. */
+    pendingSendByRecipient: Map<string, SessionMessageSendInputV1>;
+    sentRequestIdByRecipient: Map<string, string>;
     recipients: Map<string, ScribeRecipientMemory>;
   };
   const scribeReminderStates = new Map<string, ScribeReminderState>();
@@ -2296,7 +2340,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     const existing = scribeReminderStates.get(key);
     if (existing !== undefined) return existing;
     const created: ScribeReminderState = { lastCheckAtMs: Number.NEGATIVE_INFINITY,
-      computedAtCursor: undefined, pendingSend: null, sentRequestId: null, recipients: new Map() };
+      computedAtCursor: undefined, pendingSendByRecipient: new Map(), sentRequestIdByRecipient: new Map(),
+      recipients: new Map() };
     scribeReminderStates.set(key, created);
     return created;
   }
@@ -2377,14 +2422,13 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
 
   /** §11.5 step 5: send the pending request through the shared helper; on
    * `committed` record it so the next period does not send it again. A
-   * thrown/failed send keeps `pendingSend`, so the next period retries the SAME
+   * thrown/failed send keeps that recipient's pending send, so the next period retries the SAME
    * requestId. */
-  async function sendPendingScribeReminder(ctx: CoreCallContext, state: ScribeReminderState): Promise<void> {
-    const pending = state.pendingSend;
-    if (pending === null) return;
+  async function sendPendingScribeReminder(ctx: CoreCallContext, state: ScribeReminderState, key: string,
+    pending: SessionMessageSendInputV1): Promise<void> {
     await sendPendingNotice(ctx, sendScribeReminder, pending, (ref) => {
-      state.pendingSend = null;
-      state.sentRequestId = pending.meta.requestId;
+      state.pendingSendByRecipient.delete(key);
+      state.sentRequestIdByRecipient.set(key, pending.meta.requestId);
       recipientMemory(state, pending.input.recipient).ref = ref;
     });
   }
@@ -2558,56 +2602,65 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     // Rework 2 item 3: retry ONLY when the cursor did not move. A pending send
     // belongs to a specific computed cursor; once the cursor moves it is stale.
     if (state.computedAtCursor !== undefined && cursor === state.computedAtCursor) {
-      if (state.pendingSend !== null) await sendPendingScribeReminder(ctx, state);
+      // A copy first: a committed send deletes its entry.
+      for (const [key, pending] of [...state.pendingSendByRecipient]) await sendPendingScribeReminder(ctx, state, key, pending);
       return;
     }
     // The cursor moved (or this is the first check): drop any stale pending
     // request so it can never be resent to a recipient the ledger has left.
-    state.pendingSend = null;
+    state.pendingSendByRecipient.clear();
 
-    const recipient = await resolveScribeRecipient(ctx);
-    if (recipient.status !== 'ready' || recipient.value === null) return;
-    // The resolver may hand back the Session AGGREGATE ref; the mailbox address
-    // is the plain `{ projectId, sessionId }` (a bare SessionRef).
-    const recipientRef: SessionRef = { projectId: recipient.value.projectId, sessionId: recipient.value.sessionId };
-
-    // 4. the unhandled check. `unknown` sends nothing and leaves the cursor
-    // unset; an unhandled reminder sends nothing but records the cursor.
-    const disposition = await scribeReminderDisposition(ctx, recipientRef, state);
-    if (disposition === 'unknown') return;
-    if (disposition === 'unhandled') { state.computedAtCursor = cursor; return; }
-
+    // BK-09 (v4 :6623–:6686): read the to-dos first, put each to-do in the bucket of its own managing scope (O2's
+    // rule, the same basis as `countCurrentNotes` and the write path), then send each scope's reminder to that
+    // scope's own scribe. `group.goalId` is a bucket of the to-do read, never a scope.
     const goalIds = await platform.notes.goalIdsForWorkspace(ctx);
     if (goalIds.status !== 'ready') return;
     const todos = await noteScribeTodos.readScribeTodos(ctx, { goalIds: goalIds.value });
     if (todos.status !== 'ready') return;
-    let pendingCount = 0;
-    let updateDueCount = 0;
-    let immediate = false;
-    const identities = new Set<string>();
-    const anchorNames = new Set<string>();
-    for (const goal of todos.value) {
-      pendingCount += goal.pending.length;
-      updateDueCount += goal.updateDueTodos.length;
-      if (goal.immediate) immediate = true;
-      for (const todo of [...goal.pending, ...goal.updateDueTodos]) {
-        identities.add(todo.identity);
-        anchorNames.add(todo.anchorKey);
+    const byScope = new Map<string, { scope: NoteScopeV1; pendingCount: number; updateDueCount: number;
+      immediate: boolean; identities: Set<string>; anchorNames: Set<string> }>();
+    for (const group of todos.value) {
+      for (const [todo, updateDue] of [...group.pending.map((t) => [t, false] as const),
+        ...group.updateDueTodos.map((t) => [t, true] as const)]) {
+        const scopeRead = await platform.notes.managingScopeOf(ctx, { todo, goalId: group.goalId });
+        if (scopeRead.status !== 'ready') return;
+        const key = canonicalJson(scopeRead.value as never);
+        const bucket = byScope.get(key) ?? { scope: scopeRead.value, pendingCount: 0, updateDueCount: 0,
+          immediate: false, identities: new Set<string>(), anchorNames: new Set<string>() };
+        if (updateDue) bucket.updateDueCount += 1; else bucket.pendingCount += 1;
+        if (group.immediate) bucket.immediate = true;
+        bucket.identities.add(todo.identity);
+        bucket.anchorNames.add(todo.anchorKey);
+        byScope.set(key, bucket);
       }
     }
-    state.computedAtCursor = cursor;
-    if (!immediate && pendingCount < SCRIBE_PENDING_THRESHOLD && updateDueCount < SCRIBE_UPDATE_DUE_THRESHOLD) return;
-    const requestId = 'scribe-reminder:' + scope.workspaceId + ':' + recipientRef.sessionId + ':'
-      + sha256Hex(canonicalJson([...identities].sort() as never));
-    if (state.sentRequestId === requestId) return;
-    const text = renderTemplate(PLATFORM_PROMPT_PACK_V1, 'scribe-reminder', {
-      marker: SCRIBE_REMINDER_MARKER,
-      pendingCount: String(pendingCount),
-      updateDueCount: String(updateDueCount),
-      anchors: [...anchorNames].slice(0, 20).join('、'),
-    }, []).text;
-    state.pendingSend = systemNotifyRequest({ recipient: recipientRef, text, requestId });
-    await sendPendingScribeReminder(ctx, state);
+    for (const bucket of byScope.values()) {
+      const recipient = await resolveScribeRecipient(ctx, bucket.scope);   // the scope's OWN scribe
+      // O5b-03: a failed read is not "no scribe": return before the cursor is recorded, so the next period retries.
+      if (recipient.status !== 'ready') return;
+      if (recipient.value === null) continue;
+      // The resolver may hand back the Session AGGREGATE ref; the mailbox address is the plain `{ projectId, sessionId }`.
+      const recipientRef: SessionRef = { projectId: recipient.value.projectId, sessionId: recipient.value.sessionId };
+      // `unknown` sends nothing and leaves the cursor unset; an unhandled reminder sends nothing for this scribe.
+      const disposition = await scribeReminderDisposition(ctx, recipientRef, state);
+      if (disposition === 'unknown') return;
+      if (disposition === 'unhandled') continue;
+      if (!bucket.immediate && bucket.pendingCount < SCRIBE_PENDING_THRESHOLD
+        && bucket.updateDueCount < SCRIBE_UPDATE_DUE_THRESHOLD) continue;
+      const requestId = 'scribe-reminder:' + scope.workspaceId + ':' + recipientRef.sessionId + ':'
+        + sha256Hex(canonicalJson([...bucket.identities].sort() as never));
+      if (state.sentRequestIdByRecipient.get(recipientRef.sessionId) === requestId) continue;
+      const text = renderTemplate(PLATFORM_PROMPT_PACK_V1, 'scribe-reminder', {
+        marker: SCRIBE_REMINDER_MARKER,
+        pendingCount: String(bucket.pendingCount),
+        updateDueCount: String(bucket.updateDueCount),
+        anchors: [...bucket.anchorNames].slice(0, 20).join('、'),
+      }, []).text;
+      const pending = systemNotifyRequest({ recipient: recipientRef, text, requestId });
+      state.pendingSendByRecipient.set(recipientRef.sessionId, pending);
+      await sendPendingScribeReminder(ctx, state, recipientRef.sessionId, pending);
+    }
+    state.computedAtCursor = cursor;   // every scope computed (an `unknown` or a failed read returned above)
   }
 
   // The background link batch: one batch per workspace at a time, run from the

@@ -55,6 +55,9 @@
 - 你用 `record_note` 的 `write` 和 `withdraw`，只动自己的注记；`review` 不属于你。
 - 平台说哪条联系被这次改动改断了，就在交结果之前用 `record_note` 重写或撤下它；这算工作结果的一部分。
 {{/tool:record_note}}
+{{#tool:send_session_message}}
+- 读到别的线写的注记有疑问，可以按注记的来源用 `send_session_message` 发只读问询（`inquiry`）问写它的那条线；回答你的是它的只读副本，不打断它，也不替它改主意。
+{{/tool:send_session_message}}
 
 ## 共享的东西只写一份
 

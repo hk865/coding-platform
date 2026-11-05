@@ -149,15 +149,16 @@ import { createNoteService, noteCommandIdentity } from '../core/work-graph/notes
 import type { NoteRunFactResolver, NoteService } from '../core/work-graph/notes/note-service.js';
 import { createNoteReadModel, readAllRecords, type NoteListReadPort, type NoteMemoryMaterialReadPort } from '../core/work-graph/notes/note-read-model.js';
 import { createVersionLists } from '../core/work-graph/notes/note-version-lists.js';
-import { createScribeScope } from '../core/work-graph/notes/scribe-scope.js';
+import { createScribeScope, newScribeScopeCall } from '../core/work-graph/notes/scribe-scope.js';
 import { createNoteCheck } from '../core/work-graph/views/note-views.js';
 import { createSemanticLayerRead, expandFlowForHead, type SemanticLinksReader } from '../core/work-graph/notes/semantic-layer-read.js';
 import { createNoteMemoryMaterial } from '../core/work-graph/notes/note-memory-material.js';
 import { createNoteScribeTodos } from '../core/work-graph/notes/note-scribe-todos.js';
+import { readHeadBatch } from '../core/work-graph/notes/note-batch-reader.js';
 import { createNoteDecisionSource } from '../core/work-graph/notes/note-decision-source.js';
 import type { ContextExtensionsDependencies } from '../core/work-graph/views/context-extensions.js';
 import type { NoteCheckPort, NoteHeadCheckPort, NoteMemoryMaterialPort, NoteMemoryReadPort, NoteReadPort,
-  NoteScopeReadPort, NoteScribeTodoPort, NoteWritePort } from '../core/work-graph/model/note-contracts.js';
+  NoteScopeReadPort, NoteScopeV1, NoteScribeTodoV1, NoteScribeTodoPort, NoteWritePort } from '../core/work-graph/model/note-contracts.js';
 import type { SourceProvider } from '../core/workspace/ports.js';
 import { decodeRun } from '../core/work-graph/materials/run-snapshot-decoder.js';
 import type { EvidencePort } from '../core/work-graph/model/evidence-contracts.js';
@@ -3121,12 +3122,26 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const listNotes = noteReads.listNotes;
     const { listPlanVersions, listCatalogVersions } = noteVersions;
     const countCurrentNotes = scribeScope.countCurrentNotes;
+    // b08/c24: the managing scope of one scribe todo. This public read owns its per-call cache, like
+    // `countCurrentNotes` (scribe-scope.ts:321–:322). An `updateDue` todo has no head (note-scribe-todos.ts:198–:201);
+    // its goal/stage anchors are one goal's, and a stage anchor is that goal's class, so the goal anchor gives
+    // the same scope. `goalId!` holds: only a non-null goal group carries `updateDueTodos` (note-scribe-todos.ts:211).
+    const managingScopeOf = async (ctx: CoreCallContext, input: { todo: NoteScribeTodoV1; goalId: string | null }):
+      Promise<ReadResult<NoteScopeV1>> => {
+      const call = newScribeScopeCall();
+      if (input.todo.noteId === null) {
+        return scribeScope.managingScopeOfAnchors(ctx, [{ kind: 'goal', goalId: input.goalId! }], call);
+      }
+      const heads = await readHeadBatch(backend.records, ctx.projectId, [input.todo.noteId], { requireAll: true });
+      if (!heads.ok) return rejected('unavailable', heads.reason);   // BatchFailure.code is a string (note-batch-reader.ts:21)
+      return scribeScope.managingScopeOf(ctx, heads.value.get(input.todo.noteId)!, call);
+    };
     // Slice 4B R16/L22: the second `checkNotes` call site (the write envelope and
     // 4C's routes bind it). Exposed now so NE3 tests run through the real holder.
     const checkNotes = noteCheck.checkNotes;
     // Slice 4C-2 §11.5: the scribe reminder's two narrow Host reads. The goal
     // ids are one paged walk of the Goal-by-workspace index; the recipient is
-    // the smallest-sessionId active scribe (the 7D resolver replaces this).
+    // the scope's own scribe (BK-09): the smallest-sessionId active scribe whose scope basis is exactly that scope.
     const goalIdsForWorkspace = async (ctx: CoreCallContext): Promise<ReadResult<string[]>> => {
       const page = await readAllRecords(backend.records, GOAL_BY_WORKSPACE_INDEX, [ctx.projectId, ctx.workspaceId ?? '']);
       if (!page.ok) return { status: 'rejected', code: page.code, reason: page.reason };
@@ -3140,19 +3155,43 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       }
       return { status: 'ready', value: goalIds };
     };
-    // The SAME duty recipient resolver built beside the Session duty resolver above; `notes.resolveScribeRecipient`
-    // keeps the same public shape and result, with no second copy of the scan (LD-04).
-    const resolveScribeRecipient = (ctx: CoreCallContext): Promise<ReadResult<SessionRef | null>> =>
-      dutyRecipient.resolveDutyRecipient(ctx, {
-        workspace: { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' },
-        duty: 'scribe',
-      });
+    // The scope's own scribe (BK-09): the smallest-sessionId active scribe whose scope basis is exactly that scope.
+    // A failed page, duty or `manages` read is the read's rejection, never a different scribe.
+    const resolveScribeRecipient = async (
+      ctx: CoreCallContext, scope: NoteScopeV1,
+    ): Promise<ReadResult<SessionRef | null>> => {
+      const call = newScribeScopeCall();
+      const found: SessionRef[] = [];
+      let cursor: string | undefined;
+      for (;;) {
+        const page = await sessionDirectory.findSessions(ctx, {
+          workspace: { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' },
+          includeArchived: false, page: { limit: 200, ...(cursor === undefined ? {} : { cursor }) },
+        });
+        if (page.status !== 'ready') return page;
+        for (const card of page.value.items) {
+          if (card.record.lifecycle !== 'active') continue;
+          const duty = await sessionDutyResolver(card.record.role, ctx);
+          if (duty.status !== 'ready') return duty;
+          if (duty.value !== 'scribe') continue;
+          const manages = await scribeScope.manages(ctx,
+            { projectId: card.record.ref.projectId, sessionId: card.record.ref.sessionId }, scope, call);
+          if (manages.status !== 'ready') return manages;
+          if (manages.value) found.push({ projectId: card.record.ref.projectId, sessionId: card.record.ref.sessionId });
+        }
+        if (page.value.nextCursor === null) break;
+        cursor = page.value.nextCursor;
+      }
+      found.sort((left, right) => left.sessionId < right.sessionId ? -1 : left.sessionId > right.sessionId ? 1 : 0);
+      return { status: 'ready', value: found[0] ?? null };
+    };
     const notes: NoteWritePort & NoteReadPort & NoteMemoryReadPort & NoteScopeReadPort & NoteCheckPort
       & NoteListReadPort & SemanticLinksReader & typeof noteVersions & Pick<NoteHeadCheckPort, 'doubtfulLinks'> & {
         readScribeTodos: NoteScribeTodoPort['readScribeTodos'];
         readLedgerCursor: NoteScribeTodoPort['readLedgerCursor'];
         goalIdsForWorkspace: (ctx: CoreCallContext) => Promise<ReadResult<string[]>>;
-        resolveScribeRecipient: (ctx: CoreCallContext) => Promise<ReadResult<SessionRef | null>>;
+        resolveScribeRecipient: (ctx: CoreCallContext, scope: NoteScopeV1) => Promise<ReadResult<SessionRef | null>>;
+        managingScopeOf: typeof managingScopeOf;
       } = {
         writeNote, reviewNote, withdrawNote, readNote, listByAnchor,
         listCurrentVersions: noteReads.listCurrentVersions, countCurrentNotes, checkNotes,
@@ -3170,6 +3209,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         doubtfulLinks: noteCheck.doubtfulLinks,
         goalIdsForWorkspace,
         resolveScribeRecipient,
+        managingScopeOf,
       };
     // Slice 1 (spec §3.3): the responsibility port's three public writes. Every
     // member is read here so the public `closeTerminalResponsibility` write (a

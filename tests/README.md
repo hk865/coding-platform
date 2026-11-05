@@ -6,12 +6,12 @@
 
 ## tests/ 下的直接子文件夹
 
-- `tests/app/` — Host/HTTP 路由、Host 装配与运行入口（128 个 `*.test.ts`），例如 `S5-decision-routes.test.ts`、`PC2-H-tool-routes.test.ts`、`RC-work-run-budget.test.ts`。
+- `tests/app/` — Host/HTTP 路由、Host 装配与运行入口（129 个 `*.test.ts`），例如 `S5-decision-routes.test.ts`、`PC2-H-tool-routes.test.ts`、`RC-work-run-budget.test.ts`。
 - `tests/architecture/` — 依赖方向、生产代码可达性和状态写入边界（4 个），入口 `boundaries.test.ts`；`production-reach.ts` 是它自己的扫描器。
 - `tests/business/` — 业务流程：Workflow、决定/审批、归档、交接（90 个），例如 `R5c-workflow.test.ts`、`WP1-continuation-handover.test.ts`。
 - `tests/composition/` — `createTargetPlatform` 组合根和真实 Host 接线（45 个），例如 `AG1-session-discovery.test.ts`。
 - `tests/context/` — 上下文装配，只有 `verification-workspace-reader.test.ts` 一个。
-- `tests/contracts/` — 契约、提示词包/文本、平台能力和 Skill 声明（27 个），例如 `PC-prompt-set-v1.test.ts`。
+- `tests/contracts/` — 契约、提示词包/文本、平台能力和 Skill 声明（28 个），例如 `PC-prompt-set-v1.test.ts`。
 - `tests/core/` — 只有 `work-graph/MVP-execution-list.test.ts`，核对与 `src/core` 对齐的清单。
 - `tests/data/` — 记录存储、材料、工作区文件、git 操作和编码边界（56 个），例如 `R2e-git-operations.test.ts`。
 - `tests/helpers/` — 共享测试夹具，共 203 个文件；本清单主体在下一节。

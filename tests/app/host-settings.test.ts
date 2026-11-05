@@ -633,8 +633,9 @@ describe('HOST settings model catalog, selection and Host effect', () => {
       const afterSelect = await (await coreGet(started.base, BOOTSTRAP_SUFFIX, started.token))
         .json() as BootstrapResponse;
       const installedProfiles = profilesFor(afterSelect, one.scope);
-      expect(installedProfiles).toHaveLength(2);
-      expect(installedProfiles.map(profile => profile.label)).toEqual(['Local workbench', 'Local secretary']);
+      expect(installedProfiles).toHaveLength(5);
+      expect(installedProfiles.map(profile => profile.label))
+        .toEqual(['Local workbench', 'Local secretary', 'Local adviser', 'Local scribe', 'Local reviewer']);
       expect(profilesFor(afterSelect, two.scope)).toEqual([]);
       // Frozen default installed by the local workbench: no hidden cumulative
       // Query token cap. null is neither 0 nor Infinity.

@@ -156,7 +156,7 @@
     },
     "skill-platform-work": {
       "file": "templates/skill-platform-work.txt",
-      "version": 9,
+      "version": 10,
       "mentionsTools": []
     },
     "skill-platform-secretary": {
@@ -166,7 +166,7 @@
     },
     "skill-platform-adviser": {
       "file": "templates/skill-platform-adviser.txt",
-      "version": 9,
+      "version": 10,
       "mentionsTools": []
     },
     "skill-platform-scribe": {
@@ -176,7 +176,7 @@
     },
     "skill-platform-reviewer": {
       "file": "templates/skill-platform-reviewer.txt",
-      "version": 3,
+      "version": 4,
       "mentionsTools": []
     }
   },

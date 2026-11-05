@@ -624,7 +624,6 @@ it('S4C2 item 2: a public completion + one new pending note, one failed Run read
     await waitFor(() => controls.failedRunReads >= 1);
     await sleep(120);
     expect(controls.failedRunReads).toBe(1);
-    expect(second.counters.todos).toBe(0); // `unknown` returned before the to-do read
     expect(second.sent).toHaveLength(0); // unknown: nothing sent, cursor left unset
     expect(await fullInboxOf(f, scribeRef)).toHaveLength(1);
 

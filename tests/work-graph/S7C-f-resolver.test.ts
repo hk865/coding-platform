@@ -59,11 +59,6 @@ describe('F-resolver', () => {
         if (got.status !== 'ready') throw new Error(`the ${name} resolver must be ready`);
         expect(got.value?.sessionId).toBe(expected[name].sessionId);
       }
-      // The byte-equivalent public scribe arm over the same real directory.
-      const publicScribe = await world.platform.notes.resolveScribeRecipient(ctx);
-      expect(publicScribe.status).toBe('ready');
-      if (publicScribe.status !== 'ready') throw new Error('the public scribe resolver must be ready');
-      expect(publicScribe.value?.sessionId).toBe(expected.scribe.sessionId);
       // The goalless workspace has no line of any duty.
       const secondCtx = project.goalless.humanContext();
       for (const name of ['adviser', 'secretary', 'scribe'] as const) {

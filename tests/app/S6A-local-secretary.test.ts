@@ -259,8 +259,10 @@ describe('the local workbench publishes a secretary profile', () => {
       const profiles = await profilesOf(started, scope);
       const hash = hashOf(scope);
       expect(profiles.map(profile => profile.id))
-        .toEqual([`local-workbench-query-${hash}`, `local-secretary-query-${hash}`]);
-      expect(profiles.map(profile => profile.label)).toEqual(['Local workbench', 'Local secretary']);
+        .toEqual([`local-workbench-query-${hash}`, `local-secretary-query-${hash}`, `local-adviser-query-${hash}`,
+          `local-scribe-query-${hash}`, `local-reviewer-query-${hash}`]);
+      expect(profiles.map(profile => profile.label))
+        .toEqual(['Local workbench', 'Local secretary', 'Local adviser', 'Local scribe', 'Local reviewer']);
       expect(profiles[0]?.sessionRole)
         .toEqual({ kind: 'legacy_template', templateId: 'local-workbench', templateRevision: '1' });
       expect(profiles[1]?.sessionRole)
@@ -349,7 +351,7 @@ describe('the local workbench publishes a secretary profile', () => {
     try {
       const { scope, modelId } = await openAndSelect(started);
       const first = await profilesOf(started, scope);
-      expect(first).toHaveLength(2);
+      expect(first).toHaveLength(5);
       const localFirstRevision = entryOf(await runPlainQuery(started, scope, first[0]!, 'local-first'))
         .hostConfigurationRevision;
       const secretaryFirstRevision = entryOf(await runPlainQuery(started, scope, first[1]!, 'secretary-first'))
