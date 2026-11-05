@@ -30,7 +30,7 @@ import { advanceUntil, driveWorkflow, submitControl } from '../helpers/A2-restar
 import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { byIdentityPrefix, commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import { S6A_SCOPE, S6A_WORK_ROLE, type S6ASession } from '../helpers/S6A-request-fixture.js';
-import { openS7CHandoffWorld, type S7CHandoffWorld } from '../helpers/S7C-handoff-fixture.js';
+import { openS7CHandoffWorld, openS7CHandoffWorldLight, type S7CHandoffCore } from '../helpers/S7C-handoff-fixture.js';
 import { committed, ready, sessionOf } from '../helpers/S7A-fixture.js';
 import { s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
 import { createS6BLine } from '../helpers/S6B1-fixture.js';
@@ -53,14 +53,14 @@ function resetHostFactory(): void {
     { value: REAL_FACTORY, configurable: true, writable: true });
 }
 
-const opened: S7CHandoffWorld[] = [];
+const opened: S7CHandoffCore[] = [];
 afterEach(async () => {
   commitBarrier.reset();
   for (const world of opened.splice(0)) await world.close();
 });
 
 /** The successor's prepared manifest, opened from the start perform's prepared envelope. */
-async function successorManifestOf(world: S7CHandoffWorld, start: WorkflowAdvanceInput): Promise<PreparedTaskManifestV1> {
+async function successorManifestOf(world: S7CHandoffCore, start: WorkflowAdvanceInput): Promise<PreparedTaskManifestV1> {
   if (start.kind !== 'perform' || start.operation.kind !== 'start') {
     throw new Error('S7C H-brief-entered: the Workflow next step is not the successor start');
   }
@@ -74,7 +74,7 @@ async function successorManifestOf(world: S7CHandoffWorld, start: WorkflowAdvanc
 }
 
 /** The Goal's autonomy through the public settings route, so its Tasks may enter after the plan is adopted. */
-async function setAutonomy(world: S7CHandoffWorld, goal: { aggregateType: 'Goal'; projectId: string; goalId: string }):
+async function setAutonomy(world: S7CHandoffCore, goal: { aggregateType: 'Goal'; projectId: string; goalId: string }):
 Promise<void> {
   const read = ready<{ goal: { revision: number } }>(
     await world.world.post('goals/read', plain(S6A_SCOPE, goal)), 'goals/read');
@@ -85,7 +85,7 @@ Promise<void> {
 }
 
 type SuccessorFlow = {
-  readonly world: S7CHandoffWorld;
+  readonly world: S7CHandoffCore;
   readonly successor: SessionRef;
   readonly select: (flowId: string, goal: GoalRef, task: TaskTriple) => WorkflowAdvanceInput;
 };
@@ -96,7 +96,7 @@ type SuccessorFlow = {
  */
 async function openSuccessor(backend: 'memory' | 'sqlite', label: string): Promise<SuccessorFlow> {
   resetHostFactory();
-  const world = await openS7CHandoffWorld({ backend });
+  const world = await openS7CHandoffWorldLight({ backend });
   opened.push(world);
   const handed: TaskTriple[] = [...world.tasks.slice(0, 3), world.clean.task, world.other.task];
   const accepted = committed<{ operation: { aggregateType: 'CoreOperation'; projectId: string; operationId: string } }>(
@@ -137,7 +137,7 @@ async function openSuccessor(backend: 'memory' | 'sqlite', label: string): Promi
 }
 
 /** The successor Run a select_work/claim left in the Session's facts. */
-async function latestRunOf(world: S7CHandoffWorld, successor: SessionRef) {
+async function latestRunOf(world: S7CHandoffCore, successor: SessionRef) {
   const facts = ready<{ latestWork: { runRef: { aggregateType: 'Run'; projectId: string; goalId: string;
     runId: string } } | null }>(await world.world.post('sessions/facts', plain(S6A_SCOPE, successor)),
   'the successor facts');

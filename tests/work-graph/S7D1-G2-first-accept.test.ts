@@ -1,7 +1,7 @@
 /**
  * `G2-first-accept` (book `7d1:2018`, start rulings §5 `:2123`, w56-06): the first acceptance skips the source's
  * goal/project scope links and their claims. The real `sessions/create` + `sessions/link` world is
- * `seedS7D1HandoffScope`: it has already run the platform's real `sessionHandoff.acceptHandoff` and stops there, so a
+ * `seedS7D1HandoffScopeLight`: it has already run the platform's real `sessionHandoff.acceptHandoff` and stops there, so a
  * row observes the accepted operation before any successor exists (DR-04). The row reads the saved operation back
  * through `sessions/operation` (`action.progress.scope === null`, no successor/create arm) and both lines through
  * `sessions/read` (the source's goal link and the adviser's real module link are the same open links at the same
@@ -20,7 +20,7 @@ import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
 import { plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { ready } from '../helpers/S7A-fixture.js';
 import {
-  openLinkOf, seedS7D1HandoffScope, type S7D1HandoffScopeSeed,
+  openLinkOf, seedS7D1HandoffScopeLight, type S7D1HandoffScopeSeed,
 } from '../helpers/S7D1-role-line-world.js';
 
 const seeds: S7D1HandoffScopeSeed[] = [];
@@ -31,7 +31,7 @@ afterEach(async () => {
 describe('G2-first-accept', () => {
   it('first acceptance writes no scope, keeps the source goal and adviser module links, and creates no successor link',
     async () => {
-      const seed = await seedS7D1HandoffScope();
+      const seed = await seedS7D1HandoffScopeLight();
       seeds.push(seed);
 
       // The operation the real acceptance saved, read immediately and through the public route.

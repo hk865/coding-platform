@@ -22,7 +22,7 @@ import { graphWrite } from '../helpers/AG2b-collaboration-fixture.js';
 import { s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
 import { commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
-import { openS7CHandoffWorld, type S7CHandoffWorld } from '../helpers/S7C-handoff-fixture.js';
+import { openS7CHandoffWorldLight, type S7CHandoffCore } from '../helpers/S7C-handoff-fixture.js';
 import { committed, setS7AAutonomy } from '../helpers/S7A-fixture.js';
 
 vi.mock('../../src/core/record-store/in-memory-record-store.js', async (importOriginal) =>
@@ -30,9 +30,9 @@ vi.mock('../../src/core/record-store/in-memory-record-store.js', async (importOr
 vi.mock('../../src/core/record-store/sqlite-record-store.js', async (importOriginal) =>
   (await import('../helpers/S6A-commit-barrier.js')).sqliteBarrierModule(importOriginal));
 
-let opened: S7CHandoffWorld | undefined;
-// `restoreMocks` would re-install the consume fixture's Host-factory wrapper after this hook and nest it into
-// the next world; restoring first lets the world's own close put the real factory back.
+let opened: S7CHandoffCore | undefined;
+// Restore mocks before closing: the fixture's close/reopen helpers and the handoff-entry capture are the only
+// spies here, and restoring first keeps every row's world on the real Host factory.
 afterEach(async () => {
   expect(commitBarrier.reset()).toEqual([]);
   vi.restoreAllMocks();
@@ -40,12 +40,12 @@ afterEach(async () => {
   opened = undefined;
 });
 
-async function world(backend: 'memory' | 'sqlite' = 'memory'): Promise<S7CHandoffWorld> {
-  opened = await openS7CHandoffWorld({ backend });
+async function world(backend: 'memory' | 'sqlite' = 'memory'): Promise<S7CHandoffCore> {
+  opened = await openS7CHandoffWorldLight({ backend });
   return opened;
 }
 
-function fragmentOf(target: S7CHandoffWorld, caller: { session: SessionRef; run: RunRef;
+function fragmentOf(target: S7CHandoffCore, caller: { session: SessionRef; run: RunRef;
   duty: 'executor' | 'adviser' }): HandoffToolFragmentV1 {
   return {
     caller: { actor: agentActorOf(caller.session, caller.run), session: caller.session, run: caller.run,
@@ -58,7 +58,7 @@ function fragmentOf(target: S7CHandoffWorld, caller: { session: SessionRef; run:
 type Assignments = HandoffAcceptInputV1['assignments'];
 
 /** The accept through the platform's published owner; the fragment carries the fixture's real source Run. */
-function acceptHandoffViaOwner(target: S7CHandoffWorld, source: SessionRef, assignments: Assignments, fragment: HandoffToolFragmentV1,
+function acceptHandoffViaOwner(target: S7CHandoffCore, source: SessionRef, assignments: Assignments, fragment: HandoffToolFragmentV1,
   commandId: string) {
   return target.world.platform.sessionHandoff.acceptHandoff(target.world.systemContext(), {
     commandId, workspace: { ...S6A_SCOPE }, source, trigger: 'tool', assignments, tool: fragment,
@@ -66,7 +66,7 @@ function acceptHandoffViaOwner(target: S7CHandoffWorld, source: SessionRef, assi
 }
 
 /** A real `responsible` module link on the source line, through `sessions/link`. */
-async function linkModule(target: S7CHandoffWorld, source: SessionRef, moduleId: string): Promise<void> {
+async function linkModule(target: S7CHandoffCore, source: SessionRef, moduleId: string): Promise<void> {
   const card = await target.world.readSession(source);
   const moduleRef = { projectId: S6A_SCOPE.projectId, moduleId };
   const workTarget = { kind: 'module' as const, ref: moduleRef };
@@ -80,7 +80,7 @@ async function linkModule(target: S7CHandoffWorld, source: SessionRef, moduleId:
 }
 
 /** The one open approval card with this key, through the project queue. */
-async function approvalCardOf(target: S7CHandoffWorld, cardKey: string) {
+async function approvalCardOf(target: S7CHandoffCore, cardKey: string) {
   const workspace = s6aCardsWorkspace(target.world, S6A_SCOPE);
   const cards = await workspace.readCards();
   const card = cards.find(candidate => candidate.source.kind === 'handoff_approval'
@@ -90,7 +90,7 @@ async function approvalCardOf(target: S7CHandoffWorld, cardKey: string) {
 }
 
 /** Answer the card through the real decision coordinator, as the person. */
-async function answerApprovalCard(target: S7CHandoffWorld, cardKey: string, optionId: 'approve' | 'reject',
+async function answerApprovalCard(target: S7CHandoffCore, cardKey: string, optionId: 'approve' | 'reject',
   requestId: string) {
   const { card, workspace } = await approvalCardOf(target, cardKey);
   return workspace.post('decisions/answer', graphWrite(workspace.scope, {
@@ -98,7 +98,7 @@ async function answerApprovalCard(target: S7CHandoffWorld, cardKey: string, opti
   }, requestId, card.source.pins));
 }
 
-function approvalOf(target: S7CHandoffWorld, operation: OperationRef) {
+function approvalOf(target: S7CHandoffCore, operation: OperationRef) {
   return target.world.platform.sessions.getSessionOperation(target.world.systemContext(), operation);
 }
 

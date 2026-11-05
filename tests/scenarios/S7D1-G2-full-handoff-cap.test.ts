@@ -2,7 +2,7 @@
  * `G2-full-handoff-cap` (book `7d1:2020`, start rulings §5 `:2125`, RL-06, w56-01): a full handoff whose successor
  * borrows the source's seat moves the holder old→new exactly once, and a crash before the archive registration
  * resumes into the same archive stage. Two entries: a real secretary with empty tasks handed off by the person's
- * public `secretaries/handoff` route, and an executor with tasks (`seedS7D1HandoffScope`) driven by
+ * public `secretaries/handoff` route, and an executor with tasks (`seedS7D1HandoffScopeLight`) driven by
  * `restartBeforeArchive`. Both set `seedS7D1Cap` first, so the successor must borrow the source's seat instead of
  * reserving. The secretary entry holds the real archive registration, posts the route without waiting, crashes,
  * re-posts the same command, takes the operation from the returned progress and continues with the existing driver.
@@ -27,7 +27,7 @@ import { driveS6BHandoff, teardownS6BHandoff } from '../helpers/S6B2-fixture.js'
 import {
   readS7D1Allocation, restartBeforeArchive, restartSecretaryHandoff, seedS7D1Cap,
 } from '../helpers/S7D1-allocation-world.js';
-import { seedS7D1HandoffScope, type S7D1HandoffScopeSeed } from '../helpers/S7D1-role-line-world.js';
+import { seedS7D1HandoffScopeLight, type S7D1HandoffScopeSeed } from '../helpers/S7D1-role-line-world.js';
 
 vi.mock('../../src/core/record-store/in-memory-record-store.js', async importOriginal =>
   (await import('../helpers/S6A-commit-barrier.js')).inMemoryBarrierModule(importOriginal));
@@ -43,7 +43,7 @@ afterEach(async () => {
 describe('G2-full-handoff-cap', () => {
   it.each(['secretary', 'executor'] as const)(
     'G2-full-handoff-cap (%s): the archive moves the holder old to new once across the restart', async duty => {
-      const seed = await seedS7D1HandoffScope({ backend: 'sqlite' });
+      const seed = await seedS7D1HandoffScopeLight({ backend: 'sqlite' });
       seeds.push(seed);
       const world = seed.world.world;
       const dutyName = duty as RoleLineDutyV1;

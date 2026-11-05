@@ -3,7 +3,7 @@
  * meets the executor cap on its own, gets `capacity/at_cap`, and borrows nothing; the public advance returns `busy`,
  * and the saved `action.progress.lastRefusal.code` is `busy` (no new field on the advance result).
  *
- * The world is `seedS7D1HandoffScope({ partial: true })` (one of FH-1's Tasks stays unnamed, so the source is not
+ * The world is `seedS7D1HandoffScopeLight({ partial: true })` (one of FH-1's Tasks stays unnamed, so the source is not
  * full and cannot borrow a seat). `seedS7D1Cap` fills `open.executor` to the duty's current holders + reservations;
  * the successor's create then meets the cap. Per DR-02 the row calls the published Workflow composite's
  * `continueHandoff` directly (not `driveS6BHandoff`, which converts `busy` into an exception) so the `busy` return
@@ -23,7 +23,7 @@ import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
 import { plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { ready } from '../helpers/S7A-fixture.js';
 import { readS7D1Allocation, seedS7D1Cap } from '../helpers/S7D1-allocation-world.js';
-import { seedS7D1HandoffScope, type S7D1HandoffScopeSeed } from '../helpers/S7D1-role-line-world.js';
+import { seedS7D1HandoffScopeLight, type S7D1HandoffScopeSeed } from '../helpers/S7D1-role-line-world.js';
 
 const seeds: S7D1HandoffScopeSeed[] = [];
 afterEach(async () => {
@@ -32,7 +32,7 @@ afterEach(async () => {
 
 describe('G2-partial-handoff-cap', () => {
   it('a partial handoff successor meets the cap, borrows nothing and the public advance answers busy', async () => {
-    const scope = await seedS7D1HandoffScope({ partial: true });
+    const scope = await seedS7D1HandoffScopeLight({ partial: true });
     seeds.push(scope);
     const world = scope.world.world;
 

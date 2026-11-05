@@ -412,7 +412,31 @@ async function startHandoffRun(world: S6AHostWorld, goal: GoalRef, line: S6ASess
  * One Host: FT-1's world, the three real lines, one restart that carries attention and the check configuration,
  * then the two real counted reworks of `task`. Closes the world only when its own setup fails.
  */
-export async function openS7CSystemWorld(options: S7CSystemWorldOptions = {}): Promise<S7CSystemWorld> {
+type S7CWorldBase = {
+  readonly world: S6AHostWorld;
+  readonly tools: S7CToolWorld;
+  readonly goal: GoalRef;
+  readonly task: TaskTriple;
+  readonly line: S6ASession;
+  readonly target: S6ASession;
+  readonly adviser: S6ASession | null;
+  readonly startRun: (task: TaskTriple, stopBefore?: string) =>
+    Promise<{ run: RunRef; receipts: WorkflowStepReceipt[]; execution: TaskExecutionRecord }>;
+  readonly handOff: (input: { task: TaskTriple; target: SessionRef; reason: string; callId: string }) =>
+    Promise<{ call: S6AToolCall; result: unknown; run: RunRef; receipts: WorkflowStepReceipt[];
+      execution: TaskExecutionRecord }>;
+  readonly restart: (hold: CommitHold) => Promise<S6AHostWorld>;
+  readonly close: () => Promise<void>;
+};
+
+/** The rows that only read or start their own Runs need none of the two seeded counted reworks. */
+export type S7CReadWorld = S7CWorldBase;
+
+export type S7CReadWorldOptions = Pick<S7CSystemWorldOptions,
+  'adviser' | 'backend' | 'duty' | 'grantTools' | 'grant' | 'role' | 'onReopened'>;
+
+/** FT-1's tool world, the three real lines and the one restart; no request round and no counted rework. */
+async function openS7CBase(options: S7CSystemWorldOptions): Promise<S7CWorldBase> {
   const adviser = options.adviser ?? true;
   const backend = options.backend ?? 'memory';
   const duty = options.duty ?? 'executor';
@@ -446,25 +470,10 @@ export async function openS7CSystemWorld(options: S7CSystemWorldOptions = {}): P
       ...(backend === 'memory' ? { sharedMemoryStore: true as const } : {}),
       extraHostOptions: { checks: systemCheckConfiguration(), attention: [attentionScopeOf(target.ref)] },
     });
-    // The Goal's secretary is the owner of a real request root (the resolver prefers it over the duty read); the
-    // held round opens and answers on the reopened Host through the request-round public steps.
     await options.onReopened?.(world);
-    const round = await holdS6BRequestRound(world, { label: 's7c-l2-secretary', goalId: goal.goalId },
-      async held => held.secretary);
-    const secretary = round.value;
-    await options.beforeCountedRework?.(world, secretary);
-    await world.scripted.script(line, [
-      { kind: 'text', text: 'S7C L2: the first Run of the counted Task answers' },
-      { kind: 'text', text: 'S7C L2: the requeued Run answers' },
-    ]);
-    const receipts: WorkflowStepReceipt[] = [];
-    const first = await firstCountedRework(world, goal, line, task, receipts);
-    const second = await secondCountedRework(world, goal, line, task, first.next, receipts);
     return {
-      world, tools, goal, task, line, target, adviser: adviserLine, secretary,
-      firstRework: first.rework, secondRework: second.rework, secondReworkRun: second.run,
-      startRun: (targetTask, stopBefore = 'open_checks') =>
-        startRunOn(world, goal, line, targetTask, stopBefore),
+      world, tools, goal, task, line, target, adviser: adviserLine,
+      startRun: (targetTask, stopBefore = 'open_checks') => startRunOn(world, goal, line, targetTask, stopBefore),
       handOff: input => startHandoffRun(world, goal, line, input),
       restart: async hold => {
         if (world.backend !== 'sqlite') {
@@ -479,6 +488,43 @@ export async function openS7CSystemWorld(options: S7CSystemWorldOptions = {}): P
     };
   } catch (error) {
     await world.close().catch(() => undefined);
+    throw error;
+  }
+}
+
+/** FL-1's readable world for rows whose own Runs/deliveries are the subject (no seeded counted chain). */
+export async function openS7CReadWorld(options: S7CReadWorldOptions = {}): Promise<S7CReadWorld> {
+  return await openS7CBase(options);
+}
+
+/**
+ * One Host: FT-1's world, the three real lines, one restart that carries attention and the check configuration,
+ * then the two real counted reworks of `task`. Closes the world only when its own setup fails.
+ */
+export async function openS7CSystemWorld(options: S7CSystemWorldOptions = {}): Promise<S7CSystemWorld> {
+  const base = await openS7CBase(options);
+  const { world, tools, goal, task, line } = base;
+  const main = tools.main;
+  try {
+    // The Goal's secretary is the owner of a real request root (the resolver prefers it over the duty read); the
+    // held round opens and answers on the reopened Host through the request-round public steps.
+    const round = await holdS6BRequestRound(world, { label: 's7c-l2-secretary', goalId: goal.goalId },
+      async held => held.secretary);
+    const secretary = round.value;
+    await options.beforeCountedRework?.(world, secretary);
+    await world.scripted.script(line, [
+      { kind: 'text', text: 'S7C L2: the first Run of the counted Task answers' },
+      { kind: 'text', text: 'S7C L2: the requeued Run answers' },
+    ]);
+    const receipts: WorkflowStepReceipt[] = [];
+    const first = await firstCountedRework(world, goal, line, task, receipts);
+    const second = await secondCountedRework(world, goal, line, task, first.next, receipts);
+    return {
+      ...base, secretary,
+      firstRework: first.rework, secondRework: second.rework, secondReworkRun: second.run,
+    };
+  } catch (error) {
+    await base.close().catch(() => undefined);
     throw error;
   }
 }

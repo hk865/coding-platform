@@ -38,7 +38,9 @@ import { ready } from './S2C-K-scenario-support.js';
 import { sessionOf } from './S7A-fixture.js';
 import { adoptS6BPlan, createS6BLine, governS6B } from './S6B1-fixture.js';
 import { committed } from './S7A-fixture.js';
-import { linkTask, openS7CHandoffWorld, type S7CHandoffWorld } from './S7C-handoff-fixture.js';
+import {
+  linkTask, openS7CHandoffWorld, openS7CHandoffWorldLight, type S7CHandoffCore,
+} from './S7C-handoff-fixture.js';
 
 const ADVISER_ROLE = platformRoleProfile('adviser').template;
 const MODULE_ID = 's6a-core';
@@ -210,7 +212,7 @@ export async function openS7D1RoleLineWorld(options: { backend: S6ABackend }): P
  * the scope (and holder) with the source. No module link is written as a Task link, no record or context is built.
  */
 export type S7D1HandoffScopeSeed = {
-  readonly world: S7CHandoffWorld;
+  readonly world: S7CHandoffCore;
   readonly source: S6ASession;
   readonly adviser: S6ASession;
   /** Every open `responsible` Task the source held at acceptance (FH-1 keeps t1..t3 of the twelve-Task Plan). */
@@ -229,7 +231,22 @@ export type S7D1HandoffScopeSeed = {
 export async function seedS7D1HandoffScope(
   options: { backend?: S6ABackend; partial?: boolean } = {},
 ): Promise<S7D1HandoffScopeSeed> {
-  const opened = await openS7CHandoffWorld(options.backend === undefined ? {} : { backend: options.backend });
+  return await handoffScopeOn(await openS7CHandoffWorld(
+    options.backend === undefined ? {} : { backend: options.backend }), options.partial === true);
+}
+
+/**
+ * The same accepted handoff scope on the lighter FH-1 world (no consume world): the rows that only read the
+ * acceptance, drive the published handoff or read the holders need none of the consume seed's lines or Runs.
+ */
+export async function seedS7D1HandoffScopeLight(
+  options: { backend?: S6ABackend; partial?: boolean } = {},
+): Promise<S7D1HandoffScopeSeed> {
+  return await handoffScopeOn(await openS7CHandoffWorldLight(
+    options.backend === undefined ? {} : { backend: options.backend }), options.partial === true);
+}
+
+async function handoffScopeOn(opened: S7CHandoffCore, partial: boolean): Promise<S7D1HandoffScopeSeed> {
   const world = opened.world;
   try {
     const source = opened.lines.source;
@@ -251,7 +268,7 @@ export async function seedS7D1HandoffScope(
     const tasks = heldCard.links.flatMap(link =>
       link.ref.relation === 'responsible' && link.until === null && link.ref.target.kind === 'task'
         ? [link.ref.target.ref] : []);
-    const assigned = options.partial === true ? tasks.slice(0, -1) : tasks;
+    const assigned = partial ? tasks.slice(0, -1) : tasks;
     const accepted = await world.platform.sessionHandoff.acceptHandoff(world.humanContext(), {
       commandId: 's7d1-handoff-scope', workspace: { ...S6A_SCOPE }, source: source.ref, trigger: 'manual',
       assignments: [{ target: { kind: 'create', duty: 'executor' }, tasks: [...assigned] }],

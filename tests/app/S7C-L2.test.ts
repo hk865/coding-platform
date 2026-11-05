@@ -33,7 +33,7 @@ import type { HostSettingsStoredModel } from '../../src/app/host-settings.js';
 import type { PreparedTaskManifestV1 } from '../../src/contracts/core/prepared-execution.js';
 import { readBody } from '../helpers/IV-host-fixture.js';
 import {
-  answerDecisionCard, attentionNotices, decisionQueueOf, mainNotices, openS7CSystemWorld, reworkNotices,
+  answerDecisionCard, attentionNotices, decisionQueueOf, mainNotices, openS7CReadWorld, openS7CSystemWorld, reworkNotices,
   S7C_L2_ATTENTION_PATH,
 } from '../helpers/S7C-L2-world.js';
 
@@ -73,7 +73,7 @@ afterEach(async () => {
 });
 
 it('is not empty', async () => {
-  const opened = await openS7CSystemWorld();
+  const opened = await openS7CReadWorld();
   worlds.push(opened.world);
   try {
     const graph = ready<{ tasks: Array<{ ref: { taskId: string } }> }>(
@@ -136,7 +136,7 @@ describe('rejects: decisions/queue without a required input', () => {
     ['sections', { page: { limit: 100 } }, 'the queue read requires sections'],
     ['page', { sections: ['waiting_answer'] }, 'the queue read requires a page'],
   ] as const)('a queue read without %s is invalid with HTTP 200', async (_missing, rest, reason) => {
-    const opened = await openS7CSystemWorld();
+    const opened = await openS7CReadWorld();
     worlds.push(opened.world);
     const queue = await opened.world.post('decisions/queue', plain(S6A_SCOPE, { workspace: S6A_SCOPE, ...rest }));
     expect(queue).toEqual({ httpStatus: 200, body: { status: 'rejected', code: 'invalid', reason } });
@@ -213,7 +213,7 @@ describe('L2-wiring', () => {
       model: 'deepseek-flash' };
     const grant = localWorkbenchGrant(workspace, model);
     // The production function is the grant's source (the binding below carries exactly this object).
-    const opened = await openS7CSystemWorld({ role: LOCAL_WORKBENCH_ROLE as Extract<typeof LOCAL_WORKBENCH_ROLE, { kind: 'legacy_template' }>, grant });
+    const opened = await openS7CReadWorld({ role: LOCAL_WORKBENCH_ROLE as Extract<typeof LOCAL_WORKBENCH_ROLE, { kind: 'legacy_template' }>, grant });
     worlds.push(opened.world);
     const task = opened.tools.tasks[1]!;
     await opened.world.scripted.script(opened.line, [{ kind: 'text', text: 'S7C L2 wiring answer' }]);
@@ -247,7 +247,7 @@ describe('T-receipt', () => {
         return built;
       });
       try {
-        const opened = await openS7CSystemWorld({ backend });
+        const opened = await openS7CReadWorld({ backend });
         worlds.push(opened.world);
         const handoff = await opened.handOff({ task: opened.tools.tasks[1]!, target: opened.target.ref,
           reason: 'S7C T-receipt: hand the task off', callId: `s7c-t-receipt-${backend}` });
@@ -312,7 +312,7 @@ describe('L2-gate-handoff', () => {
 
   it('a pending handoff card blocks the handed-over Task and its dependent, while the unrelated Task advances; approval releases the source',
     async () => {
-      const opened = await openS7CSystemWorld();
+      const opened = await openS7CReadWorld();
       worlds.push(opened.world);
       // The same FT-1 Host adopts the L46 plan onto the caller's own A/B Tasks: C's gate-result edge on A is the formal
       // dependency, D's expected_dependency stays advisory, and B is the unrelated work Task.

@@ -2,7 +2,7 @@
  * `G2-residual` (book `7d1:2019`, start rulings §5 `:2124`, w56-16, DR-03): a full handoff moves the source's
  * goal/project scope to the borrower; a partial handoff leaves the scope (and holder) with the source.
  *
- * The world is `seedS7D1HandoffScope` (full and `{ partial: true }`): the fixture already closed FH-1's two extra
+ * The world is `seedS7D1HandoffScopeLight` (full and `{ partial: true }`): the fixture already closed FH-1's two extra
  * Goal Tasks through the real `linkTask` (DR-03) and ran the real acceptance. The row opens the source's project
  * link through the real `sessions/link` (beside the fixture's goal link), drives the published handoff with
  * `driveS6BHandoff`, and reads both lines back through `sessions/read`. The two predicates are the tree's own:
@@ -34,7 +34,7 @@ import { ready } from '../helpers/S7A-fixture.js';
 import { driveS6BHandoff } from '../helpers/S6B2-fixture.js';
 import { readS7D1Allocation } from '../helpers/S7D1-allocation-world.js';
 import {
-  openLink, openLinkOf, seedS7D1HandoffScope, type S7D1HandoffScopeSeed,
+  openLink, openLinkOf, seedS7D1HandoffScopeLight, type S7D1HandoffScopeSeed,
 } from '../helpers/S7D1-role-line-world.js';
 
 const projectTarget: WorkLinkTarget = { kind: 'project', ref: { projectId: S6A_SCOPE.projectId } };
@@ -52,7 +52,7 @@ async function withProjectLink(scope: S7D1HandoffScopeSeed, label: string): Prom
 }
 
 async function seedScope(partial: boolean, label: string): Promise<S7D1HandoffScopeSeed> {
-  const scope = await seedS7D1HandoffScope(partial ? { partial: true } : {});
+  const scope = await seedS7D1HandoffScopeLight(partial ? { partial: true } : {});
   seeds.push(scope);
   await withProjectLink(scope, label);
   return scope;

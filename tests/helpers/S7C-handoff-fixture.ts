@@ -32,10 +32,11 @@ import { vi } from 'vitest';
 import * as handoffEntryModule from '../../src/business/workflow/handoff-tool-entry.js';
 
 import {
-  S6A_SCRIBE_ROLE, S6A_SCOPE, S6A_WORK_ROLE, S6A_SECRETARY_ROLE,
+  S6A_AT, S6A_SCRIBE_ROLE, S6A_SCOPE, S6A_WORK_ROLE, S6A_SECRETARY_ROLE,
   type S6ABackend, type S6AExtraBinding, type S6ASession,
 } from './S6A-request-fixture.js';
-import { adoptS6BPlan, createS6BLine, holdS6BRequestRound, understandingPointer } from './S6B1-fixture.js';
+import { openS6AHostWorld, type S6AHostWorld } from './S6A-host-fixture.js';
+import { adoptS6BPlan, createS6BLine, governS6B, holdS6BRequestRound, understandingPointer } from './S6B1-fixture.js';
 import { understandingNote } from './S4C2-note-card-fixture.js';
 import { openS7B2ConsumeWorld, type S7B2ConsumeWorld } from './S7B2-consumable-sessions.js';
 import { ready, sessionOf, S7A_REPLY_TOOLS, committed } from './S7A-fixture.js';
@@ -99,9 +100,8 @@ export type S7CHandoffLines = {
   readonly fixed: S6ASession;
 };
 
-export type S7CHandoffWorld = {
-  readonly consume: S7B2ConsumeWorld;
-  readonly world: S7B2ConsumeWorld['world'];
+export type S7CHandoffCore = {
+  readonly world: S6AHostWorld;
   /** The entry the platform built for THIS world, captured during its construction. */
   readonly handoffEntry: ReturnType<typeof handoffEntryModule.createHandoffToolEntry>;
   readonly goal: GoalRef;
@@ -115,6 +115,9 @@ export type S7CHandoffWorld = {
   readonly note: NoteItemV1;
   close(): Promise<void>;
 };
+
+/** The consume world plus the FH-1 state built on it (the world #2 and #3 originally used). */
+export type S7CHandoffWorld = S7CHandoffCore & { readonly consume: S7B2ConsumeWorld };
 
 export async function linkTask(world: S7CHandoffWorld['world'], card: SessionCard, task: TaskTriple, active: boolean,
   requestId: string): Promise<void> {
@@ -150,12 +153,12 @@ function executorChild(cards: readonly SessionCard[]): SessionCard {
   return child;
 }
 
-export async function openS7CHandoffWorld(options: { backend?: S6ABackend;
-  attention?: readonly AttentionScopeV1[] } = {}): Promise<S7CHandoffWorld> {
+/** The bindings every FH-1 world needs: the creator, the executor, the adviser, the member and the note tools. */
+function handoffBindings(): S6AExtraBinding[] {
   const creator = runtimeBinding('s7c-handoff-creator-binding', CREATOR_ROLE, CREATOR_TOOLS, true);
   const executor = runtimeBinding('s7c-handoff-executor-binding', EXECUTOR_ROLE, WORK_TOOLS);
   const adviser = runtimeBinding('s7c-handoff-adviser-binding', ADVISER_ROLE, WORK_TOOLS);
-  const bindings: S6AExtraBinding[] = [
+  return [
     { binding: creator, workflow: workflowBinding(creator.id, CREATOR_ROLE) },
     { binding: executor, workflow: workflowBinding(executor.id, EXECUTOR_ROLE) },
     { binding: adviser, workflow: workflowBinding(adviser.id, ADVISER_ROLE) },
@@ -164,9 +167,14 @@ export async function openS7CHandoffWorld(options: { backend?: S6ABackend;
       mergeTools: ['create_member'] },
     { binding: S7A_REPLY_TOOLS.binding, mergeTools: ['record_note'] },
   ];
+}
 
-  // The platform's own entry is the one closure the production composition builds; capture it from the real
-  // factory call instead of constructing a second entry with stand-in reads.
+/**
+ * The platform's own handoff entry is the one closure the production composition builds; capture it from the real
+ * factory call instead of constructing a second entry with stand-in reads.
+ */
+async function withCapturedHandoffEntry<T>(open: () => Promise<T>):
+Promise<{ opened: T; entry: ReturnType<typeof handoffEntryModule.createHandoffToolEntry> }> {
   const buildEntry = handoffEntryModule.createHandoffToolEntry;
   let handoffEntry: ReturnType<typeof handoffEntryModule.createHandoffToolEntry> | null = null;
   const entrySpy = vi.spyOn(handoffEntryModule, 'createHandoffToolEntry').mockImplementation(deps => {
@@ -174,18 +182,59 @@ export async function openS7CHandoffWorld(options: { backend?: S6ABackend;
     handoffEntry = built;
     return built;
   });
-  let consume: S7B2ConsumeWorld;
   try {
-    consume = await openS7B2ConsumeWorld({
-      ...(options.backend === undefined ? {} : { backend: options.backend }),
-      ...(options.attention === undefined ? {} : { attention: options.attention }),
-      extraBindings: bindings });
+    const opened = await open();
+    if (handoffEntry === null) throw new Error('S7C: the platform built no handoff tool entry');
+    return { opened, entry: handoffEntry };
   } finally {
     entrySpy.mockRestore();
   }
-  const builtEntry = handoffEntry;
-  if (builtEntry === null) throw new Error('S7C: the platform built no handoff tool entry');
-  const world = consume.world;
+}
+
+/** The FH-1 state on a consume world (the original world of H-entry/H-brief/H-tool-brief). */
+export async function openS7CHandoffWorld(options: { backend?: S6ABackend;
+  attention?: readonly AttentionScopeV1[] } = {}): Promise<S7CHandoffWorld> {
+  const { opened: consume, entry } = await withCapturedHandoffEntry(() => openS7B2ConsumeWorld({
+    ...(options.backend === undefined ? {} : { backend: options.backend }),
+    ...(options.attention === undefined ? {} : { attention: options.attention }),
+    extraBindings: handoffBindings(),
+  }));
+  const core = await handoffCore(consume.world, entry, () => consume.world.close());
+  return { ...core, consume };
+}
+
+/**
+ * The same FH-1 state on the frozen S6A host world alone: no consume world, its twelve-Task Plan, its ten eligible
+ * lines and their real send Runs. Rows that only read or step the handoff (H-approval, H-entered, G2) need none of
+ * those; the source/adviser Runs, the member child and the understanding note are built exactly as above.
+ */
+export async function openS7CHandoffWorldLight(options: { backend?: S6ABackend } = {}): Promise<S7CHandoffCore> {
+  const { opened: world, entry } = await withCapturedHandoffEntry(() => openS6AHostWorld({
+    backend: options.backend ?? 'memory',
+    extraBindings: [
+      { ...S7A_REPLY_TOOLS, mergeTools: ['respond_session_message', 'send_session_message'] },
+      ...handoffBindings(),
+    ],
+  }));
+  try {
+    const main = s6aCardsWorkspace(world, S6A_SCOPE);
+    await governS6B(world, main, world.goals);
+    // The same twelve-Task plan the consume world seeds on goal 1, so every Task the rows name is the same record.
+    await adoptS6BPlan(main, world.goals.first, { label: 's7b2-consume',
+      taskIds: Array.from({ length: 12 }, (_, index) => `s7b2-consume-task-${index + 1}`),
+      role: S6A_WORK_ROLE.templateId });
+    // The consume world leaves the clock ten seconds past the world's first instant; keep the same instant.
+    world.clock.set(new Date(Date.parse(S6A_AT) + 10_000).toISOString());
+  } catch (error) {
+    await world.close().catch(() => undefined);
+    throw error;
+  }
+  return await handoffCore(world, entry, () => world.close());
+}
+
+async function handoffCore(world: S6AHostWorld,
+  builtEntry: ReturnType<typeof handoffEntryModule.createHandoffToolEntry>,
+  close: () => Promise<void>): Promise<S7CHandoffCore> {
   try {
     await setS7D1Open(world, 'executor', 40, 0, 's7c-handoff-open-executors');
     const main = s6aCardsWorkspace(world, S6A_SCOPE);
@@ -382,15 +431,14 @@ export async function openS7CHandoffWorld(options: { backend?: S6ABackend;
       role: EXECUTOR_ROLE }));
 
     return {
-      consume, world, handoffEntry: builtEntry, goal, plan, tasks,
+      world, handoffEntry: builtEntry, goal, plan, tasks,
       clean: { goal: cleanGoal, task: cleanTask }, other: { goal: otherGoal, task: otherTask },
       lines: { source, secretarySource, existing, creator: creatorLine, adviser: adviserLine,
       adviserRun, scribe, fixed },
-      sourceRun, note,
-      close: () => consume.world.close(),
+      sourceRun, note, close,
     };
   } catch (error) {
-    await world.close().catch(() => undefined);
+    await close().catch(() => undefined);
     throw error;
   }
 }
