@@ -121,14 +121,15 @@ function jsonNormalize(value: unknown): JsonValue {
 
 type FocusTaskRef = { aggregateType: 'Task'; projectId: string; goalId: string; taskId: string };
 
-type CallerPins = { project: number; workspace: number; goal: number };
+type CallerPins = { project: number; workspace: number; goal: number | null };
 
 type ConsultationBinding = { messageRef: SessionMessageRef; recipient: SessionRef; part?: 'response' };
 
 type SubmitDraft = {
   projectId: string;
   workspaceId: string;
-  goalId: string;
+  /** Null only for a role_exploration Query, the one kind a submit admits without a Goal. */
+  goalId: string | null;
   queryJobId: string;
   runId: string;
   actor: ActorRef;
@@ -145,12 +146,13 @@ type ExpectedNormalization = { status: 'ok'; pins: CallerPins } | { status: 'inv
 
 /**
  * The caller pins are EXACTLY the Project/Workspace/Goal current revisions plus
- * the target QueryJob@0 and QueryRun@0. A missing, duplicate, extra or
- * other-scope pin is `invalid` before any lookup.
+ * the target QueryJob@0 and QueryRun@0; a Query without a Goal carries no Goal
+ * pin. A missing, duplicate, extra or other-scope pin is `invalid` before any
+ * lookup.
  */
 function normalizeExpectedPins(
   raw: unknown,
-  scope: { projectId: string; workspaceId: string; goalId: string; queryJobId: string; runId: string },
+  scope: { projectId: string; workspaceId: string; goalId: string | null; queryJobId: string; runId: string },
 ): ExpectedNormalization {
   if (!Array.isArray(raw)) return { status: 'invalid', reason: 'meta.expected must be an array of version pins' };
   const project: number[] = [];
@@ -178,6 +180,7 @@ function normalizeExpectedPins(
         workspace.push(revision);
         break;
       case 'Goal':
+        if (scope.goalId === null) return { status: 'invalid', reason: 'a null-Goal Query carries no Goal pin' };
         if (ref['projectId'] !== scope.projectId || ref['goalId'] !== scope.goalId) {
           return { status: 'invalid', reason: 'a Goal pin belongs to another scope' };
         }
@@ -203,13 +206,14 @@ function normalizeExpectedPins(
         return { status: 'invalid', reason: 'meta.expected accepts only the Project/Workspace/Goal/QueryJob/QueryRun pins' };
     }
   }
-  if (project.length !== 1 || workspace.length !== 1 || goal.length !== 1 || job !== 1 || run !== 1) {
+  if (project.length !== 1 || workspace.length !== 1 || job !== 1 || run !== 1
+    || (scope.goalId === null ? goal.length !== 0 : goal.length !== 1)) {
     return {
       status: 'invalid',
-      reason: 'meta.expected must pin exactly the Project, Workspace, Goal, target QueryJob@0 and target QueryRun@0',
+      reason: 'meta.expected must pin exactly the Project, Workspace, the Goal when present, the target QueryJob@0 and QueryRun@0',
     };
   }
-  return { status: 'ok', pins: { project: project[0]!, workspace: workspace[0]!, goal: goal[0]! } };
+  return { status: 'ok', pins: { project: project[0]!, workspace: workspace[0]!, goal: goal[0] ?? null } };
 }
 
 function prepareSubmit(ctx: CoreCallContext, request: unknown): PreparedSubmit {
@@ -257,8 +261,14 @@ function prepareSubmit(ctx: CoreCallContext, request: unknown): PreparedSubmit {
     return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('forbidden', 'intent project/workspace does not match the Host call context') };
   }
   const goalId = intent['goalId'];
-  if (goalId === null) return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('unsupported', 'this batch requires a real goalId') };
-  if (!nonEmpty(goalId)) return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'intent.goalId must be a non-empty string') };
+  // The raw kind decides the one no-Goal exception; validQueryExecution still validates the execution below.
+  const roleExploration = isRecord(intent['execution']) && intent['execution']['kind'] === 'role_exploration';
+  if (goalId === null && !roleExploration) {
+    return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('unsupported', 'this batch requires a real goalId') };
+  }
+  if (goalId !== null && !nonEmpty(goalId)) {
+    return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'intent.goalId must be a non-empty string') };
+  }
   if (intent['schemaVersion'] !== 1) return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'intent.schemaVersion must be 1') };
   // The intent id is bound to the ACTUAL job identity, not to meta.requestId.
   if (intent['intentId'] !== queryJobId) {
@@ -538,7 +548,7 @@ function decodeOne<T>(
   return { status: 'unavailable', reason: `the read batch neither returned nor reported missing ${key}` };
 }
 
-type ScopeFacts = { project: ProjectSnapshot; workspace: WorkspaceSnapshot; goal: GoalSnapshot };
+type ScopeFacts = { project: ProjectSnapshot; workspace: WorkspaceSnapshot; goal: GoalSnapshot | null };
 
 type ScopeRead = { status: 'ready'; facts: ScopeFacts } | { status: 'rejected'; rejection: CoreRejection };
 
@@ -546,9 +556,10 @@ async function readScopeFacts(
   deps: QueryJobDependencies,
   projectKey: string,
   workspaceKey: string,
-  goalKey: string,
+  goalKey: string | null,
 ): Promise<ScopeRead> {
-  const read = await deps.records.readMany([projectKey, workspaceKey, goalKey]);
+  const keys = goalKey === null ? [projectKey, workspaceKey] : [projectKey, workspaceKey, goalKey];
+  const read = await deps.records.readMany(keys);
   if (read.status !== 'ready') {
     if (read.code === 'not_found') return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('not_found', read.reason) };
     return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('unavailable', `${read.code}: ${read.reason}`) };
@@ -563,10 +574,11 @@ async function readScopeFacts(
   const workspace = decodeOne(workspaceKey, present, missing, decodeWorkspaceSnapshot);
   if (workspace.status === 'missing') return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('not_found', 'the Workspace does not exist') };
   if (workspace.status === 'unavailable') return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('unavailable', `the Workspace is not readable: ${workspace.reason}`) };
-  const goal = decodeOne(goalKey, present, missing, decodeGoalSnapshot);
-  if (goal.status === 'missing') return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('not_found', 'the Goal does not exist') };
-  if (goal.status === 'unavailable') return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('unavailable', `the Goal is not readable: ${goal.reason}`) };
-  return { status: 'ready', facts: { project: project.value, workspace: workspace.value, goal: goal.value } };
+  const goal = goalKey === null ? null : decodeOne(goalKey, present, missing, decodeGoalSnapshot);
+  if (goal !== null && goal.status === 'missing') return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('not_found', 'the Goal does not exist') };
+  if (goal !== null && goal.status === 'unavailable') return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('unavailable', `the Goal is not readable: ${goal.reason}`) };
+  return { status: 'ready', facts: { project: project.value, workspace: workspace.value,
+    goal: goal === null ? null : goal.value } };
 }
 
 function pinsFromCurrent(current: readonly { refKey: string; revision: number | null }[]): VersionPin[] {
@@ -636,20 +648,24 @@ async function submit(
     projectId: draft.projectId,
     workspaceId: draft.workspaceId,
   } satisfies WorkspaceRef);
-  const goalKey = canonicalRefKey({ aggregateType: 'Goal', projectId: draft.projectId, goalId: draft.goalId } satisfies GoalRef);
+  // A role_exploration Query has no Goal: no Goal read, pin or guard.
+  const goalId = draft.goalId;
+  const goalKey = goalId === null ? null
+    : canonicalRefKey({ aggregateType: 'Goal', projectId: draft.projectId, goalId } satisfies GoalRef);
 
   const scope = await readScopeFacts(deps, projectKey, workspaceKey, goalKey);
   if (scope.status === 'rejected') return scope.rejection;
   const facts = scope.facts;
-  if (facts.project.revision !== draft.pins.project || facts.workspace.revision !== draft.pins.workspace ||
-      facts.goal.revision !== draft.pins.goal) {
+  if (facts.project.revision !== draft.pins.project || facts.workspace.revision !== draft.pins.workspace
+    || (facts.goal === null ? draft.pins.goal !== null : facts.goal.revision !== draft.pins.goal)) {
     return rejectedWithNonEmptyCurrent('revision_conflict', 'the supplied version pins do not match the versions read in this call', [
       { ref: { aggregateType: 'Project', projectId: draft.projectId }, revision: facts.project.revision },
       { ref: { aggregateType: 'Workspace', projectId: draft.projectId, workspaceId: draft.workspaceId }, revision: facts.workspace.revision },
-      { ref: { aggregateType: 'Goal', projectId: draft.projectId, goalId: draft.goalId }, revision: facts.goal.revision },
+      ...(facts.goal === null ? [] : [{ ref: facts.goal.ref, revision: facts.goal.revision }]),
     ]);
   }
-  if (facts.goal.workspaceRef.projectId !== draft.projectId || facts.goal.workspaceRef.workspaceId !== draft.workspaceId) {
+  if (facts.goal !== null
+    && (facts.goal.workspaceRef.projectId !== draft.projectId || facts.goal.workspaceRef.workspaceId !== draft.workspaceId)) {
     return rejectedWithNonEmptyCurrent('invalid', 'the Goal belongs to another workspace');
   }
 
@@ -700,14 +716,14 @@ async function submit(
   }
 
   const execution = draft.intent.execution;
-  if (execution.kind === 'initial_coordination' && facts.goal.activePlanRevision !== null) {
+  if (execution.kind === 'initial_coordination' && (facts.goal === null || facts.goal.activePlanRevision !== null)) {
     return rejectedWithNonEmptyCurrent('invalid', 'initial_coordination requires a Goal without an active Plan');
   }
 
   // (4a) non-empty focus proves exact membership in the Goal's CURRENT Plan.
   let planGuard: { refKey: string; revision: number } | null = null;
   if (draft.focusRefs.length > 0) {
-    const activePlan: PlanRevisionRef | null = facts.goal.activePlanRevision;
+    const activePlan: PlanRevisionRef | null = facts.goal === null ? null : facts.goal.activePlanRevision;
     if (activePlan === null) {
       return rejectedWithNonEmptyCurrent('invalid', 'focusTaskRefs cannot be proven members of the Goal without an active Plan');
     }
@@ -767,7 +783,7 @@ async function submit(
   const guards: RecordGuard[] = [
     { refKey: projectKey, expectedRevision: facts.project.revision },
     { refKey: workspaceKey, expectedRevision: facts.workspace.revision },
-    { refKey: goalKey, expectedRevision: facts.goal.revision },
+    ...(goalKey === null || facts.goal === null ? [] : [{ refKey: goalKey, expectedRevision: facts.goal.revision }]),
     { refKey: jobKey, expectedRevision: null },
     { refKey: runKey, expectedRevision: null },
   ];

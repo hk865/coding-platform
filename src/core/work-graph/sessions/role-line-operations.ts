@@ -38,13 +38,14 @@ import type {
   RoleLineOperationV1, SessionCard, SessionDirectoryPort, SessionOperationRecord,
 } from '../model/session-contracts.js';
 import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
-import type { RoleLineActionV1, RoleLineStepStateV1 } from '../state/role-line-action.js';
+import type { ColdStartPhaseV1, RoleLineActionV1, RoleLineStepStateV1 } from '../state/role-line-action.js';
 import { allocationNext } from '../state/role-line-allocation.js';
 import {
   ROLE_LINE_CHANGE_SCOPE_PHASE, roleLineChildCommandId, roleLineOperationRef, roleLineStepTransition,
   type START_LINES_PHASES,
 } from '../state/role-line-operation.js';
 import { createAllocationRead, openLimitOf, seatAtCap } from './allocation-read.js';
+import { roleLineStepSession, writeRoleLineOperation } from './role-line-operation-write.js';
 import { roleLineOperationChangedCodec, roleLineSplitSavedCodec } from './role-line-orchestration-codecs.js';
 import { roleLineCommitContribution } from './role-scope-commit.js';
 import { stableSessionCreationIdentity } from './session-directory.js';
@@ -158,6 +159,9 @@ export type RoleLineOperationsDeps = {
   queue?: { allocate(ctx: CoreCallContext, input: { commandId: string; goalRef: GoalRef;
     approval?: { operationRef: OperationRef; expectedRevision: number };
     rejection?: { operationRef: OperationRef; expectedRevision: number } }): Promise<WriteResult<unknown> | CoreRejection> };
+  /** C1: the cold-start driver (`cold-start-service.ts`), structurally; absent, a cold start stays `blocked`. */
+  coldStart?: { drive(ctx: CoreCallContext, input: { projectId: string; workspaceId: string }):
+    Promise<ReadResult<{ phase: ColdStartPhaseV1; revision: number; completed: boolean }>> };
   now(): string;
 };
 
@@ -316,50 +320,12 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
     return { status: 'ready', value: handoffContextOf({ ...ctx, workspaceId: main.value }, ctx.principal) };
   }
 
-  /**
-   * The one guarded single write of a role_line operation (L-1: one `RoleLineOperationChanged` with its
-   * `operationRef`, through `executeWriteCommand`; precedent `role-limits-service.ts`). A step write's identity is the
-   * operation and its next revision, so a lost answer replays the receipt; the accepted write of a person command
-   * carries the public command as its fingerprint. `extra` rides in the same commit (the terminal release, and record 5
-   * on an adviser split's done write); its events go before the operation event, which stays last (the executor's
-   * result event).
-   */
-  async function writeOperation(
+  /** The one guarded single write of a role_line operation (`writeRoleLineOperation`, shared with the cold start). */
+  function writeOperation(
     ctx: CoreCallContext, prior: RoleLineOperationV1 | null, next: RoleLineOperationV1,
     command?: { commandId: string; fingerprintInput: JsonValue }, extra?: CommitFragment,
   ): Promise<WriteResult<{ revision: number }>> {
-    const trusted = trustedContext(ctx, 'a role-line operation write');
-    if (!trusted.ok) return trusted.rejection;
-    const key = operationRefKey(next.ref);
-    const result = await executeWriteCommand(deps.records, {
-      operation: 'role-line-operation',
-      principal: ctx.principal as unknown as JsonValue,
-      commandId: command?.commandId ?? `${next.ref.operationId}:${next.revision}`,
-      scope: { projectId: next.ref.projectId, workspaceId: next.workspaceId },
-      fingerprintInput: command?.fingerprintInput
-        ?? ({ ref: next.ref, revision: next.revision, phase: next.phase, action: next.action } as unknown as JsonValue),
-      read: async () => ({ status: 'ready' as const, facts: null }),
-      decide: (): { refuse: never } | { decision: null } => ({ decision: null }),
-      build: (_decision, keys) => ({
-        records: [encodeSessionOperationRecord(next), ...(extra?.records ?? [])],
-        claims: [...(extra?.claims ?? [])],
-        events: [...(extra?.events ?? []), roleLineOperationChangedCodec.encode({
-          eventId: eventIdOf(keys.identityKey, 'changed'), eventType: 'RoleLineOperationChanged', schemaVersion: 1,
-          occurredAt: deps.now(), projectId: next.ref.projectId, workspaceId: next.workspaceId,
-          actor: trusted.actor, revision: next.revision, operationRef: next.ref })],
-        guards: [{ refKey: key, expectedRevision: prior === null ? null : prior.revision }, ...(extra?.guards ?? [])],
-        ...(extra?.commitCursorBindings === undefined ? {} : { commitCursorBindings: extra.commitCursorBindings }),
-      }),
-      result: { eventType: 'RoleLineOperationChanged', schemaVersion: 1,
-        decode: (event) => roleLineOperationChangedCodec.decode(event),
-        validate: (event, receipt, keys) => canonicalKey(event.operationRef as unknown as JsonValue)
-          !== canonicalKey(next.ref as unknown as JsonValue) ? 'the event records another operation'
-          : receipt.identityKey === keys.identityKey ? null : 'the receipt belongs to another command',
-        project: (event) => ({ revision: event.revision }) },
-    });
-    if (result.status === 'refused') return result.refusal;
-    if (result.status === 'rejected') return rejectedWithCurrent(result.code, result.reason, result.current);
-    return { status: 'committed', value: result.value, replayed: result.replayed, cursor: result.cursor };
+    return writeRoleLineOperation({ records: deps.records, now: deps.now }, ctx, prior, next, command, extra);
   }
 
   function failedRecordOf(record: RoleLineOperationV1, action: RoleLineActionV1, refusal: CoreRejection):
@@ -541,12 +507,8 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
   }
 
   /** The committed child's planned Session (the create operation's own ref). */
-  async function lineSessionOf(ctx: CoreCallContext, record: RoleLineOperationV1): Promise<ReadResult<SessionRef | null>> {
-    const child = record.action.steps[0]?.childOperation ?? null;
-    if (child === null) return { status: 'ready', value: null };
-    const read = await deps.operations.getSessionOperation(ctx, child);
-    if (read.status !== 'ready') return read;
-    return { status: 'ready', value: read.value.action.kind === 'create' ? read.value.action.plannedSessionRef : null };
+  function lineSessionOf(ctx: CoreCallContext, record: RoleLineOperationV1): Promise<ReadResult<SessionRef | null>> {
+    return roleLineStepSession(deps.operations, ctx, record.action.steps[0] ?? { childOperation: null });
   }
 
   function continueResultOf(outcome: StepOutcomeV1): ReadResult<RoleLineContinueResultV1> {
@@ -621,9 +583,18 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
         roleConfiguration: saved.roleConfiguration, name: saved.name ?? null, roleScopes: saved.roleScopes ?? [],
         parentOperation: record.ref }));
     }
+    if (record.action.action === 'cold_start' && deps.coldStart !== undefined) {
+      // The cold start moves one phase per pass; it is `done` only when its record completes.
+      const driven = await deps.coldStart.drive(ctx, { projectId: record.ref.projectId, workspaceId: record.workspaceId });
+      if (driven.status !== 'ready') return driven;
+      // The cold start's normal wait (a request, a candidate, a card) is `waiting`; Host does not count it blocked.
+      const state = driven.value.completed ? 'done'
+        : driven.value.revision === record.revision ? 'waiting' : 'blocked';
+      return { status: 'ready', value: { revision: driven.value.revision, state, capacity: null } };
+    }
     if (record.action.action !== 'start_lines') {
       // Person commands carry their request in the caller, not the record: the same commandId replays them
-      // through the writer; the Host never guesses a scope. cold_start is C1's.
+      // through the writer; the Host never guesses a scope.
       return { status: 'ready', value: { revision: record.revision, state: 'blocked', capacity: null } };
     }
     // start_lines (C1, rework-1): drive the open steps in secretary -> adviser -> scribe order in this one call until

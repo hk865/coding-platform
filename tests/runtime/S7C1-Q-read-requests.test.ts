@@ -97,7 +97,7 @@ async function expectNoWorkReadTool(): Promise<void> {
   await driveWorkflow(work.ag2b, claimInput, { stopBefore: 'open_checks', receipts });
   const start = receipts.find(entry => entry.kind === 'start')?.result as
     { status?: string; code?: string; reason?: string } | undefined;
-  if (start?.status === 'committed') {
+  if (start?.status === 'committed' || start?.status === 'ready') {
     // A Work Run that did start still offers no read tool.
     const requests = await work.scripted.requests(line);
     expect(requests.length).toBeGreaterThan(0);

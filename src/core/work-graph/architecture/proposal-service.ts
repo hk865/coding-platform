@@ -26,6 +26,7 @@ import { rejected } from '../../../contracts/core/rejections.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { RunRef } from '../../../contracts/dispatch.js';
+import type { QueryRunRef } from '../../../contracts/query-job.js';
 import type { DecisionChangeProofV1, DecisionSourceV1, UserDecisionBodyV1 } from '../../../contracts/goal-decisions.js';
 import { decisionSourceKey } from '../../../contracts/goal-decisions.js';
 import { messageOf } from '../../../contracts/error-message.js';
@@ -38,6 +39,7 @@ import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { SessionMessage } from '../model/communication-contracts.js';
 import { platformCheckContext } from '../model/platform-check-context.js';
 import { commandKeys, type CommitFragment } from '../persistence/command-executor.js';
+import { lookupAll } from '../persistence/lookup-all.js';
 import { mergeGuards } from '../persistence/record-guards.js';
 import { storeFailureToRejection } from '../persistence/read-result-failures.js';
 import { lookupCommittedReceipt, type CommittedReceipt } from '../persistence/receipt-lookup.js';
@@ -45,11 +47,12 @@ import {
   newArchitectureProposalRecord, transitionArchitectureProposal,
   type ArchitectureProposalRecordV1,
 } from '../state/architecture-proposal-machine.js';
+import { coldStartOperationRef } from '../state/cold-start.js';
 import {
   ARCHITECTURE_PROPOSAL_CHANGED_EVENT, decodeArchitectureProposalBatchRecord,
   decodeArchitectureProposalChangedEvent, decodeArchitectureProposalRecord,
   encodeArchitectureProposalBatchRecord, encodeArchitectureProposalChangedEvent,
-  encodeArchitectureProposalRecord,
+  encodeArchitectureProposalRecord, S8C_PROPOSAL_BATCH_BY_PROJECT_LOOKUP, S8C_PROPOSAL_BY_PROJECT_LOOKUP,
 } from './proposal-record-codecs.js';
 import type { ArchitectureRevision } from './catalog-contracts.js';
 import {
@@ -65,14 +68,30 @@ import {
 } from './revision-planner.js';
 import { parseRepairOps } from './repair-ops.js';
 
-/** The optional cold-start window fact; absent means the immediate single-member freeze. */
+/**
+ * The window read: `open` is the cold start's phase-and-pin verdict; `revision` is the cold-start record revision
+ * the proposal commit guards, so a lifecycle pass that moves the record between this read and the commit makes the
+ * proposal re-read the (now closed) window (`book-7d2-frozen.md:796`, `ports.ts:125`).
+ */
+export type ProposalBatchWindowReadV1 = { open: boolean; revision: number | null };
+
+/**
+ * The optional cold-start window fact; absent means the immediate single-member freeze. The window takes the
+ * proposal's own base pin: a cold-start batch binds one pin, so a proposal on any other pin freezes alone
+ * (`book-7d2-frozen.md:792`, `:796`).
+ */
 export type ProposalBatchWindowPort = {
-  isOpen(ctx: CoreCallContext, input: { projectRef: ProjectScope }): Promise<ReadResult<boolean>>;
+  isOpen(ctx: CoreCallContext, input: { projectRef: ProjectScope; baseCatalogPin: ArchitectureCatalogPinV1 }):
+    Promise<ReadResult<ProposalBatchWindowReadV1>>;
 };
 
 /** The trusted Run→Session facts the composition resolves for a `work_run` proposer. */
 export type ProposalRunFactResolver = (ctx: CoreCallContext, runRef: RunRef) =>
   Promise<ReadResult<{ sessionRef: SessionRef; role: RoleConfigurationRef }>>;
+
+/** The trusted QueryRun facts the composition resolves for a `query_run` proposer. */
+export type ProposalQueryRunFactResolver = (ctx: CoreCallContext, queryRunRef: QueryRunRef) =>
+  Promise<ReadResult<{ sessionRef: SessionRef; role: RoleConfigurationRef; kind: 'role_exploration' }>>;
 
 /** The decision-message owner's answer read; the answer's selection and captured pins are the approval's facts. */
 export type ProposalDecisionMessageRead = {
@@ -90,6 +109,8 @@ export type ProposalServiceDeps = CatalogRevisionDependencies & {
   proposalBatchWindow?: ProposalBatchWindowPort;
   decisionMessages: ProposalDecisionMessageRead;
   runFacts: ProposalRunFactResolver;
+  /** The `query_run` proposer's facts (the planning QueryRun resolver's `readProposerFacts`). */
+  queryRunFacts: ProposalQueryRunFactResolver;
 };
 
 export type ArchitectureProposalService = {
@@ -103,6 +124,13 @@ export type ArchitectureProposalService = {
     Promise<ApplyBatchResult<ArchitectureRevision>>;
   readArchitectureProposal(ctx: CoreCallContext,
     input: { proposalRef: ArchitectureProposalRef }): Promise<ReadResult<ProposalRead>>;
+  /** Every pending, unbatched proposal of the project, in proposal-id order. */
+  readPendingArchitectureProposals(ctx: CoreCallContext, input: { projectRef: ProjectScope }):
+    Promise<ReadResult<ArchitectureProposalRef[]>>;
+  /** The project's frozen batches on one pin, by the freeze's own pin rule. */
+  readFrozenArchitectureBatches(ctx: CoreCallContext,
+    input: { projectRef: ProjectScope; baseCatalogPin: ArchitectureCatalogPinV1 }):
+    Promise<ReadResult<ArchitectureProposalBatchRef[]>>;
 };
 
 type Clock = { now: string; eventId: string };
@@ -127,7 +155,7 @@ function readFailure(read: { status: string; code?: string; reason?: string }): 
  * The planner admits a catalog revision only through the Host principal. A proposal
  * write is a read-only trial whose contribution is discarded, so it runs under a
  * fixed internal system identity; the real proposer is stored on the proposal from
- * the trusted Run facts, never from the model.
+ * the trusted Run or `role_exploration` QueryRun facts, never from the model.
  */
 const TRIAL_ACTOR: { kind: 'system'; id: string } = Object.freeze({ kind: 'system', id: 'architecture-proposal-trial' });
 
@@ -410,7 +438,7 @@ async function replayPropose(deps: ProposalServiceDeps, receipt: CommittedReceip
 async function writeProposal(deps: ProposalServiceDeps, ctx: CoreCallContext,
   input: ProposeArchitectureRevisionInputV1 & { commandId: string },
   proposer: SessionRef, keys: { identityKey: string; fingerprint: string },
-  write: Clock, immediate: boolean): Promise<ProposalResult> {
+  write: Clock, immediate: boolean, coldStartRevision: number | null): Promise<ProposalResult> {
   const proposalId = sha256Hex(canonicalJson({ projectId: ctx.projectId, commandId: input.commandId } as unknown as JsonValue));
   const ref: ArchitectureProposalRef = {
     aggregateType: 'ArchitectureProposal', projectId: ctx.projectId, proposalId,
@@ -439,6 +467,12 @@ async function writeProposal(deps: ProposalServiceDeps, ctx: CoreCallContext,
   }
   records.push(encodeArchitectureProposalRecord(record));
   guards.push({ refKey: canonicalKey(ref), expectedRevision: null });
+  // A proposal that read the window open guards the cold-start revision it read; a lifecycle pass that moves the
+  // record (freeze save or completion) makes this commit conflict, and the caller re-reads the closed window.
+  if (coldStartRevision !== null) {
+    guards.push({ refKey: canonicalKey(coldStartOperationRef(ctx.projectId) as unknown as JsonValue),
+      expectedRevision: coldStartRevision });
+  }
   const event = encodeArchitectureProposalChangedEvent({
     eventId: write.eventId, eventType: ARCHITECTURE_PROPOSAL_CHANGED_EVENT, schemaVersion: 1,
     occurredAt: write.now, projectId: ctx.projectId, proposalRef: ref, revision: record.revision,
@@ -534,15 +568,38 @@ Promise<ReadResult<FreezePlan[]>> {
   return { status: 'ready', value: plans };
 }
 
+/** The one pin equality of a freeze: the catalog ref and the baseline. */
+function sameCatalogPin(left: ArchitectureCatalogPinV1, right: ArchitectureCatalogPinV1): boolean {
+  return canonicalJson(left.catalogRef as unknown as JsonValue) === canonicalJson(right.catalogRef as unknown as JsonValue)
+    && canonicalJson(left.baseline as unknown as JsonValue) === canonicalJson(right.baseline as unknown as JsonValue);
+}
+
+/** One project's frozen batches in batch-id order; the `structural_proposal` card source reads the same list. */
+export async function readProjectBatches(records: Pick<RecordLookupPort, 'lookup'>, projectId: string):
+Promise<ReadResult<ArchitectureProposalBatchV1[]>> {
+  let batch;
+  try {
+    batch = await lookupAll(records, S8C_PROPOSAL_BATCH_BY_PROJECT_LOOKUP, [projectId]);
+  } catch (error) {
+    return storeFailureToRejection(error);
+  }
+  const batches: ArchitectureProposalBatchV1[] = [];
+  for (const encoded of batch.items) {
+    const decoded = decodeArchitectureProposalBatchRecord(encoded);
+    if (decoded.status !== 'decoded') {
+      return { status: 'rejected', code: 'unavailable', reason: `a proposal batch is damaged: ${decoded.reason}` };
+    }
+    const { revision: _revision, ...value } = decoded.value;
+    batches.push(value);
+  }
+  return { status: 'ready', value: batches };
+}
+
 async function freezeProposals(deps: ProposalServiceDeps, ctx: CoreCallContext,
   pin: ArchitectureCatalogPinV1, refs: readonly ArchitectureProposalRef[]): Promise<ReadResult<ArchitectureProposalBatchV1[]>> {
   const read = await readProposals(deps, refs);
   if (read.status !== 'ready') return read;
-  const samePin = (record: ArchitectureProposalRecordV1): boolean =>
-    canonicalJson(record.baseCatalogPin.catalogRef as unknown as JsonValue)
-      === canonicalJson(pin.catalogRef as unknown as JsonValue)
-    && canonicalJson(record.baseCatalogPin.baseline as unknown as JsonValue)
-      === canonicalJson(pin.baseline as unknown as JsonValue);
+  const samePin = (record: ArchitectureProposalRecordV1): boolean => sameCatalogPin(record.baseCatalogPin, pin);
   const existingRefs: ArchitectureProposalBatchRef[] = [];
   const seenBatches = new Set<string>();
   for (const record of read.value) {
@@ -623,6 +680,19 @@ async function freezeProposals(deps: ProposalServiceDeps, ctx: CoreCallContext,
   return { status: 'ready', value: [...all.values()] };
 }
 
+/** The one proposer gate: a Work Run, or a trusted role_exploration QueryRun. */
+async function proposerOf(deps: ProposalServiceDeps, ctx: CoreCallContext):
+Promise<ReadResult<{ sessionRef: SessionRef; role: RoleConfigurationRef }> | CoreRejection> {
+  if (ctx.principal.kind === 'work_run') return deps.runFacts(ctx, ctx.principal.runRef);
+  if (ctx.principal.kind === 'query_run') {
+    const facts = await deps.queryRunFacts(ctx, ctx.principal.queryRunRef);
+    if (facts.status !== 'ready') return facts;
+    // The resolver's ready value is always a stored `role_exploration` round; it already checked the real Job.
+    return { status: 'ready', value: { sessionRef: { ...facts.value.sessionRef }, role: structuredClone(facts.value.role) } };
+  }
+  return rejected('forbidden', 'a structural proposal is written by an adviser Work Run or a role_exploration QueryRun');
+}
+
 // --------------------------------------------------------------------------
 // The four public entries (bare form; the factory binds deps)
 // --------------------------------------------------------------------------
@@ -643,15 +713,15 @@ export async function proposeArchitectureRevision(deps: ProposalServiceDeps, ctx
   if (!parsed.ok) return { status: 'invalid', reason: parsed.problem.reason };
   const movesProblem = catalogRevisionMovesProblem(input.responsibilityMoves, ctx.projectId, null);
   if (movesProblem !== null) return { status: 'invalid', reason: movesProblem };
-  if (ctx.principal.kind !== 'work_run') {
-    return rejected('forbidden', 'a structural proposal is written by a Work Run');
+  if (ctx.principal.kind !== 'work_run' && ctx.principal.kind !== 'query_run') {
+    return rejected('forbidden', 'a structural proposal is written by an adviser Work Run or a role_exploration QueryRun');
   }
   const keys = await proposalWriteKeys(deps, ctx, input);
   const prior = await lookupCommittedReceipt(deps.records, keys.identityKey, keys.fingerprint);
   if (prior.status === 'conflict') return rejected('idempotency_conflict', prior.reason);
   if (prior.status !== 'missing' && prior.status !== 'found') return rejected('unavailable', prior.reason);
   if (prior.status === 'found') return replayPropose(deps, prior.receipt);
-  const facts = await deps.runFacts(ctx, ctx.principal.runRef);
+  const facts = await proposerOf(deps, ctx);
   if (facts.status !== 'ready') return readFailure(facts);
   if (deps.duty === undefined) return rejected('unavailable', 'the proposal owner has no Session duty reader');
   const duty = await deps.duty(facts.value.role, platformCheckContext(ctx, TRIAL_ACTOR));
@@ -664,15 +734,28 @@ export async function proposeArchitectureRevision(deps: ProposalServiceDeps, ctx
     input.responsibilityMoves, input.reason, `${input.commandId}:trial`);
   if (trial !== null) return trial.code === 'invalid' ? { status: 'invalid', reason: trial.reason } : trial;
 
-  const window = deps.proposalBatchWindow === undefined
-    ? { status: 'ready' as const, value: false }
-    : await deps.proposalBatchWindow.isOpen(ctx, { projectRef: { projectId: ctx.projectId } });
-  if (window.status === 'rejected') return window;
-  if (window.status !== 'ready') {
-    return rejected('unavailable', `proposal batch window is not readable (${window.status})`);
+  const readBatchWindow = async (): Promise<ProposalBatchWindowReadV1 | CoreRejection> => {
+    if (deps.proposalBatchWindow === undefined) return { open: false, revision: null };
+    const read = await deps.proposalBatchWindow.isOpen(ctx,
+      { projectRef: { projectId: ctx.projectId }, baseCatalogPin: input.baseCatalogPin });
+    if (read.status === 'ready') return read.value;
+    if (read.status === 'rejected') return read;
+    return rejected('unavailable', `proposal batch window is not readable (${read.status})`);
+  };
+  const writeWith = (verdict: ProposalBatchWindowReadV1) => writeProposal(deps, ctx, input, facts.value.sessionRef,
+    keys, { now: deps.now(), eventId: deps.eventId() }, !verdict.open, verdict.open ? verdict.revision : null);
+  let window = await readBatchWindow();
+  if ('status' in window) return window;
+  let result = await writeWith(window);
+  // The cold-start revision moved between the window read and this commit: re-read; the window is closed now, so
+  // the proposal freezes as its own single-member batch.
+  if (window.open && result.status === 'rejected' && result.code === 'revision_conflict') {
+    const again = await readBatchWindow();
+    if ('status' in again) return again;
+    window = again;
+    result = await writeWith(window);
   }
-  return writeProposal(deps, ctx, input, facts.value.sessionRef, keys,
-    { now: deps.now(), eventId: deps.eventId() }, !window.value);
+  return result;
 }
 
 export async function freezeArchitectureProposalBatch(deps: ProposalServiceDeps, ctx: CoreCallContext,
@@ -950,11 +1033,43 @@ export async function readArchitectureProposal(deps: ProposalServiceDeps, ctx: C
   };
 }
 
+// --------------------------------------------------------------------------
+// The project's pending proposals and frozen batches (bare form; the factory binds deps)
+// --------------------------------------------------------------------------
+
+/** Every pending, unbatched proposal of the project, in proposal-id order. */
+async function readPendingArchitectureProposals(deps: ProposalServiceDeps, ctx: CoreCallContext,
+  input: { projectRef: ProjectScope }): Promise<ReadResult<ArchitectureProposalRef[]>> {
+  try {
+    const page = await lookupAll(deps.records, S8C_PROPOSAL_BY_PROJECT_LOOKUP, [input.projectRef.projectId]);
+    const refs: ArchitectureProposalRef[] = [];
+    for (const encoded of page.items) {
+      const decoded = decodeArchitectureProposalRecord(encoded);
+      if (decoded.status !== 'decoded') return rejected('unavailable', 'a stored proposal is damaged');
+      if (decoded.value.state === 'pending' && decoded.value.batchRef === null) refs.push({ ...decoded.value.ref });
+    }
+    return { status: 'ready', value: refs };
+  } catch (error) {
+    return storeFailureToRejection(error);
+  }
+}
+
+async function readFrozenArchitectureBatches(deps: ProposalServiceDeps, _ctx: CoreCallContext,
+  input: { projectRef: ProjectScope; baseCatalogPin: ArchitectureCatalogPinV1 }):
+  Promise<ReadResult<ArchitectureProposalBatchRef[]>> {
+  const batches = await readProjectBatches(deps.records, input.projectRef.projectId);
+  if (batches.status !== 'ready') return batches;
+  return { status: 'ready', value: batches.value
+    .filter(batch => sameCatalogPin(batch.baseCatalogPin, input.baseCatalogPin)).map(batch => ({ ...batch.ref })) };
+}
+
 export function createArchitectureProposalService(deps: ProposalServiceDeps): ArchitectureProposalService {
   return {
     proposeArchitectureRevision: (ctx, input) => proposeArchitectureRevision(deps, ctx, input),
     freezeArchitectureProposalBatch: (ctx, input) => freezeArchitectureProposalBatch(deps, ctx, input),
     applyArchitectureProposalBatch: (ctx, input) => applyArchitectureProposalBatch(deps, ctx, input),
     readArchitectureProposal: (ctx, input) => readArchitectureProposal(deps, ctx, input),
+    readPendingArchitectureProposals: (ctx, input) => readPendingArchitectureProposals(deps, ctx, input),
+    readFrozenArchitectureBatches: (ctx, input) => readFrozenArchitectureBatches(deps, ctx, input),
   };
 }

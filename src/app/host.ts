@@ -39,7 +39,7 @@ import {
 } from './goal-wait-wakes.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../contracts/prompts/platform-pack.generated.js';
 import { renderTemplate } from '../contracts/prompts/render-template.js';
-import { createTargetPlatform, type TargetPlatformOptions } from '../composition/create-platform.js';
+import { COLD_START_STAGE_NOT_BOUND, createTargetPlatform, type TargetPlatformOptions } from '../composition/create-platform.js';
 import type { RecordCommitNotice, RecordCommitObserver } from '../composition/commit-observer.js';
 import type { WorkspaceHostBindings } from '../core/workspace/access.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
@@ -389,11 +389,13 @@ const LOCAL_SECRETARY_TOOL_NAMES: readonly string[] = [...LOCAL_READ_TOOL_NAMES,
 
 // Each built-in duty's tools (book §3.8 item 6; O5b rulings 4, 5, 7, 32): the names its two skill templates
 // (`platform-work` and its own) put in a tool block, the frozen v4 names and what the tested duty bindings grant,
-// every one a name a Work Run knows; `read` brings `search` and `code_index` with it. The reviewer's are
+// every one a name a Work Run knows; the adviser's `read_requests` is for the cold start's exploration Query only
+// (a Work Run knows it and builds none); `read` brings `search` and `code_index` with it. The reviewer's are
 // read-only, without `record_note` (PL's rule).
 const LOCAL_ADVISER_TOOL_NAMES: readonly string[] = [...LOCAL_READ_TOOL_NAMES, ...NOTE_TOOL_NAMES,
   'query_task_graph', 'query_ready_tasks', 'propose_future_plan', 'find_related_sessions', 'send_session_message',
-  'create_member', 'assign_module_maintainer', 'propose_role_split', 'propose_architecture_revision'];
+  'create_member', 'assign_module_maintainer', 'propose_role_split', 'propose_architecture_revision',
+  'read_requests'];
 const LOCAL_SCRIBE_TOOL_NAMES: readonly string[] = [...LOCAL_READ_TOOL_NAMES, ...NOTE_TOOL_NAMES,
   'find_related_sessions', 'send_session_message'];
 const LOCAL_REVIEWER_TOOL_NAMES: readonly string[] = [...LOCAL_READ_TOOL_NAMES, 'run_readonly_command'];
@@ -718,6 +720,9 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   let requestDriverCommitted: ((notice: RecordCommitNotice) => void) | undefined;
   let requestWakeSink: ((scope: WorkspaceScope, source: 'request_command') => void) | undefined;
   let armMessageRelease: ((scope: WorkspaceScope) => void) | undefined;
+  // C1: the cold start's exploration rounds run on the request driver's stage driver; until it exists (and with no
+  // request driver or no lease at all) the sink is empty and those rounds wait where they are.
+  let coldStartStageSink: NonNullable<TargetPlatformOptions['coldStartStages']> | undefined;
   // L8 (book ruling 1): the mutable trigger sink handed to the platform BEFORE
   // the driver exists; each formal adoption/revision/PASS calls it after its
   // non-replayed commit, and the driver is installed right after the platform.
@@ -826,6 +831,11 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       // landed in; the sink is bound once the loop exists, and the platform
       // never drives a round by itself.
       requestWake: (scope, source) => { requestWakeSink?.(scope, source); },
+      coldStartStages: {
+        advance: (ctx, input) => coldStartStageSink === undefined
+          ? Promise.resolve(COLD_START_STAGE_NOT_BOUND) : coldStartStageSink.advance(ctx, input),
+        wake: (scope) => { coldStartStageSink?.wake(scope); },
+      },
       // A committed approval through the trusted entry arms the release queue; a replay included, and
       // arming twice is harmless (`7a2-rgp-v7.md:1076`).
       onMessageReleaseApproved: approved => { armMessageRelease?.({
@@ -1023,6 +1033,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         return senderClass(qctx, execution.consultation.messageRef,
           execution.consultation.part === 'response' ? 'response' : 'message');
       }
+      if (execution.kind === 'role_exploration') return 2;   // the cold start's round: the platform (Host system) starts it
       return 0;                                   // initial_coordination / a plain semantic_query: only `queries/submit`
     }
     let runs = startingRuns.get(ctx);
@@ -1117,6 +1128,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   let wakeLoop: WakeLoop | undefined;
   let requestQueues: ReturnType<typeof createRequestRoundQueues> | undefined;
   let lifecycleQueue: ReturnType<typeof createHandoffQueue> | undefined;
+  // The Host consumer id a plain Query start records; the request driver's stage driver below reads it too.
+  const workflowConsumerId = workflow?.consumerId ?? 'local-workbench-consumer';
   if (leaseOwned) {
     const loop = createWakeLoop({ driving: () => leaseOwned });
     // The queue must see a commit even when the request driver is off, or a goal parked
@@ -1163,17 +1176,24 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       loop.wake({ projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' }, LIFECYCLE_QUEUE, 'advance_settled');
     };
     markerRoundEnded = recordRoundEnd;                  // A1b: the drain's marker driver ends a request round the same way
+    // The one Query stage driver: a request round starts under its claimed profile's consumer id, a cold-start
+    // exploration round (through the sink) under the Host's.
+    const stageDriver = createQueryStageDriver({
+      queries: platform.queries, runtime: platform.runtime, facts: platform.requestFacts,
+      fence: platform.readHandoffFence, consumerId: workflowConsumerId,
+      onRoundEnded: recordRoundEnd,
+    });
+    coldStartStageSink = {
+      advance: (ctx, input) => stageDriver.advance(ctx, input),
+      wake: (scope) => { loop.wake(scope, LIFECYCLE_QUEUE, 'advance_settled'); },
+    };
     const queues = createRequestRoundQueues({
       rounds: platform.requestRounds,
       facts: platform.requestFacts,
       sessions: platform.sessionFacts,
       profiles: platform.secretaryProfiles,
       drain: platform.requestIntake.drainUnassigned,
-      driver: createQueryStageDriver({
-        queries: platform.queries, runtime: platform.runtime, facts: platform.requestFacts,
-        fence: platform.readHandoffFence,
-        onRoundEnded: recordRoundEnd,
-      }),
+      driver: stageDriver,
       // Every pass runs as the Host's own system actor; the loop's abort signal
       // goes into the context, so closing stops a pass at its next request. A
       // pass starts only at `start`, `addWorkspace` or a wake, all of which come
@@ -1257,7 +1277,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
               : await handoffOwner.manualArchive(ctx, { operation });
           if (result.status === 'ready') {
             if (result.value.revision > revision) continued += 1;
-            else blocked += 1;
+            // A normal wait (a person's answer, a card, a candidate) is not a left-behind operation.
+            else if (!('state' in result.value && result.value.state === 'waiting')) blocked += 1;
           } else if (transient(result)) {
             failures.push(notReady(`the ${kind} operation ${operation.operationId}`, result).message);
           } else {
@@ -1395,7 +1416,6 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   const publishedProfileIds = new Set(runtimeProfiles.map(profile => profile.id));
   const workflowScopes: CoreScope[] = workflow === undefined ? []
     : [...new Map(workflow.bindings.map(binding => [scopeKey(binding.workspace), { ...binding.workspace }])).values()];
-  const workflowConsumerId = workflow?.consumerId ?? 'local-workbench-consumer';
 
   const buildBootstrap = (): BootstrapResponse => {
     const execution: BootstrapExecution = {

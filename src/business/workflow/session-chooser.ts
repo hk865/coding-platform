@@ -191,7 +191,7 @@ export function createSessionChooser(deps: {
    * pick's own verdict and `exclusionOf`), not too long, and a prior responsible module link inside `modules`;
    * the latest activity wins. The claim check and the commit are O1b's `reuse`; a card is O1b/O3's.
    */
-  async function reuseStandby(owned: Owned, input: {
+  async function reuseStandby(owned: Pick<Owned, 'ctx'>, input: {
     commandId: string; duty: RoleLineDutyV1; scope: RoleScopeV1[]; modules: ReadonlySet<string> | 'all';
   }): Promise<{ kind: 'reused'; line: RoleLineLineV1 } | { kind: 'none' } | CoreRejection> {
     if (deps.roleLineReuse === undefined || deps.standby === undefined) return { kind: 'none' };

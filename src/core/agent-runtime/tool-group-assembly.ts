@@ -256,6 +256,8 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
     && !EXPLORATION_TOOL_NAME_SET.has(name) && !PLATFORM_COORDINATION_TOOL_NAMES.has(name)
     && name !== CREATE_MEMBER_TOOL_NAME && !REWORK_TOOL_NAME_SET.has(name)
     && name !== ASSIGN_MODULE_MAINTAINER_TOOL_NAME
+    // `read_requests` is a name a Work Run knows but never builds: only a Query builds it.
+    && name !== READ_REQUESTS_TOOL_NAME
     && !(input.extensionNames?.has(name) ?? false));
   if (unknown.length > 0) {
     return { ok: false, rejection: rejected('unsupported', `the Run selects tool names this Runtime does not know: ${[...new Set(unknown)].join(', ')}`) };
@@ -644,6 +646,8 @@ export function kernelEnabledToolNames(input: {
  */
 export type FinalToolListInputV1 = {
   callKind: 'work' | 'query';
+  /** A cold-start `role_exploration` Query; absent reads false (every Work call and every other Query). */
+  explorationRound?: boolean;
   /**
    * What a Query round may write in this round. The Work branch never reads
    * it; a Query selects a note tool only when the value is `secretary`.
@@ -729,8 +733,9 @@ export function finalToolNamesOf(input: FinalToolListInputV1): ToolGroupResult<s
   const graphNames = GRAPH_TOOL_NAMES.filter(name => wanted.has(name));
   const linkCheckNames = LINK_CHECK_TOOL_NAMES.filter(name => wanted.has(name));
   const noteNames = NOTE_TOOL_NAMES.filter(name => wanted.has(name) && (input.callKind === 'work' ? true : input.noteAdmission.class !== 'none'));
-  // Only the Work Runtime builds the proposal tool; a Query's projection never reaches its factory.
-  const architectureNames = query ? [] : ARCHITECTURE_TOOL_NAMES.filter(name => wanted.has(name));
+  // Only the Work Runtime and an exploration Query build the proposal tool; no other Query reaches its factory.
+  const architectureNames = query && input.explorationRound !== true ? []
+    : ARCHITECTURE_TOOL_NAMES.filter(name => wanted.has(name));
   const memberNames = wanted.has(CREATE_MEMBER_TOOL_NAME) && (!query || secretary) ? [CREATE_MEMBER_TOOL_NAME] : [];
   // Only the Work Runtime builds the maintainer tool; Query has no adviser duty.
   const maintainerNames = !query && wanted.has(ASSIGN_MODULE_MAINTAINER_TOOL_NAME)

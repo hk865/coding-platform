@@ -20,7 +20,7 @@ const PACK: ResolvedPromptPackV1 = PLATFORM_PROMPT_PACK_V1;
 const V2_TEMPLATES = {
     'base': '5a9fa326d215e82d8329a0ddce8ff2da29463430550dd8320695b760ef7f03b5',
     'skill-platform-work': '202fa0b83e3377a9dff1ccb3b189fe1c8ed6ea6c4e48ad4f20124e2757c4dab9',
-    'skill-platform-secretary': '1796b4ef8b3e1a49807173dc4a9d466a56d22e460228722bcd92415fa51accaa',
+    'skill-platform-secretary': '0bb59d33dcba00898fbb35ca971580b3acfde7ccffc4b2ca168c3fb957e6780a',
     'skill-platform-adviser': '8954f1e09e66ce7a1e7e38ea96d0dd413f1dfa10e640c1a15a2d656dd6166d96',
     'skill-platform-scribe': '7e7d2ea6b21f44f407d7dcd2d2847651e7b156306ae97fdc5a1bceb92ee4bd94',
     'skill-platform-reviewer': '7cd261e9a6611af0941f9ba42c3d0a6dbfe6e70d8a931fae88e1a4c7e03d8e9a',
@@ -29,7 +29,7 @@ const V2_TEMPLATES = {
 /** The v1 Skill texts PC-1 pinned plus the decision 89 and 8E L3 row 4 paragraphs, hand-written. */
 const V1_SKILL_DIGESTS = {
     'skill-platform-work': '0b4b8f7baaffe224329c978d3c30819340bd87db0de7a00537da5b4ad1180952',
-    'skill-platform-secretary': '60f1528bc7ff9555661ff4c4f0b4000eb6735dd5009c4c31b28259c98ad84be6',
+    'skill-platform-secretary': '5e8b4695d873c7f60bf6c9efad098a759f260b929e76b8c90e59b5d93b8451fa',
     'skill-platform-adviser': '14f22fef053a19f4013c53b833e50ee84431baf09798d2cf08a2218a8aeb0542',
     'skill-platform-scribe': '5c4d9ebc3a3abb6b7d56bcb957728247789186588f4290d451d3c1efe2f46fd1',
     'skill-platform-reviewer': '59e74ce8031bb1a10465326aefc4eab7039d2bb28096141f45a13c55ee61dd92',
@@ -51,7 +51,7 @@ describe('platform prompt pack v2 (rulings 17–18)', () => {
             expect(manifest.templates[id], `manifest entry ${id}`).toEqual({
                 file: `templates/${id}.txt`,
                 version: id === 'base' ? 2 : id === 'skill-platform-adviser' || id === 'skill-platform-work' ? 10
-                    : id === 'skill-platform-reviewer' ? 4 : 8,
+                    : id === 'skill-platform-reviewer' ? 4 : id === 'skill-platform-secretary' ? 9 : 8,
                 mentionsTools: [],
             });
             const text = templates[id];
@@ -131,7 +131,7 @@ describe('platform prompt pack v2 (rulings 17–18)', () => {
             'handoff-brief-adviser': { packId: 'platform', version: 1, mentionsTools: ['read'] },
             base: { packId: 'platform', version: 2, mentionsTools: [] },
             'skill-platform-work': { packId: 'platform', version: 10, mentionsTools: [] },
-            'skill-platform-secretary': { packId: 'platform', version: 8, mentionsTools: [] },
+            'skill-platform-secretary': { packId: 'platform', version: 9, mentionsTools: [] },
             'skill-platform-adviser': { packId: 'platform', version: 10, mentionsTools: [] },
             'skill-platform-scribe': { packId: 'platform', version: 8, mentionsTools: [] },
             'skill-platform-reviewer': { packId: 'platform', version: 4, mentionsTools: [] },

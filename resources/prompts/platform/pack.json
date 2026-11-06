@@ -161,7 +161,7 @@
     },
     "skill-platform-secretary": {
       "file": "templates/skill-platform-secretary.txt",
-      "version": 8,
+      "version": 9,
       "mentionsTools": []
     },
     "skill-platform-adviser": {

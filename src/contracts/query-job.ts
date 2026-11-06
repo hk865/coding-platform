@@ -280,7 +280,7 @@ export type QueryJobIntentV1 = {
     correlationId: string;
     /** The real read-only role work every current Query carries. */
     execution: {
-        kind: 'semantic_query' | 'initial_coordination' | 'execution_coordination' | 'intervention_planning';
+        kind: 'semantic_query' | 'initial_coordination' | 'execution_coordination' | 'intervention_planning' | 'role_exploration';
         responsePurpose?: import('./memory.js').MemoryPurpose;
         feedback?: import('./execution-feedback.js').FeedbackSource;
         roleBinding: RoleBindingRefV1;
@@ -388,7 +388,7 @@ function validConsultationBinding(value: unknown): boolean {
 export function validQueryExecution(value: QueryJobIntentV1['execution']): boolean {
     if (value === undefined)
         return true;
-    if (!value || !['semantic_query', 'initial_coordination', 'execution_coordination', 'intervention_planning'].includes(value.kind))
+    if (!value || !['semantic_query', 'initial_coordination', 'execution_coordination', 'intervention_planning', 'role_exploration'].includes(value.kind))
         return false;
     // §3.17: the planning kind carries its source message; no other kind may carry one.
     if (value.kind === 'intervention_planning') {

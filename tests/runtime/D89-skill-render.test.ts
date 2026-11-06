@@ -55,7 +55,7 @@ const SKILLS: Readonly<Record<string, Skill>> = {
   'skill-platform-secretary': {
     outside: "## 没有参谋时的接口约定\n- 目标没有参谋时，共享件的归属由你定：列出几个任务都会用到的共享件，每件只交给一个任务写。收到请你定归属的行动请求，或者读到模块上的 `open_question`，也由你定。\n  - 这一轮记不了注记时，把分工写进计划草案或回答，由之后有权写的那一轮落实；不要说已经记下。\n  为什么：没有参谋时，这件事没有别人接；你不定，执行者只能各写一份。".split('\n'),
     blocks: { 'secretary.note': "  - 用 `record_note` 按共同工作原则里的格式记接口约定（更新时先读现行的，再写一条新的取代它）；回答了 `open_question` 的，记一条 `decision` 用 `replaces` 收掉它。" },
-    blankLines: 13,
+    blankLines: 14,
   },
 };
 

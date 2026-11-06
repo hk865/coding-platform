@@ -47,12 +47,21 @@ const statesOf = (rows: S7D2BirthRun['atStop']) =>
 /** The end of the birth: one operation, completed, every step done; three lines, each its duty's one holder. */
 async function expectEnd(world: S7D2RoleLineWorld): Promise<void> {
   const rows = await world.operations();
-  expect(rows).toHaveLength(1);
-  expect(rows[0]).toMatchObject({
+  expect(rows).toHaveLength(2);
+  expect(startLinesOf(rows)).toMatchObject({
     action: 'role_line', phase: 'completed', actionPhase: 'done',
     steps: [{ key: 'secretary', state: 'done' }, { key: 'adviser', state: 'done' }, { key: 'scribe', state: 'done' }],
     result: { status: 'done', reason: null },
   });
+  // The secretary step's registration commit also bore the project's one cold start. This world adopted its
+  // governance first, so no secretary round is an initial-format answer and the cold start waits at `candidates`.
+  const projectId = world.startLines.projectId;
+  const coldStartRef = { aggregateType: 'CoreOperation', projectId, operationId: `cold_start:${projectId}` };
+  expect(rows.filter(row => row.operation.operationId === coldStartRef.operationId)).toEqual([{
+    operation: coldStartRef, action: 'role_line', phase: 'running', actionPhase: 'candidates', steps: [],
+    result: null, lastCompleted: null, candidate: null, pendingRegions: [], explorations: [], batchRefs: [],
+    route: null, baseCatalogPin: null,
+  }]);
 
   // The three lines, and only they, are responsible for the project: one open project link each.
   const lineIds = DUTIES.map(duty => world.lines[duty].ref.sessionId);

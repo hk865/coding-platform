@@ -20,21 +20,21 @@
 | --- | --- | --- | --- |
 | `createEvidenceService` | `src/core/work-graph/evidence/evidence-service.ts:908` | 构造 `EvidencePort` 的单一实现，依赖全部由组合根注入 | 组合根接线；不要另写证据服务 |
 | `openVerification` | `src/core/work-graph/evidence/evidence-service.ts:1079` | 读 subject Run 与已采纳 Plan、捕获固定 source、编译计划、按轮次 revision CAS 登记 pending checks | Run 结束开检查；一个 subject 只开一条轮次链 |
-| `readVerification`、`queryOriginalVerification`、`queryRoundChainHead` | `src/core/work-graph/evidence/evidence-service.ts:1247`、`src/core/work-graph/evidence/evidence-service.ts:1304`、`src/core/work-graph/evidence/evidence-service.ts:1269` | 读一轮、读某 work Run 的原轮链头、读某 subject 的链头 | 启动恢复与完成读取；读不到不是“没有轮” |
-| `beginCheck`、`recordCheckResult`、`abandonCheck`、`interruptCheck` | `src/core/work-graph/evidence/evidence-service.ts:1322`、`src/core/work-graph/evidence/evidence-service.ts:1400`、`src/core/work-graph/evidence/evidence-service.ts:1544`、`src/core/work-graph/evidence/evidence-service.ts:1548` | 检查 pending→executing 并冻结 ticket、记录真实观察/未启动/中断 | 检查 runner 与 Host 记录结果 |
+| `readVerification`、`queryOriginalVerification`、`queryRoundChainHead` | `src/core/work-graph/evidence/evidence-service.ts:1269`、`src/core/work-graph/evidence/evidence-service.ts:1269`、`src/core/work-graph/evidence/evidence-service.ts:1269` | 读一轮、读某 work Run 的原轮链头、读某 subject 的链头 | 启动恢复与完成读取；读不到不是“没有轮” |
+| `beginCheck`、`recordCheckResult`、`abandonCheck`、`interruptCheck` | `src/core/work-graph/evidence/evidence-service.ts:1548`、`src/core/work-graph/evidence/evidence-service.ts:1548`、`src/core/work-graph/evidence/evidence-service.ts:1548`、`src/core/work-graph/evidence/evidence-service.ts:1548` | 检查 pending→executing 并冻结 ticket、记录真实观察/未启动/中断 | 检查 runner 与 Host 记录结果 |
 | `finalizeChecks` | `src/core/work-graph/evidence/evidence-service.ts:1552` | 折冻结 coverage，一次 commit 写 round + Evidence + 索引 + 事件 + receipt；未覆盖/阻塞进 gaps，不当 PASS | 轮次收口；不伪造 PASS |
 | `reverifyRound` | `src/core/work-graph/evidence/evidence-service.ts:2011` | 在 finalized 非 PASS 链头上开后继轮，或提交一条策略拒绝；接受可选 `acknowledgement`，提交结果带 `proofReceipt` | 自动复核/返工；不要另开第二轮 |
-| `reverifyApprovedByCard`、`lookupToolCommit` | `src/core/work-graph/evidence/evidence-service.ts:2025`、`src/core/work-graph/evidence/evidence-service.ts:2356` | 卡片批准的返工复核入口（与 `reverifyRound` 同一后继轮提交）和 `request_recheck` 的只读已提交回执查询；后者从 Kernel 记录参数重建同一身份，不写第二份请求 | `request_recheck` 工具的重放读与卡片批准路径；不要另写回执查询或后继轮 |
+| `reverifyApprovedByCard`、`lookupToolCommit` | `src/core/work-graph/evidence/evidence-service.ts:2356`、`src/core/work-graph/evidence/evidence-service.ts:2356` | 卡片批准的返工复核入口（与 `reverifyRound` 同一后继轮提交）和 `request_recheck` 的只读已提交回执查询；后者从 Kernel 记录参数重建同一身份，不写第二份请求 | `request_recheck` 工具的重放读与卡片批准路径；不要另写回执查询或后继轮 |
 | `compileVerificationPlan` | `src/core/work-graph/evidence/verification-plan.ts:61` | 纯编译：每个必需要求绑定可覆盖的冻结能力，缺覆盖记 `uncovered`，空必需集 `invalid`，不接受调用方 digest/coverage/PASS | open/reverify 冻结检查计划 |
-| `evidenceApplicabilityWithBasis`、`selectEffectiveEvidenceSet` | `src/core/work-graph/tasks/evidence-coverage.ts:153`、`src/core/work-graph/tasks/evidence-coverage.ts:76` | 证据适用性判定与有效证据的单一纯折叠 | finalize 与完成读取；不要在本层重算 applicability |
+| `evidenceApplicabilityWithBasis`、`selectEffectiveEvidenceSet` | `src/core/work-graph/tasks/evidence-coverage.ts:76`、`src/core/work-graph/tasks/evidence-coverage.ts:76` | 证据适用性判定与有效证据的单一纯折叠 | finalize 与完成读取；不要在本层重算 applicability |
 | `sameRef` **正本** | `src/core/work-graph/state/ref-equality.ts:2` | 引用的结构判等；不是 `sameJson` 的等价物 | 证据 commit 组装；执行入口的 `sameJson as sameRef` 转出已删除，F 行副本直接用 `src/contracts/fingerprint.ts:50` 的 `sameJson` |
-| `mergeGuards`、`mapStoreFailure` | `src/core/work-graph/persistence/record-guards.ts:12`、`src/core/work-graph/tasks/execution-entry-service.ts:148` | 合并一个 commit 的读 guards、把执行写失败映射成 `CoreRejection` | 证据 commit 组装（M1-27、M1-30、M1-32） |
-| `bindTrustedContext`、`isolateWrite` | `src/core/work-graph/tasks/execution-entry-service.ts:217`、`src/core/work-graph/tasks/execution-entry-service.ts:225` | 绑定可信 Host 上下文并同步隔离写入请求 | 每个证据写入入口；不要另写绑定与检查顺序 |
+| `mergeGuards`、`mapStoreFailure` | `src/core/work-graph/persistence/record-guards.ts:12`、`src/core/work-graph/tasks/execution-entry-service.ts:156` | 合并一个 commit 的读 guards、把执行写失败映射成 `CoreRejection` | 证据 commit 组装（M1-27、M1-30、M1-32） |
+| `bindTrustedContext`、`isolateWrite` | `src/core/work-graph/tasks/execution-entry-service.ts:225`、`src/core/work-graph/tasks/execution-entry-service.ts:225` | 绑定可信 Host 上下文并同步隔离写入请求 | 每个证据写入入口；不要另写绑定与检查顺序 |
 
 ## 内部用
 
 - 本文件夹的两个值导出（`createEvidenceService`、`compileVerificationPlan`）都在上表，其余导出是类型。
-- `lookupReceipt` 是本层的私有包装（`src/core/work-graph/evidence/evidence-service.ts:519`），只在提交前/提交抛错后经 `GoalRecordTransactionPort.lookupCommit` 查回执；它不是 `src/core/record-store/ports.ts` 的导出。同类私有包装还在 `src/core/work-graph/queries/query-job-service.ts:426`、`src/core/work-graph/tasks/completion.ts:174`，按各 owner 的代码使用，收拢前不要编造共享端口。
+- `lookupReceipt` 是本层的私有包装（`src/core/work-graph/evidence/evidence-service.ts:519`），只在提交前/提交抛错后经 `GoalRecordTransactionPort.lookupCommit` 查回执；它不是 `src/core/record-store/ports.ts` 的导出。同类私有包装还在 `src/core/work-graph/queries/query-job-service.ts:436`、`src/core/work-graph/tasks/completion.ts:174`，按各 owner 的代码使用，收拢前不要编造共享端口。
 
 ## 不要做
 

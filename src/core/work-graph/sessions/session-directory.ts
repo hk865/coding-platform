@@ -59,8 +59,9 @@ import {
   type HostActor, type TrustedContext,
 } from './trusted-context.js';
 import type {
-  ConsultationCreateV1, CreateSeatDecisionV1, SessionCard, SessionCreateOperationRecord, SessionCreationInput,
-  SessionCreationIntentV1, SessionCreationResult, SessionDirectoryPort, SessionOperationRecord, SessionPage,
+  ConsultationCreateV1, CreateSeatDecisionV1, RoleLineOperationV1, SessionCard, SessionCreateOperationRecord,
+  SessionCreationInput, SessionCreationIntentV1, SessionCreationResult, SessionDirectoryPort, SessionOperationRecord,
+  SessionPage,
 } from '../model/session-contracts.js';
 import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
 import type { CommitFragment } from '../persistence/command-executor.js';
@@ -82,6 +83,7 @@ import {
   type SessionCreatedEvent,
 } from './session-record-codecs.js';
 import { validateWorkLinkTarget } from './session-targets.js';
+import { coldStartBirthOf } from './cold-start-service.js';
 import { allocationNext } from '../state/role-line-allocation.js';
 import { roleLineStepTransition } from '../state/role-line-operation.js';
 import { foldRoleScopeClaimChanges, responsibilityClaimChanges } from '../state/role-scope.js';
@@ -1454,6 +1456,8 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       // member arm (a handoff successor has a handoff parent and writes no such event). The proof is present only when
       // the creation carried an acknowledgement, because without one no message can ever cite the effect.
       let memberEvent: MemberCreatedEventV1 | null = null;
+      // The `start_lines` parent, kept for the cold-start birth below.
+      let startLines: RoleLineOperationV1 | null = null;
       const parentRef = createAction.parentOperation;
       if (parentRef !== null) {
         const parentKey = operationRefKey(parentRef);
@@ -1468,6 +1472,9 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
           return reject('unavailable', `the parent Session operation is damaged: ${decodedParent.reason}`);
         }
         const parent = decodedParent.value;
+        if (parent.action.kind === 'role_line' && parent.action.action === 'start_lines') {
+          startLines = parent as RoleLineOperationV1;
+        }
         const parentAction = (parent.action as { kind: string }).kind === 'member_create'
           ? parent.action as unknown as MemberCreateActionV1 : null;
         if (parentAction !== null
@@ -1544,6 +1551,14 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       }
       // The proof decoder reads the receipt's LAST event, so the member event is appended after every effect event.
       if (memberEvent !== null) events.push(memberCreatedCodec.encode(memberEvent));
+      // §3.13: the cold-start operation is born in the `start_lines` secretary step's registration commit, so a
+      // crash before it leaves neither; this commit already carries `SessionCreated`, so no second event (L-1).
+      const birth = startLines === null ? null : coldStartBirthOf({ startLines, createAction, occurredAt: createdAt });
+      if (birth !== null) {
+        const birthKey = operationRefKey(birth.ref);
+        recordsToWrite.push(encodeSessionOperationRecord(birth));
+        guardByKey.set(birthKey, { refKey: birthKey, expectedRevision: null });
+      }
       for (const guard of targetGuards.values()) guardByKey.set(guard.refKey, guard);
       const claims: UniqueClaimChange[] = [{
         claimKey: kernelSessionClaimKey(registration.adapterId, registration.kernelSessionId),

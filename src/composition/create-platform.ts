@@ -195,7 +195,7 @@ import type { PlanServiceDependencies } from '../core/work-graph/tasks/plan-serv
 import { createPlanAdoptionStop } from './plan-adoption-stop.js';
 import { PLAN_RECORD_SCHEMAS } from '../core/work-graph/persistence/plan-record-codecs.js';
 import { DECISION_RECORD_SCHEMAS } from '../core/work-graph/persistence/decision-record-codecs.js';
-import { PLAN_STATE_RECORD_SCHEMAS, PLAN_GOVERNANCE_RECORD_SCHEMAS, GOAL_BY_WORKSPACE_INDEX, createPlanReaders, createSessionResponsibilityBasisReader, createNoteRunTaskResolver, readCanonicalTaskFacts, readGoal, readGoalPhase, readGoalPlanWindow, readGoalsByProject, readGoalRunsForCount, readTaskClosure, taskClosureOf, type PlanReaders, type TaskClosureV1 } from '../core/work-graph/tasks/plan-readers.js';
+import { PLAN_STATE_RECORD_SCHEMAS, PLAN_GOVERNANCE_RECORD_SCHEMAS, GOAL_BY_WORKSPACE_INDEX, createPlanReaders, createSessionResponsibilityBasisReader, createNoteRunTaskResolver, readCanonicalTaskFacts, readGoal, readGoalPhase, readGoalPlanWindow, readGoalsByProject, readGoalRunsForCount, readOpenResponsibilityLines, readTaskClosure, taskClosureOf, type PlanReaders, type TaskClosureV1 } from '../core/work-graph/tasks/plan-readers.js';
 import { createSessionDirectory } from '../core/work-graph/sessions/session-directory.js'; import { createDutyRecipient } from '../core/work-graph/sessions/duty-recipient.js';
 import { createConsumableSessions, type ConsumableSessionsPort }
   from '../core/work-graph/views/consumable-sessions.js';
@@ -234,6 +234,10 @@ import type { EffectiveScopeV1 } from '../core/work-graph/state/role-scope.js';
 import type { RoleLinePositionV1 } from '../core/work-graph/state/role-line-position.js';
 import type { RoleScopeV1 } from '../contracts/role-lines.js';
 import { createRoleLineOperations, startLinesInitialRecord } from '../core/work-graph/sessions/role-line-operations.js';
+import {
+  createColdStartProposalWindow, createColdStartService, type ColdStartStagePort,
+} from '../core/work-graph/sessions/cold-start-service.js';
+import { readColdStartAdoption, readColdStartCandidate } from '../core/work-graph/tasks/cold-start-reads.js';
 import {
   createRoleLineMaintenance, type RoleLineMaintenancePort,
 } from '../core/work-graph/sessions/role-line-maintenance.js';
@@ -404,7 +408,16 @@ import type {
 import { createWorkLineConversation } from './work-line-conversation.js';
 import { createArchitectureReminderFactsReader } from './architecture-reminder-facts.js';
 import { createSessionChooser, type PickReadsV1 } from '../business/workflow/session-chooser.js';
+import type { QueryStageAdvanceInput, QueryStageOutcome } from '../business/workflow/query-stage-driver.js';
 import { messageOf } from '../contracts/error-message.js';
+
+/** The cold start's stage answer while no Host stage driver is bound (the Host answers it too while its sink is
+ *  empty): the exploration round waits for a change. */
+export const COLD_START_STAGE_NOT_BOUND: QueryStageOutcome = {
+  status: 'blocked', retry: 'on_change', reason: 'the cold-start stage driver is not bound' };
+/** The cold start's stage answer while its round runs detached: the settled round wakes the lifecycle pass. */
+const COLD_START_ROUND_DETACHED: QueryStageOutcome = {
+  status: 'blocked', retry: 'on_change', reason: 'the exploration round runs detached' };
 
 export type TargetPlatformOptions = {
   storage: { kind: 'memory' } | { kind: 'sqlite'; directory: string };
@@ -541,6 +554,14 @@ export type TargetPlatformOptions = {
    * for the Query routes or a later Host.
    */
   requestWake?: (scope: WorkspaceScope, source: 'request_command') => void;
+  /**
+   * C1: the Host's Query stage driver for the cold start's exploration rounds (bound after the platform is built)
+   * and the lifecycle wake a settled round sends. Absent, the cold start's rounds wait where they are.
+   */
+  coldStartStages?: {
+    advance(ctx: CoreCallContext, input: QueryStageAdvanceInput): Promise<QueryStageOutcome>;
+    wake(scope: WorkspaceScope): void;
+  };
   onMessageReleaseApproved?: MessageReleaseApprovedHookV1;
   /**
    * Slice 5 §3.2/§2.6: the exact configured operator of this Host. It is the
@@ -959,6 +980,7 @@ function createAuthorizeQueryConfiguration(host: RuntimeHostBindings): Authorize
     return { status: 'ready', value: projectQueryConfiguration({
       host: configured.value, requested: queryExecutionBindingOf(input.job, input.run).runtimeBudget,
       roleResolution: input.roleResolution, secretaryRound: isRequestRound(input.job),
+      explorationRound: input.job.job.intent.execution.kind === 'role_exploration',
     }) };
   };
 }
@@ -1722,6 +1744,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...catalogRevision,
       decisionMessages: decisionMessageOwner,
       runFacts: (ctx, runRef) => noteRunFacts(ctx, runRef),
+      // C1: the cold start's batch window and the exploration round's trusted proposer read.
+      proposalBatchWindow: createColdStartProposalWindow({ records: backend.records }),
+      queryRunFacts: (ctx, ref) => noteQueryRun.readProposerFacts(ctx, ref),
     });
     const repairActivation = createRepairActivationService({
       records: backend.records,
@@ -1936,6 +1961,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const roleLineOperations = createRoleLineOperations({ records: backend.records, createLine: requestLineCreation,
       operations: sessionDirectory, responsibility: sessionResponsibility, now,
       platformRole: (duty) => platformRoleProfile(duty).template, duty: sessionDutyResolver,
+      // C1: the cold start is built later in this root; the arrow reads it only when the Host drives one.
+      coldStart: { drive: (ctx, input) => coldStart.drive(ctx, input) },
       adjustments: {
         // Card supplement C3: rules -> match -> the five-layer policy; the guards ride the writer's own first commit.
         async judge(ctx, input) {
@@ -3004,6 +3031,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       workspaceMaxFileBytes: DEFAULT_WORKSPACE_LIMITS.maxFileBytes,
       architecture: catalog,
       scopes: scribeScope,
+      // 120-13 丙: the one effective-scope read (built later in this root), for a region adviser's write.
+      regionScopes: { readEffectiveScope: (ctx, input) => effectiveScope.readEffectiveScope(ctx, input) },
       now, eventId: randomUUID, newId: options.noteNewId ?? randomUUID,
       ...(options.noteLimits === undefined ? {} : options.noteLimits),
     });
@@ -3290,6 +3319,18 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       releaseOverlapGate: (...args) => trackedCall(() => overlapGates.releaseOverlapGate(...args), unavailable),
       readOverlapGates: (...args) => trackedCall(() => overlapGates.readOverlapGates(...args), unavailable),
     };
+    // A line's own context window by its role (null when it cannot be read): the maintenance page and the cold
+    // start's standby "too long" read share this one read.
+    const lineContextWindowOf = async (ctx: CoreCallContext, role: RoleConfigurationRef): Promise<number | null> => {
+      const resolveRole = options.runtime?.resolveRoleConfiguration;
+      if (resolveRole === undefined) return null;
+      try {
+        const configured = await resolveRole(ctx, { role });
+        return configured.status === 'ready' ? configured.value.budget.contextWindowTokens : null;
+      } catch {
+        return null;
+      }
+    };
     // O2 (v4 §3.1.3, N-7): the one role-line maintenance instance — the Workflow's page, the reclaim both admissions
     // call and the `propose_role_split` owner's facts read. The tasks/notes reads are their owners' functions.
     const maintenance = createRoleLineMaintenance({
@@ -3298,16 +3339,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       handoff: { startHandoff: (ctx, input) => rawWorkflow.sessionHandoff!.startHandoff(ctx, input) },
       records: backend.records, eventPage: rawBackend.eventPage, observed,
       readGoal, readGoalPhase, readGoalsByProject, roleLineInputBasis,
-      contextWindowOf: async (ctx, role) => {
-        const resolveRole = options.runtime?.resolveRoleConfiguration;
-        if (resolveRole === undefined) return null;
-        try {
-          const configured = await resolveRole(ctx, { role });
-          return configured.status === 'ready' ? configured.value.budget.contextWindowTokens : null;
-        } catch {
-          return null;
-        }
-      },
+      contextWindowOf: lineContextWindowOf,
       bindings: bindingReads, notes: { countCurrentNotes }, scribeTodos: noteScribeTodos, plans: planService,
       sessionFacts, now,
     });
@@ -3797,9 +3829,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         notVisibleOmitted: captured.capture.notVisibleOmitted };
     };
     /**
-     * A planning round or a consultation runs on a line that keeps working, so losing it closes the Turn and hands the
-     * line back (K L10); its source message then takes the ordinary no-answer ending. Any other Query line keeps the
-     * old rule (A8 Q-01, KA-16). The problem text, or null.
+     * A planning round, a cold-start exploration round or a consultation runs on a line that keeps working, so losing
+     * it closes the Turn and hands the line back (K L10); its source message then takes the ordinary no-answer ending.
+     * Any other Query line keeps the old rule (A8 Q-01, KA-16). The problem text, or null.
      */
     const closeQueryLineTurn = async (ctx: CoreCallContext, queryRunRef: QueryRunRef): Promise<string | null> => {
       const close = runtime.port.closeQueryTurn;
@@ -3808,6 +3840,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       if (read.status !== 'ready') return `the QueryRun is not readable (${read.status})`;
       const { job: { job: { intent: { execution } } }, session } = read.value;
       if (session.provenance.kind === 'readonly_copy' || !(execution.kind === 'intervention_planning'
+        || execution.kind === 'role_exploration'
         || (execution.kind === 'semantic_query' && execution.consultation !== undefined))) return null;
       const closed = await close.call(runtime.port, ctx, { queryRunRef,
         sessionRef: { projectId: session.ref.projectId, sessionId: session.ref.sessionId } });
@@ -4193,6 +4226,91 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const roleLineAllocation: RoleLineAllocationReadPort = {
       readRoleLineAllocation: (...args) => trackedCall(() => allocationReader.readRoleLineAllocation(...args), unavailable),
     };
+    // C1 (L-9 :1806): the cold start's standby pick, a chooser of its own. "Too long" is the line's input basis
+    // against its own context window (the table's 500000 ceiling when the window cannot be read), as the
+    // maintenance page judges a line.
+    const coldStartChooser = createSessionChooser({ sessions: sessionDirectory, sessionFacts,
+      roleLineReuse: roleLineOperations, pick: pickReads,
+      standby: { allocation: roleLineAllocation, tooLong: async (ctx, session) => {
+        const card = await sessionDirectory.readSession(ctx, session);
+        if (card.status !== 'ready') return card;
+        const record = card.value.record;
+        const window = await lineContextWindowOf(ctx, record.role);
+        const basis = await roleLineInputBasis(backend.records,
+          { projectId: record.ref.projectId, workspaceId: record.workspaceId }, session,
+          window ?? Number.POSITIVE_INFINITY);
+        if (basis.status !== 'ready') return basis;
+        return { status: 'ready', value: { tooLong: basis.value.tooLong } };
+      } },
+    });
+    // D-1 / X-15: the cold start never waits on a round. The Host's stage driver runs it detached, one advance at a
+    // time per QueryRun (the drain set waits for it at close); a settled round wakes the lifecycle pass, and a
+    // backoff is answered once to the next drive, which the lifecycle loop's own backoff retries.
+    const coldStartRounds = new Map<string, { kind: 'running' } | { kind: 'backoff'; reason: string }>();
+    const coldStartStages: ColdStartStagePort = {
+      async advance(ctx, input) {
+        const bound = options.coldStartStages;
+        if (bound === undefined) return COLD_START_STAGE_NOT_BOUND;
+        const key = canonicalKey(input.expectedRunRef);
+        const entry = coldStartRounds.get(key);
+        if (entry?.kind === 'running') return COLD_START_ROUND_DETACHED;
+        if (entry?.kind === 'backoff') {
+          coldStartRounds.delete(key);
+          return { status: 'blocked', retry: 'backoff', reason: entry.reason };
+        }
+        coldStartRounds.set(key, { kind: 'running' });
+        const scope: WorkspaceScope = { projectId: input.queryJobRef.projectId, workspaceId: input.queryJobRef.workspaceId };
+        void trackDetached((async () => {
+          let outcome: QueryStageOutcome;
+          try {
+            outcome = await bound.advance(ctx, input);
+          } catch (error) {
+            coldStartRounds.set(key, { kind: 'backoff', reason: messageOf(error) });
+            bound.wake(scope);
+            return;
+          }
+          if (outcome.status === 'blocked' && outcome.retry === 'backoff') {
+            coldStartRounds.set(key, { kind: 'backoff', reason: outcome.reason });
+            bound.wake(scope);
+          } else if (outcome.status === 'blocked') {
+            coldStartRounds.delete(key);                  // waits for the next change; nothing to wake
+          } else {
+            coldStartRounds.delete(key);
+            bound.wake(scope);
+          }
+        })());
+        return COLD_START_ROUND_DETACHED;
+      },
+    };
+    const coldStartReads = { ordered: backend.records, records: backend.records, facts: rawRequestFacts,
+      answers: queryJobs, bindings: bindingReads };
+    // 7D2 C1: the one cold-start driver; `roleLineOperations.continueOperation` drives it from the Host's pass.
+    const coldStart = createColdStartService({
+      records: backend.records, sessions: sessionDirectory, queries: queryJobs,
+      requests: { readFacts: (ctx, input) => rawRequestFacts.readFacts(ctx, input) },
+      route: {
+        // L-10: the route question is one system round on the initial request (one receipt per operationId); the
+        // round's own commit wakes the request queue.
+        async askRoute(ctx, input) {
+          const appended = await rawRequestRounds.append(ctx, { command: { kind: 'cold_start_route',
+            operationId: input.operationId, requestRoot: input.requestRoot, text: input.text } });
+          if (appended.status === 'rejected') return appended;
+          if (appended.status === 'appended' && appended.receipt.kind === 'submit') {
+            return { status: 'ready', value: { round: { ...appended.receipt.round } } };
+          }
+          return rejected('unavailable', 'the cold-start route question was not appended');
+        },
+      },
+      initial: { readCandidate: (ctx, input) => readColdStartCandidate(coldStartReads, ctx, input) },
+      adoption: { readAdopted: (ctx, input) => readColdStartAdoption(coldStartReads, ctx, input) },
+      registration: projects, profiles: rawSecretaryProfiles, proposals: architectureProposals, messages: mailbox,
+      lines: roleLineOperations,
+      standby: { reuseStandby: (ctx, input) => coldStartChooser.reuseStandby({ ctx }, input) },
+      regionLines: {
+        readOpenRegionLines: (ctx, input) => readOpenResponsibilityLines(backend.records, ctx, input, sessionDutyResolver),
+      },
+      stages: coldStartStages, now,
+    });
     // O5b (v4 :6442–:6445): the ONE `role-lines/read` owner over the same line list, effective-scope read (BK-15's
     // instance, :4000) and allocation read the pick and the allocation route use; never a second array.
     const roleLineRead = createRoleLineRead({

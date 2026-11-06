@@ -70,6 +70,8 @@ const CALL_KIND_SECTIONS: Readonly<Record<ContextCallKindV1, ReadonlySet<Context
   planning: new Set(['role', 'goal', 'task', 'footprint']),
   intervention_planning: new Set(['role', 'goal', 'task']),
   attention: new Set(['role', 'goal', 'task', 'footprint', 'notes', 'reminders', 'inputs', 'continuation']),
+  // A role_exploration round has no Goal and no task card: only the role and the project footprint.
+  role_exploration: new Set(['role', 'footprint']),
 };
 
 function invalid(reason: string): CoreRejection {

@@ -110,6 +110,8 @@ export type RequestInternalCommandV1 =
   | { kind: 'end_unbound'; operationId: string; round: QueryJobRef }
   | { kind: 'intervention_new_goal'; operationId: string; sourceMessageRef: SessionMessageRef;
       goalRef: GoalRef; text: string }
+  /** L-10: the cold start's route question, one more round on the initial request for its current owner. */
+  | { kind: 'cold_start_route'; operationId: string; requestRoot: QueryJobRef; text: string }
   | InternalRouteCommandV1
   | (RequestUnderstandingCommandV1 & { kind: 'request_understanding' });
 
@@ -1028,6 +1030,22 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       return withTailRetries(() => prepareSubmit(ctx, principal, {
         kind: 'submit', commandId: command.operationId, goalId: null, text: command.text,
         continues: null, recipient: null,
+      }, { assignTo: null, createdLine: false, capacityBlocked: true }, identityKey, fingerprint),
+      (prepared) => commitPrepared(identityKey, fingerprint, prepared));
+    }
+    if (command.kind === 'cold_start_route') {
+      const identityKey = commandIdentity({ operation: 'request.cold_start_route',
+        scope: { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? null },
+        principal: principalIdentity(principal), commandId: command.operationId });
+      const fingerprint = sha256Hex(canonicalJson({ kind: command.kind, operationId: command.operationId,
+        requestRoot: command.requestRoot, text: command.text } as unknown as JsonValue));
+      const replayed = await replayInternal(identityKey, fingerprint, null);
+      if (replayed !== null) return replayed;
+      // The round continues the request: it follows the request's current owner, or waits for a secretary when the
+      // owner is gone (`capacityBlocked`, as the intervention's new-goal round).
+      return withTailRetries(() => prepareSubmit(ctx, principal, {
+        kind: 'submit', commandId: command.operationId, goalId: null, text: command.text,
+        continues: command.requestRoot, recipient: null,
       }, { assignTo: null, createdLine: false, capacityBlocked: true }, identityKey, fingerprint),
       (prepared) => commitPrepared(identityKey, fingerprint, prepared));
     }

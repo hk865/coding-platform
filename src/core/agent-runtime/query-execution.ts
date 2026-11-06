@@ -37,6 +37,7 @@ import { createMailboxInputSupply } from './execution-inputs.js';
 import {
   createSessionMailboxTools, SECRETARY_QUERY_MAILBOX_TOOL_NAMES, type SessionMailboxToolsHandle,
 } from './communication-tools.js';
+import { ARCHITECTURE_TOOL_NAMES, createArchitectureTools, type ArchitectureToolsHandle } from './architecture-tools.js';
 import { createMemberTools, CREATE_MEMBER_TOOL_NAME, type CreateMemberToolsHandle } from './member-tools.js';
 import { createReadRequestTools, READ_REQUESTS_TOOL_NAMES, type ReadRequestToolsHandle } from './request-read-tools.js';
 import { projectQueryConfiguration } from './query-preparation.js';
@@ -283,6 +284,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       // reads its Job intent, a request round reads its own claimed attempt.
       const binding = queryExecutionBindingOf(record.job, record.run);
       const intentExecution = record.job.job.intent.execution;
+      const explorationRound = intentExecution.kind === 'role_exploration';
       if (signal.aborted) return rejected('cancelled', 'the Query start was cancelled before the Host configuration read');
 
       if (deps.host.resolveQueryConfiguration === undefined) {
@@ -299,7 +301,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       if (configured.status !== 'ready') return mapRead(configured);
       const projected = projectQueryConfiguration({
         host: configured.value, requested: binding.runtimeBudget, roleResolution: state.roleResolution,
-        secretaryRound: manifest.request !== null,
+        secretaryRound: manifest.request !== null, explorationRound,
       });
       if (projected.configurationRevision !== manifest.hostConfigurationRevision
         || !sameRef(projected.permissions, manifest.permissions)
@@ -353,6 +355,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
             effectiveGoalId: manifest.goal === null ? null : manifest.goal.ref.goalId,
             planRef: manifest.focusPlan === null ? null : manifest.focusPlan.ref,
             hostSystemPlanningSource,
+            roleExploration: explorationRound,
           })
         : secretaryNoteAdmission({
             requestRoot: manifest.request.requestRoot,
@@ -370,6 +373,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       // any entry write. A difference is `forbidden`.
       const startToolNames = finalToolNamesOf({
         callKind: 'query',
+        explorationRound,
         noteAdmission,
         selected: manifest.permissions.tools,
         readOnly: true,
@@ -385,6 +389,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           graph: deps.graphContext !== undefined && deps.taskInputs !== undefined,
           notes: noteAdmission.class !== 'none', unknownCallReviews: false, commandRerunRequests: false,
           linkCheck: deps.notes?.check !== undefined,
+          architectureProposals: deps.architectureProposals !== undefined,
         },
         // The read-only command is a Host-gated capability: the start reads the
         // real whole-workspace read policy again (the same fact preparation
@@ -421,6 +426,9 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         : SECRETARY_QUERY_MAILBOX_TOOL_NAMES.filter(name => frozenToolNames.includes(name));
       const memberNames = frozenToolNames.includes(CREATE_MEMBER_TOOL_NAME) ? [CREATE_MEMBER_TOOL_NAME] : [];
       const readRequestNames: readonly string[] = READ_REQUESTS_TOOL_NAMES.filter(name => frozenToolNames.includes(name));
+      // Only a role_exploration round may carry the structural proposal tool, bound to the same owner as Work's.
+      const architectureNames: readonly string[] = explorationRound
+        ? ARCHITECTURE_TOOL_NAMES.filter(name => frozenToolNames.includes(name)) : [];
       const mailboxPort = deps.messages;
       const memberPort = deps.memberCreation;
       // The round's accepted submit callIds are a closure value: a QueryRun's
@@ -437,7 +445,8 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       }
       let coordinationTools: ToolGroup | null = null;
       if (grantedGraphNames.length > 0 || grantedLinkCheckNames.length > 0 || noteAdmission.class !== 'none' || submitNames.length > 0
-        || secretaryMailboxNames.length > 0 || memberNames.length > 0 || readRequestNames.length > 0) {
+        || secretaryMailboxNames.length > 0 || memberNames.length > 0 || readRequestNames.length > 0
+        || architectureNames.length > 0) {
         // The original query_run tool context (spec §4.1: tool inputs never
         // obtain the Host context/reader). The narrow history proxy separately
         // uses the ORIGINAL initiator's same-scope Host context for RT8 only.
@@ -448,6 +457,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         // request (never a model argument). Every other Query keeps today's
         // goal requirement and its principal shape.
         const secretary = manifest.contextAssembly.callKind === 'secretary';
+        const exploration = manifest.contextAssembly.callKind === 'role_exploration';
         const frozenGoalId = manifest.request === null ? null : manifest.request.effectiveGoalId;
         const initiator = structuredClone(facts.value.initiator);
         const toolContext: CoreCallContext = {
@@ -478,8 +488,9 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
               ? null
               : { aggregateType: 'Goal', projectId: queryRunRef.projectId, goalId: frozenGoalId };
           } else {
-            if (facts.value.goal === null) return rejected('invalid', 'no goal');
-            goalRef = facts.value.goal.ref;
+            // The one other no-goal round is a role_exploration Query: its graph tools read the project.
+            if (facts.value.goal === null && !exploration) return rejected('invalid', 'no goal');
+            goalRef = facts.value.goal === null ? null : facts.value.goal.ref;
           }
           graphTools = createQueryGraphToolGroup({
             names: grantedGraphNames,
@@ -489,9 +500,10 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
             inputs: graphDeps.inputs,
             history: deps.graphHistory,
             hostContext: trustedHostContext,
-            // The notes read port is bound only for a secretary round; a plain
-            // Query keeps the memory branch's explicit refusal.
-            ...(secretary && deps.notes?.memory !== undefined ? { notes: deps.notes.memory } : {}),
+            // The notes read port is bound only for a secretary round and an
+            // exploration round; a plain Query keeps the memory branch's
+            // explicit refusal.
+            ...((secretary || exploration) && deps.notes?.memory !== undefined ? { notes: deps.notes.memory } : {}),
             texts: toolTexts,
           });
         }
@@ -511,6 +523,18 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
             texts: toolTexts,
             kinds: noteAdmission.kinds,
             withdraw: noteAdmission.withdraw,
+          });
+        }
+        let architectureTools: ArchitectureToolsHandle | null = null;
+        if (architectureNames.length > 0) {
+          if (deps.architectureProposals === undefined) {
+            return rejected('unsupported', 'the exploration Query selected propose_architecture_revision but no proposal owner is bound');
+          }
+          architectureTools = createArchitectureTools({
+            propose: deps.architectureProposals,
+            context: toolContext,
+            requestIdForCall: (call: Readonly<ToolCall>): string => queryToolRequestIdForCall(queryRunRef, call),
+            texts: toolTexts,
           });
         }
         let mailboxTools: SessionMailboxToolsHandle | null = null;
@@ -578,8 +602,8 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           });
         }
         const names = [
-          ...grantedGraphNames, ...grantedLinkCheckNames, ...noteNames, ...secretaryMailboxNames, ...memberNames, ...readRequestNames,
-          ...submitNames,
+          ...grantedGraphNames, ...grantedLinkCheckNames, ...noteNames, ...architectureNames, ...secretaryMailboxNames,
+          ...memberNames, ...readRequestNames, ...submitNames,
         ];
         if (names.length > 0) {
           coordinationTools = {
@@ -588,6 +612,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
               ...(graphTools?.create(workspace) ?? []),
               ...(linkCheckTools?.create(workspace) ?? []),
               ...(noteTools?.create(workspace) ?? []).filter(definition => noteNames.includes(definition.name)),
+              ...(architectureTools?.create(workspace) ?? []),
               ...(mailboxTools?.create(workspace) ?? []).filter(definition => secretaryMailboxNames.includes(definition.name)),
               ...(memberTools?.create(workspace) ?? []).filter(definition => memberNames.includes(definition.name)),
               ...(readRequestTools?.create(workspace) ?? []).filter(definition => readRequestNames.includes(definition.name)),

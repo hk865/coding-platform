@@ -4,8 +4,9 @@
  * A plain Query and a copy have no request root, so they get no note tool and no
  * note declaration. A secretary round admits the six general kinds plus
  * `understanding`, `link` and `flow`: `review` is not a write kind at all, and
- * `repair` is refused for a secretary's write. A planning round admits only the
- * six general kinds.
+ * `repair` is refused for a secretary's write. A planning round admits the six
+ * general kinds; a `role_exploration` round is a planning-class round with no
+ * Goal that also admits `link` and `flow`.
  *
  * This file holds the value's one declaration; consumers import it through
  * `model/secretary-note-contracts.ts`, which re-exports it.
@@ -24,7 +25,7 @@ export type QueryNoteAdmissionV1 =
       /** The still-valid request_understanding grant set (goal ids), read from the round's frozen batch. */
       grantedGoalIds: readonly string[] }
   | { class: 'planning';
-      /** A planning round writes only the six general kinds; no understanding/repair. */
+      /** The six general kinds (a role_exploration round also `link`, `flow`); no understanding/repair. */
       kinds: readonly NoteKind[];
       withdraw: true;
       /** A planning round carries no request_understanding grants. */
@@ -57,14 +58,23 @@ export function secretaryNoteAdmission(input: {
  * planning round; a `text`-shaped overlap note is stored as `null` in the
  * manifest and enters only when its frozen source message is a Host system
  * `action_request` and the round has an effective Goal. `planRef` is part of the
- * frozen input but does not decide the class.
+ * frozen input but does not decide the class. A `role_exploration` round (the
+ * cold start's exploration, no Goal) is planning-class too and also admits
+ * `link` and `flow`.
  */
 export function planningNoteAdmission(input: {
   answerShape: QueryAnswerShapeV1 | null;
   effectiveGoalId: string | null;
   planRef: PlanRevisionRef | null;
   hostSystemPlanningSource: boolean;
+  /** A role_exploration round is a planning-class note round with no Goal; absent reads false. */
+  roleExploration?: boolean;
 }): QueryNoteAdmissionV1 {
+  if (input.roleExploration === true) {
+    // The exploration branch only ADDS the semantic `link`/`flow` kinds to the six general kinds; the ordinary
+    // planning branch below keeps `NOTE_GENERAL_KINDS` unchanged, and both go through the same S4 scope admission.
+    return { class: 'planning', kinds: [...NOTE_GENERAL_KINDS, 'link', 'flow'], withdraw: true, grantedGoalIds: [] };
+  }
   const planningShape = input.answerShape === 'plan_round' || input.answerShape === 'plan_review';
   const hostTextRound = input.answerShape === null && input.hostSystemPlanningSource
     && input.effectiveGoalId !== null;

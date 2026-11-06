@@ -370,7 +370,7 @@ export function queryPlanSummary(plan: PlanRevisionSnapshot, texts: PromptTextsV
 }
 
 /** §4.3/G5.1: the planning footprint rows are the top-level module cards. */
-export function topLevelModuleCards(architecture: GraphContextFactsV1['architecture']): OptionalRow[] {
+export function topLevelModuleCards(architecture: Pick<NonNullable<GraphContextFactsV1['architecture']>, 'modules' | 'containment'> | null): OptionalRow[] {
   if (architecture === null) return [];
   const children = new Set((architecture.containment?.parentOf ?? []).map((entry) => entry.child.moduleId));
   return architecture.modules

@@ -20,7 +20,7 @@ import { canonicalJson, sha256Hex, type JsonValue } from './fingerprint.js';
 export type { PlatformDutyV1 };
 
 export type ContextCallKindV1 = 'work' | 'continuation' | 'handoff' | 'review'
-  | 'secretary' | 'copy' | 'planning' | 'attention' | 'intervention_planning';
+  | 'secretary' | 'copy' | 'planning' | 'attention' | 'intervention_planning' | 'role_exploration';
 
 /**
  * The ONE runtime list of call kinds (90-8). The same list was hand-copied in
@@ -29,7 +29,8 @@ export type ContextCallKindV1 = 'work' | 'continuation' | 'handoff' | 'review'
  * module keeps its own section table (semantics, not the list).
  */
 export const CONTEXT_CALL_KINDS: readonly ContextCallKindV1[] = [
-  'work', 'continuation', 'handoff', 'review', 'secretary', 'copy', 'planning', 'attention', 'intervention_planning',
+  'work', 'continuation', 'handoff', 'review', 'secretary', 'copy', 'planning', 'attention',
+  'intervention_planning', 'role_exploration',
 ];
 export type ContextSectionNameV1 = 'role' | 'goal' | 'task' | 'footprint'
   | 'notes' | 'reminders' | 'inputs' | 'continuation' | 'unknown_call_review';

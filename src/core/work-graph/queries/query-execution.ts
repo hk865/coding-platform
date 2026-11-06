@@ -135,12 +135,14 @@ function expectedQueryDuty(manifest: PreparedQueryManifestV1): PlatformDutyV1 | 
  * and as `copy` when it is not (context-assembler.ts:
  * `planning = facts !== null && kind === 'initial_coordination'`), so both are
  * legal for that kind; a semantic Query (and every other Query kind) is a
- * `copy` assembly. Every other callKind remains forbidden.
+ * `copy` assembly. Every other callKind remains forbidden. A role_exploration
+ * Query binds only its own call kind.
  */
 function expectedQueryCallKinds(job: QueryJobSnapshot): readonly ContextCallKindV1[] {
   if (isRequestRound(job)) return ['secretary'];
   // The planning Query's binding call kind is its own; the start check reads the same table.
   if (job.job.intent.execution.kind === 'intervention_planning') return ['intervention_planning'];
+  if (job.job.intent.execution.kind === 'role_exploration') return ['role_exploration'];
   return job.job.intent.execution.kind === 'initial_coordination' ? ['planning', 'copy'] : ['copy'];
 }
 /**
@@ -436,8 +438,12 @@ async function readPreparationFacts(deps: QueryExecutionDependencies, ctx: CoreC
   if (goalId === null) {
     // A no-goal request round is a secretary round: its workspace comes from
     // the call scope, never from a Goal. Every other Query still requires its
-    // Goal, so a plain Query with no Goal is refused before any use.
-    if (!isRequestRound(record.value.job)) return rejectedWithNonEmptyCurrent('invalid', 'no goal');
+    // Goal, so a plain Query with no Goal is refused before any use. The one
+    // other no-goal kind is a role_exploration Query, which reads the project.
+    if (!isRequestRound(record.value.job)
+      && record.value.job.job.intent.execution.kind !== 'role_exploration') {
+      return rejectedWithNonEmptyCurrent('invalid', 'no goal');
+    }
     const workspaceKey = canonicalRefKey({
       aggregateType: 'Workspace', projectId: queryRunRef.projectId, workspaceId: queryRunRef.workspaceId,
     });
@@ -1546,9 +1552,10 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     const factsGoal = facts.value.goal;
     // A request round may have no Goal yet; its manifest then carries no goal
     // and only the Workspace is compared. Every other Query still requires the
-    // Goal, and a mismatched nullness is an inconsistent manifest.
+    // Goal, and a mismatched nullness is an inconsistent manifest. A
+    // role_exploration Query has no Goal and is compared the same way.
     if (manifestGoal === null || factsGoal === null) {
-      if (!isRequestRound(job) || manifestGoal !== factsGoal) {
+      if ((!isRequestRound(job) && job.job.intent.execution.kind !== 'role_exploration') || manifestGoal !== factsGoal) {
         return rejectedWithNonEmptyCurrent('invalid', 'no goal');
       }
       if (manifest.workspace.revision !== facts.value.workspace.revision

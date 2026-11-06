@@ -1340,58 +1340,10 @@
       "note": "read by the scribe reminder's broken-link count (8E-2 S), slice 8 of the orchestration design; delete this entry when S lands"
     },
     {
-      "file": "src/core/work-graph/architecture/proposal-service.ts",
-      "name": "ArchitectureProposalService.freezeArchitectureProposalBatch",
-      "reason": "kept-for",
-      "note": "waits for 7D2 C1 batch freeze (the 7D2-only batch-freeze method on the proposal service), slice 7 of the orchestration design"
-    },
-    {
-      "file": "src/core/work-graph/architecture/proposal-service.ts",
-      "name": "FreezePlan",
-      "reason": "kept-for",
-      "note": "waits for 7D2 C1 batch freeze (the batch-freeze plan type), slice 7 of the orchestration design"
-    },
-    {
-      "file": "src/core/work-graph/architecture/proposal-service.ts",
-      "name": "freezePlan",
-      "reason": "kept-for",
-      "note": "waits for 7D2 C1 batch freeze (the batch-freeze planner), slice 7 of the orchestration design"
-    },
-    {
-      "file": "src/core/work-graph/architecture/proposal-service.ts",
-      "name": "freezeProposals",
-      "reason": "kept-for",
-      "note": "waits for 7D2 C1 batch freeze (the batch-freeze reader/committer), slice 7 of the orchestration design"
-    },
-    {
-      "file": "src/core/work-graph/architecture/proposal-service.ts",
-      "name": "freezeArchitectureProposalBatch",
-      "reason": "kept-for",
-      "note": "waits for 7D2 C1 batch freeze (the public batch-freeze entry), slice 7 of the orchestration design"
-    },
-    {
       "file": "src/core/work-graph/state/role-line-action.ts",
       "name": "ROLE_LINE_STEP_KEYS",
       "reason": "kept-for",
       "note": "kept for slice 7 of the orchestration design: O1b's `startLinesInitialRecord` (TS-10 item 3, moved verbatim) spells the three keys literally and only tests read this list; the first package that reads the keys in production deletes this entry"
-    },
-    {
-      "file": "src/core/work-graph/sessions/role-line-operations.ts",
-      "name": "RoleLineRegionOpenInputV1",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: the input of `openRegionLine`, which 7D2 C1's `openPendingRegions` binds by symbol (v4 :8049-:8058, :9066); C1 deletes this entry when it calls it"
-    },
-    {
-      "file": "src/core/work-graph/sessions/role-line-operations.ts",
-      "name": "RoleLineRegionOpenResultV1",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: the answer of `openRegionLine`, read by 7D2 C1's `openPendingRegions` (v4 :8049-:8058); C1 deletes this entry when it calls it"
-    },
-    {
-      "file": "src/core/work-graph/sessions/role-line-operations.ts",
-      "name": "RoleLineOperationsPort.openRegionLine",
-      "reason": "kept-for",
-      "note": "kept for slice 7 of the orchestration design: 7D2 C1's cold start opens one adviser line per top-level module through it (v4 :7935, :9066); C1 deletes this entry when it calls it"
     }
   ]
 }

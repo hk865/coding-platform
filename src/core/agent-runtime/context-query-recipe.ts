@@ -10,7 +10,7 @@ import { rejected } from '../../contracts/core/rejections.js';
 import { isRequestRound } from '../../contracts/query-job.js';
 import type { QueryPreparationFacts } from '../work-graph/queries/contracts.js';
 import type { SecretaryPreparationFactsV1 } from '../work-graph/model/secretary-contracts.js';
-import type { GraphContextFactsV1 } from '../work-graph/model/graph-context-contracts.js';
+import type { GraphContextFactsV1, GraphReadPageV1, NodeCardV1 } from '../work-graph/model/graph-context-contracts.js';
 import {
   annotations, effectiveDuty, goalPayload, notImplementedExtensions, noteSourcesOf,
   queryFocusLines, queryPlanSummary, rolePayload, topLevelModuleCards,
@@ -27,6 +27,36 @@ import type {
   AssembledContextV1, ContextAssembler, ContextAssemblerDependencies, ContextQueryHistoryInputV1,
 } from './context-types.js';
 import type { ResolvedRuntimeConfiguration } from './execution-contracts.js';
+
+/**
+ * A role_exploration round has no Goal, so it reads the project branch of the same graph port
+ * (`lookGraph` with `goalRef: null`): every module card from the root path, page by page. A
+ * catalog with no module answers `not_found`, which is no cards.
+ */
+async function readProjectModuleCards(
+  deps: ContextAssemblerDependencies, ctx: CoreCallContext,
+): Promise<ReadResult<NodeCardV1[]>> {
+  if (deps.graphContext === undefined) {
+    return rejected('unavailable', 'the exploration Query has no graph context reader');
+  }
+  const cards: NodeCardV1[] = [];
+  let afterCursor: string | null = null;
+  do {
+    let read: ReadResult<GraphReadPageV1<NodeCardV1>>;
+    try {
+      read = await deps.graphContext.lookGraph(ctx, {
+        goalRef: null, target: { kind: 'path', path: '.' }, relation: 'card', page: { afterCursor, limit: 100 },
+      });
+    } catch (error) {
+      return rejected('unavailable', `the exploration project graph read failed: ${messageOf(error)}`);
+    }
+    if (read.status === 'not_found') return { status: 'ready', value: cards };
+    if (read.status !== 'ready') return read;
+    cards.push(...read.value.items);
+    afterCursor = read.value.nextCursor;
+  } while (afterCursor !== null);
+  return { status: 'ready', value: cards };
+}
 
 export async function assembleQueryContext(
   deps: ContextAssemblerDependencies, ctx: CoreCallContext,
@@ -72,15 +102,19 @@ export async function assembleQueryContext(
   const roleSection = rolePayload(input.role, permissions, duty, residentBudgetBytes, texts);
   const goal = input.facts.goal;
   const workspace = input.facts.workspace;
+  const queryKind = input.facts.record?.job?.job?.intent?.execution?.kind;
+  const exploration = queryKind === 'role_exploration';
   // The plain Query recipe reads the graph context of its Goal. A request round
-  // without a goal takes the secretary recipe before this point.
-  if (goal === null) return rejected('invalid', 'no goal');
+  // without a goal takes the secretary recipe before this point; a role_exploration
+  // round has no Goal and reads the project instead.
+  if (goal === null && !exploration) return rejected('invalid', 'no goal');
 
   // §4.2/G5.1: a Query reads the same graph context when the port is wired; a
   // graph rejection passes through unchanged and is never a legacy fallback.
-  // Query has no inputs section, so `includeInputs` stays false.
+  // Query has no inputs section, so `includeInputs` stays false. The exploration
+  // round takes no Goal read (that request needs a GoalRef).
   let facts: GraphContextFactsV1 | null = null;
-  if (deps.graphContext !== undefined) {
+  if (deps.graphContext !== undefined && goal !== null && !exploration) {
     const focusTaskIds = (input.facts.record?.job?.job?.intent?.focusTaskRefs ?? []).map((ref) => ref.taskId);
     let read: ReadResult<GraphContextFactsV1>;
     try {
@@ -96,22 +130,40 @@ export async function assembleQueryContext(
     if (read.status !== 'ready') return read;
     facts = read.value;
   }
-  const queryKind = input.facts.record?.job?.job?.intent?.execution?.kind;
+  // The exploration footprint is the project's top-level modules, rebuilt from the module cards and their child
+  // modules. The cards' memory indexes go only into the binding's extension annotations: no notes section is
+  // rendered, so no note source is recorded.
+  let projectCards: NodeCardV1[] | null = null;
+  if (exploration) {
+    const read = await readProjectModuleCards(deps, ctx);
+    if (read.status !== 'ready') return read;
+    projectCards = read.value;
+  }
+  const projectArchitecture = projectCards === null ? null : {
+    modules: projectCards.flatMap((card) => card.module === null ? [] : [card.module]),
+    containment: { parentOf: projectCards.flatMap((card) => {
+      const parent = card.module;
+      return parent === null ? [] : card.children.flatMap((child) =>
+        child.kind === 'module' ? [{ parent: parent.ref, child: child.ref }] : []);
+    }) },
+  };
   const intervention = queryKind === 'intervention_planning';
   const planning = intervention || (facts !== null && queryKind === 'initial_coordination');
-  const extensions = facts?.extensions ?? notImplementedExtensions();
-  const goalText = goalPayload(facts?.goal ?? goal, workspace.revision, extensions, texts);
+  const extensions = facts?.extensions ?? projectCards?.[0]?.indexes ?? notImplementedExtensions();
+  const goalText = goal === null ? null
+    : goalPayload(facts?.goal ?? goal, workspace.revision, extensions, texts);
   const consultationText = input.consultationFacts === undefined ? null
     : consultationFactsLines(input.consultationFacts.facts, input.consultationFacts.resolved, texts);
   // The intervention template has its own `message` slot, so the question leaves the goal section
   // (otherwise it would render twice); every other kind keeps today's goal+questionHeading+question text.
-  const goalSection = intervention ? goalText
+  const goalSection = goalText === null ? null : intervention ? goalText
     : `${goalText}\n${consultationText === null ? '' : consultationText + '\n'}${S('context.questionHeading')}\n${input.question}`;
-  const taskSection = intervention ? null
+  const taskSection = exploration ? null : intervention ? null
     : planning && input.facts.focusPlan !== null
       ? queryPlanSummary(input.facts.focusPlan, texts)
       : planning ? null : queryFocusLines(input.facts, facts?.graph ?? null, texts);
-  const footprintRows = planning && !intervention ? topLevelModuleCards(facts?.architecture ?? null) : [];
+  const footprintRows = (planning || exploration) && !intervention
+    ? topLevelModuleCards(exploration ? projectArchitecture : facts?.architecture ?? null) : [];
   // Ruling 14: the ONE pure mode rule. A Query with a formal basis follows it
   // and reads no boundary (C7); without one it follows the stored cursor.
   const history = input.history;
@@ -120,16 +172,22 @@ export async function assembleQueryContext(
     sessionBasis: history.sessionBasis,
     hasCompletedCursor: history.sessionBasis === undefined && history.hasCompletedCursor,
   });
-  const callKind = intervention ? 'intervention_planning' as const : planning ? 'planning' as const : 'copy' as const;
-  const templateId = intervention ? 'intervention-planning' as const
-    : planning ? 'query-planning-input' as const : 'query-copy-input' as const;
+  const callKind = exploration ? 'role_exploration' as const
+    : intervention ? 'intervention_planning' as const : planning ? 'planning' as const : 'copy' as const;
+  // The exploration round has no new template: it uses the planning input template, and its question rides
+  // the role section because the round has no goal section.
+  const templateId = exploration ? 'query-planning-input' as const
+    : intervention ? 'intervention-planning' as const
+      : planning ? 'query-planning-input' as const : 'query-copy-input' as const;
   const sectionOrder = sectionOrderFor(callKind, templateId, texts);
   const rendered = renderQueryContext({
     templateId,
     prelude: queryContextPrelude(texts),
-    required: { role: roleSection, goal: goalSection, task: taskSection },
+    required: { role: exploration ? roleSection + '\n' + input.question : roleSection,
+      goal: goalSection, task: taskSection },
     ...(intervention ? { plan: input.facts.focusPlan === null ? null : queryPlanSummary(input.facts.focusPlan, texts), message: input.question } : {}),
-    optional: planning && !intervention ? { footprint: footprintRows } : {},
+    optional: exploration ? { footprint: footprintRows }
+      : planning && !intervention ? { footprint: footprintRows } : {},
     residentBudgetBytes,
     sectionOrder,
     toolNames: input.toolNames,
@@ -148,7 +206,8 @@ export async function assembleQueryContext(
     sections: rendered.sections,
     // §11.4/L20 (C-04): a Query renders understanding + norms only, so
     // `keptGeneral` is empty and no general note source is recorded.
-    sources: sortedSources([...(facts?.sources ?? []), ...noteSourcesOf(extensions.notes, [], texts)]),
+    sources: sortedSources([...(facts?.sources ?? []),
+      ...(exploration ? [] : noteSourcesOf(extensions.notes, [], texts))]),
     inputSelections: [],
     extensions: annotations(extensions),
   };

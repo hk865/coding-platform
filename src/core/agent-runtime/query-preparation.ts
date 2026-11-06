@@ -46,7 +46,7 @@ import { READ_REQUESTS_TOOL_NAME } from './request-read-tools.js';
 import { WHITEBOARD_TOOL_NAMES } from './whiteboard-tools.js';
 import type { ContextAssembler } from './context-assembler.js';
 import { createContextAssembler } from './context-assembler.js';
-import { queryPreparedSectionOrder } from './context-rendering.js';
+import { queryPreparedSectionOrder, sectionOrderFor } from './context-rendering.js';
 import type { SecretaryHandoffPromptFactsV1 } from './context-secretary-recipe.js';
 import type { ConsultationResolvedFactV1 } from './consultation-facts-text.js';
 import { finalToolNamesOf, BUILTIN_TOOL_NAMES, RUNTIME_TOOL_NAMES } from './tool-group-assembly.js';
@@ -87,9 +87,12 @@ const FORBIDDEN_QUERY_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
 const SECRETARY_QUERY_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
   ...SECRETARY_QUERY_MAILBOX_TOOL_NAMES, CREATE_MEMBER_TOOL_NAME, READ_REQUESTS_TOOL_NAME,
 ]);
-function forbiddenQueryToolNames(secretaryRound: boolean): ReadonlySet<string> {
-  if (!secretaryRound) return FORBIDDEN_QUERY_TOOL_NAMES;
-  return new Set([...FORBIDDEN_QUERY_TOOL_NAMES].filter(name => !SECRETARY_QUERY_TOOL_NAMES.has(name)));
+/** A cold-start exploration round may also select `read_requests` (the request it explores from). */
+const EXPLORATION_QUERY_TOOL_NAMES: ReadonlySet<string> = new Set<string>([READ_REQUESTS_TOOL_NAME]);
+function forbiddenQueryToolNames(secretaryRound: boolean, explorationRound: boolean): ReadonlySet<string> {
+  if (!secretaryRound && !explorationRound) return FORBIDDEN_QUERY_TOOL_NAMES;
+  const allowed = secretaryRound ? SECRETARY_QUERY_TOOL_NAMES : EXPLORATION_QUERY_TOOL_NAMES;
+  return new Set([...FORBIDDEN_QUERY_TOOL_NAMES].filter(name => !allowed.has(name)));
 }
 
 function ownContext(ctx: CoreCallContext): CoreCallContext | null {
@@ -197,13 +200,15 @@ export function projectQueryConfiguration(input: {
   roleResolution: Exclude<RoleSpecResolutionV1, { status: 'inadmissible' }>;
   /** `isRequestRound(job)`: the one frozen class fact. */
   secretaryRound: boolean;
+  /** The Job's execution kind is `role_exploration`; absent reads false. */
+  explorationRound?: boolean;
 }): {
   configurationRevision: string;
   permissions: { tools: string[]; writeScope: [] };
   hostTemplate: PreparedQueryManifestV1['hostTemplate'];
   budget: RuntimeBudget;
 } {
-  const forbidden = forbiddenQueryToolNames(input.secretaryRound);
+  const forbidden = forbiddenQueryToolNames(input.secretaryRound, input.explorationRound === true);
   const ceiling = input.roleResolution.status === 'resolved'
     ? new Set(input.roleResolution.spec.permissions.tools)
     : null;
@@ -267,9 +272,10 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
       if (facts.status !== 'ready') return mapRead(facts);
       const { record, goal, workspace, focusPlan } = facts.value;
       const requestRound = isRequestRound(record.job);
-      // A no-goal request round prepares from the secretary facts; every other
-      // Query still requires its Goal, so a null goal is refused before any use.
-      if (goal === null && !requestRound) return rejected('invalid', 'no goal');
+      const explorationRound = record.job.job.intent.execution.kind === 'role_exploration';
+      // A no-goal request round prepares from the secretary facts and a cold-start exploration round has no Goal;
+      // every other Query still requires its Goal, so a null goal is refused before any use.
+      if (goal === null && !requestRound && !explorationRound) return rejected('invalid', 'no goal');
       const executionState = record.run.run.executionState;
       if (executionState === undefined) return rejected('incomplete', 'the QueryRun has no persisted execution state');
       if (executionState.phase !== 'claimed' && executionState.phase !== 'prepared') {
@@ -319,6 +325,7 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         requested: binding.runtimeBudget,
         roleResolution: executionState.roleResolution,
         secretaryRound: requestRound,
+        explorationRound,
       });
       const hostTemplate = executionState.roleResolution.status === 'resolved' ? null : projected.hostTemplate;
       if (executionState.roleResolution.status === 'absent') {
@@ -434,6 +441,7 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
             effectiveGoalId: goal === null ? null : goal.ref.goalId,
             planRef: focusPlan === null ? null : focusPlan.ref,
             hostSystemPlanningSource,
+            roleExploration: explorationRound,
           })
         : secretaryNoteAdmission({
             requestRoot: secretaryFacts.request.requestRoot,
@@ -442,6 +450,7 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
           });
       const finalNames = finalToolNamesOf({
         callKind: 'query',
+        explorationRound,
         noteAdmission,
         // Preparation freezes only the names this Runtime knows; the start
         // checks the real selection and rejects an unknown name first.
@@ -462,6 +471,7 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
           mailbox: true, decisionMessages: true, applicationReceipt: true,
           sessions: true, plans: true, graph: true, notes: true,
           unknownCallReviews: true, commandRerunRequests: true,
+          architectureProposals: explorationRound,
         },
         readonlyCommand: {
           requested: readonlyRequested,
@@ -743,7 +753,10 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
       const promptParts: PromptPartsV1 = {
         selection: { modelId: selection.modelId, provider: boundProvider, model: boundModel,
           packId: pack.manifest.packId, reasoningReplay: selection.reasoningReplay },
-        sectionOrder: queryPreparedSectionOrder(tracked.texts),
+        sectionOrder: explorationRound
+          ? { ...queryPreparedSectionOrder(tracked.texts),
+            role_exploration: sectionOrderFor('role_exploration', 'query-planning-input', tracked.texts) }
+          : queryPreparedSectionOrder(tracked.texts),
         templates: templatesToFreeze(usedTemplates).map(id => promptTemplatePart(pack, id)),
         strings: pack.strings,
         base: { templateId: 'base', version: promptTemplateVersion(pack, 'base'), text: mergedBase },

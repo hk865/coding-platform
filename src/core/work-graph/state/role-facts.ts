@@ -4,6 +4,7 @@
  * outside `state/` assigns a protected field of `SessionRoleFactsV1`.
  */
 import type { OperationRef } from '../../../contracts/core/operations.js';
+import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { CreatorRefV1, SessionOpenedByV1, SessionRoleFactsV1 } from '../../../contracts/role-lines.js';
 
@@ -16,7 +17,7 @@ export function sessionRoleFactsRecord(input: {
 }): SessionRoleFactsV1 {
   const session = input.session.ref;
   return {
-    ref: { aggregateType: 'SessionRoleFacts', projectId: session.projectId, sessionId: session.sessionId },
+    ref: sessionRoleFactsRef(session),
     revision: 1,
     sessionRef: { projectId: session.projectId, sessionId: session.sessionId },
     name: input.name,
@@ -24,4 +25,9 @@ export function sessionRoleFactsRecord(input: {
     openedBy: input.decided.openedBy,
     originOperation: input.originOperation,
   };
+}
+
+/** The one ref of a Session's stored role facts: the record's key is this ref's canonical JSON. */
+export function sessionRoleFactsRef(session: SessionRef): SessionRoleFactsV1['ref'] {
+  return { aggregateType: 'SessionRoleFacts', projectId: session.projectId, sessionId: session.sessionId };
 }

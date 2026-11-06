@@ -22,14 +22,14 @@ import { checkShape } from '../../../contracts/validation/data-format.js';
 import type { EncodedRecord } from '../../record-store/ports.js';
 import type { DecisionCardSourcePort, DecisionCardV1 } from '../model/decision-contracts.js';
 import { createCollectionCardSource } from './decision-read-model.js';
-import { lookupAll } from '../persistence/lookup-all.js';
 import { storeFailureToRejection } from '../persistence/read-result-failures.js';
 import { parseDecisionSourceKey, nestedSourceObject } from '../tasks/decision-source-identity.js';
 import {
-  ArchitectureProposalBatchRefShape, S8C_PROPOSAL_BATCH_BY_PROJECT_LOOKUP,
+  ArchitectureProposalBatchRefShape,
   decodeArchitectureProposalBatchRecord, decodeArchitectureProposalRecord,
   type ArchitectureProposalRecordV1,
 } from '../architecture/proposal-record-codecs.js';
+import { readProjectBatches } from '../architecture/proposal-service.js';
 import { readCurrentCatalogWindow, type CurrentCatalogWindow } from '../architecture/catalog-service.js';
 import { STRUCTURAL_PROPOSAL_OPTIONS } from '../communication/decision-source-facts.js';
 
@@ -213,26 +213,6 @@ Promise<ReadResult<ArchitectureProposalBatchV1 | null>> {
   return { status: 'ready', value: batch };
 }
 
-async function readProjectBatches(deps: StructuralProposalSourceDependencies, projectId: string):
-Promise<ReadResult<ArchitectureProposalBatchV1[]>> {
-  let batch;
-  try {
-    batch = await lookupAll(deps.records, S8C_PROPOSAL_BATCH_BY_PROJECT_LOOKUP, [projectId]);
-  } catch (error) {
-    return storeFailureToRejection(error);
-  }
-  const batches: ArchitectureProposalBatchV1[] = [];
-  for (const encoded of batch.items) {
-    const decoded = decodeArchitectureProposalBatchRecord(encoded);
-    if (decoded.status !== 'decoded') {
-      return { status: 'rejected', code: 'unavailable', reason: `a proposal batch is damaged: ${decoded.reason}` };
-    }
-    const { revision: _revision, ...value } = decoded.value;
-    batches.push(value);
-  }
-  return { status: 'ready', value: batches };
-}
-
 async function readFacts(deps: StructuralProposalSourceDependencies, batch: ArchitectureProposalBatchV1,
   activeRevision: number): Promise<ReadResult<StructuralProposalCardFactsV1>> {
   const members = await readMembers(deps, batch);
@@ -250,7 +230,7 @@ export function createStructuralProposalSource(
       const projectId = workspace.projectId;
       // §3.7 item 3: a project with no frozen batch has no card, so a missing
       // current catalog must not make the whole queue unreadable.
-      const batches = await readProjectBatches(deps, projectId);
+      const batches = await readProjectBatches(deps.records, projectId);
       if (batches.status !== 'ready') return batches;
       if (batches.value.length === 0) return { status: 'ready', value: [] };
       const window = await readCurrentCatalogWindow(deps.records, projectId);

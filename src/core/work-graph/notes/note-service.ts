@@ -31,7 +31,8 @@ import { anchorFormatProblem, anchorKeyOf, conclusionProblem, isSafeRelativePath
 import { checkLinkDraft, endpointIdentityOf, evidenceRoleProblem, literalKeyProblem } from './link-evidence.js';
 import { languageOfPath } from '../../workspace/architecture-language-provider.js';
 import type { ScribeScope, ScribeScopeCall } from './scribe-scope.js';
-import { newScribeScopeCall, sourceIsAuthorOf } from './scribe-scope.js';
+import { moduleOfAnchor, newScribeScopeCall, sourceIsAuthorOf } from './scribe-scope.js';
+import type { EffectiveScopeReadPort } from '../state/role-scope.js';
 import { stageContinuityOf } from './note-continuity.js';
 import { anchorSlots } from './note-related-scope.js';
 import { readGoalPlanWindow, type GoalPlanWindow } from '../tasks/plan-readers.js';
@@ -112,6 +113,8 @@ export type NoteServiceDependencies = {
   workspaceMaxFileBytes: number;
   architecture?: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'>;
   scopes?: ScribeScope;
+  /** 120-13 丙: the line's effective scope, read for a region adviser's write; absent, no region check. */
+  regionScopes?: Pick<EffectiveScopeReadPort, 'readEffectiveScope'>;
   now(): string;
   eventId(): string;
   newId(): string;
@@ -172,8 +175,8 @@ Promise<{ ok: true; value: Caller } | { ok: false; rejection: Rejected }> {
         resolved.reason) };
     }
     const { kind, round } = resolved.value;
-    // N11: a planning round writes only the six general note kinds; the two
-    // request-understanding kinds are refused before the scope is entered.
+    // N11: a planning round (an exploration round too) is refused only the
+    // understanding and repair kinds, before the scope is entered.
     if (kind === 'planning'
       && (input.note.kind === 'understanding' || input.note.kind === 'repair')) {
       return { ok: false, rejection: forbidden('a planning round cannot write an understanding or repair note') };
@@ -1698,6 +1701,39 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
         if (!stepEnds.has(endpointIdentityOf(extra))) {
           return rejectedInput(input, 'invalid', 'flow_anchor_mismatch');
         }
+      }
+    }
+    // 120-13 丙: a region adviser (a Work Run or an exploration round alike) writes a note only with at least one
+    // anchor of its own: a module of its effective region (deeper regions of other advisers already taken out), or
+    // one of its goals. A project scope (the opening adviser) and a goal-only scope are not limited here; reads,
+    // the two check tiers and a region that changes after the write are not judged.
+    if (caller.duty === 'adviser' && caller.sessionRef !== null && deps.regionScopes !== undefined) {
+      const scope = await deps.regionScopes.readEffectiveScope(ctx, { session: caller.sessionRef });
+      if (scope.status !== 'ready') {
+        return rejectedInput(input, 'unavailable', scope.status === 'rejected' ? scope.reason
+          : 'the effective scope cannot be read');
+      }
+      const ownModules = new Set(scope.value.flatMap((entry) => entry.kind === 'region'
+        ? entry.modules.map((module) => module.moduleId) : []));
+      const regionLimited = scope.value.some((entry) => entry.kind === 'region')
+        && !scope.value.some((entry) => entry.kind === 'project');
+      if (regionLimited) {
+        const ownGoals = scope.value.flatMap((entry) => entry.kind === 'goal' ? [entry.goalRef.goalId] : []);
+        const window = await catalogWindowOf(call, ctx);
+        if (window.status === 'rejected') return rejectedInput(input, 'unavailable', window.reason);
+        const catalog = window.status === 'ready' ? window.catalog.catalog : null;
+        // Evidence and basis files are not anchors: a link is judged by its checked ends, a flow by its steps' anchors.
+        const judged: NoteAnchorV1[] = draft.kind === 'link' ? linkAnchors
+          : draft.kind === 'flow' ? draft.flow.steps.flatMap((step) => {
+            const head = relations.get(step.link)!;
+            return [head.anchor, ...head.extraAnchors];
+          })
+          : resolved.anchors;
+        const own = judged.some((anchor) => {
+          const moduleId = moduleOfAnchor(catalog, anchor);
+          return (moduleId !== null && ownModules.has(moduleId)) || ('goalId' in anchor && ownGoals.includes(anchor.goalId));
+        });
+        if (!own) return rejectedInput(input, 'forbidden', 'anchor_out_of_region');
       }
     }
     for (const noteId of [...draft.replaces, ...draft.contradicts, ...draft.coexistWith]) {

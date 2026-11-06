@@ -60,12 +60,13 @@ export const MESSAGE_RELEASE_QUEUE = 'message_release';
  * The lifecycle queue's own wake types: SessionActivity/CurrentPointer guard the coverage commit; NoteHead/
  * NoteVersion feed the brief; PlanProposal/Goal end a request's processing, which the routing set and the
  * handoff archive condition read; GoalPhase (a formal completion) and ProjectRoleLimits (a raised cap) wake the
- * Goal adviser queue drain. Static, not conditional: a pass without a pending operation costs one
+ * Goal adviser queue drain; an ArchitectureProposal write, freeze or approval wakes the cold start's
+ * `coarse_split` and `proposals`. Static, not conditional: a pass without a pending operation costs one
  * indexed read.
  */
 export const LIFECYCLE_WAKE_AGGREGATE_TYPES: readonly string[] = Object.freeze([
   'QueryJob', 'QueryRun', 'Session', 'CoreOperation', 'SessionActivity', 'PlanProposal', 'Goal',
-  'NoteHead', 'NoteVersion', 'CurrentPointer', 'GoalPhase', 'ProjectRoleLimits',
+  'NoteHead', 'NoteVersion', 'CurrentPointer', 'GoalPhase', 'ProjectRoleLimits', 'ArchitectureProposal',
 ]);
 
 /**

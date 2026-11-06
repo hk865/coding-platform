@@ -71,6 +71,8 @@ const CALL_KIND_SECTIONS: Readonly<Partial<Record<ContextCallKindV1, readonly Co
   intervention_planning: ['role', 'goal', 'task'],
   // The secretary's three task slots project onto the one `task` section.
   secretary: ['role', 'goal', 'task', 'notes', 'reminders'],
+  // A role_exploration round has no Goal and no task card; its question rides the role section.
+  role_exploration: ['role', 'footprint'],
 };
 
 /**
@@ -98,7 +100,8 @@ export function templateSectionOrder(texts: PromptTextsV1, templateId: ContextTe
  * sections. A person's pack that declares another legal order is followed.
  */
 export function sectionOrderFor(
-  callKind: 'work' | 'continuation' | 'handoff' | 'planning' | 'copy' | 'secretary' | 'intervention_planning',
+  callKind: 'work' | 'continuation' | 'handoff' | 'planning' | 'copy' | 'secretary' | 'intervention_planning'
+    | 'role_exploration',
   templateId: ContextTemplateId,
   texts: PromptTextsV1 = DEFAULT_TEXTS,
 ): ContextSectionNameV1[] {

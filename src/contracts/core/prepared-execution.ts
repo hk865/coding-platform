@@ -295,7 +295,7 @@ export type PreparedQueryManifestV1 = {
   role: Exclude<RoleSpecResolutionV1, { status: 'inadmissible' }>;
   hostTemplate: { templateId: string; revision: string; digest: string } | null;
   hostConfigurationRevision: string;
-  /** Null only with `contextAssembly.callKind: 'secretary'` (a request without a goal). */
+  /** Null only with `contextAssembly.callKind: 'secretary'` (a request without a goal) or `'role_exploration'`. */
   goal: { ref: GoalSnapshot['ref']; revision: number } | null;
   /** The frozen request facts; null for every non-request Query. */
   request: SecretaryRequestManifestV1 | null;
