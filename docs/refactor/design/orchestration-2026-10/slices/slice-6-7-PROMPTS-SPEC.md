@@ -140,7 +140,7 @@
 **P2 按模型选包和思考策略。**【lead 定；选包按你 10-21 定的】
 - “按模型的策略表”就是设置里的模型列表，每个模型项加两项：
   - `promptPack`（缺省 `platform`）；
-  - `reasoningReplay`（`current_run` 或 `none`，缺省 `current_run`，P4）。
+  - `reasoningReplay`（`current_run`、`none` 或 `all`，缺省 `all`，P4；见决定 121-50）。
   不另建一张按型号前缀匹配的表。上下文窗口照今天（`host.ts:260` 不动）。
 - Host 配置里直接给的模型绑定（不经设置的）也带这两项，缺省值相同。
 - **准备时**按这次执行的模型绑定取一次，把模型项 id、provider、model、包 id、`reasoningReplay` 记进冻结集（P5）。
@@ -184,7 +184,7 @@
 - **删了什么要报给平台**：Kernel 补丁加一个回调，在调模型之前按 `requestId` 报这次删的各类个数、输入计数和预算；恢复执行也一样。平台把它并进这次请求的记录（P5）。
 
 **P4 思考。**【lead 定】
-- `current_run`：拼请求前去掉以前执行（历史）里 assistant 消息的思考，这次执行里的保留。`none`：全部去掉。
+- `all`（缺省）：都带回，包括以前执行（历史）里的思考；平台不向 Kernel 传 `reasoningReplay`，Kernel 默认不过滤。`current_run`：拼请求前去掉以前执行（历史）里 assistant 消息的思考，这次执行里的保留。`none`：全部去掉。见决定 121-50。
 - 去掉思考以后既没有正文、也没有工具调用的 assistant 消息，从发出的那份里拿掉（F11 那种合法记录不能变成空消息）。
 - 只改发出的那份，Kernel 存的原记录不动，原历史照旧能按需读。
 - 在 runtime-runner 里做（已在补丁清单），提供方适配器不改。OpenAI 适配器本来就不带思考，选什么效果都一样。
@@ -382,11 +382,11 @@ type PromptPackManifestV1 = {
   tools: Record<string, string>;         // 工具名 → tools/<name>.json
 };
 // 设置里的模型项加两项（Host 配置直接给的模型绑定同样）
-type SettingsModel = { /* 今天的字段 */ promptPack?: string; reasoningReplay?: 'current_run' | 'none' };
+type SettingsModel = { /* 今天的字段 */ promptPack?: string; reasoningReplay?: 'current_run' | 'none' | 'all' };
 // prepared manifest 里
 type PromptSetV1 = {
   schemaVersion: 1; modelId: string; provider: string; model: string; packId: string;
-  reasoningReplay: 'current_run' | 'none';
+  reasoningReplay: 'current_run' | 'none' | 'all';
   sectionOrder: Partial<Record<ContextCallKindV1, ContextSectionNameV1[]>>;
   templates: { id: string; version: number; packId: string; digest: string; ref: ArtifactRef }[];
   strings: { digest: string; ref: ArtifactRef };                                      // 按继承合并后的整张表
@@ -406,7 +406,7 @@ type ModelRequestPromptFactsV1 = {
 };
 // Kernel 补丁的新输入（runCodingAgent 和恢复入口都有）
 //   baseSystemPrompt: { templateId: string; version: number; text: string };
-//   skills: SkillContext[]; reasoningReplay: 'current_run' | 'none';
+//   skills: SkillContext[]; reasoningReplay: 'current_run' | 'none' | 'all';
 //   previewRequest(request: ModelRequest): Promise<{ outgoing: ModelRequest; inputTokens: number;
 //                                                    outputReserve: number; fits: boolean }>;
 //   onContextSelected(report: { requestId: string; inputTokens: number; budget: number; removed: … }): void;
@@ -452,7 +452,7 @@ type ModelRequestPromptFactsV1 = {
     - 校验不过，回 `invalid` 并列出问题、文件不变；
     - 在平台包上存，回 `forbidden`；
     - 存了以后下一次准备用新版，存之前已准备的执行仍用旧版（这一项用 PE2＋PE3：经编辑路由存，再走真实的准备和开始，看假模型收到的内容）。
-  - PC-05 选包（PE2、PE3）：设置里两个模型各选一个包，各自的执行用各自的包；不选时用 `platform` 和 `current_run`。
+  - PC-05 选包（PE2、PE3）：设置里两个模型各选一个包，各自的执行用各自的包；不选时用 `platform` 和 `all`。
   - PC-23 提示词目录不进工作区（PE2）：
     - 设置目录配在一个工作区里面，Host 启动报配置错误；
     - 打开的新工作区正是提示词目录的上级，回 `invalid`；
@@ -484,7 +484,7 @@ type ModelRequestPromptFactsV1 = {
     - 预估是异步的分词器时照样工作。
   - PC-16 hook 复核（PE6）：hook 改了输出上限，复核用新的预留。
   - PC-17 思考（PE5、PE7）：
-    - `current_run` 时以前执行的 assistant 消息不带思考、这次的带；`none` 时都不带；
+    - `all` 时以前执行和这次的 assistant 思考都带（不向 Kernel 传 `reasoningReplay`）；`current_run` 时以前执行的不带、这次的带；`none` 时都不带；见决定 121-50。
     - 只有思考的历史消息从发出的那份里拿掉；
     - Kernel 里存的原记录不变。
 - **提醒、工具和段序**
@@ -550,7 +550,7 @@ D3 阶段这些测试一律不改（搬文字不改字节）；下面都是 PC �
   - PC-2：包的编辑、选包、段序、提醒、工具声明。
 - DSH 施工、Codex 审、lead 验收，合入前跑全量和规模批（决定 86-6）。
 - 这些都不等于真实模型验收。PC 和 6A 合入后，用真实模型重跑时核三件事：
-  - DeepSeek 在 `current_run` 下工具循环正常；
+  - DeepSeek 在 `all` 下工具循环正常（默认，见决定 121-50）；
   - 按请求记录里的用量看缓存命中；
   - 秘书接完整历史时，多久到换手阈值。
 

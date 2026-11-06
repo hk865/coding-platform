@@ -30,6 +30,7 @@
   关闭时要等它们做完；内部原始 owner 不外露。
 - 带命令身份的写入有回执：重放返回原回执，不做与当前时间有关的检查；提交抛错后先按身份查回执，再决定结果。
 - `vendor/coding-agent/dist` 是冻结的运行依赖，不手改；Kernel 补丁只经 `scripts/build-kernel-patch.mjs`。
+- 不新增直接读 Kernel 会话记录格式（`session.created`、`turn.started`、`agent.event` 等）的地方；要用就复用现有的读点（`kernel-turn-facts.ts`、`session-operations.ts`、`observation-recovery.ts` 等）。MVP 之后要迁到 DSH，这些读点是迁移的主要成本（决定 121-51）。
 
 ## 4. 写法
 
