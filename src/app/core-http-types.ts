@@ -62,6 +62,7 @@ import type { PlanProposalRef, PlanTaskPort } from '../core/work-graph/model/pla
 import type {
   DecisionMessagePort,
   DecisionReadPort,
+  GoalListReadPort,
   GoalSettingsPort,
   RequestCandidatePort,
   WorkspaceDecisionSettingsPort,
@@ -298,6 +299,7 @@ export type CoreRouteSuffix =
   | 'goals/settings/set'
   | 'goals/reorder'
   | 'goals/conflicts'
+  | 'goals/list'
   | 'plans/request-candidate'
   | 'plans/abandon'
   | 'decisions/queue'
@@ -530,6 +532,8 @@ export type GoalsReorderBody = GraphWriteBody<GoalSettingsPort['reorderGoals']>;
 export type GoalsReorderResponse = RouteResponse<GoalSettingsPort['reorderGoals']>;
 export type GoalsConflictsBody = PlainBody<DecisionReadPort['queryGoalConflicts']>;
 export type GoalsConflictsResponse = RouteResponse<DecisionReadPort['queryGoalConflicts']>;
+export type GoalsListBody = PlainBody<GoalListReadPort['readGoalList']>;
+export type GoalsListResponse = RouteResponse<GoalListReadPort['readGoalList']>;
 export type GoalsDispatchBasisBody = PlainBody<DispatchBasisReadPort['readDispatchBasis']>;
 export type GoalsDispatchBasisResponse = RouteResponse<DispatchBasisReadPort['readDispatchBasis']>;
 /** The person's release and the Goal's gate page; each body is N's exact port input. */

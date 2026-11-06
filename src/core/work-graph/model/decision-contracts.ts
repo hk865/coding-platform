@@ -316,6 +316,27 @@ export interface GoalSettingsPort {
   }>): Promise<WriteResult<{ goals: GoalSnapshot[] }>>;
 }
 
+// Four values of `GoalDisplayPhase`; `null` means the row needs `goals/display`.
+export type GoalListPhaseV1 = 'PLANNING' | 'PAUSED' | 'CANCELLED' | 'COMPLETED';
+
+/** One `goals/list` row: the narrow settings/display facts, not a second Goal snapshot. */
+export type GoalListRowV1 = {
+  ref: GoalRef; revision: number; since: CommitCursor;
+  /** "目标 n" in the project's creation order; null when that read is incomplete. */
+  ordinal: number | null;
+  objective: string; desiredState: GoalSnapshot['desiredState']; desiredStateRevision: number;
+  order: number; autonomy: GoalSettingsV1['autonomy']; waitForGoalRef: GoalRef | null;
+  activePlanRevision: PlanRevisionRef | null;
+  display: { phase: GoalListPhaseV1 | null };
+};
+
+/** The whole workspace's Goals in one stable window; no page cursor. */
+export type GoalListReadV1 = { goals: GoalListRowV1[]; sourceCursor: CommitCursor | null };
+
+export interface GoalListReadPort {
+  readGoalList(ctx: CoreCallContext, input: { workspace: WorkspaceScope }): Promise<ReadResult<GoalListReadV1>>;
+}
+
 export interface DecisionMessagePort {
   sendUserMessage(ctx: CoreCallContext, request: GraphWrite<{
     goalRef: GoalRef; intent: 'notify' | 'decision_request'; text: string;

@@ -85,6 +85,7 @@ import { createHandoffApprovalApplicationAdapter } from '../business/workflow/se
 import {
   createGoalConflictAssembler, listWorkspaceGoals, readGoalFootprint, readGoalTerminalState,
 } from '../core/work-graph/views/goal-conflicts.js';
+import { createGoalListReadModel } from '../core/work-graph/views/goal-list-read-model.js';
 import { createSecretaryPreparationFacts } from '../core/work-graph/views/secretary-preparation-facts.js';
 import { createAutomaticReworkNoticeSource } from '../core/work-graph/views/automatic-rework-notices.js';
 import { createContinuationNoticeSource } from '../core/work-graph/views/continuation-notices.js';
@@ -92,7 +93,7 @@ import { createNoteReviewNoticeSource } from '../core/work-graph/views/note-revi
 import { createNoticePositionComparator } from '../core/work-graph/views/notice-position.js';
 import { createNoticeDisplayToken } from '../core/work-graph/views/notice-display-token.js';
 import type {
-  DecisionMessagePort, DecisionNoticeSourcePort, DecisionReadPort, GoalSettingsPort, NoteDecisionSourcePort,
+  DecisionMessagePort, DecisionNoticeSourcePort, DecisionReadPort, GoalListReadPort, GoalSettingsPort, NoteDecisionSourcePort,
   RequestCandidatePort, WorkspaceDecisionSettingsPort,
   MessageReleaseCandidatesPort, MessageReleasePort, MessageReleasedActionsPort,
 } from '../core/work-graph/model/decision-contracts.js';
@@ -4382,6 +4383,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       allocate: (ctx, input) => trackedCall(() => goalAdviserQueue.allocate(ctx, input), unavailable),
       drain: (ctx, input) => trackedCall(() => goalAdviserQueue.drain(ctx, input), unavailable),
     };
+    // The whole-workspace Goal list reads the same records; no second index or reader.
+    const rawGoalList = createGoalListReadModel({ records: backend.records });
     const platform = {
       goals, plans, claims, executions, sessions, materials, messages, messageRelease, controls, evidence, checks, roles, architecture, projects, completionPolicies,
       messageExpiry: messageExpiryPort,
@@ -4544,6 +4547,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       /** L8: the Host's detached-work seam for the one auto-capture driver. The
        * promise joins the close drain; the Host installs it before close. */
       trackDetached,
+      goalList: { readGoalList: (...args: Parameters<GoalListReadPort['readGoalList']>) =>
+        trackedCall(() => rawGoalList.readGoalList(...args), unavailable) } as GoalListReadPort,
       close(): Promise<void> {
         isClosing = true;
         closing ??= (async () => {
@@ -4582,6 +4587,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       'goalAdviserQueue', 'runtimeInFlight', 'roleLineRead'] as const) {
       Object.defineProperty(platform, key, { enumerable: false });
     }
+    // The Goal list read is an internal owner like the decision ports.
+    Object.defineProperty(platform, 'goalList', { enumerable: false });
     return platform;
   } catch (error) {
     // Close every owned resource while preserving the initialization error.

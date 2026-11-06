@@ -73,6 +73,7 @@ import type { GraphWrite } from '../core/work-graph/model/task-contracts.js';
 import type {
   DecisionMessagePort,
   DecisionReadPort,
+  GoalListReadPort,
   GoalSettingsPort,
   RequestCandidatePort,
   WorkspaceDecisionSettingsPort,
@@ -271,6 +272,7 @@ export type CoreRouteBindings = {
   setGoalSettings: GoalSettingsPort['setGoalSettings'];
   reorderGoals: GoalSettingsPort['reorderGoals'];
   queryGoalConflicts: DecisionReadPort['queryGoalConflicts'];
+  readGoalList: GoalListReadPort['readGoalList'];
   /** §3.6 item 5: the Goal card's three-version read, published on the Goal service. */
   readDispatchBasis: DispatchBasisReadPort['readDispatchBasis'];
   /** The person's gate release and the Goal's gate page, N's one owner port. */
@@ -436,6 +438,8 @@ export type CoreRoutePlatform = {
    * cursor, the user-facing decision messages, the read-only decision queue and
    * the per-request candidate head. The composition root always publishes them. */
   goalSettings: Omit<GoalSettingsPort, 'resolveGoalConflict'>;
+  /** The whole-workspace Goal list read; optional so a narrow platform answers `unsupported`. */
+  goalList?: GoalListReadPort;
   workspaceDecisionSettings: WorkspaceDecisionSettingsPort;
   decisionMessages: DecisionMessagePort;
   decisions: DecisionReadPort;
@@ -679,6 +683,7 @@ export const CORE_ROUTE_SPECS: Record<
   'goals/settings/set': { kind: 'graph_write', binding: 'setGoalSettings', owner: 'goalSettings.setGoalSettings' },
   'goals/reorder': { kind: 'graph_write', binding: 'reorderGoals', owner: 'goalSettings.reorderGoals' },
   'goals/conflicts': { kind: 'plain', binding: 'queryGoalConflicts', owner: 'decisions.queryGoalConflicts' },
+  'goals/list': { kind: 'plain', binding: 'readGoalList', owner: 'goalList.readGoalList' },
   // §3.6 item 5: the three-version read a Goal card carries, as its own Goal read row (not a messages entry).
   'goals/dispatch-basis': { kind: 'plain', binding: 'readDispatchBasis', owner: 'goals.readDispatchBasis' },
   // The two Goal-card commands, the copy preview and the initialization adoption.
@@ -1205,6 +1210,8 @@ export function createPlatformCoreRouteBindings(
       : platform.goalSettings.reorderGoals.bind(platform.goalSettings),
     queryGoalConflicts: platform.decisions === undefined ? unsupported('the platform does not publish decisions.queryGoalConflicts')
       : platform.decisions.queryGoalConflicts.bind(platform.decisions),
+    readGoalList: platform.goalList === undefined ? unsupported('the platform does not publish goalList.readGoalList')
+      : platform.goalList.readGoalList.bind(platform.goalList),
     readDispatchBasis: platform.goals.readDispatchBasis.bind(platform.goals),
     // Only the person releases; a system or member actor is `forbidden` before the owner runs. The Gate
     // page is the ordinary read. A narrow platform without the owner answers explicit `unsupported`.
@@ -1669,6 +1676,7 @@ export async function dispatchCoreRoute(
       case 'goals/settings/set': return bindings.setGoalSettings(ctx, graphWrite.request as never);
       case 'goals/reorder': return bindings.reorderGoals(ctx, graphWrite.request as never);
       case 'goals/conflicts': return bindings.queryGoalConflicts(ctx, plain.input as never);
+      case 'goals/list': return bindings.readGoalList(ctx, plain.input as never);
       case 'goals/dispatch-basis': return bindings.readDispatchBasis(ctx, plain.input as never);
       case 'plans/request-candidate': return bindings.readRequestCandidate(ctx, plain.input as never);
       case 'plans/abandon': return bindings.abandonPlanProposal(ctx, graphWrite.request as never);
