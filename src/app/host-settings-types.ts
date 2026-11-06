@@ -8,6 +8,7 @@ import type { PlanLoopLimitsV1 } from '../contracts/plan-loop-limits.js';
 import type {
   PromptPackProblemV1, TemplateSlotTableV1, ToolTextV1,
 } from '../contracts/prompts/prompt-pack.js';
+import type { ReasoningReplayV1 } from '../contracts/prompts/prompt-set.js';
 import type {
   ChecksConfirmationPort, ChecksEntryPort, SavedChecksReadPort, SettingsSerialGatePort,
 } from '../core/work-graph/model/initialization-adoption-contracts.js';
@@ -25,8 +26,8 @@ export type SettingsModel = {
   reasoningEffort?: 'low' | 'high' | 'max';
   /** The person's prompt pack for this model; absent means `platform`. */
   promptPack?: string;
-  /** The reasoning-replay policy; absent means `current_run`. */
-  reasoningReplay?: 'current_run' | 'none';
+  /** The reasoning-replay policy; absent means `all`. */
+  reasoningReplay?: ReasoningReplayV1;
 };
 export type SettingsWorkspace = {
   scope: CoreScope; name: string; root: string; modelId: string | null;
@@ -116,8 +117,8 @@ export type SaveSettingsModel = {
   reasoningEffort?: 'low' | 'high' | 'max';
   /** Omitted clears the stored pack (it resolves to `platform`). */
   promptPack?: string;
-  /** Omitted clears the stored policy (it resolves to `current_run`). */
-  reasoningReplay?: 'current_run' | 'none';
+  /** Omitted clears the stored policy (it resolves to `all`). */
+  reasoningReplay?: ReasoningReplayV1;
 };
 export type OpenSettingsWorkspace = {
   path: string; name?: string; modelId?: string;

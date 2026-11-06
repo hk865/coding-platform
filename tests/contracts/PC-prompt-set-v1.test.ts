@@ -99,7 +99,7 @@ function rejectionTable(): Array<{ name: string; value: unknown }> {
     // Top level: every field missing and wrong-typed, plus an unknown key.
     const TOP_LEVEL_WRONG: Array<[string, unknown]> = [
         ['schemaVersion', 2], ['modelId', 42], ['provider', 42], ['model', 42], ['packId', 42],
-        ['reasoningReplay', 'all'], ['sectionOrder', []], ['templates', {}], ['strings', []],
+        ['reasoningReplay', 'off'], ['sectionOrder', []], ['templates', {}], ['strings', []],
         ['base', []], ['skills', {}], ['toolNames', {}], ['tools', {}],
     ];
     for (const [field, wrong] of TOP_LEVEL_WRONG) {
@@ -266,8 +266,12 @@ describe('PromptSetV1 decode (ruling 13)', () => {
         expect(decodePromptSetV1({ ...VALID, schemaVersion: 2 })).toBeNull();
     });
 
+    it.each(['current_run', 'none', 'all'] as const)('accepts the reasoningReplay value %s', (reasoningReplay) => {
+        expect(decodePromptSetV1({ ...VALID, reasoningReplay })).not.toBeNull();
+    });
+
     it('rejects an unknown reasoningReplay value', () => {
-        expect(decodePromptSetV1({ ...VALID, reasoningReplay: 'all' })).toBeNull();
+        expect(decodePromptSetV1({ ...VALID, reasoningReplay: 'off' })).toBeNull();
     });
 
     it('rejects a Skill entry missing any required field', () => {
@@ -331,9 +335,9 @@ describe('promptSelectionOf (ruling 13)', () => {
         })).toEqual({ modelId: 'settings-item-1', promptPack: 'mine', reasoningReplay: 'none' });
     });
 
-    it('falls back to the revision, the platform pack and the current run', () => {
+    it('falls back to the revision, the platform pack and all replay', () => {
         expect(promptSelectionOf({ configuration: { revision: 'revision-fallback' } }))
-            .toEqual({ modelId: 'revision-fallback', promptPack: 'platform', reasoningReplay: 'current_run' });
+            .toEqual({ modelId: 'revision-fallback', promptPack: 'platform', reasoningReplay: 'all' });
     });
 });
 

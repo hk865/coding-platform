@@ -8,11 +8,12 @@ import * as kernel from '../../vendor/coding-agent/dist/public-api.js';
 import { ModelBudget, DEFAULT_RUNTIME_BUDGET } from '../../src/core/agent-runtime/model-budget.js';
 import { runObservedModel, type ObservedModelRunOptions } from '../../src/core/agent-runtime/observed-model-run.js';
 import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
+import type { ReasoningReplayV1 } from '../../src/contracts/prompts/prompt-set.js';
 import { frozenPromptInputs } from './PC-frozen-prompt.js';
 
 const SESSION_ID = 'r4c-continuous-session';
 
-async function fixture() {
+async function openContinuityFixture(overrides: { reasoningReplay?: ReasoningReplayV1; thinking?: boolean } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'next-r4c-continuity-'));
   const databasePath = join(root, 'kernel.sqlite');
   await writeFile(join(root, 'note.txt'), 'A real workspace file.\n');
@@ -22,12 +23,17 @@ async function fixture() {
       options.signal.throwIfAborted();
       requests.push(structuredClone(request));
       const base = { schemaVersion: 1 as const, requestId: request.requestId };
-      yield { ...base, sequence: 1, type: 'text_delta', delta: `answer ${requests.length}` };
-      yield { ...base, sequence: 2, type: 'completed', reason: 'final_answer' };
+      let sequence = 1;
+      if (overrides.thinking === true)
+        yield { ...base, sequence: sequence++, type: 'reasoning_delta', delta: `think ${requests.length}` };
+      yield { ...base, sequence: sequence++, type: 'text_delta', delta: `answer ${requests.length}` };
+      yield { ...base, sequence, type: 'completed', reason: 'final_answer' };
     },
   };
   const budget = { ...DEFAULT_RUNTIME_BUDGET, perResponseTokens: 128 };
-  const prompt = await frozenPromptInputs();
+  const prompt = await frozenPromptInputs({
+    ...(overrides.reasoningReplay === undefined ? {} : { reasoningReplay: overrides.reasoningReplay }),
+  });
   const bodies = new RawArtifactBodyStore();
   const promptFacts = new Map();
   const options = (input: string): ObservedModelRunOptions => ({
@@ -69,7 +75,7 @@ function completedBoundary(records: readonly kernel.SessionRecord[]): number {
 
 describe('R4c Runtime forwards frozen public Kernel Session options', () => {
   it('continues from a fixed completed boundary and replays one execution identity without another model call or Turn', async () => {
-    const fx = await fixture();
+    const fx = await openContinuityFixture();
     try {
       const first = await runObservedModel(fx.options('first question'));
       expect(first.state.status).toBe('completed');
@@ -99,8 +105,22 @@ describe('R4c Runtime forwards frozen public Kernel Session options', () => {
     } finally { await fx.close(); }
   });
 
+  it('all replays every earlier thinking before a later run in the same Session', async () => {
+    const fx = await openContinuityFixture({ reasoningReplay: 'all', thinking: true });
+    try {
+      await runObservedModel(fx.options('first question'));
+      const boundary = completedBoundary(await fx.records());
+      await runObservedModel({ ...fx.options('second question'),
+        sessionContext: { version: 1, mode: 'session_history', throughPosition: boundary },
+        executionIdentity: { runId: 'rrall-run', turnId: 'rrall-turn' } });
+      expect(fx.requests).toHaveLength(2);
+      const assistants = fx.requests[1]!.messages.filter(message => message.role === 'assistant');
+      expect(assistants.map(message => message.reasoningContent)).toEqual(['think 1']);
+    } finally { await fx.close(); }
+  });
+
   it('uses the selected earlier boundary and keeps omitted options in current-turn mode', async () => {
-    const fx = await fixture();
+    const fx = await openContinuityFixture();
     try {
       await runObservedModel(fx.options('first question'));
       const firstBoundary = completedBoundary(await fx.records());
@@ -118,7 +138,7 @@ describe('R4c Runtime forwards frozen public Kernel Session options', () => {
   });
 
   it('lets Kernel reject missing and unfinished history boundaries before a new model call', async () => {
-    const fx = await fixture();
+    const fx = await openContinuityFixture();
     try {
       const first = await runObservedModel(fx.options('first question'));
       expect(first.state.status).toBe('completed');
@@ -138,7 +158,7 @@ describe('R4c Runtime forwards frozen public Kernel Session options', () => {
   });
 
   it('snapshots caller-owned option objects before any asynchronous work', async () => {
-    const fx = await fixture();
+    const fx = await openContinuityFixture();
     try {
       await runObservedModel(fx.options('first question'));
       const boundary = completedBoundary(await fx.records());

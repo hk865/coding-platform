@@ -274,7 +274,8 @@ export async function createKernelHarness(
         providerRegistry, secretSource: { get: () => 'synthetic-pc-key' },
         additionalTools: () => tools, inputSupply: inputs.supply,
         baseSystemPrompt: options.baseSystemPrompt ?? { templateId: 'pc-base', version: 1, text: 'BASE' },
-        skills: options.skills ?? [], reasoningReplay: options.reasoningReplay ?? 'current_run',
+        skills: options.skills ?? [],
+        ...(options.reasoningReplay === undefined ? {} : { reasoningReplay: options.reasoningReplay }),
         ...(throughPosition === undefined ? {} : {
           sessionContext: { version: 1, mode: 'session_history', throughPosition },
         }),
@@ -439,11 +440,16 @@ export function contextInput(input: Pick<ContextBuilderInput, 'transcript'> & Pa
 
 export function selectionOptions(
   idsAndBuilder: Omit<SelectionOptions, 'previewRequest' | 'reasoningReplay'>,
-  previewRequest: PreviewFn, reasoningReplay: NonNullable<RunAppInput['reasoningReplay']> = 'current_run',
+  previewRequest: PreviewFn, reasoningReplay?: RunAppInput['reasoningReplay'],
 ): SelectionOptions {
   // Caller supplies the history-id set, protected ids and builder using K's public
-  // options type. Their field spellings are not specified by ruling 3.
-  return { ...idsAndBuilder, reasoningReplay, previewRequest: async request => previewRequest(request) };
+  // options type. Their field spellings are not specified by ruling 3. Absent
+  // hands the Kernel no option, which is the platform's `all` policy.
+  return {
+    ...idsAndBuilder,
+    ...(reasoningReplay === undefined ? {} : { reasoningReplay }),
+    previewRequest: async request => previewRequest(request),
+  };
 }
 
 export function fixtureTool(name: string, execute: ToolDefinition['handler']['execute']): ToolDefinition {

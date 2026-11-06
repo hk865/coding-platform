@@ -39,7 +39,9 @@ import {
 } from '../contracts/validation/initialization-adoption.js';
 import type { PromptPackChainEntryV1, PromptPackManifestV1, PromptPackProblemV1, ToolTextV1 } from '../contracts/prompts/prompt-pack.js';
 import { resolvePromptPackV1 } from '../contracts/prompts/resolve-pack.js';
-import { canonicalToolTextBody, promptToolTextDigest } from '../contracts/prompts/prompt-set.js';
+import {
+  canonicalToolTextBody, isReasoningReplayV1, promptToolTextDigest, type ReasoningReplayV1,
+} from '../contracts/prompts/prompt-set.js';
 import { TEMPLATE_SLOTS } from '../contracts/prompts/slot-tables.js';
 import {
   createDiskPromptPack, effectiveTemplateVersionOf, effectiveToolTextOf, isPromptPackId,
@@ -138,7 +140,7 @@ export type HostSettingsModelDefinition = {
   thinking?: 'enabled' | 'disabled';
   reasoningEffort?: 'low' | 'high' | 'max';
   promptPack?: string;
-  reasoningReplay?: 'current_run' | 'none';
+  reasoningReplay?: ReasoningReplayV1;
   secretEnvironmentVariable?: string;
 };
 
@@ -152,7 +154,7 @@ export type HostSettingsStoredModel = {
   thinking?: 'enabled' | 'disabled';
   reasoningEffort?: 'low' | 'high' | 'max';
   promptPack?: string;
-  reasoningReplay?: 'current_run' | 'none';
+  reasoningReplay?: ReasoningReplayV1;
   secretEnvironmentVariable?: string;
   apiKey?: string;
 };
@@ -582,8 +584,7 @@ function parseStoredModel(value: unknown): HostSettingsStoredModel {
   }
   if (value['promptPack'] !== undefined && !isPromptPackId(value['promptPack']))
     throw new Error('the private host settings file is invalid');
-  if (value['reasoningReplay'] !== undefined
-    && value['reasoningReplay'] !== 'current_run' && value['reasoningReplay'] !== 'none')
+  if (value['reasoningReplay'] !== undefined && !isReasoningReplayV1(value['reasoningReplay']))
     throw new Error('the private host settings file is invalid');
   return {
     id: value['id'], label: value['label'], provider: value['provider'], model: value['model'],
@@ -923,9 +924,8 @@ export async function createHostSettings(
       return invalid('reasoningEffort must be low, high, max');
     if (input['promptPack'] !== undefined && !isPromptPackId(input['promptPack']))
       return invalid('promptPack must be a pack id');
-    if (input['reasoningReplay'] !== undefined
-      && input['reasoningReplay'] !== 'current_run' && input['reasoningReplay'] !== 'none')
-      return invalid('reasoningReplay must be current_run or none');
+    if (input['reasoningReplay'] !== undefined && !isReasoningReplayV1(input['reasoningReplay']))
+      return invalid('reasoningReplay must be current_run, none or all');
     if (input['id'] !== undefined && !nonEmpty(input['id'])) return invalid('id must be a non-empty string when present');
     if (input['apiKey'] !== undefined && typeof input['apiKey'] !== 'string') return invalid('apiKey must be a string when present');
 
@@ -937,8 +937,7 @@ export async function createHostSettings(
     const reasoningEffort = input['reasoningEffort'] === 'low' || input['reasoningEffort'] === 'high'
       || input['reasoningEffort'] === 'max' ? input['reasoningEffort'] : undefined;
     const promptPack = typeof input['promptPack'] === 'string' ? input['promptPack'] : undefined;
-    const reasoningReplay = input['reasoningReplay'] === 'current_run' || input['reasoningReplay'] === 'none'
-      ? input['reasoningReplay'] : undefined;
+    const reasoningReplay = isReasoningReplayV1(input['reasoningReplay']) ? input['reasoningReplay'] : undefined;
     const modelId = nonEmpty(input['id']) ? input['id'] : randomUUID();
     const existingIndex = models.findIndex(entry => entry.id === modelId);
     const previous = existingIndex >= 0 ? models[existingIndex] : undefined;
@@ -950,7 +949,7 @@ export async function createHostSettings(
       ...(thinking === undefined ? {} : { thinking }),
       ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
       // Ruling 7: a save without the field CLEARS it; absence is what resolves to
-      // `platform` / `current_run`, so a later save never inherits the old pack.
+      // `platform` / `all`, so a later save never inherits the old pack.
       ...(promptPack === undefined ? {} : { promptPack }),
       ...(reasoningReplay === undefined ? {} : { reasoningReplay }),
       ...(previous?.secretEnvironmentVariable === undefined ? {} : { secretEnvironmentVariable: previous.secretEnvironmentVariable }),

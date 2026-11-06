@@ -674,7 +674,7 @@ export async function frozenPromptInputs(options: {
     systemInstruction: options.systemInstruction ?? null,
     selection: {
       promptPack: options.promptPack ?? 'platform',
-      reasoningReplay: options.reasoningReplay ?? 'current_run',
+      reasoningReplay: options.reasoningReplay ?? 'all',
     },
     ...(options.promptPacks === undefined ? {} : { promptPacks: options.promptPacks }),
   });

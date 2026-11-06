@@ -31,19 +31,20 @@
 | `resolvePromptPackV1` | `src/contracts/prompts/resolve-pack.ts:79` | 校验并合并整条包链，最近包覆盖，返回 templates/strings/tools 及 origins/toolOrigins；从不抛错。 | 唯一的选包与继承合并入口；app 读盘后调它。 |
 | `createPlatformPromptPackSource` | `src/contracts/prompts/prompt-pack.ts:73` | 只提供生成平台包的 `PromptPackSourcePort`；其他包 id 返回 invalid。 | 没有设置目录的 Host/组合根；有磁盘包时由 app 提供另一个 source。 |
 | `PromptPackSourcePort` | `src/contracts/prompts/prompt-pack.ts:64` | 准备执行时取已解析包的端口。 | 运行时只依赖这个端口，不直接读包文件。 |
-| `decodePromptSetV1` | `src/contracts/prompts/prompt-set.ts:131` | 严格解码 `PromptSetV1`：未知或缺失字段返回 null；工具名唯一且按 en 升序。 | 读清单/请求记录时；所有清单 loader 共用。 |
-| `promptSelectionOf` | `src/contracts/prompts/prompt-set.ts:115` | 从 BoundModel 读 modelId/promptPack/reasoningReplay；没有 selection 时用 configuration.revision、platform、current_run。 | 准备执行选包时；不要另读 selection。 |
-| `canonicalToolTextBody` | `src/contracts/prompts/prompt-set.ts:226` | 工具说明的规范正文：description + 按名排序的 parameters。 | 存工具说明或计算 digest 时。 |
-| `promptToolTextDigest` | `src/contracts/prompts/prompt-set.ts:234` | 规范工具说明正文的 sha256。 | 冻结集和编辑路由核对同一份工具说明。 |
-| `checkPromptBody` | `src/contracts/prompts/prompt-set.ts:245` | 校验存储正文的 content type、digest、UTF-8 大小与 ref 一致，返回正文或 null。 | 读任何冻结提示词正文（模板、字符串表、base、Skill、工具说明）时。 |
-| `PROMPT_TEXT_CONTENT_TYPE`、`PROMPT_TOOL_SPECS_CONTENT_TYPE`、`PROMPT_TOOL_TEXT_CONTENT_TYPE` | `src/contracts/prompts/prompt-set.ts:14`、`src/contracts/prompts/prompt-set.ts:16`、`src/contracts/prompts/prompt-set.ts:18` | 三类提示词正文的内容类型常量。 | 写/读 artifact 正文时按类型区分。 |
+| `REASONING_REPLAY_VALUES`、`ReasoningReplayV1`、`isReasoningReplayV1` | `src/contracts/prompts/prompt-set.ts:18`、`src/contracts/prompts/prompt-set.ts:19`、`src/contracts/prompts/prompt-set.ts:20` | 思考回传策略 `current_run`/`none`/`all` 的唯一取值表、类型和校验；`all` 是默认。 | 所有收这个值的类型、校验和解码都引用它，不再写字面联合。 |
+| `decodePromptSetV1` | `src/contracts/prompts/prompt-set.ts:142` | 严格解码 `PromptSetV1`：未知或缺失字段返回 null；工具名唯一且按 en 升序。 | 读清单/请求记录时；所有清单 loader 共用。 |
+| `promptSelectionOf` | `src/contracts/prompts/prompt-set.ts:126` | 从 BoundModel 读 modelId/promptPack/reasoningReplay；没有 selection 时用 configuration.revision、platform、all。 | 准备执行选包时；不要另读 selection。 |
+| `canonicalToolTextBody` | `src/contracts/prompts/prompt-set.ts:236` | 工具说明的规范正文：description + 按名排序的 parameters。 | 存工具说明或计算 digest 时。 |
+| `promptToolTextDigest` | `src/contracts/prompts/prompt-set.ts:244` | 规范工具说明正文的 sha256。 | 冻结集和编辑路由核对同一份工具说明。 |
+| `checkPromptBody` | `src/contracts/prompts/prompt-set.ts:255` | 校验存储正文的 content type、digest、UTF-8 大小与 ref 一致，返回正文或 null。 | 读任何冻结提示词正文（模板、字符串表、base、Skill、工具说明）时。 |
+| `PROMPT_TEXT_CONTENT_TYPE`、`PROMPT_TOOL_SPECS_CONTENT_TYPE`、`PROMPT_TOOL_TEXT_CONTENT_TYPE` | `src/contracts/prompts/prompt-set.ts:25`、`src/contracts/prompts/prompt-set.ts:27`、`src/contracts/prompts/prompt-set.ts:29` | 三类提示词正文的内容类型常量。 | 写/读 artifact 正文时按类型区分。 |
 | `PLATFORM_PROMPT_PACK_V1` | `src/contracts/prompts/platform-pack.generated.ts:4` | 平台包（清单 schemaVersion 1，含 Work/Query 第 2 版模板、`intervention-planning` 模板、两个秘书模板、六个交接模板、六个投递模板 `action-request-delivery`、`inquiry-delivery`、`notify-delivery`、`wait-reply-delivery`、`wait-expiry-delivery`、`intervention-delivery`，以及 Run 里联系被改断时交给执行者的输入模板 `link-breaks-input`）的只读解析结果。 | 没有自定义包时的默认包、测试默认值；不要运行时从 resources 现读。 |
 | `PLATFORM_SKILLS` | `src/contracts/prompts/platform-skills.ts:6` | 五个平台 Skill 的 id/title/kind/priority/templateId。 | agent-runtime 构造或校验平台 Skill 时。 |
 | `TEMPLATE_SLOTS` | `src/contracts/prompts/slot-tables.ts:17` | 每个模板的槽与必填性（代码契约）；六个交接模板各只有一行必填的 `task_round`。 | 包编辑器、解析、渲染校验；包不能改这张表。 |
 | 包与解析类型 | `src/contracts/prompts/prompt-pack.ts:9` | `PromptPackManifestV1`、`PromptPackChainEntryV1`、`ResolvedPromptPackV1`、`PromptPackValidationV1`、`PromptPackProblemV1`、`TemplateSlotTableV1`、`ToolTextV1`。 | app 读盘、组合根接线和解析结果传递。 |
-| `PromptTextsV1` | `src/contracts/prompts/prompt-set.ts:26` | 渲染器需要的最小文本面：templates + strings。 | 任何渲染入口的类型；resolved pack 结构上满足它。 |
-| 请求记录类型 | `src/contracts/prompts/prompt-set.ts:35` | `ModelRequestPromptFactsV1`、`QueryRequestPromptFactsV1`、`PromptRecordRequestV1`。 | 冻结每次模型请求的 digest、删除量和输出上限。 |
-| 记录读取类型 | `src/contracts/prompts/prompt-set.ts:64` | `PromptRecordReadResultV1`、`PromptRecordReadV1`、`PromptSetV1`。 | 请求记录读取端口与清单里的 prompt set。 |
+| `PromptTextsV1` | `src/contracts/prompts/prompt-set.ts:37` | 渲染器需要的最小文本面：templates + strings。 | 任何渲染入口的类型；resolved pack 结构上满足它。 |
+| 请求记录类型 | `src/contracts/prompts/prompt-set.ts:46` | `ModelRequestPromptFactsV1`、`QueryRequestPromptFactsV1`、`PromptRecordRequestV1`。 | 冻结每次模型请求的 digest、删除量和输出上限。 |
+| 记录读取类型 | `src/contracts/prompts/prompt-set.ts:75` | `PromptRecordReadResultV1`、`PromptRecordReadV1`、`PromptSetV1`。 | 请求记录读取端口与清单里的 prompt set。 |
 
 ## 内部用
 无。`TemplateNodeV1`、`SlotRangeV1`、`TemplateParseV1` 是解析/渲染结果的公开形状，其余导出都在上表。

@@ -10,6 +10,7 @@
  */
 import { resolve } from 'node:path';
 import type { PromptPackSourcePort } from '../../src/contracts/prompts/prompt-pack.js';
+import type { ReasoningReplayV1 } from '../../src/contracts/prompts/prompt-set.js';
 import type { ResolvedRuntimeConfiguration } from '../../src/core/agent-runtime/execution-contracts.js';
 import type { ObservedModelRunOptions } from '../../src/core/agent-runtime/observed-model-run.js';
 import { openPCWorkFixture, scriptedModel } from '../helpers/PC-platform-fixture.js';
@@ -21,7 +22,7 @@ export async function frozenPromptInputs(options: {
   systemInstruction?: string;
   promptPacks?: PromptPackSourcePort;
   promptPack?: string;
-  reasoningReplay?: 'current_run' | 'none';
+  reasoningReplay?: ReasoningReplayV1;
 } = {}): Promise<ObservedModelRunOptions['prompt']> {
   const fixture = await openPCWorkFixture({
     model: scriptedModel([]), tools: ['read'],
@@ -32,7 +33,7 @@ export async function frozenPromptInputs(options: {
     systemInstruction: options.systemInstruction ?? null,
     selection: {
       promptPack: options.promptPack ?? 'platform',
-      reasoningReplay: options.reasoningReplay ?? 'current_run',
+      reasoningReplay: options.reasoningReplay ?? 'all',
     },
     ...(options.promptPacks === undefined ? {} : { promptPacks: options.promptPacks }),
   });

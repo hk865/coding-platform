@@ -96,6 +96,7 @@ describe("PC-18 byte preview after the thinking filter", () => {
       selectionOptions(
         { historyEntryCount, taskInputMessageId: "task-1", build: buildModelRequest },
         probe.previewRequest,
+        "current_run",
       ),
     );
 

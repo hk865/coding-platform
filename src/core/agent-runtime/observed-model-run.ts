@@ -5,7 +5,9 @@ import type { AgentEvent, ContextSelectionReport, ExecutionIdentity, HookPort, M
 import type { BoundModel } from './source-tool-ports.js';
 import type { ModelBudget, RuntimeBudget } from './model-budget.js';
 import type { ModelTokenBudget } from './model-budget.js';
-import type { ModelRequestPromptFactsV1 } from '../../contracts/prompts/prompt-set.js';
+import type {
+  ModelRequestPromptFactsV1, ReasoningReplayV1,
+} from '../../contracts/prompts/prompt-set.js';
 import { PROMPT_TOOL_SPECS_CONTENT_TYPE } from '../../contracts/prompts/prompt-set.js';
 import type { PromptSkillV1 } from './prompt-set-texts.js';
 import type { ArtifactRef } from '../../contracts/artifact.js';
@@ -81,7 +83,7 @@ export type ObservedModelRunOptions = {
   prompt: {
     base: { templateId: string; version: number; text: string };
     skills: PromptSkillV1[];
-    reasoningReplay: 'current_run' | 'none';
+    reasoningReplay: ReasoningReplayV1;
   };
   /** 显式结构化报告请求；必须在容量计量和模型调用授权前进入真实请求。 */
   responseFormat?: { type: 'json_object' };
@@ -396,7 +398,8 @@ export async function runObservedModel(o: ObservedModelRunOptions) {
         // 裁定 22：冻结的提示词输入是本 Run 唯一的 base 与 Skills 来源。
         baseSystemPrompt: prompt.base,
         skills: prompt.skills,
-        reasoningReplay: prompt.reasoningReplay,
+        // `all` means "hand the Kernel no option": without it nothing is filtered.
+        ...(prompt.reasoningReplay === 'all' ? {} : { reasoningReplay: prompt.reasoningReplay }),
         previewRequest: request => o.meter.preview(finalRequest(request)),
         onContextSelected: report => {
           selections.set(report.requestId, report);

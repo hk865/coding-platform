@@ -16,6 +16,7 @@
  * other page working.
  */
 import { canonicalJson, sha256Hex } from '../contracts/fingerprint.js';
+import { isReasoningReplayV1, type ReasoningReplayV1 } from '../contracts/prompts/prompt-set.js';
 import { nonEmpty } from '../contracts/validation/common.js';
 import {
   createBuiltinProviderRegistry,
@@ -60,8 +61,8 @@ export type WorkbenchModelConfiguration = {
   modelId?: string;
   /** The explicit prompt pack; absent defaults to `platform` at resolution. */
   promptPack?: string;
-  /** The explicit replay policy; absent defaults to `current_run` at resolution. */
-  reasoningReplay?: 'current_run' | 'none';
+  /** The explicit replay policy; absent defaults to `all` at resolution. */
+  reasoningReplay?: ReasoningReplayV1;
 };
 
 /** The original explicit trusted Skill selection: a repository resource root
@@ -241,7 +242,7 @@ export function runtimeModelId(identity: {
   secretEnvironmentVariable: string;
   options?: Readonly<Record<string, JsonValue>>;
   promptPack?: string;
-  reasoningReplay?: 'current_run' | 'none';
+  reasoningReplay?: ReasoningReplayV1;
 }): string {
   const material = canonicalJson({
     provider: identity.provider,
@@ -317,9 +318,8 @@ export function validateWorkbenchRuntimeConfiguration(
       return { code: 'invalid', reason: `bindings[${index}].model.modelId must be a non-empty string when present` };
     if (binding.model.promptPack !== undefined && !nonEmpty(binding.model.promptPack))
       return { code: 'invalid', reason: `bindings[${index}].model.promptPack must be a non-empty string when present` };
-    if (binding.model.reasoningReplay !== undefined
-      && binding.model.reasoningReplay !== 'current_run' && binding.model.reasoningReplay !== 'none')
-      return { code: 'invalid', reason: `bindings[${index}].model.reasoningReplay must be current_run or none when present` };
+    if (binding.model.reasoningReplay !== undefined && !isReasoningReplayV1(binding.model.reasoningReplay))
+      return { code: 'invalid', reason: `bindings[${index}].model.reasoningReplay must be current_run, none or all when present` };
     if (!isPlainObject(binding.grant)) return { code: 'invalid', reason: `bindings[${index}] requires a trusted grant` };
     // Slice 3 §2.4 item 3 / §2.5: the optional resident budget and duty are
     // validated here; an explicit legacy duty must name exactly the versioned
@@ -509,7 +509,7 @@ export function createWorkbenchRuntimeHostBindings(
       selection: {
         modelId,
         promptPack: binding.model.promptPack ?? 'platform',
-        reasoningReplay: binding.model.reasoningReplay ?? 'current_run',
+        reasoningReplay: binding.model.reasoningReplay ?? 'all',
       },
     };
     models.set(binding.id, model);

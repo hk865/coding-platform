@@ -27,7 +27,9 @@ import type {
 import { runObservedModel } from './observed-model-run.js';
 import { readPromptTexts } from './prompt-set-texts.js';
 import { sessionHistoryDecision } from './context-history-facts.js';
-import { promptSelectionOf, type PromptSetV1 } from '../../contracts/prompts/prompt-set.js';
+import {
+  promptSelectionOf, type PromptSetV1, type ReasoningReplayV1,
+} from '../../contracts/prompts/prompt-set.js';
 import { renderTemplate } from '../../contracts/prompts/render-template.js';
 import { isReviewRoundPurpose, reviewRoundAdmissionProblem } from '../../contracts/review-admission.js';
 import { createControlOnlyInputSupply, createMailboxInputSupply, type InputSupply } from './execution-inputs.js';
@@ -104,11 +106,11 @@ export { createGraphHistoryProxy } from './tool-group-assembly.js';
  * Ruling 16: the Host binding still names the prepared prompt selection and the
  * provider/model the set was frozen with. `promptSelectionOf` is the only reader
  * of `selection`; a BoundModel without one takes its documented fallback
- * (revision / `platform` / `current_run`) and is compared exactly like any other.
+ * (revision / `platform` / `all`) and is compared exactly like any other.
  */
 function samePromptBinding(
   model: { configuration: { revision: string; provider: string; model: string };
-    selection?: { modelId: string; promptPack: string; reasoningReplay: 'current_run' | 'none' } },
+    selection?: { modelId: string; promptPack: string; reasoningReplay: ReasoningReplayV1 } },
   set: PromptSetV1,
 ): boolean {
   const selection = promptSelectionOf(model);

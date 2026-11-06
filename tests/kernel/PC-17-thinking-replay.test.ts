@@ -26,6 +26,7 @@ import {
   userEntry,
 } from "../helpers/PC-kernel-fixture.js";
 import { successResult } from "../helpers/orchestration-fixture.js";
+import { promptSelectionOf } from "../../src/contracts/prompts/prompt-set.js";
 
 type AssistantMessage = Extract<
   ModelRequest["messages"][number],
@@ -43,7 +44,7 @@ function transcriptIds(transcript: ContextBuilderInput["transcript"]): string[] 
     entry.kind === "tool_result" ? entry.callId : entry.message.messageId);
 }
 
-async function realRuns(replay: "current_run" | "none") {
+async function realRuns(replay: "current_run" | "none" | "all") {
   const echo = fixtureTool("echo", async (call) => successResult(call.callId, "echo ok"));
   return createKernelHarness(
     [
@@ -55,7 +56,8 @@ async function realRuns(replay: "current_run" | "none") {
       },
       { text: "answer-three" },
     ],
-    { reasoningReplay: replay, tools: [echo] },
+    // `all` is the platform's "hand the Kernel no option".
+    { ...(replay === "all" ? {} : { reasoningReplay: replay }), tools: [echo] },
   );
 }
 
@@ -130,6 +132,35 @@ describe("PC-17 thinking replay", () => {
     } finally {
       await harness.close();
     }
+  });
+
+  it("all: a later run in the same Session carries every earlier thinking", async () => {
+    const harness = await realRuns("all");
+    try {
+      expect((await harness.run("run one")).state.status).toBe("completed");
+      expect((await harness.run("run two")).state.status).toBe("completed");
+      expect((await harness.run("run three")).state.status).toBe("completed");
+      expect(harness.model.requests).toHaveLength(4);
+
+      const second = assistantParts(harness.model.requests[1]!);
+      expect(second.map((message) => message.reasoningContent)).toEqual(["think-one"]);
+
+      const third = assistantParts(harness.model.requests[3]!);
+      expect(third.map((message) => message.reasoningContent)).toEqual([
+        "think-one", "think-two", "think-three",
+      ]);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("unset reasoningReplay defaults to all", () => {
+    expect(promptSelectionOf({ configuration: { revision: "pc-run-default" } }))
+      .toEqual({
+        modelId: "pc-run-default",
+        promptPack: "platform",
+        reasoningReplay: "all",
+      });
   });
 
   it("current_run keeps the selected thinking-only message; DeepSeek sends it and OpenAI has no item for it", async () => {

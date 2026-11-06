@@ -237,18 +237,18 @@ describe('PC-1a prompt selection through a full Host start', () => {
       // The rebuilt settings binding carries the settings item's literal id.
       expect(model.configuration.revision).toBe('host-settings:settings-item-1');
       expect(promptSelectionOf(model)).toEqual({
-        modelId: 'settings-item-1', promptPack: 'platform', reasoningReplay: 'current_run',
+        modelId: 'settings-item-1', promptPack: 'platform', reasoningReplay: 'all',
       });
     } finally {
       await started.host.close();
     }
   });
 
-  it('keeps today platform/current_run defaults and today runtime id without direct fields', async () => {
+  it('keeps platform/all defaults and today runtime id without direct fields', async () => {
     const started = await startHost(DIRECT_MODEL, false);
     try {
       expect(await resolvedSelection('pc-run-defaults')).toEqual({
-        modelId: DIRECT_ID, promptPack: 'platform', reasoningReplay: 'current_run',
+        modelId: DIRECT_ID, promptPack: 'platform', reasoningReplay: 'all',
       });
     } finally {
       await started.host.close();

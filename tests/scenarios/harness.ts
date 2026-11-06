@@ -802,7 +802,7 @@ export function ag2bWorkRuntime(model: () => ScriptedModel,
         baseUrl: 'http://127.0.0.1' }, client: model().client,
         ...(options.workModelId === undefined ? {} : {
           selection: { modelId: options.workModelId, promptPack: 'platform',
-            reasoningReplay: 'current_run' as const },
+            reasoningReplay: 'all' as const },
         }),
       inputCounter: { count: () => ({ tokens: 256, method: 'model_tokenizer' as const, tokenizer: 'scenario-counter' }) } },
       budget: AG2B_RUNTIME_BUDGET,

@@ -11,6 +11,16 @@ import { sha256Hex } from '../fingerprint.js';
 import { isRecord } from '../validation/common.js';
 import type { ToolTextV1 } from './prompt-pack.js';
 
+/** The platform's reasoning-replay policy (decision 83-4): `current_run` sends
+ * only this execution's thinking, `none` sends none, and `all` sends every
+ * earlier turn's thinking as well. `all` is the default; the Runtime passes no
+ * Kernel option for it, so the Kernel filters nothing. */
+export const REASONING_REPLAY_VALUES = ['current_run', 'none', 'all'] as const;
+export type ReasoningReplayV1 = typeof REASONING_REPLAY_VALUES[number];
+export function isReasoningReplayV1(value: unknown): value is ReasoningReplayV1 {
+    return typeof value === 'string' && (REASONING_REPLAY_VALUES as readonly string[]).includes(value);
+}
+
 /** Content type of a prompt text body: a template, the merged string table, the merged base or a Skill content. */
 export const PROMPT_TEXT_CONTENT_TYPE = 'application/vnd.coding-platform.prompt-text;version=1';
 /** Content type of a body holding `JSON.stringify` of the request's tool specs. */
@@ -84,7 +94,7 @@ export type PromptSetV1 = {
     provider: string;
     model: string;
     packId: string;
-    reasoningReplay: 'current_run' | 'none';
+    reasoningReplay: ReasoningReplayV1;
     sectionOrder: Partial<Record<ContextCallKindV1, ContextSectionNameV1[]>>;
     templates: { id: string; version: number; packId: string; digest: string; ref: ArtifactRef }[];
     /** The string table merged across inheritance. */
@@ -111,15 +121,15 @@ export type PromptSetV1 = {
  * Reads the selection-bearing part of a `BoundModel` (source-tool-ports.ts).
  * Contracts may not import core, so the shape is structural; a `BoundModel` is
  * assignable to it. This is the only reader of `selection`: absence means a
- * test-built model, which keeps today's revision, platform pack and replay.
+ * test-built model, which keeps today's revision, platform pack and `all` replay.
  */
 export function promptSelectionOf(model: {
     configuration: { revision: string };
-    selection?: { modelId: string; promptPack: string; reasoningReplay: 'current_run' | 'none' };
-}): { modelId: string; promptPack: string; reasoningReplay: 'current_run' | 'none' } {
+    selection?: { modelId: string; promptPack: string; reasoningReplay: ReasoningReplayV1 };
+}): { modelId: string; promptPack: string; reasoningReplay: ReasoningReplayV1 } {
     const { selection } = model;
     if (selection === undefined)
-        return { modelId: model.configuration.revision, promptPack: 'platform', reasoningReplay: 'current_run' };
+        return { modelId: model.configuration.revision, promptPack: 'platform', reasoningReplay: 'all' };
     return { modelId: selection.modelId, promptPack: selection.promptPack, reasoningReplay: selection.reasoningReplay };
 }
 
@@ -177,7 +187,7 @@ export function decodePromptSetV1(value: unknown): PromptSetV1 | null {
     if (value['schemaVersion'] !== 1) return null;
     for (const field of ['modelId', 'provider', 'model', 'packId'] as const)
         if (!isString(value[field])) return null;
-    if (value['reasoningReplay'] !== 'current_run' && value['reasoningReplay'] !== 'none') return null;
+    if (!isReasoningReplayV1(value['reasoningReplay'])) return null;
 
     const sectionOrder = value['sectionOrder'];
     if (!isRecord(sectionOrder)) return null;

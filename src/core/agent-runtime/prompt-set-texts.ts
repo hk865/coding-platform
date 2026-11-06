@@ -19,7 +19,7 @@ import { FileSkillLoader as KernelFileSkillLoader } from '../../../vendor/coding
 import type { CoreRejection } from '../../contracts/core/results.js';
 import {
   canonicalToolTextBody, checkPromptBody, PROMPT_TEXT_CONTENT_TYPE, PROMPT_TOOL_TEXT_CONTENT_TYPE,
-  type PromptSetV1, type PromptTextsV1,
+  type PromptSetV1, type PromptTextsV1, type ReasoningReplayV1,
 } from '../../contracts/prompts/prompt-set.js';
 import type { ToolTextV1 } from '../../contracts/prompts/prompt-pack.js';
 import { renderSkillTextV1 } from './context-rendering.js';
@@ -59,7 +59,7 @@ export type PromptPartsV1 = {
     provider: string;
     model: string;
     packId: string;
-    reasoningReplay: 'current_run' | 'none';
+    reasoningReplay: ReasoningReplayV1;
   };
   sectionOrder: PromptSetV1['sectionOrder'];
   templates: readonly PromptTemplatePartV1[];

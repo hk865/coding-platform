@@ -22,7 +22,7 @@ import type { HookPort, ToolCall } from '../../../vendor/coding-agent/dist/publi
 import { canonicalJson, sameJson as sameRef, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
 import {
   decodePromptSetV1, promptSelectionOf, type ModelRequestPromptFactsV1, type PromptSetV1,
-  type QueryRequestPromptFactsV1,
+  type QueryRequestPromptFactsV1, type ReasoningReplayV1,
 } from '../../contracts/prompts/prompt-set.js';
 import { QUERY_MANIFEST_CONTENT_TYPE } from '../../contracts/no-progress.js';
 import { packString } from '../../contracts/prompts/pack-string.js';
@@ -94,11 +94,11 @@ function mapRead(result: ReadResult<unknown>): CoreRejection {
  * Ruling 16: the Host binding still names the prepared prompt selection and the
  * provider/model the set was frozen with. `promptSelectionOf` is the only reader
  * of `selection`; a BoundModel without one takes its documented fallback
- * (revision / `platform` / `current_run`) and is compared exactly like any other.
+ * (revision / `platform` / `all`) and is compared exactly like any other.
  */
 function samePromptBinding(
   model: { configuration: { revision: string; provider: string; model: string };
-    selection?: { modelId: string; promptPack: string; reasoningReplay: 'current_run' | 'none' } },
+    selection?: { modelId: string; promptPack: string; reasoningReplay: ReasoningReplayV1 } },
   set: PromptSetV1,
 ): boolean {
   const selection = promptSelectionOf(model);

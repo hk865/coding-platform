@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
+import type { ReasoningReplayV1 } from '../../src/contracts/prompts/prompt-set.js';
 import { createDiskPromptPackSource } from '../../src/app/prompt-packs.js';
 import { LOCAL_WORKBENCH_ROLE, LOCAL_WORKBENCH_ROLE_BINDING } from '../../src/app/runtime-configuration.js';
 import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
@@ -287,7 +288,7 @@ async function promptRecordOf(host: PC2Host, runRef: RunRef) {
 
 function expectRecordSet(
   record: Awaited<ReturnType<typeof promptRecordOf>>,
-  expected: { modelId: string; packId: string; reasoningReplay: 'current_run' | 'none' },
+  expected: { modelId: string; packId: string; reasoningReplay: ReasoningReplayV1 },
 ): void {
   expect({
     modelId: record.set.modelId, packId: record.set.packId, reasoningReplay: record.set.reasoningReplay,
@@ -319,7 +320,7 @@ function expectPackSkill(record: Awaited<ReturnType<typeof promptRecordOf>>, tex
 }
 
 function saveModel(
-  host: PC2Host, id: string, fields: { promptPack?: string; reasoningReplay?: 'current_run' | 'none' } = {},
+  host: PC2Host, id: string, fields: { promptPack?: string; reasoningReplay?: ReasoningReplayV1 } = {},
 ) {
   return host.call('models/save', {
     id, label: id === 'pc2-model-a' ? 'Model A' : 'Model B',
@@ -424,7 +425,7 @@ describe('PC-06/PC-08 (J-02) the same settings model changes pack after preparat
 });
 
 describe('PC-05 / PC-06 / PC-08 (J-01, J-02, H-09) settings reach the real execution and a restart', () => {
-  it('freezes A, updates B, clears to platform/current_run, and keeps an absent pack id', async () => {
+  it('freezes A, updates B, clears to platform/all, and keeps an absent pack id', async () => {
     const catalog = [
       {
         id: 'pc2-model-a', label: 'Model A', provider: 'deepseek' as const, model: 'deepseek-chat',
@@ -511,7 +512,7 @@ describe('PC-05 / PC-06 / PC-08 (J-01, J-02, H-09) settings reach the real execu
       await prepareAndStart(host, defaultsRun, 'pc2-h09-default');
       const defaultsRecord = await promptRecordOf(host, defaultsRun);
       expectRecordSet(defaultsRecord, {
-        modelId: 'pc2-model-a', packId: 'platform', reasoningReplay: 'current_run',
+        modelId: 'pc2-model-a', packId: 'platform', reasoningReplay: 'all',
       });
 
       // A legal pack id that does not exist is accepted at save and read back.
