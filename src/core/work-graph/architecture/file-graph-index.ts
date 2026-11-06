@@ -63,7 +63,7 @@ function readOffset(captureRef: ObservedCaptureRef, query: unknown, cursor: stri
 }
 
 /** Nodes sorted by workspace-relative path, de-duplicated by path. */
-function orderedNodes(graph: FileGraphData): FileGraphPageNodeV1[] {
+export function orderedNodes(graph: FileGraphData): FileGraphPageNodeV1[] {
   const byPath = new Map<string, FileGraphPageNodeV1>();
   for (const node of graph.nodes) if (!byPath.has(node.path)) byPath.set(node.path, node);
   return [...byPath.values()].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);

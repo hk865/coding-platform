@@ -54,6 +54,7 @@ import type { AdoptInitialArchitectureInput } from '../core/work-graph/architect
 import type { ArchitectureCatalogPort } from '../core/work-graph/architecture/catalog-contracts.js';
 import type { ArchitectureProposalService } from '../core/work-graph/architecture/proposal-service.js';
 import type { ObservedArchitecturePort } from '../core/work-graph/architecture/contracts.js';
+import type { ArchitectureWorkScopePort } from '../core/work-graph/views/architecture-work-scope-reader.js';
 import type {
   CompletionPolicyConfigurationPort,
   ProjectRegistrationPort,
@@ -339,6 +340,9 @@ export type CoreRouteSuffix =
   | 'architecture/versions'
   // L8 (book ruling 8): the one public observation state with computed pending.
   | 'architecture/observation-state'
+  // UI1 A3/A25/A5: the file/module search and the live-Run work set.
+  | 'architecture/find'
+  | 'architecture/work-scope'
   // The four person-only request commands.
   | 'requests/submit'
   | 'requests/route'
@@ -416,6 +420,8 @@ export type ArchitectureCoreRouteDto = {
   'architecture/semantic-links': { body: ArchitectureSemanticLinksBody; response: ArchitectureSemanticLinksResponse };
   'architecture/semantic-flows': { body: ArchitectureSemanticFlowsBody; response: ArchitectureSemanticFlowsResponse };
   'architecture/semantic-links/check': { body: ArchitectureSemanticLinksCheckBody; response: ArchitectureSemanticLinksCheckResponse };
+  'architecture/find': { body: ArchitectureFindBody; response: ArchitectureFindResponse };
+  'architecture/work-scope': { body: ArchitectureWorkScopeBody; response: ArchitectureWorkScopeResponse };
 };
 /** L8 (P16): the public manual capture body. The driver's trusted start
  * watermark (`requestSeq`) is not a public input, so the DTO omits it; the port
@@ -430,6 +436,10 @@ export type ArchitectureCaptureBody = {
 export type ArchitectureCaptureResponse = RouteResponse<ObservedArchitecturePort['captureSourceChanges']>;
 export type ArchitectureQueryBody = PlainBody<ObservedArchitecturePort['queryArchitecture']>;
 export type ArchitectureQueryResponse = RouteResponse<ObservedArchitecturePort['queryArchitecture']>;
+export type ArchitectureFindBody = PlainBody<ObservedArchitecturePort['findArchitecture']>;
+export type ArchitectureFindResponse = RouteResponse<ObservedArchitecturePort['findArchitecture']>;
+export type ArchitectureWorkScopeBody = PlainBody<ArchitectureWorkScopePort['readArchitectureWorkScope']>;
+export type ArchitectureWorkScopeResponse = RouteResponse<ArchitectureWorkScopePort['readArchitectureWorkScope']>;
 export type PlansProposeBody = GraphWriteBody<PlanTaskPort['proposePlan']>;
 export type PlansProposeResponse = RouteResponse<PlanTaskPort['proposePlan']>;
 export type PlansApplyBody = GraphWriteBody<PlanTaskPort['applyPlanChange']>;

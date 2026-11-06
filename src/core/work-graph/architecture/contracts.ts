@@ -3,6 +3,7 @@ import type { ArtifactRef } from '../../../contracts/artifact.js';
 import type { AdoptedArchitecture, ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
 import type { ArchitectureAutoCaptureFailureV1, ArchitectureAutoCaptureRecordV1,
   ArchitectureObservationStateV1, ArchitectureReminderFactsV1, AutoCaptureTriggerV1 } from '../../../contracts/architecture-observation.js';
+import type { ArchitectureFindRequestV1, ArchitectureFindResultV1 } from '../../../contracts/architecture-search.js';
 import type { ArchitectureSourceMapping } from '../../../contracts/architecture-source.js';
 import type { CodeGraphEdge, CodeGraphNode, FileGraphNodeV1, FileGraphPageV1, FormalObservedComparisonV1,
   LanguageCoverageV1, ObservedCaptureRef, ObservationInventoryV1 } from '../../../contracts/architecture-inspection.js';
@@ -168,4 +169,7 @@ export interface ObservedArchitecturePort {
   compareFormalObserved(ctx: CoreCallContext, input: {
     catalog: ArchitectureCatalogPinV1; captureRef: ObservedCaptureRef;
   }): Promise<ReadResult<FormalObservedComparisonV1>>;
+  /** UI1 A3/A25: the one file/module search over the current observation and catalog. */
+  findArchitecture(ctx: CoreCallContext, input: ArchitectureFindRequestV1):
+    Promise<ReadResult<ArchitectureFindResultV1>>;
 }

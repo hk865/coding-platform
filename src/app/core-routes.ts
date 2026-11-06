@@ -26,6 +26,7 @@ import type { RuntimeExecutionPort } from '../core/agent-runtime/ports.js';
 import type { ArchitectureCatalogPort } from '../core/work-graph/architecture/catalog-contracts.js';
 import type { ArchitectureProposalService } from '../core/work-graph/architecture/proposal-service.js';
 import type { ObservedArchitecturePort } from '../core/work-graph/architecture/contracts.js';
+import type { ArchitectureWorkScopePort } from '../core/work-graph/views/architecture-work-scope-reader.js';
 import type {
   MessageForwardingPort, SessionMailboxPort, SessionMessageCommandPort,
 } from '../core/work-graph/model/communication-contracts.js';
@@ -154,6 +155,8 @@ export type CoreRouteBindings = {
   checkSemanticLinks: SemanticLinksReader['checkSemanticLinks'];
   captureArchitectureSource: ObservedArchitecturePort['captureSourceChanges'];
   queryArchitecture: ObservedArchitecturePort['queryArchitecture'];
+  findArchitecture: ObservedArchitecturePort['findArchitecture'];
+  readArchitectureWorkScope: ArchitectureWorkScopePort['readArchitectureWorkScope'];
   // Slice 8A §2: the two observed-domain comparisons and the impact read.
   compareArchitecture: ObservedArchitecturePort['compareArchitecture'];
   compareFormalObserved: ObservedArchitecturePort['compareFormalObserved'];
@@ -410,7 +413,7 @@ export type CoreRoutePlatform = {
   goals: GoalTaskPort & DispatchBasisReadPort & GoalConfirmPort
     & { readGoalCopyDraft: GoalCopyPort['readDraft']; confirmGoalCopy: GoalCopyPort['confirm'] };
   plans: PlanTaskPort;
-  architecture: ArchitectureCatalogPort & ObservedArchitecturePort;
+  architecture: ArchitectureCatalogPort & ObservedArchitecturePort & ArchitectureWorkScopePort;
   workspace: WorkspaceToolsPort;
   sessions: Pick<SessionDirectoryPort, 'findSessions' | 'readSession' | 'getSessionOperation'>
     & Pick<SessionLifecyclePort, 'archiveSession' | 'reactivateSession' | 'linkSessionWork' | 'releaseSessionArchiveRequest'>;
@@ -587,6 +590,9 @@ export const CORE_ROUTE_SPECS: Record<
   'architecture/impact': { kind: 'plain', binding: 'queryImpact', owner: 'architecture.queryImpact' },
   // L8 (book ruling 8): the one public observation state; the tests' bounded wait.
   'architecture/observation-state': { kind: 'plain', binding: 'observationState', owner: 'architecture.observationState' },
+  // UI1 A3/A25/A5: the file/module search and the live-Run work set.
+  'architecture/find': { kind: 'plain', binding: 'findArchitecture', owner: 'architecture.findArchitecture' },
+  'architecture/work-scope': { kind: 'plain', binding: 'readArchitectureWorkScope', owner: 'architecture.readArchitectureWorkScope' },
   'plans/propose': { kind: 'graph_write', binding: 'proposePlan', owner: 'plans.proposePlan' },
   'plans/apply': { kind: 'graph_write', binding: 'applyPlanChange', owner: 'plans.applyPlanChange' },
   'plans/proposal': { kind: 'plain', binding: 'readPlanProposal', owner: 'plans.readPlanProposal' },
@@ -1025,6 +1031,12 @@ export function createPlatformCoreRouteBindings(
       : platform.notes.checkSemanticLinks.bind(platform.notes),
     captureArchitectureSource: platform.architecture.captureSourceChanges.bind(platform.architecture),
     queryArchitecture: platform.architecture.queryArchitecture.bind(platform.architecture),
+    findArchitecture: platform.architecture.findArchitecture === undefined
+      ? unsupported('the platform does not publish architecture.findArchitecture')
+      : platform.architecture.findArchitecture.bind(platform.architecture),
+    readArchitectureWorkScope: platform.architecture.readArchitectureWorkScope === undefined
+      ? unsupported('the platform does not publish architecture.readArchitectureWorkScope')
+      : platform.architecture.readArchitectureWorkScope.bind(platform.architecture),
     compareArchitecture: platform.architecture.compareArchitecture.bind(platform.architecture),
     compareFormalObserved: platform.architecture.compareFormalObserved.bind(platform.architecture),
     queryImpact: platform.architecture.queryImpact.bind(platform.architecture),
@@ -1600,6 +1612,8 @@ export async function dispatchCoreRoute(
       case 'architecture/compare-formal': return bindings.compareFormalObserved(ctx, plain.input as never);
       case 'architecture/impact': return bindings.queryImpact(ctx, plain.input as never);
       case 'architecture/observation-state': return bindings.observationState(ctx, plain.input as never);
+      case 'architecture/find': return bindings.findArchitecture(ctx, plain.input as never);
+      case 'architecture/work-scope': return bindings.readArchitectureWorkScope(ctx, plain.input as never);
       case 'plans/propose': return bindings.proposePlan(ctx, graphWrite.request as never);
       case 'plans/apply': return bindings.applyPlanChange(ctx, graphWrite.request as never);
       case 'plans/proposal': return bindings.readPlanProposal(ctx, plain.input as never);

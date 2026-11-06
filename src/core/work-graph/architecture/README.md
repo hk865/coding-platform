@@ -11,7 +11,8 @@
 ## 文件
 - `architecture-delta.ts` — 纯观测图差异（结构 key 与 digest 的增删改）、SCC 环成员与 `compareObservedGraphs`；不产出 baseline 或规则结论。
 - `architecture-record-codecs.ts` — observed capture 的 body/chunk/记录/事件 codec、schema 注册与 `mergeObservedFileGraphChunks`。
-- `architecture-service.ts` — `ObservedArchitecturePort` 实现：源捕获、历史读、邻域/影响/比较、自动捕获、文件图分页与 chunk 打包。
+- `architecture-service.ts` — `ObservedArchitecturePort` 实现：源捕获、历史读、邻域/影响/比较、自动捕获、文件图分页与 chunk 打包、文件/分组搜索（`findArchitecture`）。
+- `architecture-search-index.ts` — 纯搜索投影：basename/路径/模块名的匹配面、tier 排序、路径去重、正式 containment 祖先与搜索 cursor；不读记录，来源由 service 一次载入。
 - `catalog-contracts.ts` — 正式 catalog 的 adoption/revision 端口、revision 快照与 module facts DTO。
 - `catalog-record-codecs.ts` — catalog 记录/事件 codec、adoption 闭包校验、`architectureBaselineDigest` 与 schema 注册。
 - `catalog-service.ts` — 正式架构的初始接受（`adoptInitialArchitecture`）、catalog 修订（`reviseArchitectureCatalog`）、revision 读取、当前 catalog 的 module facts、revision 的完整 pin（`catalogPinOf`）与 guards。
@@ -29,7 +30,7 @@
 | --- | --- | --- | --- |
 | `ObservedArchitecturePort` | `src/core/work-graph/architecture/contracts.ts:115` | 观测架构的捕获、自动捕获、查询、比较、影响与文件图读端口 | 消费观测架构时只依赖此端口 |
 | `ArchitectureCatalogPort` | `src/core/work-graph/architecture/catalog-contracts.ts:119` | 正式架构的初始采用、修订与 revision 读取 | 正式架构的写读入口 |
-| `createObservedArchitecture` | `src/core/work-graph/architecture/architecture-service.ts:904` | 绑定 workspace/bodies/records 等依赖，实现观测端口 | 组合根装配观测架构服务 |
+| `createObservedArchitecture` | `src/core/work-graph/architecture/architecture-service.ts:908` | 绑定 workspace/bodies/records 等依赖，实现观测端口 | 组合根装配观测架构服务 |
 | `createArchitectureCatalogService` | `src/core/work-graph/architecture/catalog-service.ts:466` | 绑定 records，实现正式 catalog 端口 | 组合根装配正式架构服务 |
 | `readCurrentCatalogWindow` | `src/core/work-graph/architecture/catalog-service.ts:379` | 解析 active pointer，再在同一窗口读 pointer+baseline+catalog，复核后返回 CAS guards | 需要当前正式架构及其 guards 时 |
 | `readRevisionByRef` | `src/core/work-graph/architecture/catalog-service.ts:440` | 按引用读不可变 baseline 与同 revision 的 catalog | 正式/观测比较解析 pin 时 |
@@ -49,6 +50,9 @@
 | `listFilesPage` | `src/core/work-graph/architecture/file-graph-index.ts:96` | 文件图按路径稳定排序分页 | 文件级列表读 |
 | `neighborsPage` | `src/core/work-graph/architecture/file-graph-index.ts:103` | 一跳出/入邻居分页 | 文件邻域读 |
 | `impactPage` | `src/core/work-graph/architecture/file-graph-index.ts:120` | 反向可达影响分页，深度有上限 | 文件影响读 |
+| `orderedNodes` | `src/core/work-graph/architecture/file-graph-index.ts:66` | 观测文件节点按工作区相对路径稳定排序并按路径去重 | 文件图分页与架构搜索共用同一排序/去重，不另写一份 |
+| `buildArchitectureGroups` | `src/core/work-graph/architecture/architecture-search-index.ts:63` | 正式 catalog 的模块组：声明路径、单路径 `path` 与 containment 祖先（根→父） | 搜索与当前工作集合都要模块组时 |
+| `pageArchitectureFind` | `src/core/work-graph/architecture/architecture-search-index.ts:164` | 在已载入的文件节点/正式模块上匹配、排序、全量计数并返回一页；cursor 绑定 capture/catalog/查询 | `architecture/find` 的唯一匹配/分页点 |
 | `compareFormalObservedGraphs` | `src/core/work-graph/architecture/formal-comparison.ts:29` | 正式 catalog 与观测文件图的确定性 finding | 架构提醒与检查 |
 | `architectureBaselineDigest` | `src/core/work-graph/architecture/catalog-record-codecs.ts:201` | 正式 baseline 的规范内容 digest，与 `plan-readers.ts` 的治理读取一致 | 校验/读取 baseline 时 |
 | `OBSERVED_ARCHITECTURE_RECORD_SCHEMAS` | `src/core/work-graph/architecture/architecture-record-codecs.ts:746` | observed 记录/事件的 Store schema 注册表 | 组合根注册纪录后端 |
@@ -58,7 +62,8 @@
 - architecture-record-codecs：`OBSERVED_ARCHITECTURE_SCHEMA_ID`、`OBSERVATION_CURRENT_SCHEMA_ID`、`ARCHITECTURE_AUTO_CAPTURE_SCHEMA_ID`、`ARCHITECTURE_AUTO_CAPTURE_REQUESTED_EVENT`、`ARCHITECTURE_AUTO_CAPTURE_FAILED_EVENT`、`ARCHITECTURE_AUTO_CAPTURE_EVENT_VERSION`、`ARCHITECTURE_SOURCE_OBSERVED_EVENT`、`ARCHITECTURE_SOURCE_OBSERVED_EVENT_VERSION`、`OBSERVED_ARCHITECTURE_BODY_CONTENT_TYPE`、`FILE_GRAPH_CHUNK_CONTENT_TYPE`、`readSourceCaptureRef`、`readArtifactRef`、`readPersistedSourceCaptureRef`、`validateObservedFileGraphChunkV2`、`decodeObservedFileGraphChunk`、`mergeObservedFileGraphChunks`、`decodeObservedArchitectureBody`、`encodeObservedArchitecture`、`encodeObservationCurrent`、`encodeArchitectureSourceObservedEvent`、`encodeArchitectureAutoCapture`、`encodeArchitectureAutoCaptureEvent`、`decodeArchitectureAutoCapture`、`decodeArchitectureAutoCaptureEvent`、`decodeObservedArchitectureRecord`、`decodeObservationCurrent`、`decodeArchitectureSourceObservedEvent`。
 - catalog-record-codecs：`ARCHITECTURE_CATALOG_SCHEMA_ID`、`ARCHITECTURE_CATALOG_ADOPTED_EVENT`、`ARCHITECTURE_CATALOG_EVENT_VERSION`、`S4B_CATALOG_REVISION_BY_PROJECT_LOOKUP`、`ARCHITECTURE_CATALOG_REVISED_EVENT`、`readModuleRef`、`readArchitectureBaselineRef`、`readArchitectureCatalogRef`、`readArchitectureBaselinePin`、`readConstraints`、`readArchitectureBaselineSnapshot`、`validateAdoptedArchitecture`、`encodeArchitectureCatalog`、`encodeArchitectureCatalogAdoptedEvent`、`encodeArchitectureCatalogRevisedEvent`、`decodeArchitectureCatalogRecord`、`decodeArchitectureCatalogAdoptedEvent`、`decodeArchitectureCatalogRevisedEvent`。
 - architecture-service：`normalizeFileGraph`、`serializeFileGraphChunks`（文件图存储步骤的纯 helper）、`safeMappingPath`（`src/core/work-graph/architecture/architecture-service.ts:133`，映射路径的收窄检查）。
-- file-graph-index：`FILE_GRAPH_PAGE_SIZE`、`FILE_GRAPH_MAX_IMPACT_DEPTH`、`FileGraphCursorError`。
+- file-graph-index：`FILE_GRAPH_PAGE_SIZE`、`FILE_GRAPH_MAX_IMPACT_DEPTH`、`FileGraphCursorError`、`orderedNodes`（导出后与搜索共用，见上表）。
+- architecture-search-index：`ArchitectureFindCursorError`、`architectureFindQueryKey`、`moduleKey`（游标解码错误、查询键与模块身份键；`moduleKey` 由工作集读共用，不要另写一份）。
 - graph-index：`ObservedGraphCursorError`。
 - catalog-service：`BASELINE_SCHEMA_ID`、`BASELINE_ACTIVE_SCHEMA_ID`、`activeRefKey`、`baselineRefFor`、`catalogRefFor`（baseline/active/catalog 的 ref 与键配方）。
 - repair-ops：`catalogRevisionMovesProblem`、`structuralOfRepair`、`repairNeedsCard`、`repairBindingDigest`、`RepairProblemV1`。

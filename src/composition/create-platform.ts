@@ -371,6 +371,7 @@ import { createConsultationFactsReader } from '../core/work-graph/queries/platfo
 import { createObservedArchitecture } from '../core/work-graph/architecture/architecture-service.js';
 import { OBSERVED_ARCHITECTURE_RECORD_SCHEMAS } from '../core/work-graph/architecture/architecture-record-codecs.js';
 import { createArchitectureCatalogService, readCurrentCatalogWindow } from '../core/work-graph/architecture/catalog-service.js';
+import { createArchitectureWorkScopeReader, type ArchitectureWorkScopePort } from '../core/work-graph/views/architecture-work-scope-reader.js';
 import type { ArchitectureCatalogPort } from '../core/work-graph/architecture/catalog-contracts.js';
 import { ARCHITECTURE_CATALOG_SCHEMAS } from '../core/work-graph/architecture/catalog-record-codecs.js';
 import { observeRecordCommits, type RecordCommitObserver } from './commit-observer.js';
@@ -2569,7 +2570,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       claimQuery: (...args) => trackedCall(() => queryJobs.claimQuery(...args), unavailable),
       readQueryAnswer: (...args) => trackedCall(() => queryJobs.readQueryAnswer(...args), unavailable),
     };
-    const architecture: typeof observed & ArchitectureCatalogPort = {
+    const architectureWorkScope = createArchitectureWorkScopeReader({ records: backend.records, catalog });
+    const architecture: typeof observed & ArchitectureCatalogPort & ArchitectureWorkScopePort = {
       captureSourceChanges: (...args) => trackedCall(() => observed.captureSourceChanges(...args), unavailable),
       // L8 request record and the one public observation state (book rulings 3, 8, 12).
       requestAutoCapture: (...args) => trackedCall(() => observed.requestAutoCapture(...args), unavailable),
@@ -2578,6 +2580,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       observationState: (...args) => trackedCall(() => observed.observationState(...args), unavailable),
       readReminderFacts: (...args) => trackedCall(() => observed.readReminderFacts(...args), unavailable),
       queryArchitecture: (...args) => trackedCall(() => observed.queryArchitecture(...args), unavailable),
+      findArchitecture: (...args) => trackedCall(() => observed.findArchitecture(...args), unavailable),
+      readArchitectureWorkScope: (...args) =>
+        trackedCall(() => architectureWorkScope.readArchitectureWorkScope(...args), unavailable),
       compareArchitecture: (...args) => trackedCall(() => observed.compareArchitecture(...args), unavailable),
       queryImpact: (...args) => trackedCall(() => observed.queryImpact(...args), unavailable),
       listFiles: (...args) => trackedCall(() => observed.listFiles(...args), unavailable),

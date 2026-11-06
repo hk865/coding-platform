@@ -16,6 +16,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { moduleMappingsOf, type AdoptedArchitecture, type ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
+import type { ArchitectureFindRequestV1, ArchitectureFindResultV1 } from '../../../contracts/architecture-search.js';
 import type { FileGraphNodeV1, FileGraphPageNodeV1, FileGraphPageV1, FormalObservedComparisonV1,
   LanguageCoverageV1, ObservedCaptureRef, ObservationInventoryV1 } from '../../../contracts/architecture-inspection.js';
 import { isAutoCaptureTrigger } from '../../../contracts/architecture-observation.js';
@@ -57,10 +58,11 @@ import {
   type ObservedArchitectureBodyV2, type ObservedFileGraphChunk,
 } from './architecture-record-codecs.js';
 import { readRevisionByRef } from './catalog-service.js';
-import type { ArchitectureCatalogPort } from './catalog-contracts.js';
+import type { ArchitectureCatalogPort, ModuleContainment, ModuleDefinition } from './catalog-contracts.js';
 import { compareFormalObservedGraphs } from './formal-comparison.js';
 import { FileGraphCursorError, FILE_GRAPH_MAX_IMPACT_DEPTH, FILE_GRAPH_PAGE_SIZE, impactPage,
-  listFilesPage, neighborsPage, type FileGraphData, type FileGraphPageData } from './file-graph-index.js';
+  listFilesPage, neighborsPage, orderedNodes, type FileGraphData, type FileGraphPageData } from './file-graph-index.js';
+import { ArchitectureFindCursorError, pageArchitectureFind } from './architecture-search-index.js';
 import type { ObservedArchitectureComparison, ObservedArchitectureImpact, ObservedArchitectureNeighborhood,
   ObservedArchitecturePort, ObservedArchitectureRecord, ObservedArchitectureRef, ObservedArchitectureSelection,
   ObservedFileGraphChunkScope, ObservedFileGraphManifestV2, ObservedGraphAnchor, ObservedGraphPageRequest,
@@ -1706,6 +1708,71 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
       loaded => impactPage(loaded, captureRef, file, depth, Math.min(limit, FILE_GRAPH_PAGE_SIZE), cursor));
   }
 
+  async function findArchitecture(ctx: CoreCallContext, input: ArchitectureFindRequestV1): Promise<ReadResult<ArchitectureFindResultV1>> {
+    if (ctx?.signal?.aborted) return rejected('cancelled', 'the architecture find was cancelled');
+    const owned = ownJsonInput(input, 'findArchitecture input');
+    if (owned.status === 'invalid') return invalid(owned.reason);
+    if (!isRecord(owned.value)) return invalid('architecture find requires a request object');
+    const raw = owned.value as Record<string, unknown>;
+    const needleRaw = raw['needle'];
+    if (typeof needleRaw !== 'string') return invalid('architecture find needle must be a string');
+    const codePoints = [...needleRaw].length;
+    if (codePoints < 1 || codePoints > 256) return invalid('architecture find needle must be 1..256 Unicode code points');
+    const pageRaw = raw['page'];
+    const limit = isRecord(pageRaw) ? pageRaw['limit'] : undefined;
+    if (!safeInteger(limit) || limit < 1 || limit > 100) {
+      return invalid('architecture find page.limit must be an integer between 1 and 100');
+    }
+    const afterCursor = isRecord(pageRaw) ? pageRaw['afterCursor'] : undefined;
+    if (afterCursor !== null && typeof afterCursor !== 'string') {
+      return invalid('the architecture find cursor is malformed');
+    }
+    const workspaceId = ctx.workspaceId;
+    if (workspaceId === undefined || workspaceId.length === 0) {
+      return forbidden('architecture find requires a bound project/workspace context');
+    }
+    const scope: WorkspaceScope = { projectId: ctx.projectId, workspaceId };
+    const pointer = await readCurrentObservationPointer(records, scope);
+    if (pointer.status !== 'ready') return pointer;
+    let nodes: FileGraphPageNodeV1[] = [];
+    let sourceCursor: CommitCursor | null = null;
+    let captureRef: ObservedCaptureRef | null = null;
+    if (pointer.value !== null) {
+      const loaded = await loadObservation(deps, ctx, { kind: 'observed', ref: pointer.value.observedRef });
+      if (loaded.status !== 'ready') return asReadResult(loaded);
+      nodes = orderedNodes({ nodes: loaded.value.fileGraph.pageNodes(), edges: [] });
+      sourceCursor = loaded.value.sourceCursor;
+      captureRef = pointer.value.observedRef;
+    }
+    let modules: ModuleDefinition[] = [];
+    let containment: ModuleContainment | undefined;
+    let catalogRevision: number | null = null;
+    if (deps.catalog !== undefined) {
+      const revision = await deps.catalog.readArchitectureRevision(ctx, { selection: { kind: 'current' } });
+      if (revision.status === 'ready') {
+        modules = revision.value.catalog.catalog.modules;
+        containment = revision.value.catalog.catalog.containment;
+        catalogRevision = revision.value.catalog.ref.revision;
+      } else if (revision.status !== 'not_found') return revision;
+    }
+    try {
+      const page = pageArchitectureFind({ nodes, modules, needle: needleRaw, afterCursor, limit,
+        ...(containment === undefined ? {} : { containment }),
+        binding: { captureId: captureRef?.captureId ?? null, catalogRevision } });
+      return { status: 'ready', value: {
+        needle: page.needle, items: page.items, counts: page.counts, nextCursor: page.nextCursor,
+        sources: {
+          fileGraph: { availability: captureRef === null ? 'not_observed' : 'available', captureRef },
+          catalog: { availability: catalogRevision === null ? 'not_adopted' : 'available', revision: catalogRevision },
+        },
+        readThrough: sourceCursor,
+      } };
+    } catch (error) {
+      if (error instanceof ArchitectureFindCursorError) return invalid(error.message);
+      throw error;
+    }
+  }
+
   async function compareFormalObserved(ctx: CoreCallContext, input: {
     catalog: ArchitectureCatalogPinV1; captureRef: ObservedCaptureRef;
   }): Promise<ReadResult<FormalObservedComparisonV1>> {
@@ -1745,5 +1812,5 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
 
   return { captureSourceChanges, requestAutoCapture, failAutoCapture, readAutoCapture, observationState,
     readReminderFacts, queryArchitecture, compareArchitecture, queryImpact,
-    listFiles, neighbors, impact, compareFormalObserved };
+    listFiles, neighbors, impact, compareFormalObserved, findArchitecture };
 }

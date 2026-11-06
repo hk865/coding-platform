@@ -46,6 +46,10 @@ export const EXPECTED_ROUTE_ROWS = {
   'architecture/compare': { kind: 'plain', binding: 'compareArchitecture', owner: 'architecture.compareArchitecture' },
   'architecture/compare-formal': { kind: 'plain', binding: 'compareFormalObserved', owner: 'architecture.compareFormalObserved' },
   'architecture/impact': { kind: 'plain', binding: 'queryImpact', owner: 'architecture.queryImpact' },
+  // UI1 architecture-search: the two reads this package adds; not part of the 8A three.
+  'architecture/find': { kind: 'plain', binding: 'findArchitecture', owner: 'architecture.findArchitecture' },
+  'architecture/work-scope': { kind: 'plain', binding: 'readArchitectureWorkScope',
+    owner: 'architecture.readArchitectureWorkScope' },
   // The person's catalog revision and the proposal read beside the two adopt/read rows.
   'architecture/revise': { kind: 'graph_write', binding: 'reviseArchitectureCatalog',
     owner: 'architecture.reviseArchitectureCatalog' },
@@ -96,6 +100,9 @@ export const MVP_UI_ROUTES = [
 
 /** The three slice-8A architecture reads (`tests/app/S8A-architecture-routes.test.ts`). */
 export const ARCHITECTURE_READ_ROUTES = ['architecture/compare', 'architecture/compare-formal', 'architecture/impact'] as const;
+
+/** The two UI1 architecture-search reads (`tests/app/S9UI1-architecture-search-routes.test.ts`); kept out of the 8A list. */
+export const ARCHITECTURE_SEARCH_ROUTES = ['architecture/find', 'architecture/work-scope'] as const;
 
 /** The three legacy reads `tests/app/S3-graph-routes.test.ts` RT06 checks. */
 export const LEGACY_READ_ROUTES = ['tasks/query', 'executions/history', 'executions/brief'] as const;
