@@ -249,7 +249,7 @@ describe('a person\'s pack over the secretary templates reaching a real round', 
     expect((await world.packs.create(PACK_ID)).status).toBe('ready');
     const savedRound = await world.packs.saveTemplate(PACK_ID, 'secretary-round', PERSON_ROUND_TEXT);
     expect(savedRound).toMatchObject({
-      status: 'ready', value: { templateId: 'secretary-round', version: 2, fromPack: PACK_ID, text: PERSON_ROUND_TEXT },
+      status: 'ready', value: { templateId: 'secretary-round', version: 3, fromPack: PACK_ID, text: PERSON_ROUND_TEXT },
     });
     const savedAnswer = await world.packs.saveTemplate(PACK_ID, 'secretary-answer', 'ANSWER FROM THE PERSON');
     expect(savedAnswer).toMatchObject({ status: 'ready', value: { version: 4, fromPack: PACK_ID } });
@@ -277,7 +277,7 @@ describe('a person\'s pack over the secretary templates reaching a real round', 
     expect(record.set.sectionOrder.secretary).toEqual(['role', 'goal', 'task', 'notes']);
     expect(templateEntries(record)).toEqual([
       { id: 'secretary-answer', version: 4, packId: PACK_ID },
-      { id: 'secretary-round', version: 2, packId: PACK_ID },
+      { id: 'secretary-round', version: 3, packId: PACK_ID },
       { id: 'base', version: 2, packId: 'platform' },
       ...DELIVERY_SET_ENTRIES,
     ]);
@@ -294,7 +294,7 @@ describe('a pack edit while the round waits at the start gate', () => {
     const memory = await seeded(world);
     expect((await world.packs.create(PACK_ID)).status).toBe('ready');
     const firstRound = await world.packs.saveTemplate(PACK_ID, 'secretary-round', PLATFORM_ROUND_TEXT);
-    expect(firstRound).toMatchObject({ status: 'ready', value: { version: 2, fromPack: PACK_ID } });
+    expect(firstRound).toMatchObject({ status: 'ready', value: { version: 3, fromPack: PACK_ID } });
     const firstAnswer = await world.packs.saveTemplate(PACK_ID, 'secretary-answer', 'PACK ONE ANSWER');
     expect(firstAnswer).toMatchObject({ status: 'ready', value: { version: 4, fromPack: PACK_ID } });
     await selectPack(world);
@@ -307,7 +307,7 @@ describe('a pack edit while the round waits at the start gate', () => {
     // Prepared and committed, the start not yet committed.
     await gate.reached;
     const editedRound = await world.packs.saveTemplate(PACK_ID, 'secretary-round', EDITED_ROUND_TEXT);
-    expect(editedRound).toMatchObject({ status: 'ready', value: { version: 3, fromPack: PACK_ID } });
+    expect(editedRound).toMatchObject({ status: 'ready', value: { version: 4, fromPack: PACK_ID } });
     const editedAnswer = await world.packs.saveTemplate(PACK_ID, 'secretary-answer', 'PACK TWO ANSWER');
     expect(editedAnswer).toMatchObject({ status: 'ready', value: { version: 5, fromPack: PACK_ID } });
     gate.release();
@@ -326,7 +326,7 @@ describe('a pack edit while the round waits at the start gate', () => {
     expect(record.set.sectionOrder.secretary).toEqual(['role', 'goal', 'notes', 'task']);
     expect(templateEntries(record)).toEqual([
       { id: 'secretary-answer', version: 4, packId: PACK_ID },
-      { id: 'secretary-round', version: 2, packId: PACK_ID },
+      { id: 'secretary-round', version: 3, packId: PACK_ID },
       { id: 'base', version: 2, packId: 'platform' },
       ...DELIVERY_SET_ENTRIES,
     ]);

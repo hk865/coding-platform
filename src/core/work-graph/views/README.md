@@ -63,14 +63,14 @@
 
 ### 架构与工作集
 
-- `architecture-work-scope-reader.ts` — `architecture/work-scope` 的唯一读（`ArchitectureWorkScopePort`）：两次 live 状态 lookup（任一页还有下一页即 `capacity`，不返回部分集合）、一次 pinned plan 批量读、一次当前 catalog 读；按 `plannedFiles` 和 module scope 认领组装文件/模块行，文件归属用 `pathOwnershipOf` 的最长合法路径（tie/none 为 `null`），同一 task 的多个 live Run 只贡献一次；不展开 `writeScope`、不读 executed files。
+- `architecture-work-scope-reader.ts` — `architecture/work-scope` 的唯一读（`ArchitectureWorkScopePort`）：两次 live 状态 lookup（任一页还有下一页即 `capacity`，两页按完整 `RunRef` 去重后合计仍超过 200 也 `capacity`，不返回部分集合）、一次 pinned plan 批量读（每个不同 `planRef` 只解码一次）、一次当前 catalog 读；按 `plannedFiles` 和 module scope 认领组装文件/模块行，文件归属用 `pathOwnershipOf` 的最长合法路径（tie/none 为 `null`），同一 task 的多个 live Run 只贡献一次；不展开 `writeScope`、不读 executed files。
 
 ### 秘书准备
 
 做请求轮的秘书准备事实读取的去这组。
 
 - `secretary-handoff-facts.ts` — 交接的只读事实：`checkArchiveCondition` 按核心谓词（源仍拥有且处理中的请求为零）+ 源/`SessionActivity` guard + 操作持有者的 fence（手工归档为 `null`）+ 首读 horizon 给出可合并片段；`readCoverage` 读源仍拥有且处理中的请求根、它们的有效 Goal、每个 Goal 的当前理解指针/版本/最后文字写入者、最后进入并结束的轮、活动 revision 和一次完整读的首个 horizon；`readRoutingSet` 在同一完整读上返回源仍拥有的根（含已回答/已关闭；归档条件与 coverage 仍只数处理中的），`closed` 表示这次读到末尾；`readBriefState` 按五个 phase 找后继是本 Session 的交接操作（含 `existing` 目标与已完成操作），给出 `none`/`waiting`/`ready`/`consumed` 四态，`ready` 只在受保护的最终归档成功且完整路由集保存之后，材料从操作自己的事实和请求/注记读来时读，不存两份（当前理解的正文由同一次 pointer→head→version 读解码一次，written 与 current 同一版本时不再重读）；`readBriefGoalRefs` 是给推进用的窄读口：每个被覆盖的 Goal 给出 written/current 两个引用，推进只存引用，Session 层不读 Note。失败或损坏一律 `unavailable`，不折成空覆盖/空集合，也不把 `waiting` 读成 `none`。
-- `secretary-preparation-facts.ts` — `SecretaryPreparationFactsPort` 的唯一实现：一次读齐执行轮的 Job/Run 材料（材料里的 `command` 从存的 `round.job.understanding` 投影，批轮与早先轮走同一投影）、待吸收批、早先 Session 的历史、workspace、当前架构、两个治理指针与 workspace Goals，以及 `ask` 轮卡片引用对象的当前版本（一次 `readMany`，不存在记 null）；还读齐冻结材料里每个理解命令的 operation 记录（缺失/失败/损坏为 `unavailable`，每条进 guards），产出唯一的 `understandingGrants`，并按五个 phase 找后继 Session 的交接 operation 作为 `briefRef`（多个取 revision 最大者，同样进 guards；这条 operation 的简报已被消费时 `briefRef` 为 null、不进 guards，OP-F1）；任何失败原样返回，不折成空事实。
+- `secretary-preparation-facts.ts` — `SecretaryPreparationFactsPort` 的唯一实现：一次读齐执行轮的 Job/Run 材料（材料里的 `command` 从存的 `round.job.understanding` 投影、`references` 从 `round.job.requestReferences` 投影（request 轮必写），批轮与早先轮走同一投影）、待吸收批、早先 Session 的历史、workspace、当前架构、两个治理指针与 workspace Goals，以及 `ask` 轮卡片引用对象的当前版本（一次 `readMany`，不存在记 null）；还读齐冻结材料里每个理解命令的 operation 记录（缺失/失败/损坏为 `unavailable`，每条进 guards），产出唯一的 `understandingGrants`，并按五个 phase 找后继 Session 的交接 operation 作为 `briefRef`（多个取 revision 最大者，同样进 guards；这条 operation 的简报已被消费时 `briefRef` 为 null、不进 guards，OP-F1）；任何失败原样返回，不折成空事实。
 
 ### 注记与通知
 
@@ -111,7 +111,8 @@
 | `createContextExtensionsReader` | `src/core/work-graph/views/context-extensions.ts:256` | 图读取的可选 extensions：异常锚点、决定队列提示、记忆材料；无 Goal 的请求只投影项目理解和 norms，其余 Goal 专属行跳过；读失败原样返回 | 组装上下文、需要这些扩展行时 |
 | `createDecisionReadModel` | `src/core/work-graph/views/decision-read-model.ts:254` | 决定队列的唯一聚合器：卡片、请知悉、冲突合成一页，卡片按 `decisionSubjectKey` 排序与过滤；`DecisionWholePageReader` 的 `readWholePage` 是同一装配的整页读（`notices.goalRef` 可为 `null`，项目行是公共部分） | 读决定队列或标记请知悉已看时；主对话要卡片和请知悉时用整页读，不要另写装配 |
 | `createEffectiveScopeReader` | `src/core/work-graph/views/role-scope-reader.ts:51` | `EffectiveScopeReadPort` 的实现：按 ref 读 Session 记录、项目链接优先并停止，其余每个开着的 Goal 链接一项、每个区域链接一项；读失败原样拒绝 | 组合根装配有效范围读端口时；不要用会拒绝别的工作区 Session 的 `readSession` |
-| `createArchitectureWorkScopeReader` | `src/core/work-graph/views/architecture-work-scope-reader.ts:59` | `architecture/work-scope` 的唯一读：live Run 的 `plannedFiles` + module 认领 → 文件/模块行；两次状态 lookup、一次 plan 批量读、一次 catalog 读；`writeScope` 原样带出不展开 | 组合根装配 `architecture.work-scope` 时；不要另写 Run→文件归属 |
+| `mergeLiveRuns` | `src/core/work-graph/views/architecture-work-scope-reader.ts:37` | 两个 live 状态页的纯合并：按完整 `RunRef` 去重（后读的 running 覆盖先读的 starting），合计超过 200 给 `capacity` | 工作集读在两次 lookup 之后合并时；不要另写第二份去重或上限 |
+| `createArchitectureWorkScopeReader` | `src/core/work-graph/views/architecture-work-scope-reader.ts:72` | `architecture/work-scope` 的唯一读：live Run 的 `plannedFiles` + module 认领 → 文件/模块行；两次状态 lookup、一次 plan 批量读、一次 catalog 读；`writeScope` 原样带出不展开 | 组合根装配 `architecture.work-scope` 时；不要另写 Run→文件归属 |
 | `cardInScope` | `src/core/work-graph/views/decision-read-model.ts:3025` | 一张卡是否属于某个 Goal（队列的 Goal 过滤用的同一条规则） | 按 Goal 挑卡时；`requests/read` 的卡片也用它 |
 | `createCollectionCardSource` | `src/core/work-graph/views/decision-read-model.ts:353` | 集合型卡片来源的通用适配器：一次/页装配、偏移分页、关闭卡片；规格用 `serves` 声明服务的 subject，`readCollection` 和 `project` 都只收一个 `subject`，装配缓存按来源种类、工作区和 subject 分开；队列只在不按 Goal 过滤的读里枚举一次项目 | 新增卡片来源时只注册读写和投影，不复制分页 |
 | `createGoalCauseCardSource` | `src/core/work-graph/views/decision-read-model.ts:278` | 把 Goal 决策依据读法包成 `goal_cause` 卡片来源 | 装配决定队列、注册来源 |

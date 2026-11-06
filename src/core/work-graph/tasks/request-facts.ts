@@ -130,6 +130,7 @@ export function deriveRequestCore(
       kind: kind as QueryRoundKind,
       status: roundStatus(round, run, coveredKeys.has(canonicalJson(round.ref as unknown as JsonValue))),
       input: round.job.intent.question,
+      references: round.job.requestReferences!.map((reference) => ({ ...reference })),
       answer: answer?.answer.answer ?? null,
       ideas: answer === null ? [] : answer.answer.ideas.map((idea) => ({ ...idea })),
       goalCardDrafts: answer === null ? [] : answer.answer.goalCardDrafts.map((draft, index) => ({

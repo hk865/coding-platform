@@ -102,7 +102,8 @@ async function sincesOf(workspace: S6ACardsWorkspace, requests: readonly S6ARequ
  * A request's view, from its submit receipt: one request round, queued (the driver is off), owned and assigned to
  * the receipt's secretary, so processing; a request with a waiting candidate names it and has the `candidate` reason.
  */
-function requestView(made: S6ARequest, since: CommitCursor, candidate: S6ACandidate | null = null): RequestCoreViewV1 {
+function requestView(made: S6ARequest, since: CommitCursor, candidate: S6ACandidate | null = null,
+  references: unknown[] = []): RequestCoreViewV1 {
   return {
     requestRoot: made.requestRoot, goalId: made.goalId, effectiveGoalId: made.goalId,
     owner: made.secretary, ownerState: 'owned', processing: true, assignment: 'assigned', waitReason: null,
@@ -110,8 +111,8 @@ function requestView(made: S6ARequest, since: CommitCursor, candidate: S6ACandid
     rounds: [{
       ref: made.round, kind: 'request', status: 'queued', input: made.text, answer: null, ideas: [], goalCardDrafts: [],
       selectedIdea: null, assignedSession: made.secretary, session: null, absorbedInto: null, closeCode: null,
-      closeDetail: null, closeMessage: null, since,
-    }],
+      closeDetail: null, closeMessage: null, since, references,
+    } as unknown as RequestCoreViewV1['rounds'][number]],
     candidate: candidate === null ? null : { proposalRef: candidate.proposal.ref, state: 'candidate', stale: false },
   };
 }
@@ -292,6 +293,36 @@ describe.each(BACKENDS)('main/read and requests/read (%s)', backend => {
     });
     expect(await readRequestCards(cards.main, noGoal.requestRoot))
       .toEqual({ ...requestView(noGoal, since.get(noGoal.requestRoot.queryJobId)!), cards: [] });
+  });
+
+  // UI1 request-refs 说明书 §5 rows 2 and 8, and §2.6: a multi-line reference is written on the
+  // round, `main/read` returns it unchanged, and the bubble's input stays the
+  // typed text (a reference is never spliced into `text`). Mutation: delete
+  // `references` from deriveRequestCore (row 2), or build the round's text from
+  // the reference (row 8); both are red on the exact view below.
+  it('R-12: a multi-line reference reads on main/read and the input keeps only the typed text', async () => {
+    const cards = await openWorld(backend);
+    const goal = cards.world.goals.first;
+    const label = 'request-references';
+    const text = `S6A main read references ${label}`;
+    const references = [{ path: 'src/a.ts', startLine: 3, endLine: 5, snapshot: 'the selected draft' }];
+    const result = asRecord(await cards.main.route('requests/submit', {
+      commandId: `s6a-cards-submit-${cards.main.scope.workspaceId}-${label}`,
+      goalId: goal.goalId, text, continues: null, recipient: null, references,
+    }));
+    expect(result['status']).toBe('queued');
+    const made: S6ARequest = {
+      label, goalId: goal.goalId, text, requestRoot: result['requestRoot'] as QueryJobRef,
+      round: result['round'] as QueryJobRef, secretary: result['secretary'] as S6ARequest['secretary'],
+      created: result['created'] as boolean,
+    };
+    const since = await sinceOf(cards.main, made);
+    const page = await readMain(cards.main, goal.goalId);
+    const found = page.requests.find(request => request.requestRoot.queryJobId === made.requestRoot.queryJobId);
+    expect(found).toEqual({ ...requestView(made, since, null, references), cardKeys: queueOrder(pointerCausesOf(goal)) });
+    expect(found!.rounds[0]!.input).toBe(text);
+    expect(found!.rounds[0]!.input).not.toContain('src/a.ts');
+    expect(found!.rounds[0]!.input).not.toContain('{');
   });
 
   describe('rejects: main/read and requests/read', () => {

@@ -74,9 +74,10 @@ const submitInput = (commandId: string): Record<string, unknown> => ({
 
 /** One request root through the Host's `requests/submit` route. */
 async function submitRoot(
-  world: S6ARequestWorld, commandId: string,
+  world: S6ARequestWorld, commandId: string, references?: unknown,
 ): Promise<{ root: QueryJobRef; secretary: SessionRef }> {
-  const answer = await world.post('requests/submit', body(submitInput(commandId)));
+  const input = references === undefined ? submitInput(commandId) : { ...submitInput(commandId), references };
+  const answer = await world.post('requests/submit', body(input));
   const value = asRecord(answer.body);
   if (value['status'] !== 'queued') throw new Error(`S6A: the submit did not queue: ${JSON.stringify(answer.body)}`);
   return { root: value['requestRoot'] as QueryJobRef, secretary: asRecord(value['secretary']) as unknown as SessionRef };
@@ -119,6 +120,22 @@ describe.each(['memory', 'sqlite'] as const)('request facts read (%s)', backend 
     expect({ owner: facts.value.owner, ownerState: facts.value.ownerState, lastOwner: facts.value.lastOwner })
       .toEqual({ owner: secretary.ref, ownerState: 'owned', lastOwner: secretary.ref });
     expect(facts.value.initiator.kind).toBe('human');
+  });
+
+  // UI1 request-refs 说明书 §3.3.4 and §5 row 1: a reference submitted through the Host is read
+  // back by the real complete read; memory and SQLite answer the same. Mutation:
+  // `newRequestRound` writes `requestReferences: []`, or deriveRequestCore drops
+  // the projection; this row is red on the exact array below.
+  it('FP-03 a submitted reference is read back from the real store', async () => {
+    const world = await open(backend);
+    await idleSecretary(world);
+    const references = [{ path: 'src/a.ts', startLine: 3, endLine: 5, snapshot: 'the selected draft' }];
+    const { root } = await submitRoot(world, `s6a-fp03-references-${backend}`, references);
+    const facts = await world.platform.requestFacts.readRequest(world.humanContext(), { requestRoot: root });
+    expect(facts.status).toBe('ready');
+    if (facts.status !== 'ready') return;
+    expect(facts.value.rounds).toHaveLength(1);
+    expect((facts.value.rounds[0] as unknown as Record<string, unknown>)['references']).toEqual(references);
   });
 
   it('FP-05 a throwing owner-Session read is unavailable, not a rejected promise', async () => {

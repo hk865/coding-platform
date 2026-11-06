@@ -220,7 +220,7 @@ describe.each(['memory', 'sqlite'] as const)('a goal request prepares from the s
       requestRoot,
       round: {
         ref: round, revision: job.revision, runRef: run.ref, runRevision: run.revision,
-        since: job.since, text: GOAL_TEXT, selectedIdea: null, relatedCards: [], command: null,
+        since: job.since, text: GOAL_TEXT, selectedIdea: null, relatedCards: [], references: [], command: null,
         relatedMessageRef: null, delivery: null,
       },
       batch: [],

@@ -351,7 +351,9 @@ function copyQueryExecutionRequest(request: QueryExecutionRequest): QueryExecuti
       || typeof runRef.workspaceId !== 'string' || !runRef.workspaceId
       || typeof runRef.queryJobId !== 'string' || !runRef.queryJobId || typeof runRef.runId !== 'string' || !runRef.runId)
     throw Error('query source binding requires a real QueryRun reference');
-  if (typeof request.question !== 'string' || !request.question) throw Error('query source binding requires the recorded question');
+  // An empty recorded question is the references-only request round (ruling 23):
+  // the submit entry already checks non-empty text, except for that one case.
+  if (typeof request.question !== 'string') throw Error('query source binding requires the recorded question');
   // An explicit null maxTokens is accepted (no cumulative cap) while a real
   // numeric budget must still be a positive safe integer.
   if (!request.budget || (request.budget.maxTokens !== null

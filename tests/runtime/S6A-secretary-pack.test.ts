@@ -78,7 +78,7 @@ describe.each(BACKENDS)('the secretary pack routes on the %s backend', backend =
                 expect(round).toMatchObject({
                     status: 'ready',
                     value: {
-                        templateId: 'secretary-round', version: 2, fromPack: PACK_ID,
+                        templateId: 'secretary-round', version: 3, fromPack: PACK_ID,
                         text: MOVED_TASK_BLOCK, mentionsTools: [],
                     },
                 });
@@ -96,7 +96,7 @@ describe.each(BACKENDS)('the secretary pack routes on the %s backend', backend =
                 expect(readRound).toMatchObject({
                     status: 'ready',
                     value: {
-                        templateId: 'secretary-round', version: 2, fromPack: PACK_ID, text: MOVED_TASK_BLOCK,
+                        templateId: 'secretary-round', version: 3, fromPack: PACK_ID, text: MOVED_TASK_BLOCK,
                         slots: {
                             prelude: { required: false }, role: { required: true }, goal: { required: false },
                             notes: { required: false }, task_round: { required: true },
@@ -165,7 +165,7 @@ describe.each(BACKENDS)('the secretary pack routes on the %s backend', backend =
             ]);
             const read = await world.packs.readTemplate(PACK_ID, 'secretary-round');
             expect(read).toMatchObject({
-                status: 'ready', value: { version: 1, fromPack: 'platform', text: PLATFORM_ROUND },
+                status: 'ready', value: { version: 2, fromPack: 'platform', text: PLATFORM_ROUND },
             });
         }
 

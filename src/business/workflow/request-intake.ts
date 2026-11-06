@@ -39,7 +39,7 @@ import type { SessionRef, WorkspaceScope } from '../../contracts/core/identity.j
 import type { ReadResult } from '../../contracts/core/results.js';
 import type { SessionMessageRef } from '../../contracts/core/session-message.js';
 import type { GoalRef, VersionedRef } from '../../contracts/ledger.js';
-import type { QueryJobRef } from '../../contracts/query-job.js';
+import type { QueryJobRef, RequestReferenceInputV1 } from '../../contracts/query-job.js';
 import { canonicalJson, type JsonValue } from '../../contracts/fingerprint.js';
 import { messageOf } from '../../contracts/error-message.js';
 import type {
@@ -88,6 +88,8 @@ export interface RequestSubmitPort {
   submitRequest(ctx: CoreCallContext, input: {
     commandId: string; goalId: string | null; text: string;
     continues: QueryJobRef | null; recipient: SessionRef | null;
+    /** Structured file selections; omitted is the empty list (old clients). */
+    references?: RequestReferenceInputV1[];
   }): Promise<RequestSubmitResultV1>;
   route(ctx: CoreCallContext, input: {
     commandId: string; round: QueryJobRef; to: SessionRef | null;
@@ -102,6 +104,8 @@ export interface RequestSubmitPort {
    */
   ask(ctx: CoreCallContext, input: {
     commandId: string; round: QueryJobRef; cardRefs: VersionedRef[]; regenerate: boolean; text: string;
+    /** A submit-only field; when a caller sends it here the command refuses it as `invalid`. */
+    references?: unknown;
   }): Promise<RequestAskResultV1>;
   /**
    * The completed-goal intervention's goal-less new request. It is an internal command: the public
@@ -365,10 +369,11 @@ export function createRequestIntake(deps: RequestIntakeDependencies): RequestInt
 
   async function submitRequest(
     ctx: CoreCallContext, input: { commandId: string; goalId: string | null; text: string;
-      continues: QueryJobRef | null; recipient: SessionRef | null },
+      continues: QueryJobRef | null; recipient: SessionRef | null; references?: RequestReferenceInputV1[] },
   ): Promise<RequestSubmitResultV1> {
     const command: RequestPublicCommandV1 = { kind: 'submit', commandId: input.commandId, goalId: input.goalId,
-      text: input.text, continues: input.continues, recipient: input.recipient };
+      text: input.text, continues: input.continues, recipient: input.recipient,
+      references: input.references ?? [] };
     const pre = await deps.rounds.precheck(ctx, command);
     if (pre.status === 'rejected') return pre;
     if (pre.status === 'fresh' && command.continues !== null && pre.facts === null) {
@@ -454,10 +459,12 @@ export function createRequestIntake(deps: RequestIntakeDependencies): RequestInt
 
   async function ask(
     ctx: CoreCallContext,
-    input: { commandId: string; round: QueryJobRef; cardRefs: VersionedRef[]; regenerate: boolean; text: string },
+    input: { commandId: string; round: QueryJobRef; cardRefs: VersionedRef[]; regenerate: boolean; text: string;
+      references?: unknown },
   ): Promise<RequestAskResultV1> {
     return followup(ctx, { kind: 'ask', commandId: input.commandId, round: input.round, cardRefs: input.cardRefs,
-      regenerate: input.regenerate, text: input.text });
+      regenerate: input.regenerate, text: input.text,
+      ...(Object.hasOwn(input, 'references') ? { references: input.references } : {}) });
   }
 
   /**

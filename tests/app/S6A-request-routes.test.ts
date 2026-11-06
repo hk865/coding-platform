@@ -612,3 +612,222 @@ async function expectNoRequestWritten(world: S6ARequestWorld, sessions: Awaited<
   expect(next['created']).toBe(false);
   expect(sessionOf(next['secretary'])).toEqual(secretary.ref);
 }
+
+// ------------------------------------------------------------------------- //
+// Structured references on `requests/submit` (UI1 request-refs 说明书 §5, ruling 21–24)
+// ------------------------------------------------------------------------- //
+
+const REF_WHOLE = [{ path: 'src/a.ts' }];
+const REF_SELECTION = [{ path: 'src/a.ts', startLine: 3, endLine: 5, snapshot: 'the selected draft' }];
+
+/** The rounds of one request as the public read returns them (never the store). */
+async function roundsOf(world: S6ARequestWorld, root: QueryJobRef): Promise<Record<string, unknown>[]> {
+  const answer = await world.post('requests/read', body({ requestRoot: root }));
+  expect(answer.httpStatus).toBe(200);
+  const read = expectObject(answer.body);
+  if (read['status'] !== 'ready') throw new Error(`S6A: requests/read is not ready: ${JSON.stringify(answer.body)}`);
+  const value = expectObject(read['value']);
+  return (value['rounds'] as unknown[]).map(expectObject);
+}
+
+/** A submit refused on an existing root: its one error first, then the public read shows the same round count. */
+async function refusedOnRoot(world: S6ARequestWorld, root: QueryJobRef, commandId: string, references: unknown,
+  expected: Record<string, unknown>): Promise<void> {
+  const before = (await roundsOf(world, root)).length;
+  const refused = expectObject((await world.post('requests/submit',
+    body(submitInput(commandId, { continues: root, references })))).body);
+  expect(refused).toMatchObject(expected);
+  expect(await roundsOf(world, root)).toHaveLength(before);
+}
+
+describe.each(['memory', 'sqlite'] as const)('request references (%s)', backend => {
+  it('REF-1: one whole-file reference is written and read back on its round', async () => {
+    const world = await open({ backend });
+    await world.createSecretary('refs-whole');
+    const submitted = expectQueuedAssigned((await world.post('requests/submit',
+      body(submitInput('s6a-refs-whole', { references: REF_WHOLE })))).body);
+    const root = submitted['requestRoot'] as QueryJobRef;
+    const rounds = await roundsOf(world, root);
+    expect(rounds).toHaveLength(1);
+    expect(rounds[0]!['input']).toBe('S6A question s6a-refs-whole');
+    // Mutation: `newRequestRound` writes `requestReferences: []`; the read
+    // turns [] here and this row is red on the next line.
+    expect(rounds[0]!['references']).toEqual([{ path: 'src/a.ts', startLine: null, endLine: null, snapshot: null }]);
+  });
+
+  it('REF-1: a startLine alone reads back as a one-line selection', async () => {
+    const world = await open({ backend });
+    await world.createSecretary('refs-line');
+    const submitted = expectQueuedAssigned((await world.post('requests/submit',
+      body(submitInput('s6a-refs-line', { references: [{ path: 'src/a.ts', startLine: 4 }] })))).body);
+    const rounds = await roundsOf(world, submitted['requestRoot'] as QueryJobRef);
+    // UI1 request-refs 说明书 §2.3.2: only a startLine means that one line, so endLine follows it.
+    // Mutation: keep endLine null when startLine is set; this row is red here.
+    expect(rounds[0]!['references']).toEqual([{ path: 'src/a.ts', startLine: 4, endLine: 4, snapshot: null }]);
+  });
+
+  it('REF-1: omitted, null and [] references all read back as []', async () => {
+    const world = await open({ backend });
+    await world.createSecretary('refs-empty');
+    const read: unknown[] = [];
+    const entries: readonly [string, unknown][] = [
+      ['s6a-refs-omit', undefined], ['s6a-refs-null', null], ['s6a-refs-list', []],
+    ];
+    for (const [commandId, references] of entries) {
+      const input = references === undefined ? submitInput(commandId) : submitInput(commandId, { references });
+      const submitted = expectQueuedAssigned((await world.post('requests/submit', body(input))).body);
+      read.push((await roundsOf(world, submitted['requestRoot'] as QueryJobRef))[0]!['references']);
+    }
+    // Mutation: write `requestReferences: input.requestReferences` without the
+    // `?? []` default; the omitted entry reads undefined and this row is red.
+    expect(read).toEqual([[], [], []]);
+  });
+
+  it('REF-2: references without text are accepted; neither text nor references is invalid', async () => {
+    const world = await open({ backend });
+    await world.createSecretary('refs-only');
+    const submitted = expectQueuedAssigned((await world.post('requests/submit',
+      body(submitInput('s6a-refs-only', { text: '', references: REF_SELECTION })))).body);
+    const rounds = await roundsOf(world, submitted['requestRoot'] as QueryJobRef);
+    expect(rounds[0]!['input']).toBe('');
+    expect(rounds[0]!['references']).toEqual([
+      { path: 'src/a.ts', startLine: 3, endLine: 5, snapshot: 'the selected draft' },
+    ]);
+    // Mutation: keep `text must be non-empty` unconditional; the submit above is
+    // refused and this row is red before the read.
+    const neither = expectObject((await world.post('requests/submit',
+      body(submitInput('s6a-refs-neither', { text: '', references: [] })))).body);
+    expect(neither).toMatchObject({ status: 'rejected', code: 'invalid', reason: 'text must be non-empty' });
+  });
+
+  it('REF-3: the same commandId and references replay the receipt; other references conflict', async () => {
+    const world = await open({ backend });
+    await world.createSecretary('refs-replay');
+    const first = expectQueuedAssigned((await world.post('requests/submit',
+      body(submitInput('s6a-refs-replay', { references: REF_SELECTION })))).body);
+    const root = first['requestRoot'] as QueryJobRef;
+    const replay = expectQueuedAssigned((await world.post('requests/submit',
+      body(submitInput('s6a-refs-replay', { references: REF_SELECTION })))).body);
+    expect(replay).toEqual(first);
+    // Mutation: drop `references` from `commandFingerprint`'s submit content; the
+    // changed-reference submit below replays the old receipt instead of this
+    // conflict, and this row is red on `idempotency_conflict`.
+    const conflict = expectObject((await world.post('requests/submit',
+      body(submitInput('s6a-refs-replay', { references: REF_WHOLE })))).body);
+    expect(conflict).toMatchObject({ status: 'rejected', code: 'idempotency_conflict' });
+    expect(await roundsOf(world, root)).toHaveLength(1);
+  });
+});
+
+describe('rejects: request references', () => {
+  it.each([
+    ['a parent segment', '../x'],
+    ['an absolute path', '/etc/passwd'],
+    ['a drive letter', 'C:\\x'],
+    ['a parent segment in the middle', 'a/../../b'],
+  ])('refuses %s as a normalized path, not as forbidden (ruling 24)', async (_label, path) => {
+    const world = await open({ backend: 'memory' });
+    await world.createSecretary('refs-path');
+    const root = (expectQueuedAssigned((await world.post('requests/submit',
+      body(submitInput('s6a-refs-path-root')))).body))['requestRoot'] as QueryJobRef;
+    // Mutation: route out-of-workspace paths to the `forbidden` branch; this row
+    // then answers forbidden and is red on `code`.
+    await refusedOnRoot(world, root, 's6a-refs-path', [{ path }], { code: 'invalid',
+      reason: 'references[0].path must be a normalized workspace-relative path' });
+  });
+
+  it('refuses an endLine before its startLine, and writes no round', async () => {
+    const world = await open({ backend: 'memory' });
+    await world.createSecretary('refs-order');
+    const root = (expectQueuedAssigned((await world.post('requests/submit',
+      body(submitInput('s6a-refs-order-root')))).body))['requestRoot'] as QueryJobRef;
+    // Mutation: delete the `endLine < startLine` branch; the submit writes a
+    // round and this row is red on `code`.
+    await refusedOnRoot(world, root, 's6a-refs-order',
+      [{ path: 'src/a.ts', startLine: 5, endLine: 3, snapshot: null }],
+      { code: 'invalid', reason: 'references[0].endLine must not be before startLine' });
+  });
+
+  it('refuses more than 8 references, and writes no round', async () => {
+    const world = await open({ backend: 'memory' });
+    await world.createSecretary('refs-nine');
+    const root = (expectQueuedAssigned((await world.post('requests/submit',
+      body(submitInput('s6a-refs-nine-root')))).body))['requestRoot'] as QueryJobRef;
+    const nine = Array.from({ length: 9 }, (_, index) => ({ path: `src/${String(index)}.ts` }));
+    // Mutation: MAX_REFS 8 -> 99; the nine references are written and this row
+    // is red on `code`.
+    await refusedOnRoot(world, root, 's6a-refs-nine', nine,
+      { code: 'invalid', reason: 'references must name at most 8 references' });
+  });
+
+  it('refuses a snapshot over 4 KiB of UTF-8, and writes no round', async () => {
+    const world = await open({ backend: 'memory' });
+    await world.createSecretary('refs-big');
+    const root = (expectQueuedAssigned((await world.post('requests/submit',
+      body(submitInput('s6a-refs-big-root')))).body))['requestRoot'] as QueryJobRef;
+    const snapshot = 'x'.repeat(4 * 1024 + 1);
+    expect(Buffer.byteLength(snapshot, 'utf8')).toBe(4097);
+    // Mutation: MAX_SNAPSHOT 4096 -> 4097; this row is red on `code`.
+    await refusedOnRoot(world, root, 's6a-refs-big', [{ path: 'src/a.ts', snapshot }],
+      { code: 'invalid', reason: 'references[0].snapshot must be at most 4 KiB of UTF-8' });
+  });
+
+  it('refuses snapshots over 16 KiB in total, and writes no round', async () => {
+    const world = await open({ backend: 'memory' });
+    await world.createSecretary('refs-total');
+    const root = (expectQueuedAssigned((await world.post('requests/submit',
+      body(submitInput('s6a-refs-total-root')))).body))['requestRoot'] as QueryJobRef;
+    // Each snapshot is exactly at the per-reference limit, so only the total
+    // check can refuse this submit: 5 * 4096 = 20480 > 16384.
+    const snapshot = 'y'.repeat(4 * 1024);
+    expect(Buffer.byteLength(snapshot, 'utf8') * 5).toBe(20480);
+    const five = Array.from({ length: 5 }, (_, index) => ({ path: `src/${String(index)}.ts`, snapshot }));
+    // Mutation: MAX_TOTAL 16384 -> 20480; this row is red on `code`.
+    await refusedOnRoot(world, root, 's6a-refs-total', five,
+      { code: 'invalid', reason: 'references must carry at most 16 KiB of snapshots' });
+  });
+
+  it('refuses references that are not an array, and writes no round', async () => {
+    const world = await open({ backend: 'memory' });
+    await world.createSecretary('refs-array');
+    const root = (expectQueuedAssigned((await world.post('requests/submit',
+      body(submitInput('s6a-refs-array-root')))).body))['requestRoot'] as QueryJobRef;
+    // Mutation: skip the non-array check; this row is red on `code`.
+    await refusedOnRoot(world, root, 's6a-refs-array', 'src/a.ts',
+      { code: 'invalid', reason: 'references must be an array' });
+  });
+
+  it('refuses a non-string snapshot, and writes no round', async () => {
+    const world = await open({ backend: 'memory' });
+    await world.createSecretary('refs-snapshot');
+    const root = (expectQueuedAssigned((await world.post('requests/submit',
+      body(submitInput('s6a-refs-snapshot-root')))).body))['requestRoot'] as QueryJobRef;
+    // Mutation: accept any snapshot type; this row is red on `code`.
+    await refusedOnRoot(world, root, 's6a-refs-snapshot', [{ path: 'src/a.ts', snapshot: 3 }],
+      { code: 'invalid', reason: 'references[0].snapshot must be a string' });
+  });
+
+  it('refuses an endLine without a startLine, and writes no round', async () => {
+    const world = await open({ backend: 'memory' });
+    await world.createSecretary('refs-end-only');
+    const root = (expectQueuedAssigned((await world.post('requests/submit',
+      body(submitInput('s6a-refs-end-only-root')))).body))['requestRoot'] as QueryJobRef;
+    // Mutation: default the missing startLine to the endLine; this row is red on `code`.
+    await refusedOnRoot(world, root, 's6a-refs-end-only', [{ path: 'src/a.ts', endLine: 2 }],
+      { code: 'invalid', reason: 'references[0].endLine requires startLine' });
+  });
+
+  it.each([
+    ['a zero startLine', { path: 'src/a.ts', startLine: 0, endLine: null, snapshot: null },
+      'references[0].startLine must be a positive safe integer'],
+    ['a fractional endLine', { path: 'src/a.ts', startLine: 1, endLine: 1.5, snapshot: null },
+      'references[0].endLine must be a positive safe integer'],
+  ])('refuses %s, and writes no round', async (_label, reference, reason) => {
+    const world = await open({ backend: 'memory' });
+    await world.createSecretary('refs-positive');
+    const root = (expectQueuedAssigned((await world.post('requests/submit',
+      body(submitInput('s6a-refs-positive-root')))).body))['requestRoot'] as QueryJobRef;
+    // Mutation: drop the positive-safe-integer check; this row is red on `code`.
+    await refusedOnRoot(world, root, 's6a-refs-positive', [reference], { code: 'invalid', reason });
+  });
+});

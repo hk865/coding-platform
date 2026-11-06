@@ -9,6 +9,25 @@ export type QueryJobRef = {
     workspaceId: string;
     queryJobId: string;
 };
+
+/** The public entry's shape of one request reference: omitted fields mean "none". */
+export type RequestReferenceInputV1 = {
+    path: string;
+    /** 1-based; omitted/null = the whole file. */
+    startLine?: number | null;
+    /** Omitted/null with `startLine` set = that single line; it cannot stand without `startLine`. */
+    endLine?: number | null;
+    /** The draft snapshot text; omitted/null = the saved file. */
+    snapshot?: string | null;
+};
+
+/** The stored/read shape: every key present, omitted values written null. */
+export type RequestReferenceV1 = {
+    path: string;
+    startLine: number | null;
+    endLine: number | null;
+    snapshot: string | null;
+};
 export type QueryRunRef = {
     aggregateType: "QueryRun";
     projectId: string;
@@ -34,6 +53,8 @@ export type SecretaryRoundMaterialV1 = {
     runRevision: number;
     since: CommitCursor;
     text: string;
+    /** The submit's structured file selections; a request round's projection always writes the list. */
+    references?: RequestReferenceV1[];
     selectedIdea: { round: QueryJobRef; index: number; title: string; detail: string } | null;
     relatedCards: { ref: VersionedRef; current: number | null }[];
     /** The round's stored understanding command, projected from `round.job.understanding`. */
@@ -479,6 +500,8 @@ export type QueryJobV1 = {
     receipt: RequestCommandReceiptV1 | null;
     /** The round's understanding command; `null` on every other Query and every historical record. */
     understanding: RequestUnderstandingCommandV1 | null;
+    /** The submit's structured file selections (UI1 request-refs); every request round writes the list. */
+    requestReferences?: RequestReferenceV1[];
 };
 // ------------------------------------------------------------------------ //
 // Events (query v1)                                                         //

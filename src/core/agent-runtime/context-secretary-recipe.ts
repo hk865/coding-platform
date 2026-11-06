@@ -26,7 +26,7 @@ import { renderDeliveryInput } from '../../contracts/prompts/delivery-input.js';
 import type { PromptTextsV1 } from '../../contracts/prompts/prompt-set.js';
 import { renderTemplate } from '../../contracts/prompts/render-template.js';
 import type { RoleSpecResolutionV1 } from '../../contracts/role-spec-materials.js';
-import type { SecretaryRoundMaterialV1, QueryJobRef } from '../../contracts/query-job.js';
+import type { RequestReferenceV1, SecretaryRoundMaterialV1, QueryJobRef } from '../../contracts/query-job.js';
 import type { QueryPreparationFacts } from '../work-graph/queries/contracts.js';
 import type { GraphContextFactsV1 } from '../work-graph/model/graph-context-contracts.js';
 import type { NoteMemoryMaterialV1 } from '../work-graph/model/note-contracts.js';
@@ -73,15 +73,31 @@ function relatedCardLine(card: SecretaryRoundMaterialV1['relatedCards'][number])
   return card.current === card.ref.revision ? line : `${line} (now @${String(card.current)})`;
 }
 
+/** One reference as the secretary reads it: `path`, the 1-based line(s), then the draft snapshot verbatim. */
+function referenceText(reference: RequestReferenceV1): string {
+  const lines = [reference.endLine === null || reference.endLine === reference.startLine
+    ? `- ${reference.path}${reference.startLine === null ? '' : `:${String(reference.startLine)}`}`
+    : `- ${reference.path}:${String(reference.startLine)}-${String(reference.endLine)}`];
+  if (reference.snapshot !== null) {
+    lines.push('  snapshot:', ...reference.snapshot.split('\n').map((line) => `    ${line}`));
+  }
+  return lines.join('\n');
+}
+
 /**
- * `- [<since>] <input>`, then the frozen delivery of a reply/expiry round when
- * it has one, then the selected idea when there is one, then the card refs the
- * round carries (an `ask`) under their heading. A round with none of these
- * renders its input line alone.
+ * `- [<since>] <input>`, then the round's structured references when it has
+ * any, then the frozen delivery of a reply/expiry round when it has one, then
+ * the selected idea when there is one, then the card refs the round carries
+ * (an `ask`) under their heading. A round with none of these renders its input
+ * line alone.
  */
 export function roundMaterial(round: SecretaryRoundMaterialV1, texts: PromptTextsV1,
   toolNames: readonly string[] = []): string {
   const lines = [`- [${round.since}] ${round.text}`];
+  const references = round.references ?? [];
+  if (references.length > 0) {
+    lines.push(packString(texts, 'secretary.referencesHeading'), ...references.map(referenceText));
+  }
   if (round.delivery !== null && round.relatedMessageRef !== null) {
     // The frozen slots are the canonical delivery input minus the template and
     // message id: an expiry carries `expiryCount` and takes the expiry

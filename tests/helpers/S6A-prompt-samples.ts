@@ -1,6 +1,6 @@
 /**
  * Hand-written expected secretary inputs: the text a secretary round (`callKind: 'secretary'`, template
- * `secretary-round` v1) sends as its input, built only from literals and from values a test got from public steps
+ * `secretary-round` v2) sends as its input, built only from literals and from values a test got from public steps
  * (ids, revisions, `since` cursors as a public read shows them, texts the test submitted). Nothing here calls
  * production rendering code or imports a production constant; every literal is copied by hand from the frozen
  * secretary rules (the `secretary-round` and `secretary-answer` templates, the secretary strings, the rendering of
@@ -50,6 +50,7 @@ export const SECRETARY_STRINGS = {
   'secretary.goalsHeading': '## Goals',
   'secretary.noGoal': 'This request has no goal yet.',
   'secretary.roundHeading': '## This round',
+  'secretary.referencesHeading': '## References',
   'secretary.selectedIdea': 'Selected idea:',
   'secretary.batchedHeading': '## Also queued in this request',
   'secretary.earlierHeading': '## Earlier rounds of this request on other secretaries',
@@ -63,7 +64,7 @@ export const SECRETARY_ROUND_TEMPLATE_V1 =
   '{{prelude}}\n\n{{role}}{{goal}}{{notes}}{{task_round}}{{task_batched}}{{task_earlier}}';
 
 /** The platform pack's versions of the two secretary templates (the answer mentions no tool at pack level). */
-export const SECRETARY_TEMPLATE_VERSIONS = { 'secretary-round': 1, 'secretary-answer': 3 } as const;
+export const SECRETARY_TEMPLATE_VERSIONS = { 'secretary-round': 2, 'secretary-answer': 3 } as const;
 
 /** `secretary-answer.txt` rendered for a `semantic_query` round: its one submit block. */
 export const SECRETARY_ANSWER_FORMAT_V1 =

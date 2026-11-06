@@ -80,12 +80,16 @@ function requestJob(): QueryJobSnapshot {
       selectedIdea: { round: ref('query-2'), index: 2 },
       goalAttribution: 'goal-2',
       relatedCardRefs: [{ ref: { aggregateType: 'Goal', projectId: P, goalId: 'goal-2' }, revision: 4 }],
+      requestReferences: [
+        { path: 'src/a.ts', startLine: 3, endLine: 5, snapshot: 'the selected draft' },
+        { path: 'docs/b.md', startLine: null, endLine: null, snapshot: null },
+      ],
       enteredSession: session('session-3'),
       intakeSession: session('session-4'),
       receipt: { kind: 'submit', requestRoot: root, round: ref('query-3'), assignment: 'assigned',
         secretary: session('session-1'), created: true },
       understanding: null,
-    },
+    } as unknown as QueryJobSnapshot['job'],
   };
 }
 
@@ -182,7 +186,7 @@ function routingJob(): QueryJobSnapshot {
       ...job.job, queryJobId: 'query-4', intent: { ...intent(), intentId: 'query-4' }, status: 'closed', runRef: null,
       closeReason: { code: 'not_entered', message: 'routing_round_created_closed', detail: null },
       roundKind: 'routing', assignedSession: null, intakeSession: null, enteredSession: null,
-      routing: { from: null, to: session('session-2'), reason: 'assigned' },
+      requestReferences: [], routing: { from: null, to: session('session-2'), reason: 'assigned' },
       receipt: { kind: 'route', routingRound: ref('query-4') },
     },
   };
@@ -266,6 +270,50 @@ describe('QueryJob current format (§3.1.1, §3.3)', () => {
     delete body.slots;
     const encoded = { ...encodeQueryJobSnapshot(requestJob()), json: JSON.stringify(body) };
     expect(decodeQueryJobSnapshot(encoded).status).toBe('invalid');
+  });
+});
+
+describe('the stored request references (UI1 request-refs 说明书 §1.2, §2.8.9)', () => {
+  /** A Job whose `requestReferences` is the value under test; every other field is the current format. */
+  const withRefs = (references: unknown, overrides: Record<string, unknown> = {}): QueryJobSnapshot => {
+    const job = requestJob();
+    return { ...job, job: { ...job.job, ...overrides, requestReferences: references } as unknown as QueryJobSnapshot['job'] };
+  };
+  const decodeWithRefs = (references: unknown, overrides: Record<string, unknown> = {}) =>
+    decodeQueryJobSnapshot(encodeQueryJobSnapshot(withRefs(references, overrides)));
+
+  // Mutation: delete the `requestReferencesProblem` call in `jobIssues`; each
+  // row then decodes a bad stored reference and is red on `status`.
+  it.each([
+    ['a reference that is not an object', ['src/a.ts']],
+    ['a startLine that is not a positive integer', [{ path: 'src/a.ts', startLine: 0, endLine: null, snapshot: null }]],
+    ['an endLine before startLine', [{ path: 'src/a.ts', startLine: 5, endLine: 3, snapshot: null }]],
+    ['a snapshot that is not a string', [{ path: 'src/a.ts', startLine: null, endLine: null, snapshot: 3 }]],
+  ] as [string, unknown][])('refuses %s', (_label, references) => {
+    const result = decodeWithRefs(references);
+    expect(result.status).toBe('invalid');
+    if (result.status === 'invalid') expect(result.reason).toContain('requestReferences');
+  });
+
+  // Mutation: delete the "must be empty on this round kind" branch; this row
+  // then decodes a plain Query carrying references and is red on `status`.
+  it('refuses references on a round kind that is not request or followup', () => {
+    const result = decodeWithRefs([{ path: 'src/a.ts', startLine: null, endLine: null, snapshot: null }],
+      { roundKind: null, requestRoot: null });
+    expect(result.status).toBe('invalid');
+    if (result.status === 'invalid') expect(result.reason).toContain('must be empty on this round kind');
+  });
+
+  // Ruling 29: every request record writes the key; a missing key is a bad
+  // record, not an old format. Mutation: accept the absent key in jobIssues;
+  // this row then decodes and is red on `status`.
+  it('refuses a request Job without requestReferences', () => {
+    const encoded = encodeQueryJobSnapshot(requestJob());
+    const body = JSON.parse(encoded.json) as { job: Record<string, unknown> };
+    delete body.job['requestReferences'];
+    const result = decodeQueryJobSnapshot({ ...encoded, json: JSON.stringify(body) });
+    expect(result.status).toBe('invalid');
+    if (result.status === 'invalid') expect(result.reason).toContain('requestReferences');
   });
 });
 

@@ -324,6 +324,7 @@ async function readSecretaryFactsOnce(
         runRevision: roundRun.revision,
         since: round.since,
         text: round.job.intent.question,
+        references: round.job.requestReferences!.map((reference) => ({ ...reference })),
         selectedIdea,
         relatedCards,
         command: round.job.understanding,

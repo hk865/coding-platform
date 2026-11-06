@@ -33,6 +33,7 @@ import {
 } from '../../../contracts/validation/common.js';
 import { checkShape } from '../../../contracts/validation/data-format.js';
 import { isArtifactRef } from '../../record-store/body-codec.js';
+import { requestReferencesProblem } from '../model/request-references.js';
 import type {
   PendingQueryJobSnapshot,
   QueryCloseDetailV1,
@@ -930,6 +931,19 @@ function jobIssues(value: unknown, expectedRef: QueryJobRef | null): string[] {
   }
   if (!(value['roundKind'] === null || QUERY_ROUND_KINDS.includes(value['roundKind'] as QueryRoundKind))) {
     issues.push('job.roundKind is not null or a legal QueryRoundKind');
+  }
+  // The current request format always writes the key (ruling 29); a plain Query
+  // is not a request round and writes no request references.
+  const requestReferences = value['requestReferences'];
+  if (requestReferences === undefined) {
+    if (value['roundKind'] !== null) issues.push('job.requestReferences is required on a request round');
+  } else {
+    const problem = requestReferences === null ? 'references must be an array' : requestReferencesProblem(requestReferences);
+    if (problem !== null) issues.push(`job.requestReferences ${problem}`);
+    else if (Array.isArray(requestReferences) && requestReferences.length > 0
+      && value['roundKind'] !== 'request' && value['roundKind'] !== 'followup') {
+      issues.push('job.requestReferences must be empty on this round kind');
+    }
   }
   if (!(value['requestGoalId'] === null || nonEmpty(value['requestGoalId']))) {
     issues.push('job.requestGoalId must be null or a non-empty string');

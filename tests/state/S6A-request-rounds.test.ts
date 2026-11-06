@@ -56,7 +56,7 @@ function requestRound(overrides: Partial<Parameters<typeof newRequestRound>[0]> 
     queryJobId: 'qj-root', runId: 'qr-root', scope: SCOPE, intent: INTENT, kind: 'request', requestRoot: null,
     requestGoalId: 'g1', assignedSession: SESSION_A, intakeSession: SESSION_A, selectedIdea: null,
     relatedCardRefs: [CARD_REF], relatedMessageRef: null, receipt: RECEIPT, submission: SUBMISSION,
-    submittedAt: SUBMITTED_AT, understanding: null, ...overrides,
+    submittedAt: SUBMITTED_AT, understanding: null, requestReferences: [], ...overrides,
   });
 }
 
@@ -82,10 +82,10 @@ describe('newRequestRound', () => {
         submittedAt: SUBMITTED_AT, updatedAt: SUBMITTED_AT,
         requestRoot: JOB_REF, roundKind: 'request', requestGoalId: 'g1', assignedSession: SESSION_A,
         routing: null, relatedMessageRef: null, absorbedInto: null, absorbedRounds: [], selectedIdea: null,
-        goalAttribution: null, relatedCardRefs: [CARD_REF], enteredSession: null, intakeSession: SESSION_A,
-        receipt: RECEIPT, understanding: null,
+        goalAttribution: null, relatedCardRefs: [CARD_REF], requestReferences: [], enteredSession: null,
+        intakeSession: SESSION_A, receipt: RECEIPT, understanding: null,
       },
-    } satisfies PendingQueryJobSnapshot);
+    } as unknown as PendingQueryJobSnapshot);
     expect(records.run).toEqual({
       ref: RUN_REF, revision: 1, schemaVersion: 1,
       run: { schemaVersion: 1, queryJobRef: JOB_REF, runId: 'qr-root', status: 'pending', startedAt: null, endedAt: null, outcome: null },
@@ -93,6 +93,19 @@ describe('newRequestRound', () => {
     expect(records.job.ref).not.toBe(JOB_REF);
     expect(records.run.ref).not.toBe(RUN_REF);
     expect(records.run.run.queryJobRef).toEqual(records.job.ref);
+  });
+
+  // Mutation: write `requestReferences: []` in `newRequestRound` instead of the
+  // normalized input (or drop the field): this row is red on the first expect.
+  it('writes the normalized references the submit supplied and defaults them to []', () => {
+    const references = [
+      { path: 'src/a.ts', startLine: 3, endLine: 5, snapshot: 'the selected draft' },
+      { path: 'docs/b.md', startLine: null, endLine: null, snapshot: null },
+    ];
+    const written = requestRound({ requestReferences: references } as unknown as
+      Partial<Parameters<typeof newRequestRound>[0]>);
+    expect((written.job.job as unknown as Record<string, unknown>)['requestReferences']).toEqual(references);
+    expect((requestRound().job.job as unknown as Record<string, unknown>)['requestReferences']).toEqual([]);
   });
 
   it('writes the internal understanding command onto the Job and leaves new requests without one', () => {
@@ -141,8 +154,8 @@ describe('newRoutingRound', () => {
       requestRoot: JOB_REF, roundKind: 'routing', requestGoalId: 'g1', assignedSession: null,
       routing: { from: null, to: SESSION_B, reason: 'assigned' },
       relatedMessageRef: null, absorbedInto: null, absorbedRounds: [], selectedIdea: null,
-      goalAttribution: null, relatedCardRefs: [], enteredSession: null, intakeSession: null, receipt: null,
-      understanding: null,
+      goalAttribution: null, relatedCardRefs: [], requestReferences: [], enteredSession: null, intakeSession: null,
+      receipt: null, understanding: null,
     });
     // A routing round never creates a QueryRun: the constructor returns one Job snapshot.
     expect(routing.job.runRef).toBeNull();

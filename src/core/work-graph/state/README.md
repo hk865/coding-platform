@@ -202,18 +202,18 @@
 | `queryRecoveryStateOf` | `src/core/work-graph/state/query-run-recovery.ts:505` | Job+Run 的恢复机器状态 | 恢复迁移前 |
 | `MAX_ATTESTATION_REASON_CHARS` / `QueryAnswerCheck` | `src/core/work-graph/state/query-run-recovery.ts:129`、`src/core/work-graph/state/query-run-recovery.ts:129` | 人工确认理由和关闭消息的上限（2000 个 UTF-16 单位，截断不留半个代理对）；答案检查失败的 detail 与理由 | 校验确认理由、结清带答案检查的终态；`src/core/work-graph/tasks/run-reconcile-service.ts` 只复用这个常量，不另写答案检查类型 |
 | `sameRef`（**正本**） | `src/core/work-graph/state/ref-equality.ts:2` | 与键序无关的 ref 结构相等；本层是唯一正本 | 比较 ref；不要再写第二份 |
-| `newRequestRound` | `src/core/work-graph/state/request-rounds.ts:66` | 建新请求轮（Job/Run 对）：`roundKind` 取 `request`/`followup`/`reply`/`expiry`，`relatedMessageRef` 在答复/到期轮上写消息、其它轮为 `null`，并可写入本轮的理解命令 | 收到新请求、答复或到期 |
+| `newRequestRound` | `src/core/work-graph/state/request-rounds.ts:66` | 建新请求轮（Job/Run 对）：`roundKind` 取 `request`/`followup`/`reply`/`expiry`，`relatedMessageRef` 在答复/到期轮上写消息、其它轮为 `null`，可写入本轮的理解命令；`NewRequestRoundInput.requestReferences` 必填（没有引用时构造器收到 `[]`），`newRoutingRound` 写 `[]` | 收到新请求、答复或到期 |
 | `newRoutingRound` | `src/core/work-graph/state/request-rounds.ts:113` | 建只路由、不跑的轮（无 Run）；`routing: null` 的归属臂带 `goalAttribution`，`job.goalId` 与 `job.goalAttribution` 都写该 Goal id，`understanding` 保持 `null` | 秘书分派与 Goal 归属轮；不要另写归属轮 |
-| `endUnstartedRound` | `src/core/work-graph/state/request-rounds.ts:158` | 结束未开始的轮 | 未执行即关闭 |
-| `newAttempt` | `src/core/work-graph/state/request-rounds.ts:183` | 在同一 Job 上开新 Run | 重试；保留旧 runId/触发身份 |
-| `absorbRound` | `src/core/work-graph/state/request-rounds.ts:232` | 把批轮吸收进执行轮 | 合并批处理请求 |
-| `recordAbsorbedRounds` | `src/core/work-graph/state/request-rounds.ts:255` | 记录被吸收的批轮（一次一条） | absorb 之后 |
-| `setIntake` | `src/core/work-graph/state/request-rounds.ts:267` | 设置/清除 secretary-intake 持有者 | 秘书领取/释放请求 |
-| `recordEntered` | `src/core/work-graph/state/request-rounds.ts:276` | 一次性写 enteredSession，第二次换 Session 抛错 | 请求第一次真正进入 |
-| `transitionUnderstandingCommand` | `src/core/work-graph/state/request-rounds.ts:294` | 理解命令的唯一合法迁移 `live → closed`、`live → consumed`、`closed → consumed`；已 consumed、回退或 commandId 不符抛错，只改 state/updatedAt、revision+1 | 关闭或消费一条理解命令 |
-| `foldUnderstandingCommand` | `src/core/work-graph/state/request-rounds.ts:324` | 把一次理解命令迁移的结果折进另一份 Job 快照：保留该快照的 revision/updatedAt，只取迁移产出的命令；没有命令抛错 | 轮结束提交把消费后的命令并入自己的下一份 Job |
-| `UnderstandingOperationFactsV1`、`liveUnderstandingGrants` | `src/core/work-graph/state/request-rounds.ts:375`、`:375` | 冻结材料列表 `[round, ...batch]` 上仍有效授权集的唯一纯规则：命令 live、自身 generation 等于其 operation 当前 generation、requestRoot 是本次请求根且 operation 的 source 仍是 owner；按 Goal 去重、轮次顺序，返回 readonly `GoalRef[]` | 准备读取、启动重核和注记时解析授权集 |
-| `currentUnderstandingGeneration` | `src/core/work-graph/state/request-rounds.ts:405` | operation 的当前理解 generation：`progress.understanding` 最大记录，非交接分支或无记录为 `null` | 判命令 generation 前 |
+| `endUnstartedRound` | `src/core/work-graph/state/request-rounds.ts:163` | 结束未开始的轮 | 未执行即关闭 |
+| `newAttempt` | `src/core/work-graph/state/request-rounds.ts:188` | 在同一 Job 上开新 Run | 重试；保留旧 runId/触发身份 |
+| `absorbRound` | `src/core/work-graph/state/request-rounds.ts:237` | 把批轮吸收进执行轮 | 合并批处理请求 |
+| `recordAbsorbedRounds` | `src/core/work-graph/state/request-rounds.ts:260` | 记录被吸收的批轮（一次一条） | absorb 之后 |
+| `setIntake` | `src/core/work-graph/state/request-rounds.ts:272` | 设置/清除 secretary-intake 持有者 | 秘书领取/释放请求 |
+| `recordEntered` | `src/core/work-graph/state/request-rounds.ts:281` | 一次性写 enteredSession，第二次换 Session 抛错 | 请求第一次真正进入 |
+| `transitionUnderstandingCommand` | `src/core/work-graph/state/request-rounds.ts:299` | 理解命令的唯一合法迁移 `live → closed`、`live → consumed`、`closed → consumed`；已 consumed、回退或 commandId 不符抛错，只改 state/updatedAt、revision+1 | 关闭或消费一条理解命令 |
+| `foldUnderstandingCommand` | `src/core/work-graph/state/request-rounds.ts:329` | 把一次理解命令迁移的结果折进另一份 Job 快照：保留该快照的 revision/updatedAt，只取迁移产出的命令；没有命令抛错 | 轮结束提交把消费后的命令并入自己的下一份 Job |
+| `UnderstandingOperationFactsV1`、`liveUnderstandingGrants` | `src/core/work-graph/state/request-rounds.ts:369`、`:380` | 冻结材料列表 `[round, ...batch]` 上仍有效授权集的唯一纯规则：命令 live、自身 generation 等于其 operation 当前 generation、requestRoot 是本次请求根且 operation 的 source 仍是 owner；按 Goal 去重、轮次顺序，返回 readonly `GoalRef[]` | 准备读取、启动重核和注记时解析授权集 |
+| `currentUnderstandingGeneration` | `src/core/work-graph/state/request-rounds.ts:410` | operation 的当前理解 generation：`progress.understanding` 最大记录，非交接分支或无记录为 `null` | 判命令 generation 前 |
 | `leaseReleasedForContinuation` | `src/core/work-graph/state/review-lease.ts:25` | 租约是否由 afterRun 或其复查轮释放 | 续作前置检查 |
 | `isUnenteredReviewRoundForCancellation` | `src/core/work-graph/state/review-lease.ts:41` | 可证明未进入 Kernel 的复查 Run | UR3h 取消判定 |
 | `reviewRoundEndedKnown` | `src/core/work-graph/state/review-lease.ts:63` | 复查 Run 是否已知结束 | 判断可续作 |

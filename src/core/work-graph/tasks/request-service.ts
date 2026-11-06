@@ -34,6 +34,7 @@ import { canonicalKey as keyOf, canonicalJson, sameJson, sha256Hex, type JsonVal
 import {
   queryJobRefFor, type QueryJobIntentV1, type QueryJobRef, type QueryJobSnapshot,
   type QueryRunRef, type QueryRunSnapshot, type RequestCommandReceiptV1,
+  type RequestReferenceInputV1, type RequestReferenceV1,
   type RequestUnderstandingCommandV1,
 } from '../../../contracts/query-job.js';
 import { rejected } from '../../../contracts/core/rejections.js';
@@ -79,6 +80,7 @@ import { aggregateRefProblem } from '../persistence/decision-record-codecs.js';
 import { sessionRefProblem } from '../persistence/rework-codecs.js';
 import { readOwnerRecord } from './owner-record-read.js';
 import { validIdeaCount } from '../model/request-ideas.js';
+import { normalizeRequestReferences, requestReferencesProblem } from '../model/request-references.js';
 import { ownerWriteStoreFailureToRejection } from '../persistence/read-result-failures.js';
 import { replayCommittedReceipt, type ReceiptReplayFailure } from './receipt-replay.js';
 import { admitRequestSecretary } from './secretary-selection.js';
@@ -99,10 +101,11 @@ export {
 
 export type RequestPublicCommandV1 =
   | { kind: 'submit'; commandId: string; goalId: string | null; text: string; continues: QueryJobRef | null;
-      recipient: SessionRef | null }
+      recipient: SessionRef | null; references: RequestReferenceInputV1[] }
   | { kind: 'route'; commandId: string; round: QueryJobRef; to: SessionRef | null; reason: 'manual' | 'dropped' }
   | { kind: 'select_idea'; commandId: string; round: QueryJobRef; index: number }
-  | { kind: 'ask'; commandId: string; round: QueryJobRef; cardRefs: VersionedRef[]; regenerate: boolean; text: string };
+  | { kind: 'ask'; commandId: string; round: QueryJobRef; cardRefs: VersionedRef[]; regenerate: boolean; text: string;
+      references?: unknown };
 
 export type RequestInternalCommandV1 =
   | { kind: 'reply' | 'expiry'; operationId: string; requestRoot: QueryJobRef; messageRef: SessionMessageRef }
@@ -235,7 +238,7 @@ function commandFingerprint(command: RequestPublicCommandV1): string {
   switch (command.kind) {
     case 'submit':
       content = { kind: 'submit', goalId: command.goalId, text: command.text, continues: command.continues,
-        recipient: command.recipient };
+        recipient: command.recipient, references: normalizeRequestReferences(command.references) };
       break;
     case 'route':
       content = { kind: 'route', round: command.round, to: command.to, reason: command.reason };
@@ -354,8 +357,12 @@ export function publicCommandProblem(command: RequestPublicCommandV1, projectId:
   switch (command.kind) {
     case 'submit': {
       if (!(command.goalId === null || nonEmpty(command.goalId))) return 'goalId must be null or a non-empty string';
-      const text = queryTextProblem(command.text);
-      if (text !== null) return `text ${text}`;
+      // Ruling 23: a submit that carries references may omit the words; both empty stays invalid.
+      const carriesReferences = Array.isArray(command.references) && command.references.length > 0;
+      if (!(carriesReferences && command.text === '')) {
+        const text = queryTextProblem(command.text);
+        if (text !== null) return `text ${text}`;
+      }
       if (command.continues !== null) {
         const problem = queryJobRefProblem(command.continues, 'continues');
         if (problem !== null) return problem;
@@ -394,6 +401,22 @@ export function publicCommandProblem(command: RequestPublicCommandV1, projectId:
     default:
       return `unknown request command ${String((command as { kind?: unknown }).kind)}`;
   }
+}
+
+/**
+ * The service's pure input refusal: a submit's references first (all their
+ * problems are `invalid`, ruling 24), then the command's own shape. Every
+ * other command kind refuses a `references` key instead of dropping it.
+ */
+export function requestInputRejection(command: RequestPublicCommandV1, projectId: string): RequestRejectionV1 | null {
+  if (command.kind === 'submit') {
+    const problem = requestReferencesProblem(command.references);
+    if (problem !== null) return rejected('invalid', problem);
+  } else if (Object.hasOwn(command, 'references')) {
+    return rejected('invalid', 'references are only accepted on a submit');
+  }
+  const shape = publicCommandProblem(command, projectId);
+  return shape === null ? null : rejected('invalid', shape);
 }
 
 // ------------------------------------------------------------------------ //
@@ -897,8 +920,8 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
     const principal = hostPrincipalOf(ctx, 'human');
     if (principal === null) return rejected('forbidden', 'only the person may issue a request command');
     // (2) pure input checks, nothing read.
-    const shape = publicCommandProblem(command, ctx.projectId);
-    if (shape !== null) return rejected('invalid', shape);
+    const refusal = requestInputRejection(command, ctx.projectId);
+    if (refusal !== null) return refusal;
 
     // (3) identity and fingerprint.
     const identityKey = commandIdentity({ operation: `request.${command.kind}`,
@@ -956,8 +979,8 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
     if ('plan' in input) {
       const person = hostPrincipalOf(ctx, 'human');
       if (person === null) return rejected('forbidden', 'only the person may append a public request command');
-      const shape = publicCommandProblem(input.command, ctx.projectId);
-      if (shape !== null) return rejected('invalid', shape);
+      const refusal = requestInputRejection(input.command, ctx.projectId);
+      if (refusal !== null) return refusal;
       return appendPublic(ctx, person, input.command, input.plan);
     }
     // Internal commands are authorized by principal kind, not by a human actor.
@@ -1029,7 +1052,7 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       if (replayed !== null) return replayed;
       return withTailRetries(() => prepareSubmit(ctx, principal, {
         kind: 'submit', commandId: command.operationId, goalId: null, text: command.text,
-        continues: null, recipient: null,
+        continues: null, recipient: null, references: [],
       }, { assignTo: null, createdLine: false, capacityBlocked: true }, identityKey, fingerprint),
       (prepared) => commitPrepared(identityKey, fingerprint, prepared));
     }
@@ -1045,7 +1068,7 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       // owner is gone (`capacityBlocked`, as the intervention's new-goal round).
       return withTailRetries(() => prepareSubmit(ctx, principal, {
         kind: 'submit', commandId: command.operationId, goalId: null, text: command.text,
-        continues: command.requestRoot, recipient: null,
+        continues: command.requestRoot, recipient: null, references: [],
       }, { assignTo: null, createdLine: false, capacityBlocked: true }, identityKey, fingerprint),
       (prepared) => commitPrepared(identityKey, fingerprint, prepared));
     }
@@ -1119,8 +1142,8 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       queryJobId, runId: `run-${queryJobId}`, scope, intent, kind: 'followup',
       requestRoot: command.requestRoot, requestGoalId: rootJob.job.requestGoalId,
       assignedSession: { ...source }, intakeSession: null, selectedIdea: null, relatedCardRefs: [],
-      relatedMessageRef: null, receipt, submission: requestTailSubmissionOf(identityKey, fingerprint, eventId),
-      submittedAt: occurredAt,
+      relatedMessageRef: null, receipt, requestReferences: [],
+      submission: requestTailSubmissionOf(identityKey, fingerprint, eventId), submittedAt: occurredAt,
       understanding: command,
     });
     const guards = preparedGuards([
@@ -1164,7 +1187,7 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
     return buildRound({
       ctx, principal, commandId: command.operationId, identityKey, fingerprint, occurredAt: deps.now(),
       requestRoot: { ...command.requestRoot }, kind: command.kind, requestGoalId: facts.requestGoalId,
-      text: root!.job.intent.question, selectedIdea: null, relatedCardRefs: [],
+      text: root!.job.intent.question, selectedIdea: null, relatedCardRefs: [], references: [],
       relatedMessageRef: { ...command.messageRef }, createdLine: false, receiptKind: command.kind,
       facts, goalGuard: null, assignment: assignment.value,
     });
@@ -1235,6 +1258,7 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       requestRoot: command.continues, kind: command.continues === null ? 'request' : 'followup',
       requestGoalId: command.continues === null ? command.goalId : facts!.requestGoalId,
       text: command.text, selectedIdea: null, relatedCardRefs: [], relatedMessageRef: null,
+      references: normalizeRequestReferences(command.references),
       createdLine: plan.createdLine, receiptKind: 'submit', facts, goalGuard, assignment: assignment.value,
     });
   }
@@ -1305,6 +1329,7 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
     occurredAt: string;
     requestRoot: QueryJobRef | null; kind: 'request' | 'followup' | 'reply' | 'expiry'; requestGoalId: string | null;
     text: string; selectedIdea: { round: QueryJobRef; index: number } | null; relatedCardRefs: VersionedRef[];
+    references: RequestReferenceV1[];
     createdLine: boolean; receiptKind: 'submit' | 'select_idea' | 'ask' | 'reply' | 'expiry';
     /** The message a reply/expiry round answers: the round's own and its receipt's `relatedMessageRef`. */
     relatedMessageRef: SessionMessageRef | null;
@@ -1344,7 +1369,7 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       // follow-up take none.
       intakeSession: assignment.takesIntake && assignment.assignedSession !== null ? assignment.assignedSession : null,
       selectedIdea: input.selectedIdea, relatedCardRefs: input.relatedCardRefs,
-      relatedMessageRef: input.relatedMessageRef, receipt,
+      relatedMessageRef: input.relatedMessageRef, receipt, requestReferences: input.references,
       submission: requestTailSubmissionOf(input.identityKey, input.fingerprint, eventId), submittedAt: input.occurredAt,
       understanding: null,
     });
@@ -1566,7 +1591,8 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       ctx, principal, commandId: command.commandId, identityKey, fingerprint, occurredAt: deps.now(),
       requestRoot, kind: 'followup', requestGoalId: facts.requestGoalId, text, selectedIdea,
       relatedCardRefs: command.kind === 'ask' ? command.cardRefs.map((ref) => structuredClone(ref)) : [],
-      relatedMessageRef: null, createdLine: plan.createdLine, receiptKind: command.kind, facts, goalGuard: null,
+      references: [], relatedMessageRef: null, createdLine: plan.createdLine, receiptKind: command.kind, facts,
+      goalGuard: null,
       assignment: assignment.value,
     });
   }

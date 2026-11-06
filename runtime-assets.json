@@ -13,11 +13,11 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "7a97aee73bf6c738b373cf43f8bfec063b52c8555a5cd91f2e1e0bdcec959839"
+    "sha256": "df924d427eab34d32184bde1c0c48d61e440261d339b9bfdac0a30732ce40c6d"
   },
   {
     "path": "resources/prompts/platform/strings.json",
-    "sha256": "a34d314db2c86b129c6ab680a29a937675edf20d719145ac11dafe74ccfb7344"
+    "sha256": "3c11f48e8a4673a302d8539a6b694ecca91a9e080979429544deb249b1732302"
   },
   {
     "path": "resources/prompts/platform/templates/initial-planning-answer.txt",

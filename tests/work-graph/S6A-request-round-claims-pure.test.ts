@@ -68,7 +68,7 @@ function round(id: string, since: number, overrides: Partial<NewRequestRoundInpu
     queryJobId: `qj-${id}`, runId: `qr-${id}`, scope: SCOPE, intent: INTENT, kind: root ? 'request' : 'followup',
     requestRoot: root ? null : ROOT_REF, requestGoalId: null, assignedSession: root ? SESSION_A : null, intakeSession: null,
     selectedIdea: null, relatedCardRefs: [], relatedMessageRef: null, receipt: RECEIPT, submission: SUBMISSION,
-    submittedAt: AT, understanding: null, ...overrides,
+    submittedAt: AT, understanding: null, requestReferences: [], ...overrides,
   });
   return { job: { ...records.job, since: makeCommitCursor(since) }, run: records.run };
 }

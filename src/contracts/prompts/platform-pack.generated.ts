@@ -109,7 +109,7 @@ export const PLATFORM_PROMPT_PACK_V1 = {
       },
       "secretary-round": {
         "file": "templates/secretary-round.txt",
-        "version": 1,
+        "version": 2,
         "mentionsTools": [] as [],
       },
       "secretary-answer": {
@@ -718,6 +718,7 @@ export const PLATFORM_PROMPT_PACK_V1 = {
     "secretary.goalsHeading": "## Goals",
     "secretary.noGoal": "This request has no goal yet.",
     "secretary.roundHeading": "## This round",
+    "secretary.referencesHeading": "## References",
     "secretary.selectedIdea": "Selected idea:",
     "secretary.cardsHeading": "## Cards",
     "secretary.batchedHeading": "## Also queued in this request",
@@ -1159,7 +1160,7 @@ export const PLATFORM_PROMPT_PACK_V1 = {
     },
     "secretary-round": {
       "packId": "platform",
-      "version": 1,
+      "version": 2,
       "mentionsTools": [],
     },
     "secretary-answer": {

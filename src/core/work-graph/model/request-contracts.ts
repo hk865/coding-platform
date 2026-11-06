@@ -14,7 +14,7 @@ import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type {
   GoalCardDraftV1, QueryCloseDetailV1, QueryJobIntentV1, QueryJobRef, QueryRoundKind, RequestCommandReceiptV1,
-  RequestUnderstandingCommandV1,
+  RequestReferenceV1, RequestUnderstandingCommandV1,
 } from '../../../contracts/query-job.js';
 import type { RuntimeBudget } from '../../../contracts/runtime-budget.js';
 import type { RecordGuard } from '../../record-store/ports.js';
@@ -105,6 +105,8 @@ export type RequestRoundViewV1 = {
   kind: QueryRoundKind;
   status: RequestRoundStatus;
   input: string;
+  /** The round's structured file selections; an old round reads `[]`. */
+  references: RequestReferenceV1[];
   answer: string | null;
   ideas: { title: string; detail: string }[];
   goalCardDrafts: GoalCardDraftRowsV1;

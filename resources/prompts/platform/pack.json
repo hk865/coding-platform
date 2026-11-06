@@ -107,7 +107,7 @@
     },
     "secretary-round": {
       "file": "templates/secretary-round.txt",
-      "version": 1,
+      "version": 2,
       "mentionsTools": []
     },
     "secretary-answer": {

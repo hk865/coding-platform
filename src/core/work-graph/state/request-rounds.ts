@@ -21,6 +21,7 @@ import type {
   QueryRunSnapshot,
   QuerySubmissionBindingV1,
   RequestCommandReceiptV1,
+  RequestReferenceV1,
   RequestUnderstandingCommandV1,
   SecretaryRoundMaterialV1,
 } from '../../../contracts/query-job.js';
@@ -56,6 +57,8 @@ export type NewRequestRoundInput = {
   submittedAt: string;
   /** The internal understanding command this round writes; `null` on every other round. */
   understanding: RequestUnderstandingCommandV1 | null;
+  /** The submit's structured references; every new round passes the list (empty when it has none). */
+  requestReferences: RequestReferenceV1[];
 };
 
 /**
@@ -88,6 +91,7 @@ export function newRequestRound(input: NewRequestRoundInput): PendingQueryLifecy
       relatedMessageRef: input.relatedMessageRef === null ? null : structuredClone(input.relatedMessageRef),
       receipt: structuredClone(input.receipt),
       understanding: input.understanding === null ? null : structuredClone(input.understanding),
+      requestReferences: structuredClone(input.requestReferences),
     },
   };
   return { job, run: pending.run };
@@ -140,6 +144,7 @@ export function newRoutingRound(input: NewRoutingRoundInput): PendingQueryJobSna
     selectedIdea: null,
     goalAttribution: attributionGoalId,
     relatedCardRefs: [],
+    requestReferences: [],
     enteredSession: null,
     intakeSession: null,
     receipt: input.receipt === null ? null : structuredClone(input.receipt),

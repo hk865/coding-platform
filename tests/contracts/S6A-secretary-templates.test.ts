@@ -60,9 +60,9 @@ function textsOf(secretaryRound: string): PromptTextsV1 {
 }
 
 describe('the platform secretary templates', () => {
-    it('declares the round at version 1 and the answer at version 3, with their code-owned slots and digests', () => {
+    it('declares the round at version 2 and the answer at version 3, with their code-owned slots and digests', () => {
         const versions = {
-            'secretary-round': 1, 'secretary-answer': 3,
+            'secretary-round': 2, 'secretary-answer': 3,
             'handoff-write-understanding-secretary': 1, 'handoff-brief-secretary': 1,
         } as const;
         for (const id of [
@@ -118,6 +118,7 @@ describe('the platform secretary templates', () => {
             goalsHeading: PACK.strings['secretary.goalsHeading'],
             noGoal: PACK.strings['secretary.noGoal'],
             roundHeading: PACK.strings['secretary.roundHeading'],
+            referencesHeading: PACK.strings['secretary.referencesHeading'],
             selectedIdea: PACK.strings['secretary.selectedIdea'],
             batchedHeading: PACK.strings['secretary.batchedHeading'],
             earlierHeading: PACK.strings['secretary.earlierHeading'],
@@ -131,6 +132,7 @@ describe('the platform secretary templates', () => {
             goalsHeading: '## Goals',
             noGoal: 'This request has no goal yet.',
             roundHeading: '## This round',
+            referencesHeading: '## References',
             selectedIdea: 'Selected idea:',
             batchedHeading: '## Also queued in this request',
             earlierHeading: '## Earlier rounds of this request on other secretaries',

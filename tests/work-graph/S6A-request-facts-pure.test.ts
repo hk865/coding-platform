@@ -25,6 +25,9 @@ import type {
   RequestCommandReceiptV1,
 } from '../../src/contracts/query-job.js';
 import { newRequestRound, newRoutingRound } from '../../src/core/work-graph/state/request-rounds.js';
+import {
+  decodeQueryJobSnapshot, encodeQueryJobSnapshot,
+} from '../../src/core/work-graph/queries/query-record-codecs.js';
 import type { PendingQueryLifecycleRecords } from '../../src/core/work-graph/state/query-run-recovery.js';
 import {
   deriveCoveredByDrop, deriveEffectiveGoalId, deriveRequestOwner, oldestPendingRound,
@@ -68,7 +71,7 @@ function pending(id: string, overrides: Partial<Parameters<typeof newRequestRoun
     queryJobId: id, runId: `run-${id}`, scope: SCOPE, intent: INTENT, kind: id === 'qj-root' ? 'request' : 'followup',
     requestRoot: id === 'qj-root' ? null : ROOT_REF, requestGoalId: 'g1', assignedSession: SESSION_A,
     intakeSession: SESSION_A, selectedIdea: null, relatedCardRefs: [], relatedMessageRef: null, receipt: RECEIPT,
-    submission: SUBMISSION, submittedAt: AT, understanding: null, ...overrides,
+    submission: SUBMISSION, submittedAt: AT, understanding: null, requestReferences: [], ...overrides,
   });
 }
 
@@ -186,7 +189,7 @@ describe('deriveRequestCore: one round', () => {
     expect(view.rounds[0]).toEqual({
       ref: ROOT_REF, kind: 'request', status: 'queued', input: 'what next?', answer: null, ideas: [],
       goalCardDrafts: [], selectedIdea: null, assignedSession: SESSION_A, session: null, absorbedInto: null,
-      closeCode: null, closeDetail: null, closeMessage: null, since: makeCommitCursor(1),
+      closeCode: null, closeDetail: null, closeMessage: null, since: makeCommitCursor(1), references: [],
     });
     expect(view).toMatchObject({ goalId: 'g1', effectiveGoalId: 'g1', owner: SESSION_A, ownerState: 'owned',
       assignment: 'assigned', waitReason: null, reasons: ['round'], processing: true });
@@ -338,7 +341,7 @@ describe('newRoutingRound: the attribution arm', () => {
         requestRoot: ROOT_REF, roundKind: 'routing', requestGoalId: 'g1', assignedSession: null,
         routing: { from: null, to: SESSION_B, reason: 'assigned' },
         relatedMessageRef: null, absorbedInto: null, absorbedRounds: [], selectedIdea: null,
-        goalAttribution: null, relatedCardRefs: [], enteredSession: null, intakeSession: null, receipt: null,
+        goalAttribution: null, relatedCardRefs: [], requestReferences: [], enteredSession: null, intakeSession: null, receipt: null,
         understanding: null,
       },
     });
