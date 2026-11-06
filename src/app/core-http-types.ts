@@ -38,6 +38,7 @@ import type { RoleLineOperationReadPort } from '../core/work-graph/views/role-li
 import type { AutonomyRulePort } from '../core/work-graph/tasks/autonomy-rule-service.js';
 import type { GoalAdviserQueuePort } from '../core/work-graph/tasks/goal-adviser-queue-service.js';
 import type { RoleLineReadPort } from '../core/work-graph/views/role-line-read.js';
+import type { VerificationRoundReadPort } from '../core/work-graph/views/verification-round-read.js';
 import type { CoreRouteBindings } from './core-routes.js';
 // Slice 1 (spec §4.4, §0.2 L5): the owner ports of the eleven new suffixes.
 import type { SessionLifecyclePort } from '../core/work-graph/sessions/lifecycle-contracts.js';
@@ -271,6 +272,8 @@ export type CoreRouteSuffix =
   // (gate): a successor round of a finalized non-PASS chain head, or its
   // committed policy refusal.
   | 'verification/reverify'
+  // UI1: one formal round, its subject chain and the adopted Plan's delivery read.
+  | 'verification/round'
   // Slice 1 (spec §4.4, §0.2 L5): the Session facts, corrections and archive
   // suffixes. `CoreRouteSuffix` is declared ONLY here; `core-routes.ts` adds the
   // table rows, binding types and dispatch cases.
@@ -774,6 +777,15 @@ export type RoleLineCoreRouteDto = {
   'goals/adviser-queue/reorder': { body: GoalsAdviserQueueReorderBody; response: GoalsAdviserQueueReorderResponse };
   'goals/adviser-queue/assign': { body: GoalsAdviserQueueAssignBody; response: GoalsAdviserQueueAssignResponse };
   'role-lines/read': { body: RoleLinesReadBody; response: RoleLinesReadResponse };
+};
+
+// The one verification round read: `plain`, the input is the port's own exact
+// three-way (roundRef/taskRef/subjectRunRef) shape.
+export type VerificationRoundReadBody = PlainBody<VerificationRoundReadPort['readVerificationRound']>;
+export type VerificationRoundReadResponse = RouteResponse<VerificationRoundReadPort['readVerificationRound']>;
+/** The typed assembly of the verification suffixes; `CORE_ROUTE_SPECS`'s annotation names it. */
+export type VerificationCoreRouteDto = {
+  'verification/round': { body: VerificationRoundReadBody; response: VerificationRoundReadResponse };
 };
 
 /** The compile-time typed assembly of the two secretary lifecycle suffixes. */

@@ -230,6 +230,7 @@ import { createRoleLimitsService } from '../core/work-graph/sessions/role-limits
 import { createRoleLineAllocationReader } from '../core/work-graph/views/role-line-allocation-reader.js';
 import { createRoleLineOperationsRead } from '../core/work-graph/views/role-line-operations-read.js';
 import { createRoleFactsRead, createRoleLineRead, type RoleLineReadPort } from '../core/work-graph/views/role-line-read.js';
+import { createVerificationRoundRead, type VerificationRoundReadPort } from '../core/work-graph/views/verification-round-read.js';
 import type { LineRowV1 } from '../contracts/work-line.js';
 import type { EffectiveScopeV1 } from '../core/work-graph/state/role-scope.js';
 import type { RoleLinePositionV1 } from '../core/work-graph/state/role-line-position.js';
@@ -4589,6 +4590,16 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     }
     // The Goal list read is an internal owner like the decision ports.
     Object.defineProperty(platform, 'goalList', { enumerable: false });
+    // UI1: the ONE verification round read over the same store and the public
+    // evidence read; it opens no report body and writes nothing. Published
+    // non-enumerably like the other internal owner groups, after the object so
+    // the existing composition README's line references do not move.
+    const verificationRoundRead = createVerificationRoundRead({ records: backend.records, evidence });
+    const trackedVerificationRoundRead: VerificationRoundReadPort = {
+      readVerificationRound: (ctx, input) =>
+        trackedCall(() => verificationRoundRead.readVerificationRound(ctx, input), unavailable),
+    };
+    Object.defineProperty(platform, 'verification', { value: trackedVerificationRoundRead, writable: true, configurable: true });
     return platform;
   } catch (error) {
     // Close every owned resource while preserving the initialization error.

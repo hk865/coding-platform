@@ -23,6 +23,12 @@
 - `pointer-facts.ts` — `createGoalPointerFacts`：一次读取 Goal 理解指针的版本、CAS 地址与同次读取水位；缺失为 `'none'`/null 版本期待，失败不当缺失。
 - `track-read-model.ts` — 轨道条读模型：Run、验收轮、Query 区间的有界分页。Run 条带 `attempt.ordinal`（第几次尝试，`attemptOrdinalOf`）；重新入队时 `attempt.requeue` 另带 `failureClass`、`goalResume`、`requestedAt` 与 `interruption`。Query 条带带各自的 `QueryActivity` 视图。每个选中 Session 自己的 Query 先按它的 provenance 定画法（`queryOwnScanOf`）：普通 Session 画自己的 turn（按轨道 Goal 过滤）；只读副本画成从来源被问的 consultation，不按 Goal 过滤；来源也被选中时由来源的副本流画，副本自己不画——与 `sessionRefs` 顺序无关。`dedupeQueryBarsByRunRef` 只是按完整 `QueryRunRef` 的身份防重；`queryBarAskedOf` 优先取记录的正式被问 Session、否则取副本来源。
 
+### 验收与证据
+
+做单轮正式检查、轮次链和 Done 交付/验收聚合读的去这组。
+
+- `verification-round-read.ts` — `verification/round` 的读口 `createVerificationRoundRead`（`VerificationRoundReadPort`）：输入三选一（`roundRef`，或 `taskRef`，或 `taskRef`+`subjectRunRef`，或只有 `subjectRunRef`），只给 work 任务的 `taskRef` 是 `invalid`；最多三次存储读（锚点、锚定 Plan、一次 evidence 的 `readSubjectChain`），checks、gaps、链摘要和 delivery 全在内存组装；链头/序号/前驱与 display status 用 `state/verification-machine.ts` 的 `roundChainHead`/`displayRoundStatus`，33 行上限和 `incomplete` 句子只有 evidence 一份；`checks` 按 `verificationPlan` 的顺序全量返回，`reportRef` 原样、不打开报告正文（点开走 `materials/open`）；`delivery` 由 adopted Plan 的 obligations/verificationRequirements 按 selected 轮的 coverage 投影，state 按 FAIL → INCONCLUSIVE → pending/executing → PASS → missing 判。
+
 ### 可消费 Session
 
 做 Host 心跳挑可打开 Session 的去这组。

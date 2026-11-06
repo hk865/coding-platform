@@ -153,7 +153,7 @@ import {
 } from '../tasks/rework-request-codecs.js';
 import { sessionMessageRefProblem } from '../tasks/codec-shape-checks.js';
 
-type Records = GoalRecordTransactionPort & RecordLookupPort;
+export type Records = GoalRecordTransactionPort & RecordLookupPort;
 type HostActor = { kind: 'human' | 'system'; id: string };
 type LoadedRound = { ok: true; round: RoundSnapshot } | { ok: false; rejection: CoreRejection };
 
@@ -2401,3 +2401,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
     return { openVerification, readVerification, queryOriginalVerification, queryRoundChainHead, beginCheck, recordCheckResult,
         abandonCheck, interruptCheck, finalizeChecks, reverifyRound, reverifyApprovedByCard, lookupToolCommit };
 }
+
+/** UI1 (`verification/round`): the chain read the round view reuses, so the 32-row limit,
+ * the chain validity rules and the `incomplete` sentences stay in this ONE reader. */
+export { readSubjectChain };

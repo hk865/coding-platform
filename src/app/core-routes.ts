@@ -42,6 +42,7 @@ import type {
 } from '../core/work-graph/sessions/role-line-operations.js';
 import type { RoleLineOperationReadPort } from '../core/work-graph/views/role-line-operations-read.js';
 import type { RoleLineReadPort } from '../core/work-graph/views/role-line-read.js';
+import type { VerificationRoundReadPort } from '../core/work-graph/views/verification-round-read.js';
 import type { AutonomyRulePort } from '../core/work-graph/tasks/autonomy-rule-service.js';
 import type { GoalAdviserQueuePort } from '../core/work-graph/tasks/goal-adviser-queue-service.js';
 import type { SessionLifecyclePort } from '../core/work-graph/sessions/lifecycle-contracts.js';
@@ -117,6 +118,7 @@ import {
   type WaitsCoreRouteDto,
   type RequestCommandCoreRouteDto,
   type RoleLineCoreRouteDto,
+  type VerificationCoreRouteDto,
   type WorkspaceFilesCoreRouteDto,
   type SecretariesArchiveBody,
   type SecretariesArchiveResponse,
@@ -245,6 +247,8 @@ export type CoreRouteBindings = {
   readReconcileReport: HostReconcileReportPort['readReconcileReport'];
   // A.2 step 5.9 (VR-14): the successor round owner.
   reverifyRound: NonNullable<EvidencePort['reverifyRound']>;
+  /** UI1: one formal verification round with its chain and delivery projection. */
+  readVerificationRound: VerificationRoundReadPort['readVerificationRound'];
   // Slice 1 (spec §4.4): the Session facts, corrections and archive entries.
   // `archiveLine`/`continueArchiveLine` stay optional on `WorkflowPort` for the
   // old narrow doubles; the real composition always publishes them.
@@ -513,6 +517,9 @@ export type CoreRoutePlatform = {
   goalAdviserQueue?: Pick<GoalAdviserQueuePort, 'read' | 'reorder' | 'assign'>;
   /** The role-line read owner; internal like the other owner groups, so a narrow platform answers `unsupported`. */
   roleLineRead?: RoleLineReadPort;
+  /** UI1: the verification round read owner; internal like the other owner groups, so a narrow platform
+   * without it answers `unsupported`. */
+  verification?: VerificationRoundReadPort;
 };
 
 /** `executions/resolve-unknown` input (RUN-22): the unknown Run and the operator's reason. */
@@ -551,7 +558,8 @@ export const CORE_ROUTE_SPECS: Record<
   | keyof ArchitectureCoreRouteDto
   | keyof OverlapCoreRouteDto
   | keyof RequestCommandCoreRouteDto | keyof SecretaryLifecycleCoreRouteDto | keyof WaitsCoreRouteDto
-  | keyof RoleLineCoreRouteDto | keyof MaintainerCoreRouteDto | keyof WorkspaceFilesCoreRouteDto,
+  | keyof RoleLineCoreRouteDto | keyof MaintainerCoreRouteDto | keyof WorkspaceFilesCoreRouteDto
+  | keyof VerificationCoreRouteDto,
   CoreRouteSpec
 > = {
   'controls/submit': { kind: 'graph_write', binding: 'submitControl', owner: 'controls.submitControl' },
@@ -655,6 +663,8 @@ export const CORE_ROUTE_SPECS: Record<
   'host/reconcile-report': { kind: 'plain', binding: 'readReconcileReport', owner: 'host.readReconcileReport' },
   // A.2 step 5.9 (spec §9 VR-14 "调用者"; §15.2 5.9 `verification/reverify`).
   'verification/reverify': { kind: 'graph_write', binding: 'reverifyRound', owner: 'evidence.reverifyRound' },
+  // UI1: the read-only round/chain/delivery read beside the reverify write.
+  'verification/round': { kind: 'plain', binding: 'readVerificationRound', owner: 'verification.readVerificationRound' },
   // Slice 1 (spec §4.4): the eleven Session facts / corrections / archive routes.
   'sessions/archive-line': { kind: 'graph_write', binding: 'archiveLine', owner: 'workflow.archiveLine' },
   'sessions/archive-continue': { kind: 'plain', binding: 'continueArchiveLine', owner: 'workflow.continueArchiveLine' },
@@ -1148,6 +1158,9 @@ export function createPlatformCoreRouteBindings(
     reverifyRound: platform.evidence.reverifyRound === undefined
       ? unsupported('the Host does not publish the successor-round owner (reverifyRound)')
       : platform.evidence.reverifyRound.bind(platform.evidence),
+    readVerificationRound: platform.verification === undefined
+      ? unsupported('the Host does not publish the verification round read')
+      : platform.verification.readVerificationRound.bind(platform.verification),
     // Slice 1 (spec §4.4): the new owners. `archiveLine`/`continueArchiveLine`
     // are optional only for an old narrow Workflow double; the real composition
     // publishes them, and `readUndeliveredReplies` likewise.
@@ -1653,6 +1666,7 @@ export async function dispatchCoreRoute(
       case 'queries/resolve-unknown': return bindings.resolveUnknownQueryRun(ctx, graphWrite.request as never);
       case 'host/reconcile-report': return bindings.readReconcileReport(ctx, plain.input as never);
       case 'verification/reverify': return bindings.reverifyRound(ctx, graphWrite.request as never);
+      case 'verification/round': return bindings.readVerificationRound(ctx, plain.input as never);
       // Slice 1 (spec §4.4): explicit arms, one per new suffix.
       case 'sessions/archive-line': return bindings.archiveLine(ctx, graphWrite.request as never);
       case 'sessions/archive-continue': return bindings.continueArchiveLine(ctx, plain.input as never);

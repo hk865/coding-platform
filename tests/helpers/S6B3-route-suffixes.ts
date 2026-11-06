@@ -51,6 +51,8 @@ export const EXPECTED_ROUTE_ROWS = {
     owner: 'architecture.reviseArchitectureCatalog' },
   'architecture/proposals/read': { kind: 'plain', binding: 'readArchitectureProposal',
     owner: 'architecture.readArchitectureProposal' },
+  // UI1 verification-read: the one plain round read beside `verification/reverify`.
+  'verification/round': { kind: 'plain', binding: 'readVerificationRound', owner: 'verification.readVerificationRound' },
   // Slice 3: the graph find route and the three legacy reads beside it.
   'graph/find': { kind: 'plain', binding: 'findGraph', owner: 'graphContext.findGraph' },
   'tasks/query': { kind: 'plain', binding: 'queryTaskGraph', owner: 'plans.queryTaskGraph' },
