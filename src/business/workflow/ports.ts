@@ -2,7 +2,7 @@ import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { CommitCursor } from '../../contracts/command-event.js';
 import type { DecisionApplicationReceiptV1 } from '../../contracts/core/session-message.js';
 import type { SessionMessageRef } from '../../contracts/core/session-message.js';
-import type { RoleConfigurationRef, WorkspaceScope } from '../../contracts/core/identity.js';
+import type { RoleConfigurationRef, SessionRef, WorkspaceScope } from '../../contracts/core/identity.js';
 import type { CoreRejection } from '../../contracts/core/results.js';
 import type { ReadResult, WriteResult } from '../../contracts/core/results.js';
 import type { GoalRef } from '../../contracts/ledger.js';
@@ -354,6 +354,26 @@ export type ConsultationConsumerDependencies = {
  * rejects an unknown kind as unsupported. `advanceWork` is the finite R5c.1
  * advancement entry; each `perform` calls at most one owner.
  */
+/** The person's public `queries/ask` input: the line head, the question and the idempotency id. */
+export type LineAskInputV1 = {
+  sessionRef: SessionRef;
+  question: string;
+  commandId: string;
+};
+
+/** The Host binding fills the read-only Query profile after reading the line, then hands this command to the Workflow. */
+export type LineAskCommandV1 = LineAskInputV1 & {
+  roleBinding: RoleBindingRefV1;
+  runtimeBudget: RuntimeBudget;
+  budget: QueryJobIntentV1['budget'];
+  consumerId: string;
+};
+
+/** `round` is the deterministic Query of the saved message even while the consumer still waits for its answer. */
+export type LineAskResultV1 =
+  | { status: 'queued'; round: QueryJobRef }
+  | CoreRejection;
+
 export interface WorkflowPort {
   handleGoalInput(ctx: CoreCallContext, input: InitialPlanningGoalInput): Promise<InitialPlanningGoalInputResult>;
   advanceWork(ctx: CoreCallContext, input: WorkflowAdvanceInput, internal?: WorkflowAdvanceInternal): Promise<WorkflowAdvanceResult>;
@@ -365,6 +385,8 @@ export interface WorkflowPort {
    * behavior and the type-compatible fixtures.
    */
   consumeConsultation?(ctx: CoreCallContext, input: ConsultationInput): Promise<ConsultationResult>;
+  /** The person's `queries/ask`: save one inquiry, then run the same 7B consultation consumer; the profile fields are the Host binding's. */
+  askLine?(ctx: CoreCallContext, input: LineAskCommandV1): Promise<LineAskResultV1>;
   /** One saved person's or agent's message delivered to the line's existing Task (slice-7-SPEC L11). */
   handleIntervention?(ctx: CoreCallContext, input: InterventionInput): Promise<HandleInterventionResultV1>;
   /** S's `DeliveryEligibilityFactsPort['readDeliveryEligibilityFacts']`: the one fact read L injects into the Query

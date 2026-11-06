@@ -169,7 +169,7 @@
 | `rejected` **正本** | `src/contracts/core/rejections.ts:5` | 领域 rejection 构造器（无 `current`） | 返回失败时用 `rejected` |
 | `lookupCommit` **正本** | `src/core/record-store/ports.ts:194` | Store 的 exact identity/fingerprint 幂等查询端口 | 重放/恢复的底层查询；需要失败分类时用 `lookupCommittedReceipt`，不要复制整套分类 |
 | `oldestPendingRound` **正本** | `src/core/work-graph/queries/request-rounds-read.ts:464` | 选最老的 pending 非 routing round | intake 转移、未分配遍历、Workflow 计划；只有这一份 |
-| `buildRecordedEvent` **正本** | `src/core/work-graph/queries/query-execution.ts:609` | 从实际写入的 Run 构造执行事件 | 记录 Query 执行事件；只有这一份 |
+| `buildRecordedEvent` **正本** | `src/core/work-graph/queries/query-execution.ts:616` | 从实际写入的 Run 构造执行事件 | 记录 Query 执行事件；只有这一份 |
 | `latestActivityAt` **正本**、`indexActiveCopies`、`readActiveCopies` | `src/core/work-graph/state/session-activity.ts:25`、`line-clock.ts:66`、`line-clock.ts:66` | 工作线时钟（规范化实现在 `state/session-activity.ts`，`line-clock.ts` 只再导出它）、活跃只读副本索引与完整分页枚举 | 工作线卡、秘书选择；不要把时钟或副本另读一份 |
 | `readLatestQueryRun`、`readQueryRunByRef`、`readQueryJobGoal` | `line-clock.ts:145`、`line-clock.ts:145`、`line-clock.ts:145` | 最近 Query、按 ref 读 QueryRun、读其 QueryJob 的 goal；失败经 sink 原样报 | 线卡与只读副本的阶段；`readQueryJobGoal` 由线卡和副本共用 |
 | `copyPhase`、`readClaimedAtForRun` **正本** | `line-clock.ts:190`、`line-clock.ts:190` | 副本的阶段/开始时刻；Run 无起止时间时按 claim 索引回退读 claimedAt | 线卡、秘书选择；不要把 claimedAt 另读一份 |
@@ -296,7 +296,7 @@
 - Host 调用者检查和命令身份里的主体用 `src/contracts/core/call-context.ts:79` 的 `hostPrincipalOf` 与 `src/contracts/core/call-context.ts:82` 的 `principalIdentity`；`request-service.ts` 原来的私有副本已删除，不要再写。
 - `mergeGuards` 只有 `src/core/work-graph/persistence/record-guards.ts:12` 这一份，不要再写；读窗口的 `appendGuardFirstWins`（`src/core/work-graph/queries/request-rounds-read.ts:178`）与 `secretary-selection.ts:112` 的 `appendGuardCopyFirstWins`（带 guard 浅拷贝）是有意保留的 first-wins 追加，不是它的副本（S11、S12）。
 - `oldestPendingRound` 只有 `src/core/work-graph/queries/request-rounds-read.ts:464` 这一份，已合成；不要另写选最老 pending round 的私有副本。
-- `buildRecordedEvent` 只有 `src/core/work-graph/queries/query-execution.ts:609` 这一份，已合成；不要在 request-service 内联第二份。
+- `buildRecordedEvent` 只有 `src/core/work-graph/queries/query-execution.ts:616` 这一份，已合成；不要在 request-service 内联第二份。
 - 开放轮遍历只有 `unassigned` 和 `open` 两条具名读取，且共用 `readOpenIndexPage`（`request-service.ts:833`）的游标解析与页读取；不要在别处再写 `s6-query-open-by-workspace` 的分页、`after` 解析或候选解码。`open` 只投影 `job.requestRoot`，不读请求事实。
 - `readClaimedAtForRun` 的正本在 `line-clock.ts:190`；`views/work-line-reader.ts` 只在已由 claim 定位 Run 的分支里直接取 claimedAt（`src/core/work-graph/tasks/line-clock.ts:190` 仍调用正本），`secretary-selection.ts` 已改调它，旧的私有 `readClaimedAt` 已删；不要新增第三份。
 - `readOwnerRecord`（`src/core/work-graph/persistence/owner-record-read.ts:22`，本目录再导出）是单条 owner 读的正本；`request-service.ts:416` 的 `readOne` 只是包着它的 owner 分类器，`run-state-service.ts:646` 是批量读的另一回事。不要再写新的 `readOne` 通用副本。

@@ -3699,6 +3699,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       handleGoalInput: (...args) => trackedCall(() => rawWorkflow.handleGoalInput(...args), unavailable),
       advanceWork: (...args) => trackedCall(() => rawWorkflow.advanceWork(...args), unavailable),
       consumeConsultation: (...args) => trackedCall(() => rawWorkflow.consumeConsultation(...args), unavailable),
+      askLine: (...args) => trackedCall(() => rawWorkflow.askLine!(...args), unavailable),
       handleIntervention: (...args) => trackedCall(() => rawWorkflow.handleIntervention!(...args), unavailable),
       readDeliveryEligibilityFacts: (...args) => trackedCall(() => rawWorkflow.readDeliveryEligibilityFacts!(...args), unavailable),
       // Slice 1 (spec §4.1, §4.2): the composite archive action, its recovery

@@ -747,7 +747,8 @@ function executionStateIssues(value: unknown): string[] {
 /**
  * The persisted Query manifest's goal and request facts. A plain Query pins a
  * goal and carries no request facts; a secretary round pins the request facts,
- * and only a no-goal request round or a `role_exploration` round has a null
+ * and only a no-goal request round, a `role_exploration` round or a saved-message
+ * consultation copy (the one `copy` round admitted without a Goal) has a null
  * goal. The rules are checked here
  * because both manifest loaders decode the same stored body.
  */
@@ -783,8 +784,9 @@ export function queryManifestProblem(value: unknown): string | null {
   }
   const request = value['request'];
   if (request !== null && !isRecord(request)) return 'the Query manifest request is not an object';
-  if (goal === null && callKind !== 'secretary' && callKind !== 'role_exploration') {
-    return 'a Query manifest without a goal must be a secretary round';
+  if (goal === null && callKind !== 'secretary' && callKind !== 'role_exploration'
+    && callKind !== 'copy') {
+    return 'a Query manifest without a goal must be a secretary round or a consultation copy';
   }
   if (request === null) {
     if (callKind === 'secretary') return 'a secretary round manifest has no request facts';

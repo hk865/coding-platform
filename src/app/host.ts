@@ -87,6 +87,8 @@ import {
   createRequestRoundQueues, REQUEST_ROUNDS_QUEUE, REQUEST_UNASSIGNED_QUEUE,
 } from '../business/workflow/request-round-queue.js';
 import { createQueryStageDriver, type QueryStageDriver } from '../business/workflow/query-stage-driver.js';
+import { servingBinding } from '../business/workflow/role-bindings.js';
+import { lineAskInputRejection } from '../business/workflow/line-ask.js';
 import {
   attentionSignalToJson, createAttentionObserver, createAttentionScanner, type AttentionScopeV1, type AttentionSignal,
 } from './attention-observer.js';
@@ -546,6 +548,13 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   // read. It is declared before the platform so the profile port's getter can
   // see the settings rebuild that splices it in place.
   const runtimeProfiles: WorkbenchQueryProfile[] = (runtimeConfiguration?.queryProfiles ?? []).map(profile => structuredClone(profile));
+  // The one rule for a configured Query profile: the first whose scope and Session Role match. Ruling 9 (E22: a
+  // working, idle or finished line can be asked) also asks a line whose Role has no profile — a builder or a
+  // goal-less line — so `askLine` falls back to the workspace's first profile; the copy runs read-only regardless.
+  const queryProfileOf = (scope: { projectId: string; workspaceId: string }, role: unknown): WorkbenchQueryProfile | undefined =>
+    runtimeProfiles.find(entry => entry.scope.projectId === scope.projectId
+      && entry.scope.workspaceId === scope.workspaceId
+      && canonicalJson(entry.sessionRole as never) === canonicalJson(role as never));
   const attentionScopes: AttentionScopeV1[] = options.attention === undefined ? [] : structuredClone(options.attention);
   const inputConsumers = structuredClone(options.inputConsumers ?? []);
   for (const entry of inputConsumers) {
@@ -2232,9 +2241,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       const offer = candidate.nextMessage;
       if (offer === null) continue;
       // Never guess the model: the first configured profile whose scope and sessionRole match this Session.
-      const profile = runtimeProfiles.find(entry => entry.scope.projectId === scope.projectId
-        && entry.scope.workspaceId === scope.workspaceId
-        && canonicalJson(entry.sessionRole as never) === canonicalJson(candidate.role as never));
+      const profile = queryProfileOf(scope, candidate.role);
       if (profile === undefined) {
         skips.push({ sessionRef: candidate.session, reason: 'no_profile' });
         continue;
@@ -2904,6 +2911,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       startQuery: busy('queries/start') as unknown as CoreRouteBindings['startQuery'],
       advanceWork: busy('workflow/advance') as unknown as CoreRouteBindings['advanceWork'],
       consumeConsultation: busy('workflow/consultation') as unknown as CoreRouteBindings['consumeConsultation'],
+      askLine: busy('queries/ask') as unknown as CoreRouteBindings['askLine'],
       driverStart: busy('workflow/driver-start') as unknown as CoreRouteBindings['driverStart'],
       resolveUnknownRun: busy('the unknown-outcome attestation') as unknown as CoreRouteBindings['resolveUnknownRun'],
       resolveUnknownQueryRun: busy('the unknown-outcome attestation') as unknown as CoreRouteBindings['resolveUnknownQueryRun'] };
@@ -2928,6 +2936,48 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       captureWorkspaceRegistration({ projectId: ref.projectId, workspaceId: ref.workspaceId });
     }
     return written;
+  };
+  // `queries/ask` is the person's command: read the line once, select the one
+  // profile by the same `scope + sessionRole` rule the consume loop uses, then
+  // hand the projected command to the Workflow's one ask entry.
+  const askLine: CoreRouteBindings['askLine'] = async (ctx, input) => {
+    if (ctx.principal.kind !== 'host' || ctx.principal.actor.kind !== 'human') {
+      return { status: 'rejected', code: 'forbidden', reason: 'only the person may call this route' };
+    }
+    const inputRejection = lineAskInputRejection(ctx.projectId, input);
+    if (inputRejection !== null) return inputRejection;
+    const card = await platform.sessions.readSession(ctx, input.sessionRef);
+    if (card.status === 'not_found') return { status: 'rejected', code: 'not_found', reason: 'the requested record does not exist' };
+    if (card.status !== 'ready') {
+      return card.status === 'rejected' ? card
+        : { status: 'rejected', code: 'incomplete', reason: `the requested record is not ready (${card.status})` };
+    }
+    const scope = { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' };
+    // Ruling 9 (E22): a builder or goal-less line has no profile of its own, so the read-only copy runs on the
+    // workspace's first profile instead of refusing the person's question. Ruling 33 keeps the two roles apart:
+    // the first profile supplies the budgets, while the copy's `roleBinding` must come from a trusted Work
+    // binding of the line's own Role (the copy keeps the source Role and its claim checks it).
+    const sameRole = queryProfileOf(scope, card.value.record.role);
+    const limits = sameRole ?? runtimeProfiles.find(entry => entry.scope.projectId === scope.projectId
+      && entry.scope.workspaceId === scope.workspaceId);
+    if (limits === undefined) {
+      return { status: 'rejected', code: 'unavailable', reason: 'the Session role has no query profile' };
+    }
+    const roleId = card.value.record.role.kind === 'legacy_template'
+      ? card.value.record.role.templateId : card.value.record.role.pin.ref.roleId;
+    const workBinding = sameRole === undefined
+      ? servingBinding(workflow?.bindings ?? [], scope.projectId, scope.workspaceId, roleId)
+      : null;
+    if (sameRole === undefined && workBinding === null) {
+      return { status: 'rejected', code: 'unavailable', reason: 'the Session role has no trusted work binding' };
+    }
+    const roleBinding = sameRole?.roleBinding ?? workBinding!.roleBinding;
+    const ask = platform.workflow.askLine;
+    if (ask === undefined) {
+      return { status: 'rejected', code: 'unsupported', reason: 'the Workflow does not publish the ask entry' };
+    }
+    return ask(ctx, { ...input, roleBinding, runtimeBudget: limits.runtimeBudget,
+      budget: limits.budget, consumerId: limits.consumerId });
   };
   // PL §6.4.3 adoption point 1: the committed first plan exports before the driver starts;
   // the result is unchanged and the export is detached.
@@ -2970,7 +3020,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   const server: WorkbenchServer = createWorkbenchServer({
     token,
     bindings: leaseGated({ ...routeBindings, registerWorkspace, adoptInitialization,
-      applyPlanChange: applyPlanChangeWithExport, advanceWork: advanceWorkWithExport }),
+      applyPlanChange: applyPlanChangeWithExport, advanceWork: advanceWorkWithExport, askLine }),
     actor,
     bootstrap: buildBootstrap,
     changes,

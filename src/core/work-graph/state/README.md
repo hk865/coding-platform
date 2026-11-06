@@ -156,7 +156,7 @@
 | `deriveLineStatus` | `src/core/work-graph/state/line-status.ts:261` | 唯一的工作线状态派生（词、注意、标记、桶） | 列表、悬停卡、详情 |
 | `lineRunningCapOf` | `src/core/work-graph/state/line-status.ts:413` | 由持有者的 Query 标记或 Run 的持久 `starting`+`authorized` 形状派生运行名额等待（`running_cap` 或 null） | 画线的名额等待；不要另写判定 |
 | `deriveLineControls` | `src/core/work-graph/state/line-status.ts:496` | 由事实与状态派生可用控制项 | 画工作线操作 |
-| `deriveAttentionAll` | `src/core/work-graph/state/line-status.ts:752` | 一条线上所有注意项及来源 | 需要完整注意清单时 |
+| `deriveAttentionAll` | `src/core/work-graph/state/line-status.ts:744` | 一条线上所有注意项及来源 | 需要完整注意清单时 |
 | `transitionMessage` | `src/core/work-graph/state/message-machine.ts:1607` | SessionMessage 主迁移 | 消息读/回/派生 |
 | `createSessionMessageRecord` | `src/core/work-graph/state/message-machine.ts:1773` | 建新消息记录 | 收到用户或系统消息 |
 | `nextSessionMessageRecord` | `src/core/work-graph/state/message-machine.ts:1854` | 按变更生成下一条消息记录 | 读、回、绑定答复 |

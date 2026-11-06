@@ -273,9 +273,13 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
       const { record, goal, workspace, focusPlan } = facts.value;
       const requestRound = isRequestRound(record.job);
       const explorationRound = record.job.job.intent.execution.kind === 'role_exploration';
+      // A saved-message consultation Query is the other no-goal round: it reads the
+      // frozen source facts and runs on the read-only copy.
+      const consultationRound = record.job.job.intent.execution.kind === 'semantic_query'
+        && record.job.job.intent.execution.consultation !== undefined;
       // A no-goal request round prepares from the secretary facts and a cold-start exploration round has no Goal;
       // every other Query still requires its Goal, so a null goal is refused before any use.
-      if (goal === null && !requestRound && !explorationRound) return rejected('invalid', 'no goal');
+      if (goal === null && !requestRound && !explorationRound && !consultationRound) return rejected('invalid', 'no goal');
       const executionState = record.run.run.executionState;
       if (executionState === undefined) return rejected('incomplete', 'the QueryRun has no persisted execution state');
       if (executionState.phase !== 'claimed' && executionState.phase !== 'prepared') {

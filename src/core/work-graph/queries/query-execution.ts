@@ -138,6 +138,11 @@ function expectedQueryDuty(manifest: PreparedQueryManifestV1): PlatformDutyV1 | 
  * `copy` assembly. Every other callKind remains forbidden. A role_exploration
  * Query binds only its own call kind.
  */
+/** A saved-message consultation Query may run without a Goal; no other semantic Query may. */
+function isConsultationQuery(job: QueryJobSnapshot): boolean {
+  const execution = job.job.intent.execution;
+  return execution.kind === 'semantic_query' && execution.consultation !== undefined;
+}
 function expectedQueryCallKinds(job: QueryJobSnapshot): readonly ContextCallKindV1[] {
   if (isRequestRound(job)) return ['secretary'];
   // The planning Query's binding call kind is its own; the start check reads the same table.
@@ -439,9 +444,11 @@ async function readPreparationFacts(deps: QueryExecutionDependencies, ctx: CoreC
     // A no-goal request round is a secretary round: its workspace comes from
     // the call scope, never from a Goal. Every other Query still requires its
     // Goal, so a plain Query with no Goal is refused before any use. The one
-    // other no-goal kind is a role_exploration Query, which reads the project.
+    // other no-goal kinds are a role_exploration Query (it reads the project) and
+    // a saved-message consultation Query.
     if (!isRequestRound(record.value.job)
-      && record.value.job.job.intent.execution.kind !== 'role_exploration') {
+      && record.value.job.job.intent.execution.kind !== 'role_exploration'
+      && !isConsultationQuery(record.value.job)) {
       return rejectedWithNonEmptyCurrent('invalid', 'no goal');
     }
     const workspaceKey = canonicalRefKey({
@@ -1555,7 +1562,8 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     // Goal, and a mismatched nullness is an inconsistent manifest. A
     // role_exploration Query has no Goal and is compared the same way.
     if (manifestGoal === null || factsGoal === null) {
-      if ((!isRequestRound(job) && job.job.intent.execution.kind !== 'role_exploration') || manifestGoal !== factsGoal) {
+      if ((!isRequestRound(job) && job.job.intent.execution.kind !== 'role_exploration'
+        && !isConsultationQuery(job)) || manifestGoal !== factsGoal) {
         return rejectedWithNonEmptyCurrent('invalid', 'no goal');
       }
       if (manifest.workspace.revision !== facts.value.workspace.revision

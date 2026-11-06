@@ -74,9 +74,9 @@ function isolateInput(input: unknown): IsolatedInput {
     return { ok: false, rejection: reject('invalid', 'messageRef must be a complete SessionMessageRef') };
   }
   const goalRef = cloned['goalRef'];
-  if (!isRecord(goalRef) || goalRef['aggregateType'] !== 'Goal'
-    || !nonEmpty(goalRef['projectId']) || !nonEmpty(goalRef['goalId'])) {
-    return { ok: false, rejection: reject('invalid', 'goalRef must be a complete GoalRef') };
+  if (goalRef !== null && (!isRecord(goalRef) || goalRef['aggregateType'] !== 'Goal'
+    || !nonEmpty(goalRef['projectId']) || !nonEmpty(goalRef['goalId']))) {
+    return { ok: false, rejection: reject('invalid', 'goalRef must be a complete GoalRef or null') };
   }
   const roleBinding = cloned['roleBinding'];
   if (!isRecord(roleBinding) || roleBinding['schemaVersion'] !== 1
@@ -303,7 +303,8 @@ export function createConsultationConsumer(deps: ConsultationConsumerDeps):
       const problem = await deliveryProblem(owned, message, input.part ?? 'message', message.goalRef, target);
       if (problem !== null) return reject(problem.code, problem.reason);
     }
-    const configMatches = job.job.intent.goalId === input.goalRef.goalId
+    const configMatches = (input.goalRef === null ? job.job.intent.goalId === null
+      : job.job.intent.goalId === input.goalRef.goalId)
       && sameCanonical(job.job.intent.budget, input.budget)
       && sameCanonical(execution.roleBinding, input.roleBinding)
       && sameCanonical(execution.runtimeBudget, input.runtimeBudget);
@@ -345,7 +346,7 @@ export function createConsultationConsumer(deps: ConsultationConsumerDeps):
     if (messageRef.projectId !== owned.projectId || messageRef.workspaceId !== owned.workspaceId) {
       return reject('forbidden', 'the consultation message is outside the bound project/workspace');
     }
-    if (value.goalRef.projectId !== owned.projectId) {
+    if (value.goalRef !== null && value.goalRef.projectId !== owned.projectId) {
       return reject('forbidden', 'the consultation Goal is outside the bound project');
     }
 
@@ -476,20 +477,23 @@ export function createConsultationConsumer(deps: ConsultationConsumerDeps):
     const registration = await deps.consultations.projects.readWorkspaceRegistration(owned.ctx,
       { projectId: owned.projectId, workspaceId: owned.workspaceId });
     if (registration.status !== 'ready') return asRejection(registration, 'the Project/Workspace registration');
-    const goalRead = await deps.plans.queryGoal(owned.ctx, value.goalRef);
-    if (goalRead.status !== 'ready') return asRejection(goalRead, 'the Goal');
-    if (goalRead.value.goal.ref.goalId !== value.goalRef.goalId
-      || goalRead.value.goal.workspaceRef.workspaceId !== owned.workspaceId) {
-      return reject('forbidden', 'the Goal is not the requested same-workspace Goal');
+    let goalRevision: number | null = null;
+    if (value.goalRef !== null) {
+      const goalRead = await deps.plans.queryGoal(owned.ctx, value.goalRef);
+      if (goalRead.status !== 'ready') return asRejection(goalRead, 'the Goal');
+      if (goalRead.value.goal.ref.goalId !== value.goalRef.goalId
+        || goalRead.value.goal.workspaceRef.workspaceId !== owned.workspaceId) {
+        return reject('forbidden', 'the Goal is not the requested same-workspace Goal');
+      }
+      goalRevision = goalRead.value.goal.revision;
     }
-    const goalRevision = goalRead.value.goal.revision;
 
     const intent: QueryJobIntentV1 = {
       schemaVersion: 1,
       intentId: refs.queryJobRef.queryJobId,
       projectId: owned.projectId,
       workspaceId: owned.workspaceId,
-      goalId: value.goalRef.goalId,
+      goalId: value.goalRef === null ? null : value.goalRef.goalId,
       question: isolatedInquiry || value.part === 'response' ? question : renderTemplate(PLATFORM_PROMPT_PACK_V1,
         'consultation-received-input',
         { messageId: message.ref.messageId, sourceJson: JSON.stringify(message.sourceRef) }, []).text,
@@ -516,7 +520,7 @@ export function createConsultationConsumer(deps: ConsultationConsumerDeps):
         expected: [
           { ref: { aggregateType: 'Project', projectId: owned.projectId }, revision: registration.value.project.revision },
           { ref: { aggregateType: 'Workspace', projectId: owned.projectId, workspaceId: owned.workspaceId }, revision: registration.value.workspace.revision },
-          { ref: value.goalRef, revision: goalRevision },
+          ...(value.goalRef === null || goalRevision === null ? [] : [{ ref: value.goalRef, revision: goalRevision }]),
           { ref: refs.queryJobRef, revision: 0 },
           { ref: refs.queryRunRef, revision: 0 },
         ],

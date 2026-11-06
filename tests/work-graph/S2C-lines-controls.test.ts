@@ -262,14 +262,31 @@ describe.each(['memory', 'sqlite'] as const)('2C-17 line controls (%s)', (kind) 
     expect(paused.status).toBe('committed');
   });
 
-  it('2C-17 (12) unwind controls name slice 7 as not_yet', async () => {
+  it('2C-17 (12) the active line\'s intervene is available and points at the person send', async () => {
     const f = await lineFixture();
-    const head = (await f.createSession('s17-notyet')).ref;
+    const head = (await f.createSession('s17-intervene')).ref;
     await f.claim('implement-a', head);
     const row = await rowOfHead(f, head);
     const intervene = controlOf(row, 'intervene');
-    expect(intervene?.availability).toBe('not_yet');
-    expect(intervene?.reasonCode).toBe('not_yet');
-    expect(intervene?.reason).toContain('7');
+    expect(intervene?.availability).toBe('available');
+    expect(intervene?.route).toBe('messages/send');
+    expect(intervene?.target).toEqual({ sessionRef: head });
+    expect(intervene?.pins).toEqual([]);
+  });
+
+  it('2C-17 (13) lines/list and lines/read agree on the available ask and intervene controls', async () => {
+    const f = await lineFixture();
+    const goal = await f.addGoal('g17-consistent', [{ taskId: 'w', title: 'W task' }]);
+    const head = (await f.createSession('s17-consistent')).ref;
+    await f.link(head, { kind: 'task', ref: goal.tasks['w']! }, 'responsible', true);
+    await f.claim('w', head, goal);
+    const listed = await rowOfHead(f, head);
+    const detail = ready(await f.reader.readWorkLine(f.ctx, { workspace: f.base.scope, key: head }));
+    if (detail.kind !== 'line') throw new Error(`expected a line detail, got ${detail.kind}`);
+    for (const kind of ['ask', 'intervene'] as const) {
+      expect(controlOf(detail.row, kind)).toEqual(controlOf(listed, kind));
+    }
+    expect(controlOf(detail.row, 'ask')?.availability).toBe('available');
+    expect(controlOf(detail.row, 'intervene')?.availability).toBe('available');
   });
 });

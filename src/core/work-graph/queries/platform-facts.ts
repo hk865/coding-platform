@@ -74,7 +74,7 @@ const CONSULTATION_MESSAGE_LIMIT = 20;
 const CONSULTATION_RECORD_LIMIT = 200;
 
 /** The source card's open task links carry the Goal its work belongs to; no extra read is added. */
-function sourceGoalRef(source: SessionCard): GoalRef | null {
+export function sourceGoalRef(source: SessionCard): GoalRef | null {
   const taskLinks = source.links.filter(link => link.ref.target.kind === 'task');
   const link = taskLinks.find(candidate => candidate.until === null && candidate.ref.relation === 'responsible')
     ?? taskLinks.find(candidate => candidate.until === null)

@@ -5,7 +5,7 @@
  * `queries/resolve-unknown`; a standby (paused-interrupted) and a working line
  * archive through `sessions/archive-line`; an archived retired line's
  * `reactivate` is refused with `reactivate_refused_retired` and its `ask` is
- * `not_yet`.
+ * available on `queries/ask`.
  *
  * Entry LE4: `openHostScenario`, `restart({ crash: true })`, `runMaintenance`,
  * the real `lines/list`, `lines/archived`, and the control routes named by each
@@ -147,7 +147,7 @@ it('2C-34 (3) a standby paused-interrupted line lists archive on sessions/archiv
   expect(started).toMatchObject({ status: 'ready' });
 }, 240_000);
 
-it('2C-34 (4) an archived retired line refuses reactivate with reactivate_refused_retired and its ask is not_yet', async () => {
+it('2C-34 (4) an archived retired line refuses reactivate with reactivate_refused_retired and its ask points at queries/ask', async () => {
   let h: HostScenario | undefined;
   h = await openHostScenario({ script: { replies: [
     { kind: 'calls', calls: [{ callId: 's2c34d-g1', name: 'read', args: { path: 'src/module.ts' } }] },
@@ -179,5 +179,6 @@ it('2C-34 (4) an archived retired line refuses reactivate with reactivate_refuse
   const reactivate = requireControl(archived!, 'reactivate', 'the archived retired reactivate control');
   expect(reactivate).toMatchObject({ availability: 'unavailable', reasonCode: 'reactivate_refused_retired' });
   const ask = requireControl(archived!, 'ask', 'the archived retired ask control');
-  expect(ask).toMatchObject({ availability: 'not_yet', reasonCode: 'not_yet' });
+  expect(ask).toMatchObject({ availability: 'available', reasonCode: null, route: 'queries/ask',
+    target: { sessionRef: { projectId: AG2B_SCOPE.projectId, sessionId: session.ref.sessionId } }, pins: [] });
 }, 240_000);

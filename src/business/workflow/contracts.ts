@@ -382,15 +382,15 @@ export type InitialPlanningGoalInputResult = CoreRejection | {
 
 /**
  * The frozen explicit-consultation consumer input. The caller supplies only the
- * original message ref, a real Goal, the already-selected read-only Query
- * profile fields and a consumer id; there is no caller recipient, question,
- * answer text, sender identity or terminal state.
+ * original message ref, its Goal when the line has one, the already-selected
+ * read-only Query profile fields and a consumer id; there is no caller
+ * recipient, question, answer text, sender identity or terminal state.
  */
 export type ConsultationInput = {
   schemaVersion: 1;
   part?: 'response';
   messageRef: SessionMessageRef;
-  goalRef: GoalRef;
+  goalRef: GoalRef | null;
   roleBinding: RoleBindingRefV1;
   runtimeBudget: RuntimeBudget;
   budget: QueryJobIntentV1['budget'];

@@ -261,9 +261,12 @@ function prepareSubmit(ctx: CoreCallContext, request: unknown): PreparedSubmit {
     return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('forbidden', 'intent project/workspace does not match the Host call context') };
   }
   const goalId = intent['goalId'];
-  // The raw kind decides the one no-Goal exception; validQueryExecution still validates the execution below.
+  // The raw kind decides the no-Goal exceptions (a cold-start exploration round
+  // and a saved-message consultation Query); validQueryExecution still validates
+  // the execution below.
   const roleExploration = isRecord(intent['execution']) && intent['execution']['kind'] === 'role_exploration';
-  if (goalId === null && !roleExploration) {
+  const consultationSubmit = isRecord(intent['execution']) && isRecord(intent['execution']['consultation']);
+  if (goalId === null && !roleExploration && !consultationSubmit) {
     return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('unsupported', 'this batch requires a real goalId') };
   }
   if (goalId !== null && !nonEmpty(goalId)) {

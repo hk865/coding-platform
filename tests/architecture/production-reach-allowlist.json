@@ -69,6 +69,18 @@
     },
     {
       "file": "src/app/core-http-types.ts",
+      "name": "QueriesAskBody",
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the queries/ask route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
+      "name": "QueriesAskResponse",
+      "reason": "wire-format",
+      "note": "like the GoalsSettingsBody entry: the queries/ask route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"
+    },
+    {
+      "file": "src/app/core-http-types.ts",
       "name": "ArchitectureAdoptInitialBody",
       "reason": "wire-format",
       "note": "like the GoalsSettingsBody entry: the architecture/adopt-initial route request/response DTO; its reader is the HTTP route boundary (src/app/server.ts + CORE_ROUTE_SPECS/core-routes.ts) and the workbench UI; nothing in src/ names the alias at runtime"

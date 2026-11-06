@@ -285,6 +285,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       const binding = queryExecutionBindingOf(record.job, record.run);
       const intentExecution = record.job.job.intent.execution;
       const explorationRound = intentExecution.kind === 'role_exploration';
+      const consultationRound = intentExecution.kind === 'semantic_query' && intentExecution.consultation !== undefined;
       if (signal.aborted) return rejected('cancelled', 'the Query start was cancelled before the Host configuration read');
 
       if (deps.host.resolveQueryConfiguration === undefined) {
@@ -488,8 +489,9 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
               ? null
               : { aggregateType: 'Goal', projectId: queryRunRef.projectId, goalId: frozenGoalId };
           } else {
-            // The one other no-goal round is a role_exploration Query: its graph tools read the project.
-            if (facts.value.goal === null && !exploration) return rejected('invalid', 'no goal');
+            // The other no-goal rounds are a role_exploration Query (its graph tools read the project)
+            // and a saved-message consultation Query.
+            if (facts.value.goal === null && !exploration && !consultationRound) return rejected('invalid', 'no goal');
             goalRef = facts.value.goal === null ? null : facts.value.goal.ref;
           }
           graphTools = createQueryGraphToolGroup({

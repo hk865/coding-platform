@@ -82,6 +82,7 @@ import type {
 } from '../core/work-graph/model/decision-contracts.js';
 import type { StartupReconcileReportV1 } from './startup-reconcile.js';
 import type { WorkflowPort } from '../business/workflow/ports.js';
+import type { LineAskInputV1, LineAskResultV1 } from '../business/workflow/ports.js';
 import type {
   RequestAskResultV1, RequestIntakePort, RequestRouteResultV1, RequestSelectIdeaResultV1, RequestSubmitResultV1,
 } from '../business/workflow/request-intake.js';
@@ -209,6 +210,8 @@ export type CoreRouteBindings = {
   handleGoalInput: WorkflowPort['handleGoalInput'];
   advanceWork: WorkflowPort['advanceWork'];
   consumeConsultation: NonNullable<WorkflowPort['consumeConsultation']>;
+  /** The person's ask command; the Host layer fills the Query profile fields before the Workflow call. */
+  askLine: (ctx: CoreCallContext, input: LineAskInputV1) => Promise<LineAskResultV1>;
   // AG2b collaboration driver: the Host-layer handle lifetime, one binding per
   // exact driver method. A Host without a driver keeps the routes published but
   // explicitly unsupported.
@@ -628,6 +631,7 @@ export const CORE_ROUTE_SPECS: Record<
   'waits/dispose': { kind: 'plain', binding: 'disposeWait', owner: 'waits.disposeWait' },
   'workspaces/registration': { kind: 'plain', binding: 'readWorkspaceRegistration', owner: 'projects.readWorkspaceRegistration' },
   'queries/submit': { kind: 'graph_write', binding: 'submitQueryJob', owner: 'queries.submitQueryJob' },
+  'queries/ask': { kind: 'plain', binding: 'askLine', owner: 'workflow.askLine' },
   'queries/read': { kind: 'plain', binding: 'readQueryJob', owner: 'queries.readQueryJob' },
   'queries/claim': { kind: 'graph_write', binding: 'claimQuery', owner: 'queries.claimQuery' },
   'queries/prepare': { kind: 'plain', binding: 'prepareQuery', owner: 'runtime.prepareQuery' },
@@ -1095,6 +1099,10 @@ export function createPlatformCoreRouteBindings(
       : personEntry(platform.messageForwarding.disposeWait.bind(platform.messageForwarding)),
     readWorkspaceRegistration: platform.projects.readWorkspaceRegistration.bind(platform.projects),
     submitQueryJob: platform.queries.submitQueryJob.bind(platform.queries),
+    askLine: personEntry((_ctx, _input: LineAskInputV1): Promise<LineAskResultV1> => Promise.resolve({
+      status: 'rejected', code: 'unsupported',
+      reason: 'the Host does not publish the Workflow ask entry (queries/ask)',
+    })),
     readQueryJob: platform.queries.readQueryJob.bind(platform.queries),
     claimQuery: platform.queries.claimQuery.bind(platform.queries),
     prepareQuery: platform.runtime.prepareQuery.bind(platform.runtime),
@@ -1645,6 +1653,7 @@ export async function dispatchCoreRoute(
       case 'waits/dispose': return bindings.disposeWait(ctx, plain.input as never);
       case 'workspaces/registration': return bindings.readWorkspaceRegistration(ctx, plain.input as never);
       case 'queries/submit': return bindings.submitQueryJob(ctx, graphWrite.request as never);
+      case 'queries/ask': return bindings.askLine(ctx, plain.input as never);
       case 'queries/read': return bindings.readQueryJob(ctx, plain.input as never);
       case 'queries/claim': return bindings.claimQuery(ctx, graphWrite.request as never);
       case 'queries/prepare': return bindings.prepareQuery(ctx, plain.input as never);

@@ -46,10 +46,11 @@ import { reviewRoundEndedKnown } from '../../core/work-graph/state/review-lease.
 import type { ReverifyRoundInput } from '../../core/work-graph/model/evidence-contracts.js';
 import type { CommandRerunRequestRef } from '../../contracts/command-rerun-request.js';
 import type { ConsultationInput, ConsultationResult, FailedCardRefV1, GoalWaitBasisV1, InitialPlanningGoalInput, InitialPlanningGoalInputResult, ResolveDecisionInputV1, ResolveDecisionReadV1, WorkflowAdvanceInput, WorkflowAdvanceInternal, WorkflowAdvanceResult, WorkflowCalls, WorkflowOperation, WorkflowSessionRequeue, WorkflowSessionReview, WorkflowStepReceipt } from './contracts.js';
-import type { WorkflowDependencies, WorkflowHostConfiguration, WorkflowPort } from './ports.js';
+import type { LineAskCommandV1, LineAskResultV1, WorkflowDependencies, WorkflowHostConfiguration, WorkflowPort } from './ports.js';
 import type { HandoffWorkflowDependencies } from './contracts.js';
 import { createSecretaryHandoffWorkflow } from './session-handoff.js';
 import { createConsultationConsumer, asRejection } from './consultation.js';
+import { createLineAsk } from './line-ask.js';
 import { createTaskGate, goalWaitBasisOf } from './task-gate.js';
 import { planOnlyTargetOf, refinementRoundOf, systemRoundSendInput } from './plan-round.js';
 import { orderTasksByDependency } from './task-order.js';
@@ -3772,6 +3773,17 @@ export function createWorkflow(deps: WorkflowDependencies & {
     }
     return consultation(ctx, input);
   };
+  // The person's one ask entry composes the same saved message and the same
+  // consultation consumer; without the mailbox or the consumer it stays
+  // explicitly unsupported, never a second copy/Query path.
+  const askLine = deps.messages === undefined || consultation === null ? null
+    : createLineAsk({ sessions: deps.sessions, messages: deps.messages, consult: consultation });
+  const askLineEntry = async (ctx: CoreCallContext, input: LineAskCommandV1): Promise<LineAskResultV1> => {
+    if (askLine === null) {
+      return rejection('unsupported', 'the Workflow has no consultation mailbox/Query/Project dependency');
+    }
+    return askLine(ctx, input);
+  };
 
   // Slice 5 §4.5 finite decision coordination and the read-only ordering safe
   // point. The finite coordinator is built from the SAME optional owner seams;
@@ -3840,7 +3852,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
   };
 
   return {
-    handleGoalInput, advanceWork, consumeConsultation, resolveDecision, orderGoalAdvances,
+    handleGoalInput, advanceWork, consumeConsultation, askLine: askLineEntry, resolveDecision, orderGoalAdvances,
     backfillRecentActivity, backfillActivityRange,
     handleIntervention: intervention.handleIntervention,
     readDeliveryEligibilityFacts,

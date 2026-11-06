@@ -90,6 +90,7 @@ import type { OverlapGatePort } from '../core/work-graph/tasks/overlap-gates.js'
 import type { GoalConfirmPort, GoalCopyPort } from '../core/work-graph/model/goal-card-contracts.js';
 import type { InitializationAdoptionHostPort } from './initialization-adoption.js';
 import type { WorkflowPort } from '../business/workflow/ports.js';
+import type { LineAskInputV1, LineAskResultV1 } from '../business/workflow/ports.js';
 import type { CollaborationDriverPort } from './collaboration-driver.js';
 import type { WorkbenchCommandState, WorkbenchToolsPort } from './workbench-tools.js';
 // Slice 2C (spec §2): the line/node-detail owner ports and the Host-assembled
@@ -230,6 +231,7 @@ export type CoreRouteSuffix =
   | 'waits/dispose'
   | 'workspaces/registration'
   | 'queries/submit'
+  | 'queries/ask'
   | 'queries/read'
   | 'queries/claim'
   | 'queries/prepare'
@@ -815,6 +817,10 @@ export type WorkspacesRegistrationBody = PlainBody<ProjectRegistrationPort['read
 export type WorkspacesRegistrationResponse = RouteResponse<ProjectRegistrationPort['readWorkspaceRegistration']>;
 export type QueriesSubmitBody = GraphWriteBody<QueryJobPort['submitQueryJob']>;
 export type QueriesSubmitResponse = RouteResponse<QueryJobPort['submitQueryJob']>;
+/** `queries/ask` is the person's plain command: the public input has no profile
+ * fields, and the Host binding fills them after reading the line. */
+export type QueriesAskBody = { scope: CoreScope; input: LineAskInputV1 };
+export type QueriesAskResponse = LineAskResultV1;
 export type QueriesReadBody = PlainBody<QueryJobPort['readQueryJob']>;
 export type QueriesReadResponse = RouteResponse<QueryJobPort['readQueryJob']>;
 export type QueriesClaimBody = GraphWriteBody<QueryJobPort['claimQuery']>;

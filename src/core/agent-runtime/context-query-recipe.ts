@@ -103,11 +103,15 @@ export async function assembleQueryContext(
   const goal = input.facts.goal;
   const workspace = input.facts.workspace;
   const queryKind = input.facts.record?.job?.job?.intent?.execution?.kind;
+  const execution = input.facts.record?.job?.job?.intent?.execution;
   const exploration = queryKind === 'role_exploration';
+  // A saved-message consultation Query on a goal-less line is the other no-goal
+  // round: its frozen facts and question ride the role section.
+  const consultationRound = queryKind === 'semantic_query' && execution?.consultation !== undefined;
   // The plain Query recipe reads the graph context of its Goal. A request round
   // without a goal takes the secretary recipe before this point; a role_exploration
   // round has no Goal and reads the project instead.
-  if (goal === null && !exploration) return rejected('invalid', 'no goal');
+  if (goal === null && !exploration && !consultationRound) return rejected('invalid', 'no goal');
 
   // §4.2/G5.1: a Query reads the same graph context when the port is wired; a
   // graph rejection passes through unchanged and is never a legacy fallback.
@@ -158,7 +162,10 @@ export async function assembleQueryContext(
   // (otherwise it would render twice); every other kind keeps today's goal+questionHeading+question text.
   const goalSection = goalText === null ? null : intervention ? goalText
     : `${goalText}\n${consultationText === null ? '' : consultationText + '\n'}${S('context.questionHeading')}\n${input.question}`;
-  const taskSection = exploration ? null : intervention ? null
+  const consultationOnlySection = goal === null && consultationRound
+    ? `${consultationText === null ? '' : consultationText + '\n'}${S('context.questionHeading')}\n${input.question}`
+    : null;
+  const taskSection = exploration || consultationOnlySection !== null ? null : intervention ? null
     : planning && input.facts.focusPlan !== null
       ? queryPlanSummary(input.facts.focusPlan, texts)
       : planning ? null : queryFocusLines(input.facts, facts?.graph ?? null, texts);
@@ -183,7 +190,8 @@ export async function assembleQueryContext(
   const rendered = renderQueryContext({
     templateId,
     prelude: queryContextPrelude(texts),
-    required: { role: exploration ? roleSection + '\n' + input.question : roleSection,
+    required: { role: exploration ? roleSection + '\n' + input.question
+      : consultationOnlySection === null ? roleSection : roleSection + '\n' + consultationOnlySection,
       goal: goalSection, task: taskSection },
     ...(intervention ? { plan: input.facts.focusPlan === null ? null : queryPlanSummary(input.facts.focusPlan, texts), message: input.question } : {}),
     optional: exploration ? { footprint: footprintRows }

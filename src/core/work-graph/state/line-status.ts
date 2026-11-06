@@ -482,7 +482,8 @@ const ROUTE_RESOLVE_RUN = 'executions/resolve-unknown';
 const ROUTE_RESOLVE_QUERY = 'queries/resolve-unknown';
 const ROUTE_ARCHIVE_LINE = 'sessions/archive-line';
 const ROUTE_REACTIVATE = 'sessions/reactivate';
-const ROUTE_ASK = 'queries/submit';
+const ROUTE_INTERVENE = 'messages/send';
+const ROUTE_ASK = 'queries/ask';
 
 /**
  * L16 / §3.10: the controls this line can offer, computed with the SAME pure
@@ -497,7 +498,7 @@ export function deriveLineControls(facts: LineFactsV1, status: LineStatusV1): Li
   const controls: LineControlV1[] = [];
   if (facts.head.lifecycle === 'archived') {
     controls.push(reactivateControl(facts));
-    controls.push(notYet('ask', ROUTE_ASK, '第 7 片接上问一问'));
+    controls.push(available('ask', ROUTE_ASK, { sessionRef: headRef(facts) }, []));
     return controls;
   }
   // Work pause/resume/cancel (T3a/T3b/T3d/T4/T5/T7). T0 and T3c give no
@@ -535,7 +536,10 @@ export function deriveLineControls(facts: LineFactsV1, status: LineStatusV1): Li
   }
   if (status.own !== 'retired') controls.push(available('archive', ROUTE_ARCHIVE_LINE, { sessionRef: headRef(facts) }, []));
   controls.push(askControl(facts));
-  controls.push(notYet('intervene', ROUTE_CONTROL, '第 7 片接上直接干预'));
+  controls.push(status.readOnly
+    ? refused('intervene', ROUTE_INTERVENE, { sessionRef: headRef(facts) }, [],
+      { code: 'forbidden', reason: 'the line is read-only; a direct intervention needs an active line' })
+    : available('intervene', ROUTE_INTERVENE, { sessionRef: headRef(facts) }, []));
   return controls;
 }
 
@@ -615,14 +619,6 @@ function reactivateControl(facts: LineFactsV1): LineControlV1 {
 }
 
 function askControl(facts: LineFactsV1): LineControlV1 {
-  if (facts.head.health === 'unavailable') {
-    // §3.10: the derived-copy "ask" path only needs an ACTIVE (lifecycle) Session,
-    // which a `kernel_turn_open` retired line still is; missing/damaged wait for slice 7.
-    if (facts.head.healthConclusion === 'kernel_turn_open') {
-      return available('ask', ROUTE_ASK, { sessionRef: headRef(facts) }, []);
-    }
-    return notYet('ask', ROUTE_ASK, '第 7 片接上已退役线的问一问');
-  }
   return available('ask', ROUTE_ASK, { sessionRef: headRef(facts) }, []);
 }
 
@@ -642,10 +638,6 @@ function refused(
   problem: { code: string; reason: string },
 ): LineControlV1 {
   return { kind, availability: 'unavailable', reason: problem.reason, reasonCode: problem.code, route, target, pins };
-}
-
-function notYet(kind: LineControlKindV1, route: string, reason: string): LineControlV1 {
-  return { kind, availability: 'not_yet', reason, reasonCode: 'not_yet', route, target: {}, pins: [] };
 }
 
 // -------------------------------------------------------------------------- //
