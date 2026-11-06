@@ -9,7 +9,8 @@
  * `sessions/session-record-codecs.ts`, because only that layer may name the Store's encoded records.
  *
  * Readiness is deliberately not a field: whether the successor may be offered the brief is read from
- * the stored handoff operation's phase progress after its responsibility transfer completed.
+ * the stored handoff operation's phase progress after its responsibility transfer completed; a split's record 5 is
+ * written in the split's done commit, so a split's record is ready when it is read.
  */
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';

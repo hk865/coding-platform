@@ -46,7 +46,11 @@ export type RoleLineActionV1 = {
   batchRefs?: ArchitectureProposalBatchRef[];
   route?: 'map' | 'split' | null;
   baseCatalogPin?: ArchitectureCatalogPinV1 | null;
+  /** SPLITUND: an adviser tool split's admitted understanding versions, saved by its first write; absent otherwise. */
+  understanding?: { noteId: string; version: number }[];
 };
+/** One note version `{ noteId, version }`: the one field (`model/session-operation-arms.ts` imports it). */
+export const NoteVersionField = f.object({ noteId: id, version: f.integer({ min: 1 }) });
 export const RoleLineActionShape = defineShape({ name: 'RoleLineAction', fields: {
   kind: f.literal('role_line'), action: f.enumOf(ROLE_LINE_ACTIONS), phase: id,
   goalRef: f.nullable(f.ref(GoalRefShape)),
@@ -63,4 +67,5 @@ export const RoleLineActionShape = defineShape({ name: 'RoleLineAction', fields:
   batchRefs: f.optional(f.array(f.object({ aggregateType: f.literal('ArchitectureProposalBatch'),
     projectId: id, batchId: id }))),
   route: f.optional(f.nullable(f.enumOf(['map', 'split'] as const))),
-  baseCatalogPin: f.optional(f.nullable(f.ref(architectureCatalogPinShape))) } });
+  baseCatalogPin: f.optional(f.nullable(f.ref(architectureCatalogPinShape))),
+  understanding: f.optional(f.array(NoteVersionField)) } });

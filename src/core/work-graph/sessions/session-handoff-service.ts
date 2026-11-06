@@ -36,7 +36,7 @@ import { checkShape } from '../../../contracts/validation/data-format.js';
 import { OperationRefShape, SessionMessageRefShape } from '../../../contracts/data-format-refs.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type {
-  CommitCursorBinding, EncodedDomainEvent, EncodedRecord, GoalRecordTransactionPort, RecordCommitIdentityPort,
+  EncodedDomainEvent, EncodedRecord, GoalRecordTransactionPort, RecordCommitIdentityPort,
   RecordGuard, UniqueClaimChange,
 } from '../../record-store/ports.js';
 import type {
@@ -60,7 +60,7 @@ import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
 import type { WorkHandoffBriefV1 } from '../state/work-handoff-brief.js';
 import { toolCommitLookupUnknownTool, toolCommitRequestId } from '../model/tool-commit-arguments.js';
 import {
-  commandIdentity, commandKeys, executeWriteCommand, readCommittedEvent, type CommandResult, type Keys,
+  commandIdentity, commandKeys, executeWriteCommand, readCommittedEvent, type CommandResult, type CommitFragment, type Keys,
 } from '../persistence/command-executor.js';
 import { lookupAll } from '../persistence/lookup-all.js';
 import { sessionActivityRefOf } from './session-activity.js';
@@ -518,7 +518,7 @@ type AdvanceResult = Extract<HandoffAdvanceResultV1, { status: 'committed' }>['v
 type Stop = AdvanceResult['stop'];
 
 /** Record 5 before the Store binds its `since`; the successor-stage commit supplies the cursor binding. */
-type PendingWorkHandoffBriefV1 = Omit<WorkHandoffBriefV1, 'since'> & { since: CommitCursor | null };
+export type PendingWorkHandoffBriefV1 = Omit<WorkHandoffBriefV1, 'since'> & { since: CommitCursor | null };
 
 /** Only the two Work duties have a handoff brief; a secretary/scribe successor has none. */
 function briefDutyOf(duty: PlatformDutyV1 | 'unknown'): 'executor' | 'adviser' | null {
@@ -526,7 +526,7 @@ function briefDutyOf(duty: PlatformDutyV1 | 'unknown'): 'executor' | 'adviser' |
 }
 
 /** Record 5's complete value from material that already read successfully; the digest covers the material only. */
-function pendingWorkHandoffBrief(input: {
+export function pendingWorkHandoffBrief(input: {
   operation: OperationRef; source: SessionRef; successor: SessionRef; duty: 'executor' | 'adviser';
   tasks: readonly TaskTriple[]; workspaceId: string; material: HandoffBriefMaterialV1;
 }): PendingWorkHandoffBriefV1 {
@@ -546,6 +546,20 @@ function pendingWorkHandoffBrief(input: {
     material: input.material,
     consumedBy: null,
     since: null,
+  };
+}
+
+/** Record 5's one commit fragment (H's successor step and an adviser split's done write): the encoded record, its
+ *  `HandoffBriefRecorded` event, the absence guard and the `since` cursor binding. */
+export function workHandoffBriefCommit(brief: PendingWorkHandoffBriefV1, input: { eventId: string; at: string }):
+  CommitFragment {
+  return {
+    records: [workHandoffBriefCodec.encode(brief)],
+    claims: [],
+    events: [handoffBriefRecordedCodec.encode({ eventId: input.eventId, eventType: 'HandoffBriefRecorded',
+      schemaVersion: 1, occurredAt: input.at, handoffBrief: brief as unknown as JsonValue })],
+    guards: [{ refKey: canonicalKey(brief.ref), expectedRevision: null }],
+    commitCursorBindings: [{ refKey: canonicalKey(brief.ref), field: 'since' }],
   };
 }
 
@@ -922,24 +936,17 @@ export function createSessionHandoffAdvanceService(deps: SessionHandoffAdvanceDe
               workspaceId: record.workspaceId, operationRef: operation, revision: nextRecord.revision,
               phase: nextRecord.phase, action: nextRecord.action });
             const brief = draft.brief;
-            const briefRecords: EncodedRecord[] = [];
-            const briefEvents: EncodedDomainEvent[] = [];
-            const commitCursorBindings: CommitCursorBinding[] = [];
-            if (brief !== undefined) {
-              briefRecords.push(workHandoffBriefCodec.encode(brief));
-              briefEvents.push(handoffBriefRecordedCodec.encode({ eventId: eventIdOf(keys.identityKey, 'handoff-brief'),
-                eventType: 'HandoffBriefRecorded', schemaVersion: 1, occurredAt: at,
-                handoffBrief: brief as unknown as JsonValue }));
-              commitCursorBindings.push({ refKey: canonicalKey(brief.ref), field: 'since' });
-            }
+            const fragment = brief === undefined ? null
+              : workHandoffBriefCommit(brief, { eventId: eventIdOf(keys.identityKey, 'handoff-brief'), at });
             return { guards: [{ refKey: operationRefKey(operation),
               expectedRevision: draft.guardRevision ?? record.revision },
-              ...(brief === undefined ? [] : [{ refKey: canonicalKey(brief.ref), expectedRevision: null }]),
+              ...(fragment === null ? [] : fragment.guards),
               ...draft.guards],
-              records: [encodeSessionOperationRecord(nextRecord), ...briefRecords], claims: draft.claims,
-              events: [...briefEvents, event],
+              records: [encodeSessionOperationRecord(nextRecord), ...(fragment?.records ?? [])], claims: draft.claims,
+              events: [...(fragment?.events ?? []), event],
               ...(draft.ledgerHorizon === undefined ? {} : { ledgerHorizon: draft.ledgerHorizon }),
-              ...(commitCursorBindings.length === 0 ? {} : { commitCursorBindings }) };
+              ...(fragment?.commitCursorBindings === undefined ? {}
+                : { commitCursorBindings: fragment.commitCursorBindings }) };
           },
           result: {
             eventType: handoffRecordedEvent.eventType, schemaVersion: handoffRecordedEvent.schemaVersion,

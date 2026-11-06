@@ -5,8 +5,8 @@
  * one is left alone; a split resumes after a crash at each phase and never makes a second line.
  *
  * World: `openS7D2ProjectWorld` (tests/helpers/S7D2-role-line-world.ts) with `scribeReminderPeriodMs: 25` on every
- * Host start (the Host idle cycle) and, where the tool is called, `adviserTools` with `propose_role_split` added to the
- * world's three. The row's lines:
+ * Host start (the Host idle cycle) and, where the tool is called, `adviserTools` with `propose_role_split` and
+ * `record_note` added to the world's three. The row's lines:
  * - L1 = `regionAdviser`: region `src`, whose known children are `src/a` and `src/b` (`s7d2Catalog`);
  * - L3 = `tooLong`: goal 2 alone (no strict subrange); the newest request of its one Work Run reports 160,000 input
  *   tokens, at `min(500,000, floor(0.8 × 200,000))` (`S7D2_TOO_LONG_INPUT_TOKENS`);
@@ -46,9 +46,11 @@ import type {
 } from '../../src/core/work-graph/model/session-contracts.js';
 import type { RoleLineOperationReadV1 } from '../../src/core/work-graph/views/role-line-operations-read.js';
 import { adoptPLMixedPlan } from '../helpers/PL-consumption-fixture.js';
+import { understandingNote } from '../helpers/S4C2-note-card-fixture.js';
 import { commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import type { S6AReply } from '../helpers/S6A-host-fixture.js';
 import { S6A_SCOPE, type S6ABackend } from '../helpers/S6A-request-fixture.js';
+import { understandingPointer } from '../helpers/S6B1-fixture.js';
 import { valueOf } from '../helpers/S6B3-fixture.js';
 import { sendS7A2PersonMessage } from '../helpers/S7A2-fixture.js';
 import { jsonOf } from '../helpers/S7C-member-fixture.js';
@@ -72,7 +74,7 @@ afterEach(async () => {
 
 type SplitRow = Extract<RoleLineOperationReadV1, { action: 'role_line' }>;
 
-const SPLIT_TOOLS = ['read', 'send_session_message', 'create_member', 'propose_role_split'] as const;
+const SPLIT_TOOLS = ['read', 'send_session_message', 'create_member', 'propose_role_split', 'record_note'] as const;
 const NOT_STRICT = 'the move is not a strict subrange of the caller line';
 const REASON = 'RL-13: src/a carries a burden of its own';
 
@@ -150,12 +152,24 @@ async function planOnL1(handle: S7D2ProjectWorld, label: string, taskIds: readon
 const splitCall = (callId: string, moduleId: string) => ({ callId, name: 'propose_role_split',
   args: { move: [{ kind: 'region', moduleRef: { projectId: S6A_SCOPE.projectId, moduleId } }], reason: REASON } });
 
-/** One real Work Run of L1 on `task`: one model reply per tool call, then a text. */
-function splitRun(handle: S7D2ProjectWorld, task: TaskTriple, label: string,
+/** One real Work Run of L1 on `task`: first the understanding on goal 1 the split requires (`moduleId` is its extra
+ *  anchor), then one model reply per tool call, then a text. */
+async function splitRun(handle: S7D2ProjectWorld, task: TaskTriple, label: string, moduleId: string,
   calls: readonly ReturnType<typeof splitCall>[]): Promise<unknown> {
-  const replies: S6AReply[] = [...calls.map((call): S6AReply => ({ kind: 'calls', calls: [call] })),
+  const anchor = { kind: 'goal' as const, goalId: handle.goal.goalId };
+  const pointer = await understandingPointer(handle.world, anchor);
+  const draft = understandingNote({ anchor, topic: `${label}-understanding`,
+    conclusion: `RL-13 ${label} understanding`, structural: false,
+    replaces: pointer.noteId === null ? [] : [pointer.noteId] });
+  if (draft.kind !== 'understanding') throw new Error(`RL-13: ${label} wrote no understanding`);
+  const note = { callId: `${label}-understanding`, name: 'record_note', args: {
+    op: 'write', kind: draft.kind, topic: draft.topic, conclusion: draft.conclusion, anchor: draft.anchor,
+    sections: draft.sections, structural: draft.structural, replaces: draft.replaces,
+    expectedPointerRevision: pointer.revision, extraAnchors: [{ kind: 'module', moduleId }] } };
+  const replies: S6AReply[] = [{ kind: 'calls', calls: [note] },
+    ...calls.map((call): S6AReply => ({ kind: 'calls', calls: [call] })),
     { kind: 'text', text: `RL-13 ${label} done` }];
-  return runS7D2Work(handle.world, { line: handle.regionAdviser, goal: handle.goal, task, label, replies });
+  return await runS7D2Work(handle.world, { line: handle.regionAdviser, goal: handle.goal, task, label, replies });
 }
 
 /** The tool's own result for `callId`, as the Runtime served it to L1's model. */
@@ -179,7 +193,8 @@ describe('RL-13 A: propose_role_split', () => {
       const handle = await openWorld('memory', true);
       const l1 = handle.regionAdviser;
       const [first, second] = await planOnL1(handle, 's7d2-rl13-a', ['rl13-a-1', 'rl13-a-2']);
-      await splitRun(handle, first!, 'rl13-a-1', [splitCall('rl13-a-whole', 'src'), splitCall('rl13-a-child', 'src/a')]);
+      await splitRun(handle, first!, 'rl13-a-1', handle.modules.child.moduleId,
+        [splitCall('rl13-a-whole', 'src'), splitCall('rl13-a-child', 'src/a')]);
       expect(await resultOf(handle, 'rl13-a-whole')).toEqual({ status: 'rejected', code: 'invalid', reason: NOT_STRICT });
       const accepted = await resultOf(handle, 'rl13-a-child') as { operation: OperationRef };
       expect(accepted).toMatchObject({ status: 'accepted', operation: expect.any(Object), revision: expect.any(Number) });
@@ -207,7 +222,8 @@ describe('RL-13 A: propose_role_split', () => {
         .filter(reservation => reservation.operationRef.operationId === child?.operationId)).toEqual([]);
 
       // The same move again, from a new tool call on a Task not run yet: the same operation, no second line.
-      await splitRun(handle, second!, 'rl13-a-2', [splitCall('rl13-a-replay', 'src/a')]);
+      await splitRun(handle, second!, 'rl13-a-2', handle.modules.region.moduleId,
+        [splitCall('rl13-a-replay', 'src/a')]);
       expect(await resultOf(handle, 'rl13-a-replay')).toMatchObject({ status: 'accepted', operation: accepted.operation });
       const again = splitRows(await handle.operations());
       expect(again.map(row => row.operation)).toEqual([accepted.operation]);
@@ -245,7 +261,7 @@ describe('RL-13 B: at the open cap', () => {
   it('RL-13 B1 (memory): with no idle line the call is the at-cap refusal and the split ends failed', async () => {
     const handle = await openWorld('memory', true);
     const { task, busy, n } = await atCap(handle, 's7d2-rl13-b1', false);
-    await splitRun(handle, task, 'rl13-b1', [splitCall('rl13-b1-split', 'src/a')]);
+    await splitRun(handle, task, 'rl13-b1', handle.modules.child.moduleId, [splitCall('rl13-b1-split', 'src/a')]);
     const reason = `at_cap: adviser has ${String(n)} holder(s) and 0 reservation(s) against open limit ${String(n)}`;
     // o3b-start-rulings.md item 12 (Q12; later-rows-rulings.md:11 Q6, merged K9): after O3b the split is a platform
     // automatic add, so this at-cap refusal opens capacity episode 1 (v4 :3391–:3392, :3409–:3413).
@@ -266,7 +282,7 @@ describe('RL-13 B: at the open cap', () => {
   it('RL-13 B2 (memory): one idle line is reclaimed, then the split is admitted', async () => {
     const handle = await openWorld('memory', true);
     const { task, n, standby } = await atCap(handle, 's7d2-rl13-b2', true);
-    await splitRun(handle, task, 'rl13-b2', [splitCall('rl13-b2-split', 'src/a')]);
+    await splitRun(handle, task, 'rl13-b2', handle.modules.child.moduleId, [splitCall('rl13-b2-split', 'src/a')]);
     expect(await resultOf(handle, 'rl13-b2-split')).toMatchObject({ status: 'accepted' });
     expect((await handle.readCard(standby!)).record.lifecycle).toBe('archived');
     const end = await splitEnd(handle);
@@ -322,7 +338,8 @@ describe('RL-13 D: a crash in the split', () => {
 
   /** L1's split Run, not awaited: the crash leaves it to the abandoned Host, so it settles only after its release. */
   const startSplit = (handle: S7D2ProjectWorld, task: TaskTriple, label: string): Promise<unknown> =>
-    splitRun(handle, task, label, [splitCall(`${label}-split`, 'src/a')]).catch((error: unknown) => error);
+    splitRun(handle, task, label, handle.modules.child.moduleId, [splitCall(`${label}-split`, 'src/a')])
+      .catch((error: unknown) => error);
 
   /** The new Host's end: `done`, the saved body, one new line, one more adviser holder than before the split. */
   async function expectResumed(handle: S7D2ProjectWorld, holders: number): Promise<void> {

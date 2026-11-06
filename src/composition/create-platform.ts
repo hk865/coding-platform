@@ -1986,6 +1986,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // b11 (v4 :1894–:1897): a cancelled reservation closes a stale capacity card at once, through the same
       // capacity owner the archive (:1919) and the limits owner (:4123) call.
       closeStale: (ctx, input) => roleCapacityService.closeIfStale(ctx, input),
+      ...(queryExecution === undefined ? {} : { brief: { assemble: (ctx, input) => handoffBriefsMaterial.assemble(ctx, input) } }),
     });
     // O4a M14: the one goal adviser queue owner (book :530); its notices go through the one notifyProject writer.
     const goalAdviserQueue = createGoalAdviserQueueService({
@@ -2302,7 +2303,16 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
             if (facts.status !== 'ready') return rejected('unavailable', 'the split facts are not readable');
             const plan = planRoleLineSplit({ ...facts.value, move: input.move, tooLong: false, tooSlow: false });
             if (plan === null) return rejected('invalid', 'the move is not a strict subrange of the caller line');
-            const started = await roleLineOperations.startRoleLineSplit(owned, { source: input.caller.session, plan });
+            let understanding: { noteId: string; version: number }[] | undefined;
+            if (facts.value.line.duty === 'adviser') {
+              // SPLITUND: only an adviser caller proves its own current understanding; nothing is written on `incomplete`.
+              const read = await handoffEntry.readOwnLineUnderstanding(ctx, { caller: {
+                actor: input.caller.actor, session: input.caller.session, run: input.caller.run } });
+              if (read.status !== 'found') return read;
+              understanding = read.understanding;
+            }
+            const started = await roleLineOperations.startRoleLineSplit(owned, { source: input.caller.session, plan,
+              ...(understanding === undefined ? {} : { understanding }) });
             if (started.status === 'rejected') return started;
             if (started.status === 'ready' && started.value.cardKey !== undefined) {
               // card supplement C7: the split waits for a person's card; the tool answers at once

@@ -5,7 +5,8 @@
  * the reason; the trusted Work caller, the command id and the context are bound by the factory. The owner validates
  * the move with the same split planner the maintenance page uses and refuses at once; a refusal goes back to the model
  * as the tool result, never a suspended call. A split that waits for a person's card is a success with one sentence,
- * as `hand_off`'s is. This file adds no second validator.
+ * as `hand_off`'s is; an `incomplete` result is also a success with the owner's text, as `hand_off`'s is. This file
+ * adds no second validator.
  */
 import type { ActorRef } from '../../contracts/command-event.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
@@ -35,6 +36,9 @@ export type RoleSplitToolOwnerV1 = {
   }): Promise<{ status: 'accepted'; operation: OperationRef; revision: number }
     /** The split waits for a person's `role_line_change` card (card supplement C7). */
     | { status: 'needs_decision'; cardKey: string; operation: OperationRef }
+    /** SPLITUND: the calling adviser Run has no current understanding note yet; nothing was written (the
+     *  `hand_off` rule). */
+    | { status: 'incomplete'; text: string }
     | CoreRejection>;
 };
 
@@ -110,6 +114,9 @@ export function createRoleSplitTools(config: RoleSplitToolsConfig):
           output: [{ kind: 'json', value: result as never }], effects: noneEffects() };
       }
       return rejectedResult(callId, result, result.reason);
+    }
+    if (result.status === 'incomplete') {
+      return successWithText(callId, result, result.text);
     }
     if (result.status === 'needs_decision') {
       return successWithText(callId, result, '拆线已登记，等人在卡上决定；这一轮不要重复提交。');

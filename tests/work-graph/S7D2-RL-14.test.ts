@@ -65,7 +65,7 @@ async function createOf(handle: S7D2ProjectWorld, line: SessionRef): Promise<Ope
 describe('RL-14', () => {
   /*
    * Named mutation (v4 :8852): `regionPositionOf` renders `unknown` as `{status:'region',moduleRef,burden:0}` ->
-   * `capture_failed` and `ownership_ambiguous`: (c) answers `accepted` and a split row appears, red.
+   * `capture_failed` and `ownership_ambiguous`: (c) answers `incomplete` (no understanding written), so still red.
    * `containment_absent` is not sensitive to it (merged :204: its mutation shows only on the read, O5b-R2's).
    */
   it.each<S7D2ObservationVariant>(['capture_failed', 'ownership_ambiguous', 'containment_absent'])(

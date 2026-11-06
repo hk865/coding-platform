@@ -48,7 +48,10 @@ import { createAllocationRead, openLimitOf, seatAtCap } from './allocation-read.
 import { roleLineOperationChangedCodec, roleLineSplitSavedCodec } from './role-line-orchestration-codecs.js';
 import { roleLineCommitContribution } from './role-scope-commit.js';
 import { stableSessionCreationIdentity } from './session-directory.js';
-import { handoffContextOf, savedHostPrincipal } from './session-handoff-service.js';
+import {
+  handoffContextOf, pendingWorkHandoffBrief, savedHostPrincipal, workHandoffBriefCommit,
+  type HandoffBriefMaterialAssembler,
+} from './session-handoff-service.js';
 import {
   CORE_OPERATION_BY_WORKSPACE_PHASE_LOOKUP, decodeSessionOperationRecord, encodeSessionOperationRecord, operationRefKey,
 } from './session-record-codecs.js';
@@ -114,8 +117,11 @@ export interface RoleLineOperationsPort {
 /** `cardKey` (card supplement C7): the split waits for a person's `role_line_change` card. */
 export type RoleLineSplitStartV1 = { operation: OperationRef; revision: number; cardKey?: string };
 export interface RoleLineSplitPort {
-  /** b02: the one starter/continuer; O2 only calls it. */
-  startRoleLineSplit(ctx: CoreCallContext, input: { source: SessionRef; plan: RoleLineSplitPlanV1 }):
+  /** b02: the one starter/continuer; O2 only calls it. SPLITUND: `understanding` is an adviser tool split's admitted
+   *  versions (`readOwnLineUnderstanding`'s `found`), saved by a new operation's first write only; the maintenance
+   *  page and a scribe caller pass none. */
+  startRoleLineSplit(ctx: CoreCallContext, input: { source: SessionRef; plan: RoleLineSplitPlanV1;
+    understanding?: { noteId: string; version: number }[] }):
     Promise<ReadResult<RoleLineSplitStartV1>>;
 }
 export type RoleLineOperationsDeps = {
@@ -124,6 +130,9 @@ export type RoleLineOperationsDeps = {
   createLine: RoleLineCreatePort;
   operations: Pick<SessionDirectoryPort, 'getSessionOperation' | 'readSession'>;
   responsibility: Pick<SessionResponsibilityPort, 'reanchorSessionResponsibility'>;
+  /** SPLITUND: H's successor-step material seam (`session-handoff-service.ts:476`), the same instance H uses. Absent
+   *  (a platform without a Runtime), an adviser split's done write carries no record 5. */
+  brief?: HandoffBriefMaterialAssembler;
   /** b11: O5b injects the one post-release close structurally; absent keeps the terminal release unchanged. */
   closeStale?: (ctx: CoreCallContext, input: {
     projectRef: ProjectScope; duty: RoleLineDutyV1; operation: OperationRef | null;
@@ -311,7 +320,9 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
    * The one guarded single write of a role_line operation (L-1: one `RoleLineOperationChanged` with its
    * `operationRef`, through `executeWriteCommand`; precedent `role-limits-service.ts`). A step write's identity is the
    * operation and its next revision, so a lost answer replays the receipt; the accepted write of a person command
-   * carries the public command as its fingerprint. `extra` rides in the same commit (the terminal release).
+   * carries the public command as its fingerprint. `extra` rides in the same commit (the terminal release, and record 5
+   * on an adviser split's done write); its events go before the operation event, which stays last (the executor's
+   * result event).
    */
   async function writeOperation(
     ctx: CoreCallContext, prior: RoleLineOperationV1 | null, next: RoleLineOperationV1,
@@ -332,10 +343,10 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
       build: (_decision, keys) => ({
         records: [encodeSessionOperationRecord(next), ...(extra?.records ?? [])],
         claims: [...(extra?.claims ?? [])],
-        events: [roleLineOperationChangedCodec.encode({
+        events: [...(extra?.events ?? []), roleLineOperationChangedCodec.encode({
           eventId: eventIdOf(keys.identityKey, 'changed'), eventType: 'RoleLineOperationChanged', schemaVersion: 1,
           occurredAt: deps.now(), projectId: next.ref.projectId, workspaceId: next.workspaceId,
-          actor: trusted.actor, revision: next.revision, operationRef: next.ref }), ...(extra?.events ?? [])],
+          actor: trusted.actor, revision: next.revision, operationRef: next.ref })],
         guards: [{ refKey: key, expectedRevision: prior === null ? null : prior.revision }, ...(extra?.guards ?? [])],
         ...(extra?.commitCursorBindings === undefined ? {} : { commitCursorBindings: extra.commitCursorBindings }),
       }),
@@ -838,7 +849,8 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
     return { status: 'ready', value: null };
   }
 
-  async function startRoleLineSplit(ctx: CoreCallContext, input: { source: SessionRef; plan: RoleLineSplitPlanV1 }):
+  async function startRoleLineSplit(ctx: CoreCallContext, input: { source: SessionRef; plan: RoleLineSplitPlanV1;
+    understanding?: { noteId: string; version: number }[] }):
     Promise<ReadResult<RoleLineSplitStartV1>> {
     const lineCtx = await lineContextOf(ctx);
     if (lineCtx.status !== 'ready') return lineCtx;
@@ -872,6 +884,7 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
           phase: 'accepted', requestedAt: now, updatedAt: now, observation: null, failure: null,
           action: { kind: 'role_line', action: 'role_line_split', phase: card ? 'waiting' : 'planned',
             goalRef: onlyGoalOf(goals), split: roleLineSplitSavedCodec.decode(canonical),
+            ...(input.understanding === undefined ? {} : { understanding: structuredClone(input.understanding) }),
             result: card ? { status: 'waiting', reason: null } : null,
             steps: [{ key: 'split', duty: counted.value, childOperation: null, state: 'pending' }] } };
         const written = await writeOperation(lineCtx.value, null, planned, { commandId: ref.operationId,
@@ -899,7 +912,7 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
 
   /** A split phase write (the action's phase carries the split table); the step marker moves with it when given. */
   async function splitPhase(ctx: CoreCallContext, record: RoleLineOperationV1, phase: RoleLineSplitPhaseV1,
-    step: RoleLineStepStateV1 | null): Promise<ReadResult<RoleLineContinueResultV1>> {
+    step: RoleLineStepStateV1 | null, extra?: CommitFragment): Promise<ReadResult<RoleLineContinueResultV1>> {
     let action: RoleLineActionV1 = record.action;
     if (step !== null) {
       const stepped = roleLineStepTransition(action, 0, { state: step });
@@ -910,7 +923,7 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
     const next: RoleLineOperationV1 = { ...record, revision: record.revision + 1, updatedAt: deps.now(),
       phase: done ? 'completed' : 'running',
       action: { ...action, phase, result: done ? { status: 'done', reason: null } : action.result } };
-    const written = await writeOperation(ctx, record, next);
+    const written = await writeOperation(ctx, record, next, undefined, extra);
     if (written.status !== 'committed') return written;
     return { status: 'ready', value: { revision: next.revision, state: done ? 'done' : 'created', capacity: null } };
   }
@@ -937,8 +950,23 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
     }
     const phase = saved.action.phase as RoleLineSplitPhaseV1;
     if (phase === 'linked') {
+      // SPLITUND: an adviser tool split's done write carries record 5 in the same commit, after the material reads.
+      let extra: CommitFragment | undefined;
+      const assembler = deps.brief;
+      if (assembler !== undefined && saved.action.steps[0]?.duty === 'adviser') {
+        const created = await lineSessionOf(runCtx, saved);
+        if (created.status !== 'ready') return created;
+        const line = created.value!;
+        const material = await assembler.assemble(runCtx, { source: body.source, duty: 'adviser', tasks: [],
+          workspaceId: saved.workspaceId, understanding: saved.action.understanding ?? null });
+        if (material.status !== 'ready') return material;
+        const brief = pendingWorkHandoffBrief({ operation: saved.ref, source: body.source, successor: line,
+          duty: 'adviser', tasks: [], workspaceId: saved.workspaceId, material: material.value });
+        extra = workHandoffBriefCommit(brief, { eventId: eventIdOf(canonicalKey(brief.ref), 'handoff-brief'),
+          at: deps.now() });
+      }
       // C13: every split (the tool's, the page's, an approved card's) is done only here.
-      const done = await splitPhase(runCtx, saved, 'done', null);
+      const done = await splitPhase(runCtx, saved, 'done', null, extra);
       if (done.status === 'ready') {
         await noticeDone(runCtx, saved, `拆线：从线 ${truncateUtf8(body.source.sessionId, 160)} 拆出一条新线接手`
           + `${noticeTargetOf(saved, '移出的范围')}（${ADJUSTMENT_RULE}；可合并范围或归档新线）`);

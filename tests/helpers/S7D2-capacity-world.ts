@@ -2,16 +2,18 @@
  * O3b's capacity world (`7d2-start-rulings.v4.md` §11 `:8876`, re-based by the write-tests brief
  * `tests-7d2-o3b.txt:27–:33`, lead Q13, plan A): RL-11 and RL-16 (1), (3), (6) run on it. It extends O1b's region
  * world (`openS7D2RegionWorld`, tests/helpers/S7D2-role-line-world.ts) with the adviser Work binding
- * `S7D2_ADVISER_WORK`, `propose_role_split` merged into that binding (`S6A-request-fixture.ts` `mergeTools`), and
+ * `S7D2_ADVISER_WORK`, `propose_role_split` and `record_note` merged into that binding (`S6A-request-fixture.ts`
+ * `mergeTools`), and
  * `scribeReminderPeriodMs: 25` on every Host start (the Host idle cycle). Every step is a public route or a scripted
  * Work Run calling the real tool:
  * - `line`: `role-lines/open` of an adviser on a scope; `newGoal`: `goals/create`; `autonomy`: `goals/settings/set`
  *   at the goal's `goals/read` revision;
  * - `plan`: one Plan on one goal (`plans/propose` + `plans/apply`, `adoptPLMixedPlan`; a goal adopts once), each
  *   Task assigned to its line's role and linked to that line (`sessions/link`);
- * - `split`: one Work Run of a line on one of its Tasks (`workflow/advance`, `runS7D2Work`) whose model calls
- *   `propose_role_split {move, reason}` once and then answers a text; `toolResult` reads that call's tool message
- *   (its `result.status` and JSON block) from the requests the Runtime served the line's model;
+ * - `split`: one Work Run of a line on one of its Tasks (`workflow/advance`, `runS7D2Work`) whose model first writes
+ *   the understanding the split requires on the Run's own goal (the `record_note` call the fixture reads the pointer
+ *   for), then calls `propose_role_split {move, reason}` once and answers a text; `toolResult` reads that call's tool
+ *   message (its `result.status` and JSON block) from the requests the Runtime served the line's model;
  * - `busy`: one person `inquiry` to each line (`messages/send`, `sendS7A2PersonMessage`), so it is not idle;
  * - reads: `decisions/queue` (`queue`; the project subject's cards are in it without a goal), `decisions/card`,
  *   `decisions/answer` (`answer`: the card's own pins), the project notices (`notices`), `projects/role-limits`;
@@ -31,8 +33,9 @@ import type {
 } from '../../src/core/work-graph/model/decision-contracts.js';
 import { graphWrite } from './AG2b-collaboration-fixture.js';
 import { adoptPLMixedPlan } from './PL-consumption-fixture.js';
-
+import { understandingNote } from './S4C2-note-card-fixture.js';
 import { S6A_SCOPE, type S6ABackend, type S6ASession } from './S6A-request-fixture.js';
+import { understandingPointer } from './S6B1-fixture.js';
 import { valueOf } from './S6B3-fixture.js';
 import { sendS7A2PersonMessage } from './S7A2-fixture.js';
 import { jsonOf } from './S7C-member-fixture.js';
@@ -53,7 +56,8 @@ export type S7D2CapacityWorld = S7D2RegionWorld & {
   autonomy(goal: GoalRef, autonomy: GoalAutonomyV1, requestId: string): Promise<void>;
   /** One adopted Plan on `goal`: each Task assigned to its line's role and linked to that line. */
   plan(goal: GoalRef, label: string, tasks: readonly { taskId: string; line: S6ASession }[]): Promise<TaskTriple[]>;
-  /** One Work Run of `line` on `task` whose model calls `propose_role_split` once, then answers a text. */
+  /** One Work Run of `line` on `task` whose model writes the Run goal's understanding, then calls
+   *  `propose_role_split` once and answers a text. */
   split(input: { line: S6ASession; task: TaskTriple; callId: string; move: readonly RoleScopeV1[]; label: string }):
     Promise<void>;
   /** The tool message the Runtime served `line`'s model for `callId`: its `result.status` and its JSON block. */
@@ -78,7 +82,8 @@ export type S7D2CapacityWorld = S7D2RegionWorld & {
 export async function openS7D2CapacityWorld(options: { backend: S6ABackend }): Promise<S7D2CapacityWorld> {
   const region = await openS7D2RegionWorld({ backend: options.backend,
     extraBindings: [S7D2_ADVISER_WORK,
-      { binding: { id: S7D2_ADVISER_WORK.binding.id } as WorkbenchRuntimeBinding, mergeTools: ['propose_role_split'] }],
+      { binding: { id: S7D2_ADVISER_WORK.binding.id } as WorkbenchRuntimeBinding,
+        mergeTools: ['propose_role_split', 'record_note'] }],
     extraHostOptions: { scribeReminderPeriodMs: 25 } });
   const host = region.world;
   const route = async <T>(suffix: string, input: unknown, what: string): Promise<T> =>
@@ -111,8 +116,24 @@ export async function openS7D2CapacityWorld(options: { backend: S6ABackend }): P
       return [...adopted.tasks];
     },
     async split(input) {
+      const anchor = { kind: 'goal' as const, goalId: input.task.goalId };
+      const pointer = await understandingPointer(host, anchor);
+      const region = input.move.find(entry => entry.kind === 'region');
+      const extraAnchors: { kind: 'module'; moduleId: string }[] = region === undefined
+        ? [] : [{ kind: 'module', moduleId: region.moduleRef.moduleId }];
+      const draft = understandingNote({ anchor,
+        // The note topic is 1–40 code points (`note-anchors.ts:374–:378`); RL-11's B labels are longer than 26.
+        topic: `${input.label.slice(0, 26)}-understanding`,
+        conclusion: `S7D2 ${input.label} understanding`, structural: false,
+        replaces: pointer.noteId === null ? [] : [pointer.noteId] });
+      if (draft.kind !== 'understanding') throw new Error(`S7D2 capacity: ${input.label} wrote no understanding`);
       await runS7D2Work(host, { line: input.line, goal: { aggregateType: 'Goal', projectId: input.task.projectId,
         goalId: input.task.goalId }, task: input.task, label: input.label, replies: [
+        { kind: 'calls', calls: [{ callId: `${input.callId}-understanding`, name: 'record_note', args: {
+          op: 'write', kind: draft.kind, topic: draft.topic, conclusion: draft.conclusion, anchor: draft.anchor,
+          sections: draft.sections, structural: draft.structural, replaces: draft.replaces,
+          expectedPointerRevision: pointer.revision,
+          ...(extraAnchors.length === 0 ? {} : { extraAnchors }) } }] },
         { kind: 'calls', calls: [{ callId: input.callId, name: 'propose_role_split',
           args: { move: structuredClone([...input.move]), reason: `S7D2 ${input.label}` } }] },
         { kind: 'text', text: `S7D2 ${input.label} done` },

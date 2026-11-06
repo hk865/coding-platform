@@ -13,7 +13,7 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "3b13ee013adadc1a95c31d68c4e174a39cd129fec228a56213f013a267b49197"
+    "sha256": "13c76e350fff75a1e312ad330da4662efdfad5b3da9074a163008b8f92dffeb4"
   },
   {
     "path": "resources/prompts/platform/strings.json",
@@ -117,7 +117,7 @@
   },
   {
     "path": "resources/prompts/platform/templates/handoff-write-understanding-adviser.txt",
-    "sha256": "2866e995a7d717ae0609cb36f6429e8e230b8645116a8b294401eaa4d9e9bf1b"
+    "sha256": "85267f723be99f2049e02048676ae4ee1610e8f846a572845b1b088fb84729dc"
   },
   {
     "path": "resources/prompts/platform/templates/handoff-brief-executor.txt",

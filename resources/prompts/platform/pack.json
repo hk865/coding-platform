@@ -132,7 +132,7 @@
     },
     "handoff-write-understanding-adviser": {
       "file": "templates/handoff-write-understanding-adviser.txt",
-      "version": 1,
+      "version": 2,
       "mentionsTools": []
     },
     "handoff-brief-executor": {

@@ -18,6 +18,7 @@ import { canonicalKey } from '../../../contracts/fingerprint.js';
 import { PLATFORM_DUTIES } from '../../../contracts/platform-duty.js';
 import { isRecord } from '../../../contracts/validation/common.js';
 import { sameRef } from '../state/ref-equality.js';
+import { NoteVersionField } from '../state/role-line-action.js';
 
 const HumanActorFields = { kind: f.literal('human'), id };
 const SystemActorFields = { kind: f.literal('system'), id };
@@ -26,7 +27,6 @@ export { ActorRefField };
 const SavedActorField = f.union('kind', { human: HumanActorFields, system: SystemActorFields });
 /** A work Run or a QueryRun. */
 const ExecutionRefField = f.union('aggregateType', { Run: RunRefShape.fields, QueryRun: QueryRunRefShape.fields });
-const NoteVersionField = f.object({ noteId: id, version: f.integer({ min: 1 }) });
 const RoleSpecRevisionRefShape = defineShape({ name: 'RoleSpecRevisionRef', fields: {
   aggregateType: f.literal('RoleSpecRevision'), projectId: id, roleId: id, revision: f.integer({ min: 1 }),
 } });

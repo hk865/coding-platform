@@ -67,8 +67,10 @@ import type { PrepareTaskExecutionRequest, ResolvedRuntimeConfiguration, Runtime
 /**
  * H: the narrow readiness read of record 5. The preparation asks once per Work
  * Run; a successor's record is offered only after the matching assignment's
- * responsibility transfer completed (B-02). The port is optional so a direct
- * preparation caller without a registered record-5 bundle keeps the old path.
+ * responsibility transfer completed (B-02). A split's record 5 is written in the
+ * split's done commit, so a split's record is ready when it is read. The port is
+ * optional so a direct preparation caller without a registered record-5 bundle
+ * keeps the old path.
  */
 export type WorkHandoffBriefReadPort = {
   readForSuccessor(ctx: CoreCallContext, input: { session: SessionRef; workspaceId: string }):
@@ -82,11 +84,12 @@ export type WorkHandoffBriefReadDependencies = {
 
 /**
  * The one readiness read: `work-handoff-brief-by-session` for the successor
- * Session, then the stored handoff operation's own phase progress. A successful
- * page with no record (or a record whose transfer has not completed, or one
- * already consumed) is the old path, `null`. Any failed read — the page itself or
- * the operation after a record was found — is `unavailable`, never a fabricated
- * brief and never silence about a broken read.
+ * Session, then the stored handoff operation's own phase progress. A split's
+ * record 5 is written in the split's done commit, so a split's record is ready
+ * when it is read. A successful page with no record (or a record whose transfer
+ * has not completed, or one already consumed) is the old path, `null`. Any failed
+ * read — the page itself or the operation after a record was found — is
+ * `unavailable`, never a fabricated brief and never silence about a broken read.
  */
 export function createWorkHandoffBriefRead(deps: WorkHandoffBriefReadDependencies): WorkHandoffBriefReadPort {
   return {
@@ -134,12 +137,14 @@ export function createWorkHandoffBriefRead(deps: WorkHandoffBriefReadDependencie
         return operation.status === 'rejected' ? operation
           : rejected('unavailable', 'the handoff operation read is not ready');
       }
-      if (operation.value.action.kind !== 'handoff') {
+      if (operation.value.action.kind === 'handoff') {
+        if (!workHandoffBriefTransferComplete(record,
+          operation.value as SessionOperationRecordOf<HandoffActionV1>)) {
+          return { status: 'ready', value: null };
+        }
+      } else if (!(operation.value.action.kind === 'role_line'
+        && operation.value.action.action === 'role_line_split')) {
         return rejected('invalid', 'the stored handoff brief names another operation kind');
-      }
-      if (!workHandoffBriefTransferComplete(record,
-        operation.value as SessionOperationRecordOf<HandoffActionV1>)) {
-        return { status: 'ready', value: null };
       }
       return { status: 'ready', value: record };
     },

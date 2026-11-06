@@ -10,6 +10,9 @@
  * `{ status: 'incomplete', text }` and writes nothing; a damaged note version is `invalid`, never a partial
  * understanding pointer. An adviser's own line hands no task, so its one Goal is the caller Run's Goal.
  *
+ * `readOwnLineUnderstanding` is the same check for an adviser caller that hands no task (a `propose_role_split`
+ * caller): it reads only and writes nothing.
+ *
  * The reads the tool group cannot carry on `CoreCallContext` (the note read, the Goal plan window, the Session
  * facts/directory/duty reads and the accept owner) come from the one factory call per platform: the entry closes
  * over its platform's own dependencies and no module-level installation exists.
@@ -80,10 +83,23 @@ export type HandoffRequestResultV1 =
   | { status: 'needs_decision'; cardKey: string; operation: OperationRef }
   | CoreRejection;
 
+/** SPLITUND: `requestHandoff`'s understanding check for an adviser that hands no task (a `propose_role_split`
+ *  caller): the caller Run's Goal, the caller Run as the source Run. It reads only. */
+export type OwnLineUnderstandingInputV1 = {
+  caller: { actor: Extract<ActorRef, { kind: 'agent' }>; session: SessionRef; run: RunRef };
+};
+export type OwnLineUnderstandingResultV1 =
+  | { status: 'found'; understanding: { noteId: string; version: number }[] }
+  | { status: 'incomplete'; text: string }
+  | CoreRejection;
+
+/** The understanding check's own input (ruling 9): the caller, the source and the assignments only. */
+type UnderstandingInputV1 = Pick<HandoffRequestInputV1, 'caller' | 'source' | 'assignments'>;
+
 function unavailable(reason: string): CoreRejection { return rejected('unavailable', reason); }
 
 /** The handed tasks' distinct Goals, in the order they first appear. */
-function taskGoalsOf(input: HandoffRequestInputV1): GoalRef[] {
+function taskGoalsOf(input: UnderstandingInputV1): GoalRef[] {
   const goals = new Map<string, GoalRef>();
   for (const assignment of input.assignments) {
     for (const task of assignment.tasks) {
@@ -98,7 +114,7 @@ function taskGoalsOf(input: HandoffRequestInputV1): GoalRef[] {
  * The Goals whose understanding the assignment requires: the handed Tasks' Goals. An adviser's own line hands no
  * task, so its one Goal is the caller Run's Goal; any other assignment with no handed task has no Goal to prove.
  */
-function understandingGoalsOf(input: HandoffRequestInputV1): GoalRef[] {
+function understandingGoalsOf(input: UnderstandingInputV1): GoalRef[] {
   const goals = taskGoalsOf(input);
   if (goals.length > 0) return goals;
   if (input.caller.duty !== 'adviser' || !sameRef(input.source, input.caller.session)) return [];
@@ -107,7 +123,7 @@ function understandingGoalsOf(input: HandoffRequestInputV1): GoalRef[] {
 
 /** The source Run whose current understanding version is the one the accept stores. */
 async function sourceRunOf(ctx: CoreCallContext, deps: HandoffToolEntryDependenciesV1,
-  input: HandoffRequestInputV1): Promise<{ run: RunRef | null } | CoreRejection> {
+  input: UnderstandingInputV1): Promise<{ run: RunRef | null } | CoreRejection> {
   if (sameRef(input.source, input.caller.session)) return { run: input.caller.run };
   const facts = await deps.sessionFacts.readSessionFacts(ctx, input.source);
   if (facts.status === 'not_found') return rejected('not_found', 'the handoff source Session is not in this workspace');
@@ -139,7 +155,7 @@ function stageAnchorsOf(window: GoalPlanWindow, goalRef: GoalRef, tasks: readonl
 }
 
 /** The `incomplete` result's rendered text: the duty's template with the handed Goals as its task round. */
-function understandingText(input: HandoffRequestInputV1, goals: readonly GoalRef[]): string {
+function understandingText(input: UnderstandingInputV1, goals: readonly GoalRef[]): string {
   const templateId = `handoff-write-understanding-${input.caller.duty}`;
   const taskRound = [packString(TEXTS, 'handoff.understandingInstruction'),
     ...goals.map(goal => `- Goal ${canonicalJson({ projectId: goal.projectId, goalId: goal.goalId } as never)}`)].join('\n');
@@ -148,7 +164,7 @@ function understandingText(input: HandoffRequestInputV1, goals: readonly GoalRef
 
 /** The source Run's current understanding versions, in Goal order, or the refusal/incomplete arm. */
 async function readUnderstanding(ctx: CoreCallContext, deps: HandoffToolEntryDependenciesV1,
-  input: HandoffRequestInputV1): Promise<{ found: { noteId: string; version: number }[] } | { text: string } | CoreRejection> {
+  input: UnderstandingInputV1): Promise<{ found: { noteId: string; version: number }[] } | { text: string } | CoreRejection> {
   const goals = understandingGoalsOf(input);
   const source = await sourceRunOf(ctx, deps, input);
   if ('status' in source) return source;
@@ -247,7 +263,9 @@ function taskProblemOf(input: HandoffRequestInputV1, links: readonly SessionWork
  * `needs_decision`, and every rejection is returned verbatim.
  */
 export function createHandoffToolEntry(deps: HandoffToolEntryDependenciesV1):
-{ requestHandoff(ctx: CoreCallContext, input: HandoffRequestInputV1): Promise<HandoffRequestResultV1> } {
+{ requestHandoff(ctx: CoreCallContext, input: HandoffRequestInputV1): Promise<HandoffRequestResultV1>;
+  readOwnLineUnderstanding(ctx: CoreCallContext, input: OwnLineUnderstandingInputV1):
+    Promise<OwnLineUnderstandingResultV1> } {
   async function requestHandoff(ctx: CoreCallContext, input: HandoffRequestInputV1): Promise<HandoffRequestResultV1> {
     const reading = handoffContextOf(ctx, HANDOFF_SYSTEM_PRINCIPAL);
     const admitted = await admissionOf(reading, deps, input);
@@ -280,5 +298,14 @@ export function createHandoffToolEntry(deps: HandoffToolEntryDependenciesV1):
       ? { status: 'needs_decision', cardKey: approval.cardKey, operation }
       : { status: 'accepted', operation };
   }
-  return { requestHandoff };
+  async function readOwnLineUnderstanding(ctx: CoreCallContext, input: OwnLineUnderstandingInputV1):
+    Promise<OwnLineUnderstandingResultV1> {
+    const reading = handoffContextOf(ctx, HANDOFF_SYSTEM_PRINCIPAL);
+    const read = await readUnderstanding(reading, deps, {
+      caller: { ...input.caller, duty: 'adviser' }, source: input.caller.session, assignments: [] });
+    if ('status' in read) return read;
+    if ('text' in read) return { status: 'incomplete', text: read.text };
+    return { status: 'found', understanding: read.found };
+  }
+  return { requestHandoff, readOwnLineUnderstanding };
 }
