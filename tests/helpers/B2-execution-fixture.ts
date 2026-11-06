@@ -35,9 +35,6 @@ import type {
   KernelExecutionBinding, ObservedExecutionHistory, TaskEntryPermit, TaskResultObservation,
 } from '../../src/core/work-graph/model/execution-entry-contracts.js';
 import { createExecutionEntryService } from '../../src/core/work-graph/tasks/execution-entry-service.js';
-import { EXECUTION_ENTRY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/execution-entry-codecs.js';
-import { MODEL_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/model-request-codecs.js';
-import { QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/query-record-codecs.js';
 import type { TaskExecutionRecord } from '../../src/core/work-graph/model/execution-read-contracts.js';
 import { PROMPT_TOOL_SPECS_CONTENT_TYPE, type ModelRequestPromptFactsV1 } from '../../src/contracts/prompts/prompt-set.js';
 import type { ModelRequestPort, ActualModelRequest } from '../../src/core/work-graph/tasks/model-call-contracts.js';
@@ -129,17 +126,12 @@ export async function createB2ExecutionFixture<Base extends TaskClaimFixture = T
   additionalSchemas: RecordBackendSchemas = { records: [], events: [] },
   options: B2ExecutionOptions<Base> = {},
 ): Promise<B2ExecutionFixture<Base>> {
-  const schemas: RecordBackendSchemas = {
-    records: [...EXECUTION_ENTRY_RECORD_SCHEMAS.records, ...MODEL_REQUEST_RECORD_SCHEMAS.records,
-      ...QUERY_JOB_RECORD_SCHEMAS.records, ...additionalSchemas.records],
-    events: [...EXECUTION_ENTRY_RECORD_SCHEMAS.events, ...MODEL_REQUEST_RECORD_SCHEMAS.events,
-      ...QUERY_JOB_RECORD_SCHEMAS.events, ...additionalSchemas.events],
-    lookups: [...EXECUTION_ENTRY_RECORD_SCHEMAS.lookups ?? [], ...MODEL_REQUEST_RECORD_SCHEMAS.lookups ?? [],
-      ...QUERY_JOB_RECORD_SCHEMAS.lookups ?? [], ...(additionalSchemas.lookups ?? [])],
-  };
+  // The claim fixture's store is the composition root's own set; the entry,
+  // model-request and query-job groups are already part of it, so only the
+  // caller's extra registrations pass through.
   const base = options.baseFactory === undefined
-    ? await createTaskClaimFixture(kind, schemas) as Base
-    : await options.baseFactory(kind, schemas);
+    ? await createTaskClaimFixture(kind, additionalSchemas) as Base
+    : await options.baseFactory(kind, additionalSchemas);
   const claimed = await base.service.claimTask(base.ctx, await base.buildRequest());
   if (claimed.status !== 'committed') throw new Error(`B2 fixture claim failed: ${JSON.stringify(claimed)}`);
   const claim = claimed.value;

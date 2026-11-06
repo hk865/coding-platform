@@ -13,6 +13,8 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { vi } from 'vitest';
+import type { createTargetPlatform } from '../../src/composition/create-platform.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { RoleConfigurationRef, SessionRef, VersionPin, WorkspaceScope } from '../../src/contracts/core/identity.js';
 import type { SessionRecord } from '../../src/contracts/core/session.js';
@@ -20,22 +22,18 @@ import type { RoleBindingRefV1, RunRef, RunSnapshot, TaskBudgetV1, TaskTriple } 
 import type { GoalRef, ProjectSnapshot, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot } from '../../src/contracts/plan.js';
 import type {
-  EncodedRecord, GoalRecordTransactionPort, RecordBackendSchemas, RecordGuard, StoreCommitReceipt,
+  EncodedEventSchema, EncodedRecord, GoalRecordTransactionPort, RecordBackendSchemas, RecordGuard, StoreCommitReceipt,
 } from '../../src/core/record-store/ports.js';
+import * as inMemoryRecordStore from '../../src/core/record-store/in-memory-record-store.js';
+import * as sqliteRecordStore from '../../src/core/record-store/sqlite-record-store.js';
+import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
 import type { LookupValue, RecordLookupPort, RecordOrderedLookupPort } from '../../src/core/record-store/lookup-ports.js';
-import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';
-import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
-import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
-import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
-import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
-import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-record-codecs.js';
-import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
-import { PLAN_GOVERNANCE_RECORD_SCHEMAS, PLAN_STATE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
-import { SESSION_RECORD_SCHEMAS, encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../../src/core/work-graph/sessions/session-record-codecs.js';
-import { ROLE_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/role-record-codecs.js';
-import { ROLE_LINE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/role-line-record-codecs.js';
-import { materialRecordSchemas } from '../../src/core/work-graph/materials/record-readers.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
+import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
+import { unknownSessionDuty } from './session-duty-double.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
+import { encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 import { createUnknownCallReviewService } from '../../src/core/work-graph/tasks/unknown-call-review-service.js';
 import { withBackendOrderedLookup } from './ordered-lookup-forward.js';
@@ -53,14 +51,6 @@ import type { ContextAssemblyBindingV1 } from '../../src/contracts/graph-context
 import type { RuntimeBudget } from '../../src/contracts/runtime-budget.js';
 import type { RawArtifactStorePort } from '../../src/core/record-store/body-ports.js';
 import type { ModelClientPort } from '../../vendor/coding-agent/dist/public-api.js';
-import { TASK_CLAIM_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/claim-record-codecs.js';
-import { UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/unknown-call-review-codecs.js';
-import { EXECUTION_HISTORY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/execution-history-codecs.js';
-import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
-import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
-import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
-import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
-import { unknownSessionDuty } from './session-duty-double.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import type { RoleConfigurationPort } from '../../src/core/work-graph/model/configuration-contracts.js';
@@ -191,6 +181,60 @@ function wrapRecords(target: Records, spy: RecordSpy): Records {
   }, target);
 }
 
+/** The seed event this fixture commits beside `commitRaw`'s records; production does not register it. */
+const TRUSTED_SCOPE_SEEDED_EVENT: EncodedEventSchema = {
+  eventType: 'TrustedScopeSeeded', schemaVersion: 1,
+  validate: event => ({ status: 'decoded', value: event }),
+};
+
+/** Production's set plus the caller's registrations, each schema once (production's copy wins). */
+function mergePlatformSchemas(base: RecordBackendSchemas, extra: RecordBackendSchemas): RecordBackendSchemas {
+  return {
+    records: uniqueBySchemaId([...base.records, ...extra.records], (schema) => schema.schemaId),
+    events: uniqueBySchemaId([...base.events, ...extra.events],
+      (event) => `${event.eventType}@${String(event.schemaVersion)}`),
+    lookups: uniqueBySchemaId([...(base.lookups ?? []), ...(extra.lookups ?? [])], (index) => index.name),
+  };
+}
+
+/** The unspied factories, captured before any test installs its own spy on the same export. */
+const realInMemoryRecordBackend = inMemoryRecordStore.createInMemoryRecordBackend;
+const realSqliteRecordBackend = sqliteRecordStore.createSqliteRecordBackend;
+
+/** Platform builds run one at a time: the backend-factory seam below is a process-wide module spy. */
+let claimPlatformQueue: Promise<unknown> = Promise.resolve();
+
+/**
+ * The ONE real platform of this fixture. The base registration is the
+ * composition root's own; `extra` is merged at the backend factory seam so a
+ * caller's test-only schema still registers without a second hand-listed set.
+ */
+function openClaimPlatform(kind: ClaimFixtureKind, directory: string, workspace: WorkspaceHostBindings,
+  now: () => string, kernelStores: Parameters<typeof createKernelStoreRegistry>[0],
+  extra: RecordBackendSchemas): Promise<Awaited<ReturnType<typeof createTargetPlatform>>> {
+  const build = async (): Promise<Awaited<ReturnType<typeof createTargetPlatform>>> => {
+    // Loaded here, not at module scope: the composition root imports modules a
+    // test may mock, and a static edge would close an import cycle with the
+    // mock factory (the S2B activity-backfill gate does exactly that).
+    const { createTargetPlatform } = await import('../../src/composition/create-platform.js');
+    if (kind === 'memory') {
+      const spy = vi.spyOn(inMemoryRecordStore, 'createInMemoryRecordBackend').mockImplementation(
+        (options) => realInMemoryRecordBackend({ ...options, schemas: mergePlatformSchemas(options.schemas, extra) }));
+      try {
+        return await createTargetPlatform({ storage: { kind: 'memory' }, workspace, now, kernelStores });
+      } finally { spy.mockRestore(); }
+    }
+    const spy = vi.spyOn(sqliteRecordStore, 'createSqliteRecordBackend').mockImplementation(
+      (options) => realSqliteRecordBackend({ ...options, schemas: mergePlatformSchemas(options.schemas, extra) }));
+    try {
+      return await createTargetPlatform({ storage: { kind: 'sqlite', directory }, workspace, now, kernelStores });
+    } finally { spy.mockRestore(); }
+  };
+  const run = claimPlatformQueue.then(build, build);
+  claimPlatformQueue = run.catch(() => undefined);
+  return run;
+}
+
 /** The real Goal/Plan/Session records plus an accepted plan for two work tasks
  * and one goal gate. Governance is created through the public bootstrap owners
  * (Project, Workspace, completion policy and the adopted architecture). */
@@ -199,30 +243,6 @@ export async function createTaskClaimFixture<A = unknown>(kind: ClaimFixtureKind
   options: ClaimFixtureOptions<A> = {}): Promise<TaskClaimFixture & { audit?: A }> {
   const directory = await mkdtemp(join(tmpdir(), `next-r4c-claim-${kind}-`));
   const ledgerPath = join(directory, 'ledger.sqlite');
-  const materials = materialRecordSchemas();
-  const schemas: RecordBackendSchemas = {
-    records: uniqueBySchemaId([...materials.records, ...PLAN_RECORD_SCHEMAS.records, ...PLAN_STATE_RECORD_SCHEMAS.records,
-      ...PLAN_GOVERNANCE_RECORD_SCHEMAS.records, ...SESSION_RECORD_SCHEMAS.records,
-      ...ROLE_RECORD_SCHEMAS.records, ...TASK_CLAIM_RECORD_SCHEMAS.records, ...ROLE_LINE_RECORD_SCHEMAS.records,
-      ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.records, ...ARCHITECTURE_CATALOG_SCHEMAS.records,
-      ...additionalSchemas.records], (schema) => schema.schemaId),
-    events: uniqueBySchemaId([...materials.events, ...PLAN_RECORD_SCHEMAS.events, ...PLAN_STATE_RECORD_SCHEMAS.events,
-      ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events,
-      ...ROLE_RECORD_SCHEMAS.events, ...TASK_CLAIM_RECORD_SCHEMAS.events, ...EXECUTION_HISTORY_RECORD_SCHEMAS.events,
-      { eventType: 'TrustedScopeSeeded', schemaVersion: 1,
-        validate: event => ({ status: 'decoded', value: event }) }, ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.events,
-      ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events, ...ARCHITECTURE_CATALOG_SCHEMAS.events,
-      ...additionalSchemas.events], (schema) => `${schema.eventType}@${String(schema.schemaVersion)}`),
-    lookups: uniqueBySchemaId([...(materials.lookups ?? []), ...(PLAN_RECORD_SCHEMAS.lookups ?? []),
-      ...(PLAN_STATE_RECORD_SCHEMAS.lookups ?? []), ...(PLAN_GOVERNANCE_RECORD_SCHEMAS.lookups ?? []),
-      ...(SESSION_RECORD_SCHEMAS.lookups ?? []), ...(ROLE_RECORD_SCHEMAS.lookups ?? []),
-      ...(TASK_CLAIM_RECORD_SCHEMAS.lookups ?? []), ...(UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.lookups ?? []),
-      ...(additionalSchemas.lookups ?? [])], (index) => index.name),
-  };
-  const backend = kind === 'memory'
-    ? createInMemoryRecordBackend({ schemas })
-    : createSqliteRecordBackend({ path: ledgerPath, schemas });
-  const audit = options.audit?.(backend.records);
 
   const projectId = 'r4c-claim-project';
   const workspaceId = 'r4c-claim-workspace';
@@ -236,30 +256,56 @@ export async function createTaskClaimFixture<A = unknown>(kind: ClaimFixtureKind
     projectId, workspaceId, principal: { kind: 'host', actor },
     materialReader: { kind: 'host', projectId, workspaceId, actor }, signal: new AbortController().signal,
   };
-
   const now = options.clock ?? (() => AT);
+  const workspaceHost: WorkspaceHostBindings = {
+    async resolveRoot(requested) {
+      if (requested.projectId !== projectId || requested.workspaceId !== workspaceId) {
+        return { status: 'rejected', code: 'not_found', reason: 'the workspace is not registered in this fixture' };
+      }
+      return { status: 'ready', value: { root: directory, workspaceRevision: 1 } };
+    },
+    async authorize() {
+      return { status: 'ready', value: { subjectKey: 'r4c-claim-host',
+        permissionRevision: 'r4c-claim-grant-1', allowsRead: () => true } };
+    },
+  };
+  const kernelStoreOptions: Parameters<typeof createKernelStoreRegistry>[0] = { entries: [{ adapterId: 'r4c-claim-kernel',
+    storeKey: 'r4c-claim-kernel-store', workspace: scope, databasePath: join(directory, 'kernel.sqlite') }] };
+  const kernelStores = await createKernelStoreRegistry(kernelStoreOptions);
+
+  // The base store and its owners are the ONE real composition root's; the
+  // caller's extra registrations (and this fixture's seed event) are merged at
+  // the backend factory seam, never into a second hand-listed set.
+  const extraSchemas: RecordBackendSchemas = { records: additionalSchemas.records,
+    events: [...additionalSchemas.events, TRUSTED_SCOPE_SEEDED_EVENT],
+    lookups: additionalSchemas.lookups ?? [] };
+  const platform = await openClaimPlatform(kind, directory, workspaceHost, now, kernelStoreOptions, extraSchemas);
+  // This fixture keeps its artifact bodies in memory (B2-execution's store), so
+  // the composition root's empty ledger-side artifacts file must not exist: the
+  // §11 invariant reader treats its presence as "requeue manifests live here".
+  await rm(join(directory, 'artifacts.sqlite'), { force: true });
+  const backendRecords = platform.disconnect.records;
+  const audit = options.audit?.(backendRecords);
+
   // ---- real Project/Workspace/policy/baseline bootstrap through the public owners --
-  let bootstrapSeq = 0;
-  const bootstrap = createProjectBootstrapServices({ records: backend.records, now,
-    eventId: () => `r4c-claim-bootstrap-${++bootstrapSeq}` });
-  const createdProject = await bootstrap.projects.createProject(ctx, {
+  const createdProject = await platform.projects.createProject(ctx, {
     input: { projectId }, meta: { requestId: 'r4c-claim-create-project', expected: [{ ref: projectRef, revision: 0 }] },
   });
   if (createdProject.status !== 'committed') throw new Error(`fixture project setup failed: ${JSON.stringify(createdProject)}`);
-  const registeredWorkspace = await bootstrap.projects.registerWorkspace(ctx, {
+  const registeredWorkspace = await platform.projects.registerWorkspace(ctx, {
     input: { workspace: scope }, meta: { requestId: 'r4c-claim-register-workspace', expected: [
       { ref: projectRef, revision: 1 }, { ref: workspaceRef, revision: 0 }] },
   });
   if (registeredWorkspace.status !== 'committed') throw new Error(`fixture workspace setup failed: ${JSON.stringify(registeredWorkspace)}`);
   const policyRef = { aggregateType: 'CompletionPolicyRevision' as const, projectId,
     policyId: 'r4c-claim-policy', revision: 1 };
-  const installed = await bootstrap.completionPolicies.installCompletionPolicy(ctx, {
+  const installed = await platform.completionPolicies.installCompletionPolicy(ctx, {
     input: { policyId: policyRef.policyId, contentRevision: 1,
       content: { schemaVersion: 1, requirementKinds: ['test'], minimumRequiredRequirementsPerObligation: 1 } },
     meta: { requestId: 'r4c-claim-install-policy', expected: [{ ref: projectRef, revision: 1 }, { ref: policyRef, revision: 0 }] },
   });
   if (installed.status !== 'committed') throw new Error(`fixture policy setup failed: ${JSON.stringify(installed)}`);
-  const activated = await bootstrap.completionPolicies.activateCompletionPolicy(ctx, {
+  const activated = await platform.completionPolicies.activateCompletionPolicy(ctx, {
     input: { target: { ref: installed.value.ref, digest: installed.value.contentDigest } },
     meta: { requestId: 'r4c-claim-activate-policy', expected: [{ ref: projectRef, revision: 1 },
       { ref: { aggregateType: 'ProjectCompletionPolicyActive', projectId }, revision: 0 }] },
@@ -272,7 +318,7 @@ export async function createTaskClaimFixture<A = unknown>(kind: ClaimFixtureKind
     description: options.bootstrapModule?.description ?? 'R4c claim fixture baseline',
     paths: options.bootstrapModule?.paths ?? ['src/r4c-claim-work'],
   };
-  const architecture = await createArchitectureCatalogService({ records: backend.records }).adoptInitialArchitecture(ctx, {
+  const architecture = await platform.architecture.adoptInitialArchitecture(ctx, {
     input: { baselineId: 'r4c-claim-baseline', description: architectureModule.description, constraints: [],
       catalog: { requireDag: true, dependencies: [], modules: [{ ref: { projectId, moduleId: architectureModule.moduleId },
         name: architectureModule.name, responsibility: architectureModule.responsibility, paths: [...architectureModule.paths], interfaces: [] }] } },
@@ -281,7 +327,7 @@ export async function createTaskClaimFixture<A = unknown>(kind: ClaimFixtureKind
   });
   if (architecture.status !== 'committed') throw new Error(`fixture architecture setup failed: ${JSON.stringify(architecture)}`);
 
-  // ---- real services over the real backends ---------------------------------
+  // ---- the composition root's published owners ------------------------------
   let eventSeq = 0;
   const eventId = () => `r4c-claim-event-${++eventSeq}`;
   let seedSeq = 0;
@@ -296,12 +342,18 @@ export async function createTaskClaimFixture<A = unknown>(kind: ClaimFixtureKind
         reason: 'R4c.1 fixture: claim admission must not read material' };
     },
   };
-  const goalsService = createGoalService({ records: backend.records, now, eventId });
-  const plans = createPlanService({ records: backend.records, bindings: createInitializationBindingReader({ records: backend.records }),
+  const goalsService = platform.goals;
+  // The Plan owner is the production constructor over the composition root's
+  // store. The published `plans` wrapper adds the adoption stop; the claim
+  // fixture's rows read the raw TASK-19 refusal, so this base keeps the raw one.
+  const plans = createPlanService({ records: backendRecords,
+    bindings: createInitializationBindingReader({ records: backendRecords }),
     materials: materialsPort, now, eventId });
-  const sessionsPort = createSessionDirectory({ records: backend.records, lookups: backend.records, duty: unknownSessionDuty });
-
-  const roleService = createRoleConfigurationService({ records: backend.records, now, eventId });
+  const sessionsPort = createSessionDirectory({ records: backendRecords, lookups: backendRecords, duty: unknownSessionDuty });
+  // The raw RoleConfigurationService: the claim owner needs its facts read, and
+  // the fixture's callers install/activate specs through it (the published
+  // `roles` wrapper exposes only four of its methods).
+  const roleService = createRoleConfigurationService({ records: backendRecords, now, eventId });
 
   async function commitRaw(recordsToWrite: readonly EncodedRecord[],
     guards: readonly RecordGuard[] = []): Promise<StoreCommitReceipt> {
@@ -313,13 +365,13 @@ export async function createTaskClaimFixture<A = unknown>(kind: ClaimFixtureKind
     const allGuards: RecordGuard[] = [...guards,
       ...recordsToWrite.filter(record => !guarded.has(record.refKey))
         .map(record => ({ refKey: record.refKey, expectedRevision: null }))];
-    return backend.records.commit({ identityKey: `r4c-claim-seed-${sequence}`,
+    return backendRecords.commit({ identityKey: `r4c-claim-seed-${sequence}`,
       fingerprint: `r4c-claim-seed-fingerprint-${sequence}`, guards: allGuards,
       records: [...recordsToWrite], events: [event], claims: [], indexGuards: [], indexChanges: [] });
   }
 
   // ---- Goal + accepted Plan through the real services ------------------------
-  const createdGoal = await goalsService.tasks.createGoal(ctx, { meta: {
+  const createdGoal = await goalsService.createGoal(ctx, { meta: {
     requestId: 'r4c-claim-create-goal',
     expected: [{ ref: projectRef, revision: 1 }, { ref: workspaceRef, revision: 1 }] },
     input: { goalId: goalRef.goalId, workspace: scope, objective: 'Exercise the atomic claim skeleton' } });
@@ -359,8 +411,6 @@ export async function createTaskClaimFixture<A = unknown>(kind: ClaimFixtureKind
   const plan = applied.value;
 
   // ---- mapped Sessions through the real directory + Kernel store -------------
-  const kernelStores = await createKernelStoreRegistry({ entries: [{ adapterId: 'r4c-claim-kernel',
-    storeKey: 'r4c-claim-kernel-store', workspace: scope, databasePath: join(directory, 'kernel.sqlite') }] });
   const defaultRole: RoleConfigurationRef = { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' };
 
   const sessionOperations = createSessionOperations({ sessions: sessionsPort, kernelStores });
@@ -381,7 +431,7 @@ export async function createTaskClaimFixture<A = unknown>(kind: ClaimFixtureKind
   // ---- records port/claim service (spy only observes the claim service) ------
   const spy = emptySpy();
   let backendClosed = false;
-  const wrapped = wrapRecords(backend.records, spy);
+  const wrapped = wrapRecords(backendRecords, spy);
   function makeService(target: Records = wrapped, clock: () => string = now): TaskClaimPort {
     const roles = createRoleConfigurationService({ records: target, now: clock, eventId });
     return createTaskClaimService({ records: target, roles, now: clock, newId });
@@ -399,23 +449,25 @@ export async function createTaskClaimFixture<A = unknown>(kind: ClaimFixtureKind
 
   /** The Workspace pin from the bootstrap owner's public registration read. */
   async function registeredWorkspacePin(): Promise<VersionPin> {
-    const registration = await bootstrap.projects.readWorkspaceRegistration(ctx, scope);
+    const registration = await platform.projects.readWorkspaceRegistration(ctx, scope);
     if (registration.status !== 'ready') throw new Error(`fixture registration read failed: ${JSON.stringify(registration)}`);
     return { ref: registration.value.workspace.ref, revision: registration.value.workspace.revision };
   }
 
-  function openSecondary(path: string): ClaimConnection {
-    const secondary = createSqliteRecordBackend({ path, schemas });
+  const secondaryPlatforms: Array<Awaited<ReturnType<typeof createTargetPlatform>>> = [];
+  async function openSecondary(): Promise<ClaimConnection> {
+    const secondary = await openClaimPlatform(kind, directory, workspaceHost, now, kernelStoreOptions, extraSchemas);
+    secondaryPlatforms.push(secondary);
     const secondarySpy = emptySpy();
-    const secondaryService = makeService(wrapRecords(secondary.records, secondarySpy));
-    return { records: secondary.records, spy: secondarySpy, service: secondaryService, close: () => secondary.close() };
+    const secondaryService = makeService(wrapRecords(secondary.disconnect.records, secondarySpy));
+    return { records: secondary.disconnect.records, spy: secondarySpy, service: secondaryService, close: () => secondary.close() };
   }
 
   const fixture: TaskClaimFixture = {
-    kind, directory, ledgerPath, records: backend.records, spy, materialsSpy, service, ctx, scope,
+    kind, directory, ledgerPath, records: backendRecords, spy, materialsSpy, service, ctx, scope,
     projectRef, workspaceRef, goalRef, planRef, plan, tasks,
     sessions: { first: firstSession, second: secondSession }, roleBinding, budget,
-    goals: goalsService.tasks, plans, sessionsPort, roleService, makeService,
+    goals: goalsService, plans, sessionsPort, roleService, makeService,
     async buildRequest(overrides = {}) {
       const sessionRef = overrides.input?.sessionRef ?? firstSession;
       const requestedGoalRef = overrides.input?.goalRef ?? goalRef;
@@ -474,21 +526,22 @@ export async function createTaskClaimFixture<A = unknown>(kind: ClaimFixtureKind
     commitRaw,
     async openConnection() {
       if (kind === 'memory') {
-        return { records: backend.records, spy, service, close: async () => undefined };
+        return { records: backendRecords, spy, service, close: async () => undefined };
       }
-      return openSecondary(ledgerPath);
+      return openSecondary();
     },
     async reopenService() {
       if (kind !== 'sqlite') throw new Error('reopenService is only meaningful for the SQLite fixture');
-      return openSecondary(ledgerPath);
+      return openSecondary();
     },
     async closeBackend() {
       if (backendClosed) return;
       backendClosed = true;
-      await backend.close();
+      await platform.close();
     },
     async close() {
       await fixture.closeBackend();
+      for (const secondary of secondaryPlatforms.splice(0)) await secondary.close().catch(() => undefined);
       await rm(directory, { recursive: true, force: true });
     },
   };

@@ -17,9 +17,6 @@ import {mkdir,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {canonicalJson,type JsonValue} from '../../src/contracts/fingerprint.js';
 import type {RunRef} from '../../src/contracts/dispatch.js';
-import {EXECUTION_ENTRY_RECORD_SCHEMAS} from '../../src/core/work-graph/persistence/execution-entry-codecs.js';
-import {MODEL_REQUEST_RECORD_SCHEMAS} from '../../src/core/work-graph/tasks/model-request-codecs.js';
-import { QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/query-record-codecs.js';
 import {createSqliteRawArtifactStore} from '../../src/core/record-store/sqlite-body-store.js';
 import {createSessionDirectory} from '../../src/core/work-graph/sessions/session-directory.js';
 import { unknownSessionDuty } from './session-duty-double.js';
@@ -191,11 +188,10 @@ export async function createB2RuntimeFixture(options: {
   additionalSchemas?: RecordBackendSchemas;
 } = {}): Promise<B2RuntimeFixture> {
   const kind = options.kind ?? 'memory';
-  const schemas=[EXECUTION_ENTRY_RECORD_SCHEMAS,MODEL_REQUEST_RECORD_SCHEMAS,QUERY_JOB_RECORD_SCHEMAS];
-  const additional=options.additionalSchemas;
-  const claimFixture = await createTaskClaimFixture(kind,{records:[...schemas.flatMap(s=>s.records),...(additional?.records??[])],
-    events:[...schemas.flatMap(s=>s.events),...(additional?.events??[])],
-    lookups:[...schemas.flatMap(s=>s.lookups??[]),...(additional?.lookups??[])]});
+  // The claim fixture's store is the composition root's own set (it already
+  // holds the entry, model-request and query-job groups); only the caller's
+  // extra registrations pass through, never a second hand-merged bundle list.
+  const claimFixture = await createTaskClaimFixture(kind, options.additionalSchemas ?? { records: [], events: [] });
   const skillRoot=join(claimFixture.directory,'skills');
   await mkdir(join(skillRoot,'b2-trusted-skill'),{recursive:true});
   await writeFile(join(skillRoot,'b2-trusted-skill','skill.json'),JSON.stringify({schemaVersion:1,id:'b2-trusted-skill',title:'B2 trusted skill',kind:'instruction',priority:10,contentFile:'content.md'}));
