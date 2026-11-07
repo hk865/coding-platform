@@ -2639,6 +2639,24 @@
           - **121-57 下一步（11-07，lead 定）。**
             - **顺序。** Python 语法错和第二工作区三包的改稿回来以后交 Codex 快速核对，再冻结、开工；T4b 开工；6C，再 K2；节点级审核新包、交付验收说明书重写；界面逐页接（DSH）；第 9 片（授权文字和费用上限）、B06（加上 Python 语法错的检查轮那一臂）；推送等用户。
             - **推送。** 远端 `feat/orchestration-slices` 在 `5a586ab2`；之后的 `73673fb1`、`a1484d80`、`5dc4fbdf` 和这批文档等用户推送，远端 `next-main` 不动。
+          - **121-58 Python 语法错、T4b 落地（11-07，lead）。**
+            - **两笔落地。** Python 语法错 `23dd88b5`（30 个文件 +406/−55）：W 的单文件查多一个 `syntax_error`，Python 的 `parse_failed` 只算它，超时和崩溃仍是 `unavailable`；写注记碰到语法错只退回那一个锚，回执带 `symbolProblems`；`record_note` 的说明加一句；每个 `before_model` 安全点按 `(path, digest, line)` 逐文件交 `python-syntax-input`，只查这次 Run 改过的 `.py`。T4b `b4334125`（15 个文件 +114/−143）：书记线、T4a 撤回的两个夹具和 `invariants.ts` 改走平台，`platformRecordSchemas` 从组合根原样提出并导出；只改测试，`it` 和 `expect` 逐字不变。
+            - **第一次全量 4 红和两笔收尾。** 4 红出在 3 个文件：`B2-09b`、`K3-44`、K3-42。`16d89bf4` 收 CRR 重复注册（`tests/helpers/B2-09b-crash.ts` 的 `crrSchemas` 在正本上又追加了一遍；T4b 的牵连测试没跑到）；`fa5653ba` 收 K3-42（审阅清单贴着 262,144 上限调的长度，这次 Python 语法错加的模板和一句说明把余量用完，说明调短 700 字节，和上回 H/T 包同样调法）。
+            - **重跑。** 全量（bubblewrap，`fa5653ba`）1,410 个文件、15,012 项全过、1,168.78 秒；规模批 15 个文件 44 项、687.58 秒。
+            - **具名改坏 6/6。** 六处都红在说明书点名的那一句，没护住 0、不干净 0；第 5 个要先按构建步骤重生成平台包才红。
+            - **Codex RVs4 两条复用和收尾。** Python G 测试的 `putFile`/`recordNote`/`readItem` 重复了 `writeAgent` 已有的读回和私有 `putFile`；T4b 新加的 `openS6BRoleLine` 和 `openScopedLine` 几乎逐句重复。生产行为没有偏离冻结要求。lead 收尾两笔（`9029022e` py、`4af7bb9c` tc4b），受影响 6 个文件 18 项全过，`assert-freeze` 0 差异。
+            - **Codex 另核三件。** 同一 Run 里修好又恢复同一个坏摘要不再提醒，是冻结的身份规则；每次请求重读累计改过的 `.py`、没有内容缓存，符合冻结做法，不加缓存或限额；常驻进程缓存的是解析结果，换了脚本要重启 Host 才确定用新版，不加监听。
+            - **规格质量分。** Python 语法错的旧测试表漏了 `S7D2-O5b-R5` 和 K3-42；T4b 的牵连测试漏了 `B2-09b-crash` 的两个用户。
+          - **121-59 第二工作区 P 的施工、合并和返工（11-07，lead 定）。**
+            - **施工和 8 件。** 施工方（`xp`）生产 +780/−170，超过 700 行停下，报了 8 件。lead 裁：行数接受，落地前由 Codex 超预算审；`composition/README.md` 的 19 个纯行号补白名单后重指；白名单外 6 处读点要改，加白名单；同名 helper 接受（和 `continuation-diff-reads.ts` 那份不是同一条规则，Contracts 不能 import core）；`planning-query-run` 留给 A；`ExecutedFileV1.workspaceId` 改成必填、旧测试字面量只补字段；任务图的行键按项目路径；Task 的工作区由服务端必给、去掉回落。另裁 `mainWorkspaceOf` 读失败回 `unavailable`、不猜；跨工作区联系的第二档按每条文件自己的工作区读，读不了记存疑。
+            - **合并 5 红的分拣。** 合并树 `a7843d43` 5 红：代码错 3（主前缀要抛、别名要抛、请求路径先去 `./` 再校验），测试错 2（XP-02 的锚点期望错用了模块路径；XP-05 的世界没采用计划，hover 读不出任务图）。
+            - **写测试方问的 4 件。** 四条都由 lead 定：XP-02 的结构提案改用人的 `architecture/revise`，提案限定留给 A 的 XA-05；`notes/list` 按锚点读、每个工作区一条，不断言按工作区过滤；XP-07 改用 `spawns` 加 `launch`/`entry`（树里没有 `use` 关系）；`tests/README.md` 进白名单、只加一行登记 helper。
+            - **返工方问的 2 件。** 白名单补 `execution-contracts.ts`、`runtime.ts`、`src/app/README.md`，准；XP-02 第二工作区的 `notes/list` 裸路径，lead 定 (c)：请求里的路径按请求工作区限定，读请求也一样，测试不动，同类读口一起查。
+            - **规格质量分（P）。** 测试说明书错 3（`notes/list` 两条、`use` 关系、proposal 限定测不到）；白名单漏了 6 处读点、2 个 README（`composition/README.md` 的 19 个行号、`src/app/README.md`）和 `execution-contracts`、`runtime` 两个文件。
+            - **返工还在跑，结果另记。**
+          - **121-60 下一步（11-07，lead 定）。**
+            - **顺序。** P 返工交回后合并、跑全量、Codex 超预算审、落地；然后 A，再 B；6C，再 K2；节点级审核新包、交付验收说明书重写；界面逐页接；第 9 片、B06（加 Python 语法错检查轮那一臂）；推送等用户。
+            - **推送。** 远端 `feat/orchestration-slices` 在 `5a586ab2`；之后的六笔（三个小包 `73673fb1`、`a1484d80`、`5dc4fbdf`，文档 `dd4476a8`，Python 语法错 `23dd88b5`，T4b `b4334125`）和这批文档等用户推送，远端 `next-main` 不动。
 
 **2026-10-07 更正（简化删除，决定 34）：** 下文“历史施工记录”里有一句：“独立 Reviewer 仍需正式 ReviewWork/结果与材料授权生产者”。材料授权的写入方（`grant-service.ts`）从没有生产调用方，已按决定 34 删除，以后不会有这个“材料授权生产者”。独立审阅者要读别人的材料，以后另想办法。原句按历史保留。
 

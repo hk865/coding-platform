@@ -444,6 +444,7 @@ CP 把 W12 的 `readWorkspaceFiles`（句柄上的）、分析器的 `verify` �
   ```
   不再每个锚点开捕获；读文件失败（`not_found` 以外）退回 `unavailable`，同第 4 片 L14 :734 的“捕获或查询失败整个写入回 unavailable”。（设计 §3.4、§6.4 L14；A13）
 - **G8 一般注记的 Python/C++ 符号（§9-7；§0.1 第 1 条）。** 用 W11 的 `lookup`（`mode: 'write'`）解析：一个 → 存定位（口径同 G2：名字那一段、解码文字摘要、签名摘要）；解析成功但没命中 → `unresolved`（警告 `symbol_unresolved`，同今天）；多个 → `symbol_ambiguous`；`exact` 不论真假（C++ 有诊断或退回的解析是 `false`，W11），都照这几条走：找到一个就存，写时找得到就存（用户 11-04 选乙，C++ 精确解析读编译器自己的系统头文件目录，W11 第 1–4 条；那几个目录用不了的机器照甲只看工作区，存法一样）；W11 回 `unsupported`（解释器或 libclang 不可用，或这个文件的编译参数认不出）→ `unresolved`（同今天的“不支持”走法，`NA:342`）；回 `unavailable`（超时、进程崩溃、解析失败）→ 整个写入 `rejected`、`unavailable`，同 G7 的失败出口（第 4 片 L14 `:734`“捕获或查询失败整个写入回 unavailable”，`NA:343`）。只管一般注记；联系的端和证据仍只收 TS/JS（F44），E-27 不变。
+  **后注（决定 121-54、121-58）：** Python 的解析失败已改：只退回那一个锚，回执带 `symbolProblems`；`unavailable` 只留给超时和崩溃。
 - **G9 删没人用的扫描上限。** G1、G7、G8 之后 `NOTE_SYMBOL_HITS_MAX`、`SYMBOL_SCAN_PAGE`、`symbolHitsMax`（NA、NS、LE 的参数，CP 的 `noteLimits`）没人用（F48），一并删掉，不然生产可达检查报走不到（F38）。`NS` 只删这些传参（`:127`、`:766`、`:1522`、`:1602`）。
 
 ### 2.5 H：后台批量、核对操作

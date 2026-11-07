@@ -48,6 +48,8 @@ lead，2026-11-02。代码行号按 `6d91cf67`。PL-1、8C、第 9 片尚未合�
 
 **第 3/4 条的口径。** 认两种结构化读取：native `read`（`call.name==='read'`，路径取 `call.arguments.path`，失败/取消/`outcome_unknown` 不算）；`read_source`（`call.arguments.path` + 成功 JSON 的 `output[0].value.path`，两者须一致；`truncated` 不影响“读到一次”的 A 口径）。`search`/`list_files`/`symbols` 不是逐文件读取，不认；`project_source` 只在 frozen source 出现，普通 Work 不依赖，本片不认。路径不 `resolve`/`normalize`，原样比较；进入判定前逐条调 `isSafeSourceRelativePath`（`workspace/path-validation.ts:3`）：`false` 记 `unknown` → INCONCLUSIVE，`true` 后按原字符串精确集合匹配。不自写绝对路径、分隔符、点段判断。“读到”的程度见 §7-L1。
 
+**后注（121-54）：** 检查轮次里“Run 结束时改过的 Python 文件还有语法错就记 gap”归这里的 witness 做。
+
 ### 1.2 结论映射
 
 | 事实 | outcome | 说明 |
