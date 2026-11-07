@@ -13,14 +13,14 @@
  * written in the split's done commit, so a split's record is ready when it is read.
  */
 import type { CommitCursor } from '../../../contracts/command-event.js';
-import type { SessionRef } from '../../../contracts/core/identity.js';
+import type { ExecutionRef, SessionRef } from '../../../contracts/core/identity.js';
 import type { OperationRef } from '../../../contracts/core/operations.js';
-import type { RunRef, TaskTriple } from '../../../contracts/dispatch.js';
+import type { TaskTriple } from '../../../contracts/dispatch.js';
 import {
   defineEvent, defineRecord, f, type InferEvent,
 } from '../../../contracts/data-format.js';
 import {
-  HandoffBriefRefShape, OperationRefShape, RunRefShape, SessionRefShape, TaskTripleShape,
+  ExecutionRefField, HandoffBriefRefShape, OperationRefShape, SessionRefShape, TaskTripleShape,
 } from '../../../contracts/data-format-refs.js';
 import { canonicalKey, canonicalOf } from '../../../contracts/fingerprint.js';
 import type {
@@ -36,7 +36,8 @@ export const WORK_HANDOFF_BRIEF_BY_SESSION_LOOKUP = 'work-handoff-brief-by-sessi
 
 /**
  * Record 5 as stored. `digest` is `handoffBriefDigest(material)` only — never the rendered bytes, a
- * template id or a tool table; `consumedBy` is the one CAS field and `since` is the Store-bound cursor.
+ * template id or a tool table; `consumedBy` is the one CAS field, it names the first Run or QueryRun that
+ * entered with the brief, and `since` is the Store-bound cursor.
  */
 export type WorkHandoffBriefV1 = {
   ref: HandoffBriefRef;
@@ -49,7 +50,7 @@ export type WorkHandoffBriefV1 = {
   binding: HandoffBriefBindingV1;
   digest: string;
   material: HandoffBriefMaterialV1;
-  consumedBy: RunRef | null;
+  consumedBy: ExecutionRef | null;
   since: CommitCursor;
 };
 
@@ -75,7 +76,7 @@ export const WORK_HANDOFF_BRIEF_FIELDS = {
   // The material is F2's normalized union; it is stored as the canonical JSON object and checked by
   // the assembly and preparation paths that own its facts. The record does not re-declare the union.
   material: f.json(),
-  consumedBy: f.nullable(f.ref(RunRefShape)),
+  consumedBy: f.nullable(ExecutionRefField),
   since: f.boundCursor('since'),
 };
 
@@ -195,13 +196,13 @@ export function workHandoffBriefTransferComplete(
  * not read record 5 and does not call this function.
  */
 export function workHandoffBriefConsumption(
-  record: WorkHandoffBriefV1, run: RunRef, at: string,
+  record: WorkHandoffBriefV1, consumer: ExecutionRef, at: string,
 ): { record: WorkHandoffBriefV1; guard: { refKey: string; expectedRevision: number } } {
   // Record 5 stores no update time; `at` is accepted for the callers' shared commit shape and is not a
   // new record field.
   void at;
   return {
-    record: { ...record, revision: record.revision + 1, consumedBy: run },
+    record: { ...record, revision: record.revision + 1, consumedBy: consumer },
     guard: { refKey: canonicalKey(record.ref), expectedRevision: record.revision },
   };
 }

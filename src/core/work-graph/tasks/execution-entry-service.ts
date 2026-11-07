@@ -47,7 +47,7 @@ import {
   continuationBriefDigest, continuationBriefShapeProblem, renderContinuationBriefZh,
 } from '../../../contracts/continuation-brief.js';
 import { renderHandoffBriefZh } from '../../../contracts/continuation-brief-render.js';
-import { handoffBriefDigest, type HandoffBriefRef } from '../../../contracts/handoff-brief.js';
+import { handoffBriefDigest } from '../../../contracts/handoff-brief.js';
 import { canonicalJson, canonicalKey, canonicalOf, sameJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import {
   PROMPT_TEXT_CONTENT_TYPE, checkPromptBody, decodePromptSetV1, type PromptTextsV1,
@@ -87,13 +87,11 @@ import {
   inputBindingProblem,
 } from '../persistence/execution-entry-codecs.js';
 import { legacyTemplateDutyOf } from '../queries/query-execution.js';
-import { encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey, workHandoffBriefCodec } from '../sessions/session-record-codecs.js';
+import { encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../sessions/session-record-codecs.js';
 import { decodeUnknownCallReview, unknownCallReviewRefKey } from './unknown-call-review-codecs.js';
 import type { UnknownCallReviewV1 } from '../../../contracts/unknown-call-review.js';
 import { decodeSessionMessageRecord, sessionMessageRefKey } from '../sessions/message-record-codecs.js';
-import {
-  workHandoffBriefConsumption, type WorkHandoffBriefV1,
-} from '../state/work-handoff-brief.js';
+import { workHandoffBriefConsumptionForCommit } from '../sessions/work-handoff-brief-consumption.js';
 import {
   attemptEventFromRunEvent, isTaskLeaseEvent, taskLeaseNodeOf, transitionAttempt, transitionDispatchOutbox,
   transitionTaskLease, type AttemptEvent, type AttemptGuardContext, type DispatchOutboxRecord, type RunEventForAttempt,
@@ -359,67 +357,6 @@ export async function readManifestFromEnvelope(
   const problem = manifestProblem(parsed);
   if (problem !== null) return { ok: false, rejection: unavailable(`the stored prepared manifest is malformed: ${problem}`) };
   return { ok: true, value: { manifest: parsed as unknown as PreparedTaskManifestV1, bodyDigest: ref.digest } };
-}
-
-/**
- * The entered commit's one handoff-brief consumption contribution. Both the
- * normal entered commit and the reconcile commit that first records entry read
- * the saved manifest's frozen handoff brief and the record 5 that brief names
- * (the ref derives from the binding: successor Session + operation), then return
- * the consumed record and its CAS guard for the SAME commit. A Run whose manifest
- * carries no handoff brief, and a record already consumed, contribute nothing;
- * no entry evidence means the caller never asks. A failed read is the caller's
- * existing failure exit, never a silent skip.
- */
-export async function handoffBriefConsumptionForCommit(
-  deps: Pick<ExecutionEntryDependencies, 'bodies' | 'records'>,
-  run: RunSnapshot, claim: TaskClaim, at: string,
-): Promise<{ ok: true; value: { record: EncodedRecord; guard: RecordGuard } | null }
-| { ok: false; rejection: CoreRejection }> {
-  // A requeue Run always carries its own continuation brief; the successor's
-  // handoff brief is only ever offered to a fresh, non-requeue first entry.
-  if (run.requeueRef !== undefined) return { ok: true, value: null };
-  const stored = await readStoredManifest(deps, run);
-  if (!stored.ok) return stored;
-  const brief = stored.value.manifest.handoffBrief;
-  if (brief === undefined) return { ok: true, value: null };
-  if (!sameJson(brief.binding.successor, claim.sessionRef)) {
-    return { ok: false, rejection: invalid('the handoff brief names another successor Session') };
-  }
-  const ref: HandoffBriefRef = {
-    aggregateType: 'HandoffBrief', projectId: brief.binding.operation.projectId,
-    sessionId: brief.binding.successor.sessionId, operationId: brief.binding.operation.operationId,
-  };
-  let read;
-  try {
-    read = await deps.records.readMany([canonicalKey(ref)]);
-  } catch (error) {
-    return { ok: false, rejection: unavailable(`the handoff brief record could not be read: ${messageOf(error)}`) };
-  }
-  if (read.status !== 'ready') return { ok: false, rejection: mapStoreFailure(read) };
-  const encoded = read.value.records[0];
-  if (encoded === undefined) {
-    return { ok: false, rejection: unavailable('the prepared handoff brief record is absent') };
-  }
-  const decoded = workHandoffBriefCodec.decode(encoded);
-  if (decoded.status !== 'decoded') {
-    return { ok: false, rejection: unavailable(`the handoff brief record is damaged: ${decoded.reason}`) };
-  }
-  const record = decoded.value as unknown as WorkHandoffBriefV1;
-  // The stored record must still be exactly the brief the manifest froze; a
-  // moved material or binding is refused, never rendered from the other side.
-  if (canonicalJson(record.binding) !== canonicalJson(brief.binding)
-    || canonicalJson(record.material) !== canonicalJson(brief.material)) {
-    return { ok: false, rejection: invalid('the stored handoff brief disagrees with the frozen manifest') };
-  }
-  if (record.consumedBy !== null) {
-    if (canonicalKey(record.consumedBy) === canonicalKey(run.ref)) return { ok: true, value: null };
-    return { ok: false, rejection: unavailable('the handoff brief was consumed by another Run') };
-  }
-  const consumed = workHandoffBriefConsumption(record, run.ref, at);
-  return { ok: true, value: {
-    record: workHandoffBriefCodec.encode(consumed.record), guard: consumed.guard,
-  } };
 }
 
 function roleResolutionProblem(role: unknown): string | null {
@@ -1969,11 +1906,20 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
       // H-02/B-02: the commit that FIRST records entry joins record 5's one
       // consumption contribution (record + CAS guard) when the manifest carries
       // the handoff brief. No entry evidence, no consumption.
-      const handoff = bindsStart
-        ? await handoffBriefConsumptionForCommit(deps, nextRun, permit.claim, deps.now())
-        : { ok: true as const, value: null };
-      if (!handoff.ok) return handoff.rejection;
-      if (handoff.value !== null) written.records.push(handoff.value.record);
+      let handoff: { ok: true; value: { record: EncodedRecord; guard: RecordGuard } | null }
+        | { ok: false; rejection: CoreRejection } = { ok: true, value: null };
+      if (bindsStart && nextRun.requeueRef === undefined) {
+        const stored = await readStoredManifest(deps, nextRun);
+        if (!stored.ok) return stored.rejection;
+        const brief = stored.value.manifest.handoffBrief;
+        if (brief !== undefined) {
+          handoff = await workHandoffBriefConsumptionForCommit({ records: deps.records }, {
+            brief, successor: permit.claim.sessionRef, consumer: nextRun.ref, at: deps.now(),
+          });
+          if (!handoff.ok) return handoff.rejection;
+        }
+      }
+      if (handoff.ok && handoff.value !== null) written.records.push(handoff.value.record);
       const event = {
         eventId, eventType: EXECUTION_ENTRY_ENTERED_EVENT_TYPE,
         schemaVersion: EXECUTION_ENTRY_EVENT_SCHEMA_VERSION, occurredAt: deps.now(),
@@ -2191,11 +2137,20 @@ export function createExecutionEntryService(deps: ExecutionEntryGoalSettingsDepe
       // H-01/B-02: the terminal/reconcile row that FIRST records entry from real
       // Kernel evidence joins the same one consumption contribution, so a lost
       // entered commit cannot let the successor run a second time.
-      const handoff = bindsStart
-        ? await handoffBriefConsumptionForCommit(deps, nextRun, claim, nowIso)
-        : { ok: true as const, value: null };
-      if (!handoff.ok) return handoff.rejection;
-      if (handoff.value !== null) written.records.push(handoff.value.record);
+      let handoff: { ok: true; value: { record: EncodedRecord; guard: RecordGuard } | null }
+        | { ok: false; rejection: CoreRejection } = { ok: true, value: null };
+      if (bindsStart && nextRun.requeueRef === undefined) {
+        const stored = await readStoredManifest(deps, nextRun);
+        if (!stored.ok) return stored.rejection;
+        const brief = stored.value.manifest.handoffBrief;
+        if (brief !== undefined) {
+          handoff = await workHandoffBriefConsumptionForCommit({ records: deps.records }, {
+            brief, successor: claim.sessionRef, consumer: nextRun.ref, at: nowIso,
+          });
+          if (!handoff.ok) return handoff.rejection;
+        }
+      }
+      if (handoff.ok && handoff.value !== null) written.records.push(handoff.value.record);
       const mergedGuards = mergeGuards([...executionReadGuards(facts, runRecord.refKey, runPin), ...intentWrites.guards,
         ...continuationGuards, ...(activityGuard === null ? [] : [activityGuard]),
         ...(handoff.value === null ? [] : [handoff.value.guard])]);

@@ -8,9 +8,9 @@
  */
 import { defineShape, f, type InferShape } from '../../../contracts/data-format.js';
 import {
-  ActorRefField, CurrentPointerRefShape, GoalRefShape, id, OperationRefShape, QueryJobAnswerRefShape, QueryJobRefShape, QueryRunRefShape,
-  RunRefShape, SessionAggregateRefShape, SessionMessageRefShape, SessionRefShape, TaskTripleShape, WorkLinkTargetField,
-  WorkspaceScopeShape,
+  ActorRefField, CurrentPointerRefShape, ExecutionRefField, GoalRefShape, id, OperationRefShape, QueryJobAnswerRefShape,
+  QueryJobRefShape, QueryRunRefShape, RunRefShape, SessionAggregateRefShape, SessionMessageRefShape, SessionRefShape,
+  TaskTripleShape, WorkLinkTargetField, WorkspaceScopeShape,
 } from '../../../contracts/data-format-refs.js';
 import { CORE_ERRORS } from '../../../contracts/core/results.js';
 import { HANDOFF_TRIGGERS } from '../../../contracts/handoff.js';
@@ -25,8 +25,6 @@ const SystemActorFields = { kind: f.literal('system'), id };
 export { ActorRefField };
 /** A saved trusted actor: an agent is never a command principal. */
 const SavedActorField = f.union('kind', { human: HumanActorFields, system: SystemActorFields });
-/** A work Run or a QueryRun. */
-const ExecutionRefField = f.union('aggregateType', { Run: RunRefShape.fields, QueryRun: QueryRunRefShape.fields });
 const RoleSpecRevisionRefShape = defineShape({ name: 'RoleSpecRevisionRef', fields: {
   aggregateType: f.literal('RoleSpecRevision'), projectId: id, roleId: id, revision: f.integer({ min: 1 }),
 } });

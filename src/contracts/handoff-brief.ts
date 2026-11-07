@@ -10,6 +10,7 @@ import type { Phase } from './plan.js';
 import type { DecisionSourceV1 } from './goal-decisions.js';
 import type { QueryRunRef } from './query-job.js';
 import type { RunRef, TaskTriple } from './dispatch.js';
+import type { RoleScopeV1 } from './role-lines.js';
 import { canonicalJson, sha256Hex, type JsonValue } from './fingerprint.js';
 
 /** Record 5's address: the successor Session and the handoff operation. */
@@ -32,6 +33,8 @@ export type HandoffBriefMaterialV1 =
       understanding: { noteId: string; version: number }[];   // >= 1, the versions §3.5 item 3 found
       oldLine: SessionRef }
   | { duty: 'adviser';
+      /** The frozen scope this operation actually hands over: project, goal or region; never a task/work link. */
+      handedScope: RoleScopeV1[];
       goals: { goalRef: GoalRef; tasks: HandoffBriefTaskV1[]; noteIndex: HandoffBriefNoteIndexV1;
         openDecisions: { source: DecisionSourceV1['kind']; key: string }[] }[];   // per Goal, whole project
       queryAnswers: { run: QueryRunRef; body: string }[];   // the source Session's last 3 ended, each <= 2 KiB
@@ -45,6 +48,14 @@ export type HandoffBriefBindingV1 = {
   successor: SessionRef;
   duty: 'executor' | 'adviser';
   digest: string;   // handoffBriefDigest(material), also record 5's `digest`
+};
+
+/** A manifest's frozen record 5: the binding and material it read, and the digest of the bytes the recipe
+ *  rendered from them (the rendered text itself is the input's interval). */
+export type FrozenHandoffBriefV1 = {
+  binding: HandoffBriefBindingV1;
+  material: HandoffBriefMaterialV1;
+  renderedDigest: string;
 };
 
 /** sha256Hex(canonicalJson(material)); the one digest rule (B2-03). Pure. */

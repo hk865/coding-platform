@@ -144,7 +144,7 @@
     },
     "handoff-brief-adviser": {
       "file": "templates/handoff-brief-adviser.txt",
-      "version": 1,
+      "version": 2,
       "mentionsTools": [
         "read"
       ]

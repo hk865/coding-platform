@@ -929,7 +929,8 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
         if (created.status !== 'ready') return created;
         const line = created.value!;
         const material = await assembler.assemble(runCtx, { source: body.source, duty: 'adviser', tasks: [],
-          workspaceId: saved.workspaceId, understanding: saved.action.understanding ?? null });
+          workspaceId: saved.workspaceId, understanding: saved.action.understanding ?? null,
+          handedScope: body.move });
         if (material.status !== 'ready') return material;
         const brief = pendingWorkHandoffBrief({ operation: saved.ref, source: body.source, successor: line,
           duty: 'adviser', tasks: [], workspaceId: saved.workspaceId, material: material.value });

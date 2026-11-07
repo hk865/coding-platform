@@ -21,6 +21,7 @@ import {
 } from '../../contracts/query-job.js';
 import { planResumeOriginalQueryOfText, systemRoundOfText } from '../../contracts/plan-round.js';
 import { parseInitialPlanningResponseV2 } from '../../contracts/initial-planning-parse.js';
+import type { FrozenHandoffBriefV1 } from '../../contracts/handoff-brief.js';
 import type { RoleSpecResolutionV1 } from '../../contracts/role-spec-materials.js';
 import type { SourceRefV1 } from '../../contracts/dispatch.js';
 import type { RuntimeBudget } from '../../contracts/runtime-budget.js';
@@ -222,6 +223,7 @@ export function projectQueryConfiguration(input: {
   };
 }
 
+/** H: the inherited `handoffBriefs` is the SAME instance Work preparation uses. */
 export type QueryPreparationDependencies = RuntimeExecutionDependencies & {
   /**
    * Ruling 14: the ONE prompt-pack source of this preparation. Absent installs
@@ -699,6 +701,17 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
       } else {
         history = { callKind: 'query', hasCompletedCursor: record.session.historyCursor !== null };
       }
+      // H/SPLITUND: the successor's record 5 is offered to the line's first round of ANY kind. A request round
+      // keeps its own secretary brief path; a QueryRun has no requeue. The read is the SAME port and readiness
+      // rule Work uses.
+      let record5: Pick<FrozenHandoffBriefV1, 'binding' | 'material'> | undefined;
+      if (!requestRound && deps.handoffBriefs !== undefined) {
+        const read = await deps.handoffBriefs.readForSuccessor(owned, {
+          session: executionState.sessionRef, workspaceId: queryRunRef.workspaceId,
+        });
+        if (read.status !== 'ready') return read;
+        if (read.value !== null) record5 = { binding: read.value.binding, material: read.value.material };
+      }
       // Slice 3 C7 (§4.2/§4.3): the ONE assembler owns the Query text and its
       // binding. A non-ready assembler result is propagated unchanged; its
       // rejection (in particular a failing `graphContext` read) is passed back as-is.
@@ -711,6 +724,7 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         permissions: projected.permissions,
         question,
         texts: tracked.texts, toolNames, history,
+        ...(record5 === undefined ? {} : { record5 }),
         ...(secretaryFacts === null ? {} : { secretaryFacts }),
         ...(handoff === undefined ? {} : { handoff }),
         ...(consultationFacts === undefined ? {} : { consultationFacts }),
@@ -801,6 +815,7 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         runtimeBudget: projected.budget,
         budget: { tokenBudget: binding.budget.maxTokens, deadline: binding.budget.deadline },
         sourceRefs,
+        ...(assembled.value.handoffBrief == null ? {} : { handoffBrief: assembled.value.handoffBrief }),
         ...(sessionBasis === undefined ? {} : { sessionBasis }),
         contextAssembly,
         takesSessionHistory,

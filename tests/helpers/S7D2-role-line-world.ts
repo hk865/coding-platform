@@ -66,7 +66,9 @@ import type { MemberRequestResultV1 } from '../../src/core/work-graph/tasks/memb
 import type { RoleLineOperationReadV1 } from '../../src/core/work-graph/views/role-line-operations-read.js';
 import { waitFor } from '../scenarios/harness.js';
 import { driveWorkflow, type AdvanceValue } from './A2-restart-fixture.js';
-import { graphWrite, plain, startLinesEnded, writeAG2bWorkspace } from './AG2b-collaboration-fixture.js';
+import {
+  AG2B_CONSUMER_ID, AG2B_RUNTIME_BUDGET, graphWrite, plain, startLinesEnded, writeAG2bWorkspace,
+} from './AG2b-collaboration-fixture.js';
 import { adoptPLMixedPlan, PL_ADVISER_ROLE, PL_ADVISER_ROLE_BINDING } from './PL-consumption-fixture.js';
 import { drivePLTaskRunsToStop } from './PL-deviation-fixture.js';
 import { commitBarrier, type CommitHold, type CommitMatch } from './S6A-commit-barrier.js';
@@ -273,6 +275,11 @@ export type S7D2RoleLineWorldOptions = {
    * `['read', 'send_session_message', 'create_member']` (`S7D2_ADVISER_WORK`).
    */
   adviserTools?: readonly string[];
+  /**
+   * BRIEFQ: add the adviser binding's Query profile (the same scope and Role, one binding), so a successor
+   * adviser line can claim and prepare a Query. Absent keeps every existing world's configuration unchanged.
+   */
+  adviserQueryProfile?: boolean;
 };
 
 export type S7D2RoleLineWorld = {
@@ -478,12 +485,20 @@ export const S7D2_TOO_LONG_INPUT_TOKENS = 160_000;
 
 const ADVISER_TOOLS: readonly string[] = ['read', 'send_session_message', 'create_member'];
 
-function adviserWorkOf(tools: readonly string[]): S6AExtraBinding {
+function adviserWorkOf(tools: readonly string[], queryProfile = false): S6AExtraBinding {
   const binding = bindingOf(PL_ADVISER_ROLE_BINDING.bindingId, PL_ADVISER_ROLE, 'S7D2 trusted adviser guidance', tools);
   return {
     binding: { ...binding, grant: { ...binding.grant, createMember: true } },
     workflow: { workspace: S6A_SCOPE, sessionRole: PL_ADVISER_ROLE, roleBinding: PL_ADVISER_ROLE_BINDING,
       budget: { tokenBudget: 1_000_000, deadline: null } },
+    // BRIEFQ: the same binding's Query profile (scope + Role match the one binding), so a successor adviser
+    // line can claim and prepare a Query. `S7D2_ADVISER_WORK` keeps no profile, as before.
+    ...(queryProfile ? { queryProfile: {
+      id: 's7d2-adviser-query-profile', label: 'S7D2 adviser query', scope: S6A_SCOPE,
+      runtimeBindingId: binding.id, sessionRole: PL_ADVISER_ROLE,
+      roleBinding: PL_ADVISER_ROLE_BINDING, runtimeBudget: AG2B_RUNTIME_BUDGET,
+      budget: { maxTokens: null, deadline: null }, consumerId: AG2B_CONSUMER_ID,
+    } } : {}),
   };
 }
 
@@ -650,7 +665,9 @@ export type S7D2ProjectWorld = S7D2RegionWorld & {
 /** The region world with `S7D2_ADVISER_WORK`, a second workspace, the scoped lines and the too-long Work Run. */
 export async function openS7D2ProjectWorld(options: S7D2RoleLineWorldOptions): Promise<S7D2ProjectWorld> {
   const world = await openS7D2RegionWorld({ ...options,
-    extraBindings: [options.adviserTools === undefined ? S7D2_ADVISER_WORK : adviserWorkOf(options.adviserTools),
+    extraBindings: [options.adviserTools === undefined && options.adviserQueryProfile !== true
+      ? S7D2_ADVISER_WORK
+      : adviserWorkOf(options.adviserTools ?? ADVISER_TOOLS, options.adviserQueryProfile === true),
       ...(options.extraBindings ?? [])] });
   let second: S7D2SecondWorkspace | null = null;
   try {

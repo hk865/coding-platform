@@ -8,6 +8,9 @@ import type { RoleSpecResolutionV1 } from '../../contracts/role-spec-materials.j
 import { messageOf } from '../../contracts/error-message.js';
 import { rejected } from '../../contracts/core/rejections.js';
 import { isRequestRound } from '../../contracts/query-job.js';
+import type { FrozenHandoffBriefV1 } from '../../contracts/handoff-brief.js';
+import { renderHandoffBriefZh } from '../../contracts/continuation-brief-render.js';
+import { sha256Hex } from '../../contracts/fingerprint.js';
 import type { QueryPreparationFacts } from '../work-graph/queries/contracts.js';
 import type { SecretaryPreparationFactsV1 } from '../work-graph/model/secretary-contracts.js';
 import type { GraphContextFactsV1, GraphReadPageV1, NodeCardV1 } from '../work-graph/model/graph-context-contracts.js';
@@ -72,6 +75,8 @@ export async function assembleQueryContext(
     toolNames: readonly string[];
     /** Ruling 14 C7: the Query's formal basis, or the real completed boundary. */
     history: ContextQueryHistoryInputV1;
+    /** The successor's frozen record 5, read once by preparation; the recipe renders it into the role section. */
+    record5?: Pick<FrozenHandoffBriefV1, 'binding' | 'material'>;
     /** The one facts value preparation read; the secretary recipe renders it and reads no port. */
     secretaryFacts?: SecretaryPreparationFactsV1;
     /** SR3 item 6: the round's hand-off material preparation read once; the recipe renders it and derives nothing. */
@@ -99,7 +104,10 @@ export async function assembleQueryContext(
     policyRevision: input.configuration?.configurationRevision ?? '',
     tools: [...input.permissions.tools], writeScope: [...input.permissions.writeScope],
   };
-  const roleSection = rolePayload(input.role, permissions, duty, residentBudgetBytes, texts);
+  const roleBase = rolePayload(input.role, permissions, duty, residentBudgetBytes, texts);
+  const record5 = input.record5;
+  const record5Text = record5 === undefined ? null : renderHandoffBriefZh(record5.material, texts);
+  const roleSection = record5Text === null ? roleBase : roleBase + '\n\n' + record5Text;
   const goal = input.facts.goal;
   const workspace = input.facts.workspace;
   const queryKind = input.facts.record?.job?.job?.intent?.execution?.kind;
@@ -220,5 +228,7 @@ export async function assembleQueryContext(
     extensions: annotations(extensions),
   };
   return { status: 'ready', value: { input: rendered.input, binding, continuationBrief: null,
+    ...(record5 === undefined ? {} : { handoffBrief: { binding: record5.binding, material: record5.material,
+      renderedDigest: sha256Hex(record5Text!) } }),
     sessionBasis: undefined, selectedTaskInputs: [], takesSessionHistory, renderMaterial: rendered.material } };
 }

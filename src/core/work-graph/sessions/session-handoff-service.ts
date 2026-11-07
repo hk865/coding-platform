@@ -28,6 +28,7 @@ import type { DecisionApplicationReceiptV1, SessionMessageRef } from '../../../c
 import type { TaskTriple } from '../../../contracts/dispatch.js';
 import { canonicalKey, canonicalOf, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
+import { roleScopeOfTarget, type RoleScopeV1 } from '../../../contracts/role-lines.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import { SESSION_ARCHIVE_AUTOMATION_ACTOR } from '../../../contracts/task-requeue.js';
 import type { ToolCommitLookupInput, ToolCommitLookupResult } from '../../../contracts/unknown-call-review.js';
@@ -476,12 +477,14 @@ export type SessionHandoffAdvancePort = Pick<SessionHandoffPort, 'advanceHandoff
 export type HandoffBriefMaterialAssembler = {
   assemble(ctx: CoreCallContext, input: {
     source: SessionRef;
-    duty: 'executor' | 'adviser';
     tasks: readonly TaskTriple[];
     workspaceId: string;
     /** The tool accept's saved admission-time understanding; null on the manual and too_long paths. */
     understanding: { noteId: string; version: number }[] | null;
-  }): Promise<ReadResult<HandoffBriefMaterialV1>>;
+  } & (
+    | { duty: 'executor' }
+    | { duty: 'adviser'; /** The frozen scope this operation actually hands over. */ handedScope: readonly RoleScopeV1[] }
+  )): Promise<ReadResult<HandoffBriefMaterialV1>>;
 };
 
 export type SessionHandoffAdvanceDependencies = {
@@ -806,14 +809,18 @@ export function createSessionHandoffAdvanceService(deps: SessionHandoffAdvanceDe
       const source = action.input.source;
 
       /** The successor step's complete material; a failure writes no record 5 and no partial material. */
-      async function readBriefMaterial(duty: 'executor' | 'adviser', tasks: readonly TaskTriple[]):
+      async function readBriefMaterial(duty: 'executor' | 'adviser', tasks: readonly TaskTriple[],
+        handedScope: readonly RoleScopeV1[]):
       Promise<{ material: HandoffBriefMaterialV1 } | { rejection: CoreRejection }> {
         let read: Awaited<ReturnType<HandoffBriefMaterialAssembler['assemble']>>;
         try {
           // The tool accept carries the understanding version it admitted; the manual and too_long triggers keep
           // the assembler's own read of the source Run's current version.
-          read = await deps.brief.assemble(savedCtx, { source, duty, tasks, workspaceId: record.workspaceId,
-            understanding: action.input.trigger === 'tool' ? action.input.tool?.understanding ?? null : null });
+          read = await deps.brief.assemble(savedCtx, duty === 'adviser'
+            ? { source, duty, tasks, workspaceId: record.workspaceId, handedScope,
+              understanding: action.input.trigger === 'tool' ? action.input.tool?.understanding ?? null : null }
+            : { source, duty, tasks, workspaceId: record.workspaceId,
+              understanding: action.input.trigger === 'tool' ? action.input.tool?.understanding ?? null : null });
         } catch (error) {
           return { rejection: unavailable(`the handoff brief material read failed: ${messageOf(error)}`) };
         }
@@ -886,6 +893,11 @@ export function createSessionHandoffAdvanceService(deps: SessionHandoffAdvanceDe
       if (duty.status !== 'ready') return duty.status === 'rejected' ? duty : unavailable('the source duty read is not ready');
       const sourceDuty = duty.value;
       const secretary = isSecretaryDuty(sourceDuty);
+      // The scope this handoff actually moves: the same open scope links the transfer stage hands to the first
+      // successor; the remaining successors get an empty list.
+      const handedScopeOf = (): RoleScopeV1[] => sourceLinks
+        .filter(link => openScopeLinkOf([link], sourceDuty) !== false)
+        .map(link => roleScopeOfTarget(link.ref.target)!);
 
       /**
        * SES-11's rule at every exit: the source's first open `responsible` Task/Work link whose target the handoff's
@@ -1223,7 +1235,7 @@ export function createSessionHandoffAdvanceService(deps: SessionHandoffAdvanceDe
             let brief: PendingWorkHandoffBriefV1 | undefined;
             if (targetDuty !== null) {
               const handed = action.input.assignments[index]!.tasks;
-              const material = await readBriefMaterial(targetDuty, handed);
+              const material = await readBriefMaterial(targetDuty, handed, index === 0 ? handedScopeOf() : []);
               if ('rejection' in material) return material.rejection;
               brief = pendingWorkHandoffBrief({ operation, source, successor: target.session, duty: targetDuty,
                 tasks: handed, workspaceId: record.workspaceId, material: material.material });
@@ -1307,7 +1319,7 @@ export function createSessionHandoffAdvanceService(deps: SessionHandoffAdvanceDe
           let brief: PendingWorkHandoffBriefV1 | undefined;
           if (targetDuty !== null) {
             const handed = action.input.assignments[index]!.tasks;
-            const material = await readBriefMaterial(targetDuty, handed);
+            const material = await readBriefMaterial(targetDuty, handed, index === 0 ? handedScopeOf() : []);
             if ('rejection' in material) return material.rejection;
             brief = pendingWorkHandoffBrief({ operation, source, successor: stable.plannedSessionRef, duty: targetDuty,
               tasks: handed, workspaceId: record.workspaceId, material: material.material });

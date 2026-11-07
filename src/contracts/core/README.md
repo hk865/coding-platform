@@ -55,8 +55,8 @@
 | `SessionMessageRef` | `src/contracts/core/session-message.ts:27` | 带项目/工作区范围的完整消息聚合引用。 | 寻址消息；`messageId` 单独不是地址，也不是授权。 |
 | `isUserMessageRecipient` | `src/contracts/core/session-message.ts:140` | 结构判定收件人是否为工作区用户。 | 分派/展示消息；不要从 id 猜收件人。 |
 | `renderUnknownCallReviewZh` | `src/contracts/core/prepared-execution.ts:106` | 把结构化审查输入渲染成中文章节，可重渲染比对。 | 准备审查/提案轮输入；WorkGraph 校验章节区间与摘要时复用。 |
-| `PreparedTaskManifestV1` | `src/contracts/core/prepared-execution.ts:206` | 任务执行清单：claim、role、预算、上下文、提示词、唯一 input。 | 准备/校验任务 Run；清单内容必须重新对正式事实核对。 |
-| `PreparedQueryManifestV1` | `src/contracts/core/prepared-execution.ts:287` | Query 执行清单与 `PreparedQueryExecution` 回执形状；`goal` 可空（仅 secretary callKind），`request` 必填（非 request 为 null）。 | 准备/校验 Query Run。 |
+| `PreparedTaskManifestV1` | `src/contracts/core/prepared-execution.ts:206` | 任务执行清单：claim、role、预算、上下文、提示词、唯一 input；可带冻结的记录 5 `handoffBrief?: FrozenHandoffBriefV1`。 | 准备/校验任务 Run；清单内容必须重新对正式事实核对。 |
+| `PreparedQueryManifestV1` | `src/contracts/core/prepared-execution.ts:287` | Query 执行清单与 `PreparedQueryExecution` 回执形状；`goal` 可空（仅 secretary callKind），`request` 必填（非 request 为 null），可带冻结的记录 5 `handoffBrief?: FrozenHandoffBriefV1`。 | 准备/校验 Query Run。 |
 
 ## 内部用
 

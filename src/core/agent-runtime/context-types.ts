@@ -7,7 +7,7 @@ import type {
 import type { ReadResult } from '../../contracts/core/results.js';
 import type { PromptTextsV1 } from '../../contracts/prompts/prompt-set.js';
 import type { ContinuationBriefV1 } from '../../contracts/continuation-brief.js';
-import type { HandoffBriefBindingV1, HandoffBriefMaterialV1 } from '../../contracts/handoff-brief.js';
+import type { FrozenHandoffBriefV1 } from '../../contracts/handoff-brief.js';
 import type {
   AttentionGraphReadRequestV1, ContextAssemblyBindingV1, GraphAttentionFactsV1,
 } from '../../contracts/graph-context.js';
@@ -131,7 +131,7 @@ export type AssembledContextV1 = {
    * section, with the material-only record digest and the rendered-bytes digest
    * the manifest freezes. Absent/null on every other Work call kind.
    */
-  handoffBrief?: { binding: HandoffBriefBindingV1; material: HandoffBriefMaterialV1; renderedDigest: string } | null;
+  handoffBrief?: FrozenHandoffBriefV1 | null;
   sessionBasis: PreparedTaskManifestV1['sessionBasis'] | undefined;
   selectedTaskInputs: PreparedTaskManifestV1['selectedTaskInputs'];
   /** Slice 1 §2.7: the anchors named by the brief's anomaly section (absent/null when it has none). */
@@ -157,7 +157,7 @@ export interface ContextAssembler {
      * H: record 5's frozen binding and material, read once at preparation and
      * offered to the successor's first Work Run only (a `handoff` call kind).
      */
-    handoff?: { binding: HandoffBriefBindingV1; material: HandoffBriefMaterialV1 };
+    handoff?: Pick<FrozenHandoffBriefV1, 'binding' | 'material'>;
   }): Promise<ReadResult<AssembledContextV1>>;
   assembleQuery(ctx: CoreCallContext, input: {
     facts: QueryPreparationFacts;
@@ -168,6 +168,8 @@ export interface ContextAssembler {
     texts?: PromptTextsV1;
     toolNames: readonly string[];
     history: ContextQueryHistoryInputV1;
+    /** The successor's frozen record 5, read once by preparation; the recipe renders it into the role section. */
+    record5?: Pick<FrozenHandoffBriefV1, 'binding' | 'material'>;
     /** The one facts value preparation read before the final tool list; the recipe never reads the port. */
     secretaryFacts?: SecretaryPreparationFactsV1;
     /** SR3 item 6: the round's hand-off material preparation read once; the recipe renders it and derives nothing. */

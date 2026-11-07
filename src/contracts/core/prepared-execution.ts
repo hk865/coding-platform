@@ -26,7 +26,7 @@ import type { PlanRevisionSnapshot } from '../plan.js';
 import type { RuntimeBudget } from '../runtime-budget.js';
 import type { TaskClaim } from './task-claim.js';
 import { templateToolNames, type ContinuationBriefV1 } from '../continuation-brief.js';
-import type { HandoffBriefBindingV1, HandoffBriefMaterialV1 } from '../handoff-brief.js';
+import type { FrozenHandoffBriefV1 } from '../handoff-brief.js';
 import type { ContextAssemblyBindingV1 } from '../graph-context.js';
 import type { PromptSetV1 } from '../prompts/prompt-set.js';
 import type {
@@ -238,7 +238,7 @@ export type PreparedTaskManifestV1 = {
    * `renderedDigest = sha256Hex(rendered bytes)` — a frozen derivation, not the
    * record's material-only digest.
    */
-  handoffBrief?: { binding: HandoffBriefBindingV1; material: HandoffBriefMaterialV1; renderedDigest: string };
+  handoffBrief?: FrozenHandoffBriefV1;
   /** Slice 3: the assembled context binding fixed at prepare (required). */
   contextAssembly: ContextAssemblyBindingV1;
   /** The assembly's history decision, inside the manifest digest. */
@@ -307,6 +307,13 @@ export type PreparedQueryManifestV1 = {
   runtimeBudget: RuntimeBudget;
   budget: { tokenBudget: number | null; deadline: string | null };
   sourceRefs: SourceRefV1[];
+  /**
+   * H: the successor's first-round handoff brief, frozen beside the Query
+   * context. The binding and the material are record 5's own; the rendered text
+   * is the `role` section's interval of `input`, and
+   * `renderedDigest = sha256Hex(rendered bytes)`.
+   */
+  handoffBrief?: FrozenHandoffBriefV1;
   /**
    * The formal isolated derivation of this Query: the source Kernel Session and
    * its fixed completed boundary. `throughPosition: null` is the explicit empty

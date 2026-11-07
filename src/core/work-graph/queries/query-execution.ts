@@ -58,6 +58,7 @@ import {
   decodeSessionOperationRecord, operationRefKey,
 } from '../sessions/session-record-codecs.js';
 import { handoffFenceGuard, readHandoffFence } from '../sessions/session-handoff-fence.js';
+import { workHandoffBriefConsumptionForCommit } from '../sessions/work-handoff-brief-consumption.js';
 import { activityGuardOf, planSessionActivityAdvance } from '../sessions/session-activity.js';
 import { decodeSessionMessageRecord, sessionMessageRefKey } from '../sessions/message-record-codecs.js';
 import { messageConsumptionProblem, messageFactsOfRecord } from '../state/message-machine.js';
@@ -1826,6 +1827,16 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     const occurredAt = deps.now();
     const eventId = deps.eventId();
     if (!nonEmpty(occurredAt) || !nonEmpty(eventId)) return rejectedWithNonEmptyCurrent('unsupported', 'the injected clock/id source produced an empty value');
+    // The manifest's frozen record 5, when it has one: the same one consumption Work uses.
+    let handoffRecord: EncodedRecord | null = null;
+    let handoffGuard: RecordGuard | null = null;
+    if (manifest.handoffBrief !== undefined) {
+      const handoff = await workHandoffBriefConsumptionForCommit({ records: deps.records }, {
+        brief: manifest.handoffBrief, successor: state.sessionRef, consumer: queryRunRef, at: occurredAt,
+      });
+      if (!handoff.ok) return handoff.rejection;
+      if (handoff.value !== null) { handoffRecord = handoff.value.record; handoffGuard = handoff.value.guard; }
+    }
     // QueryRun and QueryJob become running with the fixed entry and the round-0 execution binding.
     const { job: nextJob, run: nextRun } = advanceQueryExecutionRecord({ job, run }, {
       phase: 'entering', occurredAt,
@@ -1860,19 +1871,22 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     });
     const entered = (cursor: CommitCursor): WriteResult<QueryEntryTicket> => ({ status: 'committed', value: ticket, replayed: false, cursor });
     if (startPlan === null) {
-      const guards = mergeGuards([...pins, ...frozenGrantGuards]);
+      const guards = mergeGuards([...pins, ...frozenGrantGuards, ...(handoffGuard === null ? [] : [handoffGuard])]);
       if (!guards.ok) return guards.rejection;
       return commitBegin({
         deps, identityKey, fingerprint, guards: guards.guards,
-        records: [encodeQueryRunSnapshotRecord(nextRun), encodeQueryJobSnapshot(nextJob)],
+        records: [encodeQueryRunSnapshotRecord(nextRun), encodeQueryJobSnapshot(nextJob),
+          ...(handoffRecord === null ? [] : [handoffRecord])],
         events: [encodeQueryExecutionRecordedEvent(event)],
         claims: [handoffFenceGuard(state.sessionRef)],
         operation: 'entering',
       }, entered);
     }
-    const guards = mergeGuards([...pins, ...startPlan.guards, ...frozenGrantGuards]);
+    const guards = mergeGuards([...pins, ...startPlan.guards, ...frozenGrantGuards,
+      ...(handoffGuard === null ? [] : [handoffGuard])]);
     if (!guards.ok) return guards.rejection;
-    const records: EncodedRecord[] = [encodeQueryRunSnapshotRecord(nextRun), encodeQueryJobSnapshot(startPlan.job)];
+    const records: EncodedRecord[] = [encodeQueryRunSnapshotRecord(nextRun), encodeQueryJobSnapshot(startPlan.job),
+      ...(handoffRecord === null ? [] : [handoffRecord])];
     // One event per QueryRun the commit writes: each absorbed pending Run, which
     // ends before any attempt, then the executing Run, whose event carries the
     // ticket a replay restores.

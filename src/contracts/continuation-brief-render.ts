@@ -424,6 +424,8 @@ function handoffBriefLinesZh(material: HandoffBriefMaterialV1, B: BriefTexts, ca
     lines.push(`- understanding: ${handoffUnderstandingTextZh(B, material.understanding, cap)}`);
     lines.push(`- old line: ${canonicalJson(material.oldLine)}`);
   } else {
+    lines.push(`- handed scope: ${listZh(B, material.handedScope.map(scope => canonicalJson(scope)), cap)}`);
+    lines.push('- project background:');
     for (const goal of material.goals) {
       lines.push(`- goal ${canonicalJson(goal.goalRef)}`);
       for (const task of goal.tasks) lines.push(handoffTaskLineZh(B, task, cap, '  '));

@@ -49,6 +49,7 @@ import {
   GOAL_BY_WORKSPACE_INDEX, readCanonicalTaskFacts, readGoalPlanWindow,
 } from '../work-graph/tasks/plan-readers.js';
 import type { ExecutionReadPort, TaskExecutionRecord } from '../work-graph/model/execution-read-contracts.js';
+import type { RoleScopeV1 } from '../../contracts/role-lines.js';
 import type { HandoffBriefMaterialAssembler } from '../work-graph/sessions/session-handoff-service.js';
 import { readPreviousTurn } from './continuation-brief-assembly.js';
 import type { SessionHistoryCursorOwner } from './session-operations.js';
@@ -94,6 +95,8 @@ export type AssembleHandoffBriefInput =
       sourceRun: RunRef | null;
       workspaceId: string;
       signal: AbortSignal;
+      /** The frozen scope this operation actually hands over: project, goal or region; never a task/work link. */
+      handedScope: readonly RoleScopeV1[];
       /** The tool accept's saved admission-time understanding; null means read the current version below. */
       understanding: { noteId: string; version: number }[] | null;
     };
@@ -525,6 +528,7 @@ async function assembleAdviser(
     status: 'ready',
     value: {
       duty: 'adviser',
+      handedScope: structuredClone([...input.handedScope]),
       goals,
       queryAnswers: queryAnswers.value,
       understanding: understanding.value,
@@ -633,7 +637,8 @@ export function createHandoffBriefMaterialAssembler(
         ? { duty: 'executor', source: input.source, sourceRun, sourceRecord,
           tasks: input.tasks, workspaceId: input.workspaceId, signal: ctx.signal, understanding: input.understanding }
         : { duty: 'adviser', source: input.source, sourceRun,
-          workspaceId: input.workspaceId, signal: ctx.signal, understanding: input.understanding });
+          workspaceId: input.workspaceId, signal: ctx.signal, understanding: input.understanding,
+          handedScope: input.handedScope });
     },
   };
 }

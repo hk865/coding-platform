@@ -52,7 +52,6 @@ import { projectRunPermissions } from '../work-graph/tasks/pick-authorization.js
 import { readTaskReviews } from '../work-graph/tasks/task-review-reader.js';
 import { orderBlockedCommands } from '../work-graph/tasks/blocked-command-order.js';
 import { unknownCallReviewRefKey } from '../work-graph/tasks/unknown-call-review-codecs.js';
-import type { SessionRef } from '../../contracts/core/identity.js';
 import type { RecordOrderedLookupPort } from '../record-store/lookup-ports.js';
 import type { SessionDirectoryPort } from '../work-graph/model/session-contracts.js';
 import {
@@ -62,20 +61,9 @@ import {
 import { workHandoffBriefCodec } from '../work-graph/sessions/session-record-codecs.js';
 import type { HandoffActionV1 } from '../work-graph/model/session-operation-arms.js';
 import type { SessionOperationRecordOf } from '../work-graph/model/session-contracts.js';
-import type { PrepareTaskExecutionRequest, ResolvedRuntimeConfiguration, RuntimeExecutionDependencies } from './execution-contracts.js';
-
-/**
- * H: the narrow readiness read of record 5. The preparation asks once per Work
- * Run; a successor's record is offered only after the matching assignment's
- * responsibility transfer completed (B-02). A split's record 5 is written in the
- * split's done commit, so a split's record is ready when it is read. The port is
- * optional so a direct preparation caller without a registered record-5 bundle
- * keeps the old path.
- */
-export type WorkHandoffBriefReadPort = {
-  readForSuccessor(ctx: CoreCallContext, input: { session: SessionRef; workspaceId: string }):
-    Promise<ReadResult<WorkHandoffBriefV1 | null>>;
-};
+import type {
+  PrepareTaskExecutionRequest, ResolvedRuntimeConfiguration, RuntimeExecutionDependencies, WorkHandoffBriefReadPort,
+} from './execution-contracts.js';
 
 export type WorkHandoffBriefReadDependencies = {
   records: RecordOrderedLookupPort;
@@ -161,7 +149,8 @@ export type ExecutionPreparationDependencies = Pick<RuntimeExecutionDependencies
   'executions' | 'roles' | 'bodies' | 'host' | 'now' | 'newId'>
   & Partial<Pick<RuntimeExecutionDependencies,
     'materials' | 'plans' | 'sessions' | 'kernelStores' | 'workspaceHost' | 'workspaceSource'
-    | 'kernel' | 'graphContext' | 'taskInputs' | 'architectureReminders' | 'unknownCallReviews'>>
+    | 'kernel' | 'graphContext' | 'taskInputs' | 'architectureReminders' | 'unknownCallReviews'
+    | 'handoffBriefs'>>
   & {
     /**
      * Ruling 14: the ONE prompt-pack source of this preparation. Absent installs
@@ -180,8 +169,6 @@ export type ExecutionPreparationDependencies = Pick<RuntimeExecutionDependencies
       ctx: CoreCallContext,
       task: { projectId: string; goalId: string; taskId: string },
     ) => Promise<ReadResult<{ closed: boolean; cause: 'satisfied' | 'cancelled' | 'superseded' | null }>>;
-    /** H: record 5's readiness read; absent keeps every Work Run without a handoff brief. */
-    handoffBriefs?: WorkHandoffBriefReadPort;
   };
 
 // Slice 1 §4.1 (T10): the archive-origin rule lives with the brief assembly (slice 3 moved the brief into the

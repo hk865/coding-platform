@@ -249,9 +249,8 @@ import { notifyProject } from '../core/work-graph/communication/project-notice-s
 import { SESSION_RECORD_SCHEMAS, SESSION_LINKS_BY_PROJECT_TARGET_LOOKUP, decodeSessionRecord,
   decodeSessionWorkLink, encodeSessionRecord, plainSessionRefKey, plainSessionRefToAggregate,
   sessionAggregateRefKey, sessionWorkLinkRefKey, HANDOFF_BRIEF_RECORD_SCHEMAS } from '../core/work-graph/sessions/session-record-codecs.js';
-import {
-  createWorkHandoffBriefRead, type WorkHandoffBriefReadPort,
-} from '../core/agent-runtime/execution-preparation.js';
+import { createWorkHandoffBriefRead } from '../core/agent-runtime/execution-preparation.js';
+import type { WorkHandoffBriefReadPort } from '../core/agent-runtime/execution-contracts.js';
 import { createSessionLifecycleService } from '../core/work-graph/sessions/session-lifecycle.js';
 import type { SessionLifecyclePort } from '../core/work-graph/sessions/lifecycle-contracts.js';
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS, encodeSessionResponsibilityChangedEvent } from '../core/work-graph/sessions/lifecycle-record-codecs.js';

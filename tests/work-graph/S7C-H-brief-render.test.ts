@@ -10,6 +10,10 @@ import { handoffBriefDigest } from '../../src/contracts/handoff-brief.js';
 import { renderHandoffBriefZh } from '../../src/contracts/continuation-brief-render.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../src/contracts/prompts/platform-pack.generated.js';
 import type { PromptTextsV1 } from '../../src/contracts/prompts/prompt-set.js';
+import type { RoleScopeV1 } from '../../src/contracts/role-lines.js';
+
+/** BRIEFQ: the adviser material now carries the operation's handed scope; the type gains the field in production. */
+type AdviserMaterialV1 = Extract<HandoffBriefMaterialV1, { duty: 'adviser' }> & { handedScope: RoleScopeV1[] };
 
 const executorMaterial: HandoffBriefMaterialV1 = {
   duty: 'executor',
@@ -27,7 +31,7 @@ const executorMaterial: HandoffBriefMaterialV1 = {
   oldLine: { projectId: 'p1', sessionId: 's1' },
 };
 
-const adviserMaterial: HandoffBriefMaterialV1 = {
+const adviserMaterial: AdviserMaterialV1 = {
   duty: 'adviser',
   goals: [
     {
@@ -47,6 +51,7 @@ const adviserMaterial: HandoffBriefMaterialV1 = {
   }],
   understanding: [{ noteId: 'u1', version: 3 }],
   oldLine: { projectId: 'p1', sessionId: 's1' },
+  handedScope: [{ kind: 'region', moduleRef: { projectId: 'p1', moduleId: 'src/a' } }],
 };
 
 const EXECUTOR_HEADER = '## Handoff brief\n\n'
@@ -54,8 +59,9 @@ const EXECUTOR_HEADER = '## Handoff brief\n\n'
   + 'pointer is the version the predecessor recorded before the handoff; read it\n'
   + 'before you answer.\n\n';
 const ADVISER_HEADER = '## Handoff brief\n\n'
-  + "You are continuing this line's work in this project. The project scope below is\n"
-  + 'now yours. The understanding pointer is the version the predecessor recorded\n'
+  + "You are continuing this line's work in this project. The handed scope listed\n"
+  + 'below is now yours; the background that follows is what the line knows, not a\n'
+  + 'larger scope. The understanding pointer is the version the predecessor recorded\n'
   + 'before the handoff; read it before you answer.\n\n';
 
 const EXECUTOR_BODY = [
@@ -69,6 +75,8 @@ const EXECUTOR_BODY = [
 ].join('\n');
 
 const ADVISER_BODY = [
+  '- handed scope: {"kind":"region","moduleRef":{"moduleId":"src/a","projectId":"p1"}}',
+  '- project background:',
   '- goal {"aggregateType":"Goal","goalId":"g1","projectId":"p1"}',
   '  - task {"goalId":"g1","projectId":"p1","taskId":"t1"}: phase running; last result: completed',
   '  - note index: m1: n1@2',
@@ -124,7 +132,7 @@ describe('S7C-H brief render: the material digest is independent of rendering', 
     expect(handoffBriefDigest(executorMaterial))
       .toBe('6bc5999757d1d5b99f53bd7ed4dba233ed913d7c28541fa630531548db810c93');
     expect(handoffBriefDigest(adviserMaterial))
-      .toBe('a317d3bc3e660fa7d28cf25e371528beca4f939fb6bb45469f387b650e5a862f');
+      .toBe('7950c71ad87055dbb2c163201dbb414a26abfdc1a493a3bc3a9446d9abda23b8');
   });
 
   it('keeps the digest when a template id or a tool table changes', () => {

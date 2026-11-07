@@ -37,6 +37,7 @@ import type { PromptPackSourcePort } from '../../contracts/prompts/prompt-pack.j
 import type { RoleSpecResolutionV1 } from '../../contracts/role-spec-materials.js';
 import type { PlatformDutyV1 } from '../../contracts/graph-context.js';
 import type { RunRef } from '../../contracts/dispatch.js';
+import type { WorkHandoffBriefV1 } from '../work-graph/state/work-handoff-brief.js';
 import type { VerificationRoundSourceResult } from '../../contracts/verification-context.js';
 import type { RawArtifactStorePort } from '../record-store/body-ports.js';
 import type { ContinuationWorkspaceBytes } from '../workspace/continuation-diff-reads.js';
@@ -219,10 +220,18 @@ export type ReadonlyCommandHostFacts = {
   processSandboxOptions: { readOnlyPaths?: string[]; executablePath?: string };
 };
 
+/** H/SPLITUND: record 5's narrow readiness read, the same instance Work and Query preparation use. */
+export type WorkHandoffBriefReadPort = {
+  readForSuccessor(ctx: CoreCallContext, input: { session: SessionRef; workspaceId: string }):
+    Promise<ReadResult<WorkHandoffBriefV1 | null>>;
+};
+
 export type RuntimeExecutionDependencies = {
   claims: TaskClaimPort;
   executions: ExecutionReadPort;
   entry: ExecutionEntryPort;
+  /** H: record 5's readiness read; absent keeps Work and Query without a handoff brief. */
+  handoffBriefs?: WorkHandoffBriefReadPort;
   /** Existing WG12 writer for live nonterminal observed ranges. */
   historyWriter: ExecutionHistoryWritePort;
   modelRequests: ModelRequestPort;

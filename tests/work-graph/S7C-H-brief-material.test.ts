@@ -11,6 +11,7 @@ import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { TaskTriple } from '../../src/contracts/dispatch.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
+import type { RoleScopeV1 } from '../../src/contracts/role-lines.js';
 import type { TaskExecutionRecord } from '../../src/core/work-graph/model/execution-read-contracts.js';
 import { assembleHandoffBrief, type HandoffBriefAssemblyDeps } from '../../src/core/agent-runtime/handoff-brief-assembly.js';
 import { createWorkHandoffBriefRead } from '../../src/core/agent-runtime/execution-preparation.js';
@@ -67,6 +68,10 @@ function depsOf(target: S7CHandoffWorld): HandoffBriefAssemblyDeps {
 function signal(): AbortSignal {
   return new AbortController().signal;
 }
+
+/** BRIEFQ: the adviser assembly now takes the operation's handed scope; the type gains the field in production. */
+type AdviserAssemblyInputV1 = Parameters<typeof assembleHandoffBrief>[2] & { handedScope: RoleScopeV1[] };
+
 
 async function sourceRecordOf(target: S7CHandoffWorld, run: { projectId: string; goalId: string; runId: string }):
 Promise<TaskExecutionRecord> {
@@ -165,13 +170,16 @@ describe('H-brief-material: the adviser brief', () => {
     const adviserNote = page.items.find(item => item.kind === 'understanding'
       && item.source.kind === 'agent' && item.source.runRef?.runId === target.lines.adviserRun.runId);
     if (adviserNote === undefined) throw new Error('the adviser Run wrote no understanding on its own Goal');
-    const result = await assembleHandoffBrief(depsOf(target), target.world.systemContext(), {
+    const input: AdviserAssemblyInputV1 = {
       duty: 'adviser', source: source.ref, sourceRun: target.lines.adviserRun,
       workspaceId: S6A_SCOPE.workspaceId, signal: signal(), understanding: null,
-    });
+      handedScope: [{ kind: 'goal', goalRef: { aggregateType: 'Goal', projectId: S6A_SCOPE.projectId,
+        goalId: 's7c-handoff-adviser-goal' } }],
+    };
+    const result = await assembleHandoffBrief(depsOf(target), target.world.systemContext(), input);
     expect(result.status).toBe('ready');
     if (result.status !== 'ready' || result.value.duty !== 'adviser') return;
-    const material = result.value;
+    const material = result.value as typeof result.value & { handedScope: RoleScopeV1[] };
 
     // The adviser's Run served only its own Goal; the wait Goal's adopted Plan is still covered.
     const own = material.goals.find(entry => entry.goalRef.goalId === 's7c-handoff-adviser-goal');
@@ -194,15 +202,21 @@ describe('H-brief-material: the adviser brief', () => {
 
     expect(material.understanding).toEqual([{ noteId: adviserNote.noteId, version: adviserNote.version }]);
     expect(material.oldLine).toEqual(source.ref);
+    // BRIEFQ: the assembly returns the operation's handed scope unchanged.
+    expect(material.handedScope).toEqual([{ kind: 'goal', goalRef: { aggregateType: 'Goal',
+      projectId: S6A_SCOPE.projectId, goalId: 's7c-handoff-adviser-goal' } }]);
   }, 180_000);
 
   it('answers unavailable, never an empty material, when the ended-query lookup fails', async () => {
     const target = await world();
     const fault = commitBarrier.failReads(S2B_QUERY_RUN_BY_SESSION_ENDED_LOOKUP, 'throw-once');
-    const result = await assembleHandoffBrief(depsOf(target), target.world.systemContext(), {
+    const input: AdviserAssemblyInputV1 = {
       duty: 'adviser', source: target.lines.adviser.ref, sourceRun: target.lines.adviserRun,
       workspaceId: S6A_SCOPE.workspaceId, signal: signal(), understanding: null,
-    });
+      handedScope: [{ kind: 'goal', goalRef: { aggregateType: 'Goal', projectId: S6A_SCOPE.projectId,
+        goalId: 's7c-handoff-adviser-goal' } }],
+    };
+    const result = await assembleHandoffBrief(depsOf(target), target.world.systemContext(), input);
     expect(fault.calls()).toBe(1);
     expect(result).toMatchObject({ status: 'rejected', code: 'unavailable' });
   }, 120_000);

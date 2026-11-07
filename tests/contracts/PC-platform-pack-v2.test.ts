@@ -128,7 +128,7 @@ describe('platform prompt pack v2 (rulings 17–18)', () => {
             'handoff-write-understanding-executor': { packId: 'platform', version: 1, mentionsTools: [] },
             'handoff-write-understanding-adviser': { packId: 'platform', version: 2, mentionsTools: [] },
             'handoff-brief-executor': { packId: 'platform', version: 1, mentionsTools: ['read'] },
-            'handoff-brief-adviser': { packId: 'platform', version: 1, mentionsTools: ['read'] },
+            'handoff-brief-adviser': { packId: 'platform', version: 2, mentionsTools: ['read'] },
             base: { packId: 'platform', version: 2, mentionsTools: [] },
             'skill-platform-work': { packId: 'platform', version: 10, mentionsTools: [] },
             'skill-platform-secretary': { packId: 'platform', version: 9, mentionsTools: [] },

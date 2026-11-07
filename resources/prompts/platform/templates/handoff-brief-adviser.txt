@@ -1,7 +1,8 @@
 ## Handoff brief
 
-You are continuing this line's work in this project. The project scope below is
-now yours. The understanding pointer is the version the predecessor recorded
+You are continuing this line's work in this project. The handed scope listed
+below is now yours; the background that follows is what the line knows, not a
+larger scope. The understanding pointer is the version the predecessor recorded
 before the handoff; read it before you answer.
 
 {{task_round}}

@@ -45,6 +45,11 @@ export const TaskTripleShape = defineShape({ name: 'TaskTriple', fields: { proje
 export const RunRefShape = defineShape({
   name: 'RunRef', fields: { aggregateType: f.literal('Run'), projectId: id, goalId: id, runId: id },
 });
+/** An execution ref as one field: a Work Run or a QueryRun (`contracts/core/identity.ts` `ExecutionRef`). */
+export const ExecutionRefField = f.union('aggregateType', {
+  Run: RunRefShape.fields,
+  QueryRun: QueryRunRefShape.fields,
+});
 export const OperationRefShape = defineShape({
   name: 'OperationRef', fields: { aggregateType: f.literal('CoreOperation'), projectId: id, operationId: id },
 });
