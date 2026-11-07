@@ -16,9 +16,7 @@ import type { GoalRecordTransactionPort, RecordBackendSchemas } from '../../src/
 import type { RecordCountPort, RecordLookupIndex, RecordLookupPort } from '../../src/core/record-store/lookup-ports.js';
 import { commitRow, keyV, keyW, recordSchema, typed } from '../helpers/SP-record-store-support.js';
 import { platformRecordSchemas } from '../state/invariants.js';
-import { NOTE_RECORD_SCHEMAS, S4_NOTE_BY_REVIEW_STATUS_LOOKUP } from '../../src/core/work-graph/persistence/note-record-codecs.js';
-import { DECISION_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/decision-record-codecs.js';
-import { LINE_SETTINGS_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/line-settings-codecs.js';
+import { S4_NOTE_BY_REVIEW_STATUS_LOOKUP } from '../../src/core/work-graph/persistence/note-record-codecs.js';
 
 const dirs: string[] = [];
 afterEach(async () => { for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true }); });
@@ -181,11 +179,7 @@ it('SP-42 sqlite: a full open adds the missing type to a partial file and answer
 
 it('SP-43 sqlite: a fresh open with the full platform registration succeeds and answers lookups', async () => {
   const platform = platformRecordSchemas();
-  const schemas: RecordBackendSchemas = {
-    records: [...platform.records, ...NOTE_RECORD_SCHEMAS.records, ...DECISION_RECORD_SCHEMAS.records, ...LINE_SETTINGS_RECORD_SCHEMAS.records],
-    events: [...platform.events, ...NOTE_RECORD_SCHEMAS.events, ...DECISION_RECORD_SCHEMAS.events, ...LINE_SETTINGS_RECORD_SCHEMAS.events],
-    lookups: [...(platform.lookups ?? []), ...(NOTE_RECORD_SCHEMAS.lookups ?? []), ...(DECISION_RECORD_SCHEMAS.lookups ?? []), ...(LINE_SETTINGS_RECORD_SCHEMAS.lookups ?? [])],
-  };
+  const schemas: RecordBackendSchemas = platform;
   const path = await newPath('sp43-');
   const backend = await openSqlite(path, schemas);
   try {

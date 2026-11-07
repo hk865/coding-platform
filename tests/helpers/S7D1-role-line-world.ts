@@ -25,24 +25,22 @@ import type { ReadResult, WriteResult } from '../../src/contracts/core/results.j
 import type { SessionWorkLink } from '../../src/contracts/core/session.js';
 import type { SessionCard, SessionPage } from '../../src/core/work-graph/model/session-contracts.js';
 import { canonicalKey } from '../../src/contracts/fingerprint.js';
-import { platformRoleProfile } from '../../src/core/agent-runtime/role-profiles.js';
 import { responsibleLinkRef } from '../../src/core/work-graph/sessions/session-responsibility-service.js';
 import { graphWrite } from './AG2b-collaboration-fixture.js';
 import { s6aCardsWorkspace } from './S6A-cards-fixture.js';
 import { refOf } from './S6A-host-fixture.js';
 import {
-  openS6ATwoWorkspaceWorld, S6A_AT, S6A_SCOPE, S6A_SECRETARY_ROLE, S6A_WORK_ROLE,
+  openS6ATwoWorkspaceWorld, S6A_AT, S6A_SCOPE, S6A_WORK_ROLE,
   type S6ABackend, type S6ARequestWorld, type S6ASession,
 } from './S6A-request-fixture.js';
 import { ready } from './S2C-K-scenario-support.js';
 import { sessionOf } from './S7A-fixture.js';
-import { adoptS6BPlan, createS6BLine, governS6B } from './S6B1-fixture.js';
+import { adoptS6BPlan, governS6B, openS6BRoleLine } from './S6B1-fixture.js';
 import { committed } from './S7A-fixture.js';
 import {
   linkTask, openS7CHandoffWorld, openS7CHandoffWorldLight, type S7CHandoffCore,
 } from './S7C-handoff-fixture.js';
 
-const ADVISER_ROLE = platformRoleProfile('adviser').template;
 const MODULE_ID = 's6a-core';
 
 /** One owner write and the exact request that produced it; `replay` sends the same body again (receipt recovery). */
@@ -122,21 +120,27 @@ export async function openS7D1RoleLineWorld(options: { backend: S6ABackend }): P
     const { tasks } = await adoptS6BPlan(a, world.goals.first, {
       label: 's7d1', taskIds: ['s7d1-a', 's7d1-b'], role: S6A_WORK_ROLE.templateId,
     });
-    const first = await sessionOf(world, await createS6BLine(a, {
-      label: 's7d1-adviser-first', role: ADVISER_ROLE, tasks: [tasks[0]!],
-    }));
-    const second = await sessionOf(world, await createS6BLine(a, {
-      label: 's7d1-adviser-second', role: ADVISER_ROLE, tasks: [tasks[1]!],
-    }));
-    const secretary = await sessionOf(world, await createS6BLine(a, {
-      label: 's7d1-secretary', role: S6A_SECRETARY_ROLE,
-    }));
-
     const targets = {
       project: { kind: 'project', ref: { projectId: S6A_SCOPE.projectId } } as WorkLinkTarget,
       goal: { kind: 'goal', ref: goalB } as WorkLinkTarget,
       module: { kind: 'module', ref: { projectId: S6A_SCOPE.projectId, moduleId: MODULE_ID } } as WorkLinkTarget,
     };
+    // T4b: the two adviser lines and the secretary line open through `role-lines/open` with the scopes they hold;
+    // the two adviser Task links stay, through the real `sessions/link`.
+    const first = await sessionOf(world, await openS6BRoleLine(a, { label: 's7d1-adviser-first',
+      duty: 'adviser', scope: [{ kind: 'project' }], requestId: 's7d1-open-adviser-first' }));
+    const second = await sessionOf(world, await openS6BRoleLine(a, { label: 's7d1-adviser-second',
+      duty: 'adviser', scope: [{ kind: 'goal', goalRef: goalB }], requestId: 's7d1-open-adviser-second' }));
+    const secretary = await sessionOf(world, await openS6BRoleLine(a, { label: 's7d1-secretary',
+      duty: 'secretary', scope: [{ kind: 'region', moduleRef: { projectId: S6A_SCOPE.projectId, moduleId: MODULE_ID } }],
+      requestId: 's7d1-open-secretary' }));
+    for (const [index, line] of [first, second].entries()) {
+      const linked = await openLink(world, { line, target: { kind: 'task', ref: tasks[index]! },
+        requestId: `s7d1-world-task-${index + 1}` });
+      if (linked.result.status !== 'committed') {
+        throw new Error(`S7D1 role-line world: the Task link did not commit: ${JSON.stringify(linked.result)}`);
+      }
+    }
 
     async function readCard(line: S6ASession | SessionRef): Promise<SessionCard> {
       return ready(await a.route('sessions/read', refOf(line)) as ReadResult<SessionCard>, 'the Session card');
@@ -176,16 +180,6 @@ export async function openS7D1RoleLineWorld(options: { backend: S6ABackend }): P
           && canonicalKey(entry.ref.target) === canonicalKey(target)))
         .map(card => ({ projectId: card.record.ref.projectId, sessionId: card.record.ref.sessionId }));
       return holders[0] ?? null;
-    }
-
-    // The fixture's three scope links, each through the real route with the pins `sessions/read` answers.
-    const projectLink = await openLink(world, { line: first, target: targets.project, requestId: 's7d1-world-project' });
-    const goalLink = await openLink(world, { line: second, target: targets.goal, requestId: 's7d1-world-goal' });
-    const moduleLink = await openLink(world, { line: secretary, target: targets.module, requestId: 's7d1-world-module' });
-    const refused = ([['project', projectLink.result], ['goal', goalLink.result], ['module', moduleLink.result]] as const)
-      .filter(([, result]) => result.status !== 'committed');
-    if (refused.length > 0) {
-      throw new Error(`S7D1 role-line world: the scope link(s) did not commit: ${JSON.stringify(refused)}`);
     }
 
     return {

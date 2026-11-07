@@ -55,9 +55,12 @@ import {
 import { ROUND_CHAIN_MAX, type RoundSnapshot } from '../../src/contracts/verification.js';
 import { loadPreparedManifest, rehydratePreparedExecution } from '../../src/core/agent-runtime/execution-preparation.js';
 import { decodeStoredEventBody } from '../../src/core/record-store/record-codec.js';
-import type { EncodedDomainEvent, EncodedRecord, RecordBackendSchemas } from '../../src/core/record-store/ports.js';
+import type { EncodedDomainEvent, EncodedRecord } from '../../src/core/record-store/ports.js';
 import { createSqliteRawArtifactStore } from '../../src/core/record-store/sqlite-body-store.js';
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
+import { platformRecordSchemas } from '../../src/composition/create-platform.js';
+
+export { platformRecordSchemas };
 import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-record-codecs.js';
 import { OBSERVED_ARCHITECTURE_RECORD_SCHEMAS } from '../../src/core/work-graph/architecture/architecture-record-codecs.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
@@ -289,28 +292,6 @@ export type InvariantStore = {
 export function invariantStoreOf(directory: string): InvariantStore {
   const artifactsPath = join(directory, 'artifacts.sqlite');
   return { ledgerPath: join(directory, 'ledger.sqlite'), ...(existsSync(artifactsPath) ? { artifactsPath } : {}) };
-}
-
-/**
- * The record schemas `createTargetPlatform` registers (`create-platform.ts`),
- * so the copy is read with the production codecs and every lookup the
- * canonical reader uses is registered (an unregistered lookup would read as
- * a confirmed absence). Exported for a second backend on a scenario ledger
- * (tests/scenarios/support/plan.ts `raceWindow`).
- */
-export function platformRecordSchemas(): RecordBackendSchemas {
-  const groups: RecordBackendSchemas[] = [materialRecordSchemas(), PLAN_RECORD_SCHEMAS, PLAN_STATE_RECORD_SCHEMAS,
-    PLAN_GOVERNANCE_RECORD_SCHEMAS, SESSION_RECORD_SCHEMAS, SESSION_LIFECYCLE_RECORD_SCHEMAS, ROLE_RECORD_SCHEMAS,
-    ROLE_LINE_RECORD_SCHEMAS, UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS,
-    OBSERVED_ARCHITECTURE_RECORD_SCHEMAS, ARCHITECTURE_CATALOG_SCHEMAS, TASK_CLAIM_RECORD_SCHEMAS,
-    EXECUTION_ENTRY_RECORD_SCHEMAS, MODEL_REQUEST_RECORD_SCHEMAS, SESSION_MESSAGE_RECORD_SCHEMAS,
-    PROJECT_BOOTSTRAP_RECORD_SCHEMAS, CONTROL_RECORD_SCHEMAS, EVIDENCE_RECORD_SCHEMAS, QUERY_JOB_RECORD_SCHEMAS,
-    COMPLETION_RECORD_SCHEMAS, SESSION_ANOMALY_RECORD_SCHEMAS];
-  return {
-    records: groups.flatMap((group) => group.records),
-    events: [...groups.flatMap((group) => group.events), ...EXECUTION_HISTORY_RECORD_SCHEMAS.events],
-    lookups: groups.flatMap((group) => group.lookups ?? []),
-  };
 }
 
 /** The aggregate types of §11.0 (plus Evidence and TaskEvidenceIndex for I-3, I-7, I-13, I-15). */

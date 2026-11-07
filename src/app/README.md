@@ -97,7 +97,7 @@
 | `listDiskPromptPacks` | `src/app/prompt-packs.ts:335` | 生成 `prompts/packs/list`：platform 在前，其余按 id | 设置页列出提示词包时 |
 | `parseWorkbenchCliConfig` | `src/app/main.ts:72` | 把可序列化 CLI 文件纯转换成本地 Host 选项 | CLI 与测试复用同一份配置转换 |
 | `runWorkbenchCli` | `src/app/main.ts:196` | 读配置、启动 loopback Host、返回退出码 | `main` 入口；token 不落盘、不打印 |
-| `messageExpiry` | `src/composition/create-platform.ts:1381` | X 的过期 owner 组：`recordExpiry`/`readDueWaits` 逐成员经 `trackedCall` 发布（`readExpiryCount` 只进 Runtime，不在公开组里）；Host 心跳每 workspace 读一页到期等待并记录到期 | Host 的到期扫描；无路由、不可枚举 |
+| `messageExpiry` | `src/composition/create-platform.ts:1386` | X 的过期 owner 组：`recordExpiry`/`readDueWaits` 逐成员经 `trackedCall` 发布（`readExpiryCount` 只进 Runtime，不在公开组里）；Host 心跳每 workspace 读一页到期等待并记录到期 | Host 的到期扫描；无路由、不可枚举 |
 | `sendPendingNotice` / `runReworkNoticeCheck` | `src/app/host.ts:2483` / `:2621` | L2 的唯一待发发送与返工通知检查：`sendPendingNotice` 只在提交后回调、失败保留同一 `requestId`；attention 的收件人先问目标的负责参谋（`platform.recipients.resolveRecipient`，L35 的唯一责任收件人读），没有再回配置目标，读失败这一趟不处理、下趟重试；返工检查按 `platform.reworkNotices` 分页，按 source key + branch 复用已存投递，写 `platform.messages.appendHostSystemOutbox` 未提交就不发送、不推进，逐 workspace 捕获后下趟重试；本地执行者 grant 增 `request_rework`/`request_recheck`，秘书名单增 `send/ack/respond/withdraw_session_message` 与 `create_member`/`read_requests` | Host 的注意力发送与返工通知；不要另写待发 helper、收件人解析、outbox 写端或第二套 grant 名单 |
 
 ## 内部用

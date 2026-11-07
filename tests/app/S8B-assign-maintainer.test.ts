@@ -632,6 +632,8 @@ describe('R2-01 notice summary limit', () => {
       adviser.grant = { ...adviser.grant, tools: [...(adviser.grant.tools ?? []), 'assign_module_maintainer'] };
     });
     try {
+      const before = await target.main.readNotices({ categories: ['project_notice'] });
+      const seen = new Set(before.notices.map(notice => notice.itemKey));
       const moduleId = 'm'.repeat(512);
       await addAssignModules(target, [{ ref: { projectId: target.goal.projectId, moduleId },
         name: 'Long module', responsibility: 'Own the long module', paths: ['long'], interfaces: [] }]);
@@ -640,6 +642,7 @@ describe('R2-01 notice summary limit', () => {
       await startAssignToolRun(target, { label: 'limit', moduleId, line: L1,
         callId: 's8b-limit-call', reason: 'the long module reason' });
       const notices = await target.main.readNotices({ categories: ['project_notice'] });
+      notices.notices = notices.notices.filter(notice => !seen.has(notice.itemKey));
       expect(notices.notices).toHaveLength(1);
       expect(utf8ByteLength(notices.notices[0]!.summary)).toBeLessThanOrEqual(512);
       expect(notices.notices[0]!.summary).toContain('m'.repeat(244));
@@ -659,6 +662,8 @@ describe('B02-tool-auto (W0, adviser A1, auto)', () => {
       adviser.grant = { ...adviser.grant, tools: [...(adviser.grant.tools ?? []), 'assign_module_maintainer'] };
     });
     try {
+      const before = await target.main.readNotices({ categories: ['project_notice'] });
+      const seen = new Set(before.notices.map(notice => notice.itemKey));
       await addAssignModules(target);
       const L1 = await sessionOf(target.world, await createS6BLine(target.main,
         { label: 's8b-auto-L1', role: EXECUTOR_ROLE }));
@@ -672,6 +677,7 @@ describe('B02-tool-auto (W0, adviser A1, auto)', () => {
       }
       // The replay is the same request identity: exactly one notice remains.
       const notices = await target.main.readNotices({ categories: ['project_notice'] });
+      notices.notices = notices.notices.filter(notice => !seen.has(notice.itemKey));
       expect(notices.notices).toHaveLength(1);
       const notice = notices.notices[0]!;
       expect(notice.category).toBe('project_notice');

@@ -1038,30 +1038,9 @@ function positionCoversScope(position: RoleLinePositionV1, scope: EffectiveScope
   if (scope.kind === 'goal') return position.scope.kind === 'goal' && position.scope.goalId === scope.goalRef.goalId;
   return position.scope.kind === 'region' && position.scope.moduleId === scope.moduleRef.moduleId;
 }
-
-/** Trusted local composition root. Old Ledger/Index/Vault instances cannot be
- * supplied. No business bootstrap/claim API is invented by the storage factory. */
-export async function createTargetPlatform(options: TargetPlatformOptions) {
-  const now = options.now ?? (() => new Date().toISOString());
-  // Slice 1 (spec §2.8): the validated archive policy this Host runs with.
-  const archivePolicy = sessionArchivePolicyOf(options.sessionArchivePolicy);
-  const hostInstance: HostInstanceFacts | undefined = options.hostInstance === undefined ? undefined
-    : { hostInstanceId: options.hostInstance.hostInstanceId, lease: options.hostInstance.lease,
-      ...(options.hostInstance.takeover === undefined ? {} : { takeover: options.hostInstance.takeover }) };
-  // C8 (A.2 step 5.6): the Host-installed automatic-rework policy; the defaults (3 / true) until the
-  // Host installs its settings (`registerAutomationPolicy`). Read live by the requeue owner and the read model.
-  let automationPolicy: TaskAutomationPolicyV1 = { ...DEFAULT_TASK_AUTOMATION_POLICY };
-  const currentAutomationPolicy = (): TaskAutomationPolicyV1 => ({ ...automationPolicy });
-  // L13: the ONE platform-root resource-cap source. A directly built platform
-  // with no Host source uses the machine-memory default; the Host's holder is
-  // passed through unchanged and read live by the Kernel on every command.
-  const resourceCaps: ResourceCapSource = options.resourceCaps ?? (() => {
-    const defaults = defaultResourceCapSettings(totalmem());
-    const fixed = { memoryMaxBytes: defaults.memoryMaxMiB * MIB, tasksMax: defaults.tasksMax };
-    return { current: () => fixed };
-  })();
+export function platformRecordSchemas() {
   const materialsSchema = materialRecordSchemas();
-  const schemas = {
+  return {
     records: [...materialsSchema.records, ...PLAN_RECORD_SCHEMAS.records, ...PLAN_STATE_RECORD_SCHEMAS.records,
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.records, ...SESSION_RECORD_SCHEMAS.records, ...SESSION_LIFECYCLE_RECORD_SCHEMAS.records,
       ...ROLE_RECORD_SCHEMAS.records, ...OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.records,
@@ -1120,6 +1099,30 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       ...GOAL_COPY_RECORD_SCHEMAS.lookups ?? [], ...INITIALIZATION_ADOPTION_SCHEMAS.lookups ?? [],
       ...HANDOFF_BRIEF_RECORD_SCHEMAS.lookups ?? [], ...ROLE_LINE_RECORD_SCHEMAS.lookups ?? [], ...ROLE_LINE_ORCHESTRATION_SCHEMAS.lookups ?? []],
   };
+}
+
+/** Trusted local composition root. Old Ledger/Index/Vault instances cannot be
+ * supplied. No business bootstrap/claim API is invented by the storage factory. */
+export async function createTargetPlatform(options: TargetPlatformOptions) {
+  const now = options.now ?? (() => new Date().toISOString());
+  // Slice 1 (spec §2.8): the validated archive policy this Host runs with.
+  const archivePolicy = sessionArchivePolicyOf(options.sessionArchivePolicy);
+  const hostInstance: HostInstanceFacts | undefined = options.hostInstance === undefined ? undefined
+    : { hostInstanceId: options.hostInstance.hostInstanceId, lease: options.hostInstance.lease,
+      ...(options.hostInstance.takeover === undefined ? {} : { takeover: options.hostInstance.takeover }) };
+  // C8 (A.2 step 5.6): the Host-installed automatic-rework policy; the defaults (3 / true) until the
+  // Host installs its settings (`registerAutomationPolicy`). Read live by the requeue owner and the read model.
+  let automationPolicy: TaskAutomationPolicyV1 = { ...DEFAULT_TASK_AUTOMATION_POLICY };
+  const currentAutomationPolicy = (): TaskAutomationPolicyV1 => ({ ...automationPolicy });
+  // L13: the ONE platform-root resource-cap source. A directly built platform
+  // with no Host source uses the machine-memory default; the Host's holder is
+  // passed through unchanged and read live by the Kernel on every command.
+  const resourceCaps: ResourceCapSource = options.resourceCaps ?? (() => {
+    const defaults = defaultResourceCapSettings(totalmem());
+    const fixed = { memoryMaxBytes: defaults.memoryMaxMiB * MIB, tasksMax: defaults.tasksMax };
+    return { current: () => fixed };
+  })();
+  const schemas = platformRecordSchemas();
   // Slice 1 (spec §2.8): every one of the six new indexes must be part of the
   // real record-store schema set this Host opens. The declared
   // `SLICE1_LOOKUP_INDEXES` table and the codec-owned bundles stay in sync.

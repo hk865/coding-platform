@@ -34,11 +34,11 @@ import { vi } from 'vitest';
 import * as handoffEntryModule from '../../src/business/workflow/handoff-tool-entry.js';
 
 import {
-  S6A_AT, S6A_SCRIBE_ROLE, S6A_SCOPE, S6A_WORK_ROLE, S6A_SECRETARY_ROLE,
+  S6A_AT, S6A_SCOPE, S6A_WORK_ROLE, S6A_SECRETARY_ROLE,
   type S6ABackend, type S6AExtraBinding, type S6ASession,
 } from './S6A-request-fixture.js';
 import { openS6AHostWorld, type S6AHostWorld } from './S6A-host-fixture.js';
-import { adoptS6BPlan, createS6BLine, governS6B, holdS6BRequestRound, understandingPointer } from './S6B1-fixture.js';
+import { adoptS6BPlan, createS6BLine, governS6B, holdS6BRequestRound, openS6BRoleLine, understandingPointer } from './S6B1-fixture.js';
 import { understandingNote } from './S4C2-note-card-fixture.js';
 import { openS7B2ConsumeWorld, type S7B2ConsumeWorld } from './S7B2-consumable-sessions.js';
 import { ready, sessionOf, S7A_REPLY_TOOLS, committed } from './S7A-fixture.js';
@@ -444,8 +444,8 @@ async function handoffCore(world: S6AHostWorld,
     const receipts: WorkflowStepReceipt[] = [];
     await driveWorkflow(world.ag2b, adviserClaim, { stopBefore: 'open_checks', receipts });
     const adviserRun = claimRunOf(receipts);
-    const scribe = await sessionOf(world, await createS6BLine(main, { label: 's7c-handoff-scribe',
-      role: S6A_SCRIBE_ROLE }));
+    const scribe = await sessionOf(world, await openS6BRoleLine(main, { label: 's7c-handoff-scribe',
+      duty: 'scribe', scope: [], requestId: 's7c-handoff-scribe-open' }));
     const fixed = await sessionOf(world, await createS6BLine(main, { label: 's7c-handoff-fixed',
       role: EXECUTOR_ROLE }));
 

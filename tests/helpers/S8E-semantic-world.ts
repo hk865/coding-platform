@@ -88,7 +88,7 @@ import {
   S6A_SCRIBE_ROLE, S6A_SCOPE, type S6AExtraBinding, type S6ASession,
 } from './S6A-request-fixture.js';
 import {
-  adoptS6BPlan, createS6BLine, holdS6BRequestRound, type S6BHeldRound, type S6BLine,
+  adoptS6BPlan, createS6BLine, holdS6BRequestRound, openS6BRoleLine, type S6BHeldRound, type S6BLine,
 } from './S6B1-fixture.js';
 import { sessionOf } from './S7A-fixture.js';
 import type { S4ANoteLimits } from './S4A-note-fixture.js';
@@ -820,7 +820,8 @@ export async function openS8ESemanticWorld(options: S8EWorldOptions = {}): Promi
     const taskCount = options.scribeTasks ?? 24;
     const taskIds = Array.from({ length: taskCount }, (_, index) => `s8e-task-${String(index + 1).padStart(2, '0')}`);
     const { tasks } = await adoptS6BPlan(ws, S8E_GOAL_REF, { label: 's8e', role: S6A_SCRIBE_ROLE.templateId, taskIds });
-    const line = await createS6BLine(ws, { label: 's8e-scribe', role: S6A_SCRIBE_ROLE });
+    const line = await openS6BRoleLine(ws, { label: 's8e-scribe', duty: 'scribe', scope: [],
+      requestId: 's8e-scribe-open' });
 
     // 4. E2-14a/E2-14b: a second Goal, its one Plan task assigned to the
     // `local-workbench` template and the line responsible for it, all public.

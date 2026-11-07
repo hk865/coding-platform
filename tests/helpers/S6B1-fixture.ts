@@ -27,6 +27,9 @@
 import type { OperationRef } from '../../src/contracts/core/operations.js';
 import type { PreparedQueryExecution, PreparedQueryManifestV1 } from '../../src/contracts/core/prepared-execution.js';
 import type { RoleConfigurationRef, SessionAggregateRef, SessionRef, SessionWorkLinkRef, VersionPin, WorkLinkTarget } from '../../src/contracts/core/identity.js';
+import type { RoleScopeV1 } from '../../src/contracts/role-lines.js';
+import type { WriteResult } from '../../src/contracts/core/results.js';
+import type { RoleLineLineV1 } from '../../src/core/work-graph/sessions/role-line-operations.js';
 import type { SessionWorkLink } from '../../src/contracts/core/session.js';
 import type { TaskTriple } from '../../src/contracts/dispatch.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
@@ -100,6 +103,19 @@ export async function createS6BLine(ws: S6ACardsWorkspace,
 
 export type S6BLine = Awaited<ReturnType<typeof createS6BLine>>;
 
+/** `role-lines/open` of one duty with its scopes; answers the same `S6BLine` shape as `createS6BLine`. */
+export async function openS6BRoleLine(ws: S6ACardsWorkspace, input: {
+  label: string; duty: 'adviser' | 'secretary' | 'scribe'; scope: readonly RoleScopeV1[]; requestId: string;
+}): Promise<S6BLine> {
+  const answer = await ws.post('role-lines/open', graphWrite(ws.scope, {
+    duty: input.duty, scope: [...input.scope],
+  }, input.requestId)) as WriteResult<RoleLineLineV1>;
+  if (answer.status !== 'committed' || answer.value.session === null) {
+    throw new Error(`S6B: the ${input.label} line did not open: ${JSON.stringify(answer)}`);
+  }
+  return { label: input.label, ref: answer.value.session, operation: answer.value.operation };
+}
+
 /** `goal`'s first Plan with three work tasks of the work role, a source line responsible for all three and a target
  * line responsible for none: the real Sessions and Task links of the handoff records. Needs the governance. */
 export async function seedS6BHandoffLines(ws: S6ACardsWorkspace, goal: GoalRef, label = 'handoff') {
@@ -143,7 +159,10 @@ export async function seedS6BScribe(world: S6ARequestWorld) {
   const governance = await governS6B(world, main, world.goals);
   const { plan, tasks } = await adoptS6BPlan(main, goal, { label: 'scribe', role: S6A_SCRIBE_ROLE.templateId,
     taskIds: Array.from({ length: SCRIBE_TASKS }, (_, index) => `s6b-scribe-${index + 1}`) });
-  const line = await createS6BLine(main, { label: 'scribe', role: S6A_SCRIBE_ROLE });
+  // The project's one project-scope scribe line through the real `role-lines/open`; with no module link it manages
+  // the project scope (the same state the opening scribe has), and its creation operation is the open's own.
+  const line = await openS6BRoleLine(main, { label: 'scribe', duty: 'scribe', scope: [],
+    requestId: `s6b-scribe-${S6A_SCOPE.workspaceId}` });
   let used = 0;
   const nextTask = (): TaskTriple => {
     const task = tasks[used];

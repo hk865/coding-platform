@@ -43,7 +43,7 @@ import { OPERATOR, S6A_SCOPE, S6A_SCRIBE_ROLE, S6A_SCRIBE_ROLE_BINDING, S6A_WORK
 import { s6aCardsWorkspace, type S6ACardsWorkspace } from './S6A-cards-fixture.js';
 import { openS6AHostWorld, type S6AHostWorld } from './S6A-host-fixture.js';
 import { ag2bPlanDraft } from './AG2b-collaboration-fixture.js';
-import { createS6BLine, governS6B } from './S6B1-fixture.js';
+import { createS6BLine, governS6B, openS6BRoleLine } from './S6B1-fixture.js';
 import { catalogRevisionDeps } from './S8C-catalog-world.js';
 import { sessionOf } from './S7A-fixture.js';
 import { withConfiguredHost } from './S7C-member-fixture.js';
@@ -586,8 +586,8 @@ export async function openS8COtherGoalReaders(world: S8CRepairWorld): Promise<S8
     workLines.set(taskId, await createS6BLine(main, { label: `r9-other-work-${taskId}-${goal.goalId}`,
       role: S6A_WORK_ROLE, tasks: triples([taskId]) }));
   }
-  const scribeLine = await createS6BLine(main, { label: `r9-other-scribe-${goal.goalId}`, role: S6A_SCRIBE_ROLE,
-    tasks: triples(['t3']) });
+  const scribeLine = await openS6BRoleLine(main, { label: `r9-other-scribe-${goal.goalId}`,
+    duty: 'scribe', scope: [], requestId: `r9-other-scribe-open-${goal.goalId}` });
 
   function contextOf(runRef: RunRef, roleBinding: RoleBindingRefV1): CoreCallContext {
     return { projectId: scope.projectId, workspaceId: scope.workspaceId,

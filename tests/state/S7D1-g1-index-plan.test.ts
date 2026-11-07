@@ -58,7 +58,7 @@ describe.each(['memory', 'sqlite'] as const)('G1-index-plan (%s): one lookup per
     await pages({ kind: 'goal', ref: goal }, [
       plainSessionRef(lines.lines.secretary.ref).sessionId,
       plainSessionRef(lines.lines.second.ref).sessionId,
-    ]);
+    ].sort());
 
     const reopened = await lines.openLink({ line: lines.lines.first, target: { kind: 'project', ref: project },
       requestId: 's7d1-g1-reopen-project-first' });
@@ -70,6 +70,6 @@ describe.each(['memory', 'sqlite'] as const)('G1-index-plan (%s): one lookup per
     await pages({ kind: 'project', ref: project }, [
       plainSessionRef(worker.ref).sessionId,
       plainSessionRef(lines.lines.first.ref).sessionId,
-    ]);
+    ].sort());
   }, 180_000);
 });

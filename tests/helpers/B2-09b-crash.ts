@@ -20,17 +20,11 @@ import { createCommandRerunRequestService } from '../../src/core/work-graph/task
 import { readTaskClosure } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
 import type { WorkspaceScope } from '../../src/contracts/core/identity.js';
-import { COMMAND_RERUN_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/command-rerun-request-codecs.js';
 import { platformRecordSchemas } from '../state/invariants.js';
 
-/** The invariant registry plus the CRR schemas (and its three lookup indexes). */
+/** The platform's one record registry; it already carries the CRR schemas and their three lookup indexes. */
 function crrSchemas() {
-  const base = platformRecordSchemas();
-  return {
-    records: [...base.records, ...COMMAND_RERUN_REQUEST_RECORD_SCHEMAS.records],
-    events: [...base.events, ...COMMAND_RERUN_REQUEST_RECORD_SCHEMAS.events],
-    lookups: [...(base.lookups ?? []), ...(COMMAND_RERUN_REQUEST_RECORD_SCHEMAS.lookups ?? [])],
-  };
+  return platformRecordSchemas();
 }
 
 /** One Task's requests, all states, paged to the end through the owner read port. */

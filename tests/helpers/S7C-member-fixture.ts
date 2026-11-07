@@ -40,13 +40,13 @@ import { ag2bPlanDraft, graphWrite, plain } from './AG2b-collaboration-fixture.j
 import { s6aCardsWorkspace } from './S6A-cards-fixture.js';
 import { openS6AHostWorld, type S6AHostWorld, type S6AHostWorldOptions, type S6AToolCall } from './S6A-host-fixture.js';
 import {
-  S6A_AT, S6A_SCRIBE_ROLE, S6A_SCOPE,
+  S6A_AT, S6A_SCOPE,
   type S6ABackend, type S6AExtraBinding, type S6ASession,
 } from './S6A-request-fixture.js';
-import { createS6BLine, governS6B, holdS6BRequestRound, type S6BHeldRound } from './S6B1-fixture.js';
+import { createS6BLine, governS6B, holdS6BRequestRound, openS6BRoleLine, type S6BHeldRound } from './S6B1-fixture.js';
 import { valueOf } from './S6B3-fixture.js';
 import { sessionOf } from './S7A-fixture.js';
-import { openLink } from './S7D1-role-line-world.js';
+import { assignGoalAdviserLine } from './S7C-handoff-fixture.js';
 import { draftFrom } from '../scenarios/support/common.js';
 import type { PreparedQueryManifestV1 } from '../../src/contracts/core/prepared-execution.js';
 
@@ -301,13 +301,10 @@ export async function openS7C1World(options: { backend?: S6ABackend; adviser?: b
     const workLine = await sessionOf(world, await createS6BLine(main, { label: 's7c-work', role: CREATOR_ROLE }));
     const noCreateLine = await sessionOf(world, await createS6BLine(main, { label: 's7c-no-create', role: EXECUTOR_ROLE }));
     const adviserLine = adviser
-      ? await sessionOf(world, await createS6BLine(main, { label: 's7c-adviser', role: ADVISER_ROLE })) : null;
-    if (adviserLine !== null) {
-      const linked = await openLink(world, { line: adviserLine, target: { kind: 'goal', ref: goal },
-        requestId: 's7c-adviser-goal-link' });
-      valueOf(linked.result, 'committed', 'the s7c-adviser Goal link');
-    }
-    const scribeLine = await sessionOf(world, await createS6BLine(main, { label: 's7c-scribe', role: S6A_SCRIBE_ROLE }));
+      ? await assignGoalAdviserLine(world, { goal, label: 's7c-adviser', requestId: 's7c-adviser-goal-link' })
+      : null;
+    const scribeLine = await sessionOf(world, await openS6BRoleLine(main, { label: 's7c-scribe',
+      duty: 'scribe', scope: [], requestId: 's7c-scribe-open' }));
     const fixedLine = await sessionOf(world, await createS6BLine(main, { label: 's7c-fixed', role: EXECUTOR_ROLE }));
     const secretary = await world.createSecretary('s7c-secretary');
 
