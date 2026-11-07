@@ -69,7 +69,7 @@ export const PLATFORM_PROMPT_PACK_V1 = {
       },
       "scribe-reminder": {
         "file": "templates/scribe-reminder.txt",
-        "version": 1,
+        "version": 2,
         "mentionsTools": [] as [],
       },
       "continuation-brief": {
@@ -240,7 +240,7 @@ export const PLATFORM_PROMPT_PACK_V1 = {
     "link-breaks-input": "联系 {{noteId}}（版本 {{version}}）被这次改动改断了：证据对不上（下标 {{missing}}）。交结果之前请重写或撤下它。",
     "intervention-planning": "{{prelude}}\n\n{{role}}{{goal}}{{plan}}{{message}}",
     "plan-review-input": "{{prelude}}\n\n## 计划候选审阅\n这一轮只审计划，不执行任务、不改工作区、不写证据。\n**审阅范围：只审这一版新写或改动的任务书、义务和依赖差异。已采用的目标、阶段骨架和已采用的段是依据，不是被审对象；不要重审它们。发现上层缺陷时按第 7 节另走。**\n## 目标与已采用计划（依据）\n{{goal}}\n{{plan}}\n## 这一版的候选（这一版新写内容的完整任务书、义务和依赖差异）\n{{candidate}}\n## 请求\n{{message}}\n## 你要回答\n1. 任务边界是否合适；2. 任务书够不够让执行者不猜（范围、先看什么、怎么做、接口、验收、不做什么、复用什么）；\n3. 依赖和并行安排；4. 前提对不对；5. 有没有漏掉义务；6. 有没有该复用的；\n7. 这一版写到的每一段有没有阶段 gate（`taskKind: gate`、`scope: stage`，已采用计划里已有的也算）及其义务；缺了写成 finding，写清哪一段。\n结论只能是 pass 或 fix；fix 时每条 finding 写清哪个任务、要改什么。\n{{#tool:submit_plan_review}}用 `submit_plan_review` 填这张表：`verdict` 和 `findings` 是你要填的全部；`schemaVersion`/`kind` 由工具填。pass 可以不带 findings，fix 至少要一条。{{/tool:submit_plan_review}}\n如果这一轮没有这个工具（例如夹具直接写文字），按同一 JSON 形状交出全文，目标循环同样解析。\n",
-    "scribe-reminder": "{{marker}}待审 {{pendingCount}} 条，该更新 {{updateDueCount}} 条。锚点：{{anchors}}",
+    "scribe-reminder": "{{marker}}待审 {{pendingCount}} 条，该更新 {{updateDueCount}} 条，断了的联系 {{brokenCount}} 条。锚点：{{anchors}}",
     "continuation-brief": "## 接续说明\n{{marker}}{{body}}{{blockedOmission}}{{bodyOmission}}{{anomalies}}{{review}}{{blocked}}\n\n### 继续之前\n- “结果未知”的工具调用可能已经产生副作用，重做之前先核实当前状态。\n- “没有执行”的工具调用没有产生结果，需要时重新发起。\n- 本说明只陈述持久记录中的事实；写明“无法确定”的地方不代表没有变化。",
     "stale-files-reminder": "- 文件可能已经变化，编辑前先重新读取。",
     "unknown-call-review": "## Unknown-call review\n这一轮只核对，不做任务，不改工作区；不许重跑下面的命令。\n\n### 工作区采集\n{{workspaceLines}}\n\n### 已经写过的结论\n{{writtenLines}}\n\n### 要核对的调用{{items}}\n\n### 每条要回答两件事\n1. 做没做完：已做 / 没做 / 做了一半 / 判断不了，附依据；\n2. 会不会就是 Host 崩溃的原因：不太可能 / 可能 / 判断不了，附依据（命令本身、留下的痕迹）。",
@@ -1120,7 +1120,7 @@ export const PLATFORM_PROMPT_PACK_V1 = {
     },
     "scribe-reminder": {
       "packId": "platform",
-      "version": 1,
+      "version": 2,
       "mentionsTools": [],
     },
     "continuation-brief": {

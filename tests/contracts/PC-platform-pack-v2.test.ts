@@ -111,7 +111,7 @@ describe('platform prompt pack v2 (rulings 17–18)', () => {
             'link-breaks-input': { packId: 'platform', version: 1, mentionsTools: [] },
             'intervention-planning': { packId: 'platform', version: 1, mentionsTools: [] },
             'plan-review-input': { packId: 'platform', version: 1, mentionsTools: [] },
-            'scribe-reminder': { packId: 'platform', version: 1, mentionsTools: [] },
+            'scribe-reminder': { packId: 'platform', version: 2, mentionsTools: [] },
             'continuation-brief': { packId: 'platform', version: 2, mentionsTools: [] },
             'stale-files-reminder': { packId: 'platform', version: 1, mentionsTools: [] },
             'unknown-call-review': { packId: 'platform', version: 1, mentionsTools: [] },

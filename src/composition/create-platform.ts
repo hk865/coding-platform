@@ -2736,6 +2736,10 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // injected-clock moment the map last became empty; its initial value is the moment it is first
     // read (the platform build does not read the clock); the Host reads it only while the count is zero.
     const inFlight = new Map<string, number>();
+    // L7/S1: the injected-clock moment each ref's count last reached zero, keyed by the ref's
+    // canonical JSON like `inFlight` itself. The scribe reminder reads it to date a held Run's
+    // start; memory only, never persisted and never cleaned (there is no forget entry).
+    const endedAt = new Map<string, string>();
     let idleSince: string | null = null;
     function countInFlight<T>(ref: unknown, call: () => Promise<T>): Promise<T> {
       // A public start route's body is not type-checked: a non-record ref never counts and is
@@ -2748,6 +2752,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         if (n > 0) inFlight.set(key, n);
         else {
           inFlight.delete(key);
+          endedAt.set(key, now());
           if (inFlight.size === 0) idleSince = now();
         }
       });
@@ -3168,6 +3173,13 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const listNotes = noteReads.listNotes;
     const { listPlanVersions, listCatalogVersions } = noteVersions;
     const countCurrentNotes = scribeScope.countCurrentNotes;
+    // S1/L3: the one stored-head read both the todo's managing scope and the broken-link scope below
+    // use. A missing or failed head is the read's own rejection, never a fabricated scope.
+    const headOf = async (ctx: CoreCallContext, noteId: string) => {
+      const heads = await readHeadBatch(backend.records, ctx.projectId, [noteId], { requireAll: true });
+      if (!heads.ok) return rejected('unavailable', heads.reason);   // BatchFailure.code is a string (note-batch-reader.ts:21)
+      return { status: 'ready' as const, value: heads.value.get(noteId)! };
+    };
     // b08/c24: the managing scope of one scribe todo. This public read owns its per-call cache, like
     // `countCurrentNotes` (scribe-scope.ts:321–:322). An `updateDue` todo has no head (note-scribe-todos.ts:198–:201);
     // its goal/stage anchors are one goal's, and a stage anchor is that goal's class, so the goal anchor gives
@@ -3178,9 +3190,23 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       if (input.todo.noteId === null) {
         return scribeScope.managingScopeOfAnchors(ctx, [{ kind: 'goal', goalId: input.goalId! }], call);
       }
-      const heads = await readHeadBatch(backend.records, ctx.projectId, [input.todo.noteId], { requireAll: true });
-      if (!heads.ok) return rejected('unavailable', heads.reason);   // BatchFailure.code is a string (note-batch-reader.ts:21)
-      return scribeScope.managingScopeOf(ctx, heads.value.get(input.todo.noteId)!, call);
+      const head = await headOf(ctx, input.todo.noteId);
+      if (head.status !== 'ready') return head;
+      return scribeScope.managingScopeOf(ctx, head.value, call);
+    };
+    // L3: the managing scope of a broken-link head, read only in the composition root so
+    // `note-contracts.ts` keeps its public shape. Only a head still at the registered version
+    // and accepted/reviewed has a scope; another version or state has none (a ready null).
+    const brokenLinkScope = async (ctx: CoreCallContext, input: { noteId: string; version: number }):
+      Promise<ReadResult<NoteScopeV1 | null>> => {
+      const call = newScribeScopeCall();
+      const head = await headOf(ctx, input.noteId);
+      if (head.status !== 'ready') return head;
+      if (head.value.version !== input.version
+        || (head.value.state !== 'accepted' && head.value.state !== 'reviewed')) {
+        return { status: 'ready', value: null };
+      }
+      return scribeScope.managingScopeOf(ctx, head.value, call);
     };
     // Slice 4B R16/L22: the second `checkNotes` call site (the write envelope and
     // 4C's routes bind it). Exposed now so NE3 tests run through the real holder.
@@ -3234,12 +3260,15 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       return { status: 'ready', value: found[0] ?? null };
     };
     const notes: NoteWritePort & NoteReadPort & NoteMemoryReadPort & NoteScopeReadPort & NoteCheckPort
-      & NoteListReadPort & SemanticLinksReader & typeof noteVersions & Pick<NoteHeadCheckPort, 'doubtfulLinks'> & {
+      & NoteListReadPort & SemanticLinksReader & typeof noteVersions
+      & Pick<NoteHeadCheckPort, 'doubtfulLinks' | 'brokenLinks'> & {
         readScribeTodos: NoteScribeTodoPort['readScribeTodos'];
         readLedgerCursor: NoteScribeTodoPort['readLedgerCursor'];
         goalIdsForWorkspace: (ctx: CoreCallContext) => Promise<ReadResult<string[]>>;
         resolveScribeRecipient: (ctx: CoreCallContext, scope: NoteScopeV1) => Promise<ReadResult<SessionRef | null>>;
         managingScopeOf: typeof managingScopeOf;
+        brokenLinkScope(ctx: CoreCallContext,
+          input: { noteId: string; version: number }): Promise<ReadResult<NoteScopeV1 | null>>;
       } = {
         writeNote, reviewNote, withdrawNote, readNote, listByAnchor,
         listCurrentVersions: noteReads.listCurrentVersions, countCurrentNotes, checkNotes,
@@ -3255,9 +3284,11 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         readScribeTodos: noteScribeTodos.readScribeTodos,
         readLedgerCursor: noteScribeTodos.readLedgerCursor,
         doubtfulLinks: noteCheck.doubtfulLinks,
+        brokenLinks: noteCheck.brokenLinks,
         goalIdsForWorkspace,
         resolveScribeRecipient,
         managingScopeOf,
+        brokenLinkScope,
       };
     // Slice 1 (spec §3.3): the responsibility port's three public writes. Every
     // member is read here so the public `closeTerminalResponsibility` write (a
@@ -4423,7 +4454,14 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       overlapGates: overlapGatePort,
       workspace: workspace.tools, runtime: runtimePort, workflow, kernelStores,
       // The ONE in-flight count of Runs and QueryRuns entered through startRun/startQuery; memory only.
-      runtimeInFlight: { count: (): number => inFlight.size, idleSince: (): string => idleSince ??= now() },
+      // L7/S1: `has(ref)` asks whether that Run still runs; `endedAt(ref)` is its count's last zero.
+      // Both take the ref's canonical JSON key (the same key `countInFlight` writes).
+      runtimeInFlight: {
+        count: (): number => inFlight.size,
+        idleSince: (): string => idleSince ??= now(),
+        has: (ref: string): boolean => inFlight.has(ref),
+        endedAt: (ref: string): string | null => endedAt.get(ref) ?? null,
+      },
       // Slice 3: the same owner instances the Runtime received; the graph routes
       // read through `graphContext` and a caller could reuse `taskInputs`.
       graphContext, taskInputs,

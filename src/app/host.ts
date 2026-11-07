@@ -272,6 +272,8 @@ const scopeKey = (scope: CoreScope): string => `${scope.projectId}\u0000${scope.
 // send requestId, so the reminder's own leading text is the durable marker).
 const SCRIBE_PENDING_THRESHOLD = 10;
 const SCRIBE_UPDATE_DUE_THRESHOLD = 5;
+const SCRIBE_BROKEN_LINK_THRESHOLD = 5;
+const SCRIBE_BROKEN_LINK_AGE_MS = 10 * 60_000;
 const SCRIBE_REMINDER_PERIOD_MS = 60_000;
 // Background link batch: re-check doubtful links when the platform has been idle
 // long enough, or when enough are waiting and the last batch is old enough. A
@@ -2354,6 +2356,20 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     /** True once this recipient's whole inbox has been paged once since start. */
     recovered: boolean;
   };
+  type BrokenTiming = {
+    noteId: string;
+    version: number;
+    firstSeenMs: number;
+    /** null = 还没开始计时（heldByRun 还在跑）。 */
+    startedAtMs: number | null;
+  };
+  type ScribeReminderBucket = {
+    scope: NoteScopeV1;
+    pendingCount: number; updateDueCount: number; immediate: boolean;
+    identities: Set<string>; anchorNames: Set<string>;
+    brokenIdentities: Set<string>;
+    brokenCount: number; agedCount: number;
+  };
   type ScribeReminderState = {
     lastCheckAtMs: number;
     /** `undefined` = no check computed yet; otherwise the cursor of the last check. */
@@ -2362,6 +2378,9 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     pendingSendByRecipient: Map<string, SessionMessageSendInputV1>;
     sentRequestIdByRecipient: Map<string, string>;
     recipients: Map<string, ScribeRecipientMemory>;
+    brokenTiming: Map<string, BrokenTiming>;   // key = `${noteId}@${version}`
+    brokenKeys: Map<string, string>;           // key = canonicalJson(scope) -> that bucket's brokenKey
+    bucketRecipients: Map<string, string | null>; // bucket -> recipient sessionId; null = no scribe
   };
   const scribeReminderStates = new Map<string, ScribeReminderState>();
   function scribeReminderState(key: string): ScribeReminderState {
@@ -2369,7 +2388,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     if (existing !== undefined) return existing;
     const created: ScribeReminderState = { lastCheckAtMs: Number.NEGATIVE_INFINITY,
       computedAtCursor: undefined, pendingSendByRecipient: new Map(), sentRequestIdByRecipient: new Map(),
-      recipients: new Map() };
+      recipients: new Map(), brokenTiming: new Map(), brokenKeys: new Map(), bucketRecipients: new Map() };
     scribeReminderStates.set(key, created);
     return created;
   }
@@ -2660,68 +2679,176 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     if (cursorRead.status !== 'ready') return;
     const cursor = cursorRead.value;
 
-    // Rework 2 item 3: retry ONLY when the cursor did not move. A pending send
-    // belongs to a specific computed cursor; once the cursor moves it is stale.
-    if (state.computedAtCursor !== undefined && cursor === state.computedAtCursor) {
-      // A copy first: a committed send deletes its entry.
-      for (const [key, pending] of [...state.pendingSendByRecipient]) await sendPendingScribeReminder(sendCtx, state, key, pending);
-      return;
-    }
-    // The cursor moved (or this is the first check): drop any stale pending
-    // request so it can never be resent to a recipient the ledger has left.
-    state.pendingSendByRecipient.clear();
-
-    // BK-09 (v4 :6623–:6686): read the to-dos first, put each to-do in the bucket of its own managing scope (O2's
-    // rule, the same basis as `countCurrentNotes` and the write path), then send each scope's reminder to that
-    // scope's own scribe. `group.goalId` is a bucket of the to-do read, never a scope.
-    const goalIds = await platform.notes.goalIdsForWorkspace(ctx);
-    if (goalIds.status !== 'ready') return;
-    const todos = await noteScribeTodos.readScribeTodos(ctx, { goalIds: goalIds.value });
-    if (todos.status !== 'ready') return;
-    const byScope = new Map<string, { scope: NoteScopeV1; pendingCount: number; updateDueCount: number;
-      immediate: boolean; identities: Set<string>; anchorNames: Set<string> }>();
-    for (const group of todos.value) {
-      for (const [todo, updateDue] of [...group.pending.map((t) => [t, false] as const),
-        ...group.updateDueTodos.map((t) => [t, true] as const)]) {
-        const scopeRead = await platform.notes.managingScopeOf(ctx, { todo, goalId: group.goalId });
-        if (scopeRead.status !== 'ready') return;
-        const key = canonicalJson(scopeRead.value as never);
-        const bucket = byScope.get(key) ?? { scope: scopeRead.value, pendingCount: 0, updateDueCount: 0,
-          immediate: false, identities: new Set<string>(), anchorNames: new Set<string>() };
-        if (updateDue) bucket.updateDueCount += 1; else bucket.pendingCount += 1;
-        if (group.immediate) bucket.immediate = true;
-        bucket.identities.add(todo.identity);
-        bucket.anchorNames.add(todo.anchorKey);
-        byScope.set(key, bucket);
+    // S1: a broken head-version link starts timing at max(first seen, the end of the Run holding it); a
+    // Run still in flight does not count this round. Every round recomputes this from the CURRENT
+    // `heldByRun` (a later Run may hold the same version), and entries no longer listed are dropped.
+    const broken = platform.notes.brokenLinks(scope);
+    for (const entry of broken) {
+      const key = `${entry.noteId}@${entry.version}`;
+      const timing = state.brokenTiming.get(key) ?? { noteId: entry.noteId, version: entry.version,
+        firstSeenMs: atMs, startedAtMs: null };
+      state.brokenTiming.set(key, timing);
+      if (entry.heldByRun === null) {
+        timing.startedAtMs = timing.firstSeenMs;
+      } else if (platform.runtimeInFlight.has(entry.heldByRun)) {
+        timing.startedAtMs = null;
+      } else {
+        const ended = platform.runtimeInFlight.endedAt(entry.heldByRun);
+        timing.startedAtMs = ended === null ? timing.firstSeenMs
+          : Math.max(timing.firstSeenMs, Date.parse(ended));
       }
     }
-    for (const bucket of byScope.values()) {
+    const listed = new Set(broken.map(entry => `${entry.noteId}@${entry.version}`));
+    for (const key of [...state.brokenTiming.keys()]) if (!listed.has(key)) state.brokenTiming.delete(key);
+
+    // S2/L3: a broken link joins the bucket of its head's own managing scope, exactly as a to-do does.
+    // A version that is no longer current (or whose head is not accepted/reviewed) is not counted; a
+    // failed scope read returns without a cursor or prune.
+    const brokenBuckets = new Map<string, { scope: NoteScopeV1; ids: string[]; aged: number }>();
+    for (const timing of state.brokenTiming.values()) {
+      if (timing.startedAtMs === null) continue;
+      const scopeRead = await platform.notes.brokenLinkScope(ctx,
+        { noteId: timing.noteId, version: timing.version });
+      if (scopeRead.status !== 'ready') return;
+      if (scopeRead.value === null) continue;
+      const key = canonicalJson(scopeRead.value as never);
+      const bucket = brokenBuckets.get(key) ?? { scope: scopeRead.value, ids: [], aged: 0 };
+      bucket.ids.push(`${timing.noteId}@${timing.version}`);
+      if (atMs - timing.startedAtMs >= SCRIBE_BROKEN_LINK_AGE_MS) bucket.aged += 1;
+      brokenBuckets.set(key, bucket);
+    }
+    const brokenKeyOf = (bucket: { ids: string[]; aged: number }): string =>
+      sha256Hex(canonicalJson([[...bucket.ids].sort(), bucket.aged] as never));
+    const EMPTY_BROKEN_KEY = sha256Hex(canonicalJson([[], 0] as never));
+
+    // S2/L5: the per-bucket gate. A bucket whose broken key did not move only retries its own pending
+    // request; a changed bucket is recomputed alone, and one bucket's failed recipient read or
+    // `unknown` disposition does not block the others (the round then writes no cursor and prunes
+    // nothing).
+    let todoBuckets: Map<string, ScribeReminderBucket> | null = null;
+    const readTodoBuckets = async (): Promise<Map<string, ScribeReminderBucket> | null> => {
+      // BK-09 (v4 :6623–:6686): put each to-do in the bucket of its own managing scope (O2's rule, the
+      // same basis as `countCurrentNotes` and the write path), then send each scope's reminder to that
+      // scope's own scribe. `group.goalId` is a bucket of the to-do read, never a scope.
+      const goalIds = await platform.notes.goalIdsForWorkspace(ctx);
+      if (goalIds.status !== 'ready') return null;
+      const todos = await noteScribeTodos.readScribeTodos(ctx, { goalIds: goalIds.value });
+      if (todos.status !== 'ready') return null;
+      const byScope = new Map<string, ScribeReminderBucket>();
+      for (const group of todos.value) {
+        for (const [todo, updateDue] of [...group.pending.map((t) => [t, false] as const),
+          ...group.updateDueTodos.map((t) => [t, true] as const)]) {
+          const scopeRead = await platform.notes.managingScopeOf(ctx, { todo, goalId: group.goalId });
+          if (scopeRead.status !== 'ready') return null;
+          const key = canonicalJson(scopeRead.value as never);
+          const bucket = byScope.get(key) ?? { scope: scopeRead.value, pendingCount: 0, updateDueCount: 0,
+            immediate: false, identities: new Set<string>(), anchorNames: new Set<string>(),
+            brokenIdentities: new Set<string>(), brokenCount: 0, agedCount: 0 };
+          if (updateDue) bucket.updateDueCount += 1; else bucket.pendingCount += 1;
+          if (group.immediate) bucket.immediate = true;
+          bucket.identities.add(todo.identity);
+          bucket.anchorNames.add(todo.anchorKey);
+          byScope.set(key, bucket);
+        }
+      }
+      return byScope;
+    };
+
+    const cursorChanged = state.computedAtCursor === undefined || cursor !== state.computedAtCursor;
+    if (cursorChanged) {
+      todoBuckets = await readTodoBuckets();
+      if (todoBuckets === null) return;
+    }
+    const keys = new Set<string>(state.bucketRecipients.keys());
+    for (const key of brokenBuckets.keys()) keys.add(key);
+    if (todoBuckets !== null) for (const key of todoBuckets.keys()) keys.add(key);
+    let incomplete = false;
+    for (const key of keys) {
+      const brokenBucket = brokenBuckets.get(key);
+      const nextKey = brokenBucket === undefined ? EMPTY_BROKEN_KEY : brokenKeyOf(brokenBucket);
+      if (!cursorChanged && state.brokenKeys.get(key) === nextKey) {
+        const recipient = state.bucketRecipients.get(key);
+        if (recipient !== undefined && recipient !== null) {
+          const pending = state.pendingSendByRecipient.get(recipient);
+          if (pending !== undefined) await sendPendingScribeReminder(sendCtx, state, recipient, pending);
+        }
+        continue;
+      }
+      // A bucket changed before the to-dos were read (the cursor did not move): read them once now.
+      if (todoBuckets === null) {
+        todoBuckets = await readTodoBuckets();
+        if (todoBuckets === null) return;
+      }
+      const todoBucket = todoBuckets.get(key);
+      if (todoBucket === undefined && brokenBucket === undefined) {
+        // Neither a to-do nor a started broken link remains: drop the bucket's key, recipient and pending.
+        const oldRecipient = state.bucketRecipients.get(key);
+        if (oldRecipient !== undefined && oldRecipient !== null) state.pendingSendByRecipient.delete(oldRecipient);
+        state.brokenKeys.delete(key);
+        state.bucketRecipients.delete(key);
+        continue;
+      }
+      // Merge keeps the to-do fields and adds the broken fields; a broken-only bucket has no to-dos.
+      const bucket: ScribeReminderBucket = todoBucket === undefined
+        ? { scope: brokenBucket!.scope, pendingCount: 0, updateDueCount: 0, immediate: false,
+          identities: new Set<string>(), anchorNames: new Set<string>(),
+          brokenIdentities: new Set<string>(), brokenCount: 0, agedCount: 0 }
+        : { ...todoBucket };
+      if (brokenBucket !== undefined) {
+        for (const id of brokenBucket.ids) bucket.brokenIdentities.add(`broken:${id}`);
+        bucket.brokenCount = brokenBucket.ids.length;
+        bucket.agedCount = brokenBucket.aged;
+      }
+      const oldRecipient = state.bucketRecipients.get(key);
       const recipient = await resolveScribeRecipient(ctx, bucket.scope);   // the scope's OWN scribe
-      // O5b-03: a failed read is not "no scribe": return before the cursor is recorded, so the next period retries.
-      if (recipient.status !== 'ready') return;
-      if (recipient.value === null) continue;
+      // A failed read is not "no scribe": keep the old key and pending, and retry next round.
+      if (recipient.status !== 'ready') { incomplete = true; continue; }
+      if (recipient.value === null) {
+        if (oldRecipient !== undefined && oldRecipient !== null) state.pendingSendByRecipient.delete(oldRecipient);
+        state.brokenKeys.set(key, nextKey);
+        state.bucketRecipients.set(key, null);
+        continue;
+      }
       // The resolver may hand back the Session AGGREGATE ref; the mailbox address is the plain `{ projectId, sessionId }`.
-      const recipientRef: SessionRef = { projectId: recipient.value.projectId, sessionId: recipient.value.sessionId };
-      // `unknown` sends nothing and leaves the cursor unset; an unhandled reminder sends nothing for this scribe.
+      const recipientRef: SessionRef = { projectId: recipient.value.projectId,
+        sessionId: recipient.value.sessionId };
+      if (oldRecipient !== undefined && oldRecipient !== null
+        && oldRecipient !== recipientRef.sessionId) state.pendingSendByRecipient.delete(oldRecipient);
       const disposition = await scribeReminderDisposition(ctx, recipientRef, state);
-      if (disposition === 'unknown') return;
+      if (disposition === 'unknown') { incomplete = true; continue; }
+      // The bucket is recomputed: its old pending no longer stands for this round's gate.
+      if (oldRecipient !== undefined && oldRecipient !== null) state.pendingSendByRecipient.delete(oldRecipient);
+      state.brokenKeys.set(key, nextKey);
+      state.bucketRecipients.set(key, recipientRef.sessionId);
       if (disposition === 'unhandled') continue;
-      if (!bucket.immediate && bucket.pendingCount < SCRIBE_PENDING_THRESHOLD
-        && bucket.updateDueCount < SCRIBE_UPDATE_DUE_THRESHOLD) continue;
+      if (!(bucket.immediate || bucket.pendingCount >= SCRIBE_PENDING_THRESHOLD
+        || bucket.updateDueCount >= SCRIBE_UPDATE_DUE_THRESHOLD
+        || bucket.brokenCount >= SCRIBE_BROKEN_LINK_THRESHOLD || bucket.agedCount > 0)) continue;
+      const identities = [...bucket.identities];
+      if (bucket.brokenCount > 0) identities.push(...bucket.brokenIdentities);
       const requestId = 'scribe-reminder:' + scope.workspaceId + ':' + recipientRef.sessionId + ':'
-        + sha256Hex(canonicalJson([...bucket.identities].sort() as never));
+        + sha256Hex(canonicalJson(identities.sort() as never));
       if (state.sentRequestIdByRecipient.get(recipientRef.sessionId) === requestId) continue;
       const text = renderTemplate(PLATFORM_PROMPT_PACK_V1, 'scribe-reminder', {
         marker: SCRIBE_REMINDER_MARKER,
         pendingCount: String(bucket.pendingCount),
         updateDueCount: String(bucket.updateDueCount),
+        brokenCount: String(bucket.brokenCount),
         anchors: [...bucket.anchorNames].slice(0, 20).join('、'),
       }, []).text;
       const pending = systemNotifyRequest({ recipient: recipientRef, text, requestId });
       state.pendingSendByRecipient.set(recipientRef.sessionId, pending);
       await sendPendingScribeReminder(sendCtx, state, recipientRef.sessionId, pending);
     }
-    state.computedAtCursor = cursor;   // every scope computed (an `unknown` or a failed read returned above)
+    if (incomplete) return;
+    state.computedAtCursor = cursor;
+    // S1/L6: prune after the gate and send, and only on a complete round, so the round that first
+    // reaches AGE still sends; a pruning round that remains broken starts timing again at that moment.
+    for (const [key, timing] of [...state.brokenTiming]) {
+      if (timing.startedAtMs !== null && atMs - timing.startedAtMs >= SCRIBE_BROKEN_LINK_AGE_MS) {
+        state.brokenTiming.delete(key);
+      }
+    }
   }
 
   // The background link batch: one batch per workspace at a time, run from the

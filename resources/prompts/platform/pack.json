@@ -65,7 +65,7 @@
     },
     "scribe-reminder": {
       "file": "templates/scribe-reminder.txt",
-      "version": 1,
+      "version": 2,
       "mentionsTools": []
     },
     "continuation-brief": {

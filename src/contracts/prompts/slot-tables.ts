@@ -161,6 +161,7 @@ export const TEMPLATE_SLOTS: Readonly<Record<string, TemplateSlotTableV1>> = {
         marker: { required: true },
         pendingCount: { required: true },
         updateDueCount: { required: true },
+        brokenCount: { required: true },
         anchors: { required: false },
     },
     // The stale-files reminder is fixed text with no slots.

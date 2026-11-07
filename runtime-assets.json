@@ -13,7 +13,7 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "df924d427eab34d32184bde1c0c48d61e440261d339b9bfdac0a30732ce40c6d"
+    "sha256": "add78a3d72c6234912f5b7b86b047320f9632d656c423fb8aa7a3ddd5240313d"
   },
   {
     "path": "resources/prompts/platform/strings.json",
@@ -65,7 +65,7 @@
   },
   {
     "path": "resources/prompts/platform/templates/scribe-reminder.txt",
-    "sha256": "ff58b0ec39a30a454429e607faa4c871244d89a2821ca63badc724d6857505a0"
+    "sha256": "b9e8989113444afb1cd7b2af5e9612c13eb26616978e4d4cc56c9fce7975aa57"
   },
   {
     "path": "resources/prompts/platform/templates/continuation-brief.txt",

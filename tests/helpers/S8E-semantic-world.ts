@@ -371,6 +371,9 @@ export function s8eLinkDraft(spec: S8ELinkSpec, overrides: Partial<LinkDraftV1> 
 // The quota wrapper (DR-8E L2-04)
 // ---------------------------------------------------------------------------
 
+/** The real platform factory, captured before any wrapper: `restoreMocks` puts a previous test's wrapper back. */
+const realCreateTargetPlatform = platformModule.createTargetPlatform;
+
 /**
  * Installs ONE plain delegating function around the real module export: it
  * merges the world's limits into the Host's existing `noteLimits` and returns
@@ -378,12 +381,14 @@ export function s8eLinkDraft(spec: S8ELinkSpec, overrides: Partial<LinkDraftV1> 
  * its own single delegating spy for platform capture), no Host option and no
  * new port. Returns the paired restore.
  */
-function installQuotaWrapper(limits: S4ANoteLimits): () => void {
-  const actual = platformModule.createTargetPlatform;
+function installQuotaWrapper(limits: S4ANoteLimits, noteNewId?: () => string): () => void {
+  const actual = realCreateTargetPlatform;
   const wrapper: typeof actual = async options => {
-    const merged = Object.keys(limits).length === 0
-      ? options
-      : { ...options, noteLimits: { ...(options.noteLimits ?? {}), ...limits } };
+    const merged = {
+      ...options,
+      ...(Object.keys(limits).length === 0 ? {} : { noteLimits: { ...(options.noteLimits ?? {}), ...limits } }),
+      ...(noteNewId === undefined ? {} : { noteNewId }),
+    };
     return await actual(merged);
   };
   Object.defineProperty(platformModule, 'createTargetPlatform',
@@ -592,6 +597,8 @@ export type S8EWorldOptions = {
   backend?: 'memory' | 'sqlite';
   /** Merged over the Host's existing `TargetPlatformOptions.noteLimits`. */
   noteLimits?: S4ANoteLimits;
+  /** 8E2 S：固定 L8 摘要用的 noteId 序列（组合根已有的 `noteNewId`）。 */
+  noteNewId?: () => string;
   /** Work tasks assigned to the platform scribe; default 24 (K1–K7 and the later variants). */
   scribeTasks?: number;
   /** The Host secretary binding's tool grant; omitted keeps the Host default (`['read']`). */
@@ -709,7 +716,7 @@ async function writeTree(root: string): Promise<void> {
 
 export async function openS8ESemanticWorld(options: S8EWorldOptions = {}): Promise<S8ESemanticWorld> {
   const backend = options.backend ?? 'memory';
-  const restoreQuota = installQuotaWrapper(options.noteLimits ?? {});
+  const restoreQuota = installQuotaWrapper(options.noteLimits ?? {}, options.noteNewId);
   const linkCheck = installLinkCheckProbe();
   let localProfile: WorkbenchQueryProfile | null = null;
   const extraBindings: S6AExtraBinding[] = [...(options.extraBindings ?? [])];
