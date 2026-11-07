@@ -383,7 +383,8 @@ export async function selectPromptSkills(
 }
 
 /** A-10: the delivery set, every input template an execution may render after preparation. */
-export const DELIVERY_SET_TEMPLATE_IDS: readonly string[] = [...DELIVERY_TEMPLATE_IDS, 'user-decision-response', 'link-breaks-input'];
+export const DELIVERY_SET_TEMPLATE_IDS: readonly string[] = [...DELIVERY_TEMPLATE_IDS, 'user-decision-response', 'link-breaks-input',
+  'python-syntax-input'];
 
 /** The used templates in read order, then each delivery-set template not yet used, in DELIVERY_SET_TEMPLATE_IDS order. */
 export function templatesToFreeze(used: readonly string[]): string[] {

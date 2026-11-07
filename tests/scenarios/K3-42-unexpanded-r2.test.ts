@@ -72,9 +72,12 @@ const MODEL_CRASH_UNLIKELY = '模型写：没看到崩溃痕迹';
  * with the expanded item is over it and its floor is not. The H/T pack adds
  * `hand_off` and its four templates to every manifest's prompt set; at 243_700
  * the work manifest measured 258,882 and the review floor 262,228 (over by 84),
- * so the fill is 700 bytes lower and the floor keeps a margin.
+ * so the fill is 700 bytes lower and the floor keeps a margin. The Python
+ * syntax-error package (decision 121-54) adds `python-syntax-input` to the
+ * frozen delivery set and one sentence to `record_note`, which used up that
+ * margin, so the fill is 700 bytes lower again.
  */
-const INSTRUCTION_REPEAT = 243_000;
+const INSTRUCTION_REPEAT = 242_300;
 const LONG_INSTRUCTION = 'K3-42 (二) sized instruction: ' + 'x'.repeat(INSTRUCTION_REPEAT);
 
 afterEach(async () => {

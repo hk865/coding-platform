@@ -37,6 +37,8 @@ import type { PromptPackSourcePort } from '../../contracts/prompts/prompt-pack.j
 import type { RoleSpecResolutionV1 } from '../../contracts/role-spec-materials.js';
 import type { PlatformDutyV1 } from '../../contracts/graph-context.js';
 import type { RunRef } from '../../contracts/dispatch.js';
+import type { WorkspaceRef } from '../../contracts/ledger.js';
+import type { PythonSyntaxProblemV1 } from '../workspace/python-syntax.js';
 import type { WorkHandoffBriefV1 } from '../work-graph/state/work-handoff-brief.js';
 import type { VerificationRoundSourceResult } from '../../contracts/verification-context.js';
 import type { RawArtifactStorePort } from '../record-store/body-ports.js';
@@ -421,6 +423,14 @@ export type RuntimeExecutionDependencies = {
    * that neither could be read.
    */
   workspaceSource?: ContinuationWorkspaceSource;
+  /**
+   * 121-34: the syntax check of the Python files this Run changed; it only parses,
+   * never runs. The caller has already replaced the Work Run identity with the
+   * platform Host identity. Absent, the safe point supplies no syntax input.
+   */
+  pythonSyntax?: (ctx: CoreCallContext, input: {
+    workspace: WorkspaceRef; paths: readonly string[];
+  }) => Promise<PythonSyntaxProblemV1[]>;
   /**
    * A.2 step 5.6: the WorkGraph writer of a Run end without a Kernel terminal,
    * for the in-process variants this Runtime proves with its exited handle:

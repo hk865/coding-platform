@@ -2010,6 +2010,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     const successResult: Extract<WriteNoteResult, { status: 'accepted' | 'pending_review' | 'staged' }> = {
       status: admission.status, noteId, version: head.version, reasons: [...admission.reviewReasons],
       overQuota: committedOverQuota, confirmedByUser: admission.confirmedByUser, warnings,
+      ...(resolved.symbolProblems.length === 0 ? {} : { symbolProblems: resolved.symbolProblems }),
       existingTopics: existingTopicsOf(currentByAnchor,
         admission.state === 'accepted' ? new Set(replacedCurrent.keys()) : new Set(), topicKey),
     };

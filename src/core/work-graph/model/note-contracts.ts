@@ -93,7 +93,7 @@ export type NoteSimilarV1 = { noteId: string; version: number; header: string; s
 export type WriteNoteResult =
   | { status: 'accepted' | 'pending_review' | 'staged'; noteId: string; version: number;
       reasons: NoteReviewReason[]; overQuota: boolean; confirmedByUser: boolean;
-      warnings: ('symbol_unresolved' | 'anchor_ended' | 'evidence_unverifiable')[]; existingTopics: NoteExistingTopicV1[] }
+      warnings: ('symbol_unresolved' | 'anchor_ended' | 'evidence_unverifiable')[]; symbolProblems?: NoteSymbolProblemV1[]; existingTopics: NoteExistingTopicV1[] }
   | { status: 'rejected'; code: NoteErrorCode; reason: string; draft: WriteNoteInput;
       conflicts?: { noteId: string; version: number; conclusion: string }[];
       symbolCandidates?: { name: string; range: { startLine: number; endLine: number } }[];
@@ -569,3 +569,8 @@ export interface NoteScribeTodoPort {
    */
   readLedgerCursor(ctx: CoreCallContext): Promise<ReadResult<string | null>>;
 }
+
+/** A Python syntax error in one anchor's file; `line` is one-based and `message` is `SyntaxError.msg`. */
+export type SymbolProblemV1 = { path: string; line: number; message: string };
+/** The same problem attributed to the draft field whose `symbolRequest` met it. */
+export type NoteSymbolProblemV1 = SymbolProblemV1 & { field: string };

@@ -157,6 +157,9 @@ export const TEMPLATE_SLOTS: Readonly<Record<string, TemplateSlotTableV1>> = {
         version: { required: true },
         missing: { required: true },
     },
+    'python-syntax-input': {
+        problems: { required: true },
+    },
     'scribe-reminder': {
         marker: { required: true },
         pendingCount: { required: true },

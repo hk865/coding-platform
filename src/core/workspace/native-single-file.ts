@@ -25,13 +25,12 @@ export type NativeSymbolV1 = { name: string; kind: string;
   start: { line: number; column: number }; end: { line: number; column: number } };   // the name itself; kind is the analyzer's own
 export type NativeLookupV1 =
   | { status: 'parsed'; exact: boolean; symbols: NativeSymbolV1[] }
-  // exact: C++ parsed with this file's compile_commands.json arguments (workspace headers plus
-  // the compiler's own header directories, W11 rule 1) and that parse had no error/fatal
-  // diagnostic (as cpp-source-query.py `hasErrors`); a parse with errors, one that could not see a
-  // candidate header over the read limit, or the single-file fallback is false; Python is always true
-  | { status: 'unsupported' } | { status: 'unavailable'; reason: string };
-  // unsupported: the interpreter or libclang 18 is not available, or this file's compile
-  // arguments are not recognized (as cpp_index); unavailable: timeout, crash, parse failure
+  // exact: C++ parsed with this file's compile_commands.json arguments (workspace headers plus the
+  // compiler's own header directories, W11 rule 1) and that parse had no error/fatal diagnostic (as
+  // cpp-source-query.py `hasErrors`); a parse with errors, a missed candidate header or the fallback is false; Python true
+  | { status: 'unsupported' } | { status: 'unavailable'; reason: string } | { status: 'syntax_error'; line: number; message: string };
+  // unsupported: the interpreter or libclang 18 is unavailable or the compile arguments are not recognized;
+  // unavailable: timeout, crash, interpreter/process failure; syntax_error: a Python parse failure (line, SyntaxError.msg)
 export interface NativeSingleFilePort {
   lookup(ctx: CoreCallContext, input: { language: 'python' | 'cpp'; path: string; text: string; digest: string;
     mode: 'read' | 'write' }): Promise<NativeLookupV1>;
@@ -77,6 +76,7 @@ function finalOf(reply: ResidentMessage, language: 'python' | 'cpp'): NativeLook
   if (reply['t'] === 'result')
     return { status: 'parsed', exact: language === 'python' || reply['exact'] === true, symbols: symbolsOf(reply['symbols']) };
   if (reply['t'] === 'unsupported') return { status: 'unsupported' };
+  if (reply['t'] === 'parse_failed' && language === 'python' && positive(reply['line']) && typeof reply['message'] === 'string') return { status: 'syntax_error', line: reply['line'], message: reply['message'] };
   if (reply['t'] === 'failed' && typeof reply['reason'] === 'string') return { status: 'unavailable', reason: reply['reason'] };
   throw Error('invalid single-file reply');
 }

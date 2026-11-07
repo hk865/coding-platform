@@ -21,6 +21,7 @@ import { createWorkspaceAccessFactory, type WorkspaceHostBindings } from '../cor
 import { createWorkspaceTools, DEFAULT_WORKSPACE_LIMITS } from '../core/workspace/workspace-tools.js';
 import { createReferenceAnalyzer } from '../core/workspace/reference-analyzer.js';
 import { createNativeSingleFile } from '../core/workspace/native-single-file.js';
+import { changedPythonSyntaxProblems } from '../core/workspace/python-syntax.js';
 import { createAgentRuntime } from '../core/agent-runtime/runtime.js';
 import { createPlatformPromptPackSource, type PromptPackSourcePort } from '../contracts/prompts/prompt-pack.js';
 import type { RuntimeExecutionPort } from '../core/agent-runtime/ports.js';
@@ -140,7 +141,6 @@ import { createSecretaryQueryRun } from '../core/work-graph/tasks/secretary-quer
 import { createPlanningQueryRun } from '../core/work-graph/tasks/planning-query-run.js';
 import { createRecipientExecutions } from '../core/work-graph/sessions/recipient-executions.js';
 import type { SecretaryProfilePort } from '../core/work-graph/model/request-contracts.js';
-
 import { createEvidenceService } from '../core/work-graph/evidence/evidence-service.js';
 import type { AutomaticReverifyPolicyV1 } from '../core/work-graph/evidence/evidence-service.js';
 import { EVIDENCE_RECORD_SCHEMAS } from '../core/work-graph/persistence/evidence-record-codecs.js';
@@ -2387,7 +2387,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         handoffs: (ctx, input) => handoffEntry.requestHandoff(ctx, input),
         memoryMaterial,
         // C3: the continuation brief's checkpoint uses the SAME workspace reader as the evidence owner.
-        workspaceSource: continuationWorkspaceSource,
+        workspaceSource: continuationWorkspaceSource, pythonSyntax: (ctx, input) => changedPythonSyntaxProblems({ readWorkspaceFiles: workspace.readWorkspaceFiles, lookup: nativeSingleFile.lookup }, ctx, { ...input, maxBytes: DEFAULT_WORKSPACE_LIMITS.maxFileBytes }),
         // A.2 step 5.6: the in-process ends without a Kernel terminal (RUN-16, RUN-23).
         runReconcile,
         // K slice M1/M3/L5: the dangling-Turn closure's health owner and this

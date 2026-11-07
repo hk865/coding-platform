@@ -544,7 +544,7 @@ const NOTE_WRITE_WARNINGS: readonly string[] = ['symbol_unresolved', 'anchor_end
  */
 function noteWriteResultProblem(value: unknown, head: UnknownRecord): string | null {
   if (!isRecord(value) || !hasOnlyKeys(value, ['status', 'noteId', 'version', 'reasons', 'overQuota',
-    'confirmedByUser', 'warnings', 'existingTopics'])) {
+    'confirmedByUser', 'warnings', 'symbolProblems', 'existingTopics'])) {
     return 'NoteWritten result carries unknown fields';
   }
   if (!NOTE_WRITE_STATUSES.includes(value['status'] as NoteState)) {
@@ -568,6 +568,17 @@ function noteWriteResultProblem(value: unknown, head: UnknownRecord): string | n
   const warnings = value['warnings'];
   if (!Array.isArray(warnings) || !warnings.every(warning => NOTE_WRITE_WARNINGS.includes(warning as string))) {
     return 'NoteWritten result warnings are not recognized';
+  }
+  const symbolProblems = value['symbolProblems'];
+  if (symbolProblems !== undefined) {
+    if (!Array.isArray(symbolProblems)) return 'NoteWritten result symbolProblems are invalid';
+    for (const problem of symbolProblems) {
+      if (!isRecord(problem) || !hasOnlyKeys(problem, ['field', 'path', 'line', 'message'])
+        || !nonEmpty(problem['field']) || !nonEmpty(problem['path'])
+        || !isPos(problem['line']) || !nonEmpty(problem['message'])) {
+        return 'NoteWritten result symbolProblems are invalid';
+      }
+    }
   }
   const topics = value['existingTopics'];
   if (!Array.isArray(topics) || topics.length > NOTE_EXISTING_TOPICS_MAX) {

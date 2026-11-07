@@ -23,7 +23,8 @@
 - `single-file-syntax.ts` — 单文件 TS/JS 语法事实（slice-8E2-SPEC W4、W10）：一份文字在只含这一个文件的 Syntactic 语言服务里解析一次，导航项、`fileSyntaxOf`、`namesInRanges` 都读这棵树；纯函数，主线程，不建程序。
 - `reference-analyzer.ts` — 第二档的引用核对（slice-8E2-SPEC W1–W9）主线程一侧：先后队列、每次重列项目输入、预取、配置、找 X，经读口读线程要的文件。
 - `reference-analyzer-worker.ts` — 第二档的分析线程：每次请求建一个程序、用完就丢，共用一份按内容摘要的解析缓存，`getDocumentHighlights` 搜整个程序；只导入 TypeScript 和 Node。
-- `native-single-file.ts` — Python/C++ 单文件查（slice-8E2-SPEC W11）：一个端口一个常驻 Python `ast` 进程、一个常驻 libclang 进程，`lookup` 回一个文件里函数、类的名字和名字那一段；C++ 每次用调用方的上下文读工作区根的 `compile_commands.json` 和进程要的头文件，进程自己不读工作区。
+- `native-single-file.ts` — Python/C++ 单文件查（slice-8E2-SPEC W11）：一个端口一个常驻 Python `ast` 进程、一个常驻 libclang 进程，`lookup` 回一个文件里函数、类的名字和名字那一段；C++ 每次用调用方的上下文读工作区根的 `compile_commands.json` 和进程要的头文件，进程自己不读工作区。Python 的单文件解析失败是独立的 `syntax_error`（带一基行号和 `SyntaxError.msg`），`unavailable` 只留超时、崩溃和解释器/进程协议失败。
+- `python-syntax.ts` — 121-34：这次 Run 改过的 Python 文件只解析、不运行的语法检查；一次 `readWorkspaceFiles` 读这批路径，再对每个读到的文件调一次 `lookup`，`syntax_error` 收成 `{ path, digest, line, message }`。
 - `typescript-light-scan.ts` — 观测用 TS/JS 纯语法轻扫（不建 Program/LanguageService）。
 - `source-query.ts` — 从同一份冻结捕获切页的查询、游标和 wire 形状映射。
 - `source-index.ts` — 显式文件集的只读 TS 语义查询（symbol/definition/reference）与 excerpt。
@@ -77,6 +78,7 @@
 | `namesInRanges` | `src/core/workspace/single-file-syntax.ts:183` | 范围原文里按词边界找名字，每一处标 `free`/`other` | 第一档判断名字还在不在、是不是自由标识符时 |
 | `createReferenceAnalyzer` | `src/core/workspace/reference-analyzer.ts:55` | 建第二档的 `ReferenceAnalyzerPort`：`verify` 一次建一个程序，按 `priority` 排队；`close` 停分析线程 | 组合根建一个、接进注记的工作区；依赖传句柄的 `readWorkspaceFiles`、`listWorkspaceInputs` |
 | `createNativeSingleFile` | `src/core/workspace/native-single-file.ts:105` | 建 `NativeSingleFilePort`：`lookup` 查一个 Python/C++ 文件的函数、类；`read` 只用留着的翻译单元、没有就退回单文件解析并后台预热，`write` 照真实编译参数解析；`close` 停两个常驻进程 | 第一档读 Python/C++ 定位、一般注记写 Python/C++ 符号；一个 Host 只建一个 |
+| `changedPythonSyntaxProblems` | `src/core/workspace/python-syntax.ts:17` | 一批路径里只留 Python 的、去重排序，一次批量读，再逐文件 `lookup`；只收 `syntax_error`，按 `(path, line)` 排序 | 安全点检查这次 Run 改过的 Python 文件；不要另写解析或读取 |
 | `createResidentAnalyzer` | `src/core/workspace/analysis-runner.ts:572` | 分析脚本的常驻模式：同一套起进程、行读取、输出上限、超时、杀进程；`exchange` 一次一个，`close` 先关输入、等它退出，超时再杀 | 要长住的分析进程时；不另写进程管理 |
 | `CppSourceIndex` | `src/core/workspace/cpp-source-index.ts:16` | 权限过滤后的 C/C++ 来源查询 | 探索工具要 C/C++ 符号/import 时 |
 | `PythonSourceIndex` | `src/core/workspace/python-source-index.ts:17` | 权限过滤后的 Python 来源查询 | 探索工具要 Python 符号/import 时 |

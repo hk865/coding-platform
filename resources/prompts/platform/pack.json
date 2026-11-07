@@ -53,6 +53,11 @@
       "version": 1,
       "mentionsTools": []
     },
+    "python-syntax-input": {
+      "file": "templates/python-syntax-input.txt",
+      "version": 1,
+      "mentionsTools": []
+    },
     "intervention-planning": {
       "file": "templates/intervention-planning.txt",
       "version": 1,

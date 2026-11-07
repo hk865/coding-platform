@@ -577,7 +577,8 @@ def run_import_graph():
 
 # slice-8E2-SPEC W11. One resident process answers one line per request:
 #   in:  {"t": "hello"}                                   out: {"t": "ready", ...} | {"t": "unavailable", ...}
-#   in:  {"t": "lookup", "path", "digest", "text"}        out: {"t": "result", "symbols": [...]} | {"t": "failed", "reason"}
+#   in:  {"t": "lookup", "path", "digest", "text"}        out: {"t": "result", "symbols": [...]}
+#                                                              | {"t": "parse_failed", "line", "message"} | {"t": "failed", "reason"}
 # A symbol is {name, kind, start: {line, column}, end: {line, column}}: every FunctionDef,
 # AsyncFunctionDef and ClassDef at any depth, the exploration visitor's rule
 # (exploration-tools.ts PYTHON_AST), kinds `function`/`class`; the span is the name
@@ -638,12 +639,10 @@ def run_single_file():
         if reply is None:
             try:
                 reply = {'t': 'result', 'symbols': single_file_symbols(request['text'])}
-            except (SyntaxError, ValueError) as error:
-                message = error.msg if isinstance(error, SyntaxError) else str(error)
-                reply = {'t': 'failed', 'reason': first200('{}: {}'.format(type(error).__name__, message))}
-            except (RecursionError, MemoryError) as error:
-                emit({'t': 'failed', 'reason': first200('{}: {}'.format(type(error).__name__, str(error)))})
-                continue
+            except SyntaxError as error:
+                reply = {'t': 'parse_failed', 'line': error.lineno or 1, 'message': error.msg}
+            except (ValueError, RecursionError, MemoryError) as error:
+                reply = {'t': 'failed', 'reason': first200('{}: {}'.format(type(error).__name__, str(error)))}
         cache[key] = reply
         if len(cache) > SINGLE_FILE_CACHE_MAX:
             del cache[next(iter(cache))]

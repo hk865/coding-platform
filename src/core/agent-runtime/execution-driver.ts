@@ -62,6 +62,7 @@ import type { CommandRecognizer } from '../work-graph/model/command-recognition-
 import type { SessionMessage } from '../work-graph/model/communication-contracts.js';
 import { toolCommitRequestId } from '../work-graph/model/tool-commit-arguments.js';
 import { NOTE_LINK_VERIFY_MAX } from '../work-graph/model/note-contracts.js';
+import { platformCheckContext } from '../work-graph/model/platform-check-context.js';
 import type { ExecutionObservationService } from './execution-observation.js';
 import type { RuntimeControlCoordinator, RuntimeControlHandle } from './execution-control.js';
 import type {
@@ -79,7 +80,7 @@ export type ExecutionDriverDependencies = Pick<RuntimeExecutionDependencies,
   | 'claims' | 'evidence'
   | 'sessions' | 'runReconcile'
   | 'graphHistory' | 'graphContext' | 'taskInputs' | 'unknownCallReviews'
-  | 'commandRerunRequests' | 'commandRecognizer' | 'admission'> & {
+  | 'commandRerunRequests' | 'commandRecognizer' | 'admission' | 'pythonSyntax'> & {
   /** Slice 4C: the SAME `platform.notes` ports the note tools call. */
   notes?: RuntimeExecutionDependencies['notes'];
   /** The same observer instance backs start and explicit observe calls. */
@@ -183,6 +184,10 @@ type BeforeToolDecision = { point: 'before_tool'; kind: 'continue' }
 
 const CONTINUE_TOOL: BeforeToolDecision = { point: 'before_tool', kind: 'continue' };
 const blockTool = (reason: string): BeforeToolDecision => ({ point: 'before_tool', kind: 'block', reason });
+
+/** 121-34: the fixed internal Host identity of the changed-Python-file syntax check. */
+const PYTHON_SYNTAX_CHECK_ACTOR: { kind: 'system'; id: string } =
+  Object.freeze({ kind: 'system', id: 'python-syntax-check' });
 
 /**
  * L19a "在哪拦": the `before_tool` control hook for `shell`. It is installed on
@@ -1075,9 +1080,6 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
           // never fails the Run.
           const linksInFlight = new Set<string>();
           const linkBreakInputsFor: InputSupply = async (point, options) => {
-            const memory = deps.notes?.memory;
-            const check = deps.notes?.check;
-            if (memory === undefined || check === undefined) return [];
             try {
               const activity = await readRunActivityFacts(cursorOwner, { session: record.session, kernel: kernelBinding,
                 fromPosition: (boundary.cursor === null ? 0 : boundary.position) + 1, through: 'kernel_tail',
@@ -1086,6 +1088,26 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
               const changed = activity.facts.changedFiles;
               const paths = [...new Set([...changed.definite, ...changed.possible])].filter(path => path !== '.');
               const runCtx: CoreCallContext = { ...toolContext, signal: options.signal };
+              // 121-34: the changed Python files are parsed under the fixed internal
+              // Host identity; the Work Run identity cannot read the workspace.
+              const checkingCtx = platformCheckContext(runCtx, PYTHON_SYNTAX_CHECK_ACTOR);
+              const python = deps.pythonSyntax === undefined ? []
+                : await deps.pythonSyntax(checkingCtx, { workspace, paths });
+              const pythonInputs = python.flatMap(problem => {
+                const inputId = 'python-syntax:' + sha256Hex(canonicalJson({ path: problem.path, digest: problem.digest,
+                  line: problem.line }));
+                if (point.acceptedInputIds.includes(inputId)) return [];
+                const text = renderTemplate(promptTexts.value, 'python-syntax-input', {
+                  problems: `${problem.path}:${String(problem.line)}: ${problem.message}`,
+                }, manifest.promptSet.toolNames).text;
+                return [{ inputId, text, sourceRef: { kind: 'PythonSyntaxProblem', runRef, path: problem.path,
+                  digest: problem.digest, line: problem.line } }];
+              });
+              const memory = deps.notes?.memory;
+              const check = deps.notes?.check;
+              // The Python check does not need the note module: keep its input even
+              // when the link-break source is not wired.
+              if (memory === undefined || check === undefined) return pythonInputs;
               // noteId -> the head version the anchor read returned.
               const heads = new Map<string, number>();
               for (const path of paths) {
@@ -1095,7 +1117,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
                     { v: 1, op: 'lookup', anchor: { kind: 'file', path }, limit: 100, cursor });
                   // A file no note is anchored on holds no link.
                   if (page.status === 'rejected' && page.code === 'not_found' && page.reason === 'anchor_not_found') break;
-                  if (page.status !== 'ready') return [];
+                  if (page.status !== 'ready') return pythonInputs;
                   for (const item of page.value.items) {
                     if (item.kind === 'link' && (item.storedState === 'accepted' || item.storedState === 'reviewed')) {
                       heads.set(item.noteId, item.version);
@@ -1104,11 +1126,11 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
                   cursor = page.value.next;
                 } while (cursor !== null);
               }
-              if (heads.size === 0) return [];
+              if (heads.size === 0) return pythonInputs;
               const heldByRun = canonicalJson(runRef as never);
               const rows = await check.checkNotes(runCtx,
                 { items: [...heads].map(([noteId, version]) => ({ noteId, version })), heldByRun });
-              if (rows.status !== 'ready') return [];
+              if (rows.status !== 'ready') return pythonInputs;
               const doubtful = rows.value.filter(row => row.version === heads.get(row.noteId)
                 && row.linkVerification?.status === 'unchecked' && row.linkVerification.reason === 'refs_pending'
                 && !linksInFlight.has(`${row.noteId}@${String(row.version)}`))
@@ -1124,7 +1146,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
                   .catch(() => {})
                   .finally(() => { for (const key of keys) linksInFlight.delete(key); });
               }
-              return rows.value.flatMap(row => {
+              return [...pythonInputs, ...rows.value.flatMap(row => {
                 const verification = row.linkVerification;
                 if (verification?.status !== 'broken') return [];
                 const inputId = `link-break:${row.noteId}@${String(row.version)}:${verification.missing.join(',')}`;
@@ -1132,7 +1154,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
                 const text = renderTemplate(promptTexts.value, 'link-breaks-input', { noteId: row.noteId,
                   version: String(row.version), missing: verification.missing.join('、') }, manifest.promptSet.toolNames).text;
                 return [{ inputId, text, sourceRef: { kind: 'NoteLinkBreak', runRef, noteId: row.noteId, version: row.version } }];
-              });
+              })];
             } catch {
               return [];
             }

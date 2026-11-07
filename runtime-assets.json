@@ -13,7 +13,7 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "039a9441dea987038881be19b9501a5b7f48f5c6935f6a04be82f4568e1e8f86"
+    "sha256": "d38c94ea54d1a76fa12bcb9e3a3bf479e2ad71a6c242b5f6592f33f6e0c741a3"
   },
   {
     "path": "resources/prompts/platform/strings.json",
@@ -189,7 +189,7 @@
   },
   {
     "path": "resources/prompts/platform/tools/record_note.json",
-    "sha256": "a51a440e9322e7e1e8ffc47da33bec446ca6454b7013318535a6b78a41a1d915"
+    "sha256": "515337ce85a2a255d245279549770d80fc1258d6193b2d6e36cce8f2f63434ab"
   },
   {
     "path": "resources/prompts/platform/tools/propose_architecture_revision.json",
@@ -333,7 +333,7 @@
   },
   {
     "path": "scripts/python-source-query.py",
-    "sha256": "9e90e3a5e2f0a3ee8469f27f88a341aef62f254e6bd79279296863e06ec50fde"
+    "sha256": "8e73475ea42173aa8a6b5262821a9a7e0c345b6caa5a97a3312d35e73e551bf1"
   },
   {
     "path": "vendor/coding-agent/resources/README.md",
@@ -366,6 +366,10 @@
   {
     "path": "resources/prompts/platform/templates/link-breaks-input.txt",
     "sha256": "78396998076ca5a7a26627b019f0c4123df2e4544ac01badca7bbf6bcf5d51f8"
+  },
+  {
+    "path": "resources/prompts/platform/templates/python-syntax-input.txt",
+    "sha256": "d851600961a96eb0e0c6f8f1f7ad848297eca85364002a9f678dd46aaf903e35"
   },
   {
     "path": "resources/prompts/platform/tools/check_links.json",

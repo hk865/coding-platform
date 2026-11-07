@@ -18,7 +18,7 @@ import type {
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
 import { sha256Hex } from '../../../contracts/fingerprint.js';
 import { isPos, isRecord, nonEmpty } from '../../../contracts/validation/common.js';
-import type { NoteAnchorCandidateV1 } from '../model/note-contracts.js';
+import type { NoteAnchorCandidateV1, NoteSymbolProblemV1, SymbolProblemV1 } from '../model/note-contracts.js';
 import type {
   CaptureSummary, ReferenceAnalyzerPort, SourceHit, SourceProvider, WorkspaceResult, WorkspaceToolsPort,
 } from '../../workspace/ports.js';
@@ -113,6 +113,8 @@ export type ResolvedNoteAnchors = {
   anchorEnded: boolean;
   /** L14: a file anchor carried a `symbolRequest` that did not resolve to one locator. */
   symbolUnresolved: boolean;
+  /** A Python syntax error only affects the anchors on that file; another anchor still resolves. */
+  symbolProblems: NoteSymbolProblemV1[];
 };
 
 /** L2 (rule 21): NFC, ASCII lowercase, every Unicode White_Space run folds to one U+0020, trimmed. */
@@ -294,7 +296,7 @@ type SymbolCandidate = { name: string; start: { line: number; column: number }; 
 
 /** One symbol request's pick among a file's items; a resolved pick keeps the chosen item as the walk gave it. */
 export type SymbolPick<T extends SymbolCandidate> =
-  | { status: 'unresolved' }
+  | { status: 'unresolved'; problem?: SymbolProblemV1 }
   | { status: 'ambiguous'; candidates: { name: string; range: { startLine: number; endLine: number } }[] }
   | { status: 'resolved'; symbol: SymbolLocatorV1; item: T };
 
@@ -367,6 +369,9 @@ export async function resolveSymbol(ctx: CoreCallContext, path: string, request:
   if (read.status !== 'ready') return read;
   const found = await lookup(ctx, { language, path, text: read.text, digest: read.digest, mode: 'write' });
   if (found.status === 'unsupported') return { status: 'unresolved' };
+  if (found.status === 'syntax_error') {
+    return { status: 'unresolved', problem: { path, line: found.line, message: found.message } };
+  }
   if (found.status === 'unavailable') return { status: 'rejected', code: 'unavailable', reason: found.reason };
   return pickSymbol(request, read.text, found.symbols);
 }
@@ -529,6 +534,7 @@ export async function resolveNoteAnchors(ctx: CoreCallContext, input: {
   const anchors: NoteAnchorV1[] = [];
   let anchorEnded = false;
   let symbolUnresolved = false;
+  const symbolProblems: NoteSymbolProblemV1[] = [];
   for (const [index, draft] of drafts.entries()) {
     const field = index === 0 ? 'anchor' : `extraAnchors[${String(index - 1)}]`;
     const resolved = await resolveOne(ctx, draft, field, deps, goalPlanFacts,
@@ -537,6 +543,7 @@ export async function resolveNoteAnchors(ctx: CoreCallContext, input: {
     if (resolved.status === 'rejected') return resolved;
     if (resolved.ended) anchorEnded = true;
     if (resolved.symbolUnresolved === true) symbolUnresolved = true;
+    if (resolved.symbolProblem !== undefined) symbolProblems.push(resolved.symbolProblem);
     anchors.push(resolved.value);
   }
 
@@ -564,6 +571,7 @@ export async function resolveNoteAnchors(ctx: CoreCallContext, input: {
     basisCatalogRevision,
     anchorEnded,
     symbolUnresolved,
+    symbolProblems,
   } };
 }
 
@@ -663,7 +671,8 @@ async function resolveOne(ctx: CoreCallContext, draft: NoteDraftAnchorV1, field:
   goalPlanFacts: (goalId: string, field: string) => Promise<GoalPlanEntry | NoteAnchorFailure>,
   context: { isAgent: boolean; runGoalId: string | null; facts: readonly NoteFactV1[];
     resolveSymbols?: boolean }):
-Promise<{ status: 'ok'; value: NoteAnchorV1; ended: boolean; symbolUnresolved?: boolean } | NoteAnchorFailure> {
+Promise<{ status: 'ok'; value: NoteAnchorV1; ended: boolean; symbolUnresolved?: boolean;
+  symbolProblem?: NoteSymbolProblemV1 } | NoteAnchorFailure> {
   const notFound = (candidates?: NoteAnchorCandidateV1[], unavailable?: boolean): NoteAnchorFailure => ({
     status: 'rejected', code: 'invalid', reason: 'anchor_not_found', field,
     ...(candidates === undefined ? {} : { anchorCandidates: candidates }),
@@ -728,7 +737,8 @@ Promise<{ status: 'ok'; value: NoteAnchorV1; ended: boolean; symbolUnresolved?: 
             symbolCandidates: resolution.candidates };
         }
         if (resolution.status === 'resolved') anchor.symbol = resolution.symbol;
-        else return { status: 'ok', value: anchor, ended: false, symbolUnresolved: true };
+        else return { status: 'ok', value: anchor, ended: false, symbolUnresolved: true,
+          ...(resolution.problem === undefined ? {} : { symbolProblem: { field, ...resolution.problem } }) };
       }
       return { status: 'ok', value: anchor, ended: false, symbolUnresolved: false };
     }
