@@ -28,27 +28,13 @@ import type { DecisionCardV1 } from '../../src/core/work-graph/model/decision-co
 import type { RoleLineOperationReadV1 } from '../../src/core/work-graph/views/role-line-operations-read.js';
 import { graphWrite } from '../helpers/AG2b-collaboration-fixture.js';
 import { S6A_SCOPE, type S6ASession } from '../helpers/S6A-request-fixture.js';
-import { openS7D2QueueWorld, type S7D2QueueWorld } from '../helpers/S7D2-queue-world.js';
+import { addRowsOf, openS7D2QueueWorld, type S7D2QueueWorld } from '../helpers/S7D2-queue-world.js';
 import { waitFor } from '../scenarios/harness.js';
 
 const pairOf = (line: S6ASession): SessionRef => ({ projectId: line.ref.projectId, sessionId: line.ref.sessionId });
 
 /** The `role_line` arm of the operations read (a row carries the stored action's `steps`). */
 type RoleLineRow = Extract<RoleLineOperationReadV1, { action: 'role_line' }>;
-
-/**
- * The goal's stored `role_line_add` operations as `role-lines/operations` rows, in read order (brief §1): each row is
- * read through `sessions/operation` to name the action and its goal; the order is not asserted.
- */
-async function addRowsOf(q: S7D2QueueWorld, goal: GoalRef): Promise<RoleLineRow[]> {
-  const rows: RoleLineRow[] = [];
-  for (const row of (await q.operations()).filter((entry): entry is RoleLineRow => entry.action === 'role_line')) {
-    const stored = await q.operation(row.operation) as
-      { action?: { action?: string; goalRef?: { goalId?: string } } };
-    if (stored.action?.action === 'role_line_add' && stored.action.goalRef?.goalId === goal.goalId) rows.push(row);
-  }
-  return rows;
-}
 
 describe('O4a-2 R1/R2: a queued line add ends on the person\'s assign; the next opening is a new operation', () => {
   let q: S7D2QueueWorld | null = null;

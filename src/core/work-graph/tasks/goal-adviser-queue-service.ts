@@ -18,9 +18,11 @@
 import type { CoreCallContext, CorePrincipal } from '../../../contracts/core/call-context.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { OperationRef } from '../../../contracts/core/operations.js';
+import type { SessionWorkLink } from '../../../contracts/core/session.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import { rejected, rejectedWithCurrent } from '../../../contracts/core/rejections.js';
 import { canonicalKey, type JsonValue } from '../../../contracts/fingerprint.js';
+import { compareCursors } from '../../../contracts/ledger.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import type { GoalScreeningV1 } from '../../../contracts/query-job.js';
 import {
@@ -34,13 +36,16 @@ import {
 } from '../persistence/command-executor.js';
 import { readGoalSettings } from '../persistence/record-codecs.js';
 import { decodeRun } from '../persistence/run-record-codecs.js';
-import { lookupCommittedReceipt, lookupCommittedReceiptByIdentity } from '../persistence/receipt-lookup.js';
+import {
+  lookupCommittedReceipt, lookupCommittedReceiptByIdentity, type CommittedReceipt,
+} from '../persistence/receipt-lookup.js';
 import type { InitializationBindingReadPort } from '../model/goal-card-contracts.js';
 import type { SessionActivityReadPort } from '../model/session-activity-contracts.js';
 import type { RoleLineOperationV1, SessionCard, SessionDirectoryPort } from '../model/session-contracts.js';
 import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
 import { decodeQueryRunSnapshotRecord } from '../queries/query-record-codecs.js';
 import { failedRoleLineRecordOf, type RoleLineOperationsPort } from '../sessions/role-line-operations.js';
+import { roleLineStepSession } from '../sessions/role-line-operation-write.js';
 import { goalAdviserQueueChangedCodec, goalAdviserQueueCodec } from '../sessions/role-line-orchestration-codecs.js';
 import { roleLineCommitContribution } from '../sessions/role-scope-commit.js';
 import { readHandoffFence } from '../sessions/session-handoff-fence.js';
@@ -141,9 +146,13 @@ function queueGuardOf(queue: GoalAdviserQueueV1): RecordGuard {
   return { refKey: canonicalKey(queue.ref), expectedRevision: queue.revision === 0 ? null : queue.revision };
 }
 
-function inQueue(queue: GoalAdviserQueueV1, goalRef: GoalRef): boolean {
+function queueEntryOf(queue: GoalAdviserQueueV1, goalRef: GoalRef): GoalAdviserQueueV1['entries'][number] | undefined {
   const key = canonicalKey(goalRef);
-  return queue.entries.some((entry) => canonicalKey(entry.goalRef) === key);
+  return queue.entries.find((entry) => canonicalKey(entry.goalRef) === key);
+}
+
+function inQueue(queue: GoalAdviserQueueV1, goalRef: GoalRef): boolean {
+  return queueEntryOf(queue, goalRef) !== undefined;
 }
 
 /** TS-19's context (终稿 :1349–:1356) bound to the goal's own workspace, with the caller's principal: whichever
@@ -177,6 +186,32 @@ const GOAL_ASSIGNED = 'goal_assigned';
 function lineAddCommandId(goalId: string, generation: number): string {
   return generation === 1 ? `goal-line:${goalId}` : `goal-line#${generation}:${goalId}`;
 }
+
+/** A platform allocation command's identity of one generation: generation 1 is `goal-queue:<goalId>`, generation
+ *  n ≥ 2 is `goal-queue#<n>:<goalId>` (n in decimal). */
+function allocationCommandId(goalId: string, generation: number): string {
+  return generation === 1 ? `goal-queue:${goalId}` : `goal-queue#${generation}:${goalId}`;
+}
+
+/** A queue-assign card's identity of one generation: generation 1 is `goal-queue-assign:<goalId>`, generation n ≥ 2
+ *  is `goal-queue-assign#<n>:<goalId>`. */
+function queueCardCommandId(goalId: string, generation: number): string {
+  return generation === 1 ? `goal-queue-assign:${goalId}` : `goal-queue-assign#${generation}:${goalId}`;
+}
+
+/** The SessionWorkLink record an assignment receipt wrote; null when it names none. */
+function assignmentLinkKeyOf(receipt: CommittedReceipt): string | null {
+  return receipt.versions.map((version) => version.refKey)
+    .find((refKey) => (JSON.parse(refKey) as { aggregateType?: unknown }).aggregateType === 'SessionWorkLink')
+    ?? null;
+}
+
+/** One generation's current allocation command and the assignment still alive under it, if any. */
+type CurrentAllocationCommandV1 = { commandId: string; generation: number;
+  assignment: { receipt: CommittedReceipt; link: SessionWorkLink } | null };
+
+/** One generation's queue-assign card: its identity and its saved operation, or null when it has none. */
+type CurrentQueueCardV1 = { commandId: string; generation: number; operation: RoleLineOperationV1 | null };
 
 /** The record an assignment ends a not-yet-started card or line add with, or `null` when the operation is not one an
  *  assignment ends (its record phase is not `accepted`, or a step has left `pending`). */
@@ -216,27 +251,132 @@ export function createGoalAdviserQueueService(deps: GoalAdviserQueueDependencies
     return { status: 'ready', value: read.value as RoleLineOperationV1 };
   }
 
-  /** The goal's current line add: the first generation whose saved operation is absent or was not ended
-   *  `goal_assigned`. */
-  async function currentLineAddOf(goalRef: GoalRef):
+  /** The responsible link an assignment receipt wrote, as stored now. */
+  async function assignmentLinkOf(receipt: CommittedReceipt):
+    Promise<{ status: 'ready'; value: SessionWorkLink } | CoreRejection> {
+    const linkKey = assignmentLinkKeyOf(receipt);
+    if (linkKey === null) return rejected('unavailable', 'the assignment receipt names no responsible link');
+    const link = ownerReadValue(await readOwnerRecord({ store: deps.records, refKey: linkKey,
+      decode: decodeSessionWorkLink, readError }));
+    if (link.status !== 'ready') return link;
+    if (link.value === null) return rejected('unavailable', 'the assignment receipt names a missing link');
+    return { status: 'ready', value: link.value };
+  }
+
+  /** The goal's current platform allocation generation: the first generation that is not used up. A generation is used
+   *  up when its assignment's link is closed, its enqueue receipt no longer matches the queued entry, a drop receipt
+   *  exists, or (without a platform receipt) its saved wait card belongs to a round that already left the queue. */
+  async function currentAllocationCommandOf(goalCtx: CoreCallContext, goalRef: GoalRef):
+    Promise<{ status: 'ready'; value: CurrentAllocationCommandV1 } | CoreRejection> {
+    for (let generation = 1; ; generation += 1) {
+      const commandId = allocationCommandId(goalRef.goalId, generation);
+      const assign = await lookupCommittedReceiptByIdentity(deps.commitIdentities,
+        queueIdentityOf(goalCtx, 'assign', commandId));
+      if (assign.status !== 'missing') {
+        if (assign.status !== 'found') return rejected(assign.status, assign.reason);
+        const link = await assignmentLinkOf(assign.receipt);
+        if (link.status !== 'ready') return link;
+        if (link.value.until !== null) continue;
+        return { status: 'ready', value: { commandId, generation,
+          assignment: { receipt: assign.receipt, link: link.value } } };
+      }
+      const enqueue = await lookupCommittedReceiptByIdentity(deps.commitIdentities,
+        queueIdentityOf(goalCtx, 'enqueue', commandId));
+      if (enqueue.status !== 'missing') {
+        if (enqueue.status !== 'found') return rejected(enqueue.status, enqueue.reason);
+        const queue = await readQueueRecord(deps.records, goalRef.projectId);
+        if (queue.status !== 'ready') return queue;
+        const entry = queueEntryOf(queue.value, goalRef);
+        if (entry === undefined || entry.enqueuedAt !== enqueue.receipt.cursor) continue;
+        return { status: 'ready', value: { commandId, generation, assignment: null } };
+      }
+      const drop = await lookupCommittedReceiptByIdentity(deps.commitIdentities,
+        queueIdentityOf(goalCtx, 'drop', commandId));
+      if (drop.status !== 'missing') {
+        if (drop.status !== 'found') return rejected(drop.status, drop.reason);
+        continue;
+      }
+      const card = await queueCardAt(goalRef, generation);
+      if (card.status !== 'ready') return card;
+      if (card.value.operation !== null) {
+        const queue = await readQueueRecord(deps.records, goalRef.projectId);
+        if (queue.status !== 'ready') return queue;
+        const entry = queueEntryOf(queue.value, goalRef);
+        if (entry === undefined) continue;
+        const wait = await lookupCommittedReceiptByIdentity(deps.commitIdentities,
+          queueIdentityOf(goalCtx, 'wait', queueCardCommandId(goalRef.goalId, generation)));
+        if (wait.status !== 'missing') {
+          if (wait.status !== 'found') return rejected(wait.status, wait.reason);
+          if (compareCursors(entry.enqueuedAt, wait.receipt.cursor) > 0) continue;
+        }
+      }
+      return { status: 'ready', value: { commandId, generation, assignment: null } };
+    }
+  }
+
+  /** One generation's queue-assign card. */
+  async function queueCardAt(goalRef: GoalRef, generation: number):
+    Promise<{ status: 'ready'; value: CurrentQueueCardV1 } | CoreRejection> {
+    const commandId = queueCardCommandId(goalRef.goalId, generation);
+    const saved = await readRoleLineOperation({ aggregateType: 'CoreOperation', projectId: goalRef.projectId,
+      operationId: commandId });
+    if (saved.status !== 'ready') return saved;
+    return { status: 'ready', value: { commandId, generation, operation: saved.value } };
+  }
+
+  /** The goal's queue-assign card of the current allocation generation. */
+  async function currentQueueCardOf(goalCtx: CoreCallContext, goalRef: GoalRef):
+    Promise<{ status: 'ready'; value: CurrentQueueCardV1 } | CoreRejection> {
+    const current = await currentAllocationCommandOf(goalCtx, goalRef);
+    if (current.status !== 'ready') return current;
+    return queueCardAt(goalRef, current.value.generation);
+  }
+
+  /** The goal's current line add: the first generation not ended `goal_assigned`, and not a completed add whose line
+   *  was archived. */
+  async function currentLineAddOf(ctx: CoreCallContext, goalRef: GoalRef):
     Promise<{ status: 'ready'; value: { commandId: string; operation: RoleLineOperationV1 | null } } | CoreRejection> {
     for (let generation = 1; ; generation += 1) {
       const commandId = lineAddCommandId(goalRef.goalId, generation);
       const saved = await readRoleLineOperation(roleLineOperationRef(goalRef.projectId, 'open:add', commandId));
       if (saved.status !== 'ready') return saved;
       const operation = saved.value;
-      if (operation === null
-        || !(operation.phase === 'failed' && operation.failure?.reason === GOAL_ASSIGNED)) {
-        return { status: 'ready', value: { commandId, operation } };
+      if (operation === null) return { status: 'ready', value: { commandId, operation } };
+      if (operation.phase === 'failed' && operation.failure?.reason === GOAL_ASSIGNED) continue;
+      if (operation.phase === 'completed') {
+        const step = operation.action.steps[0];
+        if (step !== undefined) {
+          const lineCtx = { ...ctx, workspaceId: operation.workspaceId };
+          const planned = await roleLineStepSession(deps.sessions, lineCtx, step);
+          if (planned.status === 'not_found') {
+            return rejected('unavailable', 'the completed line add names a missing child operation');
+          }
+          if (planned.status === 'rejected') return rejected(planned.code, planned.reason);
+          if (planned.status !== 'ready') {
+            return rejected('unavailable', 'the completed line add child operation is not readable');
+          }
+          if (planned.value !== null) {
+            const line = await deps.sessions.readSession(lineCtx, planned.value);
+            if (line.status === 'not_found') {
+              return rejected('unavailable', 'the line the completed line add created is missing');
+            }
+            if (line.status === 'rejected') return rejected(line.code, line.reason);
+            if (line.status !== 'ready') {
+              return rejected('unavailable', 'the line the completed line add created is not readable');
+            }
+            if (line.value.record.lifecycle === 'archived') continue;
+          }
+        }
       }
+      return { status: 'ready', value: { commandId, operation } };
     }
   }
 
   /** The goal's current line add ended `goal_assigned` at `at`; `null` when it has none or it is not one an assignment
    *  ends. */
-  async function lineAddClosingOf(goalRef: GoalRef, at: string):
+  async function lineAddClosingOf(ctx: CoreCallContext, goalRef: GoalRef, at: string):
     Promise<{ status: 'ready'; value: OperationClosingV1 | null } | CoreRejection> {
-    const current = await currentLineAddOf(goalRef);
+    const current = await currentLineAddOf(ctx, goalRef);
     if (current.status !== 'ready') return current;
     const operation = current.value.operation;
     if (operation === null) return { status: 'ready', value: null };
@@ -277,22 +417,28 @@ export function createGoalAdviserQueueService(deps: GoalAdviserQueueDependencies
     return { status: 'committed', value: queue.value, replayed: true, cursor };
   }
 
-  /** An assignment already committed under this identity: its adviser is the one link the original receipt wrote. */
-  async function replayedAssignment(goalCtx: CoreCallContext, goalRef: GoalRef, commandId: string):
+  /** An assignment already committed under this identity: its adviser is the one link the original receipt wrote.
+   *  A caller that already read the receipt and its link passes them as `first` instead of reading them again. */
+  async function replayedAssignment(goalCtx: CoreCallContext, goalRef: GoalRef, commandId: string,
+    first?: { receipt: CommittedReceipt; link: SessionWorkLink }):
     Promise<WriteResult<GoalAdviserAllocationV1> | null> {
-    const found = await lookupCommittedReceiptByIdentity(deps.commitIdentities,
-      queueIdentityOf(goalCtx, 'assign', commandId));
-    if (found.status === 'missing') return null;
-    if (found.status !== 'found') return rejected(found.status, found.reason);
-    const linkKey = found.receipt.versions.map((version) => version.refKey)
-      .find((refKey) => (JSON.parse(refKey) as { aggregateType?: unknown }).aggregateType === 'SessionWorkLink');
-    if (linkKey === undefined) return rejected('unavailable', 'the assignment receipt names no responsible link');
-    const link = ownerReadValue(await readOwnerRecord({ store: deps.records, refKey: linkKey,
-      decode: decodeSessionWorkLink, readError }));
-    if (link.status !== 'ready') return link;
-    if (link.value === null) return rejected('unavailable', 'the assignment receipt names a missing link');
-    await noticeAssignment(goalCtx.projectId, goalRef, plainSessionRef(link.value.ref), commandId);
-    const queue = await replayedQueue(goalCtx.projectId, found.receipt.cursor);
+    let receipt: CommittedReceipt;
+    let link: SessionWorkLink;
+    if (first !== undefined) {
+      receipt = first.receipt;
+      link = first.link;
+    } else {
+      const found = await lookupCommittedReceiptByIdentity(deps.commitIdentities,
+        queueIdentityOf(goalCtx, 'assign', commandId));
+      if (found.status === 'missing') return null;
+      if (found.status !== 'found') return rejected(found.status, found.reason);
+      const read = await assignmentLinkOf(found.receipt);
+      if (read.status !== 'ready') return read;
+      receipt = found.receipt;
+      link = read.value;
+    }
+    await noticeAssignment(goalCtx.projectId, goalRef, plainSessionRef(link.ref), commandId);
+    const queue = await replayedQueue(goalCtx.projectId, receipt.cursor);
     return queue.status === 'committed' ? { ...queue, value: { status: 'assigned', queue: queue.value } } : queue;
   }
 
@@ -362,7 +508,7 @@ export function createGoalAdviserQueueService(deps: GoalAdviserQueueDependencies
    * adviser Session as the candidate step read it; without one (a person's assign, a line just opened) it is read here.
    */
   async function write(ctx: CoreCallContext, input: GoalQueueWriteV1,
-    pinned: { approval?: { expectedRevision: number }; adviser?: SessionCard['record'] } = {}):
+    pinned: { approval?: { expectedRevision: number }; adviser?: SessionCard['record']; generation?: number } = {}):
     Promise<WriteResult<GoalAdviserQueueV1>> {
     const trusted = trustedContext(ctx, 'a goal adviser queue write');
     if (!trusted.ok) return trusted.rejection;
@@ -458,13 +604,14 @@ export function createGoalAdviserQueueService(deps: GoalAdviserQueueDependencies
         || saved.value.revision !== pin.expectedRevision) return rejected('source_stale', NO_LONGER_WAITS);
       closing.push({ prior: saved.value, next: closedOperationOf(saved.value, at) });
     } else {
-      const card = await readRoleLineOperation({ aggregateType: 'CoreOperation' as const, projectId,
-        operationId: `goal-queue-assign:${input.goalRef.goalId}` });
+      const card = pinned.generation === undefined
+        ? await currentQueueCardOf(goalContextOf(goal.goal, { ...ctx, principal: platformPrincipal() }), input.goalRef)
+        : await queueCardAt(input.goalRef, pinned.generation);
       if (card.status !== 'ready') return card;
-      const next = card.value === null ? null : goalAssignedCloseOf(card.value, at);
-      if (card.value !== null && next !== null) closing.push({ prior: card.value, next });
+      const next = card.value.operation === null ? null : goalAssignedCloseOf(card.value.operation, at);
+      if (card.value.operation !== null && next !== null) closing.push({ prior: card.value.operation, next });
     }
-    const add = await lineAddClosingOf(input.goalRef, at);
+    const add = await lineAddClosingOf(ctx, input.goalRef, at);
     if (add.status !== 'ready') return add;
     if (add.value !== null) closing.push(add.value);
     const writes = closingWritesOf(closing);
@@ -654,7 +801,7 @@ export function createGoalAdviserQueueService(deps: GoalAdviserQueueDependencies
 
   /** Steps 4–7: the candidate, else a new adviser line, else the queue. */
   async function allocateToAdviser(goalCtx: CoreCallContext, input: { commandId: string; goalRef: GoalRef;
-    approval?: OperationPinV1 }): Promise<AllocationAttemptV1> {
+    approval?: OperationPinV1; generation?: number }): Promise<AllocationAttemptV1> {
     const facts = await readAllocationFacts(goalCtx, input.goalRef);
     if (facts.status !== 'ready') return { result: facts, queueRevision: null, kind: null };
     const queue = facts.value.queue;
@@ -667,7 +814,8 @@ export function createGoalAdviserQueueService(deps: GoalAdviserQueueDependencies
         goalRef: input.goalRef, adviser, expectedRevision: queue.revision,
         ...(approval === undefined ? {} : { operationRef: approval.operationRef }) }, {
         ...(approval === undefined ? {} : { approval: { expectedRevision: approval.expectedRevision } }),
-        ...(read === undefined ? {} : { adviser: read }) })),
+        ...(read === undefined ? {} : { adviser: read }),
+        ...(input.generation === undefined ? {} : { generation: input.generation }) })),
       queueRevision: queue.revision, kind: 'assign',
       ...(read === undefined ? {} : { adviser: { session: adviser, revision: read.revision } }) };
     };
@@ -680,7 +828,7 @@ export function createGoalAdviserQueueService(deps: GoalAdviserQueueDependencies
     }
     if (candidate !== null) return assignToAdviser(candidate.session);
     // born with an empty scope: no initial goal link/claim, so the one assign below commits the Goal responsibility
-    const current = await currentLineAddOf(input.goalRef);
+    const current = await currentLineAddOf(goalCtx, input.goalRef);
     if (current.status !== 'ready') return { result: current, queueRevision: null, kind: null };
     const opened = await deps.lines.open(goalCtx, { commandId: current.value.commandId, duty: 'adviser',
       scope: [], affectedGoals: [input.goalRef] });
@@ -713,9 +861,26 @@ export function createGoalAdviserQueueService(deps: GoalAdviserQueueDependencies
     const goal = await readGoal(deps.records, input.goalRef);
     if (goal.status !== 'ready') return goal;
     const goalCtx = goalContextOf(goal.goal, ctx);
-    // 1. an assignment already committed under this command (终稿 :1820)
-    const assigned = await replayedAssignment(goalCtx, input.goalRef, input.commandId);
-    if (assigned !== null) return assigned;
+    // 1. a platform base command first finds its current generation (终稿 :1820); a card answer's `requestId` replays
+    //    as itself. An alive assignment of the current generation answers `assigned` from the read that found it.
+    const platformBase = input.approval === undefined && input.rejection === undefined
+      && input.commandId === allocationCommandId(input.goalRef.goalId, 1);
+    let effectiveCommandId = input.commandId;
+    let generation: number | undefined;
+    if (platformBase) {
+      const current = await currentAllocationCommandOf(goalCtx, input.goalRef);
+      if (current.status !== 'ready') return current;
+      effectiveCommandId = current.value.commandId;
+      generation = current.value.generation;
+      if (current.value.assignment !== null) {
+        const replay = await replayedAssignment(goalCtx, input.goalRef, effectiveCommandId,
+          current.value.assignment);
+        if (replay !== null) return replay;
+      }
+    } else {
+      const assigned = await replayedAssignment(goalCtx, input.goalRef, input.commandId);
+      if (assigned !== null) return assigned;
+    }
     // 2. U1's reject recovers its own append first, before the adviser check: a later approval may have given the
     //    goal an adviser, and a repeated answer must still read as answered
     const rejection = input.rejection;
@@ -729,9 +894,10 @@ export function createGoalAdviserQueueService(deps: GoalAdviserQueueDependencies
       if (lines.value.some((line) => line.duty === 'adviser')) return rejected('revision_conflict', 'goal_has_adviser');
     }
     const decideOnce = (): Promise<AllocationAttemptV1> => rejection !== undefined
-      ? enqueueRejectedLineAdd(goalCtx, input.goalRef, input.commandId, rejection)
-      : allocateToAdviser(goalCtx, { commandId: input.commandId, goalRef: input.goalRef,
-        ...(input.approval === undefined ? {} : { approval: input.approval }) });
+      ? enqueueRejectedLineAdd(goalCtx, input.goalRef, effectiveCommandId, rejection)
+      : allocateToAdviser(goalCtx, { commandId: effectiveCommandId, goalRef: input.goalRef,
+        ...(input.approval === undefined ? {} : { approval: input.approval }),
+        ...(generation === undefined ? {} : { generation }) });
     const first = await decideOnce();
     // 8. a lost queue commit (o4a rulings 4, 31, 48): a person's confirm must not fail because a drain moved another
     //    goal. Recover this command's receipt by its identity alone: the confirm, the Workflow triggers and a drain
@@ -743,8 +909,9 @@ export function createGoalAdviserQueueService(deps: GoalAdviserQueueDependencies
     if (first.kind === null || first.result.status !== 'rejected') return first.result;
     const sameCommand = first.result.code === 'idempotency_conflict';
     if (!sameCommand && (first.result.code !== 'revision_conflict' || first.queueRevision === null)) return first.result;
-    const recovered = first.kind === 'assign' ? await replayedAssignment(goalCtx, input.goalRef, input.commandId)
-      : await replayedEnqueue(goalCtx, input.commandId);
+    const recovered = first.kind === 'assign'
+      ? await replayedAssignment(goalCtx, input.goalRef, effectiveCommandId)
+      : await replayedEnqueue(goalCtx, effectiveCommandId);
     if (recovered !== null) return recovered;
     if (sameCommand) return first.result;
     const pin = input.approval ?? rejection;
@@ -795,10 +962,13 @@ export function createGoalAdviserQueueService(deps: GoalAdviserQueueDependencies
         const queue = await readQueueRecord(deps.records, projectId);
         if (queue.status !== 'ready') { blocked += 1; continue; }
         if (!inQueue(queue.value, goalRef)) continue;
-        const add = advised ? await lineAddClosingOf(goalRef, deps.now()) : { status: 'ready' as const, value: null };
+        const current = await currentAllocationCommandOf(goalCtx, goalRef);
+        if (current.status !== 'ready') { blocked += 1; continue; }
+        const add = advised ? await lineAddClosingOf(goalCtx, goalRef, deps.now())
+          : { status: 'ready' as const, value: null };
         if (add.status !== 'ready') { blocked += 1; continue; }
         const writes = closingWritesOf(add.value === null ? [] : [add.value]);
-        const dropped = await commitQueue(goalCtx, { kind: 'drop', commandId: `goal-queue:${goalRef.goalId}`,
+        const dropped = await commitQueue(goalCtx, { kind: 'drop', commandId: current.value.commandId,
           fingerprintInput: { goalRef }, fragment: { records: [goalAdviserQueueCodec.encode(dropGoal(queue.value, goalRef)),
             ...writes.records], guards: [queueGuardOf(queue.value), ...writes.guards], claims: [], events: [] },
           revision: queue.value.revision + 1 });
@@ -812,11 +982,11 @@ export function createGoalAdviserQueueService(deps: GoalAdviserQueueDependencies
       const verdict = decisionActionPolicy({ action: 'goal_queue_assign', actorClass: 'system',
         affectedGoals: [{ goalRef, autonomy: readGoalSettings(goal).autonomy, settingsRevision: goal.revision }] });
       if (verdict === 'needs_decision') {
+        const card = await currentQueueCardOf(goalCtx, goalRef);
+        if (card.status !== 'ready') { blocked += 1; continue; }
+        if (card.value.operation !== null) continue;
         const operationRef: OperationRef = { aggregateType: 'CoreOperation', projectId,
-          operationId: `goal-queue-assign:${goalRef.goalId}` };
-        const saved = await readRoleLineOperation(operationRef);
-        if (saved.status !== 'ready') { blocked += 1; continue; }
-        if (saved.value !== null) continue;
+          operationId: card.value.commandId };
         const facts = await readAllocationFacts(goalCtx, goalRef);
         if (facts.status !== 'ready') { blocked += 1; continue; }
         if (adviserCandidateOf({ screening: facts.value.screening, slots: facts.value.slots }) === null) continue;
@@ -829,7 +999,7 @@ export function createGoalAdviserQueueService(deps: GoalAdviserQueueDependencies
             steps: [{ key: 'adviser', duty: 'adviser', childOperation: null, state: 'pending' }],
             result: { status: 'waiting', reason: null } },
         };
-        const waited = await commitQueue(goalCtx, { kind: 'wait', commandId: `goal-queue-assign:${goalRef.goalId}`,
+        const waited = await commitQueue(goalCtx, { kind: 'wait', commandId: card.value.commandId,
           fingerprintInput: { goalRef }, fragment: { records: [encodeSessionOperationRecord(operation)],
             guards: [{ refKey: operationRefKey(operationRef), expectedRevision: null }, queueGuardOf(facts.value.queue)],
             claims: [], events: [] }, revision: facts.value.queue.revision });

@@ -39,6 +39,7 @@ import type {
   DecisionCardV1, DecisionQueueReadV1, NoticeItemV1,
 } from '../../src/core/work-graph/model/decision-contracts.js';
 import type { RequestReadV1 } from '../../src/core/work-graph/views/main-surface-read-model.js';
+import type { RoleLineOperationReadV1 } from '../../src/core/work-graph/views/role-line-operations-read.js';
 import { waitFor } from '../scenarios/harness.js';
 import { driveWorkflow, type AdvanceValue } from './A2-restart-fixture.js';
 import { ag2bChecksConfiguration, graphWrite } from './AG2b-collaboration-fixture.js';
@@ -120,6 +121,23 @@ const ADVISER_DRAFTS: readonly S7D2QueueDraft[] = ['a1', 'a2', 'a3', 'b1', 'b2',
   .map(name => ({ name, autonomy: 'after_plan_confirmation' }));
 
 /** Open the world (see the header). Memory or SQLite. */
+/** A `role-lines/operations` row of the `role_line` kind. */
+export type S7D2RoleLineRow = Extract<RoleLineOperationReadV1, { action: 'role_line' }>;
+
+/**
+ * The goal's stored `role_line_add` operations as `role-lines/operations` rows, in read order (brief §1): each row is
+ * read through `sessions/operation` to name the action and its goal; the order is not asserted.
+ */
+export async function addRowsOf(q: S7D2QueueWorld, goal: GoalRef): Promise<S7D2RoleLineRow[]> {
+  const rows: S7D2RoleLineRow[] = [];
+  for (const row of (await q.operations()).filter((entry): entry is S7D2RoleLineRow => entry.action === 'role_line')) {
+    const stored = await q.operation(row.operation) as
+      { action?: { action?: string; goalRef?: { goalId?: string } } };
+    if (stored.action?.action === 'role_line_add' && stored.action.goalRef?.goalId === goal.goalId) rows.push(row);
+  }
+  return rows;
+}
+
 export async function openS7D2QueueWorld(options: S7D2QueueWorldOptions): Promise<S7D2QueueWorld> {
   const role = await openS7D2RoleLineWorld({ backend: options.backend,
     extraHostOptions: { scribeReminderPeriodMs: 25 } });
