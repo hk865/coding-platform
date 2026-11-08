@@ -162,10 +162,10 @@ describe('E33-6 a Goal created after the empty page appears', () => {
   }, 30_000);
 });
 
-const NINE_BOARDS = BOARD_NAMES.filter((name) => name !== 'TaskMap');
+const UNWIRED_BOARDS = BOARD_NAMES.filter((name) => name !== 'TaskMap' && name !== 'Main');
 
-describe('E33-7 only the wired board opens a change stream', () => {
-  it.each(NINE_BOARDS)('E33-7 %s mounts the sample with zero changes requests', async (name) => {
+describe('E33-7 only a wired board opens a change stream', () => {
+  it.each(UNWIRED_BOARDS)('E33-7 %s mounts the sample with zero changes requests', async (name) => {
     let changes = 0;
     const page = await bootPage({
       name, token: 'e33-token',

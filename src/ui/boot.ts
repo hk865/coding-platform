@@ -7,6 +7,8 @@ import {
 import { asRecord, asText } from './values.js';
 import { qualifyProjectPath } from '../contracts/workspace-path.js';
 import { createAutoRefresh, type RefreshRead, type RefreshSnapshot, type RefreshSources } from './refresh.js';
+import { adaptNav, type NavData, type NavLineDetail } from './adapters/nav.js';
+import { guardNotConnected, notConnectedAttrs } from './not-connected.js';
 import {
   NO_PLAN_TEXT, adaptTaskMap, adaptTaskMapCalendar, adaptTaskMapDecisionCards, adaptTaskMapDetail, adaptTaskMapTime,
   isFinishedGoalDisplayPhase, localShortAt, type TaskMapQueueRead,
@@ -49,6 +51,28 @@ export type TaskMapSessionRef = { projectId: string; sessionId: string };
 export type TaskMapActions = {
   readMore(demand: TaskMapReadDemand): void;
   pinLine(key: TaskMapSessionRef, pinned: boolean): Promise<void>;
+};
+
+/** §2.4/§2.7/§2.11: the board tells boot what it needs read; every demand joins
+ * the same refresh loop. A Goal pick changes the loop's Goal; a line opens that
+ * line's `lines/read`; the archive row reads `lines/archived` only while open. */
+export type BoardReadDemand = TaskMapReadDemand & {
+  archive?: boolean;
+};
+
+/** The one action surface `pageProps` gives every board. TaskMap uses
+ * `readMore`/`pinLine`; Main also uses `pickGoal`, `openLine` and the shared
+ * not-connected guard. */
+export type BoardActions = {
+  readMore(demand: BoardReadDemand): void;
+  pinLine?: (key: TaskMapSessionRef, pinned: boolean) => Promise<void>;
+  pickGoal: (goalId: string) => void;
+  openLine: (key: TaskMapSessionRef | null) => void;
+  notConnected: (event: { preventDefault(): void; stopPropagation(): void }) => void;
+  notConnectedAttrs: () => ReturnType<typeof notConnectedAttrs>;
+  /** §2.8: one `goals/control` write with the Goal and GoalPhase pins the page
+   * last showed, then the same refresh loop rereads the chrome. */
+  controlGoal: (control: 'pause' | 'resume' | 'cancel') => Promise<void>;
 };
 
 /**
@@ -97,12 +121,17 @@ export async function bootBoardPage(): Promise<void> {
     client = createHostClient(token);
     return token;
   }
-  const goalId = new URLSearchParams(location.search).get('goal');
+  const goalParam = new URLSearchParams(location.search).get('goal');
+  let goalId = goalParam === null || goalParam === '' ? null : goalParam;
   /* Ruling 3 "默认页": opening the board reads the DAG's today track and today
    * hour calendar, not only the six base reads. */
-  const demand: TaskMapReadDemand = { track: true, win: 'today' };
-  const actions: TaskMapActions = {
-    readMore(next: TaskMapReadDemand): void {
+  const demand: BoardReadDemand = { track: true, win: 'today' };
+  /** The navigation data the page last published; a control write pins those
+   * exact revisions (§2.8), never a second read after the click. */
+  let latest: NavData | null = null;
+  let controlSeq = 0;
+  const actions: BoardActions = {
+    readMore(next: BoardReadDemand): void {
       /* Explicit fields replace the old demand, including `false`/`null`, so a
        * closed view can withdraw its read instead of sticking forever. */
       Object.assign(demand, next);
@@ -118,11 +147,50 @@ export async function bootBoardPage(): Promise<void> {
       }
       await refresh.reread();
     },
+    pickGoal(next: string): void {
+      /* §2.9: the same refresh loop rereads the chrome for the new Goal; the
+       * URL is not rewritten and no draft table is built. */
+      goalId = next === '' ? null : next;
+      demand.lineKey = null;
+      demand.archive = false;
+      void refresh.reread();
+    },
+    openLine(key: TaskMapSessionRef | null): void {
+      demand.lineKey = key;
+      void refresh.reread();
+    },
+    notConnected: guardNotConnected,
+    notConnectedAttrs: () => notConnectedAttrs(),
+    async controlGoal(control: 'pause' | 'resume' | 'cancel'): Promise<void> {
+      const data = latest;
+      if (data === null || data.scope === null || data.selectedGoalId === null
+        || data.selectedGoalRevision === null || data.phaseRevision === null) {
+        throw new Error('goals/control needs the shown Goal and its GoalPhase revision');
+      }
+      const goalRef = { aggregateType: 'Goal' as const, projectId: data.scope.projectId, goalId: data.selectedGoalId };
+      const phaseRef = { aggregateType: 'GoalPhase' as const, projectId: data.scope.projectId, goalId: data.selectedGoalId };
+      controlSeq += 1;
+      const reply = await client.write('goals/control', data.scope, {
+        input: { goalRef, control, reason: null },
+        meta: {
+          requestId: 'navfix-control-' + String(controlSeq),
+          expected: [
+            { ref: goalRef, revision: data.selectedGoalRevision },
+            { ref: phaseRef, revision: data.phaseRevision },
+          ],
+        },
+      });
+      committedRouteValue(reply, 'goals/control');
+      await refresh.reread();
+    },
   };
-  const sources: RefreshSources<TaskMapData> = {
+  const sources: RefreshSources<unknown> = {
     read: async () => await reader(client, goalId, demand),
     publish: (snapshot) => {
       if (snapshot.error !== null) logReadError(snapshot.error);
+      /* A failed reread keeps the old data for the page; it must not become
+         the pins of a control write (§2.8: no second, stale read window). */
+      if (snapshot.error === null) latest = snapshot.data as NavData | null;
       view.updateProps(pageProps(board.defaults, snapshot, restart, actions));
     },
     subscribe: (handlers, cursor) => subscribeChanges(tokenOf, handlers, cursor),
@@ -134,13 +202,17 @@ export async function bootBoardPage(): Promise<void> {
   await refresh.start();
 }
 
-type BoardReader = (
-  client: ReturnType<typeof createHostClient>, goalId: string | null, demand?: TaskMapReadDemand,
-) => Promise<RefreshRead<TaskMapData>>;
+type BoardReader<T> = (
+  client: ReturnType<typeof createHostClient>, goalId: string | null, demand?: BoardReadDemand,
+) => Promise<RefreshRead<T>>;
 
-/** Ruling item 8: the one board this slice wires; every other board keeps the
- * E3-1 sample mount and issues no route request. */
-const BOARD_READERS: Record<string, BoardReader> = { TaskMap: readTaskMap };
+/** §2.11: one table, keyed by the served file name. TaskMap keeps its reader's
+ * signature and return type; Main joins with the chrome read. Every other
+ * board keeps the E3-1 sample mount and issues no route request. */
+const BOARD_READERS: Record<string, BoardReader<unknown>> = {
+  TaskMap: readTaskMap as BoardReader<unknown>,
+  Main: readMain,
+};
 
 /** The board name a served page is for: `/workbench/TaskMap.dc.html` -> `TaskMap`. */
 function boardNameOf(href: string): string {
@@ -156,9 +228,9 @@ function boardNameOf(href: string): string {
  * a failed reread carries the E3-2 code-table text instead. `status` stays
  * `ready` when data exists so the gate in `renderVals` does not hide it.
  */
-function pageProps(
-  defaults: Record<string, string>, snapshot: RefreshSnapshot<TaskMapData>, retry: () => void,
-  actions: TaskMapActions,
+function pageProps<T>(
+  defaults: Record<string, string>, snapshot: RefreshSnapshot<T>, retry: () => void,
+  actions: BoardActions,
 ): Record<string, unknown> {
   if (snapshot.dataVersion === 0 && snapshot.error !== null) {
     return {
@@ -171,7 +243,7 @@ function pageProps(
   const stale = { stale: snapshot.stale, staleText };
   const data = snapshot.data;
   if (data === null) return { ...defaults, actions, readState: { status: 'empty', ...stale } };
-  if (data.planMissing === true) {
+  if (data !== null && asRecord(data).planMissing === true) {
     return {
       ...defaults, actions, data, dataVersion: snapshot.dataVersion,
       readState: { status: 'empty', message: NO_PLAN_TEXT, ...stale },
@@ -218,6 +290,124 @@ async function taskMapScope(
   }
   if (missing !== null) throw missing;
   return null;
+}
+
+/** `goals/list`'s value at the JSON boundary; the chrome reads `ref`, `revision`,
+ * `ordinal`, `objective`, `order` and `display.phase` (§2.7). */
+type GoalListRead = { goals: Array<Record<string, unknown>> };
+
+/** `lines/archived`'s value at the JSON boundary. */
+type ArchivedLineRead = { rows?: unknown[]; nextCursor?: string | null };
+
+/** `decisions/queue`'s value: the counts are taken before paging (§2.11). */
+type QueueCountsRead = { counts?: unknown };
+
+/**
+ * E3-NAV §2.2/§2.4/§2.7/§2.11: the chrome read of Main and of every board that
+ * takes the navigation segment. The scope is the same `taskMapScope` the
+ * TaskMap read uses (decision 104-1), so `?goal=` is resolved per project and
+ * the navigation reads never fall back to `workspaces[0]` when a Goal was
+ * asked for. With no Goal id the first unfinished Goal is chosen: a `null` list
+ * phase is read through `goals/display` before it is called unfinished, and a
+ * finished one is skipped. The returned `cursor` is this read's bootstrap
+ * `changesHead`, never a later head.
+ */
+export async function readNav(
+  client: ReturnType<typeof createHostClient>, goalId: string | null,
+  demand: BoardReadDemand = {},
+): Promise<RefreshRead<NavData>> {
+  const boot = await client.bootstrap();
+  const cursor = boot.changesHead ?? null;
+  const found = await taskMapScope(client, boot.workspaces, goalId);
+  if (found === null) return { data: null, cursor };
+  const scope = found.scope;
+  const goals = readyRouteValue<GoalListRead>(
+    await client.post('goals/list', scope, { workspace: scope }), 'goals/list',
+  );
+  const displays = new Map<string, unknown>();
+  const refOf = (id: string) => ({ aggregateType: 'Goal' as const, projectId: scope.projectId, goalId: id });
+  const readDisplay = async (id: string): Promise<TaskMapDisplayRead> => {
+    const read = await readGoalDisplay(client, scope, refOf(id));
+    displays.set(id, read);
+    return read;
+  };
+  let selected = goalId;
+  if (selected !== null) {
+    await readDisplay(selected);
+  } else {
+    for (const entry of goals.goals) {
+      const id = asText(asRecord(entry.ref).goalId);
+      if (id === '') continue;
+      let display: TaskMapDisplayRead;
+      try {
+        display = await readDisplay(id);
+      } catch (error) {
+        if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
+        continue;
+      }
+      if (!isFinishedGoalDisplayPhase(display.display.phase)) { selected = id; break; }
+    }
+  }
+  const lines = readyRouteValue<unknown>(
+    await client.post('lines/list', scope, { workspace: scope }), 'lines/list',
+  );
+  /* The inbox is the workspace's, as the rail's two rows were; a failed count
+   * hides the item and is not an error of the page. */
+  let queue: QueueCountsRead | null = null;
+  try {
+    queue = readyRouteValue<QueueCountsRead>(await client.post('decisions/queue', scope, {
+      workspace: scope, sections: ['waiting_answer', 'notices'], page: { limit: 1 },
+    }), 'decisions/queue');
+  } catch {
+    queue = null;
+  }
+  let detail: NavLineDetail | null = null;
+  if (demand.lineKey !== null && demand.lineKey !== undefined) {
+    detail = readyRouteValue<NavLineDetail>(
+      await client.post('lines/read', scope, { workspace: scope, key: demand.lineKey }), 'lines/read',
+    );
+  }
+  let archived: unknown = null;
+  if (demand.archive === true) {
+    const rows: unknown[] = [];
+    let after: string | null = null;
+    for (let guard = 0; guard < 1000; guard += 1) {
+      const page: ArchivedLineRead = readyRouteValue<ArchivedLineRead>(await client.post('lines/archived', scope,
+        { workspace: scope, page: { limit: 100, ...(after === null ? {} : { cursor: after }) } }), 'lines/archived');
+      rows.push(...(Array.isArray(page.rows) ? page.rows : []));
+      after = page.nextCursor ?? null;
+      if (after === null) break;
+    }
+    archived = { rows };
+  }
+  const display = selected === null ? null : displays.get(selected) ?? null;
+  /* §2.8: the GoalPhase pin is read with the display. `not_found` is a Goal
+   * without an adopted Plan (0); any other failure is a read error, not 0. */
+  let phase: unknown;
+  if (selected !== null) {
+    try {
+      phase = readyRouteValue<unknown>(
+        await client.post('tasks/query', scope, { goalRef: refOf(selected) }), 'tasks/query',
+      );
+    } catch (error) {
+      if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
+      phase = null;
+    }
+  }
+  return {
+    data: adaptNav({ goals, lines, display, queue, archived, detail, phase }, selected, scope),
+    cursor,
+  };
+}
+
+/** The `BOARD_READERS` entry for Main: this package wires the chrome (rail,
+ * Goals bar, inbox, line switch); the main conversation body joins the same
+ * `props.data` in the Main page package (§2.7). */
+export async function readMain(
+  client: ReturnType<typeof createHostClient>, goalId: string | null,
+  demand: BoardReadDemand = {},
+): Promise<RefreshRead<NavData>> {
+  return readNav(client, goalId, demand);
 }
 
 /**

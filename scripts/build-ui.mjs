@@ -4,7 +4,7 @@
  * `src/ui/boot.ts` becomes `support.js` (the file every frozen board already
  * loads); each of the ten boards is copied byte-identical from its working
  * copy under `src/ui/boards/` when one exists, otherwise from the reference
- * directory, and `kit.css` from the reference directory; `index.html` lists
+ * directory, and `kit.css` from its working copy; `index.html` lists
  * the boards so `/workbench/` shows them. esbuild is already a dev dependency;
  * nothing is added.
  *
@@ -44,7 +44,7 @@ await build({
   logLevel: 'warning',
 });
 for (const name of boards) await cp(sources.get(name), join(outDir, name));
-await cp(join(boardsDir, 'kit.css'), join(outDir, 'kit.css'));
+await cp(join(workBoardsDir, 'kit.css'), join(outDir, 'kit.css'));
 
 const items = await Promise.all(boards.map(async (name) => {
   const html = await readFile(sources.get(name), 'utf8');
@@ -72,7 +72,7 @@ await writeFile(join(outDir, 'index.html'), `<!doctype html>
 </head>
 <body>
 <h1>工作台画板</h1>
-<p>2026-10-07 冻结的十块画板。任务图读真实数据，其余九块仍按画板自己的示例数据运行。</p>
+<p>2026-10-07 冻结的十块画板。任务图和主画面读真实数据，其余八块仍按画板自己的示例数据运行。</p>
 <ul>
 ${items.join('\n')}
 </ul>

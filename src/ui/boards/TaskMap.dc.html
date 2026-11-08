@@ -81,7 +81,7 @@ body { margin: 0; background: #1F1F1F; }
 
   <!-- ================= PAGE BAR ================= -->
   <header class="tm-bar">
-    <a class="btn btn-sm tm-back" href="Main.dc.html" title="回到工作台主画面">
+    <a class="btn btn-sm tm-back" href="{{backHref}}" title="回到工作台主画面">
       <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="m10 4-4 4 4 4"></path></svg>
       返回工作台
     </a>
@@ -3190,6 +3190,9 @@ class Component extends DCLogic {
       const goal = data && data.goal ? data.goal : null;
       return {
         rootMod: theme === 'light' ? 't-light' : '',
+        /* §2.2: loading, empty and error keep the same return link the ready
+           page carries, so a Goal without an adopted Plan can still leave. */
+        backHref: goal && goal.id ? 'Main.dc.html?goal=' + encodeURIComponent(String(goal.id)) : 'Main.dc.html',
         themeLabel: theme === 'light' ? '切换到深色' : '切换到浅色',
         toggleTheme: () => set({ theme: theme === 'light' ? 'dark' : 'light' }),
         legend: !!s.legend, legendCls: 'seg-btn' + (s.legend ? ' is-on' : ''), toggleLegend: () => set({ legend: !(this.state || {}).legend }),
@@ -3342,8 +3345,12 @@ class Component extends DCLogic {
           if (actions.readMore) actions.readMore({ detailTaskId: go.shownTask(left), lineKey: null }); },
         acts: det0.acts.concat([{ label: pinned ? '取消固定' : '固定', go: pinned ? unpin : pinIt(det0.id, []) }]) });
     })() : null;
+    /* §2.2: the return link carries this page's Goal, encoded once; a page with
+       no Goal keeps the plain file name. */
+    const goalId = data.goal && data.goal.id ? String(data.goal.id) : '';
     return {
       rootMod: theme === 'light' ? 't-light' : '',
+      backHref: goalId === '' ? 'Main.dc.html' : 'Main.dc.html?goal=' + encodeURIComponent(goalId),
       goalName: this.goalLabel(data.goal), hasGoal: true, goalSq: this.sqAt(data.goal.st), goalWord: data.goal.word,
       /* in replay (no reread text standing): the lines working and waiting at the cursor, and when (prototype:4048);
          with the track or the timeline unread, no number */

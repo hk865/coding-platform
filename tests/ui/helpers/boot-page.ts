@@ -70,10 +70,14 @@ export async function bootPage(options: {
   let destroyed = false;
   let pageFetches = 0;
   const assigned: string[] = [];
-  /* only the page's reconnect timer: the Host shares this process and its heartbeat keeps running */
-  globalThis.setTimeout = ((handler: () => void, delay?: number) => {
-    if (delay !== PAGE_RECONNECT_MS) return savedSetTimeout(handler, delay);
-    const handle = savedSetTimeout(() => { timers.delete(handle); handler(); }, delay);
+  /* Only the page's own no-argument reconnect timer is held: the Host shares
+     this process and its heartbeat keeps running. Other timers keep their
+     trailing arguments, because undici schedules its parser timeout as
+     `setTimeout(onParserTimeout, 4000, this.timeoutWeakRef)`; dropping the
+     WeakRef makes that callback throw `deref` of undefined outside its row. */
+  globalThis.setTimeout = ((handler: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) => {
+    if (delay !== PAGE_RECONNECT_MS || args.length > 0) return savedSetTimeout(handler, delay, ...args);
+    const handle = savedSetTimeout(() => { timers.delete(handle); handler(...args); }, delay);
     timers.add(handle);
     return handle;
   }) as typeof setTimeout;
@@ -133,6 +137,13 @@ export function findElement(root: FakeElement, predicate: (element: FakeElement)
 
 export function findButton(root: FakeElement, text: string): FakeElement | undefined {
   return findElement(root, (element) => element.tagName.toLowerCase() === 'button' && element.textContent.includes(text));
+}
+
+/** An `<a>` whose text contains `text` and, when given, whose `href` starts with `hrefStarts`. */
+export function findLink(root: FakeElement, text: string, hrefStarts?: string): FakeElement | undefined {
+  return findElement(root, (element) => element.tagName.toLowerCase() === 'a'
+    && element.textContent.includes(text)
+    && (hrefStarts === undefined || (element.getAttribute('href') ?? '').startsWith(hrefStarts)));
 }
 
 export function findClass(root: FakeElement, name: string): FakeElement | undefined {

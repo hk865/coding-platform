@@ -1,0 +1,27 @@
+{
+  "now": "2026-11-07T09:00:00+08:00",
+  "routes": {
+    "bootstrap":
+      {"workspaces":[{"scope":{"projectId":"e3w-scene","workspaceId":"e3w-scene"},"name":"E3W scene","workspaceRevision":1}],"review":null,"execution":{},"changesHead":"c0000000001"},
+    "goals/list":
+      {"status":"ready","value":{"goals":[{"ref":{"aggregateType":"Goal","projectId":"e3w-scene","goalId":"scene-goal"},"revision":1,"since":"c0000000001","ordinal":1,"objective":"场景目标","desiredState":"active","desiredStateRevision":1,"order":1,"autonomy":"after_plan_confirmation","waitForGoalRef":null,"activePlanRevision":{"planId":"scene-plan","revision":1},"display":{"phase":"RUNNING"}},{"ref":{"aggregateType":"Goal","projectId":"e3w-scene","goalId":"scene-goal-2"},"revision":1,"since":"c0000000001","ordinal":2,"objective":"场景目标二","desiredState":"paused","desiredStateRevision":1,"order":2,"autonomy":"after_plan_confirmation","waitForGoalRef":null,"activePlanRevision":null,"display":{"phase":"PAUSED"}},{"ref":{"aggregateType":"Goal","projectId":"e3w-scene","goalId":"scene-goal-3"},"revision":1,"since":"c0000000001","ordinal":3,"objective":"场景目标三","desiredState":"active","desiredStateRevision":1,"order":3,"autonomy":"after_plan_confirmation","waitForGoalRef":null,"activePlanRevision":null,"display":{"phase":"PLANNING"}}],"sourceCursor":"c0000000001"}},
+    "goals/read":
+      {"status":"ready","value":{"goal":{"ref":{"aggregateType":"Goal","projectId":"e3w-scene","goalId":"scene-goal"},"objective":"场景目标","desiredState":"active"},"pendingPlan":null,"continuedBy":[]}},
+    "goals/display":
+      {"status":"ready","value":{"goal":{"ref":{"aggregateType":"Goal","projectId":"e3w-scene","goalId":"scene-goal"},"objective":"场景目标"},"display":{"phase":"RUNNING","row":"GOAL-1","cause":null,"causes":[],"runStops":null},"liveRuns":[],"resumePending":[],"sourceCursor":"c0000000001"}},
+    "lines/list":
+      {"status":"ready","value":{"rows":[{"key":{"projectId":"e3w-scene","sessionId":"scene-secretary"},"duty":"secretary","name":{"source":"secretary_ordinal","primary":"秘书 1","extraCount":0,"ordinal":1,"tasks":[],"goalRef":null,"complete":true},"status":{"own":"standby","ownReason":{"code":"idle","params":{},"refs":[]},"attention":null,"attentionCounts":{"decide":0,"failed":0,"blocked":0,"unknown":0},"attentionComplete":true,"doneEvidence":"not_applicable","partialParts":[],"markers":[],"bucket":"standby","archivedTag":null,"readOnly":false},"runningCap":null,"responsibleNow":[],"doneTasks":null,"retired":null,"groups":{"duty":"secretary","module":null,"task":null,"alsoMaintains":[]},"sessionCount":{"status":"exact","value":1},"chainSessions":[{"projectId":"e3w-scene","sessionId":"scene-secretary"}],"pinned":false,"pinnedBy":[],"lastActivityAt":"2026-11-07T00:59:00.000Z","sortKey":"a","controls":[],"problem":null},{"key":{"projectId":"e3w-scene","sessionId":"scene-executor"},"duty":"executor","name":{"source":"duty_only","primary":"执行者","extraCount":0,"ordinal":null,"tasks":[],"goalRef":null,"complete":true},"status":{"own":"standby","ownReason":{"code":"idle","params":{},"refs":[]},"attention":null,"attentionCounts":{"decide":0,"failed":0,"blocked":0,"unknown":0},"attentionComplete":true,"doneEvidence":"not_applicable","partialParts":[],"markers":[],"bucket":"standby","archivedTag":null,"readOnly":false},"runningCap":null,"responsibleNow":[],"doneTasks":null,"retired":null,"groups":{"duty":"executor","module":null,"task":null,"alsoMaintains":[]},"sessionCount":{"status":"exact","value":1},"chainSessions":[{"projectId":"e3w-scene","sessionId":"scene-executor"}],"pinned":false,"pinnedBy":[],"lastActivityAt":"2026-11-07T00:58:00.000Z","sortKey":"b","controls":[],"problem":null}],"counts":{"working":{"status":"exact","value":0},"standby":{"status":"exact","value":2},"archived":{"status":"exact","value":1,"asOf":"c0000000001"}},"legacyUnchecked":{"status":"exact","value":0},"attentionComplete":true,"attentionProblem":null,"readWindow":{"from":"c0000000001","to":"c0000000002"}}},
+    "lines/archived":
+      {"status":"ready","value":{"rows":[],"nextCursor":null,"sourceCursor":"c0000000002","withoutArchivedAt":{"status":"exact","value":0}}},
+    "decisions/queue":
+      {"status":"ready","value":{"cards":[],"labels":[],"sections":[],"counts":{"waitingAnswer":1,"notices":{}},"sourceCursor":"c0000000001"}},
+    "tasks/query":
+      {"status":"not_found","code":"not_found","reason":"the Goal has no adopted Plan"},
+    "graph/hover":
+      {"status":"not_found","code":"not_found","reason":"the Goal has no adopted Plan"},
+    "main/read":
+      {"status":"ready","value":{"goal":{"ref":{"aggregateType":"Goal","projectId":"e3w-scene","goalId":"scene-goal"},"objective":"场景目标"},"messages":[],"nextCursor":null,"headCursor":"c0000000001"}},
+    "goals/conflicts":
+      {"status":"ready","value":{"cards":[],"labels":[],"footprintCompleteness":[{"goalRef":{"aggregateType":"Goal","projectId":"e3w-scene","goalId":"scene-goal"}}],"sourceCursor":"c0000000001"}}
+  }
+}

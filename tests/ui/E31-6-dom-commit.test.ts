@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { BOARD_NAMES, BOARDS_DIR, loadBoard, type BoardName } from './helpers/board-files.js';
 import { parseBoardParts } from '../../src/ui/board.js';
@@ -15,6 +16,7 @@ import type { VNode } from '../../src/ui/render.js';
  * one listener per event, no stale attributes, and `value`/`checked` written as
  * properties.
  */
+const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const NATIVE_EVENTS = new Set([
   'click', 'dblclick', 'focus', 'blur', 'mouseenter', 'mouseleave', 'contextmenu',
   'pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'keydown', 'wheel',
@@ -208,7 +210,9 @@ describe('E31-6 DOM commit', () => {
   });
 
   it('f: boot reads the fetched page, never the lowercased x-dc markup', async () => {
-    const source = readFileSync(`${BOARDS_DIR}/Main.dc.html`, 'utf8');
+    /* The served page is the working copy once one exists (E3-NAV §4.3). */
+    const working = `${ROOT}src/ui/boards/Main.dc.html`;
+    const source = readFileSync(existsSync(working) ? working : `${BOARDS_DIR}/Main.dc.html`, 'utf8');
     const templateHtml = source.slice(source.indexOf('<x-dc>') + '<x-dc>'.length, source.indexOf('</x-dc>'));
     const scriptStart = source.indexOf('data-dc-script');
     const tagStart = source.lastIndexOf('<script', scriptStart);

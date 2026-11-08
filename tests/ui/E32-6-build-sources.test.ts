@@ -6,9 +6,9 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 /**
- * E32-6 (ruling items 1 and 9, row E32-6): the nine boards without a working
- * copy are still byte-identical to the frozen reference; TaskMap is the one
- * board built from `src/ui/boards/`.
+ * E32-6 (ruling items 1 and 9, row E32-6): the eight boards without a working
+ * copy are still byte-identical to the frozen reference; Main and TaskMap are
+ * built from `src/ui/boards/`, and `kit.css` comes from its working copy.
  */
 const root = fileURLToPath(new URL('../..', import.meta.url));
 const frozen = `${root}docs/ui-reference/workbench-2026-10`;
@@ -16,8 +16,9 @@ const working = `${root}src/ui/boards`;
 // Its own output directory: another build test never writes into it.
 const built = mkdtempSync(join(tmpdir(), 'e32-6-workbench-'));
 const FROZEN_ONLY = [
-  'ArchOverview', 'Chain', 'Decide', 'Done', 'Goals', 'Main', 'Member', 'Phone', 'Plan',
+  'ArchOverview', 'Chain', 'Decide', 'Done', 'Goals', 'Member', 'Phone', 'Plan',
 ] as const;
+const WORKING = ['Main', 'TaskMap'] as const;
 
 beforeAll(() => {
   execFileSync(process.execPath, ['scripts/build-ui.mjs', built], { cwd: root, stdio: 'pipe' });
@@ -30,7 +31,11 @@ describe('E32-6 build sources', () => {
     expect(readFileSync(`${built}/${name}.dc.html`).equals(readFileSync(`${frozen}/${name}.dc.html`))).toBe(true);
   });
 
-  it('TaskMap is the working copy', () => {
-    expect(readFileSync(`${built}/TaskMap.dc.html`).equals(readFileSync(`${working}/TaskMap.dc.html`))).toBe(true);
+  it.each(WORKING)('%s is the working copy', (name) => {
+    expect(readFileSync(`${built}/${name}.dc.html`).equals(readFileSync(`${working}/${name}.dc.html`))).toBe(true);
+  });
+
+  it('kit.css is the working copy', () => {
+    expect(readFileSync(`${built}/kit.css`).equals(readFileSync(`${working}/kit.css`))).toBe(true);
   });
 });

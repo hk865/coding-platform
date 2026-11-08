@@ -74,10 +74,10 @@ describe('E32-7 boot reads the real task map', () => {
   });
 });
 
-const NINE_BOARDS = BOARD_NAMES.filter((name) => name !== 'TaskMap');
+const UNWIRED_BOARDS = BOARD_NAMES.filter((name) => name !== 'TaskMap' && name !== 'Main');
 
 describe('R7 a board outside the reader table mounts the E3-1 sample', () => {
-  it.each(NINE_BOARDS)('R7 %s issues no route request and renders the sample', async (name) => {
+  it.each(UNWIRED_BOARDS)('R7 %s issues no route request and renders the sample', async (name) => {
     let routeRequests = 0;
     const page = await bootPage({
       name, token: TOKEN,

@@ -38,16 +38,20 @@ describe('E32-5 board token', () => {
     const address = await server.listen(0);
     const origin = `http://${address.host}:${address.port}`;
 
-    const board = await fetch(`${origin}/workbench/TaskMap.dc.html`);
-    expect(board.status).toBe(200);
-    expect(await board.text()).toContain(`<meta name="platform-token" content="${TOKEN}">`);
-    expect(board.headers.get('cache-control')).toBe('no-store');
+    /* E3-NAV §4.3: the second working copy goes through the same static-page
+       injection; TaskMap keeps its row. */
+    for (const name of ['TaskMap', 'Main']) {
+      const board = await fetch(`${origin}/workbench/${name}.dc.html`);
+      expect(board.status).toBe(200);
+      expect(await board.text()).toContain(`<meta name="platform-token" content="${TOKEN}">`);
+      expect(board.headers.get('cache-control')).toBe('no-store');
+
+      expect(readFileSync(`${root}src/ui/boards/${name}.dc.html`, 'utf8')).not.toContain(TOKEN);
+    }
 
     const support = await fetch(`${origin}/workbench/support.js`);
     expect(support.status).toBe(200);
     expect(await support.text()).not.toContain(TOKEN);
-
-    expect(readFileSync(`${root}src/ui/boards/TaskMap.dc.html`, 'utf8')).not.toContain(TOKEN);
   });
 
   it('a TaskMap page without the token meta mounts the empty board and makes no core call', async () => {
