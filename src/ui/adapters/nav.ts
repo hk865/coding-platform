@@ -178,7 +178,7 @@ function navLineOf(entry: unknown, archived: boolean): NavLine {
 
 /** §2.8: `completion.snapshot.revision` when recorded; `not_recorded`, an
  * absent completion and `tasks/query` `not_found` are 0. */
-function completionRevisionOf(graph: unknown): number {
+export function completionRevisionOf(graph: unknown): number {
   const completion = asRecord(asRecord(graph).completion);
   if (completion.status !== 'recorded') return 0;
   const revision = asRecord(completion.snapshot).revision;

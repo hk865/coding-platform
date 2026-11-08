@@ -1,0 +1,2064 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>目标顺序与冲突</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="./kit.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&family=Noto+Sans+SC:wght@400;500&display=swap">
+<style>
+body { margin: 0; background: #1F1F1F; }
+/* page: centre (goal order + conflict) | panel (architecture tree of the conflict); no rail. Tokens only. */
+.gx { height: 100vh; min-height: 560px; display: grid; grid-template-columns: minmax(0, 1fr) 480px; overflow: hidden; }
+.gx-back { margin-left: -8px; }
+.gx-sec { display: flex; flex-direction: column; gap: 8px; }
+.gx-label { gap: 12px; padding: 0; }
+.gx-hint { margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gx-list { display: flex; flex-direction: column; gap: 1px; margin: 0 -8px; }   /* row content lines up with the labels, the hover background bleeds 8px */
+.gx-goal { gap: 8px; min-height: 36px; padding: 0 8px 0 0; }
+.gx-name { display: flex; align-items: center; gap: 10px; flex: 1 1 auto; min-width: 0; align-self: stretch; padding: 0 0 0 8px; text-align: left; }
+.gx-line { flex: 0 1000 auto; min-width: 0; font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row.is-on .gx-line { color: var(--text-2); }
+.row.is-on .order-acts { opacity: 1; }
+.gx-log { display: flex; flex-direction: column; gap: 12px; }
+.gx .d-rel { grid-template-columns: 40px minmax(0, 1fr); }
+.gx .d-item:hover, .gx .d-item:focus-visible { color: var(--text-2); }   /* task names here are plain text, not links into the task map */
+.gx .dc-facts .d-items { margin-right: 6px; }
+@media (max-width: 1240px) { .gx { grid-template-columns: minmax(0, 1fr) 420px; } }
+@media (max-width: 960px) { .gx { height: auto; min-height: 100vh; grid-template-columns: minmax(0, 1fr); overflow: visible; } }
+/* G2 (DESIGN §18.3): the panel is the auxiliary area. This board has no rail, so kit §15.1's split shell is drawn here
+   for two panes: centre | divider | panel; the panel width is state (--panel-w), no 480px cap; 隐藏 / 放大 as on Main */
+.gx.is-split { grid-template-columns: minmax(0, 1fr) 0 min(var(--panel-w, 480px), calc(100% - 360px)); }
+.gx.is-split > .main { grid-column: 1; grid-row: 1; }
+.gx.is-split > .split-handle { grid-column: 2; grid-row: 1; }
+.gx.is-split > .panel { grid-column: 3; grid-row: 1; }
+.gx.is-split.no-panel { grid-template-columns: minmax(0, 1fr) 0 0; }
+.gx.no-panel > .panel, .gx.no-panel > .split-handle { display: none; }
+.gx.is-split.panel-max { grid-template-columns: 0 0 minmax(0, 1fr); }
+.gx.panel-max > .main, .gx.panel-max > .split-handle { display: none; }
+.gx.is-dragging { cursor: col-resize; user-select: none; }
+/* the approved ≤ 1240px panel (420) holds until the divider moves (the width stays unset until then, as on every board;
+   kit §15.10 has the same rule for the three-pane shell) */
+@media (min-width: 961px) and (max-width: 1240px) { .gx.is-split { grid-template-columns: minmax(0, 1fr) 0 min(var(--panel-w, 420px), calc(100% - 360px)); } }
+@media (max-width: 960px) {
+  .gx.is-split, .gx.is-split.no-panel, .gx.is-split.panel-max { grid-template-columns: minmax(0, 1fr); }
+  .gx.is-split > .main, .gx.is-split > .panel { grid-column: auto; grid-row: auto; }
+  .gx.panel-max > .main { display: flex; }
+}
+/* rework 2026-10-06 · data/taskpanel.snippet.html [0] PART A, verbatim (the integration step moves these rules into kit.css) */
+/* taskpanel · PART A — the 任务图 thumbnail (decision 28) */
+.tp-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 12px; min-height: 18px; font-size: 12px; line-height: 18px; color: var(--text-3); }
+/* the hint stays on one line (cut only when the panel is narrower than the hint itself); 回到起点 wraps under it */
+.tp-bar .tp-hint { flex: 1 0 auto; max-width: 100%; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tp-bar .tp-note { min-width: 0; flex: 1 1 auto; color: var(--text-2); }
+.tp-back { flex: none; font-size: 12px; white-space: nowrap; }
+.tp-view { position: relative; flex: none; }
+.tp-view.is-pan { flex: 1 1 0; min-height: 140px; overflow: hidden; touch-action: none; user-select: none; }
+/* nothing to pan: the viewport is as tall as the tree, so what follows it (the legend, a note) stays right under the tree */
+.tp-view.is-pan:not(.can-pan) { flex: none; overflow: visible; }
+.tp-view.can-pan { cursor: grab; }
+.tp-view.can-pan:active { cursor: grabbing; }
+/* a tree wider than the panel keeps its labels whole, so a sideways drag shows the rest of them */
+.tp-view.is-pan > .tree { width: max-content; min-width: 100%; }
+/* a node whose deeper levels are hidden says it can open: a folded row keeps its chevron (quiet), a comb square that
+   holds more has a short stub under it, as if its branch went on */
+.tp-view.is-pan .tr-lb.tp-more .tr-chev { opacity: .55; }
+.tp-view.is-pan .tr:hover .tr-lb.tp-more .tr-chev, .tp-view.is-pan .tr-lb.tp-more:focus-visible .tr-chev { opacity: 1; }
+.tp-view.is-pan .cc.tp-more > .sq::after { content: ""; position: absolute; left: calc(50% - .5px); top: calc(100% + 2px); height: 4px; border-left: 1px solid var(--tree); }
+/* Goals only: its 任务图 (the paths to the tasks on the two shared files) fits the panel, so there is nothing to pan; the
+   viewport is then as tall as the tree, the legend stays right under it and the hover card may run past it, as on the
+   approved board. A tree that does not fit (can-pan: a narrow panel) gets the snippet's panning viewport */
+.tp-view.is-pan:not(.can-pan) { flex: none; overflow: visible; }
+</style>
+</helmet>
+
+<div class="kit gx is-split {{rootMod}} {{ax.appCls}}" style="--panel-w: {{ax.panelCss}};">
+
+  <!-- ================= CENTRE: order + conflict ================= -->
+  <main class="main">
+    <header class="head">
+      <a class="btn btn-sm gx-back" href="{{backHref}}" title="回到工作台主画面">
+        <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="m10 4-4 4 4 4"></path></svg>
+        返回工作台
+      </a>
+      <span class="head-title">目标顺序</span>
+      <span class="head-sub">{{headSub}}</span>
+      <span class="sp"></span>
+      <button class="btn btn-icon btn-sm" type="button" onClick="{{toggleTheme}}" aria-label="{{themeLabel}}" title="{{themeLabel}}">
+        <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.25"></circle><path class="fill" d="M8 2.75a5.25 5.25 0 0 1 0 10.5Z"></path></svg>
+      </button>
+      <button class="btn btn-icon btn-sm" type="button" onClick="{{togglePanel}}" aria-label="显示或隐藏右栏" title="右栏">
+        <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.75"></rect><path d="M10 2.75v10.5"></path></svg>
+      </button>
+    </header>
+
+    <div class="thread">
+      <div class="col">
+
+        <!-- ---------- ordered goals ---------- -->
+        <section class="gx-sec" aria-label="目标顺序">
+          <div class="rail-label gx-label"><span>顺序</span><span class="gx-hint">排在前面的先改共享的文件、先开工；悬停一行可以调整</span></div>
+          <!-- rows stay in goal-id order in the DOM; the flex `order` puts them in the current order, so after
+               上移 / 下移 the focused arrow still belongs to the goal that moved (sc-for has no keys) -->
+          <div class="gx-list" role="list" aria-label="目标，按顺序排列">
+            <sc-for list="{{goals}}" as="g" hint-placeholder-count="3">
+              <div role="listitem" style="order: {{g.pos}};" aria-posinset="{{g.pos}}" aria-setsize="{{listSize}}" aria-current="{{g.cur}}">
+                <div class="{{g.cls}}">
+                  <button class="gx-name" type="button" onClick="{{g.toggle}}" aria-expanded="{{g.open}}" aria-current="{{g.cur}}" title="{{g.tip}}">
+                    <span class="row-ord">{{g.ord}}</span>
+                    <span class="row-name">{{g.name}}</span>
+                    <span class="gx-line">{{g.line}}</span>
+                  </button>
+                  <span class="order-acts">
+                    <button class="{{g.upCls}}" type="button" onClick="{{g.up}}" aria-disabled="{{g.upOff}}" aria-label="{{g.upLabel}}" title="{{g.upLabel}}">
+                      <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 12.75V3.5M4.25 7.25 8 3.5l3.75 3.75"></path></svg>
+                    </button>
+                    <button class="{{g.downCls}}" type="button" onClick="{{g.down}}" aria-disabled="{{g.downOff}}" aria-label="{{g.downLabel}}" title="{{g.downLabel}}">
+                      <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.25v9.25M4.25 8.75 8 12.5l3.75-3.75"></path></svg>
+                    </button>
+                  </span>
+                  <sc-if value="{{g.hasN}}" hint-placeholder-val="{{ false }}"><span class="row-meta" title="需要你决定">{{g.n}}</span></sc-if>
+                  <span class="{{g.sq}}" aria-hidden="true"></span>
+                </div>
+                <sc-if value="{{g.open}}" hint-placeholder-val="{{ false }}">
+                  <div class="row-more">
+                    <dl class="kv">
+                      <sc-for list="{{g.kv}}" as="kv" hint-placeholder-count="4"><dt>{{kv.k}}</dt><dd>{{kv.v}}</dd></sc-for>
+                    </dl>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-for>
+          </div>
+        </section>
+
+        <!-- ---------- the conflict (Q2): goal 2 vs goal 1 ---------- -->
+        <section class="gx-sec" aria-label="冲突">
+          <div class="rail-label gx-label"><span>冲突</span><span class="gx-hint">{{cf.label}}</span></div>
+          <sc-if value="{{cf.open}}" hint-placeholder-val="{{ true }}">
+            <section class="plan" aria-label="{{cf.title}}">
+              <div class="plan-head">
+                <span class="ttl">{{cf.title}}</span>
+                <span class="scope">{{cf.scope}}</span>
+                <span class="st">要决定</span>
+              </div>
+              <div class="opt-how">{{cf.lead}}<sc-for list="{{cf.refs}}" as="rf" hint-placeholder-count="2">{{rf.pre}}<button class="ref" type="button" onClick="{{rf.go}}" title="在架构图里选中它"><span class="{{rf.sq}}" aria-hidden="true"></span>{{rf.name}}</button></sc-for>{{cf.tail}}</div>
+              <button class="btn-text dc-more" type="button" onClick="{{cf.toggleFacts}}" aria-expanded="{{cf.showFacts}}">{{cf.factsLabel}}</button>
+              <sc-if value="{{cf.showFacts}}" hint-placeholder-val="{{ false }}">
+                <dl class="dc-facts">
+                  <sc-for list="{{cf.facts}}" as="f" hint-placeholder-count="4">
+                    <dt>{{f.k}}</dt>
+                    <dd>
+                      <sc-if value="{{f.hasFiles}}" hint-placeholder-val="{{ false }}">
+                        <span class="d-items">
+                          <sc-for list="{{f.files}}" as="pf" hint-placeholder-count="2"><span class="d-file" title="{{pf.full}}"><sc-for list="{{pf.parts}}" as="fp" hint-placeholder-count="3"><span>{{fp}}</span></sc-for></span></sc-for>
+                        </span>
+                      </sc-if>
+                      {{f.v}}
+                    </dd>
+                  </sc-for>
+                </dl>
+              </sc-if>
+              <div class="opts no-key" role="radiogroup" aria-label="怎么处理冲突">
+                <sc-for list="{{cf.opts}}" as="o" hint-placeholder-count="3">
+                  <div class="{{o.cls}}">
+                    <button class="opt-top" type="button" role="radio" aria-checked="{{o.on}}" onClick="{{o.pick}}">
+                      <span class="radio" aria-hidden="true"></span>
+                      <span class="opt-title">{{o.title}}</span>
+                      <sc-if value="{{o.hasRec}}" hint-placeholder-val="{{ false }}"><span class="opt-rec">推荐</span></sc-if>
+                    </button>
+                    <sc-if value="{{o.on}}" hint-placeholder-val="{{ false }}">
+                      <div class="opt-body"><p class="opt-how">{{o.how}}</p></div>
+                    </sc-if>
+                  </div>
+                </sc-for>
+              </div>
+              <div class="plan-foot">
+                <button class="btn" type="button" onClick="{{cf.ask}}">
+                  <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.75 3.25h10.5v7.25H8l-3 2.5v-2.5H2.75Z"></path></svg>
+                  问秘书
+                </button>
+                <button class="btn-text is-off" type="button" onClick="{{cf.reopen}}" title="还没接通" aria-disabled="true">改主意</button>
+                <span class="note">{{cf.note}}</span>
+                <button class="{{cf.goCls}}" type="button" onClick="{{cf.go}}" aria-disabled="{{cf.goOff}}">确定</button>
+              </div>
+            </section>
+          </sc-if>
+          <sc-if value="{{cf.done}}" hint-placeholder-val="{{ false }}">
+            <div class="plan-line">
+              <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.75 4.25h6.5M6.75 8h6.5M6.75 11.75h6.5"></path><path d="m2.5 4.25.9.9 1.6-1.65M2.5 8l.9.9L5 7.25M2.75 11.75h1.5"></path></svg>
+              <span>{{cf.doneText}}</span>
+              <button class="btn-text is-off" type="button" onClick="{{cf.reopen}}" title="还没接通" aria-disabled="true">改主意</button>
+            </div>
+          </sc-if>
+        </section>
+
+        <!-- ---------- what happened on this page ---------- -->
+        <section class="gx-sec" aria-label="记录">
+          <div class="rail-label gx-label"><span>记录</span></div>
+          <div class="gx-log" role="log" aria-label="这一页的记录">
+            <sc-for list="{{log}}" as="l" hint-placeholder-count="1">
+              <sc-if value="{{l.isSys}}" hint-placeholder-val="{{ true }}">
+                <div class="sys-line">
+                  <sc-if value="{{l.isOrder}}" hint-placeholder-val="{{ false }}">
+                    <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 12.5V3.5M2.75 5.75 5 3.5l2.25 2.25"></path><path d="M11 3.5v9M8.75 10.25 11 12.5l2.25-2.25"></path></svg>
+                  </sc-if>
+                  <sc-if value="{{l.isCheck}}" hint-placeholder-val="{{ false }}">
+                    <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="m3.25 8.5 3 3 6.5-7"></path></svg>
+                  </sc-if>
+                  <sc-if value="{{l.isPlan}}" hint-placeholder-val="{{ true }}">
+                    <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.75 4.25h6.5M6.75 8h6.5M6.75 11.75h6.5"></path><path d="m2.5 4.25.9.9 1.6-1.65M2.5 8l.9.9L5 7.25M2.75 11.75h1.5"></path></svg>
+                  </sc-if>
+                  <span>{{l.text}}</span>
+                  <span class="t">{{l.t}}</span>
+                </div>
+              </sc-if>
+              <sc-if value="{{l.isUser}}" hint-placeholder-val="{{ false }}">
+                <div class="msg-user">
+                  <div class="bubble">{{l.text}}</div>
+                  <span class="msg-time">{{l.t}}</span>
+                </div>
+              </sc-if>
+              <sc-if value="{{l.isAgent}}" hint-placeholder-val="{{ false }}">
+                <div class="msg-agent">
+                  <span class="msg-from">秘书（主对话）</span>
+                  <p class="prose">{{l.text}}</p>
+                </div>
+              </sc-if>
+            </sc-for>
+          </div>
+        </section>
+
+      </div>
+    </div>
+
+    <!-- ---------- composer: only after 问秘书 / 在对话里问 ---------- -->
+    <sc-if value="{{composerOpen}}" hint-placeholder-val="{{ false }}">
+      <div class="dock">
+        <div class="dock-col">
+          <div class="composer">
+            <div class="composer-to">
+              <svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.75 3.25h10.5v7.25H8l-3 2.5v-2.5H2.75Z"></path></svg>
+              <span class="ellipsis">发给：秘书（主对话）· 记在当前目标的对话里</span>
+              <button class="btn btn-icon btn-xs" type="button" onClick="{{closeComposer}}" aria-label="收起输入框" title="收起输入框">
+                <svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7"></path></svg>
+              </button>
+            </div>
+            <sc-if value="{{hasAsk}}" hint-placeholder-val="{{ true }}">
+              <div class="composer-ref">
+                <span class="{{askSq}}" aria-hidden="true"></span>
+                <span class="ellipsis">引用：{{askRef}}</span>
+                <button class="btn btn-icon btn-xs" type="button" onClick="{{clearAsk}}" aria-label="移除引用" title="移除引用">
+                  <svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7"></path></svg>
+                </button>
+              </div>
+            </sc-if>
+            <sc-for list="{{ax.quotes}}" as="q" hint-placeholder-count="0">
+              <div class="composer-quote">
+                <svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.75h5.25l3 3v9.5H4Z"></path><path d="M9 1.75V5h3.25"></path></svg>
+                <span class="cq-main"><span class="cq-path" title="{{q.path}}">{{q.path}}</span><span class="cq-lines">{{q.lines}}</span><sc-if value="{{q.snap}}" hint-placeholder-val="{{ false }}"><span class="cq-snap">草稿快照</span></sc-if></span>
+                <button class="btn btn-icon btn-xs" type="button" onClick="{{q.remove}}" aria-label="移除这条引用" title="移除引用">
+                  <svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7"></path></svg>
+                </button>
+                <sc-if value="{{q.hasSnip}}" hint-placeholder-val="{{ false }}"><span class="cq-snip">{{q.snip}}</span></sc-if>
+              </div>
+            </sc-for>
+            <label class="sr-only" for="goals-composer">发给秘书</label>
+            <textarea id="goals-composer" rows="2" placeholder="{{composerPh}}" value="{{draft}}" onChange="{{onDraft}}"></textarea>
+            <div class="composer-foot">
+              <sc-if value="{{ax.hasQuotes}}" hint-placeholder-val="{{ false }}"><span class="to">{{ax.quoteNote}}</span></sc-if>
+              <button class="{{sendCls}}" type="button" onClick="{{send}}" aria-label="发送" title="发送">
+                <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 12.75V3.5M4.25 7.25 8 3.5l3.75 3.75"></path></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+  </main>
+
+  <!-- G2: the divider between the centre and the auxiliary area (drag or arrow keys; double-click = 480px) -->
+  <div class="{{ax.panel.cls}}" role="separator" aria-orientation="vertical" aria-label="调整右栏宽度" aria-valuemin="{{ax.panel.min}}" aria-valuemax="{{ax.panel.max}}" aria-valuenow="{{ax.panel.now}}" tabindex="0" title="拖动或用左右方向键调整宽度，双击恢复" onPointerDown="{{ax.panel.down}}" onPointerMove="{{ax.panel.move}}" onPointerUp="{{ax.panel.up}}" onPointerCancel="{{ax.panel.up}}" onKeyDown="{{ax.panel.key}}" onDoubleClick="{{ax.panel.reset}}" onFocus="{{ax.panel.seen}}"></div>
+
+  <!-- ================= PANEL: the auxiliary area — 任务图 (the tasks on the overlap) · 架构图 (the conflict in the
+       architecture tree) · 文件 · 命令 · Diff · file pages · node pages (右键 / 新标签打开) ================= -->
+  <aside class="panel" aria-label="辅助区">
+    <div class="ptabs aux">
+      <div class="pt-list" role="tablist" aria-label="辅助页">
+        <sc-for list="{{ax.tabs}}" as="t" hint-placeholder-count="6">
+          <span class="{{t.cls}}">
+            <button class="nm" type="button" role="tab" aria-selected="{{t.on}}" onClick="{{t.pick}}" title="{{t.tip}}">{{t.name}}</button>
+            <sc-if value="{{t.dirty}}" hint-placeholder-val="{{ false }}"><span class="dirty" title="有未保存的修改"><span class="sr-only">有未保存的修改</span></span></sc-if>
+            <sc-if value="{{t.canClose}}" hint-placeholder-val="{{ false }}">
+              <button class="x" type="button" onClick="{{t.close}}" aria-label="{{t.closeLabel}}" title="关闭">
+                <svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7"></path></svg>
+              </button>
+            </sc-if>
+          </span>
+        </sc-for>
+      </div>
+      <div class="pt-acts">
+        <!-- 放大 hides the composer: the quotes waiting there are counted here; a click restores the panel -->
+        <sc-if value="{{ax.qMax.show}}" hint-placeholder-val="{{ false }}">
+          <button class="btn-text pt-q" type="button" onClick="{{ax.qMax.go}}" title="还原右栏，回到输入框；引用还没有发送">草稿里 {{ax.qMax.n}} 条引用</button>
+        </sc-if>
+        <div class="menu-wrap">
+          <button class="btn btn-icon btn-sm" type="button" onClick="{{ax.toggleNew}}" aria-expanded="{{ax.newOpen}}" aria-label="新建页签" title="新建页签">
+            <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.25v9.5M3.25 8h9.5"></path></svg>
+          </button>
+          <sc-if value="{{ax.newOpen}}" hint-placeholder-val="{{ false }}">
+            <div class="menu" role="menu" aria-label="新建页签">
+              <sc-for list="{{ax.newItems}}" as="m" hint-placeholder-count="3">
+                <button class="{{m.cls}}" type="button" role="menuitem" onClick="{{m.go}}">{{m.label}}<sc-if value="{{m.open}}" hint-placeholder-val="{{ false }}"><span class="ck">已打开</span></sc-if></button>
+              </sc-for>
+            </div>
+          </sc-if>
+        </div>
+        <button class="btn btn-icon btn-sm" type="button" onClick="{{ax.toggleMax}}" aria-pressed="{{ax.isMax}}" aria-label="{{ax.maxLabel}}" title="{{ax.maxLabel}}">
+          <sc-if value="{{ax.isMax}}" hint-placeholder-val="{{ false }}"><svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.75 2.75v4h-4M2.75 2.75l4 4M9.25 13.25v-4h4M13.25 13.25l-4-4"></path></svg></sc-if>
+          <sc-if value="{{ax.notMax}}" hint-placeholder-val="{{ true }}"><svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.75 2.75h3.5v3.5M13.25 2.75 9.25 6.75M6.25 13.25h-3.5v-3.5M2.75 13.25l4-4"></path></svg></sc-if>
+        </button>
+        <button class="btn btn-icon btn-sm" type="button" onClick="{{ax.hide}}" aria-label="隐藏右栏" title="隐藏右栏">
+          <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.75"></rect><path d="M10 2.75v10.5"></path><path d="m5.25 6 2 2-2 2"></path></svg>
+        </button>
+      </div>
+    </div>
+
+    <sc-if value="{{isMap}}" hint-placeholder-val="{{ true }}">
+      <div class="ptools">
+        <div class="seg" role="group" aria-label="视图">
+          <button class="{{viewTreeCls}}" type="button" aria-pressed="{{isTree}}" onClick="{{showTree}}">树</button>
+          <button class="{{viewOutlineCls}}" type="button" aria-pressed="{{isOutline}}" onClick="{{showOutline}}">大纲</button>
+        </div>
+        <span class="sp"></span>
+        <button class="{{legendCls}}" type="button" onClick="{{toggleLegend}}" aria-pressed="{{legend}}">图例</button>
+        <!-- data/taskpanel.snippet.html [1], the link (the approved 树 / 大纲 switch stays): the full page = DAG + 大纲 + 轨道. Review
+             fix: the title says which goal opens — the canvas has one DAG page, goal 1's; this map holds goals 1 and 2 -->
+        <sc-if value="{{tpIsTask}}" hint-placeholder-val="{{ false }}">
+          <a class="btn-text plink" href="TaskMap.dc.html" title="整页的任务图：依赖图（DAG）、大纲和轨道">
+            整页查看
+            <svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.25 2.75h4v4M13.25 2.75 7.75 8.25"></path><path d="M11.75 9.5v3.75h-9V4.25h3.75"></path></svg>
+          </a>
+        </sc-if>
+      </div>
+      <sc-if value="{{isArch}}" hint-placeholder-val="{{ true }}">
+        <div class="pscope">
+          <div class="seg" role="group" aria-label="显示范围">
+            <button class="{{scopeOvCls}}" type="button" aria-pressed="{{isOv}}" onClick="{{toOv}}" title="只画两个目标都要改的文件的路径；每一层其余的节点是分支上的小格子">重叠的文件</button>
+            <button class="{{scopePairCls}}" type="button" aria-pressed="{{isPair}}" onClick="{{toPair}}" title="画出两个目标各自要改的全部源码文件，重叠的路径保持亮起">两个目标的文件</button>
+          </div>
+          <span class="note">{{scopeNote}}</span>
+          <a class="btn-text plink" href="ArchOverview.dc.html" title="分层的模块图：模块之间的依赖和数据流，可以逐层进入">
+            完整架构图
+            <svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.25 2.75h4v4M13.25 2.75 7.75 8.25"></path><path d="M11.75 9.5v3.75h-9V4.25h3.75"></path></svg>
+          </a>
+        </div>
+      </sc-if>
+      <!-- 任务图: the tasks of goals 1 and 2 that change the overlapping files, in each goal's plan -->
+      <sc-if value="{{isTaskTab}}" hint-placeholder-val="{{ false }}">
+        <div class="pscope"><span class="note" title="{{taskNote}}">{{taskNote}}</span></div>
+      </sc-if>
+
+      <div class="pbody">
+        <!-- data/taskpanel.snippet.html [2]: the quiet line, the viewport (the 任务图 pans when it does not fit; the 架构图 passes
+             through) and the hover card in the viewport; the rows keep Goals' own attributes (no 固定 on this board) -->
+        <sc-if value="{{tpb.show}}" hint-placeholder-val="{{ false }}">
+          <div class="tp-bar">
+            <span class="{{tpb.cls}}" title="{{tpb.tip}}">{{tpb.text}}</span>
+            <sc-if value="{{tpb.canBack}}" hint-placeholder-val="{{ false }}">
+              <button class="btn-text tp-back" type="button" onClick="{{tpb.back}}" title="树回到原处，你打开的节点收起（三层的起点）">回到起点</button>
+            </sc-if>
+          </div>
+        </sc-if>
+        <div class="{{tpv.cls}}" onPointerDown="{{tpv.down}}" onPointerMove="{{tpv.move}}" onPointerUp="{{tpv.up}}" onPointerCancel="{{tpv.up}}" onWheel="{{tpv.wheel}}">
+        <div class="{{treeCls}}" style="left: {{tpv.x}}px; top: {{tpv.y}}px;">
+          <sc-for list="{{rows}}" as="r" hint-placeholder-count="7">
+            <div class="{{r.cls}}">
+              <sc-for list="{{r.gut}}" as="g" hint-placeholder-count="1"><span class="{{g.cls}}"></span></sc-for>
+              <span class="{{r.elb}}"><i></i></span>
+              <sc-if value="{{r.isBranch}}" hint-placeholder-val="{{ true }}">
+                <button class="{{r.sqb}}" type="button" onClick="{{r.pick}}" onContextMenu="{{r.tab}}" onMouseEnter="{{r.hover}}" onMouseLeave="{{unhover}}" onFocus="{{r.hover}}" onBlur="{{unhover}}" aria-label="{{r.tip}}"><span class="{{r.sq}}"></span></button>
+                <sc-if value="{{r.hasComb}}" hint-placeholder-val="{{ true }}">
+                  <span class="{{r.combCls}}">
+                    <sc-for list="{{r.leaves}}" as="k" hint-placeholder-count="5">
+                      <button class="{{k.cls}}" type="button" onClick="{{k.pick}}" onContextMenu="{{k.tab}}" onMouseEnter="{{k.hover}}" onMouseLeave="{{unhover}}" onFocus="{{k.hover}}" onBlur="{{unhover}}" aria-label="{{k.tip}}"><i></i><span class="{{k.sq}}"></span></button>
+                    </sc-for>
+                  </span>
+                </sc-if>
+                <button class="{{r.lb}}" type="button" onClick="{{r.pick}}" onContextMenu="{{r.tab}}" onMouseEnter="{{r.hover}}" onMouseLeave="{{unhover}}" onFocus="{{r.hover}}" onBlur="{{unhover}}" aria-expanded="{{r.ex}}">
+                  <span class="tr-name">{{r.name}}</span>
+                  <span class="tr-n">{{r.a}}</span>
+                </button>
+              </sc-if>
+              <sc-if value="{{r.isLine}}" hint-placeholder-val="{{ false }}">
+                <button class="{{r.nb}}" type="button" onClick="{{r.pick}}" onContextMenu="{{r.tab}}" onMouseEnter="{{r.hover}}" onMouseLeave="{{unhover}}" onFocus="{{r.hover}}" onBlur="{{unhover}}" aria-expanded="{{r.ex}}" title="{{r.title}}">
+                  <span class="{{r.nc}}"><span class="{{r.sq}}"></span></span>
+                  <span class="tr-name">{{r.name}}</span>
+                  <sc-if value="{{r.canOpen}}" hint-placeholder-val="{{ false }}">
+                    <svg class="ico xs tr-chev" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"></path></svg>
+                  </sc-if>
+                </button>
+                <span class="tr-sum">
+                  <sc-if value="{{r.hasStrip}}" hint-placeholder-val="{{ false }}">
+                    <span class="strip"><sc-for list="{{r.strip}}" as="sp" hint-placeholder-count="6"><span class="{{sp.sq}}"></span></sc-for></span>
+                  </sc-if>
+                  <span>{{r.b}}</span>
+                  <span class="tr-a">{{r.a}}</span>
+                </span>
+              </sc-if>
+            </div>
+          </sc-for>
+        </div>
+          <sc-if value="{{card.show}}" hint-placeholder-val="{{ false }}">
+            <div class="hcard" style="left: clamp(0px, {{card.x}}px, calc(100% - 272px)); top: {{card.top}}; bottom: {{card.bottom}};" role="tooltip">
+              <div class="hc-head"><span class="{{card.sq}}" aria-hidden="true"></span><span class="hc-name">{{card.name}}</span></div>
+              <p class="hc-state"><span class="{{card.tx}}">{{card.word}}</span>{{card.why}}</p>
+              <dl class="hc-dl">
+                <sc-if value="{{card.hasPath}}" hint-placeholder-val="{{ true }}"><dt>归属</dt><dd>{{card.path}}</dd></sc-if>
+                <dt>负责</dt><dd>{{card.agent}}</dd>
+                <sc-if value="{{card.hasSem}}" hint-placeholder-val="{{ true }}"><dt>语义</dt><dd class="hc-sem">{{card.sem}}</dd></sc-if>
+                <sc-if value="{{card.hasTasks}}" hint-placeholder-val="{{ false }}">
+                  <dt>{{card.listK}}</dt>
+                  <dd>
+                    <span class="hc-items">
+                      <sc-for list="{{card.tasks}}" as="ct" hint-placeholder-count="2"><span class="hc-item"><span class="{{ct.sq}}" aria-hidden="true"></span>{{ct.name}}</span></sc-for>
+                      <sc-if value="{{card.hasMore}}" hint-placeholder-val="{{ false }}"><span class="hc-more">{{card.more}}</span></sc-if>
+                    </span>
+                  </dd>
+                </sc-if>
+              </dl>
+              <p class="hc-hint">{{card.hint}}</p>
+            </div>
+          </sc-if>
+        </div>
+
+        <sc-if value="{{legend}}" hint-placeholder-val="{{ false }}">
+          <div class="legend" aria-label="图例">
+            <span><span class="sq z10 s-decide"></span>需要你决定</span>
+            <span><span class="sq z10 s-failed"></span>失败</span>
+            <span><span class="sq z10 s-blocked"></span>受阻</span>
+            <span><span class="sq z10 s-running"></span>执行中</span>
+            <span><span class="sq z10 s-verifying"></span>验证中</span>
+            <span><span class="sq z10 s-claimable"></span>可领取</span>
+            <span><span class="sq z10 s-notyet"></span>待执行</span>
+            <span><span class="sq z10 s-future"></span>未来意图</span>
+            <sc-if value="{{isArch}}" hint-placeholder-val="{{ true }}">
+              <span><span class="sq z10 s-none"></span>两个目标都不改</span>
+              <span class="wide"><span class="sq z10 s-decide"></span>重叠的文件：冲突没定之前是“需要你决定”；定了以后显示先改它的那个目标的任务状态，并行时显示两个目标里最紧急的</span>
+              <span class="wide">亮起的连线通向两个目标都要改的文件；分支上的小格子是这一层其余的节点，悬停看名字和状态，点一下画出它的路径</span>
+              <span class="wide"><span class="sq z10 s-pending"></span><span class="sq z10 s-none"></span>一组的格子：展开时有改动是灰色，没有改动是空格；收起时显示其中最紧急的状态</span>
+            </sc-if>
+            <sc-if value="{{isTaskTab}}" hint-placeholder-val="{{ false }}">
+              <span><span class="sq z10 s-satisfied"></span>已满足</span>
+              <span class="wide">亮起的连线通向要改重叠文件的任务；分支上的小格子是这一层其余的阶段或任务，悬停看名字和状态，点一下画出它的路径</span>
+              <span class="wide"><span class="sq z10 s-satisfied"></span><span class="sq z10 s-done-2"></span><span class="sq z10 s-done-1"></span><span class="sq z10 s-pending"></span>一组的格子：子项都看得见时，按已满足的比例由深到浅，一项都没满足是半填的灰格；收起时显示其中最紧急的状态；目标的格子是它在左边顺序里的状态</span>
+            </sc-if>
+          </div>
+        </sc-if>
+      </div>
+    </sc-if>
+
+    <!-- the detail of the selected node (任务图 or 架构图), or a node page opened in its own tab (右键 / 新标签打开) -->
+    <sc-if value="{{hasDet}}" hint-placeholder-val="{{ false }}">
+      <section class="{{det.cls}}" aria-label="节点详情">
+        <div class="d-head">
+          <span class="{{det.sq}}" aria-hidden="true"></span>
+          <span class="d-title ellipsis">{{det.name}}</span>
+          <sc-if value="{{det.canClose}}" hint-placeholder-val="{{ true }}">
+            <button class="btn btn-icon btn-sm" type="button" onClick="{{det.close}}" aria-label="关闭详情" title="关闭详情">
+              <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7"></path></svg>
+            </button>
+          </sc-if>
+        </div>
+        <p class="d-state"><span class="{{det.tx}}">{{det.word}}</span>{{det.why}}</p>
+        <dl class="d-dl">
+          <dt>路径/归属</dt>
+          <dd>
+            <span class="d-crumbs">
+              <sc-for list="{{det.crumbs}}" as="c" hint-placeholder-count="3">
+                <sc-if value="{{c.sep}}" hint-placeholder-val="{{ false }}"><span class="sep">/</span></sc-if>
+                <button class="{{c.cls}}" type="button" onClick="{{c.go}}">{{c.name}}</button>
+              </sc-for>
+            </span>
+          </dd>
+          <dt>负责的 Agent</dt>
+          <dd>{{det.agent}}</dd>
+          <dt>语义</dt>
+          <dd>{{det.sem}}</dd>
+          <dt>关系</dt>
+          <dd>
+            <div class="d-rel">
+              <sc-for list="{{det.rel}}" as="gr" hint-placeholder-count="3">
+                <span class="k">{{gr.k}}</span>
+                <span class="d-items">
+                  <sc-for list="{{gr.items}}" as="it" hint-placeholder-count="2"><span class="d-item"><span class="{{it.sq}}" aria-hidden="true"></span>{{it.name}}</span></sc-for>
+                  <!-- a path opens its file page (a folder: 文件 opened at it); a changed file also offers 看 Diff -->
+                  <sc-for list="{{gr.files}}" as="f" hint-placeholder-count="0">
+                    <span class="d-fline">
+                      <sc-if value="{{f.canOpen}}" hint-placeholder-val="{{ true }}"><button class="d-file is-link" type="button" onClick="{{f.open}}" title="{{f.tip}}"><sc-for list="{{f.parts}}" as="fp" hint-placeholder-count="4"><span>{{fp}}</span></sc-for></button></sc-if>
+                      <sc-if value="{{f.cantOpen}}" hint-placeholder-val="{{ false }}"><span class="d-file" title="{{f.tip}}"><sc-for list="{{f.parts}}" as="fp" hint-placeholder-count="4"><span>{{fp}}</span></sc-for></span></sc-if>
+                      <sc-if value="{{f.hasDiff}}" hint-placeholder-val="{{ false }}"><button class="btn-text" type="button" onClick="{{f.diff}}" title="Git（HEAD）↔ 工作区，逐行">看 Diff</button></sc-if>
+                    </span>
+                  </sc-for>
+                  <sc-if value="{{gr.hasText}}" hint-placeholder-val="{{ false }}"><span>{{gr.text}}</span></sc-if>
+                </span>
+              </sc-for>
+            </div>
+          </dd>
+        </dl>
+        <div class="d-acts">
+          <sc-for list="{{det.acts}}" as="a" hint-placeholder-count="2"><button class="btn-text" type="button" onClick="{{a.go}}">{{a.label}}</button></sc-for>
+        </div>
+      </section>
+    </sc-if>
+
+    <!-- G2 pages: 文件 · file pages · 命令 · Diff (auxtabs.snippet.html [4]) -->
+    <sc-if value="{{ax.isFiles}}" hint-placeholder-val="{{ false }}">
+      <p class="pnote fnote">{{ax.fileNote}}</p>
+      <div class="pbody">
+        <div class="ftree" aria-label="工作区文件">
+          <sc-for list="{{ax.fileRows}}" as="f" hint-placeholder-count="12">
+            <button class="{{f.cls}}" type="button" onClick="{{f.go}}" aria-expanded="{{f.ex}}">
+              <sc-if value="{{f.isDir}}" hint-placeholder-val="{{ true }}"><svg class="ico xs chev" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"></path></svg></sc-if>
+              <sc-if value="{{f.isFile}}" hint-placeholder-val="{{ false }}"><span class="fsp" aria-hidden="true"></span></sc-if>
+              <span class="fname">{{f.name}}</span>
+              <sc-if value="{{f.hasMeta}}" hint-placeholder-val="{{ false }}"><span class="fmeta"><span class="add">{{f.addTxt}}</span> <span class="del">{{f.delTxt}}</span></span></sc-if>
+            </button>
+          </sc-for>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ax.isFile}}" hint-placeholder-val="{{ false }}">
+      <div class="fpage">
+        <div class="fp-head">
+          <span class="fp-path" title="{{ax.fp.path}}"><sc-for list="{{ax.fp.parts}}" as="p" hint-placeholder-count="4"><span>{{p}}</span></sc-for></span>
+          <span class="{{ax.fp.stateCls}}">{{ax.fp.state}}</span>
+          <sc-if value="{{ax.fp.known}}" hint-placeholder-val="{{ true }}">
+            <span class="fp-acts">
+              <button class="btn btn-sm" type="button" onClick="{{ax.fp.toggleEdit}}">{{ax.fp.editLabel}}</button>
+              <button class="{{ax.fp.saveCls}}" type="button" onClick="{{ax.fp.save}}" aria-disabled="{{ax.fp.cantSave}}">保存</button>
+            </span>
+          </sc-if>
+        </div>
+        <sc-if value="{{ax.fp.conflict}}" hint-placeholder-val="{{ false }}">
+          <div class="fp-note" role="alert">
+            <p><span class="tx-decide">文件在磁盘上改过了</span>：{{ax.fp.conflictText}}保存会覆盖它的改动。</p>
+            <div class="acts">
+              <button class="btn btn-sm btn-line" type="button" onClick="{{ax.fp.reload}}">重新载入</button>
+              <button class="btn btn-sm btn-line" type="button" onClick="{{ax.fp.compare}}">比较</button>
+              <button class="btn btn-sm btn-line" type="button" onClick="{{ax.fp.overwrite}}">仍然保存</button>
+              <button class="btn btn-sm" type="button" onClick="{{ax.fp.dismiss}}">先不保存</button>
+            </div>
+          </div>
+        </sc-if>
+        <sc-if value="{{ax.fp.viewing}}" hint-placeholder-val="{{ true }}">
+          <div class="fcode" aria-label="文件内容">
+            <sc-for list="{{ax.fp.rows}}" as="l" hint-placeholder-count="12">
+              <sc-if value="{{l.fold}}" hint-placeholder-val="{{ false }}"><div class="{{l.cls}}"><span class="fl-t">{{l.text}}</span></div></sc-if>
+              <sc-if value="{{l.line}}" hint-placeholder-val="{{ true }}"><div class="{{l.cls}}"><button class="fl-n" type="button" onClick="{{l.pick}}" aria-label="{{l.label}}">{{l.no}}</button><span class="fl-t">{{l.text}}</span></div></sc-if>
+            </sc-for>
+          </div>
+        </sc-if>
+        <sc-if value="{{ax.fp.editing}}" hint-placeholder-val="{{ false }}">
+          <div class="fcode is-edit">
+            <label class="sr-only" for="ax-fedit">编辑 {{ax.fp.name}}</label>
+            <textarea id="ax-fedit" class="fedit" spellcheck="false" value="{{ax.fp.draftText}}" onChange="{{ax.fp.onEdit}}" onSelect="{{ax.fp.onSelect}}"></textarea>
+          </div>
+        </sc-if>
+        <div class="fp-bar">
+          <span class="t">{{ax.fp.barText}}</span>
+          <sc-if value="{{ax.fp.hasSel}}" hint-placeholder-val="{{ false }}"><button class="btn btn-sm" type="button" onClick="{{ax.fp.clearSel}}">清除选择</button></sc-if>
+          <button class="btn btn-sm btn-line" type="button" onClick="{{ax.fp.quote}}">{{ax.fp.quoteLabel}}</button>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ax.isCmd}}" hint-placeholder-val="{{ false }}">
+      <p class="pnote fnote">{{ax.cmdNote}}</p>
+      <div class="pbody">
+        <div class="cmds">
+          <sc-for list="{{ax.cmds}}" as="c" hint-placeholder-count="5">
+            <div class="cmd">
+              <span class="cmd-name">{{c.name}}</span>
+              <span class="cmd-acts">
+                <sc-if value="{{c.canRun}}" hint-placeholder-val="{{ true }}"><button class="btn btn-sm btn-line" type="button" onClick="{{c.run}}">{{c.runLabel}}</button></sc-if>
+                <sc-if value="{{c.canCancel}}" hint-placeholder-val="{{ false }}"><button class="btn btn-sm btn-line" type="button" onClick="{{c.cancel}}">取消</button></sc-if>
+                <sc-if value="{{c.hasOut}}" hint-placeholder-val="{{ false }}"><button class="btn btn-sm" type="button" onClick="{{c.toggle}}" aria-expanded="{{c.shown}}">{{c.toggleLabel}}</button></sc-if>
+              </span>
+              <span class="cmd-line">{{c.line}}</span>
+              <span class="cmd-st"><span class="{{c.dot}}" aria-hidden="true"></span>{{c.word}}</span>
+              <sc-if value="{{c.shown}}" hint-placeholder-val="{{ false }}"><div class="cmd-out">{{c.out}}</div></sc-if>
+              <sc-if value="{{c.kept}}" hint-placeholder-val="{{ false }}"><span class="cmd-kept">{{c.keptText}}</span></sc-if>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ax.isDiff}}" hint-placeholder-val="{{ false }}">
+      <div class="dfiles" aria-label="改动的文件">
+        <sc-for list="{{ax.dfiles}}" as="d" hint-placeholder-count="6">
+          <button class="{{d.cls}}" type="button" onClick="{{d.go}}" title="{{d.path}}">
+            <span class="fname">{{d.name}}</span><span class="fdir">{{d.dir}}</span>
+            <span class="fmeta"><span class="add">{{d.add}}</span> <span class="del">{{d.del}}</span></span>
+          </button>
+        </sc-for>
+      </div>
+      <div class="diff-head">
+        <span class="ellipsis">{{ax.dhead}}</span>
+        <sc-if value="{{ax.isCmp}}" hint-placeholder-val="{{ false }}"><button class="btn-text" type="button" onClick="{{ax.backToGit}}">回到 Git ↔ 工作区</button></sc-if>
+        <sc-if value="{{ax.dOpenShow}}" hint-placeholder-val="{{ true }}"><button class="btn-text" type="button" onClick="{{ax.dOpen}}" title="{{ax.dOpenTip}}">打开文件</button></sc-if>
+      </div>
+      <div class="pbody diff-body">
+        <div class="diff" aria-label="逐行差异">
+          <sc-for list="{{ax.drows}}" as="d" hint-placeholder-count="12">
+            <sc-if value="{{d.hunk}}" hint-placeholder-val="{{ false }}"><div class="dl-hunk">{{d.text}}</div></sc-if>
+            <sc-if value="{{d.line}}" hint-placeholder-val="{{ true }}"><div class="{{d.cls}}"><span class="n">{{d.o}}</span><span class="n">{{d.n}}</span><span class="s">{{d.sign}}</span><span class="t">{{d.text}}</span></div></sc-if>
+          </sc-for>
+        </div>
+        <sc-if value="{{ax.hasDnote}}" hint-placeholder-val="{{ false }}"><p class="pnote">{{ax.dnote}}</p></sc-if>
+      </div>
+    </sc-if>
+  </aside>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["dark","light"],"default":"dark"},"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  constructor(...args) {
+    super(...args);
+    /* G2: the auxiliary area's keys (auxtabs.snippet.js). The panel opens on 架构图 (the conflict, as approved); 任务图 is
+       the first tab, as on the other boards. No file page is open at first, so the 480px strip shows every tab (as on
+       Main): a file page opens from the 文件 tree or from a file's detail (打开文件). tsel = the 任务图 selection;
+       extra = node pages opened from either map (右键 or 新标签打开). Rework 2026-10-06: the 任务图 thumbnail's keys
+       (taskpanel.snippet.js tpState); the open goal row is rowOpen (the thumbnail's 回到起点 resets the maps' shared open) */
+    this.state = Object.assign(this.axState(), this.tpState(), {
+      theme: null, rowOpen: null, cfPick: null, facts: false, err: '',
+      scope: 'overlap', view: 'tree', sel: null, tsel: null, hover: null, ofold: {}, legend: false, extra: [],
+      log: [], clock: 20, composer: false, askRef: '', askId: '', askSq: '', draft: ''
+    }, { ptab: 'arch', axPages: [], panel: true });
+  }
+
+  componentDidUpdate(prev) {
+    const s = this.state || {};
+    if (prev && prev.theme !== this.props.theme && s.theme) this.setState({ theme: null });
+    /* a successful reread is the new state: an action error from the old one no longer shows */
+    if (prev && prev.dataVersion !== this.props.dataVersion && s.err) this.setState({ err: '' });
+  }
+
+  /* ------------------------------------------------------------ vocabulary (verbatim from Main) */
+  words() {
+    return { decide: '需要你决定', failed: '失败', blocked: '受阻', running: '执行中', verifying: '验证中', waiting: '已暂停，可继续', claimable: '可领取',
+      satisfied: '已满足', pending: '待执行', future: '未来意图', deferred: '已延后', cancelled: '已取消', none: '本目标未改动' };
+  }
+  countWords() { return Object.assign({}, this.words(), { waiting: '已暂停', none: '未改动' }); }
+  rank() { return ['decide', 'failed', 'blocked', 'running', 'verifying', 'waiting', 'claimable', 'pending', 'future', 'deferred', 'cancelled', 'satisfied', 'none']; }
+  worst(a, b) { const R = this.rank(); return R.indexOf(a) <= R.indexOf(b) ? a : b; }
+  isActive(st) { return ['decide', 'failed', 'blocked', 'running', 'verifying', 'waiting', 'claimable'].indexOf(st) >= 0; }
+  fmt(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+  /* ------------------------------------------------------------ tree engine (verbatim from Main, except focusSets) */
+  finishTree(root) {
+    const byId = {}; const R = this.rank();
+    const idx = (n, p, d) => { byId[n.id] = n; n.parent = p ? p.id : null; n.depth = d; n.kids = n.kids || []; n.kids.forEach((k) => idx(k, n, d + 1)); };
+    idx(root, null, 0);
+    const agg = (n) => {
+      if (!n.kids.length) {
+        n.leaves = 1; n.sat = n.st === 'satisfied' ? 1 : 0; n.touched = n.st === 'none' ? 0 : 1;
+        n.idle = n.st === 'future' || n.st === 'deferred' || n.st === 'cancelled' ? 1 : 0;
+        n.cnt = {}; n.cnt[n.st] = 1; n.worstAll = n.st; n.worstAct = this.isActive(n.st) ? n.st : null; n.hasAct = !!n.worstAct;
+        return;
+      }
+      let leaves = 0; let sat = 0; let touched = 0; let idle = 0; let wa = 'none'; let wact = null; const cnt = {};
+      n.kids.forEach((k) => {
+        agg(k);
+        leaves += k.leaves; sat += k.sat; touched += k.touched; idle += k.idle;
+        Object.keys(k.cnt).forEach((x) => { cnt[x] = (cnt[x] || 0) + k.cnt[x]; });
+        if (R.indexOf(k.worstAll) < R.indexOf(wa)) wa = k.worstAll;
+        if (k.worstAct && (!wact || R.indexOf(k.worstAct) < R.indexOf(wact))) wact = k.worstAct;
+      });
+      Object.assign(n, { leaves: leaves, sat: sat, touched: touched, idle: idle, cnt: cnt, worstAll: wa, worstAct: wact, hasAct: !!wact, st: wa });
+    };
+    agg(root);
+    return { root: root, byId: byId };
+  }
+  geo() {
+    return {
+      tree: { cls: 'g-tree', ind: 22, sq: 14, sqRoot: 16, pitch: 18, tick: 4, gap: 2, miniPitch: 12, miniSq: 8 },
+      outline: { cls: 'g-outline', ind: 22, sq: 12, sqRoot: 14, pitch: 0, tick: 0, gap: 2, miniPitch: 0, miniSq: 0 }
+    };
+  }
+  rowGeo(outline, type) {
+    if (outline) return type === 'root' ? { h: 34, mid: 17 } : { h: 28, mid: 14 };
+    return { root: { h: 34, mid: 17 }, comb: { h: 36, mid: 11 }, plain: { h: 30, mid: 15 }, ln: { h: 28, mid: 14 } }[type];
+  }
+  crumbsOf(byId, id) { const out = []; let n = byId[id]; while (n) { out.unshift(n); n = n.parent ? byId[n.parent] : null; } return out; }
+  under(byId, id, rootId) { let n = byId[id]; while (n) { if (n.id === rootId) return true; n = n.parent ? byId[n.parent] : null; } return false; }
+  /* lit = the selection's path plus the paths to the files both goals change (o.lit); bright = what stays at full strength */
+  focusSets(o) {
+    const byId = o.byId; const root = o.root;
+    const up = (id, set) => { let n = byId[id]; while (n) { set.add(n.id); if (n === root) break; n = n.parent ? byId[n.parent] : null; } };
+    const lit = new Set(); if (o.sel) up(o.sel, lit); (o.lit || []).forEach((id) => up(id, lit));
+    const anc = new Set(lit); o.hits.forEach((h) => up(h, anc));
+    const centers = new Set((o.sel ? [o.sel] : []).concat(o.hits)); o.rel.forEach((r) => centers.add(r));
+    const focus = !!o.sel || o.hits.length > 0;
+    const bright = (n) => {
+      if (!focus || anc.has(n.id) || centers.has(n.id)) return true;
+      let p = n.parent ? byId[n.parent] : null;
+      while (p) { if (centers.has(p.id)) return true; if (p === root) break; p = p.parent ? byId[p.parent] : null; }
+      return false;
+    };
+    return { lit: lit, focus: focus, bright: bright };
+  }
+  focusTree(o) {
+    const F = this.focusSets(o); const on = o.onPath;
+    const rows = []; let y = 0;
+    const isGroup = (n) => n.kids.length > 0;
+    const anyLit = (arr) => arr.some((k) => F.lit.has(k.id));
+    const mark = (n) => (n.id === o.sel ? ' is-sel' : '');
+    const dim = (n) => (F.bright(n) ? '' : ' dim');
+    const gutCls = (g) => ({ cls: 'g' + (g.v ? ' v' : '') + (g.lit ? ' lit' : '') });
+    const elbOf = (n, pos) => (pos ? 'e ' + (pos.last ? 'end' : 'mid') + (F.lit.has(n.id) ? ' in' : '') + (pos.laterLit ? ' thru' : '') : 'e none');
+    const leafRow = (k, depth, gut, pos) => {
+      const g = this.rowGeo(false, 'ln');
+      rows.push({ isBranch: false, isLine: true, id: k.id, node: k, depth: depth, top: y, h: g.h, mid: g.mid, type: 'ln', open: false, canOpen: false, ex: null,
+        cls: 'tr ln leaf' + dim(k) + (F.lit.has(k.id) ? ' on' : '') + mark(k), gut: gut.map(gutCls), elb: elbOf(k, pos),
+        nb: 'nb' + mark(k), nc: 'nc', sq: 'sq ' + this.sqAt(k.st), name: k.name, why: '', hasWhy: false, a: '', b: '', strip: [], hasStrip: false, title: null, tip: o.tip(k) });
+      y += g.h;
+    };
+    const walkBoardTree = (n, depth, gut, pos) => {
+      const isRoot = depth === 0;
+      const path = n.kids.filter((k) => on.has(k.id)); const rest = n.kids.filter((k) => !on.has(k.id));
+      const type = isRoot ? 'root' : rest.length ? 'comb' : 'plain';
+      const g = this.rowGeo(false, type);
+      rows.push({
+        isBranch: true, isLine: false, id: n.id, node: n, depth: depth, top: y, h: g.h, mid: g.mid, type: type, open: path.length > 0, canOpen: false,
+        cls: 'tr br ' + type + dim(n) + (F.lit.has(n.id) ? ' on' : '') + mark(n),
+        gut: gut.map(gutCls), elb: elbOf(n, pos),
+        sqb: 'nc' + (path.length ? ' stem' : '') + (path.length && anyLit(path) ? ' lit' : '') + (rest.length ? ' branch' : '') + mark(n),
+        sq: 'sq ' + o.sqOf(n, isRoot ? 'root' : 'expanded'), hasComb: rest.length > 0, combCls: 'comb mini', mini: true,
+        leaves: rest.map((k, j) => ({ id: k.id, node: k, idx: j, isGroup: isGroup(k),
+          cls: 'cc' + (j === rest.length - 1 ? ' last' : '') + mark(k) + dim(k),
+          sq: 'sq ' + (isGroup(k) ? o.sqOf(k, 'collapsed') : this.sqAt(k.st)), tip: o.tip(k) })),
+        lb: 'tr-lb', name: n.name, a: rest.length ? o.restLine(rest, path.length > 0) : o.label(n).a, b: '', hasB: false,
+        ex: null, tip: o.tip(n), title: o.tip(n)
+      });
+      y += g.h;
+      const childGut = pos ? gut.concat([{ v: !pos.last, lit: pos.laterLit }]) : gut;
+      path.forEach((k, i) => {
+        const p2 = { last: i === path.length - 1, laterLit: anyLit(path.slice(i + 1)) };
+        if (isGroup(k)) walkBoardTree(k, depth + 1, childGut, p2); else leafRow(k, depth + 1, childGut, p2);
+      });
+    };
+    walkBoardTree(o.root, 0, [], null);
+    return { rows: rows, focus: F.focus, height: y };
+  }
+  focusOutline(o) {
+    const F = this.focusSets(o); const on = o.onPath;
+    const rows = []; let y = 0;
+    const isGroup = (n) => n.kids.length > 0;
+    const anyLit = (arr) => arr.some((it) => it.node && F.lit.has(it.node.id));
+    const mark = (n) => (n.id === o.sel ? ' is-sel' : '');
+    const dim = (n) => (F.bright(n) ? '' : ' dim');
+    const gutCls = (g) => ({ cls: 'g' + (g.v ? ' v' : '') + (g.lit ? ' lit' : '') });
+    const elbOf = (lit, pos) => (pos ? 'e ' + (pos.last ? 'end' : 'mid') + (lit ? ' in' : '') + (pos.laterLit ? ' thru' : '') : 'e none');
+    const sqOfKid = (k, z) => 'sq ' + (z || '') + (isGroup(k) ? o.sqOf(k, 'collapsed') : this.sqAt(k.st));
+    const walkBoardTree = (n, depth, gut, pos, onPath) => {
+      const isRoot = depth === 0; const hasKids = n.kids.length > 0;
+      const path = onPath && hasKids ? n.kids.filter((k) => on.has(k.id)) : [];
+      const open = isRoot || path.length > 0;
+      const g = this.rowGeo(true, isRoot ? 'root' : 'ln');
+      const lab = o.label(n);
+      const strip = hasKids && !open ? n.kids.slice(0, 8).map((k) => ({ sq: sqOfKid(k, 'z8 ') })) : [];
+      rows.push({ isBranch: false, isLine: true, id: n.id, node: n, depth: depth, top: y, h: g.h, mid: g.mid, type: isRoot ? 'root' : 'ln', open: open, canOpen: false,
+        cls: 'tr ln' + (isRoot ? ' root' : '') + (hasKids ? '' : ' leaf') + dim(n) + (F.lit.has(n.id) ? ' on' : '') + mark(n),
+        gut: gut.map(gutCls), elb: elbOf(F.lit.has(n.id), pos),
+        nb: 'nb' + mark(n), nc: 'nc' + (open && hasKids ? ' stem' : ''),
+        sq: 'sq ' + (isRoot ? o.sqOf(n, 'root') : hasKids ? o.sqOf(n, open ? 'expanded' : 'collapsed') : this.sqAt(n.st)),
+        name: n.name, why: '', hasWhy: false, a: lab.a, b: '', strip: strip, hasStrip: strip.length > 0, ex: null, tip: o.tip(n), title: null });
+      y += g.h;
+      if (!open || !hasKids) return;
+      const rest = n.kids.filter((k) => !on.has(k.id));
+      const listed = rest.length < 2 || o.fold[n.id + ':rest'];
+      const items = listed ? n.kids.map((k) => ({ node: k, onPath: on.has(k.id) }))
+        : path.map((k) => ({ node: k, onPath: true })).concat(rest.length ? [{ rest: rest }] : []);
+      const childGut = pos ? gut.concat([{ v: !pos.last, lit: pos.laterLit }]) : gut;
+      rows[rows.length - 1].nc += anyLit(items) ? ' lit' : '';
+      items.forEach((it, i) => {
+        const p2 = { last: i === items.length - 1, laterLit: anyLit(items.slice(i + 1)) };
+        if (it.node) { walkBoardTree(it.node, depth + 1, childGut, p2, it.onPath); return; }
+        const gg = this.rowGeo(true, 'ln');
+        const worst = it.rest.reduce((a, k) => this.worst(a, k.worstAll), 'none');
+        const strip = it.rest.slice(0, 8).map((k) => ({ sq: sqOfKid(k, 'z8 ') }));
+        rows.push({ isBranch: false, isLine: true, isFold: true, id: n.id + ':rest', foldKey: n.id + ':rest', depth: depth + 1, top: y, h: gg.h, mid: gg.mid, type: 'ln', open: false, canOpen: true,
+          cls: 'tr ln fold' + (F.focus && !it.rest.some((k) => F.bright(k)) ? ' dim' : ''), gut: childGut.map(gutCls), elb: elbOf(false, p2), nb: 'nb', nc: 'nc', sq: 'sq s-' + worst,
+          name: o.restLine(it.rest, path.length > 0), why: '', hasWhy: false, a: '', b: it.rest.length > 8 ? '…' : '', strip: strip, hasStrip: true, ex: false, tip: '列出名字',
+          title: '列出这 ' + it.rest.length + ' 项的名字' });
+        y += gg.h;
+      });
+    };
+    walkBoardTree(o.root, 0, [], null, true);
+    return { rows: rows, focus: F.focus, height: y };
+  }
+  posMap(flat, outline) {
+    const G = this.geo()[outline ? 'outline' : 'tree']; const map = {};
+    flat.rows.forEach((r) => {
+      if (r.isFold) return;
+      const sqn = r.type === 'root' ? G.sqRoot : G.sq; const x0 = r.depth * G.ind; const left = x0 + (G.ind - sqn) / 2;
+      map[r.id] = { cx: x0 + G.ind / 2, left: left, top: r.top + r.mid - sqn / 2, bottom: r.top + r.mid + sqn / 2,
+        at: { x: left - 4, top: r.top, bottom: r.top + r.h } };
+      const P = r.mini ? G.miniPitch : G.pitch; const S = r.mini ? G.miniSq : G.sq;
+      (r.leaves || []).forEach((k) => {
+        const cx = (r.depth + 1) * G.ind + k.idx * P + P / 2; const top = r.top + r.mid + G.tick + G.gap;
+        map[k.id] = { cx: cx, left: cx - S / 2, top: top, bottom: top + S, at: { x: cx - S / 2 - 8, top: top, bottom: top + S } };
+      });
+    });
+    return map;
+  }
+  cardPos(p, height) {
+    const below = Math.round(p.at.bottom + 6); const above = Math.round(p.at.top - 6);
+    const up = below + 190 > Math.max(height, 520) && above > 190;
+    return { x: Math.max(0, Math.round(p.at.x)), top: up ? 'auto' : below + 'px', bottom: up ? 'calc(100% - ' + above + 'px)' : 'auto' };
+  }
+  archSq(n, mode) {
+    if (mode === 'collapsed') return 's-' + n.worstAll;
+    return n.touched ? 's-pending' : 's-none';
+  }
+  shortPath(byId, n) {
+    const up = this.crumbsOf(byId, n.id).slice(1, -1).map((c) => c.name);
+    return up.length ? up.join(' / ') : n.parent ? byId[n.parent].name : '';
+  }
+  pathParts(p) { const a = String(p).split('/'); return { full: p, parts: a.map((x, i) => (i < a.length - 1 ? x + '/' : x)) }; }
+  /* the architecture tree of the two goals: a file's square is the most urgent state of the tasks that change
+     it. A file both goals change: 需要你决定 while the conflict is open; after 等… / 调到前面 the state of the
+     tasks of the goal that changes it first; after 并行 the most urgent of both */
+  /* the architecture tree of the two goals, from props.data. A file node's square is
+     the state the adapter gave it; `a` / `b` are the two goals' tasks that change it
+     (a display join on the conflict's own file list, never a second overlap rule). */
+  pairModel(data) {
+    const conflict = data.conflict;
+    const hitA = conflict ? conflict.hitA : [];
+    const hitB = conflict ? conflict.hitB : [];
+    const raw = data.maps && data.maps.arch
+      ? JSON.parse(JSON.stringify(data.maps.arch))
+      : { id: 'ARCH', name: data.projectId || '架构', kind: 'system', st: 'none', kids: [] };
+    /* the task nodes of the two conflict goals, so every declared file knows which
+       goal's tasks change it; the overlap itself is still only the conflict's list */
+    const byGoal = {};
+    const walkTasks = (node) => {
+      const goal = node.goal || (node.kind === 'goal' ? node.id : null);
+      if (node.kind === 'task' && goal) (byGoal[goal] = byGoal[goal] || []).push(node);
+      (node.kids || []).forEach(walkTasks);
+    };
+    if (data.maps && data.maps.task) walkTasks(data.maps.task);
+    const tasksA = conflict ? (byGoal[conflict.earlierId] || hitA) : [];
+    const tasksB = conflict ? (byGoal[conflict.laterId] || hitB) : [];
+    const stOf = (list) => list.reduce((a, t) => this.worst(a, t.st), 'none');
+    const on = (list, path) => list.filter((t) => (t.files || []).indexOf(path) >= 0);
+    const attachBoard = (n) => {
+      n.kids = n.kids || [];
+      n.sup = false;
+      if (!n.kids.length) {
+        const path = n.path || n.id;
+        n.a = n.kind === 'file' ? on(tasksA, path) : [];
+        n.b = n.kind === 'file' ? on(tasksB, path) : [];
+        n.both = n.kind === 'file' && (!!n.both || (n.a.length > 0 && n.b.length > 0));
+        if (n.kind === 'file' && n.hit && conflict && conflict.open) n.st = 'decide';
+        else if (n.kind === 'file') n.st = this.worst(stOf(n.a), stOf(n.b));
+        if (!n.st) n.st = 'none';
+      } else { n.a = []; n.b = []; n.both = false; n.kids.forEach(attachBoard); }
+    };
+    attachBoard(raw);
+    const tree = this.finishTree(raw);
+    const agg = (n) => {
+      if (!n.kids.length) {
+        n.nA = n.a.length ? 1 : 0; n.nB = n.b.length ? 1 : 0; n.nAB = n.both ? 1 : 0;
+        n.xA = 0; n.xB = 0; n.xAB = 0;
+        return;
+      }
+      n.nA = 0; n.nB = 0; n.nAB = 0; n.xA = 0; n.xB = 0; n.xAB = 0;
+      n.kids.forEach((k) => { agg(k); n.nA += k.nA; n.nB += k.nB; n.nAB += k.nAB; n.xA += k.xA; n.xB += k.xB; n.xAB += k.xAB; });
+    };
+    agg(tree.root);
+    tree.aFiles = []; tree.bFiles = [];
+    Object.keys(tree.byId).forEach((id) => {
+      const n = tree.byId[id];
+      if (n.kind !== 'file') return;
+      if (n.a.length) tree.aFiles.push(id);
+      if (n.b.length) tree.bFiles.push(id);
+    });
+    return tree;
+  }
+
+  /* goals 1 and 2 in their current order */
+  byNum(num) { return Object.keys(num).sort((x, y) => num[x] - num[y]).slice(0, 2); }
+  /* what the compact squares of one level hold: "另 5 个模块，69 个文件" (+ "，两个目标都不改"); what each goal
+     changes there is in the squares' info cards */
+  restLine(rest, hasPath, short) {
+    const U = { module: '模块', sub: '子模块', dir: '文件夹', file: '文件' };
+    /* a module's semantic groups next to a folder of non-code files read as "组" (DESIGN §18.5), not "项"; a slice of
+       a long list is a "段" — neither a folder nor a semantic group (its sem says so) — as Main's restLine says */
+    const uw = (k) => (k.slice ? '段' : U[k.kind] || '项');
+    const k0 = rest[0].kind; const unit = rest.every((k) => uw(k) === uw(rest[0])) ? uw(rest[0]) : rest.every((k) => k.kind === 'sub' || k.kind === 'dir') ? '组' : '项';
+    const files = rest.reduce((a, k) => a + k.leaves, 0); const touched = rest.reduce((a, k) => a + k.touched, 0);
+    /* short: the row would not fit the panel (renderVals measures it), so the tail goes; the compact squares' cards say it */
+    return (hasPath ? '另 ' : '') + rest.length + ' 个' + unit + (k0 === 'file' ? '' : '，' + this.fmt(files) + ' 个文件') + (touched || short ? '' : '，两个目标都不改');
+  }
+  /* a group's count line (card and detail): files, overlap, what each goal changes, then the states that need
+     you or move (as Main's cardCount), so a coloured folded square always says why it is coloured. Inside 支撑 the
+     files are support files and count as usual; above it (the root) the source counts come first and the support
+     files are their own part, so a source count means the same thing everywhere */
+  pairCount(n, num) {
+    const W = this.countWords();
+    const ids = this.byNum(num); const A = ids[0]; const B = ids[1];
+    const cA = n.sup ? n.xA : n.nA; const cB = n.sup ? n.xB : n.nB; const cAB = n.sup ? n.xAB : n.nAB;
+    const parts = [];
+    if (cA && A !== undefined) parts.push('目标 ' + num[A] + ' 改 ' + cA);
+    if (cB && B !== undefined) parts.push('目标 ' + num[B] + ' 改 ' + cB);
+    if (cAB) parts.unshift('重叠 ' + cAB);
+    if (!n.sup && n.xA && A !== undefined) parts.push('目标 ' + num[A] + ' 另改支撑里 ' + n.xA + ' 个文件');
+    if (!n.sup && n.xB && B !== undefined) parts.push('目标 ' + num[B] + ' 另改支撑里 ' + n.xB + ' 个文件');
+    const att = ['decide', 'failed', 'blocked', 'running', 'verifying', 'waiting'].filter((k) => n.cnt[k]).map((k) => W[k] + ' ' + this.fmt(n.cnt[k]));
+    return this.fmt(n.leaves) + ' 个文件' + (parts.length ? ' · ' + parts.concat(att).join(' · ') : '，两个目标都不改');
+  }
+  /* a file's state word and reason. A file one goal changes: the reason of its most urgent task (which goal it
+     is stays in the 任务 lines) */
+  pairState(n, num) {
+    const W = this.words();
+    if (n.both) {
+      if (n.st === 'decide') return { word: '需要你决定', tx: 'tx-decide', why: '：两个目标都要改，先改哪个还没定' };
+      return { word: W[n.st] || n.st, tx: 'tx-' + n.st, why: '：两个目标都要改' };
+    }
+    const goal = n.a && n.a.length ? 'g1' : n.b && n.b.length ? 'g2' : null;
+    if (!goal) return { word: '两个目标都不改', tx: 'tx-none', why: '' };
+    const list = goal === 'g1' ? n.a : n.b;
+    const R = this.rank();
+    const top = list.reduce((a, t) => (!a || R.indexOf(t.st) <= R.indexOf(a.st) ? t : a), null);
+    return { word: W[n.st] || n.st, tx: 'tx-' + n.st, why: top && top.why ? '：' + top.why : '' };
+  }
+  pairTip(n, num) {
+    if (n.kids.length) return n.name + '，' + this.pairCount(n, num);
+    const p = this.pairState(n, num);
+    return n.name + '，' + p.word + p.why;
+  }
+  /* hover info card: name · state + reason · 归属 · 负责 · 语义 · for a file the tasks of each goal that change it */
+  pairCard(tree, n, num) {
+    const parent = n.parent ? tree.byId[n.parent] : null;
+    const sem = n.sem || (parent && parent.sem) || '';
+    const path = this.shortPath(tree.byId, n);
+    const c = { show: true, name: n.name, path: path, hasPath: !!path, agent: '未分配', sem: sem, hasSem: !!sem, listK: '任务', tasks: [], hasTasks: false, more: '', hasMore: false };
+    if (n.kids.length) return Object.assign(c, { sq: 'sq z10 ' + this.archSq(n, 'collapsed'), word: this.pairCount(n, num), tx: 'tx-plain', why: '' });
+    const p = this.pairState(n, num);
+    const short = (list) => { const all = list.map((t) => t.name).join('、'); return list.length < 2 || all.length <= 12 ? all : list[0].name + ' 等 ' + list.length + ' 个'; };
+    const lines = this.byNum(num).map((g, i) => {
+      const list = i === 0 ? n.a : n.b;
+      if (!list.length) return null;
+      const line = '目标 ' + num[g] + '：' + short(list);
+      return { sq: 'sq z8 ' + this.sqAt(list.reduce((a, t) => this.worst(a, t.st), 'none')), name: line };
+    }).filter(Boolean);
+    return Object.assign(c, { sq: 'sq z10 ' + this.sqAt(n.st), word: p.word, tx: p.tx, why: p.why, tasks: lines, hasTasks: lines.length > 0 });
+  }
+  /* click detail: 路径/归属 · 负责的 Agent · 语义 · 关系 (each goal's tasks, 依赖, 路径) */
+  pairDetail(tree, id, num, go) {
+    const n = tree.byId[id];
+    if (!n) return null;
+    const card = this.pairCard(tree, n, num);
+    const crumbs = this.crumbsOf(tree.byId, id).map((c, i, a) => ({ name: c.name, sep: i > 0, cls: 'c' + (i === a.length - 1 ? ' is-on' : ''), go: () => go(c.id) }));
+    const collectBoard = (key) => { const out = []; const w = (x) => { (x[key] || []).forEach((t) => { if (out.indexOf(t) < 0) out.push(t); }); x.kids.forEach(w); }; w(n); return out; };
+    const rel = this.byNum(num).map((g, i) => {
+      const list = collectBoard(i === 0 ? 'a' : 'b');
+      const notes = [];
+      if (!list.length) notes.push('没有任务要改' + (n.kids.length ? '这里' : '它'));
+      if (list.length > 6) notes.push('另有 ' + (list.length - 6) + ' 个任务');
+      return { k: '目标 ' + num[g], items: list.slice(0, 6).map((t) => ({ name: t.name, sq: 'sq z8 ' + this.sqAt(t.st) })), files: [],
+        hasText: notes.length > 0, text: notes.join('；') };
+    });
+    const path = n.path || (n.kind === 'file' ? n.id : '');
+    if (path) rel.push({ k: '路径', items: [], files: [this.axFileItem(path)], hasText: false, text: '' });
+    return { id: id, sq: n.kids.length ? 'sq ' + this.archSq(n, 'collapsed') : 'sq ' + this.sqAt(n.st), name: n.name, tx: card.tx, word: card.word, why: card.why,
+      crumbs: crumbs, agent: card.agent, sem: card.sem, rel: rel, kind: 'arch', file: n.kind === 'file' ? n.path : null };
+  }
+
+  /* a goal's progress line: share of 已满足 plus what needs you or moves */
+  /* ------------------------------------------------------------ 任务图 (G2: the auxiliary area's first tab, as on the
+     other boards). The conflict in each goal's plan: project → goal → stage → task, focused like 架构图 — the paths to
+     the tasks of goals 1 and 2 that change the overlapping files (facts().hitA / hitB) are drawn and lit, each level's
+     other nodes are compact squares on the branch with one summary; goal 3 sits beside them as one square. A task's
+     square is its state now (effSt: after 等… / 调到前面 the later goal's 可领取 tasks on the overlap wait = 待执行); a
+     goal's square is its square in the order list. Engine, card, detail and hint work as on 架构图 (and Main). */
+  doneShare(n) {
+    if (!n.leaves) return 's-pending';
+    const share = n.sat / n.leaves;
+    if (share >= 1) return 's-satisfied';
+    if (share >= 0.5) return 's-done-2';
+    if (share > 0) return 's-done-1';
+    return n.idle === n.leaves ? 's-future' : 's-pending';
+  }
+  pairTaskModel(data) {
+    const conflict = data.conflict;
+    const raw = data.maps && data.maps.task
+      ? JSON.parse(JSON.stringify(data.maps.task))
+      : { id: 'GOALS', name: data.projectId || '项目', kind: 'project', st: 'none', kids: [] };
+    const tree = this.finishTree(raw);
+    tree.hit = {};
+    if (conflict) conflict.hitA.concat(conflict.hitB).forEach((t) => { tree.hit[t.id] = true; });
+    return tree;
+  }
+  /* Main's task squares: a goal shows its state, a folded group its most urgent moving state, an open group its share
+     of 已满足 */
+  pairTaskSq(n, mode, goalSq) {
+    if (n.kind === 'goal') return goalSq[n.goal];
+    if (mode === 'collapsed' && n.worstAct) return 's-' + n.worstAct;
+    return this.doneShare(n);
+  }
+  /* Main's countLine(n, 'task') and cardCount(n, 'task') */
+  taskCount(n) {
+    const W = this.countWords();
+    const parts = this.rank().filter((k) => n.cnt[k] && k !== 'none' && k !== 'satisfied').map((k) => W[k] + ' ' + this.fmt(n.cnt[k]));
+    if (n.sat === n.leaves) return '全部已满足';
+    return (n.sat ? n.sat + '/' + n.leaves + ' 已满足' + (parts.length ? ' · ' : '') : '') + parts.join(' · ');
+  }
+  taskCardCount(n) {
+    const W = this.countWords();
+    const parts = ['decide', 'failed', 'blocked', 'running', 'verifying', 'waiting'].filter((k) => n.cnt[k]).map((k) => W[k] + ' ' + this.fmt(n.cnt[k]));
+    if (!parts.length) return this.taskCount(n);
+    return [n.sat + '/' + n.leaves + ' 已满足'].concat(parts).join(' · ');
+  }
+  /* the compact squares of one level: "另 4 个阶段 · 需要你决定 1 · 受阻 1", "另 2 个阶段，5 个任务" (as Main's restLine) */
+  taskRestLine(rest, hasPath, short) {
+    const U = { goal: '目标', stage: '阶段', task: '任务' }; const W = this.countWords();
+    const k0 = rest[0].kind; const unit = U[k0] || '项';
+    const n = rest.reduce((a, k) => a + k.leaves, 0);
+    const alert = ['decide', 'failed', 'blocked'].map((x) => [x, rest.reduce((a, k) => a + (k.cnt[x] || 0), 0)]).filter((x) => x[1]).map((x) => W[x[0]] + ' ' + x[1]);
+    return (hasPath ? '另 ' : '') + rest.length + ' 个' + unit + (k0 === 'task' || alert.length || short ? '' : '，' + n + ' 个任务') + (alert.length ? ' · ' + alert.join(' · ') : '');
+  }
+  /* 负责: the Goals read carries no owner, so the board's own text stays for every node. */
+  taskAgentText(n) { return '未分配'; }
+  goalAgentText(g) { return '未分配'; }
+  stageAgentText(n) { return '未分配'; }
+  /* a task's reason; the adapter supplies it when the task has one */
+  taskWhy(n, c) { return n.why ? '：' + n.why : ''; }
+  pairTaskTip(n, c) {
+    if (n.kids.length) return n.name + '，' + (n.kind === 'goal' ? c.goalWord[n.goal] + ' · ' : '') + this.taskCardCount(n);
+    return n.name + '，' + this.words()[n.st] + this.taskWhy(n, c);
+  }
+  /* hover card: name · state + reason · 归属 · 负责 · 语义 · for a task the overlapping files it changes (冲突) */
+  /* hover card: name · state + reason · 归属 · 负责 · 语义 · for a task the overlapping files it changes (冲突) */
+  pairTaskCard(tm, n, c) {
+    const W = this.words(); const path = this.shortPath(tm.byId, n);
+    const base = { show: true, name: n.name, path: path, hasPath: !!path, sem: n.sem || '', hasSem: !!n.sem, listK: '冲突', tasks: [], hasTasks: false, more: '', hasMore: false };
+    if (n.kind === 'task') {
+      const ov = (n.files || []).filter((f) => c.F.overlap.indexOf(f) >= 0).map((f) => ({ sq: 'sq z8 ' + this.sqAt(c.tree.byId[f] ? c.tree.byId[f].st : 'none'), name: f.split('/').pop() }));
+      return Object.assign(base, { sq: 'sq z10 ' + this.sqAt(n.st), word: W[n.st] || n.st, tx: 'tx-' + n.st, why: this.taskWhy(n, c), agent: this.taskAgentText(n), tasks: ov, hasTasks: ov.length > 0 });
+    }
+    if (n.kind === 'goal') {
+      const sq = c.goalSq[n.goal];
+      return Object.assign(base, { sq: 'sq z10 ' + sq, word: c.goalWord[n.goal], tx: 'tx-' + sq.slice(2), why: ' · ' + this.taskCardCount(n), agent: this.goalAgentText(n.goal) });
+    }
+    if (n.kind === 'stage') return Object.assign(base, { sq: 'sq z10 ' + this.pairTaskSq(n, 'collapsed', c.goalSq), word: this.taskCardCount(n), tx: 'tx-plain', why: '', agent: this.stageAgentText(n) });
+    return Object.assign(base, { sq: 'sq z10 ' + this.doneShare(n), word: n.kids.length + ' 个目标 · ' + this.taskCardCount(n), tx: 'tx-plain', why: '', agent: '未分配' });
+  }
+  /* click detail: 路径/归属 · 负责的 Agent · 语义 · 关系 (冲突 = the overlapping files and the other goal's tasks on them;
+     依赖; 文件 — or for a group its stages / moving tasks and the tasks in it that change the overlap) */
+  pairTaskDetail(tm, id, c, go) {
+    const n = tm.byId[id];
+    if (!n) return null;
+    const card = this.pairTaskCard(tm, n, c);
+    const crumbs = this.crumbsOf(tm.byId, id).map((x, i, a) => ({ name: x.name, sep: i > 0, cls: 'c' + (i === a.length - 1 ? ' is-on' : ''), go: () => go(x.id) }));
+    const sqT = (t) => 'sq z8 ' + (t.kids.length ? this.pairTaskSq(t, 'collapsed', c.goalSq) : this.sqAt(t.st));
+    const grp = (k, items, text, files) => ({ k: k, items: items, files: files || [], hasText: !!text, text: text || '' });
+    const rel = [];
+    const earlier = c.ids[0]; const later = c.ids[1];
+    if (n.kind === 'task') {
+      const ov = (n.files || []).filter((f) => c.F.overlap.indexOf(f) >= 0);
+      const other = n.goal === earlier ? later : n.goal === later ? earlier : null;
+      if (ov.length && other) {
+        const ot = (other === earlier ? c.F.hitA : c.F.hitB).filter((t) => t.files.some((f) => ov.indexOf(f) >= 0)).map((t) => t.name);
+        rel.push(grp('冲突', ov.map((f) => ({ name: f, sq: 'sq z8 ' + this.sqAt(c.tree.byId[f] ? c.tree.byId[f].st : 'none') })), '目标 ' + c.num[other] + ' 也要改：' + ot.join('、')));
+      }
+      const deps = (n.deps || []).filter((d) => tm.byId[d]);
+      rel.push(grp('依赖', deps.map((d) => ({ name: tm.byId[d].name, sq: sqT(tm.byId[d]) })), deps.length ? '' : '无'));
+      rel.push(grp('文件', [], (n.files || []).length ? '' : '没有列出文件', (n.files || []).map((f) => this.axFileItem(f))));
+    } else {
+      const hits = []; const w = (x) => { if (x.kind === 'task' && c.hit[x.id]) hits.push(x); x.kids.forEach(w); }; w(n);
+      if (n.kind === 'stage') {
+        const act = n.kids.filter((k) => this.isActive(k.st));
+        rel.push(grp('任务', act.slice(0, 6).map((k) => ({ name: k.name, sq: sqT(k) })), act.length > 6 ? '另有 ' + (act.length - 6) + ' 个' : act.length ? '' : '没有进行中或需要处理的任务'));
+      } else rel.push(grp(n.kind === 'goal' ? '阶段' : '目标', n.kids.map((k) => ({ name: k.name, sq: sqT(k) })), ''));
+      rel.push(grp('冲突', hits.slice(0, 6).map((t) => ({ name: t.name, sq: 'sq z8 ' + this.sqAt(t.st) })), hits.length > 6 ? '另有 ' + (hits.length - 6) + ' 个' : hits.length ? '' : '没有任务要改重叠的文件'));
+    }
+    return { id: id, kind: 'task', file: null, sq: 'sq ' + card.sq.split(' ').pop(), name: n.name, tx: card.tx, word: card.word, why: card.why,
+      crumbs: crumbs, agent: card.agent, sem: card.sem, rel: rel };
+  }
+
+  /* =====================================================================
+     auxtabs.snippet.js — G2: the right auxiliary area kept from the 2026-09-28 acceptance
+     (任务图 / 架构图 / 文件 / 命令 / Diff + pages opened from nodes; hide, maximise, new tab, switch, close;
+     two draggable dividers; file tree and file pages apart; save with a conflict example; 引用到草稿 with
+     path, lines and a snippet, 草稿快照 for an unsaved selection; commands run / cancel with kept output;
+     Git ↔ working tree diff, line level).
+     Paste every method into the board's logic class, spread axState() into the constructor's this.state,
+     and bind the markup of auxtabs.snippet.html. The 文件 tree is this board's local sample state.
+     Content is the moment of 10-04 14:15 (Main, Decide); other boards pass their own clock to axView().
+     Every handler is state only: no timers, no DOM writes. Pointer drag uses setPointerCapture on the handle.
+     ===================================================================== */
+
+  /* ------------------------------------------------------------ state keys (spread into this.state) */
+  axState() {
+    return {
+      ptab: 'task',                                   /* 'task' | 'arch' | 'files' | 'cmd' | 'diff' | 'f:<path>' | a node page key */
+      axTabs: ['files', 'cmd', 'diff'],               /* tool tabs that are open (closable, reopened from +) */
+      axPages: ['src/core/work-graph/state/task-machine.ts', 'src/app/server.ts'],   /* open file pages */
+      axMax: false, axNew: false, railW: null, panelW: null, axBox: null, axDrag: null,   /* widths unset until a divider moves */
+      axDirs: { src: true, 'src/core': true, 'src/core/work-graph': true, 'src/core/work-graph/state': true, 'src/app': true },
+      axMore: {}, axSel: null, axEdit: {}, axDraft: {}, axText: {}, axSaved: {}, axReload: {}, axConflict: null, axCmp: null,
+      axCmd: { c2: { st: 'done', shown: false, n: 1 } }, axDiff: 'src/core/work-graph/state/task-machine.ts', quotes: [], axQn: 0
+    };
+  }
+
+  /* ------------------------------------------------------------ the shared fake workspace (real paths, short content) */
+  axRepo() {
+    if (this._axr) return this._axr;
+    const TM = 'src/core/work-graph/state/task-machine.ts'; const AM = 'src/core/work-graph/state/attempt-machine.ts';
+    const RC = 'src/core/work-graph/persistence/record-codecs.ts'; const SV = 'src/app/server.ts';
+    const VM = 'src/core/work-graph/state/verification-machine.ts';
+    const files = {};
+    /* a file page shows one window of the file (from, lines) inside its real length (total); the rest is a quiet fold */
+    files[TM] = { from: 80, total: 212, loaded: '14:12', lines: [
+      '  const facts = readAttemptFacts(record);', '  const failureClass = deriveReworkClass(facts);', "  let counted = failureClass !== 'interrupted';",
+      '  switch (failureClass) {', "    case 'check_failed':", "    case 'check_incomplete':", "      reason = 'auto-rework:' + failureClass;", '      break;',
+      "    case 'cancelled':", '      counted = false;', '      break;', "    case 'interrupted':", "      reason = 'platform-interrupted';", '      break;',
+      '    default:', "      reason = 'run-failed';", '  }', '  if (counted && input.autoReworks >= REWORK_LIMIT) {',
+      "    return refuse('needs_decision', 'auto_rework_limit_reached');", '  }', "  return accept({ kind: 'task_requeued', failureClass, counted, reason });"] };
+    files[SV] = { from: 118, total: 402, loaded: '14:09', lines: [
+      '  if (suffix === CHANGES_SUFFIX) {', '    const resume = parseChangeStreamResume(req.headers[LAST_EVENT_ID_HEADER]);',
+      "    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store' });", '    const stop = feed.subscribe(resume, (notice) => {',
+      "      send('id: ' + notice.id + '\\n');", "      send('data: ' + JSON.stringify(notice) + '\\n\\n');", '    });',
+      "    req.on('close', stop);", '    streams.add(res);', '    return;', '  }'],
+      /* what is on disk now: 执行者 · SSE 推送 edited it at 14:11 (+38 −4, Member.dc.html call_7e2b); the window shows the heartbeat part */
+      disk: { at: '14:11', by: '执行者 · SSE 推送', add: 38, del: 4, lines: [
+        '  if (suffix === CHANGES_SUFFIX) {', '    const resume = parseChangeStreamResume(req.headers[LAST_EVENT_ID_HEADER]);',
+        "    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store' });", '    const stop = feed.subscribe(resume, (notice) => {',
+        "      send('id: ' + notice.id + '\\n');", "      send('data: ' + JSON.stringify(notice) + '\\n\\n');", '    });',
+        '    const beat = setInterval(() => {', "      send(': heartbeat\\n\\n');", '    }, HEARTBEAT_MS);',
+        "    req.on('close', () => {", '      clearInterval(beat);', '      stop();', '    });', '    streams.add(res);', '    return;', '  }'] } };
+    files['src/app/core-routes.ts'] = { from: 1, total: 2134, loaded: '14:15', lines: [
+      '/**', ' * Core HTTP routes of the workbench: goals, tasks, members and files.', ' * Every route parses its payload, then calls one port; no route touches the', ' * RecordStore directly.', ' */',
+      "import type { CoreRouteSuffix, CoreScope } from './core-http-types.js';", "import { createHostCoreCallContext } from './core-call-context.js';", '',
+      'export const CORE_ROUTE_SPECS = [', "  { suffix: 'goals/list', method: 'POST', port: 'workflow' },", "  { suffix: 'goals/show', method: 'POST', port: 'workflow' },",
+      "  { suffix: 'tasks/graph', method: 'POST', port: 'workGraph' },", "  { suffix: 'members/list', method: 'POST', port: 'workGraph' },", "  { suffix: 'files/read', method: 'POST', port: 'workspace' },", '] as const;'] };
+    files['src/ui/views.ts'] = { from: 1, total: 88, loaded: '14:15', lines: [
+      "import { renderConversation } from './views/conversation/center.js';", "import { renderGraphs } from './views/graphs/interaction.js';",
+      "import { renderFiles } from './views/files/render.js';", "import { renderShell } from './views/shell/layout.js';", '',
+      '/** The workbench views: rail, conversation and the right-hand pages. */', 'export function renderViews(state: WorkbenchState): void {',
+      '  renderShell(state);', '  renderConversation(state);', '  renderGraphs(state);', '  renderFiles(state);', '}'] };
+    files['package.json'] = { from: 1, total: 22, loaded: '14:15', lines: [
+      '{', '  "name": "coding-platform-next",', '  "private": true,', '  "type": "module",', '  "engines": {', '    "node": ">=24.15.0 <25"', '  },', '  "scripts": {',
+      '    "check:architecture": "node scripts/check-boundaries.mjs",', '    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.ui.json",',
+      '    "build": "tsc -p tsconfig.build.json && node scripts/build-workbench.mjs",', '    "test": "vitest run --maxWorkers=1",', '    "verify:isolated": "node scripts/verify-isolated.mjs"',
+      '  },', '  "dependencies": {', '    "marked": "18.0.14",', '    "typescript": "6.0.3"', '  },', '  "devDependencies": {', '    "vitest": "4.1.10"', '  }', '}'] };
+    /* Git ↔ working tree at 14:15: the uncommitted changes of goal 1 (Chain.dc.html and Member.dc.html name the counts).
+       by = the task whose runs made the change, as the boards tell it: 重新入队与失败类别 (T13) task-machine.ts, attempt-machine.ts
+       and record-codecs.ts (Chain: "record-codecs.ts 读取旧记录时类别留空"); SSE 推送 (T28) server.ts, attention-observer.ts and
+       main.ts (Member: "已改 3 个文件"); 检查不完整判定 (T21) verification-machine.ts (Decide q1: lint 第 3 行、第 88 行) */
+    const H = (head, oldAt, newAt, rows) => ({ head: head, oldAt: oldAt, newAt: newAt, rows: rows });
+    const changed = [
+      { path: TM, add: 15, del: 6, by: '重新入队与失败类别', hunks: [
+        H('@@ -66,6 +66,15 @@ 重新入队 · task_requeued', 66, 66, [[' ', 'export function requeueTask(record: TaskRecord, input: RequeueInput) {'], [' ', "  let reason = '';"],
+          ['-', "  const failureClass = input.failureClass ?? 'run_failed';"], ['-', '  const counted = true;'], ['-', "  if (input.autoReworks >= 3) return refuse('needs_decision', 'limit');"],
+          ['+', '  if (input.failureClass !== undefined) {'], ['+', "    return refuse('invalid', 'failure_class_is_derived');"], ['+', '  }'], ['+', '  const lease = record.lease;'],
+          ['+', "  if (lease && lease.state === 'held') {"], ['+', "    return refuse('conflict', 'lease_still_held');"], ['+', '  }'], ['+', '  const attempt = record.attempt + 1;'],
+          ['+', '  const brief = input.continuationBriefRef ?? null;'], ['+', '  const actor = input.actorClass;'], ['+', "  if (!actor) return refuse('invalid', 'actor_required');"], ['+', ''],
+          [' ', '  const facts = readAttemptFacts(record);']]),
+        H('@@ -79,7 +88,8 @@', 79, 88, [[' ', "    case 'cancelled':"], [' ', '      counted = false;'], ['+', '      break;'], [' ', "    case 'interrupted':"]]),
+        H('@@ -121,7 +131,6 @@ 读取旧记录', 121, 131, [[' ', '  const record = readRecord(raw);'], ['-', '  const legacyClass = readLegacyClass(record);'], ['-', '  if (legacyClass) record.failureClass = legacyClass;'],
+          ['-', '  delete record.legacyClass;'], ['+', '  // 类别由事实推导，不再读旧字段'], ['+', '  const failureClass = deriveReworkClass(readAttemptFacts(record));'], [' ', '  return { record, failureClass };']])] },
+      { path: AM, add: 9, del: 2, by: '重新入队与失败类别', hunks: [
+        H('@@ -31,6 +31,13 @@ 结束一次尝试', 31, 31, [[' ', 'export function endAttempt(attempt: AttemptRecord, outcome: RunOutcome) {'],
+          ['-', "  const failureClass = outcome.failureClass ?? 'run_failed';"], ['-', '  return { ...attempt, phase: outcome.phase, failureClass };'],
+          ['+', '  const facts = readOutcomeFacts(outcome);'], ['+', '  const failureClass = deriveFailureClass(facts);'], ['+', "  if (failureClass === 'unknown') {"],
+          ['+', "    return refuse('needs_decision', 'result_unknown');"], ['+', '  }'], ['+', '  return {'], ['+', '    ...attempt, phase: outcome.phase, failureClass,'],
+          ['+', "    counted: failureClass !== 'interrupted',"], ['+', '  };'], [' ', '}']])] },
+      { path: RC, add: 14, del: 2, by: '重新入队与失败类别', hunks: [
+        H('@@ -168,7 +168,19 @@ 重新入队记录 · 解码', 168, 168, [[' ', 'export function decodeRequeue(raw: unknown): RequeueRecord {'], [' ', '  return {'],
+          ['-', '    failureClass: requiredEnum(raw.failureClass, REWORK_CLASSES),'], ['-', "    actorClass: requiredEnum(raw.actorClass, ACTOR_CLASSES),"],
+          ['+', '    // 类别只作审计副本；10-02 之前的记录没有这个字段'], ['+', '    failureClass: optionalEnum(raw.failureClass, REWORK_CLASSES),'],
+          ['+', "    actorClass: optionalEnum(raw.actorClass, ACTOR_CLASSES) ?? 'system',"], ['+', '    autoRework: decodeAutoRework(raw.autoRework),'], ['+', '  };'], ['+', '}'], ['+', ''],
+          ['+', 'function decodeAutoRework(raw: unknown): AutoRework {'], ['+', "  if (raw === undefined) return { used: 0, limit: 3 };"], ['+', '  return {'],
+          ['+', '    used: requiredInt(raw.used), limit: requiredInt(raw.limit),'], ['+', '  };'], ['+', '}'], [' ', '']])] },
+      { path: SV, add: 38, del: 4, by: 'SSE 推送', hunks: [], note: '执行者 · SSE 推送 14:11 的改动：SSE 推送的心跳与断开处理' },
+      { path: 'src/app/attention-observer.ts', add: 21, del: 6, by: 'SSE 推送', hunks: [], note: '执行者 · SSE 推送 13:58 的改动' },
+      { path: 'src/ui/main.ts', add: 17, del: 9, by: 'SSE 推送', hunks: [], note: '执行者 · SSE 推送 14:03 的改动：改成订阅推送，断线时退回轮询' },
+      { path: VM, add: 7, del: 1, by: '检查不完整判定', hunks: [
+        H('@@ -1,3 +1,4 @@ 导入', 1, 1, [[' ', "import type { CheckReport, VerificationRound } from '../model/contracts.js';"], [' ', "import { transition } from './transition.js';"],
+          ['+', "import { readCheckFacts } from '../evidence/evidence-service.js';"], [' ', "import { deriveReworkClass } from './task-failure.js';"]]),
+        H('@@ -82,4 +83,9 @@ 判定检查不完整', 82, 83, [[' ', 'export function judgeRound(round: VerificationRound, report: CheckReport | null) {'],
+          ['-', "  if (!report) return 'failed';"], ['+', '  const facts = readCheckFacts(round);'], ['+', '  if (!report || facts.interrupted) {'], ['+', "    return 'incomplete';"], ['+', '  }'],
+          ['+', '  const missing = facts.expected.filter((k) => !report.items[k]);'], ['+', "  if (report.items.length < facts.expected.length) return 'incomplete';"],
+          [' ', "  return report.failed.length ? 'failed' : 'passed';"], [' ', '}']])] }
+    ];
+    const cmds = [
+      { id: 'c1', name: '类型检查', line: 'npm run typecheck', out: ['> tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.ui.json', '0 个错误'], took: '41 秒', exit: 0 },
+      { id: 'c2', name: '状态机单元测试', line: 'npm test -- tests/state', out: ['> vitest run --maxWorkers=1 tests/state', ' 通过  tests/state/task-machine.test.ts（18）', ' 通过  tests/state/attempt-machine.test.ts（13）', '31 个通过'], took: '6 秒', exit: 0 },
+      { id: 'c3', name: '全部测试', line: 'npm test', long: true, out: ['> vitest run --maxWorkers=1', ' 通过  tests/state（31）', ' 通过  tests/work-graph（214）', ' … 已完成 245 / 612'], took: '' },
+      { id: 'c4', name: '边界检查', line: 'npm run check:architecture', out: ['> node scripts/check-boundaries.mjs', '0 处越界'], took: '3 秒', exit: 0 },
+      { id: 'c5', name: '构建', line: 'npm run build', out: ['> tsc -p tsconfig.build.json && node scripts/build-workbench.mjs', '工作台已构建'], took: '18 秒', exit: 0 }
+    ];
+    this._axr = { files: files, changed: changed, cmds: cmds };
+    return this._axr;
+  }
+
+  /* the local workspace tree of the file / command / Diff pages (their prototype sample state) */
+  axTree() {
+    if (this._axt) return this._axt;
+    const paths = [
+      'src/app/server.ts', 'src/app/core-routes.ts', 'src/app/attention-observer.ts', 'src/app/main.ts',
+      'src/core/work-graph/state/task-machine.ts', 'src/core/work-graph/state/attempt-machine.ts',
+      'src/core/work-graph/state/verification-machine.ts', 'src/core/work-graph/persistence/record-codecs.ts',
+      'src/ui/main.ts', 'src/ui/views.ts', 'package.json'
+    ];
+    const root = [];
+    const dirOf = (parts) => {
+      let list = root; let base = '';
+      parts.forEach((p) => {
+        base = base ? base + '/' + p : p;
+        let node = list.filter((n) => n.kids && n.name === p)[0];
+        if (!node) { node = { name: p, path: base, kids: [] }; list.push(node); }
+        list = node.kids;
+      });
+      return list;
+    };
+    paths.forEach((path) => {
+      const parts = path.split('/'); const name = parts.pop();
+      dirOf(parts).push({ name: name, path: path, kids: null });
+    });
+    const sortBoard = (list) => {
+      list.sort((a, b) => (!!b.kids - !!a.kids) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+      list.forEach((n) => { if (n.kids) sortBoard(n.kids); });
+    };
+    sortBoard(root);
+    this._axt = root;
+    return this._axt;
+  }
+
+  /* the repository's real files and folders (the 文件 tree's data), for "can this path be opened" (axRepo() first: a board
+     at another moment may add files to the tree there) */
+  axPaths() {
+    this.axRepo();
+    if (this._axp) return this._axp;
+    const files = new Set(); const dirs = new Set();
+    const w = (list) => list.forEach((n) => { if (n.kids) { dirs.add(n.path); w(n.kids); } else files.add(n.path); });
+    w(this.axTree());
+    this._axp = { files: files, dirs: dirs };
+    return this._axp;
+  }
+
+  /* a path in a map's detail (文件, 路径) and on node pages (markup: .d-fline): a file opens its page in the auxiliary area,
+     a folder opens 文件 at it, a changed file also offers 看 Diff; a path not in the repository (a planned file) stays text */
+  axFileItem(path) {
+    const P = this.axPaths(); const isFile = P.files.has(path); const isDir = !isFile && P.dirs.has(path);
+    const changed = isFile && this.axRepo().changed.some((f) => f.path === path);
+    const a = String(path).split('/'); const noopBoard = () => {};
+    return { full: path, parts: a.map((x, i) => (i < a.length - 1 ? x + '/' : x)), canOpen: isFile || isDir, cantOpen: !isFile && !isDir,
+      open: isFile ? () => this.axOpenFile(path) : isDir ? () => this.axRevealDir(path) : noopBoard,
+      tip: isFile ? '打开文件：' + path : isDir ? '在“文件”里展开：' + path : path + '（仓库里还没有这个文件）',
+      hasDiff: changed, diff: changed ? () => this.axOpenDiff(path) : noopBoard };
+  }
+  /* open a file as its own page tab; a changed file's Diff; 文件 opened at a folder (the panel shows if it was hidden) */
+  axOpenFile(path) {
+    const st = this.state || {};
+    const pages = (st.axPages || []).indexOf(path) >= 0 ? st.axPages : (st.axPages || []).concat([path]);
+    this.setState({ axPages: pages, ptab: 'f:' + path, axSel: null, axNew: false, panel: true, hover: null });
+  }
+  axOpenDiff(path) {
+    const st = this.state || {};
+    this.setState({ axTabs: (st.axTabs || []).indexOf('diff') >= 0 ? st.axTabs : (st.axTabs || []).concat(['diff']), ptab: 'diff', axDiff: path, axCmp: null, axNew: false, panel: true, hover: null });
+  }
+  axRevealDir(path) {
+    const st = this.state || {};
+    const d = Object.assign({}, st.axDirs || {}); const parts = String(path).split('/');
+    parts.forEach((x, i) => { d[parts.slice(0, i + 1).join('/')] = true; });
+    this.setState({ axTabs: (st.axTabs || []).indexOf('files') >= 0 ? st.axTabs : (st.axTabs || []).concat(['files']), ptab: 'files', axDirs: d, axNew: false, panel: true, hover: null });
+  }
+
+  /* line-level diff of two short texts (longest common subsequence) → rows [sign, oldNo, newNo, text];
+     in a changed block the removed lines come before the added ones, as in git diff */
+  axLineDiff(a, b, from) {
+    const n = a.length; const m = b.length; const L = [];
+    for (let x = 0; x <= n; x += 1) { L.push([]); for (let y = 0; y <= m; y += 1) L[x].push(0); }
+    for (let x = n - 1; x >= 0; x -= 1) for (let y = m - 1; y >= 0; y -= 1) L[x][y] = a[x] === b[y] ? L[x + 1][y + 1] + 1 : Math.max(L[x + 1][y], L[x][y + 1]);
+    const rows = []; let x = 0; let y = 0;
+    while (x < n || y < m) {
+      if (x < n && y < m && a[x] === b[y]) { rows.push([' ', from + x, from + y, a[x]]); x += 1; y += 1; }
+      else if (x < n && (y >= m || L[x + 1][y] >= L[x][y + 1])) { rows.push(['-', from + x, null, a[x]]); x += 1; }
+      else { rows.push(['+', null, from + y, b[y]]); y += 1; }
+    }
+    return rows;
+  }
+
+  /* ------------------------------------------------------------ everything the markup binds: ax.*
+     s = this.state; o = { at: '14:15' (the board's clock), extra: [{ key, name }] node pages (Main's s.extra) } */
+  axView(s, o) {
+    const set = (p) => this.setState(p);
+    const cur = () => this.state || {};
+    o = o || {}; const at = o.at || '14:15';
+    const repo = this.axRepo(); const ptab = s.ptab || 'task';
+    const noopBoard = () => {};
+    const go = (key) => set({ ptab: key, axNew: false, hover: null });
+    /* ---- tabs */
+    const toolName = { files: '文件', cmd: '命令', diff: 'Diff' };
+    /* a second (third …) 命令 page is 'cmd:2' (…): its own runs and output, named 命令 2, so several terminals tell apart */
+    const cmdN = (k) => { const m = /^cmd:(\d+)$/.exec(String(k)); return m ? +m[1] : 0; };
+    const toolOf = (k) => toolName[k] || (cmdN(k) ? '命令 ' + cmdN(k) : '');
+    const isCmdTab = ptab === 'cmd' || cmdN(ptab) > 0;
+    const isDirty = (p) => cur().axDraft && cur().axDraft[p] !== undefined;
+    const closeTab = (key) => {
+      const c = cur(); const patch = {};
+      if (toolOf(key)) patch.axTabs = (c.axTabs || []).filter((k) => k !== key);
+      else if (key.indexOf('f:') === 0) patch.axPages = (c.axPages || []).filter((p) => 'f:' + p !== key);
+      else patch.extra = (c.extra || []).filter((y) => y.key !== key);
+      if ((c.ptab || 'task') === key) patch.ptab = 'task';
+      set(patch);
+    };
+    /* file pages with the same name (src/app/main.ts, src/ui/main.ts) get the shortest parent that tells them apart, in
+       front ("app/main.ts" / "ui/main.ts": under the strip's name cap the part that differs is the part that stays);
+       a file tab's title and close label carry its full path, a node page's its name */
+    const twins = {}; const tabName = {};
+    (s.axPages || []).forEach((p) => { const b = p.split('/').pop(); (twins[b] = twins[b] || []).push(p); });
+    Object.keys(twins).forEach((b) => {
+      const ps = twins[b]; if (ps.length < 2) { tabName[ps[0]] = b; return; }
+      const dirs = ps.map((p) => p.split('/').slice(0, -1)); const most = Math.max.apply(null, dirs.map((d) => d.length));
+      let k = 1; const tail = (d) => d.slice(Math.max(0, d.length - k)).join('/');
+      while (k < most && new Set(dirs.map(tail)).size < ps.length) k += 1;
+      ps.forEach((p, i) => { tabName[p] = tail(dirs[i]) ? tail(dirs[i]) + '/' + b : b; });
+    });
+    const tab = (key, name, closable, extraCls, tip) => {
+      const on = ptab === key;
+      return { key: key, name: name, on: on, cls: 'tab' + (extraCls || '') + (on ? ' is-on' : ''), pick: () => go(key), canClose: closable, tip: tip || null,
+        close: () => closeTab(key), closeLabel: '关闭 ' + (tip || name), dirty: key.indexOf('f:') === 0 && isDirty(key.slice(2)) };
+    };
+    /* every tab has a title: the map or the tool, a file's full path, a node page's name; a node page whose name a file page
+       also has (task-machine.ts as a file and as a node) reads "name · 节点" */
+    const fileNames = new Set((s.axPages || []).map((p) => tabName[p] || p.split('/').pop()));
+    const TIP = { task: '任务图', arch: '架构图', files: '文件：工作区的目录树', diff: 'Diff：Git（HEAD）↔ 工作区，逐行' };
+    const tabs = [tab('task', '任务图', false, '', TIP.task), tab('arch', '架构图', false, '', TIP.arch)]
+      .concat((s.axTabs || []).map((k) => tab(k, toolOf(k), true, '', TIP[k] || toolOf(k) + '：项目的命令，输出隐藏后仍保留')))
+      .concat((s.axPages || []).map((p) => tab('f:' + p, tabName[p] || p.split('/').pop(), true, ' is-file', p)))
+      .concat((o.extra || s.extra || []).map((x) => tab(x.key, fileNames.has(x.name) ? x.name + ' · 节点' : x.name, true, '', '节点详情：' + x.name)));
+    const newItems = [['files', '文件'], ['cmd', '命令'], ['diff', 'Diff']].map((p) => {
+      const open = (s.axTabs || []).indexOf(p[0]) >= 0;
+      return { label: p[1], open: open, cls: 'menu-item' + (open ? ' is-on' : ''),
+        go: () => { const c = cur(); set({ axTabs: open ? c.axTabs : (c.axTabs || []).concat([p[0]]), ptab: p[0], axNew: false, panel: true }); } };
+    });
+    /* with 命令 open, + also opens another 命令 page (the next free number) */
+    if ((s.axTabs || []).indexOf('cmd') >= 0) {
+      const used = (s.axTabs || []).map(cmdN); let nx = 2; while (used.indexOf(nx) >= 0) nx += 1;
+      newItems.splice(2, 0, { label: '再开一个命令页（命令 ' + nx + '）', open: false, cls: 'menu-item',
+        go: () => { const c = cur(); set({ axTabs: (c.axTabs || []).concat(['cmd:' + nx]), ptab: 'cmd:' + nx, axNew: false, panel: true }); } });
+    }
+    /* ---- dividers: pointer drag (captured on the handle) and keyboard arrows. The widths stay unset (railW / panelW
+       null: the shell keeps the CSS widths of each window size, 232 / 480 and 208 / 420 at ≤ 1240px) until you drag a
+       divider or use its keys; the container's real width comes with every pointer, key or focus event on a divider
+       (axBox) and sets the limits, aria-valuemax and the width a drag starts from; Home and double-click go back to the
+       CSS width. o.rail === false: a board without a rail (Goals) — the panel may then take all but 360px */
+    const hasRail = o.rail !== false;
+    const boxW = (e) => (e && e.currentTarget && e.currentTarget.parentNode && e.currentTarget.parentNode.clientWidth) || cur().axBox || 1440;
+    const defW = (side, W) => (side === 'rail' ? (W <= 1240 ? 208 : 232) : (W <= 1240 ? 420 : 480));
+    const railOf = (W, c) => (hasRail ? c.railW || defW('rail', W) : 0);
+    const clamp = (v, r) => Math.round(Math.max(r[0], Math.min(r[1], v)));
+    const W0 = s.axBox || 1440;
+    const handleBoard = (side) => {
+      const key = side === 'rail' ? 'railW' : 'panelW'; const dir = side === 'rail' ? 1 : -1;
+      const range = (W, c) => (side === 'rail' ? [180, 360] : [360, Math.max(360, W - railOf(W, c) - 360)]);
+      const put = (v, W) => { const p = { axBox: W }; p[key] = v; set(p); };
+      return {
+        down: (e) => {
+          if (e && e.button !== undefined && e.button !== 0) return;
+          if (e && e.currentTarget && e.currentTarget.setPointerCapture) e.currentTarget.setPointerCapture(e.pointerId);
+          const W = boxW(e); set({ axDrag: { side: side, x: e ? e.clientX : 0, w: cur()[key] || defW(side, W), total: W }, axBox: W });
+        },
+        move: (e) => { const c = cur(); const d = c.axDrag; if (!d || d.side !== side) return; const p = {}; p[key] = clamp(d.w + dir * ((e ? e.clientX : d.x) - d.x), range(d.total, c)); set(p); },
+        up: () => { if (cur().axDrag) set({ axDrag: null }); },
+        key: (e) => {
+          const k = e && e.key; const c = cur(); const W = boxW(e); const r = range(W, c); const w = c[key] || defW(side, W); const step = e && e.shiftKey ? 64 : 16;
+          let v;
+          if (k === 'ArrowRight') v = w + step; else if (k === 'ArrowLeft') v = w - step; else if (k === 'Home') v = null; else if (k === 'End') v = r[1]; else return;
+          if (e.preventDefault) e.preventDefault();
+          put(v === null ? null : clamp(v, r), W);
+        },
+        reset: () => { const p = {}; p[key] = null; set(p); },
+        seen: (e) => { const W = boxW(e); if (cur().axBox !== W) set({ axBox: W }); },
+        cls: 'split-handle for-' + side + (s.axDrag && s.axDrag.side === side ? ' is-drag' : ''),
+        min: side === 'rail' ? 180 : 360, max: range(W0, s)[1], now: s[key] || defW(side, W0)
+      };
+    };
+    /* ---- files: the directory tree (one row per open level; 100 per folder, then 再显示 100 个) */
+    const changedBy = {}; repo.changed.forEach((f) => { changedBy[f.path] = f; });
+    const rows = [];
+    const walkBoardTree = (list, depth) => {
+      const shown = 100 + ((s.axMore || {})[list.dirPath] || 0);
+      list.items.slice(0, shown).forEach((n) => {
+        if (n.kids) {
+          const open = !!(s.axDirs || {})[n.path];
+          rows.push({ key: n.path, isDir: true, isFile: false, name: n.name, cls: 'frow d' + Math.min(depth, 9) + (open ? ' is-open' : ''), meta: '', hasMeta: false, ex: open,
+            go: () => { const d = Object.assign({}, cur().axDirs || {}); if (d[n.path]) delete d[n.path]; else d[n.path] = true; set({ axDirs: d }); } });
+          if (open) walkBoardTree({ dirPath: n.path, items: n.kids }, depth + 1);
+        } else {
+          const ch = changedBy[n.path];
+          rows.push({ key: n.path, isDir: false, isFile: true, name: n.name, cls: 'frow d' + Math.min(depth, 9) + (ptab === 'f:' + n.path ? ' is-on' : ''), ex: null,
+            meta: ch ? '+' + ch.add + ' −' + ch.del : '', hasMeta: !!ch, addTxt: ch ? '+' + ch.add : '', delTxt: ch ? '−' + ch.del : '',
+            go: () => { const c = cur(); const pages = (c.axPages || []).indexOf(n.path) >= 0 ? c.axPages : (c.axPages || []).concat([n.path]); set({ axPages: pages, ptab: 'f:' + n.path, axSel: null }); } });
+        }
+      });
+      if (list.items.length > shown) rows.push({ key: list.dirPath + ':more', isDir: false, isFile: false, isMore: true, name: '再显示 100 个（共 ' + list.items.length + ' 个）', cls: 'frow is-more d' + Math.min(depth, 9),
+        meta: '', hasMeta: false, ex: null, go: () => { const m = Object.assign({}, cur().axMore || {}); m[list.dirPath] = (m[list.dirPath] || 0) + 100; set({ axMore: m }); } });
+    };
+    if (ptab === 'files') walkBoardTree({ dirPath: '', items: this.axTree() }, 0);
+    /* ---- a file page */
+    let fp = null;
+    if (ptab.indexOf('f:') === 0) {
+      const path = ptab.slice(2); const F = repo.files[path];
+      const reloaded = !!(s.axReload || {})[path];
+      const baseLines = F ? ((s.axText || {})[path] || (reloaded && F.disk ? F.disk.lines : F.lines)) : [];
+      const draft = (s.axDraft || {})[path];
+      const lines = draft !== undefined ? draft.split('\n') : baseLines;
+      const from = F ? F.from : 1; const to = from + lines.length - 1;
+      const sel = s.axSel && s.axSel.path === path ? s.axSel : null;
+      const editing = !!(s.axEdit || {})[path];
+      const dirty = draft !== undefined;
+      const pick = (no) => (e) => {
+        const c = cur(); const prev = c.axSel && c.axSel.path === path ? c.axSel : null;
+        if (e && e.shiftKey && prev) set({ axSel: { path: path, anchor: prev.anchor, a: Math.min(prev.anchor, no), b: Math.max(prev.anchor, no) } });
+        else if (prev && prev.a === no && prev.b === no) set({ axSel: null });
+        else set({ axSel: { path: path, anchor: no, a: no, b: no } });
+      };
+      const codeRows = [];
+      if (F && from > 1) codeRows.push({ fold: true, line: false, text: '第 1–' + (from - 1) + ' 行，原型没有收录', cls: 'fl is-fold' });
+      lines.forEach((t, k) => { const no = from + k; const on = !!sel && no >= sel.a && no <= sel.b;
+        codeRows.push({ fold: false, line: true, no: no, text: t, cls: 'fl' + (on ? ' is-sel' : ''), pick: pick(no), label: '选中第 ' + no + ' 行；按住 Shift 再点一行，选中一段' }); });
+      if (F && to < F.total) codeRows.push({ fold: true, line: false, text: '第 ' + (to + 1) + '–' + F.total + ' 行，原型没有收录', cls: 'fl is-fold' });
+      const savedAt = (s.axSaved || {})[path];
+      const conflict = s.axConflict === path && F && F.disk;
+      const saveNow = () => {
+        const c = cur(); const d = (c.axDraft || {})[path]; if (d === undefined) return;
+        const t = Object.assign({}, c.axText || {}); t[path] = d.split('\n');
+        const dr = Object.assign({}, c.axDraft || {}); delete dr[path];
+        const sv = Object.assign({}, c.axSaved || {}); sv[path] = at;
+        set({ axText: t, axDraft: dr, axSaved: sv, axConflict: null });
+      };
+      /* quotes of this file waiting in the draft: with nothing selected the bar says so (the composer may be hidden by 放大
+         or by a decision card) */
+      const nQf = (s.quotes || []).filter((q) => q.path === path).length;
+      const snippet = (a, b) => { const k = Math.max(0, a - from); const t = (lines.slice(k, k + (b - a + 1)).filter((x) => x.trim())[0] || '').trim(); return t.length > 56 ? t.slice(0, 55) + '…' : t; };
+      fp = {
+        path: path, name: path.split('/').pop(), parts: path.split('/').map((x, k, a) => (k < a.length - 1 ? x + '/' : x)), known: !!F,
+        state: !F ? '原型没有收录这个文件的内容' : dirty ? '未保存的修改' : savedAt ? '已保存 ' + savedAt : reloaded ? '已重新载入 ' + at : '载入于 ' + F.loaded,
+        stateCls: 'fp-state' + (dirty ? ' tx-waiting' : ''), rows: codeRows, editing: editing, viewing: !editing, draftText: lines.join('\n'),
+        editLabel: editing ? '查看' : '编辑', toggleEdit: () => { const e = Object.assign({}, cur().axEdit || {}); if (e[path]) delete e[path]; else e[path] = true; set({ axEdit: e }); },
+        onEdit: (e) => { const d = Object.assign({}, cur().axDraft || {}); d[path] = e && e.target ? e.target.value : lines.join('\n'); set({ axDraft: d }); },
+        onSelect: (e) => { const t = e && e.target; if (!t || t.selectionStart === t.selectionEnd) return; const v = String(t.value);
+          const a = from + v.slice(0, t.selectionStart).split('\n').length - 1; const b = from + v.slice(0, Math.max(t.selectionStart, t.selectionEnd - 1)).split('\n').length - 1;
+          set({ axSel: { path: path, anchor: a, a: a, b: b } }); },
+        canSave: dirty, cantSave: !dirty, saveCls: 'btn btn-sm btn-line' + (dirty ? '' : ' is-off'),
+        save: () => { const c = cur(); if ((c.axDraft || {})[path] === undefined) return; if (F && F.disk && !(c.axReload || {})[path] && !(c.axSaved || {})[path]) set({ axConflict: path }); else saveNow(); },
+        hasSel: !!sel, selText: sel ? (sel.a === sel.b ? '已选第 ' + sel.a + ' 行' : '已选第 ' + sel.a + '–' + sel.b + ' 行') : '',
+        barText: sel ? (sel.a === sel.b ? '已选第 ' + sel.a + ' 行' : '已选第 ' + sel.a + '–' + sel.b + ' 行') + (dirty ? '（未保存，引用的是草稿快照）' : '')
+          : nQf ? '已引用到草稿（' + nQf + ' 条），还没有发送'
+          : F ? (editing ? '在编辑框里选中几行，再引用' : '点行号选中一行，按住 Shift 再点一行选中一段') : '可以把整个文件引用到草稿',
+        quoteLabel: sel ? '引用到草稿' : '把整个文件引用到草稿', clearSel: () => set({ axSel: null }),
+        quote: () => {
+          const c = cur(); const n = (c.axQn || 0) + 1;
+          const q = sel ? { id: 'q' + n, path: path, a: sel.a, b: sel.b, snip: snippet(sel.a, sel.b), snap: dirty } : { id: 'q' + n, path: path, a: null, b: null, snip: F ? snippet(from, to) : '', snap: dirty };
+          set({ quotes: (c.quotes || []).concat([q]), axQn: n, axSel: null });
+        },
+        conflict: !!conflict, conflictText: conflict ? '磁盘上的 ' + path.split('/').pop() + ' 在 ' + F.disk.at + ' 被 ' + F.disk.by + ' 改过（+' + F.disk.add + ' −' + F.disk.del + '），晚于你载入的版本（' + F.loaded + '）。' : '',
+        reload: () => { const c = cur(); const r = Object.assign({}, c.axReload || {}); r[path] = true; const dr = Object.assign({}, c.axDraft || {}); delete dr[path]; set({ axReload: r, axDraft: dr, axConflict: null }); },
+        compare: () => set({ ptab: 'diff', axCmp: path, axTabs: (cur().axTabs || []).indexOf('diff') >= 0 ? cur().axTabs : (cur().axTabs || []).concat(['diff']) }),
+        overwrite: () => saveNow(), dismiss: () => set({ axConflict: null })
+      };
+    }
+    /* ---- commands */
+    const cmdKey = (id) => (cmdN(ptab) ? ptab + '/' + id : id);   /* 命令 keeps the old keys; 命令 2 … key by page */
+    const cmds = repo.cmds.map((c0) => {
+      const ck = cmdKey(c0.id);
+      const st = (s.axCmd || {})[ck] || { st: 'idle', shown: false, n: 0 };
+      const upd = (p) => { const all = Object.assign({}, cur().axCmd || {}); all[ck] = Object.assign({}, all[ck] || { st: 'idle', shown: false, n: 0 }, p); set({ axCmd: all }); };
+      const hasOut = st.st !== 'idle';
+      const word = { idle: '未运行', running: '运行中', done: '已结束 · 退出码 ' + c0.exit + ' · 用时 ' + c0.took, cancelled: '已取消，输出保留' }[st.st];
+      const out = st.st === 'cancelled' ? c0.out.concat(['已取消']) : c0.out;
+      return { id: c0.id, name: c0.name, line: c0.line, word: word, dot: 'dot ' + (st.st === 'running' ? 's-running' : st.st === 'cancelled' ? 's-cancelled' : st.st === 'done' ? 's-satisfied' : 's-idle'),
+        canRun: st.st !== 'running', canCancel: st.st === 'running', runLabel: st.st === 'idle' ? '运行' : '再运行',
+        run: () => upd({ st: c0.long ? 'running' : 'done', shown: true, n: (st.n || 0) + 1 }), cancel: () => upd({ st: 'cancelled', shown: true }),
+        hasOut: hasOut, shown: hasOut && !!st.shown, kept: hasOut && !st.shown, keptText: '输出已隐藏，仍然保留（' + out.length + ' 行）',
+        toggleLabel: st.shown ? '隐藏输出' : '显示输出', toggle: () => upd({ shown: !st.shown }), out: out.join('\n'), outLines: out.length };
+    });
+    /* ---- diff: Git ↔ working tree, or (from a conflict) the disk ↔ your draft */
+    const cmpPath = s.axCmp && repo.files[s.axCmp] && repo.files[s.axCmp].disk ? s.axCmp : null;
+    const dfiles = repo.changed.map((f) => ({ path: f.path, name: f.path.split('/').pop(), dir: f.path.split('/').slice(0, -1).join('/'), add: '+' + f.add, del: '−' + f.del,
+      cls: 'frow d0' + (!cmpPath && s.axDiff === f.path ? ' is-on' : ''), go: () => set({ axDiff: f.path, axCmp: null }) }));
+    let drows = []; let dnote = ''; let dhead = ''; let dPath = null;
+    if (cmpPath) {
+      const F = repo.files[cmpPath]; const mine = ((s.axDraft || {})[cmpPath] !== undefined ? s.axDraft[cmpPath].split('\n') : F.lines);
+      dhead = F.disk.by + ' ' + F.disk.at + ' 写到磁盘的版本 ↔ 你的草稿 · ' + cmpPath.split('/').pop() + ' 第 ' + F.from + ' 行起';
+      drows = [{ hunk: true, line: false, text: '@@ 第 ' + F.from + ' 行起 · 磁盘 ↔ 草稿', cls: 'dl-hunk' }].concat(this.axLineDiff(F.disk.lines, mine, F.from).map((r) => ({ hunk: false, line: true, cls: 'dl-row' + (r[0] === '+' ? ' is-add' : r[0] === '-' ? ' is-del' : ''), sign: r[0] === ' ' ? '' : r[0] === '-' ? '−' : '+', o: r[1] === null ? '' : String(r[1]), n: r[2] === null ? '' : String(r[2]), text: r[3] })));
+    } else {
+      const f = repo.changed.filter((x) => x.path === s.axDiff)[0] || repo.changed[0]; dPath = f.path;
+      dhead = 'Git（HEAD）↔ 工作区 · ' + f.path.split('/').pop() + ' · +' + f.add + ' −' + f.del + (f.by ? ' · ' + f.by : '');
+      f.hunks.forEach((h) => {
+        drows.push({ hunk: true, line: false, text: h.head, cls: 'dl-hunk' });
+        let o2 = h.oldAt; let n2 = h.newAt;
+        h.rows.forEach((r) => { const row = { hunk: false, line: true, cls: 'dl-row' + (r[0] === '+' ? ' is-add' : r[0] === '-' ? ' is-del' : ''), sign: r[0] === ' ' ? '' : r[0] === '-' ? '−' : '+', o: r[0] === '+' ? '' : String(o2), n: r[0] === '-' ? '' : String(n2), text: r[1] };
+          if (r[0] !== '+') o2 += 1; if (r[0] !== '-') n2 += 1; drows.push(row); });
+      });
+      if (!f.hunks.length) dnote = (f.note ? f.note + '；' : '') + '逐行内容在原型里没有收录。';
+    }
+    /* ---- quotes in the composer */
+    const quotes = (s.quotes || []).map((q) => ({ id: q.id, path: q.path, lines: q.a === null ? '整个文件' : q.a === q.b ? '第 ' + q.a + ' 行' : '第 ' + q.a + '–' + q.b + ' 行',
+      snap: !!q.snap, snip: q.snip, hasSnip: !!q.snip, remove: () => set({ quotes: (cur().quotes || []).filter((x) => x.id !== q.id) }) }));
+    const rail = handleBoard('rail'); const panel = handleBoard('panel');
+    return {
+      appCls: (s.axMax ? 'panel-max' : '') + (s.axDrag ? ' is-dragging' : ''), railW: s.railW || defW('rail', W0), panelW: s.panelW || defW('panel', W0),
+      /* the root's two widths: 'initial' while unset, so var(--rail-w, …) / var(--panel-w, …) fall back to the CSS widths */
+      railCss: s.railW ? s.railW + 'px' : 'initial', panelCss: s.panelW ? s.panelW + 'px' : 'initial',
+      rail: rail, panel: panel,
+      tabs: tabs, isFiles: ptab === 'files', isCmd: isCmdTab, isDiff: ptab === 'diff', isFile: !!fp, isTool: ptab === 'files' || isCmdTab || ptab === 'diff' || !!fp,
+      newOpen: !!s.axNew, toggleNew: () => set({ axNew: !cur().axNew }), newItems: newItems,
+      maxLabel: s.axMax ? '还原右栏' : '放大右栏', isMax: !!s.axMax, notMax: !s.axMax, toggleMax: () => set({ axMax: !cur().axMax, panel: true }),
+      hide: () => set({ panel: false, axMax: false, axNew: false }),
+      fileRows: rows, fileNote: 'coding-platform · 分支 feat/reliability-and-structure · 改动 ' + repo.changed.length + ' 个文件',
+      fp: fp || { rows: [], parts: [] },
+      cmds: cmds, cmdNote: '命令在 Host 的工作区里运行；这里不是终端，没有输入。',
+      dfiles: dfiles, drows: drows, dhead: dhead, dnote: dnote, hasDnote: !!dnote, isCmp: !!cmpPath, backToGit: () => set({ axCmp: null }),
+      /* Diff's head: the file shown in Git ↔ 工作区 opens as its page (from Main's review) */
+      dOpenShow: ptab === 'diff' && !!dPath, dOpen: () => { if (dPath) this.axOpenFile(dPath); }, dOpenTip: dPath ? '在文件页里打开 ' + dPath : '',
+      quotes: quotes, hasQuotes: quotes.length > 0, quoteNote: '已引用到草稿，还没有发送',
+      /* 放大 hides the composer: the quotes waiting there are counted beside the strip's buttons; a click restores the panel */
+      qMax: { show: !!s.axMax && quotes.length > 0, n: quotes.length, go: () => set({ axMax: false }) }
+    };
+  }
+  /* the quoted lines as plain text, for the message you send (the board's send() decides; quoting never sends) */
+  axQuoteText(q) { return '引用：' + q.path + '，' + (q.a === null ? '整个文件' : q.a === q.b ? '第 ' + q.a + ' 行' : '第 ' + q.a + '–' + q.b + ' 行') + (q.snap ? '（草稿快照）' : ''); }
+
+  /* 待执行 is drawn hollow (s-notyet); every other state keeps its class */
+  sqAt(st) { return 's-' + (st === 'pending' ? 'notyet' : st); }
+  /* ------------------------------------------------------------ PART A · the 任务图 tab (all five boards) */
+  /* state keys: the thumbnail's pan ({ x, y, at: the selection the pan was made with }) and the panel's measured box; the
+     轨道 view's grouping, window, picked hour, closed groups, archived shown, pins and its re-sort counter */
+  tpState() {
+    return { tpPan: null, tpBox: null };
+  }
+  /* the width of a line of text in the panel (CJK and full-width punctuation 1 em, the rest about .55 em) */
+  tpTextW(t, px) { const e = px || 12; return [...String(t || '')].reduce((a, ch) => a + (/[　-鿿＀-￯]/.test(ch) ? e : e * 0.55), 0); }
+  /* the one-line summary of the compact squares of one level (the thumbnail's fallback): "另 7 个阶段，412 个任务 · 需要你决定 3";
+     the task count goes first when the line would not fit its row (room in px), the attention words stay */
+  tpRestLine(rest, hasPath, room) {
+    const U = { goal: '个目标', stage: '个阶段', batch: '个批次', task: '个任务' };
+    const leaf = (k) => !(k.kids && k.kids.length);
+    const unit = rest.every(leaf) ? '个任务' : rest.every((k) => k.kind === rest[0].kind) && U[rest[0].kind] ? U[rest[0].kind] : '组';
+    const W = { decide: '需要你决定', failed: '失败', blocked: '受阻' };
+    const alert = ['decide', 'failed', 'blocked'].map((x) => [x, rest.reduce((a, k) => a + ((k.cnt || {})[x] || 0), 0)]).filter((x) => x[1]).map((x) => W[x[0]] + ' ' + x[1]);
+    const head = (hasPath ? '另 ' : '') + rest.length + ' ' + unit;
+    const tasks = rest.reduce((a, k) => a + (leaf(k) ? 1 : k.leaves || 0), 0);
+    const taskTxt = rest.every(leaf) ? '' : '，' + String(tasks).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + ' 个任务';
+    const tail = alert.length ? ' · ' + alert.join(' · ') : '';
+    return room && taskTxt && this.tpTextW(head + taskTxt + tail) > room ? head + tail : head + taskTxt + tail;
+  }
+  /* 负责 of a node of the task map, from the work lines (decisions 25, 30); null keeps the board's own text (a goal without
+     work lines: goal 2 and 3 on Main, goal 2's plan on Plan). opt: { lines, at, ctl }; lines is true / false for the map's
+     goal, or a function of the node for a map that holds two goals (Goals: true only under goal 1) */
+  /* 负责: the Goals read carries no owner, so the board's own text stays. */
+  tpOwner(n, opt) { return null; }
+  /* the hover card the board built (taskCard): a task's head square hollow when it has not started, 负责 from the work lines */
+  tpCard(card, n, opt) {
+    if (!card || !card.show || !n) return card;
+    const out = Object.assign({}, card);
+    if (!(n.kids && n.kids.length)) out.sq = 'sq z10 ' + this.sqAt(n.st);
+    const own = this.tpOwner(n, opt); if (own) out.agent = own;
+    return out;
+  }
+  /* the detail the board built (taskDetail, four rows): the head square of a task, 负责, and the task squares in its
+     relations (依赖 / 后续 / 任务 / 重叠 hold tasks; 阶段 / 批次 hold groups and keep their squares) */
+  tpDetail(det, n, opt) {
+    if (!det || !n) return det;
+    const out = Object.assign({}, det);
+    if (!(n.kids && n.kids.length)) out.sq = String(det.sq).replace(/\bs-[a-z0-9-]+$/, this.sqAt(n.st));
+    const own = this.tpOwner(n, opt); if (own) out.agent = own;
+    const TASKS = ['依赖', '后续', '任务', '重叠'];
+    out.rel = (det.rel || []).map((g) => (TASKS.indexOf(g.k) < 0 ? g : Object.assign({}, g, {
+      items: (g.items || []).map((it) => Object.assign({}, it, { sq: String(it.sq || '').replace(/\bs-pending\b/, 's-notyet') })) })));
+    return out;
+  }
+  /* the 任务图's tree for the panel. v = the board's task view ({ o, flat, outline, byId, root, sel, hits }); s = state;
+     opt = { set, map ('task' | 'arch'), viewW (the tree's width in px), viewH (the panel body's height in px without the
+     detail), hasDetail, detailH, lines, at, ctl, keep }.
+     Returns { flat (rows: hollow task squares, can-open marks), mode ('tree' | 'focus' | 'kept' | 'outline' | 'off'), view
+     (the viewport's class, offset and pointer / wheel handlers), bar (the quiet line above the tree), place(card) (the hover
+     card in the viewport's coordinates), qrows(list) (search hits, hollow task squares) }.
+     keep: true — a board that draws its own task tree on purpose (Goals: the tasks on the two goals' shared files, already
+     the 当前工作 pattern; Plan: the plan's goal → stage → task, never deeper) keeps v.flat as it is and gets the rest: hollow
+     squares, the pan, the line, the card's place. The 架构图 (map 'arch') passes through unchanged: no pan, no squares
+     changed here. Rows without .node (Plan's hand-built rows) are looked up by id in v.byId. */
+  tpThumb(v, s, opt) {
+    opt = opt || {};
+    const set = opt.set || ((p) => this.setState(p)); const noopBoard = () => {};
+    const o = v.o || {}; const byId = v.byId || {}; const root = v.root;
+    const isTask = opt.map !== 'arch';
+    const mode0 = !isTask ? 'off' : v.outline ? 'outline' : opt.keep ? 'kept' : 'tree';
+    const viewW = Math.max(200, opt.viewW || 448);
+    const viewH = Math.max(240, opt.viewH || 760);
+    const leaf = (n) => !(n && n.kids && n.kids.length);
+    const ACT = ['decide', 'failed', 'blocked', 'running', 'verifying', 'waiting'];
+    let flat = v.flat; let mode = mode0; let shown = 0; let total = 0;
+    if (mode0 === 'tree' && o.isOpen) {
+      /* 3 levels from the root (the root open, everything below folded onto combs: the approved default); a group you opened
+         also opens its children that hold groups, so a click shows up to 3 more levels under it */
+      const up = s.open || {};
+      const isOpenBoard = (n) => o.isOpen(n) || (!!n.parent && n.parent !== root.id && up[n.parent] === true && up[n.id] !== false && n.kids.some((k) => k.kids.length > 0));
+      flat = this.flatTree(Object.assign({}, o, { isOpen: isOpenBoard }));
+      /* it still does not fit (more than one and a half panels tall): the paths to the selection (and its children, so what
+         you opened stays open) and to the most urgent work, as many as one panel holds; the rest as compact squares */
+      if (flat.height > viewH * 1.5) {
+        const work = []; const walkBoardTree = (n) => { if (leaf(n)) { if (ACT.indexOf(n.st) >= 0) work.push(n); } else n.kids.forEach(walkBoardTree); }; walkBoardTree(root);
+        work.sort((a, b) => ACT.indexOf(a.st) - ACT.indexOf(b.st));
+        const onPath = new Set([root.id]); let est = 34;
+        const addBoard = (id, force) => {
+          const chain = []; let n = byId[id]; while (n && !onPath.has(n.id)) { chain.push(n); n = n.parent ? byId[n.parent] : null; }
+          const cost = chain.reduce((a, x) => a + (leaf(x) ? 28 : 36), 0);
+          if (!force && est + cost > viewH) return false;
+          chain.forEach((x) => onPath.add(x.id)); est += cost; return true;
+        };
+        const sel = v.sel && byId[v.sel] ? byId[v.sel] : null;
+        if (sel && sel !== root) { addBoard(sel.id, true); sel.kids.forEach((k) => addBoard(k.id, true)); }
+        work.forEach((t) => { if (onPath.has(t.id) || addBoard(t.id, false)) shown += 1; });
+        total = work.length;
+        const room = (n, depth, rest) => viewW - depth * 22 - 22 - rest.length * 12 - 12 - this.tpTextW(n.name) - 14;
+        flat = this.focusTree(Object.assign({}, o, { onPath: onPath, restLine: (rest, hasPath, n, depth) => this.tpRestLine(rest, hasPath, room(n, depth || 0, rest)) }));
+        mode = 'focus';
+      }
+    }
+    /* squares: a task's own square follows sqAt (待执行 hollow); a comb square that holds more levels and a folded row that
+       can open say so (kit: a stub under the square, the chevron stays) */
+    const rows = flat.rows.map((r) => {
+      if (mode === 'off') return r;
+      const x = Object.assign({}, r); const rn = r.node || (r.isFold ? null : byId[r.id]);
+      if (rn && leaf(rn) && !r.isFold) x.sq = 'sq ' + this.sqAt(rn.st);
+      if (r.leaves) x.leaves = r.leaves.map((k) => {
+        const y = Object.assign({}, k); const kn = k.node || byId[k.id];
+        if (kn && leaf(kn)) y.sq = 'sq ' + this.sqAt(kn.st);
+        else if (mode === 'tree' && kn) y.cls = k.cls + ' tp-more';
+        return y;
+      });
+      if (r.hasStrip && rn && !r.isFold) { const kids = rn.kids.slice(0, 8); x.strip = r.strip.map((q, i) => (kids[i] && leaf(kids[i]) ? { sq: 'sq z8 ' + this.sqAt(kids[i].st) } : q)); }
+      if (mode === 'tree' && r.canOpen && !r.open) x.lb = (r.lb || 'tr-lb') + ' tp-more';
+      return x;
+    });
+    const out = Object.assign({}, flat, { rows: rows });
+    const pmap = this.posMap(out, mode === 'outline');
+    /* the viewport: 树 pans; 大纲 and the 架构图 do not (the card's position is the board's) */
+    const pans = mode === 'tree' || mode === 'focus' || mode === 'kept';
+    /* the width of a row with its labels uncut, calibrated on the rendered rows of Main, Plan and Goals (estimate − measured
+       −4 … +7 px; sketch/rework/plan-goals-fix/trial/fit-rows.cjs): CJK 1 em, a space .28 em, the rest .52 em. A branch row =
+       gutters and elbow + its comb (pitch 18, 12 when mini; the label 6px after a comb, 4px otherwise) + the label (padding
+       12, the name, 8 + each count, 20 for the chevron; 13px on the root row); a named row (leaf, fold, rest) = gutters + 96
+       (elbow, square, gaps, paddings, the count's 34px) + the name at 13px + its reason, strip and second count */
+    const tw = (t, px) => [...String(t || '')].reduce((a, ch) => a + (/[　-鿿＀-￯]/.test(ch) ? px : ch === ' ' ? px * 0.28 : px * 0.52), 0);
+    const rowW = (r) => {
+      if (r.isLine) return r.depth * 22 + 96 + tw(r.name, 13) + (r.hasWhy && r.why ? 8 + tw(r.why, 12) : 0) + (r.hasStrip ? (r.strip || []).length * 10 + 10 : 0)
+        + (r.hasB && r.b ? tw(r.b, 12) + 10 : 0) + Math.max(0, tw(r.a, 12) - 34);
+      const fs = r.type === 'root' ? 13 : 12; const n = (r.leaves || []).length;
+      return r.depth * 22 + 22 + (n ? n * (r.mini ? 12 : 18) + (r.type === 'root' ? 4 : 6) : 4) + 12 + tw(r.name, fs)
+        + (r.a ? 8 + tw(r.a, fs) : 0) + (r.hasB && r.b ? 8 + tw(r.b, fs) : 0) + (r.canOpen ? 20 : 0);
+    };
+    const W = Math.ceil(rows.reduce((a, r) => Math.max(a, rowW(r)), 0)); const H = Math.ceil(out.height || 0);
+    const box = s.tpBox && !!s.tpBox.det === !!opt.hasDetail ? s.tpBox : null;
+    const vw = box ? box.w : viewW; const vh = box ? box.h : Math.max(160, viewH - (opt.hasDetail ? opt.detailH || 330 : 0));
+    const lim = (w, h) => ({ x: Math.min(0, Math.round(w - W - 12)), y: Math.min(0, Math.round(h - H - 16)) });
+    const L = lim(vw, vh);
+    const cl = (val, lo) => Math.max(lo, Math.min(0, Math.round(val || 0)));
+    const p0 = s.tpPan || { x: 0, y: 0, at: null };
+    let x = pans ? cl(p0.x, L.x) : 0; let y = pans ? cl(p0.y, L.y) : 0;
+    /* a selection made elsewhere (the conversation, a search hit, a relation, a card) comes into view */
+    if (pans && v.sel && p0.at !== v.sel) {
+      const r = rows.filter((q) => q.id === v.sel)[0] || rows.filter((q) => (q.leaves || []).some((k) => k.id === v.sel))[0];
+      if (r && (r.top + y < 0 || r.top + r.h + y > vh)) y = cl(-(r.top - 24), L.y);
+    }
+    const canPan = pans && (L.x < 0 || L.y < 0);
+    const measure = (e) => {
+      try {
+        const b = e.currentTarget.getBoundingClientRect();
+        const nb = { w: Math.round(b.width), h: Math.round(b.height), det: !!opt.hasDetail };
+        const cur = s.tpBox || {};
+        if (cur.w !== nb.w || cur.h !== nb.h || !!cur.det !== nb.det) set({ tpBox: nb });
+        return nb;
+      } catch (err) { return { w: vw, h: vh }; }
+    };
+    /* a drag starts only with the main button on a tree that can move: a tree that fits is never measured (its viewport is
+       as tall as the tree, so its height would read as an overflow), a right-click (新标签打开) never arms a drag; a drag
+       whose release never reached the viewport (a press near its edge let go outside it) is dropped at the next move made
+       without the button */
+    const drag = {
+      down: (e) => {
+        if (!pans || !canPan || !e || e.button > 0) return;
+        const b = measure(e);
+        this._tpDrag = { id: e.pointerId, cx: e.clientX, cy: e.clientY, x: x, y: y, moved: false, el: e.currentTarget, lim: lim(b.w, b.h) };
+      },
+      move: (e) => {
+        const d = this._tpDrag;
+        if (!d || !e || d.id !== e.pointerId) return;
+        if (typeof e.buttons === 'number' && !(e.buttons & 1)) { this._tpDrag = null; return; }
+        const dx = e.clientX - d.cx; const dy = e.clientY - d.cy;
+        if (!d.moved) {
+          if (Math.abs(dx) + Math.abs(dy) < 5) return;
+          /* the pointer is captured only once it moved: a plain click still reaches the square or label under it */
+          d.moved = true; try { d.el.setPointerCapture(e.pointerId); } catch (err) { /* not capturable here */ }
+        }
+        set({ tpPan: { x: cl(d.x + dx, d.lim.x), y: cl(d.y + dy, d.lim.y), at: v.sel || null }, hover: null });
+      },
+      up: (e) => {
+        const d = this._tpDrag; this._tpDrag = null;
+        if (d && d.moved && e) { try { d.el.releasePointerCapture(e.pointerId); } catch (err) { /* already released */ } }
+      },
+      wheel: (e) => {
+        if (!pans || !canPan || !e) return;
+        const b = measure(e); const l = lim(b.w, b.h);
+        const dx = e.shiftKey ? e.deltaY : e.deltaX || 0; const dy = e.shiftKey ? 0 : e.deltaY || 0;
+        const nx = cl(x - dx, l.x); const ny = cl(y - dy, l.y);
+        if (nx !== x || ny !== y) set({ tpPan: { x: nx, y: ny, at: v.sel || null }, hover: null });
+      }
+    };
+    const opened = Object.keys(s.open || {}).some((k) => (s.open || {})[k] === true && byId[k]);
+    const moved = x !== 0 || y !== 0;
+    /* 回到起点: the tree back at its origin (it stays there, a selection does not pull it away again) and what you opened folded */
+    const back = () => set({ tpPan: { x: 0, y: 0, at: v.sel || null }, open: {}, hover: null });
+    const bar = !pans ? { show: false, cls: 'tp-hint', text: '', tip: '', isNote: false, canBack: false, back: noopBoard }
+      : mode === 'focus'
+        ? { show: true, cls: 'tp-note', isNote: true, canBack: true, back: back,
+          text: '树放不下：只画到' + (v.sel ? '选中的和' : '') + '最紧要的 ' + shown + ' 个任务，其余在小格子里',
+          tip: (total > shown ? '共 ' + total + ' 个任务在进行或要处理；' : '') + '分支上的小格子是其余的节点，悬停看名字和状态；整棵树在整页查看' }
+        : { show: true, cls: 'tp-hint', isNote: false, canBack: moved || opened, back: back,
+          text: canPan ? '树只按阶段分组，依赖在整页查看；拖动看其余部分' : '树只按阶段分组，不画依赖；依赖在整页查看',
+          tip: '树表示分组：目标、阶段、批次、任务；任务之间的依赖和关键路径在整页的 DAG 里' };
+    /* is-task: the 任务图 (树 and 大纲), where kit §18.5 dims a dimmed GROUP square further than a task's (final fix 2026-10-06);
+       the 架构图's groups keep --dim-sq, so a touched folder stays apart from an untouched one when dimmed */
+    const view = { cls: 'tp-view' + (isTask ? ' is-task' : '') + (pans ? ' is-pan' : '') + (canPan ? ' can-pan' : ''), x: x, y: y,
+      down: pans ? drag.down : noopBoard, move: pans ? drag.move : noopBoard, up: pans ? drag.up : noopBoard, wheel: pans ? drag.wheel : noopBoard };
+    /* the hover card lives in the viewport (it is never cut by the pan): below the hovered row or square, above it when it
+       would leave the visible part; clamped in the viewport's width by the approved style */
+    const place = (cd) => {
+      if (!cd || !cd.show || !pans) return cd;
+      const p = pmap[s.hover]; if (!p) return cd;
+      const top = p.at.top + y; const bot = p.at.bottom + y;
+      const upw = bot + 6 + 190 > vh && top - 6 > 150;
+      const row = rows.filter((r) => r.id === s.hover)[0];
+      const host = row ? null : rows.filter((r) => (r.leaves || []).some((k) => k.id === s.hover))[0];
+      const k = host ? host.leaves.filter((q) => q.id === s.hover)[0] : null;
+      const more = !!k && /\btp-more\b/.test(k.cls);
+      return Object.assign({}, cd, { x: Math.max(0, Math.round(p.at.x + x)), top: upw ? 'auto' : Math.round(bot + 6) + 'px', bottom: upw ? 'calc(100% - ' + Math.round(top - 6) + 'px)' : 'auto',
+        hint: more ? '点一下展开 · 双击固定 · 右键新标签打开' : cd.hint });
+    };
+    const hits = v.hits || [];
+    const qrows = (list) => (list || []).map((q, i) => { const n = byId[hits[i]]; return n && leaf(n) && isTask ? Object.assign({}, q, { sq: 'sq z8 ' + this.sqAt(n.st) }) : q; });
+    return { flat: out, mode: mode, view: view, bar: bar, place: place, qrows: qrows, pmap: pmap, width: W, height: H };
+  }
+  /* <<< end of the rework 2026-10-06 paste */
+
+  /* ------------------------------------------------------------ renderVals */
+  renderVals() {
+    const s = this.state || {};
+    const set = (p) => this.setState(p);
+    const noopBoard = () => {};
+    const padBoard = (n) => String(n).padStart(2, '0');
+    const theme = s.theme || this.props.theme || 'dark';
+    const readState = this.props.readState || null;
+    const status = readState && readState.status ? readState.status : 'empty';
+    const empty = { goals: [], conflict: null, maps: { arch: null, task: null }, selectedGoalId: null, projectId: '', count: 0 };
+    const data = status === 'ready' && this.props.data && Array.isArray(this.props.data.goals) ? this.props.data : empty;
+    const actions = this.props.actions || {};
+    const msgOf = (e) => String(e && e.message ? e.message : (e || ''));
+    const err = s.err || (status === 'error' && readState && readState.message ? readState.message : '');
+    const notConnected = (e) => {
+      if (typeof actions.notConnected === 'function') { actions.notConnected(e); return; }
+      if (e && e.preventDefault) e.preventDefault();
+      if (e && e.stopPropagation) e.stopPropagation();
+    };
+    const conflict = data.conflict;
+    const files = conflict ? conflict.files.map((f) => f.path) : [];
+    const open = !!(conflict && conflict.open);
+    const done = !!(conflict && !conflict.open);
+    const labels = conflict ? conflict.labels || [] : [];
+    const cfPick = s.cfPick || null;
+    const num = {};
+    data.goals.forEach((g) => { num[g.id] = g.pos; });
+    const tree = this.pairModel(data);
+    const tm = this.pairTaskModel(data);
+    const sqOf = {}; const word = {};
+    data.goals.forEach((g) => { sqOf[g.id] = 's-' + g.st; word[g.id] = g.statusWord; });
+    const ctx = {
+      F: { overlap: files, hitA: conflict ? conflict.hitA : [], hitB: conflict ? conflict.hitB : [] },
+      num: num, ids: this.byNum(num), tree: tree, hit: tm.hit, goalSq: sqOf, goalWord: word, files: files,
+    };
+
+    const move = (id, dir) => () => {
+      if (typeof actions.reorderGoal !== 'function') return;
+      Promise.resolve().then(() => actions.reorderGoal(id, dir)).catch((e) => set({ err: msgOf(e) }));
+    };
+    const decideBoard = () => {
+      const pick = (this.state || {}).cfPick;
+      if (!pick || !conflict || typeof actions.answerConflict !== 'function') return;
+      Promise.resolve().then(() => actions.answerConflict(conflict.cardKey, pick))
+        .then(() => set({ cfPick: null, err: '' }))
+        .catch((e) => set({ err: msgOf(e) }));
+    };
+    const askConflict = () => {
+      if (!conflict) { set({ composer: true, askRef: '', askSq: '', askId: '' }); return; }
+      const ord = (n, nm) => (n === null || n === undefined ? nm : String(n));
+      const names = conflict.files.map((f) => f.path).join('、');
+      set({ composer: true, err: '',
+        askRef: '目标 ' + ord(conflict.laterOrdinal, conflict.laterName) + ' 与目标 ' + ord(conflict.earlierOrdinal, conflict.earlierName) + ' 冲突：都要改 ' + names,
+        askSq: 'sq z8 s-decide', askId: 'conflict' });
+    };
+
+    /* ---- goal rows (centre): the DOM keeps goal-id order, `pos` is the visual order ---- */
+    const goals = data.goals.map((g) => {
+      const isOpenBoard = s.rowOpen === g.id;
+      return {
+        id: g.id, pos: g.pos, ord: g.ordinal === null || g.ordinal === undefined ? '' : String(g.ordinal),
+        name: g.name, line: g.line, sq: g.sq, n: g.n, hasN: g.hasN, open: isOpenBoard, cur: g.current ? 'true' : null,
+        cls: 'row gx-goal' + (isOpenBoard ? ' is-on' : ''),
+        tip: g.tip + '。点一下' + (isOpenBoard ? '收起' : '展开'),
+        kv: [{ k: '进度', v: g.kv.progress }, { k: '工作线', v: g.kv.line }, { k: '改动', v: g.kv.changed }, { k: '自治', v: g.kv.autonomy }],
+        toggle: () => set({ rowOpen: (this.state || {}).rowOpen === g.id ? null : g.id }),
+        up: move(g.id, 'up'), down: move(g.id, 'down'),
+        upOff: g.upOff, downOff: g.downOff, upCls: g.upCls, downCls: g.downCls, upLabel: g.upLabel, downLabel: g.downLabel,
+      };
+    });
+
+    /* ---- the conflict card ---- */
+    const how = {
+      wait: '先只做方案，等另一个目标完成再开始执行。',
+      order: '把后面的目标调到前面，先改重叠的文件。',
+      parallel: '两个目标同时进行；同一个文件同一时间只让一条工作线改。',
+    };
+    const refs = files.map((f, i) => {
+      const node = tree.byId[f];
+      return { name: f, pre: i === 0 ? '' : i === files.length - 1 ? ' 和 ' : '、',
+        sq: 'sq z8 ' + (node ? this.sqAt(node.st) : 's-none'),
+        go: () => set({ sel: f, tsel: null, hover: null, ptab: 'arch', panel: true }) };
+    });
+    const facts = [
+      { k: '重叠的文件', v: '', files: files.map((f) => this.pathParts(f)), hasFiles: files.length > 0 },
+      { k: '检测时间', v: conflict && conflict.openedAt ? conflict.openedAt : '—', files: [], hasFiles: false },
+      { k: '其他目标', v: labels.length ? labels.join('；') : '—', files: [], hasFiles: false },
+    ];
+    const cf = {
+      open: open, done: done, label: err || (conflict ? conflict.label : ''),
+      title: conflict ? conflict.title : '', scope: conflict ? conflict.scopeText : '',
+      lead: conflict ? '两个目标都要改' : '', tail: conflict ? '；先改哪个还没定。' : '', refs: refs,
+      showFacts: !!s.facts, factsLabel: s.facts ? '收起详情' : '详情',
+      toggleFacts: () => set({ facts: !(this.state || {}).facts }),
+      facts: facts,
+      opts: conflict ? conflict.options.map((o) => ({ title: o.label, how: how[o.id] || '', hasRec: false,
+        on: o.id === cfPick, cls: 'opt' + (o.id === cfPick ? ' is-on' : ''), pick: () => set({ cfPick: o.id, err: '' }) })) : [],
+      note: err || (cfPick ? '' : '先选一种处理办法'),
+      goOff: !cfPick, goCls: 'btn btn-primary' + (cfPick ? '' : ' is-off'),
+      ask: askConflict, go: decideBoard,
+      doneText: labels.length ? '已接受并行风险：' + labels.join('；') : '已决定',
+      reopenTip: '还没接通', reopen: notConnected,
+    };
+
+    /* ---- log: the record starts with the conflict card's own detection, then this page's messages.
+       The time is the card's `openedAt` (`null` shows “—”, uifields §9b), never the wall clock. ---- */
+    const conflictLog = conflict === null ? [] : [{ isSys: true, isOrder: false, isCheck: false,
+      isPlan: true, text: '检测到冲突：' + conflict.title + '，都要改 '
+        + conflict.files.map((f) => f.path).join('、'), t: conflict.openedAt ? conflict.openedAt.slice(11, 16) : '—' }];
+    const log = conflictLog.concat((s.log || []).map((l) => ({ isSys: !!l.isSys, isUser: !!l.isUser, isAgent: !!l.isAgent, isOrder: !!l.isOrder, isCheck: !!l.isCheck,
+      isPlan: !!l.isSys && !l.isOrder && !l.isCheck, text: l.text, t: l.t || '' })));
+
+    /* ---- composer (问秘书, 在对话里问) ---- */
+    const draft = s.draft || '';
+    const sendBoard = () => {
+      const st = this.state || {};
+      const text = String(st.draft || '').trim();
+      if (!text || typeof actions.askSecretary !== 'function') return;
+      const quotes = st.quotes || [];
+      const refsIn = quotes.length
+        ? quotes.map((q) => ({ path: q.path, startLine: q.a === null || q.a === undefined ? null : q.a,
+          endLine: q.b === null || q.b === undefined ? null : q.b, snapshot: q.snap ? (q.snip || null) : null }))
+        : null;
+      Promise.resolve().then(() => actions.askSecretary(text, refsIn)).then((round) => {
+        if (!round) return;
+        const add = [{ isUser: true, text: round.input }];
+        if (round.answer !== null && round.answer !== undefined) add.push({ isAgent: true, text: round.answer });
+        set({ log: ((this.state || {}).log || []).concat(add), draft: '', quotes: [], composer: false, askRef: '', askSq: '', askId: '', err: '' });
+      }).catch((e) => set({ err: msgOf(e) }));
+    };
+    const askNode = (!!s.askRef && !!s.askId && s.askId !== 'conflict') || (!s.askRef && (s.quotes || []).length > 0);
+    const composerPh = askNode ? '问秘书，比如：它和这次冲突有关吗？' : '问秘书，比如：这个冲突会耽误什么？';
+
+    /* ---- the auxiliary area: 任务图 · 架构图 · 文件 · 命令 · Diff · file pages · node pages ---- */
+    const extra = s.extra || [];
+    const isAux = (k) => (s.axTabs || []).indexOf(k) >= 0 || (k.indexOf('f:') === 0 && (s.axPages || []).indexOf(k.slice(2)) >= 0);
+    let ptab = s.ptab || 'arch';
+    if (ptab !== 'task' && ptab !== 'arch' && !isAux(ptab) && !extra.some((x) => x.key === ptab)) ptab = 'task';
+    const isTaskTab = ptab === 'task'; const isArch = ptab === 'arch'; const isMap = isTaskTab || isArch;
+    const page = extra.filter((x) => x.key === ptab)[0] || null;
+    const ax = this.axView(Object.assign({}, s, { ptab: ptab }), { at: '14:' + padBoard(s.clock || 20), extra: extra, rail: false });
+    ax.tabs = ax.tabs.map((t) => {
+      const x = extra.filter((y) => y.key === t.key)[0];
+      return x ? Object.assign({}, t, { close: () => set({ extra: ((this.state || {}).extra || []).filter((y) => y.key !== x.key), ptab: ptab === x.key ? x.kind : ptab }) }) : t;
+    });
+    if (ax.fp && ax.fp.quote) { const quote0 = ax.fp.quote; ax.fp.quote = () => { quote0(); set({ composer: true }); }; }
+
+    /* ---- the two maps ---- */
+    const byId = tree.byId; const root = tree.root;
+    const outline = s.view === 'outline';
+    const pairScope = s.scope === 'pair';
+    const sel = s.sel && byId[s.sel] ? s.sel : null;
+    const tsel = s.tsel && tm.byId[s.tsel] ? s.tsel : null;
+    const pathTo = (bid, list) => { const on = new Set(); list.forEach((t) => { let n = bid[t]; while (n && !on.has(n.id)) { on.add(n.id); n = n.parent ? bid[n.parent] : null; } }); return on; };
+    let flat = { rows: [], focus: false, height: 0 }; let mapById = {}; let mapKind = null;
+    if (isArch) {
+      const targets = pairScope ? tree.aFiles.concat(tree.bFiles.filter((f) => tree.aFiles.indexOf(f) < 0)) : files.slice();
+      if (sel) targets.push(sel);
+      const onPath = pathTo(byId, targets); onPath.add(root.id);
+      const o = { byId: byId, root: root, sel: sel, hits: [], lit: files, rel: new Set(), fold: s.ofold || {}, onPath: onPath,
+        sqOf: (n, mode) => this.archSq(n, mode), tip: (n) => this.pairTip(n, num),
+        label: (n) => (n.kids.length ? { a: this.fmt(n.leaves) + ' 个文件', b: '' } : { a: '', b: '' }),
+        restLine: (rest, hasPath) => this.restLine(rest, hasPath) };
+      flat = (outline ? this.focusOutline : this.focusTree).call(this, o); mapById = byId; mapKind = 'arch';
+    } else if (isTaskTab) {
+      const hitIds = Object.keys(tm.hit);
+      const onPath = pathTo(tm.byId, hitIds.concat(tsel ? [tsel] : [])); onPath.add(tm.root.id);
+      const o = { byId: tm.byId, root: tm.root, sel: tsel, hits: [], lit: hitIds, rel: new Set(), fold: s.ofold || {}, onPath: onPath,
+        sqOf: (n, mode) => this.pairTaskSq(n, mode, sqOf), tip: (n) => this.pairTaskTip(n, ctx),
+        label: (n) => (n.kids.length ? { a: n.kind === 'project' ? n.kids.length + ' 个目标' : n.leaves + ' 个任务', b: '' } : { a: '', b: '' }),
+        restLine: (rest, hasPath) => this.taskRestLine(rest, hasPath) };
+      if (outline) flat = this.focusOutline(o);
+      else {
+        let y0 = 0; const rows0 = []; let foc = false;
+        tm.root.kids.forEach((g) => {
+          const fg = this.focusTree(Object.assign({}, o, { root: g }));
+          fg.rows.forEach((r) => rows0.push(Object.assign({}, r, { top: r.top + y0 })));
+          y0 += fg.height; foc = foc || fg.focus;
+        });
+        flat = { rows: rows0, focus: foc, height: y0 };
+      }
+      mapById = tm.byId; mapKind = 'task';
+    }
+    const selKey = mapKind === 'task' ? 'tsel' : 'sel'; const curSel = mapKind === 'task' ? tsel : sel;
+    const openTab = (kind, id, nm) => {
+      const st = this.state || {}; const ex = st.extra || [];
+      const found = ex.filter((y) => y.kind === kind && y.id === id)[0];
+      if (found) { set({ ptab: found.key, hover: null }); return; }
+      const key = 'x' + (ex.length ? Math.max.apply(null, ex.map((y) => +y.key.slice(1))) + 1 : 1);
+      set({ extra: ex.concat([{ key: key, kind: kind, id: id, name: nm }]), ptab: key, hover: null });
+    };
+    const tabIt = (id, nm) => (e) => { if (e && e.preventDefault) e.preventDefault(); openTab(mapKind, id, nm); };
+    const pickSel = (id) => () => set({ [selKey]: (this.state || {})[selKey] === id ? null : id, hover: null });
+    const hoverIt = (id) => () => { if ((this.state || {}).hover !== id) set({ hover: id }); };
+    const avail = (s.axMax ? (s.axBox || 1440) : Math.min(ax.panelW, (s.axBox || 1440) - 360)) - 40;
+    const textPx = (t, px) => [...String(t || '')].reduce((a, ch) => a + (/[　-鿿＀-￯]/.test(ch) ? px : ch === ' ' ? px * 0.28 : px * 0.52), 0);
+    const rowPx = (r) => r.depth * 22 + 22 + r.leaves.length * 12 + 12 + textPx(r.name, r.type === 'root' ? 13 : 12) + 8 + textPx(r.a, 12) + 6;
+    const shortRest = (rest, hasPath) => (mapKind === 'task' ? this.taskRestLine(rest, hasPath, true) : this.restLine(rest, hasPath, true));
+    const rows = flat.rows.map((r) => {
+      const out = Object.assign({}, r);
+      if (r.isFold) {
+        out.pick = () => set({ ofold: Object.assign({}, (this.state || {}).ofold || {}, { [r.foldKey]: true }), hover: null });
+        out.hover = noopBoard; out.tab = noopBoard;
+        return out;
+      }
+      out.pick = pickSel(r.id); out.hover = hoverIt(r.id); out.tab = tabIt(r.id, r.name);
+      if (r.leaves) out.leaves = r.leaves.map((k) => Object.assign({}, k, { pick: pickSel(k.id), hover: hoverIt(k.id), tab: tabIt(k.id, k.node.name) }));
+      if (r.isBranch && r.hasComb && rowPx(r) > avail) out.a = shortRest(r.leaves.map((k) => k.node), r.open);
+      return out;
+    });
+    const tpOpt = { set: set, map: 'task', viewW: avail + 8, viewH: 720, hasDetail: isTaskTab && !!tsel, detailH: 330,
+      lines: false, at: 'main', ctl: null, keep: true };
+    const tp = mapKind ? this.tpThumb({ flat: Object.assign({}, flat, { rows: rows }), byId: mapById, root: mapKind === 'task' ? tm.root : root, sel: curSel, outline: outline },
+      s, mapKind === 'task' ? tpOpt : { set: set, map: 'arch' }) : null;
+    const pmap = this.posMap(flat, outline);
+    const noCard = { show: false, x: 0, top: 'auto', bottom: 'auto', sq: 'sq z10', name: '', tx: '', word: '', why: '', path: '', hasPath: false, agent: '', sem: '', hasSem: false,
+      listK: '', tasks: [], hasTasks: false, more: '', hasMore: false, hint: '' };
+    let card = noCard;
+    if (mapKind && s.hover && mapById[s.hover] && pmap[s.hover]) {
+      const hid = s.hover;
+      const host = flat.rows.some((r) => r.id === hid) ? null : flat.rows.filter((r) => (r.leaves || []).some((k) => k.id === hid))[0];
+      const build = mapKind === 'task' ? this.pairTaskCard(tm, mapById[hid], ctx) : this.pairCard(tree, mapById[hid], num);
+      card = Object.assign(build, this.cardPos(pmap[hid], flat.height),
+        { hint: (host ? '点一下画出它的路径' : hid === curSel ? '再点一次取消选中' : '点一下看详情') + ' · 右键新标签打开' });
+      if (mapKind === 'task') card = tp.place(this.tpCard(card, mapById[hid], tpOpt));
+    }
+    const ids = this.byNum(num);
+    const scopeNote = pairScope
+      ? ids.map((g, i) => '目标 ' + num[g] + ' 改 ' + (i === 0 ? tree.aFiles.length : tree.bFiles.length)).join(' · ') + ' · 重叠 ' + files.length
+      : files.length + ' 个文件两个目标都要改';
+    const taskNote = conflict
+      ? '要改重叠文件的任务：' + ids.map((g, i) => '目标 ' + num[g] + ' 的 ' + (i === 0 ? conflict.hitA.length : conflict.hitB.length) + ' 个').join(' · ')
+      : '要改重叠文件的任务：—';
+
+    /* ---- the detail: the selection of the open map, or a node page ---- */
+    const goArch = (id) => set({ ptab: 'arch', sel: id, hover: null, panel: true });
+    const goTask = (id) => set({ ptab: 'task', tsel: id, hover: null, panel: true });
+    let det = null;
+    if (isArch && sel) det = this.pairDetail(tree, sel, num, goArch);
+    else if (isTaskTab && tsel) det = this.tpDetail(this.pairTaskDetail(tm, tsel, ctx, goTask), tm.byId[tsel], tpOpt);
+    else if (page) det = page.kind === 'task' ? this.tpDetail(this.pairTaskDetail(tm, page.id, ctx, goTask), tm.byId[page.id], tpOpt) : this.pairDetail(tree, page.id, num, goArch);
+    const openFile = (path) => () => this.axOpenFile(path);
+    const detVals = det ? (() => {
+      const askBoard = () => {
+        const path = det.file || det.name;
+        set({ composer: true, quotes: [{ id: 'node:' + path, path: path, a: null, b: null, snap: false }],
+          askRef: '', askSq: '', askId: '', err: '' });
+      };
+      const acts = [{ label: '在对话里问', go: askBoard }];
+      if (det.file) acts.push({ label: '打开文件', go: openFile(det.file) });
+      if (isMap) acts.push({ label: '新标签打开', go: () => openTab(det.kind, det.id, det.name) });
+      return Object.assign({}, det, { cls: 'detail' + (isMap ? '' : ' is-page'), canClose: isMap, acts: acts, ask: askBoard,
+        close: () => set(det.kind === 'task' ? { tsel: null } : { sel: null }) });
+    })() : { cls: 'detail', sq: 'sq', name: '', tx: '', word: '', why: '', crumbs: [], agent: '', sem: '', rel: [], acts: [], canClose: false, close: noopBoard, ask: noopBoard };
+
+    const current = data.goals.filter((g) => g.id === data.selectedGoalId)[0] || data.goals.filter((g) => g.current)[0] || null;
+    const headSub = [data.projectId, String(data.goals.length) + ' 个目标', current ? current.name : ''].filter(Boolean).join(' · ')
+      + (err ? ' · ' + err : '');
+    const backHref = data.selectedGoalId ? 'Main.dc.html?goal=' + encodeURIComponent(data.selectedGoalId) : 'Main.dc.html';
+
+    return {
+      rootMod: (theme === 'light' ? 't-light' : '') + (s.panel === false ? ' no-panel' : ''),
+      themeLabel: theme === 'light' ? '切换到深色' : '切换到浅色',
+      toggleTheme: () => set({ theme: theme === 'light' ? 'dark' : 'light' }),
+      togglePanel: () => set({ panel: (this.state || {}).panel === false, axNew: false }),
+      backHref: backHref, headSub: headSub, listSize: data.goals.length,
+      ax: ax, isMap: isMap, isArch: isArch, isTaskTab: isTaskTab, isPage: !!page,
+
+      goals: goals, cf: cf, log: log,
+
+      composerOpen: !!s.composer, closeComposer: () => set({ composer: false, askRef: '', askSq: '', askId: '' }),
+      hasAsk: !!s.askRef, askRef: s.askRef || '', askSq: s.askSq || 'sq z8 s-pending', clearAsk: () => set({ askRef: '', askSq: '', askId: '' }),
+      composerPh: composerPh,
+      draft: draft, onDraft: (e) => set({ draft: e && e.target ? e.target.value : '', err: '' }),
+      sendCls: 'send' + (draft.trim() ? '' : ' is-off'), send: sendBoard,
+
+      isTree: !outline, isOutline: outline,
+      viewTreeCls: 'seg-btn' + (outline ? '' : ' is-on'), viewOutlineCls: 'seg-btn' + (outline ? ' is-on' : ''),
+      showTree: () => set({ view: 'tree', hover: null }), showOutline: () => set({ view: 'outline', hover: null }),
+      isOv: !pairScope, isPair: pairScope,
+      scopeOvCls: 'seg-btn' + (pairScope ? '' : ' is-on'), scopePairCls: 'seg-btn' + (pairScope ? ' is-on' : ''),
+      toOv: () => set({ scope: 'overlap', hover: null }), toPair: () => set({ scope: 'pair', hover: null }),
+      scopeNote: scopeNote, taskNote: taskNote,
+      legend: !!s.legend, legendCls: 'seg-btn' + (s.legend ? ' is-on' : ''), toggleLegend: () => set({ legend: !(this.state || {}).legend }),
+
+      treeCls: 'tree ' + (outline ? 'g-outline outline' : 'g-tree') + (flat.focus ? ' focus' : ''), rows: tp ? tp.flat.rows : rows,
+      tpIsTask: isTaskTab,
+      tpv: tp ? tp.view : { cls: 'tp-view', x: 0, y: 0, down: noopBoard, move: noopBoard, up: noopBoard, wheel: noopBoard },
+      tpb: tp ? tp.bar : { show: false, cls: 'tp-hint', text: '', tip: '', canBack: false, back: noopBoard },
+      card: card, unhover: () => { if ((this.state || {}).hover) set({ hover: null }); },
+      hasDet: !!det, det: detVals,
+    };
+  }
+}
+</script>
+</body>
+</html>

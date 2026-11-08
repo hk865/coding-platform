@@ -16,7 +16,7 @@ import { draftFrom } from '../scenarios/support/common.js';
  * E33-1/2/6/7 at the page level: a real Host, the real routes and the real
  * `bootBoardPage` entry. The page source, token meta and DOM are the served
  * page; the world writes through public routes, and the page notices without a
- * user action (ruling items 3, 4, 6, 7 and 8). E33-7 keeps the nine other
+ * user action (ruling items 3, 4, 6, 7 and 8). E33-7 keeps the eight other
  * boards on their sample mount with zero change-stream requests.
  */
 
@@ -162,7 +162,7 @@ describe('E33-6 a Goal created after the empty page appears', () => {
   }, 30_000);
 });
 
-const UNWIRED_BOARDS = BOARD_NAMES.filter((name) => name !== 'TaskMap' && name !== 'Main');
+const UNWIRED_BOARDS = BOARD_NAMES.filter((name) => name !== 'TaskMap' && name !== 'Main' && name !== 'Goals');
 
 describe('E33-7 only a wired board opens a change stream', () => {
   it.each(UNWIRED_BOARDS)('E33-7 %s mounts the sample with zero changes requests', async (name) => {

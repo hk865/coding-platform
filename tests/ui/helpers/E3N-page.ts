@@ -27,6 +27,10 @@ export type PageLog = {
   changesGate: Promise<void> | null;
   /** Releases a gated change-stream request (no-op when it is not held). */
   releaseChanges(): void;
+  /** The answers of `requests/submit`, in call order (G21/G22 read `status` and `requestRoot`). */
+  submits: unknown[];
+  /** The answers of `decisions/answer`, in call order (G13/G14/G16 read the `committed` receipt). */
+  answers: unknown[];
 };
 
 export type ChangeMode = 'stream' | 'controlled' | '429' | '429-once';
@@ -36,7 +40,7 @@ export const CORE = '/api/real/core/';
 export function newPageLog(): PageLog {
   let release: () => void = () => undefined;
   const log: PageLog = {
-    calls: [], changes: 0, changesTokens: [], openings: [], changesGate: null,
+    calls: [], changes: 0, changesTokens: [], openings: [], changesGate: null, submits: [], answers: [],
     releaseChanges(): void {
       log.changesGate = null;
       release();
@@ -98,11 +102,18 @@ export function forwardPage(world: S6ARequestWorld, log: PageLog, mode: ChangeMo
       log.calls.push({ route, url, input: body['input'] ?? writeInput?.input ?? null, body, token: tokenOf(init) });
     }
     const target = /^https?:/i.test(url) ? url : new URL(url, world.base).href;
-    return realFetch(target, init);
+    const answer = await realFetch(target, init);
+    if (route === 'requests/submit') {
+      log.submits.push(await answer.clone().json().catch(() => null));
+    }
+    if (route === 'decisions/answer') {
+      log.answers.push(await answer.clone().json().catch(() => null));
+    }
+    return answer;
   };
 }
 
-export async function bootE3N(world: S6ARequestWorld, name: 'Main' | 'TaskMap', options: {
+export async function bootE3N(world: S6ARequestWorld, name: 'Main' | 'TaskMap' | 'Goals', options: {
   search?: string; mode?: ChangeMode; token?: string | (() => string | null); source?: string;
   gate?: boolean;
 } = {}): Promise<{ page: BootedPage; log: PageLog }> {
@@ -145,6 +156,18 @@ export async function sleep(ms: number): Promise<void> {
  */
 export async function waitFor(predicate: () => boolean, timeoutMs = 10_000): Promise<void> {
   await expect.poll(predicate, { timeout: timeoutMs, interval: 25 }).toBe(true);
+}
+
+/** The same bounded wait without `expect.poll`: it never advances the Host's
+ * fake timers, for a page whose only pending work is its own real requests. */
+export async function turns(predicate: () => boolean, timeoutMs = 10_000): Promise<void> {
+  const count = Math.max(1, Math.ceil(timeoutMs / 25));
+  for (let turn = 0; turn < count; turn += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    if (predicate()) return;
+  }
+  if (predicate()) return;
+  throw new Error(`condition not reached within ${timeoutMs} ms`);
 }
 
 /* ---------------------------------------------------------------- DOM reads */

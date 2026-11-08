@@ -16,9 +16,9 @@ const working = `${root}src/ui/boards`;
 // Its own output directory: another build test never writes into it.
 const built = mkdtempSync(join(tmpdir(), 'e32-6-workbench-'));
 const FROZEN_ONLY = [
-  'ArchOverview', 'Chain', 'Decide', 'Done', 'Goals', 'Member', 'Phone', 'Plan',
+  'ArchOverview', 'Chain', 'Decide', 'Done', 'Member', 'Phone', 'Plan',
 ] as const;
-const WORKING = ['Main', 'TaskMap'] as const;
+const WORKING = ['Main', 'TaskMap', 'Goals'] as const;
 
 beforeAll(() => {
   execFileSync(process.execPath, ['scripts/build-ui.mjs', built], { cwd: root, stdio: 'pipe' });

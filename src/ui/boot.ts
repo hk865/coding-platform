@@ -2,16 +2,18 @@ import { BoardView } from './runtime.js';
 import { parseBoard } from './board.js';
 import {
   committedRouteValue, createHostClient, fetchPageText, readPlatformToken, readPlatformTokenText, readyRouteValue,
-  RouteReadError, subscribeChanges, type BootstrapReply, type CoreScope,
+  RouteReadError, subscribeChanges, type BootstrapReply, type CoreScope, type RouteReply,
 } from './host-client.js';
 import { asRecord, asText } from './values.js';
 import { qualifyProjectPath } from '../contracts/workspace-path.js';
 import { createAutoRefresh, type RefreshRead, type RefreshSnapshot, type RefreshSources } from './refresh.js';
 import { adaptNav, type NavData, type NavLineDetail } from './adapters/nav.js';
+import { adaptGoals, goalOrderOf, type GoalsData } from './adapters/goals.js';
 import { guardNotConnected, notConnectedAttrs } from './not-connected.js';
+import type { RequestReferenceInputV1 } from '../contracts/query-job.js';
 import {
   NO_PLAN_TEXT, adaptTaskMap, adaptTaskMapCalendar, adaptTaskMapDecisionCards, adaptTaskMapDetail, adaptTaskMapTime,
-  isFinishedGoalDisplayPhase, localShortAt, type TaskMapQueueRead,
+  isFinishedGoalDisplayPhase, localShortAt, type GoalDisplayPhaseCode, type TaskMapQueueRead,
   type TaskMapData, type TaskMapDetailTaskRead, type TaskMapDisplayRead, type TaskMapGoalRead,
   type TaskMapGraphRead, type TaskMapHoverRead, type TaskMapLineRead, type TaskMapNodeDetailData,
   type TaskMapParticipantRead, type TaskMapRiskRead, type TaskMapSummaryRead, type TaskMapCalendarRead, type TaskMapTimeData, type TaskMapTimelineRead,
@@ -73,6 +75,18 @@ export type BoardActions = {
   /** §2.8: one `goals/control` write with the Goal and GoalPhase pins the page
    * last showed, then the same refresh loop rereads the chrome. */
   controlGoal: (control: 'pause' | 'resume' | 'cancel') => Promise<void>;
+  /** §2.3: one `goals/reorder` write with every Goal's current revision, then
+   * the same refresh loop rereads the list. */
+  reorderGoal: (goalId: string, direction: 'up' | 'down') => Promise<void>;
+  /** §2.4: one `decisions/answer` write for the shown conflict card, then a
+   * reread; `revision_conflict` is shown, never retried with fresh revisions. */
+  answerConflict: (cardKey: string, optionId: 'wait' | 'order' | 'parallel') => Promise<void>;
+  /** §2.6: one `requests/submit` plus one `requests/read`; returns the round's
+   * user text and the secretary's non-null answer so the page can append it to
+   * its own log. `null` only when the submit reply carried no `requestRoot`. */
+  askSecretary: (text: string,
+    reference: RequestReferenceInputV1 | readonly RequestReferenceInputV1[] | null,
+  ) => Promise<{ input: string; answer: string | null } | null>;
 };
 
 /**
@@ -95,7 +109,8 @@ export async function bootBoardPage(): Promise<void> {
   if (board.helmetHtml.length > 0) hoistHelmet(board.helmetHtml);
 
   const documentToken = readPlatformToken(document);
-  const reader = BOARD_READERS[boardNameOf(location.href)];
+  const boardName = boardNameOf(location.href);
+  const reader = BOARD_READERS[boardName];
   if (documentToken === null || reader === undefined) {
     new BoardView(board).mount(root);
     return;
@@ -129,7 +144,14 @@ export async function bootBoardPage(): Promise<void> {
   /** The navigation data the page last published; a control write pins those
    * exact revisions (§2.8), never a second read after the click. */
   let latest: NavData | null = null;
+  /** The Goals data and scope the page last published successfully. A failed
+   * reread must not become the pins of a reorder/answer write. */
+  let latestGoals: GoalsData | null = null;
+  let latestGoalsScope: CoreScope | null = null;
   let controlSeq = 0;
+  let reorderSeq = 0;
+  let answerSeq = 0;
+  let askSeq = 0;
   const actions: BoardActions = {
     readMore(next: BoardReadDemand): void {
       /* Explicit fields replace the old demand, including `false`/`null`, so a
@@ -183,6 +205,141 @@ export async function bootBoardPage(): Promise<void> {
       committedRouteValue(reply, 'goals/control');
       await refresh.reread();
     },
+    async reorderGoal(goalId: string, direction: 'up' | 'down'): Promise<void> {
+      const data = latestGoals;
+      const scope = latestGoalsScope;
+      if (data === null || scope === null) throw new Error(writeTextOf(new Error('no Goals data')));
+      const goals = data.goals;
+      const from = goals.findIndex((goal) => goal.id === goalId);
+      const to = from + (direction === 'up' ? -1 : 1);
+      /* Already first/last (or not in the published list): no request at all. */
+      if (from < 0 || to < 0 || to >= goals.length) return;
+      const next = goals.slice();
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved!);
+      reorderSeq += 1;
+      try {
+        const reply = await client.write('goals/reorder', scope, {
+          input: { workspace: scope, goalOrder: next.map((goal) => goal.ref) },
+          meta: {
+            requestId: 'goals-reorder-' + String(reorderSeq),
+            expected: next.map((goal) => ({ ref: goal.ref, revision: goal.revision })),
+          },
+        });
+        committedRouteValue(reply, 'goals/reorder');
+      } catch (error) {
+        throw new Error(writeTextOf(error));
+      }
+      await refresh.reread();
+    },
+    async answerConflict(cardKey: string, optionId: 'wait' | 'order' | 'parallel'): Promise<void> {
+      const data = latestGoals;
+      const scope = latestGoalsScope;
+      if (data === null || scope === null) throw new Error(writeTextOf(new Error('no Goals data')));
+      const conflict = data.conflict;
+      if (conflict === null || conflict.cardKey !== cardKey) {
+        throw new Error(writeTextOf(new Error('the shown conflict card is gone')));
+      }
+      const goalOf = (id: string) => data.goals.find((goal) => goal.id === id);
+      const earlier = goalOf(conflict.earlierId);
+      const later = goalOf(conflict.laterId);
+      if (earlier === undefined || later === undefined) {
+        throw new Error(writeTextOf(new Error('the conflict Goals are not in the list')));
+      }
+      const selection = optionId === 'wait'
+        ? { kind: 'conflict_wait' as const, earlier: earlier.ref, later: later.ref }
+        : optionId === 'parallel'
+          ? { kind: 'conflict_parallel' as const, earlier: earlier.ref, later: later.ref }
+          : {
+            kind: 'conflict_order' as const,
+            /* `later` moves in front of `earlier`; every other Goal keeps its
+               relative order. */
+            goalOrder: (() => {
+              const order = data.goals.map((goal) => goal.id).filter((id) => id !== conflict.laterId);
+              const at = order.indexOf(conflict.earlierId);
+              order.splice(at < 0 ? 0 : at, 0, conflict.laterId);
+              return order.map((id) => goalOf(id)!.ref);
+            })(),
+          };
+      /* The answer command's pins are the card's captured source pins, exactly:
+         a conflict card also pins the two Plan revisions, not only the Goals
+         and the earlier GoalPhase. */
+      const sourcePins = asRecord(conflict.source).pins;
+      const expected: Array<{ ref: unknown; revision: number }> = Array.isArray(sourcePins)
+        ? sourcePins as Array<{ ref: unknown; revision: number }>
+        : [
+          { ref: earlier.ref, revision: earlier.revision },
+          { ref: later.ref, revision: later.revision },
+        ];
+      if (!Array.isArray(sourcePins) && optionId === 'wait') {
+        expected.push({
+          ref: { aggregateType: 'GoalPhase' as const, projectId: scope.projectId, goalId: conflict.earlierId },
+          revision: conflict.earlierPhaseRevision,
+        });
+      }
+      answerSeq += 1;
+      try {
+        const reply = await client.write('decisions/answer', scope, {
+          input: { source: conflict.source, selection, text: '', annotations: [] },
+          meta: { requestId: 'goals-answer-' + String(answerSeq), expected },
+        });
+        /* `decisions/answer` answers a read of the resolved decision: the
+           commit is the nested `answer` receipt, not the top-level status. */
+        const receipt = reply.status === 'ready' ? asRecord(asRecord(reply.value).answer) : null;
+        if (reply.status !== 'committed' && receipt?.status !== 'committed') {
+          throw new RouteReadError('decisions/answer', reply.code || reply.status || 'no status', reply.reason ?? '');
+        }
+      } catch (error) {
+        throw new Error(writeTextOf(error));
+      }
+      await refresh.reread();
+    },
+    async askSecretary(
+      text: string,
+      reference: RequestReferenceInputV1 | readonly RequestReferenceInputV1[] | null,
+    ): Promise<{ input: string; answer: string | null } | null> {
+      const scope = latestGoalsScope;
+      if (scope === null) throw new Error(writeTextOf(new Error('no Goals scope')));
+      const references: RequestReferenceInputV1[] = reference === null ? []
+        : Array.isArray(reference) ? [...reference] : [reference as RequestReferenceInputV1];
+      askSeq += 1;
+      let reply: RouteReply;
+      try {
+        reply = await client.post('requests/submit', scope, {
+          commandId: 'goals-ask-' + String(askSeq),
+          goalId: latestGoals?.selectedGoalId ?? null,
+          text,
+          continues: null,
+          recipient: null,
+          references,
+        });
+      } catch (error) {
+        throw new Error(writeTextOf(error));
+      }
+      if (reply.status !== 'queued') {
+        throw new Error(writeTextOf(new RouteReadError('requests/submit',
+          reply.code || reply.status || 'no status', reply.reason ?? '')));
+      }
+      const requestRoot = asRecord(reply).requestRoot;
+      if (requestRoot === null || requestRoot === undefined) return null;
+      let answer: string | null = null;
+      try {
+        const read = readyRouteValue<unknown>(
+          await client.post('requests/read', scope, { requestRoot }), 'requests/read',
+        );
+        const rounds = asRecord(read).rounds;
+        if (Array.isArray(rounds)) {
+          for (let index = rounds.length - 1; index >= 0; index -= 1) {
+            const value = asText(asRecord(rounds[index]).answer);
+            if (value !== '') { answer = value; break; }
+          }
+        }
+      } catch {
+        /* The submit stands; a failed read only means no answer to append yet. */
+        answer = null;
+      }
+      return { input: text, answer };
+    },
   };
   const sources: RefreshSources<unknown> = {
     read: async () => await reader(client, goalId, demand),
@@ -190,7 +347,13 @@ export async function bootBoardPage(): Promise<void> {
       if (snapshot.error !== null) logReadError(snapshot.error);
       /* A failed reread keeps the old data for the page; it must not become
          the pins of a control write (§2.8: no second, stale read window). */
-      if (snapshot.error === null) latest = snapshot.data as NavData | null;
+      if (snapshot.error === null) {
+        latest = snapshot.data as NavData | null;
+        if (boardName === 'Goals') {
+          latestGoals = snapshot.data as GoalsData | null;
+          latestGoalsScope = latestGoals?.scope ?? null;
+        }
+      }
       view.updateProps(pageProps(board.defaults, snapshot, restart, actions));
     },
     subscribe: (handlers, cursor) => subscribeChanges(tokenOf, handlers, cursor),
@@ -212,6 +375,7 @@ type BoardReader<T> = (
 const BOARD_READERS: Record<string, BoardReader<unknown>> = {
   TaskMap: readTaskMap as BoardReader<unknown>,
   Main: readMain,
+  Goals: readGoals,
 };
 
 /** The board name a served page is for: `/workbench/TaskMap.dc.html` -> `TaskMap`. */
@@ -408,6 +572,104 @@ export async function readMain(
   demand: BoardReadDemand = {},
 ): Promise<RefreshRead<NavData>> {
   return readNav(client, goalId, demand);
+}
+
+/**
+ * E3 Goals §2.1: one read for the Goals page. The order is fixed: bootstrap,
+ * the `?goal=` scope, `goals/list`, one `goals/display` per row whose list phase
+ * is null (only `not_found` skips that row), `lines/list`, `goals/conflicts`,
+ * and only when a card exists the two Goals' `tasks/query` plus
+ * `architecture/read`. A default Goal is the first row that is not finished,
+ * never `goals[0]`; `goalId` stays the URL value and the resolved Goal is passed
+ * to the adapter only.
+ */
+export async function readGoals(
+  client: ReturnType<typeof createHostClient>, goalId: string | null,
+  _demand: BoardReadDemand = {},
+): Promise<RefreshRead<GoalsData>> {
+  const boot = await client.bootstrap();
+  const cursor = boot.changesHead ?? null;
+  const found = await taskMapScope(client, boot.workspaces, goalId);
+  if (found === null) return { data: null, cursor };
+  const scope = found.scope;
+  const goals = readyRouteValue<GoalListRead>(
+    await client.post('goals/list', scope, { workspace: scope }), 'goals/list',
+  );
+  const rows = Array.isArray(goals.goals) ? goals.goals : [];
+  const displays: Record<string, unknown> = {};
+  const refOf = (id: string): TaskMapGoalRef => ({ aggregateType: 'Goal', projectId: scope.projectId, goalId: id });
+  for (const entry of rows) {
+    const row = asRecord(entry);
+    const listPhase = row.display === undefined || row.display === null ? null : asRecord(row.display).phase;
+    if (listPhase !== null && listPhase !== undefined) continue;
+    const id = asText(asRecord(row.ref).goalId);
+    if (id === '') continue;
+    try {
+      displays[id] = await readGoalDisplay(client, scope, refOf(id));
+    } catch (error) {
+      if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
+    }
+  }
+  let selected = goalId;
+  if (selected === null) {
+    const ordered = rows.map((entry) => asRecord(entry))
+      .map((row, index) => ({ row, order: typeof row.order === 'number' ? row.order : index }))
+      .sort((a, b) => a.order - b.order);
+    for (const { row } of ordered) {
+      const id = asText(asRecord(row.ref).goalId);
+      if (id === '') continue;
+      const listPhase = row.display === undefined || row.display === null ? null : asRecord(row.display).phase;
+      if (listPhase === null || listPhase === undefined) {
+        const display = displays[id];
+        if (display === undefined) continue;
+        const phase = asText(asRecord(asRecord(display).display).phase);
+        if (phase !== '' && !isFinishedGoalDisplayPhase(phase as GoalDisplayPhaseCode)) { selected = id; break; }
+      } else if (!isFinishedGoalDisplayPhase(listPhase as GoalDisplayPhaseCode)) {
+        selected = id; break;
+      }
+    }
+  }
+  const lines = readyRouteValue<unknown>(
+    await client.post('lines/list', scope, { workspace: scope }), 'lines/list',
+  );
+  const conflicts = readyRouteValue<unknown>(
+    await client.post('goals/conflicts', scope, { workspace: scope }), 'goals/conflicts',
+  );
+  const cards = Array.isArray(asRecord(conflicts).cards) ? asRecord(conflicts).cards as unknown[] : [];
+  const tasks: Record<string, unknown | null> = {};
+  let architecture: unknown = null;
+  if (cards.length > 0) {
+    const pins = asRecord(asRecord(cards[0]).source).pins;
+    const ids = [...new Set((Array.isArray(pins) ? pins : []).map((pin) => asRecord(pin))
+      .map((pin) => asRecord(pin.ref))
+      .filter((ref) => ref.aggregateType === 'Goal')
+      .map((ref) => asText(ref.goalId)).filter((id) => id !== ''))];
+    const orderById = new Map(rows.map((entry) => {
+      const row = asRecord(entry);
+      return [asText(asRecord(row.ref).goalId),
+        typeof row.order === 'number' ? row.order : Number.POSITIVE_INFINITY] as const;
+    }));
+    ids.sort((a, b) => goalOrderOf(orderById, a) - goalOrderOf(orderById, b));
+    for (const id of ids.slice(0, 2)) {
+      try {
+        tasks[id] = readyRouteValue<unknown>(
+          await client.post('tasks/query', scope, { goalRef: refOf(id) }), 'tasks/query',
+        );
+      } catch (error) {
+        if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
+        tasks[id] = null;
+      }
+    }
+    architecture = readyRouteValue<unknown>(
+      await client.post('architecture/read', scope, { selection: { kind: 'current' } }), 'architecture/read',
+    );
+  }
+  return {
+    data: adaptGoals({
+      goals, displays, lines, conflicts, tasks, architecture, projectId: scope.projectId, scope,
+    }, selected),
+    cursor,
+  };
 }
 
 /**
