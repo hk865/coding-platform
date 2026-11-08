@@ -21,6 +21,7 @@
  * (notes may not import views, and that reader reads far too widely).
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+import type { ReadResult } from '../../../contracts/core/results.js';
 import { okFalse } from '../../../contracts/core/rejections.js';
 import type { NoteAnchorV1, NoteHeadSnapshot, NoteKind } from '../../../contracts/note.js';
 import { isGeneral } from '../../../contracts/note.js';
@@ -72,6 +73,8 @@ export type RelatedScopeDeps = {
   records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort;
   architecture?: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'>;
   runTask?: NoteRunTaskResolver;
+  /** The project's main workspace; absent treats the caller's workspace as main. */
+  mainWorkspaceOf?: (projectId: string) => Promise<ReadResult<string | null>>;
   /** `FIND_RELATED_FILES_MAX`, injectable (spec §11.2). */
   relatedFilesMax: number;
 };
@@ -315,10 +318,29 @@ export function interfaceKeysOf(moduleId: string, module: ModuleDefinition): str
   return module.interfaces.map(candidate => `interface:${moduleId}/${candidate.id}`);
 }
 
+/** The main workspace for a related-scope read; a failed read is `unavailable`, never "the caller is main". */
+async function mainWorkspaceOutcomeOf(deps: RelatedScopeDeps, projectId: string):
+Promise<{ ok: true; value: string | null } | { ok: false; code: 'unavailable'; reason: string }> {
+  if (deps.mainWorkspaceOf === undefined) return { ok: true, value: null };
+  let read: ReadResult<string | null>;
+  try {
+    read = await deps.mainWorkspaceOf(projectId);
+  } catch {
+    return { ok: false, code: 'unavailable', reason: 'the main workspace cannot be read' };
+  }
+  if (read.status !== 'ready') {
+    return { ok: false, code: 'unavailable',
+      reason: read.status === 'rejected' ? read.reason : 'the main workspace cannot be read' };
+  }
+  return { ok: true, value: read.value };
+}
+
 /** §11.2: file keys whose single longest catalog owner is M (via the exported `moduleOfAnchor`). */
 export async function collectModuleFileKeys(deps: RelatedScopeDeps, ctx: CoreCallContext,
   catalog: AdoptedArchitecture, module: ModuleDefinition):
 Promise<{ ok: true; value: string[] } | { ok: false; code: RelatedReadCode; reason: string }> {
+  const main = await mainWorkspaceOutcomeOf(deps, ctx.projectId);
+  if (!main.ok) return main;
   const paths = new Set<string>();
   for (const prefix of module.paths) {
     const stripped = prefix.endsWith('/') ? prefix.slice(0, -1) : prefix;
@@ -336,7 +358,8 @@ Promise<{ ok: true; value: string[] } | { ok: false; code: RelatedReadCode; reas
       for (const candidate of slots) {
         if (!candidate.startsWith('file:')) continue;
         const path = candidate.slice('file:'.length);
-        if (moduleOfAnchor(catalog, { kind: 'file', path } as NoteAnchorV1) === module.ref.moduleId) paths.add(path);
+        if (moduleOfAnchor(catalog, { kind: 'file', path } as NoteAnchorV1, main.value)
+          === module.ref.moduleId) paths.add(path);
       }
     }
   }

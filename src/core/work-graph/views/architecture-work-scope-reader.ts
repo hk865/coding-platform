@@ -18,6 +18,7 @@ import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import { canonicalKey } from '../../../contracts/fingerprint.js';
 import { pathOwnershipOf } from '../../../contracts/path-ownership.js';
+import { catalogForWorkspace } from '../../../contracts/workspace-catalog.js';
 import { buildArchitectureGroups, moduleKey } from '../architecture/architecture-search-index.js';
 import type { ArchitectureCatalogPort } from '../architecture/catalog-contracts.js';
 import { decodePlanRevisionSnapshot, planRevisionRefKey } from '../persistence/plan-record-codecs.js';
@@ -46,6 +47,8 @@ export function mergeLiveRuns(pages: readonly (readonly RunSnapshot[])[]): Merge
 export type ArchitectureWorkScopeDependencies = {
   records: Pick<GoalRecordTransactionPort, 'readMany'> & RecordLookupPort;
   catalog: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'>;
+  /** The project's main workspace; absent treats the read workspace as main. */
+  mainWorkspaceOf?: (projectId: string) => Promise<ReadResult<string | null>>;
 };
 
 export interface ArchitectureWorkScopePort {
@@ -125,6 +128,22 @@ export function createArchitectureWorkScopeReader(
     let catalog: AdoptedArchitecture | null = null;
     if (catalogRevision.status === 'ready') catalog = catalogRevision.value.catalog.catalog;
     else if (catalogRevision.status !== 'not_found') return catalogRevision;
+    // The Runs are this workspace's; the module paths and the catalog must be
+    // projected to the same workspace before any ownership comparison.
+    if (catalog !== null) {
+      let mainWorkspaceId = workspaceId;
+      if (deps.mainWorkspaceOf !== undefined) {
+        const main = await deps.mainWorkspaceOf(projectId);
+        // A failed main read refuses the work scope as `unavailable`; a ready
+        // `null` (no workspace yet) keeps the read workspace as main.
+        if (main.status !== 'ready') {
+          return { status: 'rejected', code: 'unavailable',
+            reason: main.status === 'rejected' ? main.reason : 'the main workspace cannot be read' };
+        }
+        mainWorkspaceId = main.value ?? workspaceId;
+      }
+      catalog = catalogForWorkspace(catalog, workspaceId, mainWorkspaceId);
+    }
 
     const groups = buildArchitectureGroups(catalog?.modules ?? [], catalog?.containment);
     const groupsByKey = new Map(groups.map(group => [moduleKey(group.ref), group]));

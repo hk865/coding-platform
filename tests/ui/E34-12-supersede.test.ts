@@ -245,7 +245,7 @@ describe('E34-12 a real future revision and the detail subrows', () => {
           if (route === 'graph/detail' && reply.value?.task !== undefined) {
             reply.value.task.actualFiles = {
               availability: 'available',
-              value: [{ runRef: { runId: 'r1' }, path: 'src/ui/x.ts', certainty: 'definite' }],
+              value: [{ runRef: { runId: 'r1' }, path: 'src/ui/x.ts', workspaceId: 'scene', certainty: 'definite' }],
             };
           }
           return new Response(JSON.stringify(reply), { status: 200 });

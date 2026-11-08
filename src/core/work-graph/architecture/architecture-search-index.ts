@@ -115,10 +115,11 @@ function compareMatches(left: Match, right: Match): number {
     : left.item.module.ref.moduleId > right.item.module.ref.moduleId ? 1 : 0;
 }
 
-function fileMatch(node: FileGraphPageNodeV1, needle: string, module: ArchitectureGroupV1 | null): Match | null {
+function fileMatch(node: FileGraphPageNodeV1, needle: string, pathNeedle: string,
+  pathFiles: boolean, module: ArchitectureGroupV1 | null): Match | null {
   const basename = node.path.slice(node.path.lastIndexOf('/') + 1);
   const onBasename = normalizeSearchText(basename).includes(needle);
-  const onPath = normalizeSearchText(node.path).includes(needle);
+  const onPath = pathFiles && normalizeSearchText(node.path).includes(pathNeedle);
   const names = module === null ? [] : [module.name, ...module.ancestor.map(ancestor => ancestor.name)];
   const onModule = names.some(name => normalizeSearchText(name).includes(needle));
   if (!onBasename && !onPath && !onModule) return null;
@@ -134,20 +135,43 @@ function fileMatch(node: FileGraphPageNodeV1, needle: string, module: Architectu
   return { tier: labelTier(basename, needle) ?? 3, item };
 }
 
-function moduleMatch(group: ArchitectureGroupV1, needle: string): Match | null {
+function moduleItem(group: ArchitectureGroupV1, needle: string, matchedOn: ArchitectureModuleHitV1['matchedOn'],
+  projectPathOf: (path: string) => string): ArchitectureModuleHitV1 {
+  const paths = group.paths.map(projectPathOf);
+  return {
+    kind: 'module', nodeRef: { kind: 'module', ref: group.ref },
+    label: group.name, path: group.path === null ? null : projectPathOf(group.path), paths,
+    module: { ...group, path: group.path === null ? null : projectPathOf(group.path), paths }, matchedOn,
+  };
+}
+
+/** Name/ancestor matches on the original project catalog (never narrowed to a workspace). */
+function moduleNameMatch(group: ArchitectureGroupV1, needle: string,
+  projectPathOf: (path: string) => string): Match | null {
   const onName = normalizeSearchText(group.name).includes(needle);
-  const onPath = group.paths.some(path => normalizeSearchText(path).includes(needle));
   const onAncestor = group.ancestor.some(ancestor => normalizeSearchText(ancestor.name).includes(needle));
-  if (!onName && !onPath && !onAncestor) return null;
+  if (!onName && !onAncestor) return null;
   const matchedOn: ArchitectureModuleHitV1['matchedOn'] = [];
   if (onName) matchedOn.push('name');
-  if (onPath) matchedOn.push('path');
   if (onAncestor) matchedOn.push('ancestor');
-  const item: ArchitectureModuleHitV1 = {
-    kind: 'module', nodeRef: { kind: 'module', ref: group.ref },
-    label: group.name, path: group.path, paths: group.paths, module: group, matchedOn,
-  };
-  return { tier: labelTier(group.name, needle) ?? 3, item };
+  return { tier: labelTier(group.name, needle) ?? 3,
+    item: moduleItem(group, needle, matchedOn, projectPathOf) };
+}
+
+/** Path matches on the workspace the request path names. */
+function modulePathMatch(group: ArchitectureGroupV1, needle: string, pathNeedle: string,
+  projectPathOf: (path: string) => string): Match | null {
+  if (!group.paths.some(path => normalizeSearchText(path).includes(pathNeedle))) return null;
+  return { tier: labelTier(group.name, needle) ?? 3,
+    item: moduleItem(group, needle, ['path'], projectPathOf) };
+}
+
+/** One module's name/ancestor and path matches merged into one hit. */
+function mergeModuleMatch(left: Match, right: Match): Match {
+  if (left.item.kind !== 'module' || right.item.kind !== 'module') return left;
+  const matchedOn: ArchitectureModuleHitV1['matchedOn'] = [...left.item.matchedOn];
+  for (const on of right.item.matchedOn) if (!matchedOn.includes(on)) matchedOn.push(on);
+  return { tier: Math.min(left.tier, right.tier), item: { ...left.item, matchedOn } };
 }
 
 export type ArchitectureFindPage = {
@@ -164,18 +188,37 @@ export type ArchitectureFindPage = {
  */
 export function pageArchitectureFind(input: {
   nodes: readonly FileGraphPageNodeV1[];
+  /** The original project catalog: name/ancestor matches never narrow to a workspace. */
   modules: readonly ModuleDefinition[];
   containment?: ModuleContainment;
+  /** The workspace projection the request path names; path matches use it. Defaults to `modules`. */
+  pathModules?: readonly ModuleDefinition[];
+  pathContainment?: ModuleContainment;
+  /** The workspace projection the observed files belong to; file ownership uses it. Defaults to `modules`. */
+  fileModules?: readonly ModuleDefinition[];
+  fileContainment?: ModuleContainment;
+  /** Turns a projected relative module path back into its project path. */
+  projectPathOf?: (path: string) => string;
+  /** The observed files are workspace-relative; a path naming another workspace matches none of them. */
+  pathFiles?: boolean;
   needle: string;
+  /** The path branch's needle: the request path relative to the workspace it names. */
+  pathNeedle?: string;
   afterCursor: string | null;
   limit: number;
   binding: Omit<ArchitectureFindCursorBinding, 'queryKey'>;
 }): ArchitectureFindPage {
   const needle = normalizeSearchText(input.needle);
+  const pathNeedle = normalizeSearchText(input.pathNeedle ?? input.needle);
   const queryKey = architectureFindQueryKey(needle, input.limit);
   const offset = input.afterCursor === null ? 0 : readArchitectureFindOffset(input.afterCursor, { ...input.binding, queryKey });
   const groups = buildArchitectureGroups(input.modules, input.containment);
-  const candidates = groups.map(group => ({ value: group, paths: group.paths }));
+  const pathGroups = input.pathModules === undefined ? groups
+    : buildArchitectureGroups(input.pathModules, input.pathContainment);
+  const fileGroups = input.fileModules === undefined ? groups
+    : buildArchitectureGroups(input.fileModules, input.fileContainment);
+  const projectPathOf = input.projectPathOf ?? ((path: string) => path);
+  const candidates = fileGroups.map(group => ({ value: group, paths: group.paths }));
   const seen = new Set<string>();
   const matches: Match[] = [];
   for (const node of input.nodes) {
@@ -183,13 +226,22 @@ export function pageArchitectureFind(input: {
     seen.add(node.path);
     const ownership = pathOwnershipOf(node.path, candidates);
     const module = ownership.status === 'owner' ? ownership.owner : null;
-    const match = fileMatch(node, needle, module);
+    const match = fileMatch(node, needle, pathNeedle, input.pathFiles !== false, module);
     if (match !== null) matches.push(match);
   }
+  const byModule = new Map<string, Match>();
   for (const group of groups) {
-    const match = moduleMatch(group, needle);
-    if (match !== null) matches.push(match);
+    const match = moduleNameMatch(group, needle, (path: string) => path);
+    if (match !== null) byModule.set(moduleKey(group.ref), match);
   }
+  for (const group of pathGroups) {
+    const match = modulePathMatch(group, needle, pathNeedle, projectPathOf);
+    if (match === null) continue;
+    const key = moduleKey(group.ref);
+    const named = byModule.get(key);
+    byModule.set(key, named === undefined ? match : mergeModuleMatch(named, match));
+  }
+  matches.push(...byModule.values());
   matches.sort(compareMatches);
   const files = matches.filter(match => match.item.kind === 'file').length;
   const modules = matches.length - files;

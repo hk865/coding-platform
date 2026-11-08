@@ -123,10 +123,10 @@ describe('S4B MF1 facts resolve every kind', () => {
       expect(badDigest.unresolvedFacts).toEqual([{ index: 0, reason: 'invalid_file_digest' }]);
       expect(badDigest.freshness).toBe('unchecked');
 
-      const outsideId = await writeAccepted(f, draft({ topic: 'outside',
-        facts: [{ kind: 'file', path: '../outside.ts', digest: 'a'.repeat(64) }] }));
-      const outside = await check(f, outsideId);
-      expect(outside.unresolvedFacts).toEqual([{ index: 0, reason: 'forbidden' }]);
+      const outside = await f.inner.write(f.ctx(), draft({ topic: 'outside',
+        facts: [{ kind: 'file', path: '../outside.ts', digest: 'a'.repeat(64) }] }), null);
+      expect(outside).toMatchObject({ status: 'rejected', code: 'invalid',
+        reason: 'a file fact path must be a safe project path' });
     } finally { await f.close(); }
   });
 });

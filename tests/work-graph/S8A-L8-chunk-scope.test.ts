@@ -473,7 +473,9 @@ describe.each(['memory', 'sqlite'] as const)('S8A L8 chunk scope [%s]', backend 
       ROLE_BINDING, 's8a-l8-row1-prepare-b');
     expect(preparedA.input).toContain('新文件没归组：src/notes.md（1 小时前的观测）');
     expect(preparedA.input).toContain('新文件没归组：src/notes-a.md（1 小时前的观测）');
-    expect(preparedB.input).toContain('新文件没归组：src/notes.md（1 小时前的观测）');
+    // lead 11-09 (121-59, xws2p build §3.6): bare paths belong to the main workspace; B has no module of
+    // its own and the task module A has no path in B, so B's preparation does not guess B's files under A.
+    expect(preparedB.input).not.toContain('新文件没归组：src/notes.md');
     expect(preparedB.input).not.toContain('src/notes-a.md');
     expect(preparedA.input).not.toContain('架构提醒不可用');
     expect(preparedB.input).not.toContain('架构提醒不可用');

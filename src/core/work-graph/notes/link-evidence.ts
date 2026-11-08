@@ -13,6 +13,8 @@ import { validateSourceQuery } from '../../workspace/ports.js';
 import type { NavItemV1 } from '../../workspace/single-file-syntax.js';
 import { TYPESCRIPT_CONFIG_FILES } from '../../workspace/typescript-source-query.js';
 import { pathOwnershipOf } from '../../../contracts/path-ownership.js';
+import { catalogForWorkspace } from '../../../contracts/workspace-catalog.js';
+import { normalizeProjectPath, qualifyProjectPath, resolveStoredProjectPath } from '../../../contracts/workspace-path.js';
 import { languageOfPath } from '../../workspace/architecture-language-provider.js';
 import type { CurrentCatalogWindow } from '../architecture/catalog-service.js';
 import { NOTE_BASIS_FILE_MAX_BYTES, analysedDigestsMatch, type WriteNoteResult } from '../model/note-contracts.js';
@@ -23,7 +25,7 @@ export type LinkDraftCheckInput = { draft: LinkDraftV1; anchors: NoteAnchorV1[];
   catalog: Extract<CurrentCatalogWindow, { status: 'ready' }> | null };
 
 /** book :880. The workspace is note-anchors' narrow port, the platform-identity view `writeNote` holds. */
-export type LinkDraftDeps = { workspace: NoteAnchorWorkspace };
+export type LinkDraftDeps = { workspace: NoteAnchorWorkspace; mainWorkspaceId: string };
 
 /** book :881. Success carries warnings; rejection carries no draft, which writeNote adds. */
 export type LinkDraftResult =
@@ -49,7 +51,7 @@ export function endpointIdentityOf(request: LinkEndRequestV1): EndpointIdentityV
     case 'module': return `module:${request.moduleId}`;
     case 'interface': return `interface:${request.moduleId}/${request.interfaceId}`;
     case 'file': {
-      const path = normalizePath(request.path);
+      const path = normalizeProjectPath(request.path);
       if (request.symbolRequest === undefined) return `file:${path}`;
       return `file:${JSON.stringify([path, request.symbolRequest.name,
         request.symbolRequest.range?.startLine ?? null, request.symbolRequest.range?.endLine ?? null])}`;
@@ -176,14 +178,22 @@ function underAnyPath(path: string, paths: readonly string[]): boolean {
   });
 }
 
-function endContains(path: string, end: LinkEndRequestV1, catalog: AdoptedArchitecture | null): boolean {
+type ResolvedPath = { workspaceId: string; path: string };
+function resolvedFileOf(path: string, mainWorkspaceId: string): ResolvedPath {
+  return resolveStoredProjectPath(normalizeProjectPath(path), mainWorkspaceId);
+}
+function sameFile(left: ResolvedPath, right: ResolvedPath): boolean {
+  return left.workspaceId === right.workspaceId && left.path === right.path;
+}
+function endContains(resolved: ResolvedPath, end: LinkEndRequestV1,
+  catalog: AdoptedArchitecture | null, mainWorkspaceId: string): boolean {
   switch (end.kind) {
-    case 'module': return inModule(path, end.moduleId, catalog);
+    case 'module': return inModule(resolved.path, end.moduleId, catalog);
     case 'interface': {
       const paths = interfacePathsOf(end.moduleId, end.interfaceId, catalog);
-      return paths !== null && underAnyPath(path, paths);
+      return paths !== null && underAnyPath(resolved.path, paths);
     }
-    case 'file': return path === normalizePath(end.path);
+    case 'file': return sameFile(resolved, resolvedFileOf(end.path, mainWorkspaceId));
   }
 }
 
@@ -193,27 +203,34 @@ function endContains(path: string, end: LinkEndRequestV1, catalog: AdoptedArchit
  * the module(s) that own it. An interface's declared paths are not the boundary.
  * A file "to" that no module owns cannot satisfy `entry` (book :318–325).
  */
-function entryContained(path: string, to: LinkEndRequestV1, catalog: AdoptedArchitecture | null): boolean {
-  if (to.kind === 'module' || to.kind === 'interface') return inModule(path, to.moduleId, catalog);
+function entryContained(resolved: ResolvedPath, to: LinkEndRequestV1,
+  catalog: AdoptedArchitecture | null, mainWorkspaceId: string): boolean {
+  if (to.kind === 'module' || to.kind === 'interface') return inModule(resolved.path, to.moduleId, catalog);
   // A file "to" contributes the module(s) that own it; a tie that includes a
   // module the evidence also sits in counts, an unowned file satisfies nothing.
-  const ownership = evidenceOwnershipOf(normalizePath(to.path), catalog);
-  if (ownership.status === 'owner') return inModule(path, ownership.owner, catalog);
-  if (ownership.status === 'tie') return ownership.owners.some(moduleId => inModule(path, moduleId, catalog));
+  // A "to" of another workspace never contains this evidence.
+  const toResolved = resolvedFileOf(to.path, mainWorkspaceId);
+  if (toResolved.workspaceId !== resolved.workspaceId) return false;
+  const ownership = evidenceOwnershipOf(toResolved.path, catalog);
+  if (ownership.status === 'owner') return inModule(resolved.path, ownership.owner, catalog);
+  if (ownership.status === 'tie') return ownership.owners.some(moduleId => inModule(resolved.path, moduleId, catalog));
   return false;
 }
 
 function evidenceOutsideEnd(role: LinkEvidenceRoleV1, path: string,
   ends: { from: LinkEndRequestV1; to: LinkEndRequestV1; via: LinkEndRequestV1 | null },
-  catalog: AdoptedArchitecture | null): boolean {
+  fullCatalog: AdoptedArchitecture | null, mainWorkspaceId: string): boolean {
+  const resolved = resolvedFileOf(path, mainWorkspaceId);
+  const catalog = fullCatalog === null ? null
+    : catalogForWorkspace(fullCatalog, resolved.workspaceId, mainWorkspaceId);
   switch (role) {
     case 'wire':
     case 'register': return false;
     case 'use':
     case 'emit':
-    case 'launch': return !endContains(path, ends.from, catalog);
-    case 'receive': return !endContains(path, ends.to, catalog);
-    case 'entry': return !entryContained(path, ends.to, catalog);
+    case 'launch': return !endContains(resolved, ends.from, catalog, mainWorkspaceId);
+    case 'receive': return !endContains(resolved, ends.to, catalog, mainWorkspaceId);
+    case 'entry': return !entryContained(resolved, ends.to, catalog, mainWorkspaceId);
   }
 }
 
@@ -304,7 +321,8 @@ export async function checkLinkDraft(ctx: CoreCallContext, input: LinkDraftCheck
   deps: LinkDraftDeps): Promise<LinkDraftResult> {
   const draft = input.draft;
   const workspace = deps.workspace;
-  const catalog = input.catalog?.catalog.catalog ?? null;
+  const fullCatalog = input.catalog?.catalog.catalog ?? null;
+  const mainWorkspaceId = deps.mainWorkspaceId;
   const relation = draft.link.relation;
   const rawKey = draft.link.key ?? null;
   const ends = {
@@ -312,23 +330,34 @@ export async function checkLinkDraft(ctx: CoreCallContext, input: LinkDraftCheck
     to: draft.extraAnchors[0] as LinkEndRequestV1,
     via: (draft.extraAnchors[1] ?? null) as LinkEndRequestV1 | null,
   };
-  // One working-tree read per path for the whole write: the ends, the key, the evidence, the
-  // digests compared with the second tier's and the configuration all see the same bytes.
+  // The link's own workspace, named by the first file path (a bare path is
+  // main): the stored ends/key/config use it. Each evidence and definition file
+  // is still read by ITS OWN workspace, and one analysis only ever reads one
+  // workspace's files.
+  const firstEndFile = [ends.from, ends.to, ends.via]
+    .find((entry): entry is Extract<LinkEndRequestV1, { kind: 'file' }> => entry !== null && entry.kind === 'file');
+  const firstFilePath = firstEndFile?.path ?? draft.link.evidence[0]?.at.path;
+  const linkWorkspaceId = firstFilePath === undefined ? (ctx.workspaceId ?? mainWorkspaceId)
+    : resolvedFileOf(firstFilePath, mainWorkspaceId).workspaceId;
+  // One working-tree read per workspace and path for the whole write: the ends, the key, the
+  // evidence, the digests compared with the second tier's and the configuration all see the same bytes.
   const reads = new Map<string, Promise<TextRead>>();
-  const readFileOnce = (path: string): Promise<TextRead> => {
-    let read = reads.get(path);
+  const readFileOnce = (workspaceId: string, path: string): Promise<TextRead> => {
+    const key = `${workspaceId}\u0000${path}`;
+    let read = reads.get(key);
     if (read === undefined) {
-      read = readText(ctx, workspace, path);
-      reads.set(path, read);
+      read = readText({ ...ctx, workspaceId }, workspace, path);
+      reads.set(key, read);
     }
     return read;
   };
+  const definitionWorkspaces = new Map<ReferenceField, string>();
 
   // 1. Containment first: no lookup, no read (book :318–325). Its refusal is
   // returned only after the ends/key row, which the table puts before it.
   const outside: number[] = [];
   draft.link.evidence.forEach((evidence, index) => {
-    if (evidenceOutsideEnd(evidence.role, normalizePath(evidence.at.path), ends, catalog)) outside.push(index);
+    if (evidenceOutsideEnd(evidence.role, evidence.at.path, ends, fullCatalog, mainWorkspaceId)) outside.push(index);
   });
 
   const needsKey = relationNeedsKey(relation);
@@ -363,8 +392,9 @@ export async function checkLinkDraft(ctx: CoreCallContext, input: LinkDraftCheck
   const resolveEnd = async (end: LinkEndRequestV1 | null, field: LinkEndField, slot: number,
     required: boolean, referenceField: ReferenceField | null): Promise<LinkDraftResult | null> => {
     if (end === null || end.kind !== 'file' || end.symbolRequest === undefined) return null;
-    const path = normalizePath(end.path);
-    const check = await checkSymbol(path, end.symbolRequest, readFileOnce);
+    const resolved = resolvedFileOf(end.path, mainWorkspaceId);
+    const path = resolved.path;
+    const check = await checkSymbol(path, end.symbolRequest, (candidate) => readFileOnce(resolved.workspaceId, candidate));
     if (check.status === 'ambiguous') {
       return { status: 'rejected', code: 'invalid', reason: `symbol_ambiguous: ${field}`,
         symbolCandidates: check.candidates };
@@ -387,6 +417,7 @@ export async function checkLinkDraft(ctx: CoreCallContext, input: LinkDraftCheck
     setSymbol(slot, check.symbol);
     if (referenceField !== null) {
       definitions.set(referenceField, { path, name: check.symbol.qualifiedName, line: check.symbol.range.startLine });
+      definitionWorkspaces.set(referenceField, resolved.workspaceId);
     }
     return null;
   };
@@ -404,8 +435,9 @@ export async function checkLinkDraft(ctx: CoreCallContext, input: LinkDraftCheck
     if (rawKey.kind === 'literal') {
       storedKey = { kind: 'literal', text: rawKey.text };
     } else {
-      const path = normalizePath(rawKey.anchor.path);
-      const check = await checkSymbol(path, rawKey.anchor.symbolRequest, readFileOnce);
+      const resolved = resolvedFileOf(rawKey.anchor.path, mainWorkspaceId);
+      const path = resolved.path;
+      const check = await checkSymbol(path, rawKey.anchor.symbolRequest, (candidate) => readFileOnce(resolved.workspaceId, candidate));
       if (check.status === 'ambiguous') {
         return { status: 'rejected', code: 'invalid', reason: 'symbol_ambiguous: link.key',
           symbolCandidates: check.candidates };
@@ -415,13 +447,14 @@ export async function checkLinkDraft(ctx: CoreCallContext, input: LinkDraftCheck
       }
       if (check.status === 'unsupported') {
         languageUnsupported = true;
-        storedKey = { kind: 'symbol', path, symbolRequest: rawKey.anchor.symbolRequest };
+        storedKey = { kind: 'symbol', path: normalizeProjectPath(rawKey.anchor.path), symbolRequest: rawKey.anchor.symbolRequest };
       } else if (check.status === 'unavailable') {
         analyzerUnavailable = true;
-        storedKey = { kind: 'symbol', path, symbolRequest: rawKey.anchor.symbolRequest };
+        storedKey = { kind: 'symbol', path: normalizeProjectPath(rawKey.anchor.path), symbolRequest: rawKey.anchor.symbolRequest };
       } else {
-        storedKey = { kind: 'symbol', path, symbolRequest: rawKey.anchor.symbolRequest, symbol: check.symbol };
+        storedKey = { kind: 'symbol', path: normalizeProjectPath(rawKey.anchor.path), symbolRequest: rawKey.anchor.symbolRequest, symbol: check.symbol };
         definitions.set('key', { path, name: check.symbol.qualifiedName, line: check.symbol.range.startLine });
+        definitionWorkspaces.set('key', resolved.workspaceId);
       }
     }
   }
@@ -442,7 +475,9 @@ export async function checkLinkDraft(ctx: CoreCallContext, input: LinkDraftCheck
   for (const [index, evidence] of draft.link.evidence.entries()) {
     const request = evidence.at.symbolRequest;
     if (request === undefined) { evidenceSymbols.push(undefined); continue; }
-    const check = await checkSymbol(normalizePath(evidence.at.path), request, readFileOnce);
+    const symbolFile = resolvedFileOf(evidence.at.path, mainWorkspaceId);
+    const check = await checkSymbol(symbolFile.path, request,
+      (candidate) => readFileOnce(symbolFile.workspaceId, candidate));
     if (check.status === 'ambiguous') { ambiguousEvidence = { index, candidates: check.candidates }; break; }
     if (check.status === 'missing') { evidenceSymbolMissing.add(index); evidenceSymbols.push(undefined); continue; }
     if (check.status === 'unsupported') {
@@ -468,10 +503,13 @@ export async function checkLinkDraft(ctx: CoreCallContext, input: LinkDraftCheck
   // Each question's evidence index and the raw-byte digests this write read for its two files.
   const questions: ReferenceQuestionV1[] = [];
   const asked: { index: number; read: Map<string, string> }[] = [];
+  // The workspaces the questions' two files live in: one analysis reads one workspace.
+  const questionWorkspaces = new Set<string>();
 
   for (const [index, evidence] of draft.link.evidence.entries()) {
     if (evidenceSymbolMissing.has(index)) continue;
-    const path = normalizePath(evidence.at.path);
+    const evidenceFile = resolvedFileOf(evidence.at.path, mainWorkspaceId);
+    const path = evidenceFile.path;
     const isTs = languageOfPath(path) === 'typescript';
     // The references of this role (L3a) and, for a symbol key, the key's definition (8E :434).
     const fields = partFieldsOf(relation, evidence.role, rawKey?.kind);
@@ -480,7 +518,7 @@ export async function checkLinkDraft(ctx: CoreCallContext, input: LinkDraftCheck
     if (!isTs && fields.length > 0) languageUnsupported = true;
     // The same read as its selector's: an unreadable selector file is the same failure here,
     // so a selector that could not be checked never falls back to `whole_file`.
-    const content = await readFileOnce(path);
+    const content = await readFileOnce(evidenceFile.workspaceId, path);
     // A forbidden workspace read still refuses the write (book :987).
     if (content.status === 'forbidden') { forbiddenIndex ??= index; continue; }
     // A file the working tree does not have is a definite miss (row 6 collects every definite miss).
@@ -504,24 +542,36 @@ export async function checkLinkDraft(ctx: CoreCallContext, input: LinkDraftCheck
       const definition = definitions.get(field);
       if (definition === undefined) { analyzerUnavailable = true; continue; }
       const read = new Map([[path, content.digest]]);
-      const definitionRead = await readFileOnce(definition.path);
+      const definitionWorkspace = definitionWorkspaces.get(field) ?? linkWorkspaceId;
+      const definitionRead = await readFileOnce(definitionWorkspace, definition.path);
       if (definitionRead.status === 'ready') read.set(definition.path, definitionRead.digest);
       questions.push({ definition, evidence: { path, ranges: scope.kind === 'whole_file' ? null : scope.ranges } });
       asked.push({ index, read });
+      questionWorkspaces.add(evidenceFile.workspaceId);
+      questionWorkspaces.add(definitionWorkspace);
     }
   }
 
-  // The references go to the second tier once, unless there is no question or a forbidden
-  // evidence read already refuses the write. A part whose files the second tier analysed with
-  // other bytes than this write read (8E C2's race) is not judged, whatever it answered.
+  // The references go to the second tier once, unless there is no question, a forbidden
+  // evidence read already refuses the write, or the questions' files span workspaces: one
+  // analysis reads one workspace, so a spanning link keeps the existing doubtful write-time
+  // state (`analyzer_unavailable`) rather than reading one workspace's file as another's.
   let analysisConfig: LinkPayloadV1['analysisConfig'] = { path: null, digest: null };
-  if (questions.length > 0 && forbiddenIndex === null) {
-    const checked = await referenceCheckOf(ctx, workspace, questions);
+  if (questions.length > 0 && forbiddenIndex === null && questionWorkspaces.size > 1) {
+    analyzerUnavailable = true;
+  } else if (questions.length > 0 && forbiddenIndex === null) {
+    const analysisWorkspaceId = questionWorkspaces.size === 1 ? [...questionWorkspaces][0]! : linkWorkspaceId;
+    const checked = await referenceCheckOf({ ...ctx, workspaceId: analysisWorkspaceId }, workspace, questions);
     if (checked === null) {
       analyzerUnavailable = true;
-      analysisConfig = await workingTreeConfigOf(readFileOnce);
+      const found = await workingTreeConfigOf((candidate) => readFileOnce(analysisWorkspaceId, candidate));
+      analysisConfig = found.path === null ? found
+        : { path: qualifyProjectPath(analysisWorkspaceId, found.path, mainWorkspaceId), digest: found.digest };
     } else {
-      if (checked.config !== null) analysisConfig = { path: checked.config.path, digest: checked.config.digest };
+      if (checked.config !== null) {
+        analysisConfig = { path: qualifyProjectPath(analysisWorkspaceId, checked.config.path, mainWorkspaceId),
+          digest: checked.config.digest };
+      }
       asked.forEach((entry, position) => {
         const answer = checked.answers[0]![position]!;
         if (!analysedDigestsMatch(checked.analysed, entry.read)) analyzerUnavailable = true;
@@ -558,7 +608,7 @@ export async function checkLinkDraft(ctx: CoreCallContext, input: LinkDraftCheck
     return {
       role: entry.role,
       at: {
-        path: normalizePath(entry.at.path),
+        path: normalizeProjectPath(entry.at.path),
         ...(entry.at.symbolRequest === undefined ? {} : { symbolRequest: entry.at.symbolRequest }),
         ...(entry.at.range === undefined ? {} : { range: entry.at.range }),
         ...(symbol === undefined ? {} : { symbol }),

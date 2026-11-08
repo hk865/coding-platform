@@ -49,6 +49,7 @@ import type { SessionFactsPort } from '../model/session-facts-contracts.js';
 import type { HandoffProgressV1 } from '../model/session-handoff-contracts.js';
 import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
 import { lookupAll } from '../persistence/lookup-all.js';
+import { catalogForWorkspace } from '../../../contracts/workspace-catalog.js';
 import { messageConsumptionProblem, messageFactsOfRecord } from '../state/message-machine.js';
 import { goalPositionOf, regionPositionOf, type RoleLinePositionV1 } from '../state/role-line-position.js';
 import { reclaimIdleLineOf, type ReclaimSeatV1, type RoleLineReclaimPort } from '../state/role-line-reclaim.js';
@@ -142,6 +143,8 @@ export type RoleLineMaintenanceDeps = {
   };
   /** The one store: messages, operations, role-line records and the catalog. */
   records: MaintenanceRecords;
+  /** The project's main workspace; absent treats the observed line's workspace as main. */
+  mainWorkspaceOf?: (projectId: string) => Promise<ReadResult<string | null>>;
   /** The store's one commit-order event page (O1a). */
   eventPage: Pick<RecordEventPagePort, 'eventPage'>;
   /** 8A's observation state and file pages. */
@@ -346,6 +349,24 @@ export function createRoleLineMaintenance(deps: RoleLineMaintenanceDeps): RoleLi
     const catalog = await catalogOf(record.ref.projectId);
     if (catalog.status !== 'ready') return catalog;
     const regions = line.scopes.flatMap((scope) => scope.kind === 'region' ? [scope.moduleRef] : []);
+    // The observation files are the line's workspace-relative paths: project
+    // the ONE catalog onto that workspace before the region rule reads them. A
+    // failed main read is `unavailable`; a ready `null` keeps the line's
+    // workspace as main.
+    let observationCatalog = catalog.value;
+    if (regions.length > 0 && catalog.value !== null) {
+      let mainWorkspaceId: string | null = null;
+      if (deps.mainWorkspaceOf !== undefined) {
+        const main = await deps.mainWorkspaceOf(record.ref.projectId);
+        if (main.status !== 'ready') {
+          return rejected('unavailable', main.status === 'rejected' ? main.reason : 'the main workspace cannot be read');
+        }
+        mainWorkspaceId = main.value;
+      }
+      if (mainWorkspaceId !== null) {
+        observationCatalog = catalogForWorkspace(catalog.value, record.workspaceId, mainWorkspaceId);
+      }
+    }
     const children = regions.flatMap((moduleRef) => childModulesOf(catalog.value, moduleRef));
     const positions: RoleLinePositionV1[] = [];
     const seen = new Set<string>();
@@ -365,7 +386,7 @@ export function createRoleLineMaintenance(deps: RoleLineMaintenanceDeps): RoleLi
           if (seen.has(key)) continue;
           seen.add(key);
           positions.push({ kind: 'region', moduleRef,
-            position: regionPositionOf({ moduleRef, catalog: catalog.value, observation }) });
+            position: regionPositionOf({ moduleRef, catalog: observationCatalog, observation }) });
         }
       }
     } else {

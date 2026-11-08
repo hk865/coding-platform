@@ -21,6 +21,7 @@ import type { NoteIndexRowV1, NotesUnderstandingRowV1 } from '../../../contracts
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { NoteAnchorV1, NoteDraftAnchorV1, NoteHeadSnapshot, NoteState, NoteVersionSnapshot } from '../../../contracts/note.js';
 import { headerExtrasOf, isGeneral, renderNoteHeader } from '../../../contracts/note.js';
+import { normalizeRequestProjectPath } from '../../../contracts/workspace-path.js';
 import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type { NoteFlowReadV1, SemanticFlowStepV1, SemanticFlowV1 } from '../../../contracts/semantic-layer.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../../contracts/prompts/platform-pack.generated.js';
@@ -76,6 +77,8 @@ export type NoteReadDependencies = {
   plans: Pick<PlanTaskPort, 'queryGoal' | 'queryTaskGraph'>;
   architecture?: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'>;
   workspace?: NoteAnchorWorkspace;
+  /** The project's main workspace; absent treats the caller's workspace as main. */
+  mainWorkspaceOf?: (projectId: string) => Promise<ReadResult<string | null>>;
   /** Slice 4B L22 / S2.5: the injected derived-field implementation. */
   check?: NoteHeadCheckPort;
   /**
@@ -489,7 +492,8 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
   };
   const anchorFacts: NoteAnchorFactsDeps = { records: deps.records,
     ...(deps.architecture === undefined ? {} : { architecture: deps.architecture }),
-    ...(deps.workspace === undefined ? {} : { workspace: noteCheckWorkspace(deps.workspace) }) };
+    ...(deps.workspace === undefined ? {} : { workspace: noteCheckWorkspace(deps.workspace) }),
+    ...(deps.mainWorkspaceOf === undefined ? {} : { mainWorkspaceOf: deps.mainWorkspaceOf }) };
   const derivations = createNoteHeadDerivations(deps.records, quotas);
   const conflictingOf = derivations.conflictingOf;
   const overQuotaOf = derivations.overQuotaOf;
@@ -499,7 +503,51 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
   const relatedDeps: RelatedScopeDeps = { records: deps.records,
     ...(deps.architecture === undefined ? {} : { architecture: deps.architecture }),
     ...(deps.runTask === undefined ? {} : { runTask: deps.runTask }),
+    ...(deps.mainWorkspaceOf === undefined ? {} : { mainWorkspaceOf: deps.mainWorkspaceOf }),
     relatedFilesMax };
+
+  /**
+   * XP-02 read side: a request-side file path is qualified by the REQUEST's
+   * workspace before it becomes a key or a filter. A stored path is different
+   * (`resolveStoredProjectPath`: a bare path is the MAIN workspace). A failed
+   * main read is the read's existing `unavailable`; a ready `null` keeps the
+   * caller's workspace as main, exactly as the write side does.
+   */
+  async function requestMainWorkspaceId(ctx: CoreCallContext):
+  Promise<{ ok: true; value: string } | { ok: false; code: 'unavailable'; reason: string }> {
+    const requestWorkspaceId = ctx.workspaceId ?? '';
+    if (deps.mainWorkspaceOf === undefined) return { ok: true, value: requestWorkspaceId };
+    const main = await deps.mainWorkspaceOf(ctx.projectId);
+    if (main.status !== 'ready') {
+      return { ok: false, code: 'unavailable',
+        reason: main.status === 'rejected' ? main.reason : 'the main workspace cannot be read' };
+    }
+    return { ok: true, value: main.value ?? requestWorkspaceId };
+  }
+
+  async function requestAnchorOf(ctx: CoreCallContext, anchor: NoteAnchorV1):
+  Promise<{ ok: true; value: NoteAnchorV1 } | { ok: false; code: 'invalid' | 'unavailable'; reason: string }> {
+    if (anchor.kind !== 'file') return { ok: true, value: anchor };
+    const main = await requestMainWorkspaceId(ctx);
+    if (!main.ok) return main;
+    try {
+      return { ok: true, value: { ...anchor,
+        path: normalizeRequestProjectPath(ctx.workspaceId ?? '', anchor.path, main.value) } };
+    } catch {
+      return { ok: false, code: 'invalid', reason: 'anchor_invalid: anchor.path' };
+    }
+  }
+
+  async function requestPathPrefixOf(ctx: CoreCallContext, pathPrefix: string):
+  Promise<{ ok: true; value: string } | { ok: false; code: 'invalid' | 'unavailable'; reason: string }> {
+    const main = await requestMainWorkspaceId(ctx);
+    if (!main.ok) return main;
+    try {
+      return { ok: true, value: normalizeRequestProjectPath(ctx.workspaceId ?? '', pathPrefix, main.value) };
+    } catch {
+      return { ok: false, code: 'invalid', reason: 'path_prefix_invalid' };
+    }
+  }
 
   function itemOfHead(head: NoteHeadSnapshot, projectId: string,
     cache: HeadCache): Promise<ReadOutcome<NoteItemV1>> {
@@ -1923,10 +1971,13 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
    */
   async function lookupRead(ctx: CoreCallContext, input: MemoryLookupRequest, explicitState: NoteState | undefined):
   Promise<NoteMemoryReadResult<{ result: MemoryLookupResultV1; heads: NoteHeadSnapshot[] }>> {
+    const anchorRead = await requestAnchorOf(ctx, input.anchor);
+    if (!anchorRead.ok) return rejected(anchorRead.code, anchorRead.reason);
+    const anchor = anchorRead.value;
     const limit = resolveMemoryLimit(input.limit);
     // R10: the outer cursor binds the body TARGET, not the body cursor, so the
     // item page and the body page advance independently.
-    const request = { op: 'lookup', anchor: input.anchor, limit,
+    const request = { op: 'lookup', anchor, limit,
       body: input.body === undefined ? null : { noteId: input.body.noteId, version: input.body.version ?? null },
       ...(explicitState === undefined ? {} : { state: explicitState }) };
     const cursor = parseMemoryCursor(ctx, input.cursor, 'lookup', request);
@@ -1936,7 +1987,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     if (cursor.value.recordCursor !== null && current.value !== cursor.value.recordCursor) {
       return rejected('revision_conflict', 'the record cursor moved since the first page');
     }
-    const anchorKey = anchorKeyOf(input.anchor);
+    const anchorKey = anchorKeyOf(anchor);
     const headSet = await headsByAnchorKey(deps.records, ctx.projectId, anchorKey);
     if (!headSet.ok) return rejected(headSet.code, headSet.reason);
     // F4: seed the check's anchor cache with the raw set this read just loaded.
@@ -1944,7 +1995,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     anchorSets.set(`${ctx.projectId}\u0000${anchorKey}`, headSet.value);
     const onAnchor = headSet.value.filter(head => anchorSlots(head).includes(anchorKey));
     if (onAnchor.length === 0) {
-      const exists = await anchorExistsNow(ctx, input.anchor);
+      const exists = await anchorExistsNow(ctx, anchor);
       if (!exists.ok) return rejected(exists.code, exists.reason);
       if (!exists.exists) return anchorNotFound(exists.anchorCandidates, exists.candidatesUnavailable);
     }
@@ -1961,8 +2012,8 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     // U-3: the understanding status comes from the SAME check call/caches now
     // (goal/stage/project anchors only); `understandingOf` no longer reads its
     // own pointer.
-    const understandingAnchors = input.anchor.kind === 'goal' || input.anchor.kind === 'stage'
-      || input.anchor.kind === 'project' ? [anchorKey] : undefined;
+    const understandingAnchors = anchor.kind === 'goal' || anchor.kind === 'stage'
+      || anchor.kind === 'project' ? [anchorKey] : undefined;
     const pageBuilt = await checkedPage(ctx, slice.page, currentGoalId, anchorSets, undefined, undefined,
       understandingAnchors);
     if (!pageBuilt.ok) return rejected(pageBuilt.code, pageBuilt.reason);
@@ -2377,11 +2428,14 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       return { status: 'ready', value: checked.value.items[0]! };
     },
     async listByAnchor(ctx, input) {
-      const paged = await pageAnchorHeads(deps.records, ctx, input);
+      const anchorRead = await requestAnchorOf(ctx, input.anchor);
+      if (!anchorRead.ok) return rejected(anchorRead.code, anchorRead.reason);
+      const anchor = anchorRead.value;
+      const paged = await pageAnchorHeads(deps.records, ctx, { ...input, anchor });
       if (!paged.ok) return rejected(paged.code, paged.reason);
       const { heads, all, page, next } = paged.value;
       if (all.length === 0) {
-        const exists = await anchorExistsNow(ctx, input.anchor);
+        const exists = await anchorExistsNow(ctx, anchor);
         if (!exists.ok) return rejected(exists.code, exists.reason);
         if (!exists.exists) return rejected('not_found', 'anchor_not_found');
       }
@@ -2397,10 +2451,10 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       // F4: the anchor set and the page's heads already read in this call are
       // handed to the check (the raw `headsByAnchorKey` value, never a filter).
       const anchorSets = new Map<string, NoteHeadSnapshot[]>();
-      anchorSets.set(`${ctx.projectId}\u0000${anchorKeyOf(input.anchor)}`, heads);
+      anchorSets.set(`${ctx.projectId}\u0000${anchorKeyOf(anchor)}`, heads);
       const checked = await withCheck(ctx, items, undefined, headSnapshots, anchorSets);
       if (!checked.ok) return rejected(checked.code, checked.reason);
-      const pointer = await pointerOf(ctx.projectId, input.anchor);
+      const pointer = await pointerOf(ctx.projectId, anchor);
       if (!pointer.ok) return rejected(pointer.code, pointer.reason);
       const result: NotePageV1 = { items: checked.value.items, next, complete: next === null, pointer: pointer.value };
       return { status: 'ready', value: result };
@@ -2413,7 +2467,9 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
      */
     async listCurrentVersions(ctx, input) {
       try {
-        const paged = await pageAnchorHeads(deps.records, ctx, input);
+        const anchorRead = await requestAnchorOf(ctx, input.anchor);
+        if (!anchorRead.ok) return rejected(anchorRead.code, anchorRead.reason);
+        const paged = await pageAnchorHeads(deps.records, ctx, { ...input, anchor: anchorRead.value });
         if (!paged.ok) return rejected(paged.code, paged.reason);
         const items: NoteVersionSnapshot[] = [];
         for (const indexed of paged.value.page) {
@@ -2570,7 +2626,15 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       if (input.noteId === undefined && input.anchor === undefined) {
         return rejected('invalid', 'conflicts needs a noteId or an anchor');
       }
-      const request = { op: 'conflicts', noteId: input.noteId ?? null, anchor: input.anchor ?? null, limit };
+      // The anchor is only read when there is no noteId; qualify it before the
+      // cursor binds it, so a page never mixes two workspaces' anchor keys.
+      let anchor: NoteAnchorV1 | undefined;
+      if (input.noteId === undefined && input.anchor !== undefined) {
+        const anchorRead = await requestAnchorOf(ctx, input.anchor);
+        if (!anchorRead.ok) return rejected(anchorRead.code, anchorRead.reason);
+        anchor = anchorRead.value;
+      }
+      const request = { op: 'conflicts', noteId: input.noteId ?? null, anchor: anchor ?? input.anchor ?? null, limit };
       const cursor = parseMemoryCursor(ctx, input.cursor, 'conflicts', request);
       if (!cursor.ok) return rejected(cursor.code, cursor.reason);
       const current = await ledgerCursor();
@@ -2593,7 +2657,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
           for (const candidate of heads.value) seen.set(candidate.noteId, candidate);
         }
       } else {
-        const anchorKey = anchorKeyOf(input.anchor!);
+        const anchorKey = anchorKeyOf(anchor!);
         const heads = await headsByAnchorKey(deps.records, ctx.projectId, anchorKey);
         if (!heads.ok) return rejected(heads.code, heads.reason);
         anchorSets.set(`${ctx.projectId}\u0000${anchorKey}`, heads.value);
@@ -2602,7 +2666,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
         }
         // R9: an anchor with no heads still owes the caller its existence answer.
         if (seen.size === 0) {
-          const exists = await anchorExistsNow(ctx, input.anchor!);
+          const exists = await anchorExistsNow(ctx, anchor!);
           if (!exists.ok) return rejected(exists.code, exists.reason);
           if (!exists.exists) return anchorNotFound(exists.anchorCandidates, exists.candidatesUnavailable);
         }
@@ -2716,7 +2780,13 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       if (input.goalId === undefined && input.anchor === undefined) {
         return rejected('invalid', 'stale needs a goalId or an anchor');
       }
-      const request = { op: 'stale', goalId: input.goalId ?? null, anchor: input.anchor ?? null, limit };
+      let anchor: NoteAnchorV1 | undefined;
+      if (input.anchor !== undefined) {
+        const anchorRead = await requestAnchorOf(ctx, input.anchor);
+        if (!anchorRead.ok) return rejected(anchorRead.code, anchorRead.reason);
+        anchor = anchorRead.value;
+      }
+      const request = { op: 'stale', goalId: input.goalId ?? null, anchor: anchor ?? null, limit };
       const cursor = parseMemoryCursor(ctx, input.cursor, 'stale', request);
       if (!cursor.ok) return rejected(cursor.code, cursor.reason);
       const current = await ledgerCursor();
@@ -2728,10 +2798,10 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       // F4: only the anchor routes seed the check's cache; the goal route reads
       // a narrower status set and must not seed the all-states goal map.
       const anchorSets = new Map<string, NoteHeadSnapshot[]>();
-      if (input.goalId !== undefined && input.anchor !== undefined) {
+      if (input.goalId !== undefined && anchor !== undefined) {
         // R6/MF6b: both fields apply (AND). Candidates come from the anchor
         // indexes, then the goal and the accepted/reviewed state are required.
-        const anchorKey = anchorKeyOf(input.anchor);
+        const anchorKey = anchorKeyOf(anchor);
         const heads = await headsByAnchorKey(deps.records, ctx.projectId, anchorKey);
         if (!heads.ok) return rejected(heads.code, heads.reason);
         anchorSets.set(`${ctx.projectId}\u0000${anchorKey}`, heads.value);
@@ -2742,7 +2812,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
         if (!heads.ok) return rejected(heads.code, heads.reason);
         candidates = heads.value;
       } else {
-        const anchorKey = anchorKeyOf(input.anchor!);
+        const anchorKey = anchorKeyOf(anchor!);
         const heads = await headsByAnchorKey(deps.records, ctx.projectId, anchorKey);
         if (!heads.ok) return rejected(heads.code, heads.reason);
         anchorSets.set(`${ctx.projectId}\u0000${anchorKey}`, heads.value);
@@ -2789,13 +2859,23 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       const match = input.match ?? 'any';
       if (match !== 'any' && match !== 'all') return rejected('invalid', 'match must be any or all');
       const isAll = rawTerms !== null && match === 'all';
+      // XP-02: a request-side anchor or path prefix is qualified by the
+      // request's workspace before it reaches any index key.
+      let anchor: NoteAnchorV1 | undefined;
+      if (input.anchor !== undefined) {
+        const anchorRead = await requestAnchorOf(ctx, input.anchor);
+        if (!anchorRead.ok) return rejected(anchorRead.code, anchorRead.reason);
+        anchor = anchorRead.value;
+      }
       // R6/MF6b: strip exactly one trailing `/`; an empty prefix is a class-1
       // shape problem. The stripped value goes into the cursor-bound request.
       let pathPrefix: string | null = null;
       if (input.pathPrefix !== undefined) {
         const stripped = input.pathPrefix.endsWith('/') ? input.pathPrefix.slice(0, -1) : input.pathPrefix;
         if (stripped.length === 0) return rejected('invalid', 'path_prefix_empty');
-        pathPrefix = stripped;
+        const prefixRead = await requestPathPrefixOf(ctx, stripped);
+        if (!prefixRead.ok) return rejected(prefixRead.code, prefixRead.reason);
+        pathPrefix = prefixRead.value;
       }
       // §11.2 shape: `related` is the strict G-02 union; with an anchor or a
       // pathPrefix it is `invalid` / `related_with_scope` (already scoped).
@@ -2804,12 +2884,13 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
         const problem = relatedShapeProblem(relatedInput);
         if (problem !== null) return rejected('invalid', problem);
       }
-      if (relatedInput !== undefined && relatedInput !== null && (input.anchor !== undefined || pathPrefix !== null)) {
+      if (relatedInput !== undefined && relatedInput !== null && (anchor !== undefined || pathPrefix !== null)) {
         return rejected('invalid', 'related_with_scope');
       }
-      const scopeInput: MemoryFindRequest = pathPrefix === null ? input : { ...input, pathPrefix };
+      const scopeInput: MemoryFindRequest = { ...input,
+        ...(anchor === undefined ? {} : { anchor }), ...(pathPrefix === null ? {} : { pathPrefix }) };
       const relatedMarker = relatedInput === undefined ? 'auto' : relatedInput;
-      const request = { op: 'find', terms: rawTerms, match, anchor: input.anchor ?? null,
+      const request = { op: 'find', terms: rawTerms, match, anchor: anchor ?? null,
         pathPrefix, kind: input.kind ?? null, topic: input.topic ?? null,
         state: input.state ?? null, limit, related: relatedMarker };
       const cursor = parseMemoryCursor(ctx, input.cursor, 'find', request);
@@ -2831,7 +2912,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
         const resolved = await resolveRelatedScope(ctx, relatedDeps, relatedInput, relatedPlans);
         if (!resolved.ok) return rejected(resolved.code, resolved.reason);
         scope = resolved.value;
-      } else if (relatedInput === undefined && input.anchor === undefined && pathPrefix === null) {
+      } else if (relatedInput === undefined && anchor === undefined && pathPrefix === null) {
         // §11.2: with an anchor or a pathPrefix the find is already scoped and
         // never segments; only an unscoped call defaults to `caller_task`.
         const resolved = await resolveRelatedScope(ctx, relatedDeps, 'auto', relatedPlans);
@@ -2866,14 +2947,14 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       // S2.3: the exact anchor set this read already loaded, handed to the check
       // so it never re-reads it (keyed exactly as the check's head cache keys).
       const anchorSets = new Map<string, NoteHeadSnapshot[]>();
-      if (input.anchor !== undefined) {
-        const key = anchorKeyOf(input.anchor);
+      if (anchor !== undefined) {
+        const key = anchorKeyOf(anchor);
         const heads = await headsByAnchorKey(deps.records, ctx.projectId, key);
         if (!heads.ok) return rejected(heads.code, heads.reason);
         anchorSets.set(`${ctx.projectId}\u0000${key}`, heads.value);
         anchorOnAnchor = heads.value.filter(head => anchorSlots(head).includes(key));
         if (anchorOnAnchor.length === 0) {
-          const exists = await anchorExistsNow(ctx, input.anchor);
+          const exists = await anchorExistsNow(ctx, anchor);
           if (!exists.ok) return rejected(exists.code, exists.reason);
           if (!exists.exists) return anchorNotFound(exists.anchorCandidates, exists.candidatesUnavailable);
         }
@@ -2891,10 +2972,10 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
         terms = decoded.match;
         rankTerms = decoded.rank;
       }
-      const scoped = terms !== null && (input.anchor !== undefined || pathPrefix !== null);
+      const scoped = terms !== null && (anchor !== undefined || pathPrefix !== null);
       // The scoped candidate source, reused by both match modes.
       const scopedSource = async (): Promise<ReadOutcome<NoteHeadSnapshot[]>> => {
-        if (input.anchor !== undefined) return { ok: true, value: anchorOnAnchor! };
+        if (anchor !== undefined) return { ok: true, value: anchorOnAnchor! };
         const heads = await headsOnPathPrefix(ctx.projectId, pathPrefix!);
         return heads;
       };
@@ -2973,7 +3054,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
             }
             ordered = ranked.ranked.map(entry => entry.head);
           }
-        } else if (input.anchor !== undefined) {
+        } else if (anchor !== undefined) {
           ordered = anchorOnAnchor!.filter(head => headInScope(head, scopeInput, currentGoalId));
         } else if (pathPrefix !== null) {
           const heads = await headsOnPathPrefix(ctx.projectId, pathPrefix);

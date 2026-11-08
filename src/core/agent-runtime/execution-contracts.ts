@@ -363,6 +363,12 @@ export type RuntimeExecutionDependencies = {
     write?: NoteWritePort;
     check?: Pick<NoteCheckPort, 'checkNotes'>;
   };
+  /**
+   * Ruling 9: the project's main workspace, for reading a Run's changed files
+   * as project paths. A failed read supplies no link inputs; absent keeps the
+   * Run's workspace as main.
+   */
+  mainWorkspaceOf?: (projectId: string) => Promise<ReadResult<string | null>>;
   /** H's one handoff entry; absent fails a Run selecting `hand_off` closed before the model. */
   handoffs?: import('./handoff-tools.js').HandoffRequestPort;
   /**

@@ -224,7 +224,7 @@ export type LineBriefV1 = {                                                 // �
 export type FromExecutedFilesV1<T> =                                        // 要用“执行改过的文件”的字段（L15）
   | { availability: 'available'; value: T; possiblyIncomplete: boolean; sourceCursor: CommitCursor | null }
   | { availability: 'unavailable'; cause: 'not_recorded' | 'read_failed'; reason: string };
-export type ExecutedFileV1 = { runRef: RunRef; path: string; certainty: 'definite' | 'possible' };
+export type ExecutedFileV1 = { runRef: RunRef; path: string; /** The Run's workspace; the producer reads it from `workspaceSnapshot.workspaceId`. */ workspaceId: string; certainty: 'definite' | 'possible' };
 export type ExecutedFilesViewV1 = FromExecutedFilesV1<ExecutedFileV1[]>;
 export type TaskDisplayFactsV1 = {
   neverRanTerminal: 'cancelled' | 'superseded' | null;
@@ -314,7 +314,7 @@ export type NodeNotesV1 =
 
 export type NodeDetailV1 =
   | { section: 'summary'; node: GraphNodeRefV1; pin: VersionPin;
-      task: (TaskHoverV1 & { plannedModules: ModuleRef[]; plannedFiles: string[]; actualFiles: ExecutedFilesViewV1;
+      task: (TaskHoverV1 & { workspaceId: string; plannedModules: ModuleRef[]; plannedFiles: string[]; actualFiles: ExecutedFilesViewV1;
         responsibleNow: LineBriefV1[]; responsibility: 'has_responsibility' | 'none' }) | null;
       group: GroupHoverV1 | null;                                           // 目标、阶段节点
       goal: { anomalyCount: LineCountV1; workingLines: LineCountV1 } | null;

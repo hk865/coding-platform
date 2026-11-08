@@ -11,8 +11,9 @@ import type { GoalAutonomyV1 } from '../../../contracts/goal-decisions.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { CatalogRepairOpV1, NoteBodyV1, ResponsibilityMoveV1 } from '../../../contracts/note.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
+import { isSafeProjectPath } from '../../../contracts/workspace-path.js';
 import { checkWorkLinkRef } from '../persistence/decision-record-codecs.js';
-import { exactKeys, safeMappingPath } from './architecture-service.js';
+import { exactKeys } from './architecture-service.js';
 import type { ArchitectureBaselineContentV1 } from './catalog-contracts.js';
 import type { AdoptedArchitectureValidation } from './catalog-record-codecs.js';
 import { readModuleRef, validateAdoptedArchitecture } from './catalog-record-codecs.js';
@@ -59,7 +60,7 @@ function parseInterface(value: unknown): CatalogInterfaceV1 | null {
   if (!isRecord(value) || !exactKeys(value, INTERFACE_KEYS)) return null;
   if (!nonEmpty(value['id']) || !nonEmpty(value['description'])) return null;
   const paths = value['paths'];
-  if (!Array.isArray(paths) || !paths.every(nonEmpty)) return null;
+  if (!Array.isArray(paths) || !paths.every(isSafeProjectPath)) return null;
   return { id: value['id'], description: value['description'], paths: [...paths] };
 }
 
@@ -69,7 +70,7 @@ function parseModule(value: unknown): ModuleDefinition | null {
   if (ref === null) return null;
   if (!nonEmpty(value['name']) || !nonEmpty(value['responsibility'])) return null;
   const paths = value['paths'];
-  if (!Array.isArray(paths) || !paths.every(nonEmpty)) return null;
+  if (!Array.isArray(paths) || !paths.every(isSafeProjectPath)) return null;
   const rawInterfaces = value['interfaces'];
   if (!Array.isArray(rawInterfaces)) return null;
   const interfaces: ModuleDefinition['interfaces'] = [];
@@ -97,7 +98,7 @@ function parseOp(value: unknown, at: string): { op: CatalogRepairOpV1 } | { prob
     case 'add_path':
     case 'remove_path':
       if (!exactKeys(value, ['op', 'moduleId', 'path'])) return badField(`must carry exactly op, moduleId and path`);
-      if (!nonEmpty(value['moduleId']) || !safeMappingPath(value['path'])) return badField('moduleId and path must name a module and a relative path');
+      if (!nonEmpty(value['moduleId']) || !isSafeProjectPath(value['path'])) return badField('moduleId and path must name a module and a project path');
       return { op: { op, moduleId: value['moduleId'], path: value['path'] } };
     case 'add_interface': {
       if (!exactKeys(value, ['op', 'moduleId', 'interface'])) return badField('must carry exactly op, moduleId and interface');
@@ -113,7 +114,7 @@ function parseOp(value: unknown, at: string): { op: CatalogRepairOpV1 } | { prob
       if (!nonEmpty(value['moduleId']) || !nonEmpty(value['interfaceId'])) return badField('moduleId and interfaceId must be non-empty strings');
       if (!('description' in value) && !('paths' in value)) return badField('needs description or paths');
       if ('description' in value && !nonEmpty(value['description'])) return badField('description must be a non-empty string');
-      if ('paths' in value && (!Array.isArray(value['paths']) || !value['paths'].every(nonEmpty))) {
+      if ('paths' in value && (!Array.isArray(value['paths']) || !value['paths'].every(isSafeProjectPath))) {
         return badField('paths must be non-empty strings');
       }
       const opValue: Extract<CatalogRepairOpV1, { op: 'set_interface' }> = {
@@ -248,7 +249,7 @@ function applyOp(catalog: AdoptedArchitecture, rules: DependencyRules, op: Catal
     case 'add_path': {
       // The final catalog validator checks only that paths are non-empty strings,
       // so the footprint rule for an added path is checked here as well.
-      if (!safeMappingPath(op.path)) return invalidOp(`${at}: path must be a relative path`);
+      if (!isSafeProjectPath(op.path)) return invalidOp(`${at}: path must be a project path`);
       const module = findModule(catalog, op.moduleId);
       if (module === undefined) return unknownModule(`${at}: module ${op.moduleId} is not in the trial catalog`);
       if (module.paths.includes(op.path)) return noopOp(`${at}: path ${op.path} is already declared`);

@@ -26,6 +26,7 @@ import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { AggregateRef, GoalDesiredState, GoalRef } from '../../../contracts/ledger.js';
 import type { ModuleRef, SessionRef, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { RunRef, RunSnapshot, TaskTriple, DispatchOutboxRef } from '../../../contracts/dispatch.js';
+import { displayProjectPath } from '../../../contracts/workspace-path.js';
 import { isUndividedModule, type AdoptedArchitecture, type ModuleContainment, type ModuleDefinition } from '../../../contracts/architecture-catalog.js';
 import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type { GraphNodeRefV1 } from '../../../contracts/graph-context.js';
@@ -177,8 +178,18 @@ type ExecutedFilesFacts =
   | { availability: 'available'; files: ExecutedFileV1[]; possiblyIncomplete: boolean; sourceCursor: CommitCursor | null }
   | { availability: 'unavailable'; cause: 'not_recorded' | 'read_failed'; reason: string };
 
+/** Every Run of this goal read in the task graph, by runId. */
+function runWorkspacesOf(runs: TaskRuns): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const group of runs.values()) {
+    for (const run of group) out.set(run.ref.runId, run.workspaceSnapshot.workspaceId);
+  }
+  return out;
+}
+
 async function readExecutedFiles(
   port: GoalExecutedFilesPort, ctx: CoreCallContext, goalRef: GoalRef,
+  workspaces: ReadonlyMap<string, string>, fallbackWorkspaceId: string,
 ): Promise<ExecutedFilesFacts> {
   const read = await port.readGoalExecutedFiles(ctx, { goalRef });
   if (read.status !== 'ready') {
@@ -190,7 +201,8 @@ async function readExecutedFiles(
     return { availability: 'unavailable', cause: 'not_recorded', reason: '执行改过的文件还没有记录（2B）' };
   }
   return { availability: 'available',
-    files: read.value.files.map((file) => ({ runRef: file.runRef, path: file.path, certainty: file.certainty })),
+    files: read.value.files.map((file) => ({ runRef: file.runRef, path: file.path,
+      workspaceId: workspaces.get(file.runRef.runId) ?? fallbackWorkspaceId, certainty: file.certainty })),
     possiblyIncomplete: read.value.possiblyIncomplete, sourceCursor: read.value.sourceCursor };
 }
 
@@ -943,7 +955,7 @@ async function moduleHover(
     : { status: 'none' };
   return { module: module.ref, parent: parentOf(module, catalog.containment),
     undivided: isUndividedModule(catalog.adopted, module.ref), name: module.name,
-    paths: module.paths, responsibility: module.responsibility,
+    paths: module.paths.map(displayProjectPath), responsibility: module.responsibility,
     maintainer,
     unfinishedTasks: { status: 'exact', value: unfinished.length },
     workingLines: { status: 'exact', value: working }, lines: { status: 'exact', value: lines.size },
@@ -1000,7 +1012,7 @@ async function assembleHover(deps: NodeDetailReaderDeps, ctx: CoreCallContext, g
   const runsRead = await readRunsByTask(deps.records, goalRef, graph.plan);
   if (runsRead.status !== 'ready') return runsRead; // item 2: propagate the shared Run failure
   const runs = runsRead.value.runs;
-  const facts = await readExecutedFiles(deps.executedFiles, ctx, goalRef);
+  const facts = await readExecutedFiles(deps.executedFiles, ctx, goalRef, runWorkspacesOf(runs), scope.workspaceId);
   const line = memoDuty(deps.line);
   // §3.11/R-03: read the catalog and every maintainer BEFORE the one brief
   // assembly, so a maintainer-only line reaches `extraSessions` and gets its brief.
@@ -1333,7 +1345,7 @@ async function readSummary(deps: NodeDetailReaderDeps, ctx: CoreCallContext, inp
   const runsRead = await readRunsByTask(deps.records, goalRef, graph.plan);
   if (runsRead.status !== 'ready') return runsRead;
   const runs = runsRead.value.runs;
-  const facts = await readExecutedFiles(deps.executedFiles, ctx, goalRef);
+  const facts = await readExecutedFiles(deps.executedFiles, ctx, goalRef, runWorkspacesOf(runs), scope.workspaceId);
   const line = memoDuty(deps.line);
   const extraSessions = input.node.kind === 'session' ? [input.node.ref] : [];
   // R-03: the module summary collects the maintainers BEFORE its one brief
@@ -1369,6 +1381,7 @@ async function readSummary(deps: NodeDetailReaderDeps, ctx: CoreCallContext, inp
       section: 'summary', node: input.node, pin: pinOf(row.ref),
       task: {
         task: row.ref, planRef: graph.plan.ref, title: row.definition.title, phase: row.effectivePhase,
+        workspaceId: scope.workspaceId,
         phaseCause: row.phaseCause ?? null, disposition: row.disposition, display: display.display,
         module: moduleOf(row), owners, participatedLines: { status: 'exact', value: (participationIndex.get(keyOf(row.ref)) ?? []).length },
         plannedModules: moduleOf(row) === null ? [] : [moduleOf(row)!],
@@ -1488,7 +1501,7 @@ async function readSection(deps: NodeDetailReaderDeps, ctx: CoreCallContext, inp
     const runsRead = await readRunsByTask(deps.records, goalRef, graph.plan);
     if (runsRead.status !== 'ready') return runsRead;
     const runs = runsRead.value.runs;
-    const facts = await readExecutedFiles(deps.executedFiles, ctx, goalRef);
+    const facts = await readExecutedFiles(deps.executedFiles, ctx, goalRef, runWorkspacesOf(runs), scope.workspaceId);
     const items: NodeRiskV1[] = [];
     for (const candidate of otherTasks(row, graph.rows)) {
       if (directEdge(row, candidate, graph.plan)) continue;

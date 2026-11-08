@@ -5,6 +5,7 @@ import {
   RouteReadError, subscribeChanges, type BootstrapReply, type CoreScope,
 } from './host-client.js';
 import { asRecord, asText } from './values.js';
+import { qualifyProjectPath } from '../contracts/workspace-path.js';
 import { createAutoRefresh, type RefreshRead, type RefreshSnapshot, type RefreshSources } from './refresh.js';
 import {
   NO_PLAN_TEXT, adaptTaskMap, adaptTaskMapCalendar, adaptTaskMapDecisionCards, adaptTaskMapDetail, adaptTaskMapTime,
@@ -405,7 +406,13 @@ async function readNodeDetail(
   const node = { kind: 'task' as const, ref: row.ref, planRef };
   const readDetailPage = (section: string, afterCursor: string | null) => client.post('graph/detail', scope,
     { goalRef, node, section, page: { afterCursor, limit: 100 } });
-  const summary = readyRouteValue<TaskMapSummaryRead>(await readDetailPage('summary', null), 'graph/detail');
+  const summaryRead = readyRouteValue<TaskMapSummaryRead>(await readDetailPage('summary', null), 'graph/detail');
+  // The Task's Goal may live in another workspace: its workspace comes from the
+  // `graph/detail` Goal read, never from the board's scope. The board scope is
+  // the main workspace the settings opened, and the adapter projects per workspace.
+  const summary: TaskMapSummaryRead = { ...summaryRead,
+    workspaceId: asText(asRecord(summaryRead.task).workspaceId),
+    mainWorkspaceId: scope.workspaceId };
   const participants: TaskMapParticipantRead[] = [];
   let cursor: string | null = null;
   for (let page = 0; page < 10; page += 1) {
@@ -431,20 +438,47 @@ async function readNodeDetail(
     || (Array.isArray(task.plannedModules) && task.plannedModules.length > 0)
     || (Array.isArray(task.plannedFiles) && task.plannedFiles.length > 0)
     || risks.some((page) => (page.items ?? []).some((item) => asRecord(asRecord(item).shared).kind === 'module'));
-  /* E3-7: the Task's distinct actual paths (summary order) against HEAD; the Host takes at most
-   * 100 (UNCOMMITTED_FILES_MAX_PATHS). A failed read only hides the numbers. */
-  const paths = actual.availability === 'available' && Array.isArray(actual.value)
-    ? [...new Set(actual.value.map((entry) => asText(asRecord(entry).path)).filter((path) => path !== ''))].slice(0, 100)
-    : [];
-  let uncommitted: TaskMapUncommittedRead = null;
-  if (paths.length > 0) {
-    try {
-      uncommitted = readyRouteValue<NonNullable<TaskMapUncommittedRead>>(await client.post('files/uncommitted', scope, {
-        workspace: { aggregateType: 'Workspace', projectId: scope.projectId, workspaceId: scope.workspaceId }, paths,
-      }), 'files/uncommitted');
-    } catch {
-      uncommitted = null;
+  /* E3-7: each actual file's path against ITS OWN workspace's HEAD; the Host takes at most 100
+   * (UNCOMMITTED_FILES_MAX_PATHS). The result is keyed by the canonical project path, the same key
+   * the adapter's rows use, so two workspaces' same-named files never share a number. A failed read
+   * only hides that workspace's numbers. */
+  const groupedPaths = new Map<string, string[]>();
+  if (actual.availability === 'available' && Array.isArray(actual.value)) {
+    for (const entry of actual.value) {
+      const file = asRecord(entry);
+      const path = asText(file.path);
+      if (path === '') continue;
+      const workspaceId = asText(file.workspaceId) || scope.workspaceId;
+      const paths = groupedPaths.get(workspaceId) ?? [];
+      if (!paths.includes(path)) paths.push(path);
+      groupedPaths.set(workspaceId, paths);
     }
+  }
+  let uncommitted: TaskMapUncommittedRead = null;
+  if (groupedPaths.size > 0) {
+    const files: NonNullable<NonNullable<TaskMapUncommittedRead>['files']> = [];
+    let repository: 'git' | 'not_git' | null = null;
+    let remaining = 100;
+    for (const [workspaceId, workspacePaths] of groupedPaths) {
+      const paths = workspacePaths.slice(0, remaining);
+      remaining -= paths.length;
+      if (paths.length === 0) break;
+      try {
+        const read = readyRouteValue<NonNullable<TaskMapUncommittedRead>>(await client.post('files/uncommitted',
+          { ...scope, workspaceId }, {
+            workspace: { aggregateType: 'Workspace', projectId: scope.projectId, workspaceId }, paths,
+          }), 'files/uncommitted');
+        if (read.repository !== 'git') continue;
+        repository = 'git';
+        for (const entry of read.files ?? []) {
+          const file = asRecord(entry);
+          files.push({ ...file, path: qualifyProjectPath(workspaceId, asText(file.path), scope.workspaceId) });
+        }
+      } catch {
+        // One workspace's failed read leaves its files without numbers.
+      }
+    }
+    uncommitted = repository === null ? null : { repository, files };
   }
   let catalog: { modules?: unknown[]; containment?: unknown } | null = null;
   if (needsCatalog) {

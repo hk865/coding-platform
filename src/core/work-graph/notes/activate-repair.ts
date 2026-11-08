@@ -9,6 +9,8 @@
  * pure predicate; no second activation entry and no second command id exists.
  */
 import type { ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
+import { catalogForWorkspace } from '../../../contracts/workspace-catalog.js';
+import { isSafeProjectPath, normalizeProjectPath, resolveStoredProjectPath } from '../../../contracts/workspace-path.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
@@ -34,7 +36,6 @@ import {
   planCatalogRevision, type CatalogRevisionDependencies,
 } from '../architecture/revision-planner.js';
 import { repairBindingDigest, repairNeedsCard } from '../architecture/repair-ops.js';
-import { safeMappingPath } from '../architecture/architecture-service.js';
 import { decodeEvidenceSnapshot } from '../persistence/evidence-record-codecs.js';
 import {
   NOTE_DISPOSITION_CHANGED_EVENT_TYPE, NOTE_EVENT_SCHEMA_VERSION, S4_NOTE_BY_REVIEW_STATUS_LOOKUP,
@@ -68,6 +69,8 @@ export type RepairActivationDependencies = {
       Promise<ReadResult<{ message: SessionMessageRecord | null }>>;
   };
   catalogRevision: Pick<CatalogRevisionDependencies, 'taskFacts' | 'responsibility' | 'duty'>;
+  /** The project's main workspace; absent treats the Run's workspace as main. */
+  mainWorkspaceOf?: (projectId: string) => Promise<ReadResult<string | null>>;
   now(): string;
   eventId(): string;
   newId(): string;
@@ -174,11 +177,14 @@ export function footprintProblem(input: {
   declared: readonly ModuleRef[];
   observation: ReadonlySet<string> | null;
   ops: readonly CatalogRepairOpV1[];
+  /** The Run workspace the catalog, changed files and observation are relative to. */
+  workspaceId: string;
+  mainWorkspaceId: string;
   approval: 'approve' | null;
 }): { kind: 'unknown'; paths: string[] } | { kind: 'outside'; paths: string[] } | null {
   const { activity, catalog, declared, observation, ops, approval } = input;
   const pathOps = ops.filter((op) => op.op === 'add_path' || op.op === 'remove_path');
-  const touchedPaths = pathOps.map((op) => normalizePath(op.path));
+  const touchedPaths = pathOps.map((op) => normalizeProjectPath(op.path));
   const counted = activity !== null && activity.facts.status === 'counted' ? activity.facts : null;
   const incomplete = counted !== null && (counted.changedFiles.possiblyIncomplete
     || counted.changedFiles.definiteOmitted > 0 || counted.changedFiles.possibleOmitted > 0);
@@ -199,17 +205,25 @@ export function footprintProblem(input: {
 
   /** The one path rule for `add_path`/`remove_path` and `add_module` paths. */
   function repairPathProblem(raw: string): void {
-    const path = normalizePath(raw);
-    if (!safeMappingPath(path)) { outside.add(path); return; }
+    const projectPath = normalizeProjectPath(raw);
+    if (!isSafeProjectPath(projectPath)) { outside.add(projectPath); return; }
+    // The changed files and the observation are the Run workspace's relative
+    // paths: resolve the stored project path to its own workspace first, and
+    // compare only when it is this Run's workspace.
+    let resolved: { workspaceId: string; path: string };
+    try { resolved = resolveStoredProjectPath(projectPath, input.mainWorkspaceId); }
+    catch { outside.add(projectPath); return; }
+    if (resolved.workspaceId !== input.workspaceId) { outside.add(projectPath); return; }
+    const path = resolved.path;
     if (definite.has(path)) return;
     // A literal path that is not a definite file is a directory prefix: it is
     // proven only when a successful observation has EVERY file under it in
     // `definite`; `.` is the root prefix and matches every relative file.
-    if (observed === null) { unknown.add(path); return; }
+    if (observed === null) { unknown.add(projectPath); return; }
     const prefix = path === '.' ? '' : path;
     for (const file of observed) {
       const under = prefix === '' || file === prefix || file.startsWith(`${prefix}/`);
-      if (under && !definite.has(file)) { outside.add(path); return; }
+      if (under && !definite.has(file)) { outside.add(projectPath); return; }
     }
   }
 
@@ -437,8 +451,23 @@ async function activateRepairWith(
       : repairReadFailure(catalogWindow);
   }
   const pinnedCatalog = catalogWindow.catalog.catalog;
-  const firstProblem = footprintProblem({ activity, catalog: pinnedCatalog, declared, observation, ops: repair.ops,
-    approval: null });
+  // The activity's changed files and the observation are the Run workspace's
+  // relative paths: project the ONE catalog onto that workspace before the
+  // footprint compares them.
+  const runWorkspaceId = run.workspaceSnapshot.workspaceId;
+  let mainWorkspaceId = runWorkspaceId;
+  if (deps.mainWorkspaceOf !== undefined) {
+    const main = await deps.mainWorkspaceOf(run.ref.projectId);
+    // A failed main read refuses the activation as `unavailable`; a ready `null`
+    // (no workspace yet) keeps the Run's workspace as main.
+    if (main.status !== 'ready') {
+      return rejected('unavailable', main.status === 'rejected' ? main.reason : 'the main workspace cannot be read');
+    }
+    mainWorkspaceId = main.value ?? runWorkspaceId;
+  }
+  const runCatalog = catalogForWorkspace(pinnedCatalog, runWorkspaceId, mainWorkspaceId);
+  const firstProblem = footprintProblem({ activity, catalog: runCatalog, declared, observation, ops: repair.ops,
+    workspaceId: runWorkspaceId, mainWorkspaceId, approval: null });
   const renamed = repair.ops.some((op) => op.op === 'set_module_name');
   const needsCard = repairNeedsCard({ structural: repair.structural, rename: renamed,
     autonomy: readGoalSettings(goal).autonomy, footprintUnknown: firstProblem?.kind === 'unknown' });
@@ -462,8 +491,8 @@ async function activateRepairWith(
     const approved = selection !== null && selection.kind === 'option' && selection.optionId === 'approve';
     if (!approved) return { status: 'not_ready', reason: 'approval_pending' };
     if (message !== null) approvalMessage = message;
-    problem = footprintProblem({ activity, catalog: pinnedCatalog, declared, observation, ops: repair.ops,
-      approval: 'approve' });
+    problem = footprintProblem({ activity, catalog: runCatalog, declared, observation, ops: repair.ops,
+      workspaceId: runWorkspaceId, mainWorkspaceId, approval: 'approve' });
   }
   if (problem !== null && problem.kind === 'unknown') return { status: 'not_ready', reason: 'footprint_unknown' };
   if (problem !== null) return { status: 'forbidden', reason: 'outside_footprint', paths: problem.paths };

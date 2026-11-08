@@ -42,7 +42,9 @@ import { NOTE_ANCHOR_LINK_QUOTA, NOTE_ANCHOR_QUOTA, NOTE_BASIS_FILE_MAX_BYTES, N
   NOTE_GOAL_QUOTA, NOTE_LINK_VERIFY_MAX, NOTE_NATIVE_READ_WAIT_MS, NOTE_PROJECT_FLOW_QUOTA, NOTE_READ_FACTS_MAX,
   NOTE_READ_FILES_MAX, NOTE_READ_PARSE_BYTES_MAX, NOTE_SIMILAR_MAX, NOTE_SIMILAR_MIN,
   NOTE_SYMBOL_RECHECK_MAX, analysedDigestsMatch } from '../model/note-contracts.js';
-import { anchorKeyOf, isSafeRelativePath, noteCheckWorkspace, signatureDigestOf, symbolRangeText, type NoteAnchorWorkspace } from '../notes/note-anchors.js';
+import { anchorKeyOf, noteCheckWorkspace, signatureDigestOf, symbolRangeText, type NoteAnchorWorkspace } from '../notes/note-anchors.js';
+import { isSafeProjectPath, qualifyProjectPath, resolveStoredProjectPath, splitWorkspacePath } from '../../../contracts/workspace-path.js';
+import { catalogForWorkspace } from '../../../contracts/workspace-catalog.js';
 import { anchorSlots } from '../notes/note-related-scope.js';
 import { foldInputOf, foldUpdateDue } from '../notes/note-update-due.js';
 import type { RawArtifactStorePort } from '../../record-store/body-ports.js';
@@ -91,6 +93,8 @@ export type NoteCheckDependencies = {
   plans?: Pick<PlanTaskPort, 'queryGoal' | 'queryTaskGraph'>;
   architecture: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'>;
   workspace?: NoteAnchorWorkspace;
+  /** The project's main workspace; absent treats the caller's workspace as main. */
+  mainWorkspaceOf?: (projectId: string) => Promise<ReadResult<string | null>>;
   /** R1: the raw artifact store; an artifact fact is an existence check only. */
   artifacts?: Pick<RawArtifactStorePort, 'read'>;
   limits?: NoteCheckLimits;
@@ -167,6 +171,8 @@ type NativeReads = {
 
 type CheckBudget = {
   reads: Map<string, PathRead>;
+  /** The project's main workspace, resolved once by `readPlanned`; stored paths are read by this. */
+  mainWorkspaceId: string;
   factsRemaining: number;
   /** R4: distinct files the call may still parse on its own, the file anchors and the link gates together. */
   symbolRechecksRemaining: number;
@@ -231,7 +237,7 @@ function newCheckCaches(): CheckCaches {
 }
 
 function newCheckBudget(limits: NoteCheckLimits): CheckBudget {
-  return { reads: new Map(), factsRemaining: limits.readFactsMax ?? NOTE_READ_FACTS_MAX,
+  return { reads: new Map(), mainWorkspaceId: '', factsRemaining: limits.readFactsMax ?? NOTE_READ_FACTS_MAX,
     symbolRechecksRemaining: limits.symbolRecheckMax ?? NOTE_SYMBOL_RECHECK_MAX,
     parseBytesRemaining: limits.readParseBytesMax ?? NOTE_READ_PARSE_BYTES_MAX, parsed: new Set(), trees: new Map(),
     natives: { sent: new Map(), settled: new Map(), expired: false, deadline: null, timer: null } };
@@ -465,20 +471,47 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
 
   /** R4: one access for these paths; an access that does not open leaves every one of them unreadable. */
   async function readBatch(ctx: CoreCallContext, budget: CheckBudget, paths: readonly string[],
-    keepText: ReadonlyMap<string, boolean>): Promise<void> {
+    keepText: ReadonlyMap<string, boolean>, mainWorkspaceId: string): Promise<void> {
     if (paths.length === 0) return;
-    const unreadable = (): void => { for (const path of paths) budget.reads.set(path, { status: 'unavailable' }); };
-    if (workspace === undefined) { unreadable(); return; }
-    let batch: Awaited<ReturnType<NoteAnchorWorkspace['readWorkspaceFiles']>>;
-    try {
-      batch = await workspace.readWorkspaceFiles(ctx, { workspace: workspaceRef(ctx), paths, maxBytes: basisFileMaxBytes });
-    } catch {
-      unreadable();
+    if (workspace === undefined) {
+      for (const path of paths) budget.reads.set(path, { status: 'unavailable' });
       return;
     }
-    if (batch.status !== 'ready') { unreadable(); return; }
-    const files = batch.value;
-    paths.forEach((path, index) => { budget.reads.set(path, fileReadOf(files[index]!, keepText.get(path) === true)); });
+    // A stored path reads its OWN workspace: a bare path is the main workspace,
+    // a prefixed one names another. Group so each workspace gets one access,
+    // then put the results back in the requested order.
+    const groups = new Map<string, { originals: string[]; relative: string[] }>();
+    for (const path of paths) {
+      let resolved: { workspaceId: string; path: string };
+      try {
+        resolved = resolveStoredProjectPath(path, mainWorkspaceId);
+      } catch {
+        budget.reads.set(path, { status: 'forbidden' });
+        continue;
+      }
+      const group = groups.get(resolved.workspaceId) ?? { originals: [], relative: [] };
+      group.originals.push(path);
+      group.relative.push(resolved.path);
+      groups.set(resolved.workspaceId, group);
+    }
+    for (const [workspaceId, group] of groups) {
+      const wctx = { ...ctx, workspaceId };
+      let batch: Awaited<ReturnType<NoteAnchorWorkspace['readWorkspaceFiles']>>;
+      try {
+        batch = await workspace.readWorkspaceFiles(wctx, { workspace: workspaceRef(wctx), paths: group.relative,
+          maxBytes: basisFileMaxBytes });
+      } catch {
+        for (const path of group.originals) budget.reads.set(path, { status: 'unavailable' });
+        continue;
+      }
+      if (batch.status !== 'ready') {
+        for (const path of group.originals) budget.reads.set(path, { status: 'unavailable' });
+        continue;
+      }
+      group.originals.forEach((path, index) => {
+        budget.reads.set(path, fileReadOf(batch.value[index]!, keepText.get(path) === true));
+      });
+    }
   }
 
   /** The file paths one item reads, in the order it reads them; `text` marks a path whose decoded text it needs. */
@@ -488,7 +521,8 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
     for (const fact of body.facts) {
       if (factsLeft.value <= 0) break;
       factsLeft.value -= 1;
-      if (fact.kind === 'file' && FILE_DIGEST.test(fact.digest) && isSafeRelativePath(fact.path)) add(fact.path, false);
+      if (fact.kind === 'file' && FILE_DIGEST.test(fact.digest) && isSafeProjectPath(fact.path)
+        && splitWorkspacePath(fact.path).path !== '.') add(fact.path, false);
     }
     for (const anchor of [body.anchor, ...body.extraAnchors]) {
       if (anchor.kind === 'file' && (anchor.deleted !== true || anchor.symbol !== undefined)) add(anchor.path, anchor.symbol !== undefined);
@@ -515,7 +549,7 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
    * when a Python/C++ locator is among them: those files first, so their lookups are on their way
    * while the rest is read and the TS files are parsed.
    */
-  async function readPlanned(ctx: CoreCallContext, bodies: readonly CheckBody[], budget: CheckBudget): Promise<void> {
+  async function readPlanned(ctx: CoreCallContext, bodies: readonly CheckBody[], budget: CheckBudget): Promise<Reject | null> {
     const keepText = new Map<string, boolean>();
     const factsLeft = { value: limits.readFactsMax ?? NOTE_READ_FACTS_MAX };
     for (const body of bodies) {
@@ -524,10 +558,27 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
     const ordered = [...keepText.keys()];
     const admitted = ordered.slice(0, limits.readFilesMax ?? NOTE_READ_FILES_MAX);
     for (const path of ordered.slice(admitted.length)) budget.reads.set(path, { status: 'exhausted' });
+    const requestWorkspaceId = ctx.workspaceId ?? '';
+    // The main workspace is read only when a path must actually be resolved: a
+    // prefixed path names its own workspace, and a bare stored path is the main
+    // workspace, so both need the caller-is-main decision. With no admitted path
+    // there is nothing to resolve and no read.
+    let mainWorkspaceId = requestWorkspaceId;
+    if (deps.mainWorkspaceOf !== undefined && admitted.length > 0) {
+      const main = await deps.mainWorkspaceOf(ctx.projectId);
+      // A failed main read makes the whole check `unavailable`; a ready `null`
+      // (no workspace yet) keeps the caller's workspace as main.
+      if (main.status !== 'ready') {
+        return okFalse('unavailable', readFailureReason(main, 'the main workspace cannot be read'));
+      }
+      mainWorkspaceId = main.value ?? requestWorkspaceId;
+    }
+    budget.mainWorkspaceId = mainWorkspaceId;
     const native = new Set(bodies.flatMap(body => nativeLocatorsOf(body).map(located => located.path)));
-    await readBatch(ctx, budget, admitted.filter(path => native.has(path)), keepText);
+    await readBatch(ctx, budget, admitted.filter(path => native.has(path)), keepText, mainWorkspaceId);
     sendNativeLookups(ctx, budget, bodies);
-    await readBatch(ctx, budget, admitted.filter(path => !native.has(path)), keepText);
+    await readBatch(ctx, budget, admitted.filter(path => !native.has(path)), keepText, mainWorkspaceId);
+    return null;
   }
 
   /** R3: a path's read in this call; every path was read, or marked past the budget, before any item is judged. */
@@ -573,8 +624,14 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
         const read = budget.reads.get(located.path);
         if (natives.sent.has(located.path) || read?.status !== 'ready' || read.textDigest === located.symbol.fileDigest) continue;
         if (!chargeParse(budget, located.path, read.sizeBytes)) continue;
-        const answer = lookup(ctx, { language: located.language, path: located.path, text: read.content!,
-          digest: read.digest, mode: 'read' });
+        // The lookup analyses one workspace: the stored path's own, with the
+        // workspace-relative path, never the caller's workspace and a prefix.
+        let resolved: { workspaceId: string; path: string };
+        try { resolved = resolveStoredProjectPath(located.path, budget.mainWorkspaceId); }
+        catch { continue; }
+        const answer = lookup({ ...ctx, workspaceId: resolved.workspaceId },
+          { language: located.language, path: resolved.path, text: read.content!,
+            digest: read.digest, mode: 'read' });
         natives.sent.set(located.path, answer);
         // An answer after the deadline is not part of this read; the process still finishes and keeps it.
         void answer.then(value => { if (!natives.expired) natives.settled.set(located.path, value); });
@@ -1310,7 +1367,8 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
   }
 
   /** L2a class 5 / §4 rule 23: the three post-write hints. */
-  async function classFiveHints(ctx: CoreCallContext, body: CheckBody, caches: CheckCaches): Promise<Outcome<NoteHintV1[]>> {
+  async function classFiveHints(ctx: CoreCallContext, body: CheckBody, mainWorkspaceId: string,
+    caches: CheckCaches): Promise<Outcome<NoteHintV1[]>> {
     const hints: NoteHintV1[] = [];
     const anchors = [body.anchor, ...body.extraAnchors];
     const moduleAnchors = anchors.filter((anchor): anchor is Extract<NoteAnchorV1, { kind: 'module' | 'interface' }> =>
@@ -1322,8 +1380,18 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
       if (!read.ok) return read;
       catalog = read.value.catalog.catalog;
     }
-    const attributedModuleOf = (path: string): string | null => catalog === null ? null
-      : mapExecutedFilesToModules(catalog, [{ path, certainty: 'definite' as const }])[0]?.moduleRef?.moduleId ?? null;
+    // A stored path names its own workspace: project the ONE catalog onto that
+    // workspace and attribute the workspace-relative path there. The project
+    // catalog never decides a second workspace's file (the main root `.` would
+    // swallow an unowned second-workspace path).
+    const attributedModuleOf = (path: string): string | null => {
+      if (catalog === null) return null;
+      let resolved: { workspaceId: string; path: string };
+      try { resolved = resolveStoredProjectPath(path, mainWorkspaceId); }
+      catch { return null; }
+      return mapExecutedFilesToModules(catalogForWorkspace(catalog, resolved.workspaceId, mainWorkspaceId),
+        [{ path: resolved.path, certainty: 'definite' as const }])[0]?.moduleRef?.moduleId ?? null;
+    };
 
     // R13: longest-prefix attribution; the root `"."` owns nothing. A file
     // anchor contributes its own attributed module to the anchored set.
@@ -1333,9 +1401,11 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
         const moduleId = attributedModuleOf(anchor.path);
         if (moduleId !== null) anchored.add(moduleId);
       }
-      const mapped = mapExecutedFilesToModules(catalog,
-        body.basis.files.map(file => ({ path: file.path, certainty: 'definite' as const })));
-      if (!mapped.some(entry => entry.moduleRef !== null && anchored.has(entry.moduleRef.moduleId))) {
+      const mapped = body.basis.files.flatMap(file => {
+        const moduleId = attributedModuleOf(file.path);
+        return moduleId === null ? [] : [moduleId];
+      });
+      if (!mapped.some(moduleId => anchored.has(moduleId))) {
         hints.push('basis_outside_anchor');
       }
     }
@@ -1387,7 +1457,7 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
         // R1: format before reading — a bad digest is the new
         // `invalid_file_digest`; a path outside the workspace is `forbidden`.
         if (!FILE_DIGEST.test(fact.digest)) return { ok: true, value: { kind: 'unresolved', reason: 'invalid_file_digest' } };
-        if (!isSafeRelativePath(fact.path)) return { ok: true, value: { kind: 'unresolved', reason: 'forbidden' } };
+        if (!isSafeProjectPath(fact.path) || splitWorkspacePath(fact.path).path === '.') return { ok: true, value: { kind: 'unresolved', reason: 'forbidden' } };
         // R3: the fact's path shares the call-level observation budget.
         const observed = observeForItem(budget, itemObs, fact.path, fact.digest, 'raw');
         if (observed.outcome === 'unchecked') return { ok: true, value: { kind: 'budget' } };
@@ -1635,7 +1705,7 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
       }
     }
 
-    const hintOutcome = await classFiveHints(ctx, body, caches);
+    const hintOutcome = await classFiveHints(ctx, body, budget.mainWorkspaceId, caches);
     if (!hintOutcome.ok) return hintOutcome;
     hints.push(...hintOutcome.value);
 
@@ -1740,7 +1810,8 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
 
   /** The shared pass of both entries: the bodies, the one gate read, each item, then the Host registers. */
   async function checkAll(ctx: CoreCallContext, items: readonly NoteHeadCheckItemV1[], caches: CheckCaches,
-    withSimilar: boolean, heldByRun: string | undefined): Promise<Outcome<CheckedItem[]>> {
+    withSimilar: boolean, heldByRun: string | undefined):
+  Promise<Outcome<{ items: CheckedItem[]; mainWorkspaceId: string }>> {
     const bodies: CheckBody[] = [];
     for (const item of items) {
       const body = await bodyOfItem(ctx, item);
@@ -1749,7 +1820,8 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
     }
     const budget = newCheckBudget(limits);
     try {
-      await readPlanned(ctx, bodies, budget);
+      const notPlanned = await readPlanned(ctx, bodies, budget);
+      if (notPlanned !== null) return notPlanned;
       // R3: every item's single-file work first, in item order, while the Python/C++ lookups run; then the one wait.
       const judgements = bodies.map(body => judgeItem(ctx, body, budget));
       await settleNatives(budget);
@@ -1760,7 +1832,7 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
         checked.push(outcome.value);
       }
       for (const entry of checked) registerLinkRead(ctx, entry, heldByRun);
-      return { ok: true, value: checked };
+      return { ok: true, value: { items: checked, mainWorkspaceId: budget.mainWorkspaceId } };
     } finally {
       if (budget.natives.timer !== null) clearTimeout(budget.natives.timer);
     }
@@ -1774,7 +1846,7 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
    * is kept as if it had been waited for. Failure in any form is a `failed` answer.
    */
   async function verifyDoubtful(ctx: CoreCallContext, checked: readonly CheckedItem[],
-    priority: NoteLinkVerifyV1['priority'], heldByRun: string | undefined): Promise<void> {
+    priority: NoteLinkVerifyV1['priority'], heldByRun: string | undefined, mainWorkspaceId: string): Promise<void> {
     const byNote = new Map<string, CheckedItem[]>();
     for (const entry of checked) {
       const verification = entry.result.linkVerification;
@@ -1785,13 +1857,63 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
     const links = [...byNote.keys()].sort().slice(0, NOTE_LINK_VERIFY_MAX).map(noteId => byNote.get(noteId)!);
     if (links.length === 0) return;
     const reads = links.map(entries => entries[0]!.link!.read!);
-    const groups = reads.map(read => read.parts.flatMap(part => part.status === 'doubt' && part.question !== null ? [part.question] : []));
     const verify = workspace?.verify;
-    const answered: Promise<ReferenceCheckResultV1 | null> = verify === undefined ? Promise.resolve(null)
-      : verify(ctx, { workspace: workspaceRef(ctx), priority, groups })
-        .then(result => result.status === 'ready' ? result.value : null, () => null);
-    const settled = answered.then(result => links.map((entries, index) =>
-      settleLink(ctx, entries[0]!.head, reads[index]!, result, index, heldByRun)));
+    // One analysis reads one workspace: resolve each link's question paths and
+    // send its group to that workspace's analyzer, with workspace-relative
+    // paths. A link whose two files span workspaces stays doubtful (the same
+    // rule the write side uses), and one workspace's failure keeps its links
+    // doubtful without hiding another workspace's answers.
+    const pending = links.map((entries, index) => {
+      const questions = reads[index]!.parts.flatMap(part =>
+        part.status === 'doubt' && part.question !== null ? [part.question] : []);
+      if (questions.length === 0) return null;
+      let workspaceId: string | null = null;
+      const relative: ReferenceQuestionV1[] = [];
+      for (const question of questions) {
+        let definition: { workspaceId: string; path: string };
+        let evidence: { workspaceId: string; path: string };
+        try {
+          definition = resolveStoredProjectPath(question.definition.path, mainWorkspaceId);
+          evidence = resolveStoredProjectPath(question.evidence.path, mainWorkspaceId);
+        } catch { return null; }
+        if (definition.workspaceId !== evidence.workspaceId) return null;
+        if (workspaceId !== null && workspaceId !== definition.workspaceId) return null;
+        workspaceId = definition.workspaceId;
+        relative.push({ definition: { ...question.definition, path: definition.path },
+          evidence: { ...question.evidence, path: evidence.path } });
+      }
+      return workspaceId === null ? null : { index, workspaceId, questions: relative };
+    });
+    const byWorkspace = new Map<string, { index: number; questions: ReferenceQuestionV1[] }[]>();
+    for (const item of pending) {
+      if (item === null) continue;
+      byWorkspace.set(item.workspaceId, [...(byWorkspace.get(item.workspaceId) ?? []),
+        { index: item.index, questions: item.questions }]);
+    }
+    const results = new Map<number, ReferenceCheckResultV1 | null>();
+    const requests = [...byWorkspace].map(async ([workspaceId, items]) => {
+      if (verify === undefined) return;
+      const wctx = { ...ctx, workspaceId };
+      let result: ReferenceCheckResultV1 | null;
+      try {
+        const answer = await verify(wctx, { workspace: workspaceRef(wctx), priority,
+          groups: items.map(item => item.questions) });
+        result = answer.status === 'ready' ? answer.value : null;
+      } catch {
+        result = null;
+      }
+      for (const [offset, item] of items.entries()) {
+        results.set(item.index, result === null ? null : {
+          answers: links.map((_, index) => index === item.index ? (result.answers[offset] ?? []) : []),
+          analysed: result.analysed.map(entry => ({ ...entry,
+            path: qualifyProjectPath(workspaceId, entry.path, mainWorkspaceId) })),
+          config: result.config === null ? null
+            : { path: qualifyProjectPath(workspaceId, result.config.path, mainWorkspaceId), digest: result.config.digest },
+        });
+      }
+    });
+    const settled = Promise.all(requests).then(() => links.map((entries, index) =>
+      settleLink(ctx, entries[0]!.head, reads[index]!, results.get(index) ?? null, index, heldByRun)));
     let conclusions: LinkVerificationV1[] | null;
     if (priority === 'agent') {
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -1857,8 +1979,11 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
       }
       const checked = await checkAll(ctx, items, caches, input.withSimilar === true, input.heldByRun);
       if (!checked.ok) return mapStoreFailure(checked);
-      if (input.verifyLinks !== undefined) await verifyDoubtful(ctx, checked.value, input.verifyLinks.priority, input.heldByRun);
-      return { status: 'ready', value: checked.value.map(entry => entry.result) };
+      if (input.verifyLinks !== undefined) {
+        await verifyDoubtful(ctx, checked.value.items, input.verifyLinks.priority, input.heldByRun,
+          checked.value.mainWorkspaceId);
+      }
+      return { status: 'ready', value: checked.value.items.map(entry => entry.result) };
     },
     /**
      * S2.5: the internal entry the read model uses. The heads arrive from
@@ -1892,7 +2017,7 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
       }
       const checked = await checkAll(ctx, input.items, caches, false, undefined);
       if (!checked.ok) return mapStoreFailure(checked);
-      const results = checked.value.map(entry => entry.result);
+      const results = checked.value.items.map(entry => entry.result);
       // U-3: the same caches answer the requested understanding anchors
       // (pointers, triggers and the plan), so `lookup` no longer reads its own.
       const understanding: UnderstandingStatusV1[] = [];

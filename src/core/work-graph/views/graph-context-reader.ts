@@ -40,6 +40,8 @@ import type {
 } from '../../../contracts/plan.js';
 import type { RoundSnapshot, VerificationRoundRef } from '../../../contracts/verification.js';
 import type { AdoptedArchitecture, ModuleDefinition } from '../../../contracts/architecture-catalog.js';
+import { catalogForWorkspace } from '../../../contracts/workspace-catalog.js';
+import { displayProjectPath, isSafeProjectPath, normalizeRequestProjectPath, splitWorkspacePath } from '../../../contracts/workspace-path.js';
 import type { EncodedRecord, StoreFailure } from '../../record-store/ports.js';
 import type { LookupValue } from '../../record-store/lookup-ports.js';
 import { normalizeSearchText } from '../../record-store/lookup-index.js';
@@ -84,6 +86,8 @@ export type GraphContextReaderDependencies = {
   extensions?: ContextExtensionsReaderV1;
   /** The one consistent basis read injected by the composition; absent builds the default over `records`. */
   dispatchBasis?: DispatchBasisReadPort;
+  /** The project's main workspace; absent treats the caller's workspace as main. */
+  mainWorkspaceOf?: (projectId: string) => Promise<ReadResult<string | null>>;
 };
 
 // -------------------------------------------------------------------------- //
@@ -304,21 +308,10 @@ function nodeScopeProblem(node: GraphNodeRefV1, projectId: string, workspaceId: 
         ? null : 'the Round node is outside the requested scope';
   }
 }
-/** The path grammar: no drive letter, backslash, empty segment, `.` segment or
- * `..`, no NUL; the project root is the single explicit `.` locator. */
+/** The ONE project-path grammar (a workspace-relative path or the prefixed form). */
 function pathProblem(path: unknown): string | null {
   if (typeof path !== 'string' || path.length === 0) return 'path must be a non-empty string';
-  if (path.includes('\u0000')) return 'path must not contain NUL';
-  if (path.includes('\\')) return 'path must not contain a backslash';
-  if (/^[a-zA-Z]:/.test(path)) return 'path must not carry a drive letter';
-  if (path === '.') return null;
-  const segments = path.split('/');
-  for (const segment of segments) {
-    if (segment === '') return 'path must not contain an empty segment';
-    if (segment === '.') return 'path must not contain a dot segment';
-    if (segment === '..') return 'path must not contain a parent segment';
-  }
-  return null;
+  return isSafeProjectPath(path) ? null : 'path must be a safe workspace-relative or prefixed project path';
 }
 function pageLimitProblem(limit: unknown): string | null {
   if (typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
@@ -475,6 +468,16 @@ type ReadContexts = { sessionCtx: CoreCallContext; executionCtx: CoreCallContext
 type UniverseOptions = { sessions: boolean; planHint?: PlanRevisionRef };
 
 export function createGraphContextReader(deps: GraphContextReaderDependencies): GraphContextReadPort {
+  /** The project's main workspace; a failed read is `unavailable`, never "the caller is main". */
+  async function mainWorkspaceIdFor(projectId: string, fallback: string): Promise<ReadResult<string>> {
+    if (deps.mainWorkspaceOf === undefined) return { status: 'ready', value: fallback };
+    const read = await deps.mainWorkspaceOf(projectId);
+    if (read.status !== 'ready') {
+      return rejected('unavailable', read.status === 'rejected' ? read.reason : 'the main workspace cannot be read');
+    }
+    return { status: 'ready', value: read.value ?? fallback };
+  }
+
   // The one basis reader: the composition injects the shared one; without it the default is built ONCE here
   // over the same records, with the pointer adapter's one read. A Goal card never invents a null basis.
   const readDispatchBasis: DispatchBasisReadPort = deps.dispatchBasis ?? createDispatchBasisReader({
@@ -1381,7 +1384,7 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
     return {
       node,
       name: presentation.name,
-      paths: presentation.paths,
+      paths: presentation.paths.map(displayProjectPath),
       summary: presentation.summary,
       task,
       goal,
@@ -1539,26 +1542,73 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
     };
   }
 
-  function modulesMatchingPath(universe: Universe, path: string): GraphNodeRefV1[] {
-    const modules = universe.architecture?.modules ?? [];
+  /** The request path's own workspace, projected to bare module paths. */
+  async function lookPathModules(ctx: CoreCallContext, universe: Universe, path: string):
+  Promise<ReadResult<{ modules: readonly ModuleDefinition[]; relative: string }>> {
+    const requestWorkspaceId = ctx.workspaceId ?? '';
+    const main = await mainWorkspaceIdFor(ctx.projectId, requestWorkspaceId);
+    if (main.status !== 'ready') return main;
+    // A request path is qualified first: a bare path is the request workspace, a
+    // prefixed one names its own, and a main-workspace prefix/alias is refused.
+    let qualified: string;
+    try {
+      qualified = normalizeRequestProjectPath(requestWorkspaceId, path, main.value);
+    } catch {
+      return rejected('invalid', 'the path must be a safe project path');
+    }
+    const parsed = splitWorkspacePath(qualified);
+    const workspaceId = parsed.workspaceId ?? main.value;
+    const modules = universe.architecture === null ? []
+      : catalogForWorkspace(universe.architecture, workspaceId, main.value).modules;
+    return { status: 'ready', value: { modules, relative: parsed.path } };
+  }
+
+  function modulesMatchingPath(modules: readonly ModuleDefinition[], path: string): GraphNodeRefV1[] {
     if (path === '.') return modules.map(module => ({ kind: 'module', ref: module.ref }));
     return modules.filter(module => module.paths.includes(path)).map(module => ({ kind: 'module', ref: module.ref }));
   }
 
-  /** The ONE find matcher: a node matches on its normalized name, a path it
-   * owns or its normalized summary; `.` is the root directory and owns every
-   * module. Both branches search their own candidate set through this rule. */
-  function matchedNodes(universe: Universe, candidates: readonly GraphNodeRefV1[],
-    needle: string): GraphNodeRefV1[] {
-    const ownership = longestPathOwner(universe.architecture?.modules ?? [], needle);
-    const matched: GraphNodeRefV1[] = needle === '.' ? modulesMatchingPath(universe, '.') : [];
+  /** The ONE find matcher: name/summary match on the ORIGINAL candidate set
+   * (a main-workspace search still finds a second-workspace module by name);
+   * the path branch matches only the request workspace's projected catalog.
+   * The two results are unioned. */
+  async function matchedNodes(ctx: CoreCallContext, universe: Universe,
+    candidates: readonly GraphNodeRefV1[], needle: string): Promise<ReadResult<GraphNodeRefV1[]>> {
+    const matched = new Set<GraphNodeRefV1>();
     for (const node of dedupeSort(candidates)) {
       const presentation = presentationOf(node, universe);
-      if (normalizeSearchText(presentation.name).includes(needle)) { matched.push(node); continue; }
-      if (presentation.paths.some(path => pathMatches(path, needle, ownership))) { matched.push(node); continue; }
-      if (normalizeSearchText(presentation.summary).includes(needle)) matched.push(node);
+      if (normalizeSearchText(presentation.name).includes(needle)
+        || normalizeSearchText(presentation.summary).includes(needle)) matched.add(node);
     }
-    return matched;
+    const requestWorkspaceId = ctx.workspaceId ?? '';
+    const main = await mainWorkspaceIdFor(ctx.projectId, requestWorkspaceId);
+    if (main.status !== 'ready') return main;
+    const mainWorkspaceId = main.value;
+    // A bare needle is relative to the request workspace; a prefixed one names
+    // its own workspace. A non-path search text simply matches no path.
+    let pathWorkspaceId = requestWorkspaceId;
+    let relativeNeedle = needle;
+    if (isSafeProjectPath(needle)) {
+      try {
+        const qualified = normalizeRequestProjectPath(requestWorkspaceId, needle, mainWorkspaceId);
+        const parsed = splitWorkspacePath(qualified);
+        pathWorkspaceId = parsed.workspaceId ?? requestWorkspaceId;
+        relativeNeedle = normalizeSearchText(parsed.path);
+      } catch {
+        relativeNeedle = needle;
+      }
+    }
+    const projected = universe.architecture === null ? null
+      : catalogForWorkspace(universe.architecture, pathWorkspaceId, mainWorkspaceId);
+    const modules = projected?.modules ?? [];
+    const ownership = longestPathOwner(modules, relativeNeedle);
+    for (const node of modulesMatchingPath(modules, relativeNeedle)) matched.add(node);
+    for (const module of modules) {
+      if (module.paths.some(path => pathMatches(path, relativeNeedle, ownership))) {
+        matched.add({ kind: 'module', ref: module.ref });
+      }
+    }
+    return { status: 'ready', value: dedupeSort([...matched]) };
   }
 
   async function lookGraph(inputCtx: CoreCallContext, inputRequest: GraphLookRequestV1): Promise<ReadResult<GraphReadPageV1<NodeCardV1>>> {
@@ -1645,7 +1695,9 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
 
       let relationNodes: GraphNodeRefV1[];
       if (target.kind === 'path') {
-        relationNodes = modulesMatchingPath(universe, target.path);
+        const looked = await lookPathModules(ctx, universe, target.path);
+        if (looked.status !== 'ready') return propagate(looked);
+        relationNodes = modulesMatchingPath(looked.value.modules, looked.value.relative);
         if (relationNodes.length === 0) return { status: 'not_found' };
       } else {
         const node = target.node;
@@ -1708,7 +1760,9 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
     const universe = loaded.value;
     let relationNodes: GraphNodeRefV1[];
     if (target.kind === 'path') {
-      relationNodes = modulesMatchingPath(universe, target.path);
+      const looked = await lookPathModules(ctx, universe, target.path);
+      if (looked.status !== 'ready') return propagate(looked);
+      relationNodes = modulesMatchingPath(looked.value.modules, looked.value.relative);
       if (relationNodes.length === 0) return { status: 'not_found' };
     } else {
       const node = target.node;
@@ -1789,8 +1843,9 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
       if (indexes.status !== 'ready') return propagate(indexes);
       const basisKey = basisKeyOf(universe);
       if (cursorBasis !== null && cursorBasis !== basisKey) return revisionConflict(universe, ctx, goalRef);
-      const matched = matchedNodes(universe, candidates, needle);
-      return pageOfMatches(universe, matched, indexes.value, scopeKey, queryKey, afterOffset, page.limit, basisKey, ctx, goalRef);
+      const matched = await matchedNodes(ctx, universe, candidates, needle);
+      if (matched.status !== 'ready') return propagate(matched);
+      return pageOfMatches(universe, matched.value, indexes.value, scopeKey, queryKey, afterOffset, page.limit, basisKey, ctx, goalRef);
     }
 
     const loaded = await loadProjectUniverse(ctx, { sessions: true });
@@ -1807,8 +1862,9 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
     if (indexes.status !== 'ready') return propagate(indexes);
     const basisKey = basisKeyOf(universe);
     if (cursorBasis !== null && cursorBasis !== basisKey) return revisionConflict(universe, ctx, null);
-    const matched = matchedNodes(universe, candidates, needle);
-    return pageOfMatches(universe, matched, indexes.value, scopeKey, queryKey, afterOffset, page.limit, basisKey, ctx, goalRef);
+    const matched = await matchedNodes(ctx, universe, candidates, needle);
+    if (matched.status !== 'ready') return propagate(matched);
+    return pageOfMatches(universe, matched.value, indexes.value, scopeKey, queryKey, afterOffset, page.limit, basisKey, ctx, goalRef);
   }
 
   // ---------------------------------------------------------------------- //

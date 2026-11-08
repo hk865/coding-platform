@@ -41,7 +41,7 @@ export type SemanticReadInput = {
   limit: number;
 };
 
-export type SemanticReadDeps = Pick<NoteReadDependencies, 'records' | 'architecture'>
+export type SemanticReadDeps = Pick<NoteReadDependencies, 'records' | 'architecture' | 'mainWorkspaceOf'>
   & { check: NoteHeadCheckPort; flowCandidateMax?: number };
 
 /** One item's read-time link verification, in the order asked; `null` when the note is not a link. */
@@ -330,7 +330,9 @@ async function moduleKeys(deps: SemanticReadDeps, ctx: CoreCallContext, moduleId
     : catalog.modules.find(candidate => candidate.ref.moduleId === moduleId);
   let files: string[] = [];
   if (catalog !== null && module !== undefined) {
-    const read = await collectModuleFileKeys({ records: deps.records, relatedFilesMax: 0 }, ctx, catalog, module);
+    const read = await collectModuleFileKeys({ records: deps.records,
+      ...(deps.mainWorkspaceOf === undefined ? {} : { mainWorkspaceOf: deps.mainWorkspaceOf }),
+      relatedFilesMax: 0 }, ctx, catalog, module);
     if (!read.ok) return read;
     files = read.value;
   }

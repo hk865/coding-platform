@@ -24,6 +24,8 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import type { ModuleRef, SessionRef } from '../../../contracts/core/identity.js';
 import type { AdoptedArchitecture } from '../../../contracts/architecture-catalog.js';
+import { catalogForWorkspace } from '../../../contracts/workspace-catalog.js';
+import { WORKSPACE_PROJECT_PATH_PREFIX, normalizeProjectPath, resolveStoredProjectPath } from '../../../contracts/workspace-path.js';
 import type { NoteAnchorV1, NoteHeadSnapshot, NoteSourceV1 } from '../../../contracts/note.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
@@ -45,6 +47,8 @@ export type ScribeScopeDependencies = {
   sessions: Pick<SessionDirectoryPort, 'findSessions'>;
   architecture: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'>;
   duties: NoteDutyResolver;
+  /** The project's main workspace; absent treats the caller's workspace as main. */
+  mainWorkspaceOf?: (projectId: string) => Promise<ReadResult<string | null>>;
 };
 
 export type ScribeScopeRefusal = { code: 'forbidden' | 'unavailable'; reason: string };
@@ -55,7 +59,7 @@ export type ScribeScopeRefusal = { code: 'forbidden' | 'unavailable'; reason: st
  * down. It never outlives the call; there is no module-level or `ctx`-keyed
  * cache, so a reused Run context cannot leak an earlier call's facts.
  */
-export type ScribeScopeCall = { facts?: Promise<FactsOutcome> };
+export type ScribeScopeCall = { facts?: Promise<FactsOutcome>; mainWorkspaceId?: Promise<MainWorkspaceOutcome> };
 export function newScribeScopeCall(): ScribeScopeCall { return {}; }
 
 export interface ScribeScope extends NoteScopeReadPort {
@@ -94,18 +98,32 @@ function sameScope(left: NoteScopeV1, right: NoteScopeV1): boolean {
   return true;
 }
 
-/** L5/P6: file anchors map to a module by the shared longest-legal-prefix ownership rule (RW-13). */
-export function moduleOfAnchor(catalog: AdoptedArchitecture | null, anchor: NoteAnchorV1): string | null {
+/**
+ * L5/P6: file anchors map to a module by the shared longest-legal-prefix
+ * ownership rule (RW-13). With `mainWorkspaceId` the path is read in its own
+ * workspace and the ONE catalog is projected onto that workspace first; absent
+ * (or a project with no workspace yet) keeps the caller's workspace as main.
+ */
+export function moduleOfAnchor(catalog: AdoptedArchitecture | null, anchor: NoteAnchorV1,
+  mainWorkspaceId?: string | null): string | null {
   if (anchor.kind === 'module' || anchor.kind === 'interface') return anchor.moduleId;
   if (anchor.kind !== 'file' || catalog === null) return null;
-  const ownership = pathOwnershipOf(anchor.path,
-    catalog.modules.map(definition => ({ value: definition.ref.moduleId, paths: definition.paths })));
+  let path = anchor.path;
+  let projected = catalog;
+  if (mainWorkspaceId !== undefined && mainWorkspaceId !== null) {
+    const resolved = resolveStoredProjectPath(normalizeProjectPath(anchor.path), mainWorkspaceId);
+    path = resolved.path;
+    projected = catalogForWorkspace(catalog, resolved.workspaceId, mainWorkspaceId);
+  }
+  const ownership = pathOwnershipOf(path,
+    projected.modules.map(definition => ({ value: definition.ref.moduleId, paths: definition.paths })));
   return ownership.status === 'owner' ? ownership.owner : null;
 }
 
 /** A goal-only scribe's own row cannot resolve until the goal scope exists; every other row is known. */
 type SessionScopeFactsV1 = { state: 'known'; scopes: readonly NoteScopeV1[] }
   | { state: 'unavailable'; reason: 'goal_scope_pending' };
+type MainWorkspaceOutcome = { ok: true; value: string | null } | { ok: false; reason: string };
 type ScribeFacts = {
   catalog: AdoptedArchitecture | null;
   regions: Set<string>;
@@ -205,8 +223,9 @@ async function deriveFacts(ctx: CoreCallContext, deps: ScribeScopeDependencies):
 }
 
 /** P6(d): the deepest scribe scope containing every anchor (goal-class anchors only count for a goal scribe; none in 4A). */
-function managingScopeOfAnchors(facts: ScribeFacts, anchors: readonly NoteAnchorV1[]): NoteScopeV1 {
-  if (anchors.some(anchor => anchorClassOf(anchor) === 'project')) return { kind: 'project' };
+async function managingScopeOfAnchors(facts: ScribeFacts, anchors: readonly NoteAnchorV1[],
+  resolveMainWorkspace: () => Promise<MainWorkspaceOutcome>): Promise<ReadResult<NoteScopeV1>> {
+  if (anchors.some(anchor => anchorClassOf(anchor) === 'project')) return { status: 'ready', value: { kind: 'project' } };
   const goals = new Set<string>();
   const moduleAnchors: NoteAnchorV1[] = [];
   for (const anchor of anchors) {
@@ -215,22 +234,32 @@ function managingScopeOfAnchors(facts: ScribeFacts, anchors: readonly NoteAnchor
     else if (cls === 'module') moduleAnchors.push(anchor);
   }
   if (goals.size > 0) {
-    if (moduleAnchors.length > 0 || goals.size > 1) return { kind: 'project' };
+    if (moduleAnchors.length > 0 || goals.size > 1) return { status: 'ready', value: { kind: 'project' } };
     const goalId = [...goals][0]!;
     const held = [...facts.scopesBySession.values()].some(candidate => candidate.state === 'known'
       && candidate.scopes.some(scope => scope.kind === 'goal' && scope.goalId === goalId));
-    return held ? { kind: 'goal', goalId } : { kind: 'project' };
+    return { status: 'ready', value: held ? { kind: 'goal', goalId } : { kind: 'project' } };
   }
-  if (facts.regions.size === 0) return { kind: 'project' };
+  if (facts.regions.size === 0) return { status: 'ready', value: { kind: 'project' } };
   const modules: string[] = [];
+  // A stored file path resolves in its own workspace only when it carries a
+  // workspace prefix; a bare stored path is the main workspace, whose projected
+  // catalog is the whole catalog. Module/interface anchors never read a path.
+  let mainWorkspaceId: string | null = null;
+  if (moduleAnchors.some(anchor => anchor.kind === 'file'
+    && anchor.path.startsWith(WORKSPACE_PROJECT_PATH_PREFIX))) {
+    const main = await resolveMainWorkspace();
+    if (!main.ok) return { status: 'rejected', code: 'unavailable', reason: main.reason };
+    mainWorkspaceId = main.value;
+  }
   for (const anchor of moduleAnchors) {
-    const moduleId = moduleOfAnchor(facts.catalog, anchor);
-    if (moduleId === null) return { kind: 'project' };
+    const moduleId = moduleOfAnchor(facts.catalog, anchor, mainWorkspaceId);
+    if (moduleId === null) return { status: 'ready', value: { kind: 'project' } };
     modules.push(moduleId);
   }
-  if (modules.length === 0) return { kind: 'project' };
+  if (modules.length === 0) return { status: 'ready', value: { kind: 'project' } };
   const best = deepestContainingRegion(facts.catalog, [...facts.regions], modules);
-  return best === null ? { kind: 'project' } : { kind: 'region', moduleId: best };
+  return { status: 'ready', value: best === null ? { kind: 'project' } : { kind: 'region', moduleId: best } };
 }
 
 type HeadsOutcome = { ok: true; heads: NoteHeadSnapshot[] } | { ok: false; code: ReadFailureCode; reason: string };
@@ -249,6 +278,30 @@ export function createScribeScope(deps: ScribeScopeDependencies): ScribeScope {
       call.facts = cached;
     }
     return cached;
+  }
+
+  /** The main workspace, read at most once per call and only when a stored file
+   *  path carries a workspace prefix and must be resolved; a ready `null` (no
+   *  workspace yet) keeps the caller's workspace as main. */
+  function mainWorkspaceForAnchors(call: ScribeScopeCall, ctx: CoreCallContext): Promise<MainWorkspaceOutcome> {
+    let read = call.mainWorkspaceId;
+    if (read === undefined) {
+      read = (async (): Promise<MainWorkspaceOutcome> => {
+        if (deps.mainWorkspaceOf === undefined) return { ok: true, value: null };
+        try {
+          const main = await deps.mainWorkspaceOf(ctx.projectId);
+          if (main.status !== 'ready') {
+            return { ok: false,
+              reason: main.status === 'rejected' ? main.reason : 'the main workspace cannot be read' };
+          }
+          return { ok: true, value: main.value };
+        } catch {
+          return { ok: false, reason: 'the main workspace cannot be read' };
+        }
+      })();
+      call.mainWorkspaceId = read;
+    }
+    return read;
   }
 
   async function goalIdsOf(ctx: CoreCallContext): Promise<{ ok: true; goalIds: string[] } | { ok: false; code: ReadFailureCode; reason: string }> {
@@ -315,7 +368,7 @@ export function createScribeScope(deps: ScribeScopeDependencies): ScribeScope {
     const relationRead = await relationAnchorsOf(head);
     if (!relationRead.ok) return { status: 'rejected', code: relationRead.code, reason: relationRead.reason };
     const anchors = [head.anchor, ...head.extraAnchors, ...relationRead.anchors];
-    return result(managingScopeOfAnchors(factsRead.facts, anchors));
+    return managingScopeOfAnchors(factsRead.facts, anchors, () => mainWorkspaceForAnchors(call, ctx));
   }
 
   return {
@@ -336,7 +389,9 @@ export function createScribeScope(deps: ScribeScopeDependencies): ScribeScope {
         const relationRead = await relationAnchorsOf(head);
         if (!relationRead.ok) return { status: 'rejected', code: relationRead.code, reason: relationRead.reason };
         const anchors = [head.anchor, ...head.extraAnchors, ...relationRead.anchors];
-        if (sameScope(managingScopeOfAnchors(factsRead.facts, anchors), input.scope)) current += 1;
+        const managing = await managingScopeOfAnchors(factsRead.facts, anchors, () => mainWorkspaceForAnchors(call, ctx));
+        if (managing.status !== 'ready') return managing;
+        if (sameScope(managing.value, input.scope)) current += 1;
       }
       return result({ scope: input.scope, current });
     },
@@ -352,6 +407,15 @@ export function createScribeScope(deps: ScribeScopeDependencies): ScribeScope {
       const scopes = entry.scopes;
       if (scopes.length === 0) return { code: 'forbidden', reason: 'anchor_out_of_scope' };
       if (scopes.some(scope => scope.kind === 'project')) return null;
+      // Only a prefixed stored file path must be resolved in its own workspace;
+      // a bare one projects onto the whole catalog.
+      let mainWorkspaceId: string | null = null;
+      if (anchors.some(anchor => anchor.kind === 'file'
+        && anchor.path.startsWith(WORKSPACE_PROJECT_PATH_PREFIX))) {
+        const main = await mainWorkspaceForAnchors(call, ctx);
+        if (!main.ok) return { code: 'unavailable', reason: main.reason };
+        mainWorkspaceId = main.value;
+      }
       for (const anchor of anchors) {
         const cls = anchorClassOf(anchor);
         if (cls === 'goal') {
@@ -361,7 +425,7 @@ export function createScribeScope(deps: ScribeScopeDependencies): ScribeScope {
           return { code: 'forbidden', reason: 'anchor_out_of_scope' };
         }
         if (cls !== 'module') return { code: 'forbidden', reason: 'anchor_out_of_scope' };
-        const moduleId = moduleOfAnchor(facts.catalog, anchor);
+        const moduleId = moduleOfAnchor(facts.catalog, anchor, mainWorkspaceId);
         if (moduleId === null) return { code: 'forbidden', reason: 'anchor_out_of_scope' };
         const admitted = scopes.some(scope => scope.kind === 'region' && regionContains(facts.catalog, scope.moduleId, moduleId));
         if (!admitted) return { code: 'forbidden', reason: 'anchor_out_of_scope' };
@@ -385,7 +449,7 @@ export function createScribeScope(deps: ScribeScopeDependencies): ScribeScope {
     async managingScopeOfAnchors(ctx, anchors, call) {
       const factsRead = await factsFor(call, ctx);
       if (!factsRead.ok) return { status: 'rejected', code: factsRead.code, reason: factsRead.reason };
-      return result(managingScopeOfAnchors(factsRead.facts, anchors));
+      return managingScopeOfAnchors(factsRead.facts, anchors, () => mainWorkspaceForAnchors(call, ctx));
     },
   };
 }

@@ -134,7 +134,7 @@ describe('E35-4 the detail', () => {
     const phases = ['ready', 'pending', 'failed', 'satisfied'];
     const graph = { plan: { stages: [], executionDag: { dependsOn: [] } }, tasks: phases.map((phase) => ({ definition: { taskId: phase, title: phase }, effectivePhase: phase, eligibility: { eligible: phase === 'ready', reasons: [] } })) };
     const owners = adaptTaskMap(value('goals/read'), graph, value('goals/display'), { hover: { tasks: phases.map((phase) => ({ task: { taskId: phase }, owners: [] })) } }).dag.owners;
-    const detail = (state: string) => adaptTaskMapDetail({ section: 'summary', task: { task: { taskId: 't' }, responsibility: 'none' } } as TaskMapSummaryRead, [], null, null, state)!.owner;
+    const detail = (state: string) => adaptTaskMapDetail({ section: 'summary', workspaceId: 'scene', mainWorkspaceId: 'scene', task: { task: { taskId: 't' }, responsibility: 'none' } } as TaskMapSummaryRead, [], null, null, state)!.owner;
     const data = sceneData(); delete data.dag.owners.T01;
     const { vals } = sceneView([], data);
     vals().dag.nodes.find((n) => n.id === 'task:T01')!.hover();

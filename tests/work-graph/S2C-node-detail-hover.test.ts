@@ -29,10 +29,10 @@ describe.each(['memory', 'sqlite'] as const)('2C-30 graph hover (%s)', (kind) =>
 
     const files = { availability: 'available' as const, possiblyIncomplete: false, sourceCursor: null,
       files: [
-        { runRef: r1.runRef, path: 'm/a.ts', certainty: 'definite' as const },
-        { runRef: r1.runRef, path: 'm/b.ts', certainty: 'possible' as const },
-        { runRef: r2.runRef, path: 'm/b.ts', certainty: 'definite' as const },
-        { runRef: r2.runRef, path: 'm/c.ts', certainty: 'possible' as const },
+        { runRef: r1.runRef, workspaceId: 's2c-d-workspace', path: 'm/a.ts', certainty: 'definite' as const },
+        { runRef: r1.runRef, workspaceId: 's2c-d-workspace', path: 'm/b.ts', certainty: 'possible' as const },
+        { runRef: r2.runRef, workspaceId: 's2c-d-workspace', path: 'm/b.ts', certainty: 'definite' as const },
+        { runRef: r2.runRef, workspaceId: 's2c-d-workspace', path: 'm/c.ts', certainty: 'possible' as const },
       ] };
     const { reader, line } = nodeReaderOf(fixture, { executedFiles: scriptedExecutedFiles(files) });
 
@@ -112,7 +112,7 @@ describe.each(['memory', 'sqlite'] as const)('2C-30 graph hover (%s)', (kind) =>
     const written = await fixture.claim('task-a', writer);
     const { reader } = nodeReaderOf(fixture, { executedFiles: scriptedExecutedFiles({
       availability: 'available', possiblyIncomplete: false, sourceCursor: null,
-      files: [{ runRef: written.runRef, path: 'm/a.ts', certainty: 'definite' }] }) });
+      files: [{ runRef: written.runRef, workspaceId: 's2c-d-workspace', path: 'm/a.ts', certainty: 'definite' }] }) });
     const hover = await reader.readGraphHover(fixture.ctx, { goalRef: fixture.goalRef });
     expect(hover.status).toBe('ready');
     if (hover.status !== 'ready') throw new Error(JSON.stringify(hover));

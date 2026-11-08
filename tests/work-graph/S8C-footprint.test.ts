@@ -86,7 +86,8 @@ const CASES: readonly { name: string; activity: RunActivitySnapshot | null; obse
 describe('S8C G3 R5 footprint predicate', () => {
   it.each(CASES)('R5: $name', testCase => {
     const result = footprintProblem({ activity: testCase.activity, catalog: catalog(), declared: [ref('M')],
-      observation: testCase.observation, ops: testCase.ops, approval: testCase.approval });
+      observation: testCase.observation, ops: testCase.ops, workspaceId: 'ws1', mainWorkspaceId: 'ws1',
+      approval: testCase.approval });
     if (testCase.expected === null) expect(result).toBeNull();
     else expect(result).toMatchObject({ ...testCase.expected, paths: testCase.paths ?? [] });
   });

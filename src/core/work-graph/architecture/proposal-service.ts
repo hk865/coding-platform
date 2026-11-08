@@ -17,6 +17,8 @@ import type {
   ProposeArchitectureRevisionInputV1,
 } from '../../../contracts/architecture-proposal.js';
 import type { ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
+import type { CatalogRepairOpV1 } from '../../../contracts/note.js';
+import { qualifyProjectPath } from '../../../contracts/workspace-path.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import { principalIdentity } from '../../../contracts/core/call-context.js';
@@ -111,6 +113,8 @@ export type ProposalServiceDeps = CatalogRevisionDependencies & {
   runFacts: ProposalRunFactResolver;
   /** The `query_run` proposer's facts (the planning QueryRun resolver's `readProposerFacts`). */
   queryRunFacts: ProposalQueryRunFactResolver;
+  /** The project's main workspace; absent treats the caller's workspace as main. */
+  mainWorkspaceOf?: (projectId: string) => Promise<ReadResult<string | null>>;
 };
 
 export type ArchitectureProposalService = {
@@ -697,6 +701,29 @@ Promise<ReadResult<{ sessionRef: SessionRef; role: RoleConfigurationRef }> | Cor
 // The four public entries (bare form; the factory binds deps)
 // --------------------------------------------------------------------------
 
+/** Write-side path qualification for every op that declares module/interface paths. */
+export function qualifyOps(ops: readonly CatalogRepairOpV1[], requestWorkspaceId: string,
+  mainWorkspaceId: string): CatalogRepairOpV1[] {
+  const qualify = (path: string): string => qualifyProjectPath(requestWorkspaceId, path, mainWorkspaceId);
+  const qualifyPaths = (paths: readonly string[]): string[] => paths.map(qualify);
+  return ops.map(op => {
+    switch (op.op) {
+      case 'add_module':
+        return { ...op, module: { ...op.module, paths: qualifyPaths(op.module.paths),
+          interfaces: op.module.interfaces.map(iface => ({ ...iface, paths: qualifyPaths(iface.paths) })) } };
+      case 'add_path':
+      case 'remove_path':
+        return { ...op, path: qualify(op.path) };
+      case 'add_interface':
+        return { ...op, interface: { ...op.interface, paths: qualifyPaths(op.interface.paths) } };
+      case 'set_interface':
+        return op.paths === undefined ? op : { ...op, paths: qualifyPaths(op.paths) };
+      default:
+        return op;
+    }
+  });
+}
+
 export async function proposeArchitectureRevision(deps: ProposalServiceDeps, ctx: CoreCallContext,
   input: ProposeArchitectureRevisionInputV1 & { commandId: string }): Promise<ProposalResult> {
   if (!isRecord(input)) return rejected('invalid', 'a proposal requires an input object');
@@ -716,6 +743,20 @@ export async function proposeArchitectureRevision(deps: ProposalServiceDeps, ctx
   if (ctx.principal.kind !== 'work_run' && ctx.principal.kind !== 'query_run') {
     return rejected('forbidden', 'a structural proposal is written by an adviser Work Run or a role_exploration QueryRun');
   }
+  // The proposal owner may live in the main workspace while an exploration
+  // Query reads a second one; the module paths belong to the CALLER's workspace.
+  const requestWorkspaceId = ctx.workspaceId ?? '';
+  let mainWorkspaceId = requestWorkspaceId;
+  if (deps.mainWorkspaceOf !== undefined) {
+    const main = await deps.mainWorkspaceOf(ctx.projectId);
+    // A failed main read refuses the proposal as `unavailable`; a ready `null`
+    // (no workspace yet) keeps the caller's workspace as main.
+    if (main.status !== 'ready') {
+      return rejected('unavailable', main.status === 'rejected' ? main.reason : 'the main workspace cannot be read');
+    }
+    mainWorkspaceId = main.value ?? requestWorkspaceId;
+  }
+  const qualifiedInput = { ...input, ops: qualifyOps(parsed.ops, requestWorkspaceId, mainWorkspaceId) };
   const keys = await proposalWriteKeys(deps, ctx, input);
   const prior = await lookupCommittedReceipt(deps.records, keys.identityKey, keys.fingerprint);
   if (prior.status === 'conflict') return rejected('idempotency_conflict', prior.reason);
@@ -730,8 +771,8 @@ export async function proposeArchitectureRevision(deps: ProposalServiceDeps, ctx
     return rejected('forbidden', 'a structural proposal is written by an adviser');
   }
 
-  const trial = await trialCatalogRevision(deps, ctx, input.baseCatalogPin, input.ops,
-    input.responsibilityMoves, input.reason, `${input.commandId}:trial`);
+  const trial = await trialCatalogRevision(deps, ctx, qualifiedInput.baseCatalogPin, qualifiedInput.ops,
+    qualifiedInput.responsibilityMoves, qualifiedInput.reason, `${input.commandId}:trial`);
   if (trial !== null) return trial.code === 'invalid' ? { status: 'invalid', reason: trial.reason } : trial;
 
   const readBatchWindow = async (): Promise<ProposalBatchWindowReadV1 | CoreRejection> => {
@@ -742,7 +783,7 @@ export async function proposeArchitectureRevision(deps: ProposalServiceDeps, ctx
     if (read.status === 'rejected') return read;
     return rejected('unavailable', `proposal batch window is not readable (${read.status})`);
   };
-  const writeWith = (verdict: ProposalBatchWindowReadV1) => writeProposal(deps, ctx, input, facts.value.sessionRef,
+  const writeWith = (verdict: ProposalBatchWindowReadV1) => writeProposal(deps, ctx, qualifiedInput, facts.value.sessionRef,
     keys, { now: deps.now(), eventId: deps.eventId() }, !verdict.open, verdict.open ? verdict.revision : null);
   let window = await readBatchWindow();
   if ('status' in window) return window;

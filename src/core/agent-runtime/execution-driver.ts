@@ -51,6 +51,7 @@ import {
 } from './unknown-call-review-tools.js';
 import { REQUEST_COMMAND_RERUN_TOOL_NAME } from './command-rerun-tools.js';
 import { commandSha256 } from '../work-graph/state/command-normalization.js';
+import { qualifyProjectPath } from '../../contracts/workspace-path.js';
 import type { RunningAdmissionGrant } from './model-admission.js';
 import type {
   CommandRerunRequestPort, CommandRerunRequestReadPort,
@@ -83,6 +84,12 @@ export type ExecutionDriverDependencies = Pick<RuntimeExecutionDependencies,
   | 'commandRerunRequests' | 'commandRecognizer' | 'admission' | 'pythonSyntax'> & {
   /** Slice 4C: the SAME `platform.notes` ports the note tools call. */
   notes?: RuntimeExecutionDependencies['notes'];
+  /**
+   * The project's main workspace, for reading changed files as project paths.
+   * A failed read supplies no link inputs; absent keeps the Run's workspace as
+   * main.
+   */
+  mainWorkspaceOf?: (projectId: string) => Promise<ReadResult<string | null>>;
   /** The same observer instance backs start and explicit observe calls. */
   observation: ExecutionObservationService;
   /**
@@ -1087,6 +1094,16 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
               if (activity.kind !== 'facts' || activity.facts.status !== 'counted') return [];
               const changed = activity.facts.changedFiles;
               const paths = [...new Set([...changed.definite, ...changed.possible])].filter(path => path !== '.');
+              // The changed paths are the Run workspace's relative paths; the note
+              // anchors are project paths. A failed main read supplies nothing
+              // (never reads the Run workspace as main).
+              const runWorkspaceId = record.run.workspaceSnapshot.workspaceId;
+              let mainWorkspaceId = runWorkspaceId;
+              if (deps.mainWorkspaceOf !== undefined) {
+                const main = await deps.mainWorkspaceOf(record.run.ref.projectId);
+                if (main.status !== 'ready') return [];
+                mainWorkspaceId = main.value ?? runWorkspaceId;
+              }
               const runCtx: CoreCallContext = { ...toolContext, signal: options.signal };
               // 121-34: the changed Python files are parsed under the fixed internal
               // Host identity; the Work Run identity cannot read the workspace.
@@ -1111,10 +1128,11 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
               // noteId -> the head version the anchor read returned.
               const heads = new Map<string, number>();
               for (const path of paths) {
+                const projectPath = qualifyProjectPath(runWorkspaceId, path, mainWorkspaceId);
                 let cursor: string | null = null;
                 do {
                   const page = await memory.memoryLookup(runCtx,
-                    { v: 1, op: 'lookup', anchor: { kind: 'file', path }, limit: 100, cursor });
+                    { v: 1, op: 'lookup', anchor: { kind: 'file', path: projectPath }, limit: 100, cursor });
                   // A file no note is anchored on holds no link.
                   if (page.status === 'rejected' && page.code === 'not_found' && page.reason === 'anchor_not_found') break;
                   if (page.status !== 'ready') return pythonInputs;

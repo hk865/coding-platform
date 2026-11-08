@@ -74,6 +74,8 @@
 
 ### 材料与架构
 做架构目录/观察/源码快照、artifact、材料授权与路径归属的去这组。
+- `workspace-path.ts` — 项目路径的唯一语法与两条读规则：`WORKSPACE_PROJECT_PATH_PREFIX`（`/@ws:`）、`isSafeWorkspaceRelativePath`、`isSafeProjectPath`、`splitWorkspacePath`、`qualifyProjectPath`、`normalizeProjectPath`、`normalizeRequestProjectPath`、`resolveStoredProjectPath`、`displayProjectPath`；主工作区路径不带前缀，第二工作区用 `encodeURIComponent(workspaceId)` 的规范前缀，别名先解码再编码，主工作区前缀在请求侧拒绝、已存侧视为坏记录。
+- `workspace-catalog.ts` — 正式架构按工作区的读时投影 `catalogForWorkspace`：保留该工作区的模块路径并去掉前缀，依赖和 containment 只留两端都保留的项；正式 catalog 仍是一份。
 - `architecture-catalog.ts` — 架构目录 DTO：`ModuleDefinition`、`AdoptedArchitecture`、`ArchitectureCatalogPinV1`、`moduleMappingsOf` 与 `isUndividedModule`（目录里只有这一个模块，且路径正好是 `.`）；R1 字段表形状 `architectureBaselineRevisionRefShape`、`architectureCatalogRefShape`、`architectureCatalogPinShape`（pin 的 `catalogRef` 必须与 `baseline.ref` 同 project/baseline/revision）。
 - `architecture-inspection.ts` — 代码图/观察清单：`CodeGraphNode`、`FormalObservedFindingV1`、`FileGraphPageV1`、`LanguageCoverageV1`、`COVERAGE_ISSUES_MAX`。
 - `architecture-observation.ts` — 自动捕获：`AUTO_CAPTURE_TRIGGERS`、`isAutoCaptureTrigger`、`ArchitectureAutoCaptureRecordV1`、`ArchitectureObservationStateV1`。
@@ -184,6 +186,8 @@
 | `CONTEXT_CALL_KINDS` **正本** | `src/contracts/graph-context.ts:31` | 十种上下文调用种类的唯一运行时列表（`ContextCallKindV1`，含 `intervention_planning` 和 `role_exploration`）。 | 解码/校验调用种类时；不要再另写一份列表。 |
 | `goalContextDigestV1` | `src/contracts/graph-context.ts:206` | Goal 上下文内容摘要。 | 比较 Goal 内容是否变化。 |
 | `pathOwnershipOf` | `src/contracts/path-ownership.ts:36` | 最长前缀路径归属，返回 owner/none/tie 与命中前缀。 | 文件到模块/范围归属；全仓唯一实现，不要另写。 |
+| `isSafeWorkspaceRelativePath`、`isSafeProjectPath`、`splitWorkspacePath`、`qualifyProjectPath`、`normalizeProjectPath`、`displayProjectPath` | `src/contracts/workspace-path.ts:21`、`:47`、`:68`、`:99`、`:122`、`:156` | 工作区相对路径与项目路径的唯一语法、解析、写侧限定、规范化和显示。 | 注记锚、模块路径、联系证据；这是唯一的正本；`architecture-record-codecs.ts` 的 `safeRelativePath` 和 `session-anomaly-codecs.ts` 的 `pathProblem` 还各留一份旧规则，在清理清单上。 |
+| `catalogForWorkspace` | `src/contracts/workspace-catalog.ts:16` | 把一份正式 catalog 投影到一个工作区（去前缀、丢别的模块、过滤依赖/containment）。 | 观测比较、提醒、W 搜索与任务图的归属；不要另写投影。 |
 | `bestModuleDirectoryPrefixLength` | `src/contracts/path-ownership.ts:93` | 候选模块路径的最佳公共目录段数。 | 归属打平后的回退排序/打分。 |
 | `validMaterialSourcePin` | `src/contracts/material-access.ts:66` | 校验材料来源 pin 的结构与摘要。 | 读取/接受 material basis 前。 |
 | `sameArtifactRef` | `src/contracts/material-access.ts:85` | 按 contentType/digest/size 比较 artifact 引用。 | artifact 去重与身份比较；artifact 引用只按这三个字段比。 |

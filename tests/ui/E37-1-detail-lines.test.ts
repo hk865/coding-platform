@@ -119,7 +119,7 @@ async function openDetail(files: unknown[], answer: unknown, wait: string): Prom
 }
 
 describe('E37-U4 the page reads files/uncommitted with the detail (spec §4.1, §5)', () => {
-  const ui = (name: string, certainty = 'definite', runId = 'r1') => ({ runRef: { runId }, path: 'src/ui/' + name, certainty });
+  const ui = (name: string, certainty = 'definite', runId = 'r1') => ({ runRef: { runId }, path: 'src/ui/' + name, workspaceId: 'scene', certainty });
   const three = [ui('x.ts'), ui('x.ts', 'definite', 'r2'), ui('y.ts', 'possible')];
   const ready = (files: File[]) => ({ status: 'ready', value: { repository: 'git', files } });
   const name = (i: number): string => 'f' + String(i).padStart(3, '0') + '.ts';

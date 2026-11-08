@@ -569,6 +569,7 @@ function nodeDetail(input: Record<string, unknown>): NodeDetailV1 {
     section: 'summary', node: graphNode, pin: { ref: planRef, revision: 1 },
     task: task === undefined ? null : {
       task: { projectId: PROJECT, goalId: GOAL, taskId }, planRef, title: task.title,
+      workspaceId: WORKSPACE,
       phase: lit<Phase>(task.phase),
       phaseCause: task.phaseCause === null ? null : { code: phaseCauseCode(task.phaseCause.code) },
       disposition: lit<Disposition>(task.disposition),

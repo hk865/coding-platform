@@ -56,7 +56,7 @@ function nodeReaderOverCatalog(fixture: NodeFixture, catalog: AdoptedArchitectur
   const reader = createNodeDetailReader({
     records: fixture.records, plans: fixture.plans, catalog: catalogPort, anomalies: fixture.anomalies,
     executedFiles: scriptedExecutedFiles({ availability: 'available', possiblyIncomplete: false, sourceCursor: null,
-      files: files.map(path => ({ runRef, path, certainty: 'definite' as const })) }),
+      files: files.map(path => ({ runRef, path, workspaceId: 's2c-d-workspace', certainty: 'definite' as const })) }),
     line: lineDeps,
     maintainerOf: async () => ({ status: 'ready' as const, value: { status: 'none' as const } }),
   });
@@ -117,9 +117,9 @@ describe('S4C RW-13 node-detail underModule caller', () => {
     const files = { availability: 'available' as const, possiblyIncomplete: false, sourceCursor: null,
       files: [
         { runRef: { aggregateType: 'Run' as const, projectId: fixture.goalRef.projectId, goalId: fixture.goalRef.goalId, runId: 'rw13-m' },
-          path: 'm/a.ts', certainty: 'definite' as const },
+          path: 'm/a.ts', workspaceId: 's2c-d-workspace', certainty: 'definite' as const },
         { runRef: { aggregateType: 'Run' as const, projectId: fixture.goalRef.projectId, goalId: fixture.goalRef.goalId, runId: 'rw13-sub' },
-          path: 'm/sub/x.ts', certainty: 'definite' as const },
+          path: 'm/sub/x.ts', workspaceId: 's2c-d-workspace', certainty: 'definite' as const },
       ] };
     const { reader } = nodeReaderOf(fixture, { executedFiles: scriptedExecutedFiles(files) });
     const hover = await reader.readGraphHover(fixture.ctx, { goalRef: fixture.goalRef });

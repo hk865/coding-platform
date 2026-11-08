@@ -51,9 +51,9 @@ describe.each(['memory', 'sqlite'] as const)('2C-27 task detail (%s)', (kind) =>
     const available = nodeReaderOf(fixture, { executedFiles: scriptedExecutedFiles({
       availability: 'available', possiblyIncomplete: false, sourceCursor: null,
       files: [
-        { runRef: runA.runRef, path: 'm/a.ts', certainty: 'definite' },
-        { runRef: runA.runRef, path: 'm/b.ts', certainty: 'possible' },
-        { runRef: runD.runRef, path: 'm/a.ts', certainty: 'definite' },
+        { runRef: runA.runRef, workspaceId: 's2c-d-workspace', path: 'm/a.ts', certainty: 'definite' },
+        { runRef: runA.runRef, workspaceId: 's2c-d-workspace', path: 'm/b.ts', certainty: 'possible' },
+        { runRef: runD.runRef, workspaceId: 's2c-d-workspace', path: 'm/a.ts', certainty: 'definite' },
       ],
     }) });
     const c = await available.reader.readNodeDetail(fixture.ctx, { goalRef: fixture.goalRef, node, section: 'summary', page });
@@ -61,8 +61,8 @@ describe.each(['memory', 'sqlite'] as const)('2C-27 task detail (%s)', (kind) =>
     if (c.status !== 'ready' || c.value.section !== 'summary') throw new Error(JSON.stringify(c));
     expect(c.value.task?.actualFiles).toEqual({ availability: 'available', possiblyIncomplete: false, sourceCursor: null,
       value: [
-        { runRef: runA.runRef, path: 'm/a.ts', certainty: 'definite' },
-        { runRef: runA.runRef, path: 'm/b.ts', certainty: 'possible' },
+        { runRef: runA.runRef, workspaceId: 's2c-d-workspace', path: 'm/a.ts', certainty: 'definite' },
+        { runRef: runA.runRef, workspaceId: 's2c-d-workspace', path: 'm/b.ts', certainty: 'possible' },
       ] });
     expect(c.value.fileRisks).toEqual({ availability: 'available', possiblyIncomplete: false, sourceCursor: null,
       value: { riskCount: { status: 'exact', value: 1 } } });
@@ -87,7 +87,7 @@ describe.each(['memory', 'sqlite'] as const)('2C-27 task detail (%s)', (kind) =>
     // possiblyIncomplete true: the file count is partial, not exact.
     const partial = nodeReaderOf(fixture, { executedFiles: scriptedExecutedFiles({
       availability: 'available', possiblyIncomplete: true, sourceCursor: null,
-      files: [{ runRef: runA.runRef, path: 'm/a.ts', certainty: 'definite' }, { runRef: runD.runRef, path: 'm/a.ts', certainty: 'definite' }],
+      files: [{ runRef: runA.runRef, workspaceId: 's2c-d-workspace', path: 'm/a.ts', certainty: 'definite' }, { runRef: runD.runRef, workspaceId: 's2c-d-workspace', path: 'm/a.ts', certainty: 'definite' }],
     }) });
     const d = await partial.reader.readNodeDetail(fixture.ctx, { goalRef: fixture.goalRef, node, section: 'summary', page });
     expect(d.status).toBe('ready');
@@ -109,8 +109,8 @@ describe.each(['memory', 'sqlite'] as const)('2C-27 task detail (%s)', (kind) =>
     const { reader } = nodeReaderOf(fixture, { executedFiles: scriptedExecutedFiles({
       availability: 'available', possiblyIncomplete: false, sourceCursor: null,
       files: [
-        { runRef: runA.runRef, path: 'm/a.ts', certainty: 'definite' },
-        { runRef: runB.runRef, path: 'm/a.ts', certainty: 'definite' },
+        { runRef: runA.runRef, workspaceId: 's2c-d-workspace', path: 'm/a.ts', certainty: 'definite' },
+        { runRef: runB.runRef, workspaceId: 's2c-d-workspace', path: 'm/a.ts', certainty: 'definite' },
       ] }) });
     const summary = await reader.readNodeDetail(fixture.ctx, { goalRef: fixture.goalRef, node, section: 'summary', page });
     expect(summary.status).toBe('ready');

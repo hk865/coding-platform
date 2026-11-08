@@ -13,6 +13,9 @@
  */
 
 import { pathOwnershipOf } from '../../contracts/path-ownership.js';
+import { catalogForWorkspace } from '../../contracts/workspace-catalog.js';
+import { displayProjectPath, qualifyProjectPath } from '../../contracts/workspace-path.js';
+import type { AdoptedArchitecture } from '../../contracts/architecture-catalog.js';
 import { revisionAssignments } from '../../contracts/plan.js';
 import { asRecord, asText, type JsonRecord } from '../values.js';
 
@@ -614,10 +617,15 @@ export function taskMapStatesAt(
 /** One `graph/detail` summary task: only the fields the panel shows. */
 export type TaskMapDetailTaskRead = {
   task: unknown; planRef?: unknown; title?: unknown; phase?: unknown; phaseCause?: unknown;
+  /** The Task's Goal workspace, supplied by the `graph/detail` read from that Goal. */
+  workspaceId?: unknown;
   disposition?: unknown; owners?: unknown; participatedLines?: unknown; failure?: unknown;
   actualFiles?: unknown; responsibleNow?: unknown; plannedModules?: unknown; plannedFiles?: unknown;
 };
-export type TaskMapSummaryRead = { section: 'summary'; task: TaskMapDetailTaskRead | null };
+/** The Task's Goal workspace and the board's main workspace are both required:
+ * a Task living in another workspace is never keyed by the board's scope. */
+export type TaskMapSummaryRead = { section: 'summary'; task: TaskMapDetailTaskRead | null;
+  workspaceId: string; mainWorkspaceId: string };
 /** One `graph/detail` `section:'risks'` page: Tasks with no edge to this one that share its module or a file. */
 export type TaskMapRiskRead = { items?: unknown[]; nextCursor?: string | null };
 
@@ -777,6 +785,43 @@ export function adaptTaskMapDetail(
     /* a module with paths: [] stays: it can be planned, and pathOwnershipOf skips it for real files */
     return [{ value: { id: asText(entry.ref?.moduleId), name: asText(entry.name) }, paths }];
   });
+  // The task map keys one row per PROJECT path: a main-workspace file stays bare,
+  // another workspace's file carries the canonical `/@ws:` prefix. Module
+  // ownership is then read on that one workspace's projection of the ONE project
+  // catalog, and only the row DTO's last step turns the key into display text.
+  const mainWorkspaceId = asText(summary.mainWorkspaceId);
+  const taskWorkspaceId = asText(task.workspaceId) || asText(summary.workspaceId);
+  const projectPathOf = (path: string, workspaceId: string): string =>
+    qualifyProjectPath(workspaceId, path, mainWorkspaceId);
+  const displayRow = (projectPath: string): { path: string; name: string } => {
+    const shown = displayProjectPath(projectPath);
+    return { path: shown, name: shown.split('/').pop() ?? shown };
+  };
+  const adopted: AdoptedArchitecture = {
+    modules: (catalog?.modules ?? []).map((entry) => ({
+      ref: { projectId: '', moduleId: asText(entry.ref?.moduleId) },
+      name: asText(entry.name), responsibility: '',
+      paths: (Array.isArray(entry.paths) ? entry.paths : []).filter((path): path is string => typeof path === 'string'),
+      interfaces: [] })),
+    dependencies: [], requireDag: false,
+    ...(catalog?.containment === undefined ? {} : {
+      containment: { parentOf: (catalog.containment.parentOf ?? []).flatMap((edge) => {
+        const parent = asText(edge.parent?.moduleId);
+        const child = asText(edge.child?.moduleId);
+        return parent === '' || child === '' ? [] : [{ parent: { projectId: '', moduleId: parent },
+          child: { projectId: '', moduleId: child } }];
+      }) } }),
+  };
+  const workspaceModules = new Map<string, typeof modules>();
+  const projectedModulesOf = (workspaceId: string): typeof modules => {
+    let cached = workspaceModules.get(workspaceId);
+    if (cached === undefined) {
+      cached = catalogForWorkspace(adopted, workspaceId, mainWorkspaceId).modules.map((module) => ({
+        value: { id: module.ref.moduleId, name: module.name }, paths: module.paths }));
+      workspaceModules.set(workspaceId, cached);
+    }
+    return cached;
+  };
   const parents = new Map<string, string>();
   for (const edge of catalog?.containment?.parentOf ?? []) {
     const parent = asText(edge.parent?.moduleId);
@@ -806,15 +851,20 @@ export function adaptTaskMapDetail(
     rows.push(row);
     groups.set(crumb, rows);
   };
-  const ownerOf = (path: string): string => {
-    const own = pathOwnershipOf(path, modules);
+  const moduleIdOfPath = (path: string, workspaceId: string): string => {
+    const own = pathOwnershipOf(path, projectedModulesOf(workspaceId));
     return own.status === 'owner' ? String(own.owner.id) : '';
   };
-  const crumbOfPath = (path: string): string => { const moduleId = ownerOf(path); return moduleId === '' ? '未归入模块' : crumbOf(moduleId); };
+  const crumbOfPath = (path: string, workspaceId: string): string => {
+    const moduleId = moduleIdOfPath(path, workspaceId);
+    return moduleId === '' ? '未归入模块' : crumbOf(moduleId);
+  };
   /* 计划要改 (prototype:3381-3383, decision 121-10): a plan that lists files names each one under its own module, in
-   * the plan's order and ahead of the other actual files; a plan without a list keeps one row per planned module. */
+   * the plan's order and ahead of the other actual files; a plan without a list keeps one row per planned module.
+   * The plan's files are the Task workspace's, so they key by their canonical project path. */
   const listed = (Array.isArray(task.plannedFiles) ? task.plannedFiles : []).map(asText).filter((path) => path !== '');
-  const inList = new Set(listed);
+  const listedProjectPaths = listed.map((path) => projectPathOf(path, taskWorkspaceId));
+  const inList = new Set(listedProjectPaths);
   const planned = new Set<string>();
   if (inList.size === 0) {
     for (const ref of Array.isArray(task.plannedModules) ? task.plannedModules : []) {
@@ -825,26 +875,36 @@ export function adaptTaskMapDetail(
       push(crumb, { path: '', name: crumb.split(' / ').pop() ?? crumb, certainty: 'planned', tag: '计划要改' });
     }
   }
-  /* E3-7: one row per file. Several Runs of the Task can name the same path; one `definite`
-   * makes it 实际改过. The first appearance keeps its place (the summary is sorted by path). */
+  /* E3-7: one row per project path. Several Runs of the Task can name the same path -- and the
+   * same relative path in two workspaces is two rows; one `definite` makes a row 实际改过.
+   * The first appearance keeps its place (the summary is sorted by path). */
   const certaintyOf = new Map<string, 'definite' | 'possible'>();
+  const fileWorkspace = new Map<string, string>();
+  const filePath = new Map<string, string>();
   for (const entry of executed) {
     const file = asRecord(entry);
     const path = asText(file.path);
     if (path === '') continue;
+    const workspaceId = asText(file.workspaceId);
+    const projectPath = projectPathOf(path, workspaceId);
     const certainty = asText(file.certainty) === 'possible' ? 'possible' : 'definite';
-    if (certaintyOf.get(path) !== 'definite') certaintyOf.set(path, certainty);
+    if (certaintyOf.get(projectPath) !== 'definite') certaintyOf.set(projectPath, certainty);
+    if (!fileWorkspace.has(projectPath)) {
+      fileWorkspace.set(projectPath, workspaceId);
+      filePath.set(projectPath, path);
+    }
   }
-  /* E3-7: how each path stands against HEAD now. No read, not_git or a path the read does not
-   * name writes no number (decision 112-3: no real value, nothing shown). */
+  /* E3-7: how each PROJECT path stands against HEAD now. The read is keyed by the same canonical
+   * project path as the rows, so two workspaces' same-named files never share a number. No read,
+   * not_git or a path the read does not name writes no number (decision 112-3). */
   const headRead = asRecord(uncommitted);
   const stateOf = new Map<string, JsonRecord>();
   if (headRead.repository === 'git' && Array.isArray(headRead.files)) {
     for (const entry of headRead.files) stateOf.set(asText(asRecord(entry).path), asRecord(entry));
   }
   /* E3-7's words for one actual file against HEAD, with this plan's outside (decision 121-10) */
-  const actualTag = (path: string, certainty: 'definite' | 'possible', outside: boolean): string => {
-    const vsHead = stateOf.get(path);
+  const actualTag = (projectPath: string, certainty: 'definite' | 'possible', outside: boolean): string => {
+    const vsHead = stateOf.get(projectPath);
     const counts = asRecord(vsHead?.lines);
     /* prototype:3381-3382: ` +a −d（未提交）`, the minus is U+2212 */
     const mark = vsHead?.state !== 'uncommitted' ? ''
@@ -853,23 +913,25 @@ export function adaptTaskMapDetail(
     return (certainty === 'definite' ? '实际改过' : '可能改过') + mark + (outside ? (mark === '' ? ' · ' : '· ') + '不在计划里' : '');
   };
   /* a listed file that ran: 计划要改 · 实际改过 (prototype:3381); one that has not: 计划要改 (prototype:3383) */
-  for (const path of listed) {
-    const certainty = certaintyOf.get(path);
-    push(crumbOfPath(path), certainty === undefined
-      ? { path, name: path.split('/').pop() ?? path, certainty: 'planned', tag: '计划要改' }
-      : { path, name: path.split('/').pop() ?? path, certainty, tag: '计划要改 · ' + actualTag(path, certainty, false) });
+  for (const [index, path] of listed.entries()) {
+    const projectPath = listedProjectPaths[index]!;
+    const certainty = certaintyOf.get(projectPath);
+    push(crumbOfPath(path, taskWorkspaceId), certainty === undefined
+      ? { ...displayRow(projectPath), certainty: 'planned', tag: '计划要改' }
+      : { ...displayRow(projectPath), certainty, tag: '计划要改 · ' + actualTag(projectPath, certainty, false) });
   }
-  for (const [path, certainty] of certaintyOf) {
-    if (inList.has(path)) continue;
-    const moduleId = ownerOf(path);
+  for (const [projectPath, certainty] of certaintyOf) {
+    if (inList.has(projectPath)) continue;
+    const path = filePath.get(projectPath) ?? projectPath;
+    const moduleId = moduleIdOfPath(path, fileWorkspace.get(projectPath) ?? taskWorkspaceId);
     /* 不在计划里 (prototype:3382): with a list, by file; without one, by module (E3-6 item 6): the file's module
      * is neither a planned module nor under one, or it has none; a plan without modules says nothing. */
     const outside = inList.size > 0 || (planned.size > 0 && !chainOf(moduleId).some((chain) => planned.has(chain.id)));
     push(moduleId === '' ? '未归入模块' : crumbOf(moduleId),
-      { path, name: path.split('/').pop() ?? path, certainty, tag: actualTag(path, certainty, outside) });
+      { ...displayRow(projectPath), certainty, tag: actualTag(projectPath, certainty, outside) });
   }
   /* E3-7: the summary's second half, from the same read (E3I:291; prototype:3389's first clause) */
-  const shown = [...certaintyOf.keys()].map((path) => stateOf.get(path)?.state);
+  const shown = [...certaintyOf.keys()].map((projectPath) => stateOf.get(projectPath)?.state);
   const filesNote = shown.includes('uncommitted') ? '工作区里还没提交的改动，可能混有别的执行的改动'
     : shown.length > 0 && shown.every((entry) => entry === 'clean') ? '工作区里没有它未提交的改动' : '';
   const lines: TaskMapNodeDetailData['participants'] = [];

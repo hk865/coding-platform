@@ -235,7 +235,7 @@ import type { LineRowV1 } from '../contracts/work-line.js';
 import type { EffectiveScopeV1 } from '../core/work-graph/state/role-scope.js';
 import type { RoleLinePositionV1 } from '../core/work-graph/state/role-line-position.js';
 import type { RoleScopeV1 } from '../contracts/role-lines.js';
-import { createRoleLineOperations, startLinesInitialRecord } from '../core/work-graph/sessions/role-line-operations.js';
+import { createRoleLineOperations, readMainWorkspace, startLinesInitialRecord } from '../core/work-graph/sessions/role-line-operations.js';
 import {
   createColdStartProposalWindow, createColdStartService, type ColdStartStagePort,
 } from '../core/work-graph/sessions/cold-start-service.js';
@@ -1590,6 +1590,19 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       duty: sessionDutyResolver,
     };
     const catalog = createArchitectureCatalogService({ records: backend.records, revision: catalogRevision });
+    // A project's main workspace is fixed when its first workspace is
+    // registered: the three `start_lines` are born in the same commit. So ONE
+    // wrapper caches the READY id per project for every injection point. A
+    // failed read and a ready `null` (no workspace yet) are not cached: the next
+    // call reads again.
+    const mainWorkspaceCache = new Map<string, string>();
+    const mainWorkspaceOf = async (projectId: string): Promise<ReadResult<string | null>> => {
+      const cached = mainWorkspaceCache.get(projectId);
+      if (cached !== undefined) return { status: 'ready', value: cached };
+      const read = await readMainWorkspace(backend.records, projectId);
+      if (read.status === 'ready' && read.value !== null) mainWorkspaceCache.set(projectId, read.value);
+      return read;
+    };
     // The ONE reader of the roles this workspace's trusted bindings serve. It reads the live configuration at call
     // time: registering a binding may replace the whole object, so a build-time snapshot would miss it.
     const readServedRoles: ServedRolesPort['readServedRoles'] = (scope) =>
@@ -1607,7 +1620,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // `mappings`, so the automatic/manual capture and the reminder read share
     // one active-catalog decision.
     const observed = createObservedArchitecture({ records: backend.records, bodies, access, workspace: workspace.tools,
-      catalog,
+      catalog, mainWorkspaceOf: mainWorkspaceOf,
       source: options.architectureSource ?? { provider: 'typescript', configPath: 'tsconfig.json' },
       ...(options.fileGraph?.chunkBytes === undefined ? {} : { fileGraph: { chunkBytes: options.fileGraph.chunkBytes } }) });
     // L8 (interface §7): the ONE writer of reminder facts. The assembler gets this
@@ -1747,6 +1760,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // composition.
     const architectureProposals = createArchitectureProposalService({
       ...catalogRevision,
+      mainWorkspaceOf: mainWorkspaceOf,
       decisionMessages: decisionMessageOwner,
       runFacts: (ctx, runRef) => noteRunFacts(ctx, runRef),
       // C1: the cold start's batch window and the exploration round's trusted proposer read.
@@ -1755,6 +1769,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     });
     const repairActivation = createRepairActivationService({
       records: backend.records,
+      mainWorkspaceOf: mainWorkspaceOf,
       observation: observed,
       decisionMessages: { readDecisionMessagePin: decisionMessageOwner.readDecisionMessagePin },
       catalogRevision,
@@ -1772,7 +1787,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // Slice 2B L13: the production composition uses the REAL executed-files
     // reader, the same `backend.records` the rest of the platform owns.
     const goalExecutedFiles = createGoalExecutedFilesReader({ records: backend.records });
-    const goalConflicts = createGoalConflictAssembler({ records: backend.records, catalog, executedFiles: goalExecutedFiles });
+    const goalConflicts = createGoalConflictAssembler({ records: backend.records, catalog, executedFiles: goalExecutedFiles,
+      mainWorkspaceOf: mainWorkspaceOf });
     // §4.2: the card sources available in this slice. Both readers are built
     // once from the SAME records/Plan-service dependency bag the Plan owner
     // uses, and the two card-source adapters wrap them into the read model's
@@ -1896,7 +1912,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       commandRerunRequestCards, messageReleaseCards, handoffApprovalCards, adviserCreationCards,
       createMemberCreationCardSource({ records: backend.records }),
       createMaintainerAssignmentCardSource({ records: backend.records }),
-      createRepairApprovalSource({ records: backend.records, observation: observed }),
+      createRepairApprovalSource({ records: backend.records, observation: observed,
+        mainWorkspaceOf: mainWorkspaceOf }),
       createStructuralProposalSource({ records: backend.records }),
       createRoleCapacityCardSource({ records: backend.records }), createRoleLineChangeCardSource({ records: backend.records })];
     const rawDecisionReads = createDecisionReadModel({
@@ -2198,6 +2215,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       hostActor: SYSTEM_ACTOR, goalSettings: rawGoalSettings, decisions: rawDecisionReads };
     const graphContextOwner = createGraphContextReader({
       records: backend.records,
+      mainWorkspaceOf: mainWorkspaceOf,
       goals: planService,
       plans: planService,
       architecture: catalog,
@@ -2409,6 +2427,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         readTaskClosure: async (_ctx, task) => readTaskClosure(backend.records,
           { aggregateType: 'Goal', projectId: task.projectId, goalId: task.goalId }, task.taskId),
         notes: noteToolDeps,
+        // Ruling 9: the driver's changed-file projection reads the SAME main
+        // workspace as every other consumer; a failed read supplies no link inputs.
+        mainWorkspaceOf: mainWorkspaceOf,
         // The one proposal owner behind `propose_architecture_revision`; the same
         // instance the answer row applies and the Host publishes.
         architectureProposals,
@@ -2572,7 +2593,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       claimQuery: (...args) => trackedCall(() => queryJobs.claimQuery(...args), unavailable),
       readQueryAnswer: (...args) => trackedCall(() => queryJobs.readQueryAnswer(...args), unavailable),
     };
-    const architectureWorkScope = createArchitectureWorkScopeReader({ records: backend.records, catalog });
+    const architectureWorkScope = createArchitectureWorkScopeReader({ records: backend.records, catalog,
+      mainWorkspaceOf: mainWorkspaceOf });
     const architecture: typeof observed & ArchitectureCatalogPort & ArchitectureWorkScopePort = {
       captureSourceChanges: (...args) => trackedCall(() => observed.captureSourceChanges(...args), unavailable),
       // L8 request record and the one public observation state (book rulings 3, 8, 12).
@@ -3003,7 +3025,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // links, the SAME duty resolver the Workflow gets, and the active catalog's
     // containment) and the L7 per-scope current count.
     const scribeScope = createScribeScope({ records: backend.records, sessions: sessionDirectory,
-      architecture: catalog, duties: sessionDutyResolver });
+      architecture: catalog, duties: sessionDutyResolver,
+      mainWorkspaceOf: mainWorkspaceOf });
     // The second tier's reference analyzer and the one Python/C++ single-file
     // lookup read the workspace through the handle's batch read with the ctx they
     // are called with, which the note module gives its platform identity. Each
@@ -3037,6 +3060,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     };
     const noteWrite: NoteService = createNoteService({
       records: backend.records,
+      mainWorkspaceOf: mainWorkspaceOf,
       plans: planService,
       runFacts: noteRunFacts,
       duties: sessionDutyResolver,
@@ -3055,6 +3079,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // `views`). The version lists live in `notes/note-version-lists.ts`.
     const noteCheck: NoteHeadCheckPort = createNoteCheck({ records: backend.records, plans: planService,
       architecture: catalog, workspace: noteWorkspace, artifacts: bodies,
+      mainWorkspaceOf: mainWorkspaceOf,
       ...(options.noteLimits === undefined ? {} : { limits: options.noteLimits }) });
     // Slice 4C-2 U6: bind the holder created beside the early message sources.
     // Rework item 6: the source now takes the note service's batched
@@ -3118,6 +3143,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     };
     const noteReads: NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPort = createNoteReadModel({ records: backend.records,
       plans: planService, architecture: catalog, workspace: noteWorkspace, check: noteCheck,
+      mainWorkspaceOf: mainWorkspaceOf,
       // Slice 4C C2.2: the concrete narrow Run resolver (one readMany) resolves a
       // work Run's own task and bound plan from the trusted principal.
       runTask: createNoteRunTaskResolver(backend.records),
@@ -3128,6 +3154,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // note reads use; it reads the one note layer, not a second owner.
     const semanticLinks: SemanticLinksReader = createSemanticLayerRead({
       records: backend.records, architecture: catalog, check: noteCheck,
+      mainWorkspaceOf: mainWorkspaceOf,
       ...(options.noteLimits?.flowCandidateMax === undefined
         ? {} : { flowCandidateMax: options.noteLimits.flowCandidateMax }) });
     // H: the assembly reads the SAME history, records, note, decision and Query
@@ -3378,6 +3405,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       splits: roleLineOperations,
       handoff: { startHandoff: (ctx, input) => rawWorkflow.sessionHandoff!.startHandoff(ctx, input) },
       records: backend.records, eventPage: rawBackend.eventPage, observed,
+      mainWorkspaceOf: mainWorkspaceOf,
       readGoal, readGoalPhase, readGoalsByProject, roleLineInputBasis,
       contextWindowOf: lineContextWindowOf,
       bindings: bindingReads, notes: { countCurrentNotes }, scribeTodos: noteScribeTodos, plans: planService,

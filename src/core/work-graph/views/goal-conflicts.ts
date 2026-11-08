@@ -36,6 +36,7 @@ import { GOAL_BY_WORKSPACE_INDEX } from '../tasks/plan-readers.js';
 import { decodeGoalPhaseSnapshot } from '../tasks/completion-record-codecs.js';
 import { goalConflictFacts } from '../state/goal-settings-machine.js';
 import { mapExecutedFilesToModules, plannedFootprintOf } from '../model/architecture-footprint.js';
+import { catalogForWorkspace } from '../../../contracts/workspace-catalog.js';
 import { goalDecisionBasis } from '../tasks/goal-basis.js';
 
 // The two shared RecordStore failure helpers live in `persistence` (the
@@ -64,6 +65,8 @@ export type GoalConflictAssemblerDependencies = {
   records: DecisionReadRecordsPort;
   catalog: ArchitectureCatalogPort;
   executedFiles: GoalExecutedFilesPort;
+  /** The project's main workspace; absent treats the Goal's workspace as main. */
+  mainWorkspaceOf?: (projectId: string) => Promise<ReadResult<string | null>>;
   /** The page width of the Goal-list lookup; absent keeps lookupAll's default 200. */
   lookupPageLimit?: number;
 };
@@ -410,10 +413,24 @@ export async function readGoalFootprint(
     ...(input.atLeastCursor === undefined ? {} : { atLeastCursor: input.atLeastCursor }) });
   if (executed.status !== 'ready') return executed;
   // Without an adopted catalog no "executed file" can be in a module: the
-  // footprint reports none, exactly as the plan reader does.
+  // footprint reports none, exactly as the plan reader does. The files are the
+  // Goal workspace's relative paths, so project the ONE catalog onto it first.
+  const goalWorkspaceId = goal.workspaceRef.workspaceId;
+  let mainWorkspaceId = goalWorkspaceId;
+  if (deps.mainWorkspaceOf !== undefined) {
+    const main = await deps.mainWorkspaceOf(goal.ref.projectId);
+    // A failed main read refuses the footprint as `unavailable`; a ready `null`
+    // (no workspace yet) keeps the Goal's workspace as main.
+    if (main.status !== 'ready') {
+      return { status: 'rejected', code: 'unavailable',
+        reason: main.status === 'rejected' ? main.reason : 'the main workspace cannot be read' };
+    }
+    mainWorkspaceId = main.value ?? goalWorkspaceId;
+  }
   const mapped = architecture === null
     ? []
-    : mapExecutedFilesToModules(architecture, executed.value.files);
+    : mapExecutedFilesToModules(catalogForWorkspace(architecture, goalWorkspaceId, mainWorkspaceId),
+      executed.value.files);
   return { status: 'ready', value: {
     goalRef: { ...goal.ref },
     planRef: goal.activePlanRevision === null ? null : { ...goal.activePlanRevision },

@@ -16,6 +16,9 @@
  */
 import { randomUUID } from 'node:crypto';
 import { moduleMappingsOf, type AdoptedArchitecture, type ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
+import { catalogForWorkspace } from '../../../contracts/workspace-catalog.js';
+import { displayProjectPath, isSafeWorkspaceRelativePath, normalizeRequestProjectPath,
+  qualifyProjectPath, splitWorkspacePath } from '../../../contracts/workspace-path.js';
 import type { ArchitectureFindRequestV1, ArchitectureFindResultV1 } from '../../../contracts/architecture-search.js';
 import type { FileGraphNodeV1, FileGraphPageNodeV1, FileGraphPageV1, FormalObservedComparisonV1,
   LanguageCoverageV1, ObservedCaptureRef, ObservationInventoryV1 } from '../../../contracts/architecture-inspection.js';
@@ -29,7 +32,7 @@ import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
 import { rejected } from '../../../contracts/core/rejections.js';
-import type { CoreError, ReadResult, ReadStamp, WriteResult } from '../../../contracts/core/results.js';
+import type { CoreError, CoreRejection, ReadResult, ReadStamp, WriteResult } from '../../../contracts/core/results.js';
 import type { PersistedSourceCaptureRef, SourceCaptureRef } from '../../../contracts/core/source.js';
 import type { SourceRefV1 } from '../../../contracts/dispatch.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
@@ -93,6 +96,8 @@ export type ObservedArchitectureDependencies = {
    * build this service directly keep compiling; an absent `mappings` with no
    * catalog is `unsupported`, never a silent `[]`. */
   catalog?: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'>;
+  /** The project's main workspace (its `start_lines` operation); absent treats the read workspace as main. */
+  mainWorkspaceOf?: (projectId: string) => Promise<ReadResult<string | null>>;
 };
 
 const MAX_PAGE = 2048;
@@ -126,14 +131,9 @@ export { exactKeys };
 function safeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
-function safeRelativePath(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0 && value.length <= 4096
-    && !/[\\:\0]/.test(value) && value.split('/').every(segment => !!segment && segment !== '.' && segment !== '..');
-}
-/** A mapping/module path additionally accepts exactly `.` (the root); a file
- * anchor and the configuration path keep the strict `safeRelativePath` check. */
+/** A mapping/module path accepts exactly `.` (the root) or the shared workspace-relative grammar. */
 export function safeMappingPath(value: unknown): value is string {
-  return value === '.' || safeRelativePath(value);
+  return value === '.' || isSafeWorkspaceRelativePath(value);
 }
 function ownJsonInput<T>(value: T, what: string): Owned<T> {
   try {
@@ -203,7 +203,7 @@ function readAnchor(value: unknown): ObservedGraphAnchor | undefined | null {
   }
   if (value['kind'] === 'file') {
     const workspace = readWorkspaceScope(value['workspace']);
-    if (workspace === null || !safeRelativePath(value['path'])) return null;
+    if (workspace === null || !isSafeWorkspaceRelativePath(value['path'])) return null;
     return { kind: 'file', workspace, path: value['path'] };
   }
   return null;
@@ -907,6 +907,17 @@ async function restoreAutoCapture(records: GoalRecordTransactionPort,
 export function createObservedArchitecture(deps: ObservedArchitectureDependencies): ObservedArchitecturePort {
   const { workspace, bodies, records, source } = deps;
 
+  /** The project's main workspace; a failed read is `unavailable`, never "the caller is main". */
+  async function mainWorkspaceIdOf(projectId: string, fallback: string):
+  Promise<{ status: 'ready'; value: string } | CoreRejection> {
+    if (deps.mainWorkspaceOf === undefined) return { status: 'ready', value: fallback };
+    const read = await deps.mainWorkspaceOf(projectId);
+    if (read.status !== 'ready') {
+      return rejected('unavailable', read.status === 'rejected' ? read.reason : 'the main workspace cannot be read');
+    }
+    return { status: 'ready', value: read.value ?? fallback };
+  }
+
   /** The one file-page sequence. It loads the frozen graph,
    * runs the caller's paging function, attaches the whole-capture language
    * coverage, and maps a bad cursor to `invalid`. Each public entry keeps its
@@ -1026,7 +1037,11 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
       if (ctx.signal.aborted) return rejected('cancelled', 'the observation was cancelled');
       if (revision.status === 'not_found') mappings = [];
       else if (revision.status === 'ready') {
-        mappings = moduleMappingsOf(revision.value.catalog.catalog);
+        // A capture is one workspace's observation: project the ONE project
+        // catalog onto that workspace and hand the provider bare relative paths.
+        const main = await mainWorkspaceIdOf(scope.projectId, scope.workspaceId);
+        if (main.status !== 'ready') return main;
+        mappings = moduleMappingsOf(catalogForWorkspace(revision.value.catalog.catalog, scope.workspaceId, main.value));
       } else if (revision.status === 'rejected') return revision;
       else return unavailable('the active architecture catalog revision is not readable');
     }
@@ -1548,15 +1563,28 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
         nodes: loaded.value.fileGraph.nodes.map(node => ({ path: node.path, digest: node.digest })) };
       previousPersistedRef = loaded.value.persistedRef;
     }
+    const mainRead = await mainWorkspaceIdOf(scope.projectId, scope.workspaceId);
+    if (mainRead.status !== 'ready') return mainRead;
+    const mainWorkspaceId = mainRead.value;
     const findings = catalog === null || latestGraph === null ? [] : compareFormalObservedGraphs({
       architecture: catalog,
       fileGraph: { nodes: latestGraph.nodes, edges: latestGraph.edges, unresolved: latestGraph.unresolved,
         languages: latestGraph.languages, complete: latestGraph.complete, inventory: latestGraph.inventory },
+      workspaceId: scope.workspaceId, mainWorkspaceId,
     });
     // Ruling 5: also check immediately before the ready return.
     if (ctx.signal.aborted) return rejected('cancelled', 'the architecture-reminder read was cancelled');
+    // The task-module rows score the observation's relative paths against the
+    // task module's declared paths, so the catalog is projected the same way a
+    // capture or search of this workspace is. A workspace with no module of its
+    // own projects to the empty module set (build §3.6: an unexplored second
+    // workspace is reported ungrouped, never guessed); the project catalog never
+    // stands in for it, or another workspace's modules would score its paths.
+    const reminderCatalog = catalog === null ? null
+      : catalogForWorkspace(catalog, scope.workspaceId, mainWorkspaceId);
     return { status: 'ready', value: {
-      state: observationStateOf(basis.value, current, previousPersistedRef), catalog, latest, previous, findings,
+      state: observationStateOf(basis.value, current, previousPersistedRef), catalog: reminderCatalog,
+      latest, previous, findings,
     } };
   }
 
@@ -1675,7 +1703,7 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
     const captureRef = readFileGraphCaptureRef(raw['captureRef']);
     if (captureRef === null) return invalid('neighbors requires an observed capture ref');
     const file = raw['file'];
-    if (!nonEmpty(file) || !safeRelativePath(file)) return invalid('neighbors requires a normalized workspace-relative file path');
+    if (!nonEmpty(file) || !isSafeWorkspaceRelativePath(file)) return invalid('neighbors requires a normalized workspace-relative file path');
     const direction = raw['direction'];
     if (direction !== 'out' && direction !== 'in') return invalid('neighbors direction must be out or in');
     const limit = raw['limit'];
@@ -1696,7 +1724,7 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
     const captureRef = readFileGraphCaptureRef(raw['captureRef']);
     if (captureRef === null) return invalid('impact requires an observed capture ref');
     const file = raw['file'];
-    if (!nonEmpty(file) || !safeRelativePath(file)) return invalid('impact requires a normalized workspace-relative file path');
+    if (!nonEmpty(file) || !isSafeWorkspaceRelativePath(file)) return invalid('impact requires a normalized workspace-relative file path');
     const depth = raw['depth'];
     if (!safeInteger(depth)) return invalid('impact depth must be a non-negative integer');
     if (depth > FILE_GRAPH_MAX_IMPACT_DEPTH) return invalid('impact depth must be at most ' + FILE_GRAPH_MAX_IMPACT_DEPTH);
@@ -1747,20 +1775,66 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
     let modules: ModuleDefinition[] = [];
     let containment: ModuleContainment | undefined;
     let catalogRevision: number | null = null;
+    const mainRead = await mainWorkspaceIdOf(ctx.projectId, workspaceId);
+    if (mainRead.status !== 'ready') return mainRead;
+    const mainWorkspaceId = mainRead.value;
+    let pathModules: readonly ModuleDefinition[] = modules;
+    let pathContainment: ModuleContainment | undefined = containment;
+    // The observed files belong to the caller's workspace; their ownership is
+    // taken on that workspace's projection, never on the whole project catalog.
+    let fileModules: readonly ModuleDefinition[] = modules;
+    let fileContainment: ModuleContainment | undefined = containment;
+    let projectCatalog: AdoptedArchitecture | null = null;
     if (deps.catalog !== undefined) {
       const revision = await deps.catalog.readArchitectureRevision(ctx, { selection: { kind: 'current' } });
       if (revision.status === 'ready') {
-        modules = revision.value.catalog.catalog.modules;
-        containment = revision.value.catalog.catalog.containment;
+        projectCatalog = revision.value.catalog.catalog;
+        // Name/ancestor matches read the ORIGINAL project catalog (a search from
+        // one workspace still finds another workspace's module by name).
+        modules = projectCatalog.modules;
+        containment = projectCatalog.containment;
         catalogRevision = revision.value.catalog.ref.revision;
       } else if (revision.status !== 'not_found') return revision;
     }
+    // A bare request path is the caller's workspace; a prefixed one names its
+    // own, and only that workspace's projection serves the path branch.
+    let pathWorkspaceId = workspaceId;
+    let pathNeedle = needleRaw;
     try {
-      const page = pageArchitectureFind({ nodes, modules, needle: needleRaw, afterCursor, limit,
+      const qualified = normalizeRequestProjectPath(workspaceId, needleRaw, mainWorkspaceId);
+      const parsed = splitWorkspacePath(qualified);
+      pathWorkspaceId = parsed.workspaceId ?? mainWorkspaceId;
+      pathNeedle = parsed.path;
+    } catch {
+      pathWorkspaceId = workspaceId;
+      pathNeedle = needleRaw;
+    }
+    if (projectCatalog !== null) {
+      const projected = catalogForWorkspace(projectCatalog, pathWorkspaceId, mainWorkspaceId);
+      pathModules = projected.modules;
+      pathContainment = projected.containment;
+      const observed = catalogForWorkspace(projectCatalog, workspaceId, mainWorkspaceId);
+      fileModules = observed.modules;
+      fileContainment = observed.containment;
+    }
+    const projectPathInWorkspace = (path: string): string =>
+      qualifyProjectPath(pathWorkspaceId, path, mainWorkspaceId);
+    try {
+      const page = pageArchitectureFind({ nodes, modules, needle: needleRaw, pathNeedle, afterCursor, limit,
         ...(containment === undefined ? {} : { containment }),
+        ...(pathContainment === undefined ? {} : { pathContainment }),
+        ...(fileContainment === undefined ? {} : { fileContainment }),
+        fileModules, pathModules, projectPathOf: projectPathInWorkspace, pathFiles: pathWorkspaceId === workspaceId,
         binding: { captureId: captureRef?.captureId ?? null, catalogRevision } });
+      const items = page.items.map(item => item.kind === 'file' ? item : {
+        ...item,
+        path: item.path === null ? null : displayProjectPath(item.path),
+        paths: item.paths.map(displayProjectPath),
+        module: { ...item.module, path: item.module.path === null ? null : displayProjectPath(item.module.path),
+          paths: item.module.paths.map(displayProjectPath) },
+      });
       return { status: 'ready', value: {
-        needle: page.needle, items: page.items, counts: page.counts, nextCursor: page.nextCursor,
+        needle: page.needle, items, counts: page.counts, nextCursor: page.nextCursor,
         sources: {
           fileGraph: { availability: captureRef === null ? 'not_observed' : 'available', captureRef },
           catalog: { availability: catalogRevision === null ? 'not_adopted' : 'available', revision: catalogRevision },
@@ -1806,7 +1880,11 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
     const fileGraph: ProjectFileGraphV1 = { nodes: loaded.value.nodes, edges: loaded.value.edges,
       unresolved: loaded.value.unresolved, languages: loaded.value.languages, complete: loaded.value.complete,
       inventory: loaded.value.inventory };
-    const findings = compareFormalObservedGraphs({ architecture: revision.value.catalog.catalog, fileGraph });
+    const mainRead = await mainWorkspaceIdOf(captureRef.projectId, captureRef.workspaceId);
+    if (mainRead.status !== 'ready') return mainRead;
+    const mainWorkspaceId = mainRead.value;
+    const findings = compareFormalObservedGraphs({ architecture: revision.value.catalog.catalog, fileGraph,
+      workspaceId: captureRef.workspaceId, mainWorkspaceId });
     return { status: 'ready', value: { catalog, captureRef, findings, noVerdict: true } };
   }
 

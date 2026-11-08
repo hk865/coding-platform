@@ -8,6 +8,7 @@
  * per-module aggregation all agree with the rest of WorkGraph.
  */
 import type { AdoptedArchitecture, ModuleDefinition } from '../../../contracts/architecture-catalog.js';
+import { catalogForWorkspace } from '../../../contracts/workspace-catalog.js';
 import type { FormalObservedFindingV1 } from '../../../contracts/architecture-inspection.js';
 import type { ModuleRef } from '../../../contracts/core/identity.js';
 import { pathOwnershipOf, type PathOwnershipV1 } from '../../../contracts/architecture-source.js';
@@ -18,6 +19,10 @@ import { stronglyConnectedCycles } from './architecture-delta.js';
 export type CompareFormalObservedGraphsInputV1 = {
   architecture: AdoptedArchitecture;
   fileGraph: ProjectFileGraphV1;
+  /** The observed workspace; with `mainWorkspaceId` the catalog is projected
+   * onto it first so two workspaces' same relative path never shares an owner. */
+  workspaceId?: string;
+  mainWorkspaceId?: string | null;
 };
 
 const refKey = (ref: ModuleRef | null): string =>
@@ -28,7 +33,9 @@ const sameModuleIdentity = (a: ModuleRef, b: ModuleRef): boolean =>
   a.projectId === b.projectId && a.moduleId === b.moduleId;
 
 export function compareFormalObservedGraphs(input: CompareFormalObservedGraphsInputV1): FormalObservedFindingV1[] {
-  const { architecture, fileGraph } = input;
+  const { fileGraph } = input;
+  const architecture = input.workspaceId === undefined ? input.architecture
+    : catalogForWorkspace(input.architecture, input.workspaceId, input.mainWorkspaceId ?? null);
   const modules = architecture.modules;
   const candidates = modules.map(module => ({ value: module, paths: module.paths }));
   const ownershipCache = new Map<string, PathOwnershipV1<ModuleDefinition>>();

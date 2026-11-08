@@ -17,6 +17,10 @@ import type {
 } from '../../../contracts/note.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
 import { sha256Hex } from '../../../contracts/fingerprint.js';
+import {
+  isSafeProjectPath, isSafeWorkspaceRelativePath, normalizeProjectPath, normalizeRequestProjectPath,
+  resolveStoredProjectPath, splitWorkspacePath,
+} from '../../../contracts/workspace-path.js';
 import { isPos, isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type { NoteAnchorCandidateV1, NoteSymbolProblemV1, SymbolProblemV1 } from '../model/note-contracts.js';
 import type {
@@ -84,6 +88,8 @@ export type NoteAnchorFactsDeps = {
   goalPlanWindow?: (ctx: CoreCallContext, goalId: string) => Promise<GoalPlanWindow>;
   /** File existence + missing-file candidates; absent keeps the narrow doubles compiling. */
   workspace?: NoteAnchorWorkspace;
+  /** The project's main workspace (its `start_lines` operation); absent treats the caller's workspace as main. */
+  mainWorkspaceOf?: (projectId: string) => Promise<ReadResult<string | null>>;
 };
 
 export type NoteAnchorFailure = { status: 'rejected'; code: 'invalid' | 'forbidden' | 'unavailable';
@@ -115,6 +121,8 @@ export type ResolvedNoteAnchors = {
   symbolUnresolved: boolean;
   /** A Python syntax error only affects the anchors on that file; another anchor still resolves. */
   symbolProblems: NoteSymbolProblemV1[];
+  /** The project's main workspace, resolved once for this write's request/store split. */
+  mainWorkspaceId: string;
 };
 
 /** L2 (rule 21): NFC, ASCII lowercase, every Unicode White_Space run folds to one U+0020, trimmed. */
@@ -393,20 +401,12 @@ export function conclusionProblem(conclusion: unknown): string | null {
   return null;
 }
 
-/** L2a class 1/2: a normalized workspace-relative path (no backslash, drive, `.` or `..`). */
-export function isSafeRelativePath(value: unknown): value is string {
-  if (typeof value !== 'string' || value.length === 0 || value.length > 4096) return false;
-  if (/[\\:\0]/.test(value)) return false;
-  const segments = value.split('/');
-  return segments.every(segment => segment.length > 0 && segment !== '.' && segment !== '..');
-}
-
 /** The canonical anchor key of L2. The file key carries the path only (never the symbol). */
 export function anchorKeyOf(anchor: NoteAnchorV1): string {
   switch (anchor.kind) {
     case 'module': return `module:${anchor.moduleId}`;
     case 'interface': return `interface:${anchor.moduleId}/${anchor.interfaceId}`;
-    case 'file': return `file:${anchor.path}`;
+    case 'file': return `file:${normalizeProjectPath(anchor.path)}`;
     case 'goal': return `goal:${anchor.goalId}`;
     case 'stage': return `stage:${anchor.goalId}/${String(anchor.planRevision)}/${anchor.stageId}`;
     case 'task': return `task:${anchor.goalId}/${anchor.taskId}`;
@@ -484,11 +484,36 @@ export async function resolveNoteAnchors(ctx: CoreCallContext, input: {
    * keeps the old eight kinds' per-anchor resolution (book :253–254, :895). */
   resolveSymbols?: boolean;
 }, deps: NoteAnchorFactsDeps): Promise<{ status: 'ok'; value: ResolvedNoteAnchors } | NoteAnchorFailure> {
-  const drafts: NoteDraftAnchorV1[] = [input.main, ...input.extraAnchors];
-  for (const [index, draft] of drafts.entries()) {
+  const requestWorkspaceId = ctx.workspaceId ?? '';
+  let mainWorkspaceId = requestWorkspaceId;
+  if (deps.mainWorkspaceOf !== undefined) {
+    const main = await deps.mainWorkspaceOf(ctx.projectId);
+    // A failed main read refuses the anchors as `unavailable`; a ready `null`
+    // (no workspace yet) keeps the caller's workspace as main.
+    if (main.status !== 'ready') {
+      return { status: 'rejected', code: 'unavailable',
+        reason: main.status === 'rejected' ? main.reason : 'the main workspace cannot be read', field: 'anchor' };
+    }
+    mainWorkspaceId = main.value ?? requestWorkspaceId;
+  }
+  const rawDrafts: NoteDraftAnchorV1[] = [input.main, ...input.extraAnchors];
+  for (const [index, draft] of rawDrafts.entries()) {
     const field = index === 0 ? 'anchor' : `extraAnchors[${String(index - 1)}]`;
     const problem = anchorFormatProblem(draft, field);
     if (problem !== null) return problem;
+  }
+  // Qualify every file anchor to the project path before any key, duplicate
+  // check or read: a bare request path joins the caller's workspace, a prefixed
+  // one names its own, and a main-workspace prefix/alias is refused.
+  const drafts: NoteDraftAnchorV1[] = [];
+  for (const [index, draft] of rawDrafts.entries()) {
+    const field = index === 0 ? 'anchor' : `extraAnchors[${String(index - 1)}]`;
+    if (draft.kind !== 'file') { drafts.push(draft); continue; }
+    try {
+      drafts.push({ ...draft, path: normalizeRequestProjectPath(requestWorkspaceId, draft.path, mainWorkspaceId) });
+    } catch {
+      return { status: 'rejected', code: 'invalid', reason: `anchor_invalid: ${field}.path`, field };
+    }
   }
 
   // Class 1 duplicate check, on the canonical key (the stage version does not exist yet,
@@ -538,7 +563,7 @@ export async function resolveNoteAnchors(ctx: CoreCallContext, input: {
   for (const [index, draft] of drafts.entries()) {
     const field = index === 0 ? 'anchor' : `extraAnchors[${String(index - 1)}]`;
     const resolved = await resolveOne(ctx, draft, field, deps, goalPlanFacts,
-      { isAgent, runGoalId: input.goalId, facts: input.facts ?? [],
+      { isAgent, runGoalId: input.goalId, facts: input.facts ?? [], mainWorkspaceId,
         ...(input.resolveSymbols === undefined ? {} : { resolveSymbols: input.resolveSymbols }) });
     if (resolved.status === 'rejected') return resolved;
     if (resolved.ended) anchorEnded = true;
@@ -572,6 +597,7 @@ export async function resolveNoteAnchors(ctx: CoreCallContext, input: {
     anchorEnded,
     symbolUnresolved,
     symbolProblems,
+    mainWorkspaceId,
   } };
 }
 
@@ -579,7 +605,7 @@ function draftKeyWithoutVersion(draft: NoteDraftAnchorV1): string {
   switch (draft.kind) {
     case 'module': return `module:${draft.moduleId}`;
     case 'interface': return `interface:${draft.moduleId}/${draft.interfaceId}`;
-    case 'file': return `file:${normalizePath(draft.path)}`;
+    case 'file': return `file:${normalizeProjectPath(draft.path)}`;
     case 'goal': return `goal:${draft.goalId}`;
     case 'stage': return `stage:${draft.goalId}/?/${draft.stageId}`;
     case 'task': return `task:${draft.goalId}/${draft.taskId}`;
@@ -642,7 +668,8 @@ export function anchorFormatProblem(draft: unknown, field: string): NoteAnchorFa
       if (!nonEmpty(draft['moduleId'])) return bad('moduleId');
       return nonEmpty(draft['interfaceId']) ? null : bad('interfaceId');
     case 'file':
-      if (!isSafeRelativePath(draft['path'])) return bad('path');
+      if (!isSafeProjectPath(draft['path'])) return bad('path');
+      if (splitWorkspacePath(draft['path']).path === '.') return bad('path');
       if (draft['deleted'] !== undefined && draft['deleted'] !== true) return bad('deleted');
       if (draft['symbolRequest'] !== undefined) {
         const problem = symbolRequestProblem(draft['symbolRequest']);
@@ -670,7 +697,7 @@ export function anchorFormatProblem(draft: unknown, field: string): NoteAnchorFa
 async function resolveOne(ctx: CoreCallContext, draft: NoteDraftAnchorV1, field: string, deps: NoteAnchorFactsDeps,
   goalPlanFacts: (goalId: string, field: string) => Promise<GoalPlanEntry | NoteAnchorFailure>,
   context: { isAgent: boolean; runGoalId: string | null; facts: readonly NoteFactV1[];
-    resolveSymbols?: boolean }):
+    mainWorkspaceId: string; resolveSymbols?: boolean }):
 Promise<{ status: 'ok'; value: NoteAnchorV1; ended: boolean; symbolUnresolved?: boolean;
   symbolProblem?: NoteSymbolProblemV1 } | NoteAnchorFailure> {
   const notFound = (candidates?: NoteAnchorCandidateV1[], unavailable?: boolean): NoteAnchorFailure => ({
@@ -720,15 +747,19 @@ Promise<{ status: 'ok'; value: NoteAnchorV1; ended: boolean; symbolUnresolved?: 
       return { status: 'ok', value: { kind: 'interface', moduleId: draft.moduleId, interfaceId: draft.interfaceId }, ended: false };
     }
     case 'file': {
-      const path = normalizePath(draft.path);
+      const path = normalizeProjectPath(draft.path);
       const anchor: Extract<NoteAnchorV1, { kind: 'file' }> = { kind: 'file', path,
         ...(draft.deleted === true ? { deleted: true as const } : {}) };
-      const problem = await checkFileAnchor(ctx, anchor, context.facts, deps, field);
+      const problem = await checkFileAnchor(ctx, anchor, context.facts, deps, field, context.mainWorkspaceId);
       if (problem !== null) return problem;
+      // The stored path names its own workspace; the symbol read uses that
+      // workspace's context and relative path, not the caller's.
+      const stored = resolveStoredProjectPath(path, context.mainWorkspaceId);
+      const wctx = { ...ctx, workspaceId: stored.workspaceId };
       // L14: resolution runs after the class-2 existence check. The
       // symbolRequest is write-only; only the resolved locator is stored.
       if (draft.symbolRequest !== undefined && context.resolveSymbols !== false) {
-        const resolution = await resolveSymbol(ctx, path, draft.symbolRequest, deps.workspace);
+        const resolution = await resolveSymbol(wctx, stored.path, draft.symbolRequest, deps.workspace);
         if (resolution.status === 'rejected') {
           return { status: 'rejected', code: resolution.code, reason: resolution.reason, field };
         }
@@ -778,14 +809,20 @@ Promise<{ status: 'ok'; value: NoteAnchorV1; ended: boolean; symbolUnresolved?: 
 
 /** L2a classes 2/4: the live/deleted file anchor check and the missing-file candidates. */
 async function checkFileAnchor(ctx: CoreCallContext, anchor: Extract<NoteAnchorV1, { kind: 'file' }>,
-  facts: readonly NoteFactV1[], deps: NoteAnchorFactsDeps, field: string): Promise<NoteAnchorFailure | null> {
+  facts: readonly NoteFactV1[], deps: NoteAnchorFactsDeps, field: string,
+  mainWorkspaceId: string): Promise<NoteAnchorFailure | null> {
   // R2: without a workspace the existence is unknown, never admitted.
   if (deps.workspace === undefined) {
     return { status: 'rejected', code: 'unavailable', reason: 'the file anchor cannot be read', field };
   }
   const workspace = deps.workspace;
-  const read = await workspace.readWorkspace(ctx, { workspace: { aggregateType: 'Workspace',
-    projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' }, path: anchor.path, maxBytes: 1,
+  // A bare stored path is the MAIN workspace, never the caller's; a prefixed
+  // one names its own workspace. The read context follows the resolved
+  // workspace because the workspace capture checks `ctx.workspaceId`.
+  const resolved = resolveStoredProjectPath(anchor.path, mainWorkspaceId);
+  const wctx = { ...ctx, workspaceId: resolved.workspaceId };
+  const read = await workspace.readWorkspace(wctx, { workspace: { aggregateType: 'Workspace',
+    projectId: wctx.projectId, workspaceId: resolved.workspaceId }, path: resolved.path, maxBytes: 1,
     version: { kind: 'working_tree' } });
   let exists = false;
   let missing = false;
@@ -803,7 +840,7 @@ async function checkFileAnchor(ctx: CoreCallContext, anchor: Extract<NoteAnchorV
   }
   if (exists) return null;
   if (missing) {
-    const candidates = await missingFileCandidates(ctx, anchor.path, workspace);
+    const candidates = await missingFileCandidates(wctx, resolved.path, workspace);
     return { status: 'rejected', code: 'invalid', reason: 'anchor_not_found', field,
       anchorCandidates: candidates.candidates, ...(candidates.unavailable ? { candidatesUnavailable: true } : {}) };
   }

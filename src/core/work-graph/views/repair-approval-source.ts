@@ -18,6 +18,7 @@ import { rejected } from '../../../contracts/core/rejections.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { catalogForWorkspace } from '../../../contracts/workspace-catalog.js';
 import { decisionSourceKey, decisionSubjectGoalRef, type DecisionObjectV1,
   type DecisionSourceV1 } from '../../../contracts/goal-decisions.js';
 import { renderNoteHeader, type NoteHeadSnapshot } from '../../../contracts/note.js';
@@ -48,6 +49,8 @@ import type { DecisionReadRecordsPort } from './goal-conflicts.js';
 export type RepairApprovalSourceDependencies = {
   records: DecisionReadRecordsPort;
   observation: Pick<ObservedArchitecturePort, 'observationState' | 'listFiles'>;
+  /** The project's main workspace; absent treats the Run's workspace as main. */
+  mainWorkspaceOf?: (projectId: string) => Promise<ReadResult<string | null>>;
 };
 
 /** The note's own decision object, in the same aggregate shape the note card uses. */
@@ -207,9 +210,23 @@ async function readFootprintFacts(
     return window.status === 'not_found'
       ? rejected('not_found', 'the project has no current architecture catalog') : window;
   }
+  const runWorkspaceId = run.value.workspaceSnapshot.workspaceId;
+  // The activity's changed files and the observation are the Run workspace's
+  // relative paths: project the ONE catalog onto that workspace first, exactly
+  // as the activation's own footprint read does. A failed main read is
+  // `unavailable`; a ready `null` keeps the Run's workspace as main.
+  let mainWorkspaceId = runWorkspaceId;
+  if (deps.mainWorkspaceOf !== undefined) {
+    const main = await deps.mainWorkspaceOf(run.value.ref.projectId);
+    if (main.status !== 'ready') {
+      return rejected('unavailable', main.status === 'rejected' ? main.reason : 'the main workspace cannot be read');
+    }
+    mainWorkspaceId = main.value ?? runWorkspaceId;
+  }
+  const runCatalog = catalogForWorkspace(window.catalog.catalog, runWorkspaceId, mainWorkspaceId);
   const problem = footprintProblem({
-    activity, catalog: window.catalog.catalog, declared, observation: observation.files,
-    ops: repair.ops, approval: null,
+    activity, catalog: runCatalog, declared, observation: observation.files,
+    ops: repair.ops, workspaceId: runWorkspaceId, mainWorkspaceId, approval: null,
   });
   return { status: 'ready', value: { footprintUnknown: problem !== null && problem.kind === 'unknown' } };
 }

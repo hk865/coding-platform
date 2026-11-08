@@ -18,7 +18,7 @@
 - `catalog-service.ts` — 正式架构的初始接受（`adoptInitialArchitecture`）、catalog 修订（`reviseArchitectureCatalog`）、revision 读取、当前 catalog 的 module facts、revision 的完整 pin（`catalogPinOf`）与 guards。
 - `contracts.ts` — observed architecture 的记录/端口/DTO，以及本文件的 `GraphWrite` 转出（`src/core/work-graph/architecture/contracts.ts:16` 只是转出；正本在 `src/core/work-graph/model/task-contracts.ts:28`）。
 - `file-graph-index.ts` — 纯文件级图分页：listFiles/neighbors/impact 与 cursor 绑定。
-- `formal-comparison.ts` — 正式 catalog 与观测文件图的纯比较（ownership/ambiguous/SCC 等 finding）。
+- `formal-comparison.ts` — 正式 catalog 与观测文件图的纯比较（ownership/ambiguous/SCC 等 finding）；给了 `workspaceId`/`mainWorkspaceId` 时先经 `catalogForWorkspace` 投影，旧调用不给时行为不变。
 - `graph-index.ts` — 纯观测图遍历：邻域、反向影响闭包、分页与 `encodeCursor`。
 - `proposal-record-codecs.ts` — `ArchitectureProposal@1`/`ArchitectureProposalBatch@1` 记录与 `ArchitectureProposalChanged@1` 事件 codec、两个按项目 lookup 与 schema 注册；提案内容不可变，只有 `state`/`batchRef` 由状态机改，批冻结后不可变。
 - `proposal-service.ts` — 结构提案 owner：pinned propose、批冻结、答复应用/关闭与读；唯一写提案/批记录并在提案路径调 catalog planner 的地方，试算复用 `planCatalogRevision` 后丢弃其 contribution；试算和职责读用 `platformCheckContext` 换成固定的内部 Host 身份，提案记下的作者仍是 Run。提议者只经 `proposerOf`：Work Run 读 `runFacts`，冷启动的探索 QueryRun 读必填的 `queryRunFacts`（只认 `role_exploration`）；冷启动的批窗口 `proposalBatchWindow` 只在冷启动停在 `proposals`、且提议的 `baseCatalogPin` 等于冷启动的 `baseCatalogPin` 时开着，此时新提案进 `pending_batch`，由冷启动一次冻结；提议提交带读窗口时冷启动记录的 revision guard，冷启动完成在待批读取前取 ledger horizon 并随完成提交。冷启动用的三个读：`readPendingArchitectureProposals`（项目未入批的待批提案）、`readFrozenArchitectureBatches`（同一 pin 上已冻结的批，恢复冻结后没存下的批）和它们共用的 `readProjectBatches`（项目全部批，结构提案卡的读源也用）。
@@ -39,9 +39,9 @@
 | `catalogModuleFactsOf` | `src/core/work-graph/architecture/catalog-service.ts:780` | 从已读的 current window 投影某个 module 的事实 | 一次调用有多个模块目标时共享一次读 |
 | `parseRepairOps` / `applyRepairOps` | `src/core/work-graph/architecture/repair-ops.ts:191` / `src/core/work-graph/architecture/repair-ops.ts:405` | 严格解析 1–20 个 repair op，并在 pinned baseline 规则上纯试算 catalog（含最终 `validateAdoptedArchitecture` 与 `(from, to)` 规则检查） | note 写入、修订规划与结构提案共用的唯一 op 引擎 |
 | `planCatalogRevision` | `src/core/work-graph/architecture/revision-planner.ts:131` | 非提交的 catalog 修订：expected pin 对当前窗口、op 试算、删除/职责移动规则、guards/records/claims/events/next pin 一次返回 | 人路由的 `reviseArchitectureCatalog` 与提案应用合并 contribution 时 |
-| `createArchitectureProposalService` | `src/core/work-graph/architecture/proposal-service.ts:1066` | 绑定 records/lookups 等依赖，返回 propose/freeze/apply/read 的提案 owner | 组合根装配结构提案服务 |
-| `readProjectBatches` | `src/core/work-graph/architecture/proposal-service.ts:578` | 一个项目全部冻结批，按批 id 排；坏批是 `unavailable` | 冷启动按 pin 找回冻结的批、结构提案卡的读源；不要另扫批索引 |
-| `readArchitectureProposal` | `src/core/work-graph/architecture/proposal-service.ts:1020` | 按 `proposalRef` 读提案、批 ref 与卡片 key | 提案读（路由、E3 与卡来源） |
+| `createArchitectureProposalService` | `src/core/work-graph/architecture/proposal-service.ts:1107` | 绑定 records/lookups 等依赖，返回 propose/freeze/apply/read 的提案 owner | 组合根装配结构提案服务 |
+| `readProjectBatches` | `src/core/work-graph/architecture/proposal-service.ts:582` | 一个项目全部冻结批，按批 id 排；坏批是 `unavailable` | 冷启动按 pin 找回冻结的批、结构提案卡的读源；不要另扫批索引 |
+| `readArchitectureProposal` | `src/core/work-graph/architecture/proposal-service.ts:1056` | 按 `proposalRef` 读提案、批 ref 与卡片 key | 提案读（路由、E3 与卡来源） |
 | `compareObservedGraphs` | `src/core/work-graph/architecture/architecture-delta.ts:89` | 两份观测的节点/边结构差异与环变化 | 观测版本比较 |
 | `stronglyConnectedCycles` | `src/core/work-graph/architecture/architecture-delta.ts:24` | 确定性 SCC（成员数 >1 或自环）检测 | 观测差异与正式比较共用 |
 | `buildObservedNeighborhood` | `src/core/work-graph/architecture/graph-index.ts:161` | 按 anchor/depth/relations 取有界邻域页，带 unresolved 归属 | 图邻域查询 |
@@ -52,8 +52,8 @@
 | `impactPage` | `src/core/work-graph/architecture/file-graph-index.ts:120` | 反向可达影响分页，深度有上限 | 文件影响读 |
 | `orderedNodes` | `src/core/work-graph/architecture/file-graph-index.ts:66` | 观测文件节点按工作区相对路径稳定排序并按路径去重 | 文件图分页与架构搜索共用同一排序/去重，不另写一份 |
 | `buildArchitectureGroups` | `src/core/work-graph/architecture/architecture-search-index.ts:63` | 正式 catalog 的模块组：声明路径、单路径 `path` 与 containment 祖先（根→父） | 搜索与当前工作集合都要模块组时 |
-| `pageArchitectureFind` | `src/core/work-graph/architecture/architecture-search-index.ts:164` | 在已载入的文件节点/正式模块上匹配、排序、全量计数并返回一页；cursor 绑定 capture/catalog/查询 | `architecture/find` 的唯一匹配/分页点 |
-| `compareFormalObservedGraphs` | `src/core/work-graph/architecture/formal-comparison.ts:29` | 正式 catalog 与观测文件图的确定性 finding | 架构提醒与检查 |
+| `pageArchitectureFind` | `src/core/work-graph/architecture/architecture-search-index.ts:189` | 在已载入的文件节点/正式模块上匹配、排序、全量计数并返回一页；cursor 绑定 capture/catalog/查询 | `architecture/find` 的唯一匹配/分页点 |
+| `compareFormalObservedGraphs` | `src/core/work-graph/architecture/formal-comparison.ts:35` | 正式 catalog 与观测文件图的确定性 finding | 架构提醒与检查 |
 | `architectureBaselineDigest` | `src/core/work-graph/architecture/catalog-record-codecs.ts:201` | 正式 baseline 的规范内容 digest，与 `plan-readers.ts` 的治理读取一致 | 校验/读取 baseline 时 |
 | `OBSERVED_ARCHITECTURE_RECORD_SCHEMAS` | `src/core/work-graph/architecture/architecture-record-codecs.ts:746` | observed 记录/事件的 Store schema 注册表 | 组合根注册纪录后端 |
 | `ARCHITECTURE_CATALOG_SCHEMAS` | `src/core/work-graph/architecture/catalog-record-codecs.ts:543` | 正式 catalog 记录/事件的 Store schema 注册表 | 组合根注册纪录后端 |
@@ -68,7 +68,7 @@
 - catalog-service：`BASELINE_SCHEMA_ID`、`BASELINE_ACTIVE_SCHEMA_ID`、`activeRefKey`、`baselineRefFor`、`catalogRefFor`（baseline/active/catalog 的 ref 与键配方）。
 - repair-ops：`catalogRevisionMovesProblem`、`structuralOfRepair`、`repairNeedsCard`、`repairBindingDigest`、`RepairProblemV1`。
 - revision-planner：`catalogRevisionKeys`、`catalogRevisionPinProblem`、`CatalogRevisionInputV1`、`CatalogRevisionContribution`、`CatalogRevisionDependencies`。
-- proposal-service：`proposeArchitectureRevision`、`freezeArchitectureProposalBatch`、`applyArchitectureProposalBatch`、`ProposalBatchWindowPort`、`ProposalRunFactResolver`、`ProposalDecisionMessageRead`、`ProposalServiceDeps`、`ArchitectureProposalService`。
+- proposal-service：`proposeArchitectureRevision`、`qualifyOps`（写侧按请求工作区限定每条路径 op，提案与 repair 共用）、`freezeArchitectureProposalBatch`、`applyArchitectureProposalBatch`、`ProposalBatchWindowPort`、`ProposalRunFactResolver`、`ProposalDecisionMessageRead`、`ProposalServiceDeps`、`ArchitectureProposalService`。
 - proposal-record-codecs：`ArchitectureProposalRefShape`、`ArchitectureProposalBatchRefShape`、`ArchitectureProposalFields`、`ArchitectureProposalBatchFields`、`S8C_PROPOSAL_BY_PROJECT_LOOKUP`、`S8C_PROPOSAL_BATCH_BY_PROJECT_LOOKUP`、`ArchitectureProposalFormat`、`ArchitectureProposalBatchFormat`、`ARCHITECTURE_PROPOSAL_CHANGED_EVENT`、`ArchitectureProposalChangedFormat`、`architectureProposalCodec`、`architectureProposalBatchCodec`、`architectureProposalChangedEventCodec`、`ARCHITECTURE_PROPOSAL_SCHEMAS`、`encodeArchitectureProposalRecord`、`encodeArchitectureProposalBatchRecord`、`decodeArchitectureProposalRecord`、`decodeArchitectureProposalBatchRecord`、`encodeArchitectureProposalChangedEvent`、`decodeArchitectureProposalChangedEvent`。
 
 ## 不要做

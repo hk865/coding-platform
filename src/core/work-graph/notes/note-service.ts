@@ -9,7 +9,8 @@
 import { principalIdentity, type CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type {
-  CurrentPointerRef, CurrentPointerSnapshot, LinkPayloadV1, NoteAnchorV1, NoteHeadSnapshot,
+  CatalogRepairOpV1, CurrentPointerRef, CurrentPointerSnapshot, LinkDraftV1, LinkEndRequestV1, LinkPayloadV1, NoteAnchorV1,
+  NoteDraftAnchorV1, NoteFactV1, NoteHeadSnapshot,
   NoteReviewReason, NoteSourceV1, NoteState, NoteVersionSnapshot, PendingNoteHeadSnapshot,
   RepairPayloadV1, ResponsibilityMoveV1,
 } from '../../../contracts/note.js';
@@ -27,7 +28,8 @@ import type { RunRef } from '../../../contracts/dispatch.js';
 import type {
   NoteAnchorFactsDeps, NoteAnchorWorkspace, ResolvedNoteAnchors,
 } from './note-anchors.js';
-import { anchorFormatProblem, anchorKeyOf, conclusionProblem, isSafeRelativePath, noteCheckWorkspace, normalizePath, resolveNoteAnchors, topicKeyOf, topicProblem } from './note-anchors.js';
+import { anchorFormatProblem, anchorKeyOf, conclusionProblem, noteCheckWorkspace, normalizePath, resolveNoteAnchors, topicKeyOf, topicProblem } from './note-anchors.js';
+import { isSafeProjectPath, normalizeRequestProjectPath, resolveStoredProjectPath, splitWorkspacePath } from '../../../contracts/workspace-path.js';
 import { checkLinkDraft, endpointIdentityOf, evidenceRoleProblem, literalKeyProblem } from './link-evidence.js';
 import { languageOfPath } from '../../workspace/architecture-language-provider.js';
 import type { ScribeScope, ScribeScopeCall } from './scribe-scope.js';
@@ -47,6 +49,7 @@ import {
   readArchitectureBaselinePin, readArchitectureCatalogRef,
 } from '../architecture/catalog-record-codecs.js';
 import { exactKeys } from '../architecture/architecture-service.js';
+import { qualifyOps } from '../architecture/proposal-service.js';
 import {
   applyRepairOps, catalogRevisionMovesProblem, parseRepairOps, structuralOfRepair, type RepairProblemV1,
 } from '../architecture/repair-ops.js';
@@ -111,6 +114,8 @@ export type NoteServiceDependencies = {
   queryRun: NoteQueryRunSourcePort;
   workspace: NoteAnchorWorkspace;
   workspaceMaxFileBytes: number;
+  /** The project's main workspace (its `start_lines` operation), for project-path qualification. */
+  mainWorkspaceOf?: (projectId: string) => Promise<ReadResult<string | null>>;
   architecture?: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'>;
   scopes?: ScribeScope;
   /** 120-13 丙: the line's effective scope, read for a region adviser's write; absent, no region check. */
@@ -458,7 +463,7 @@ function linkEvidenceProblem(link: Record<string, unknown>, relation: string): s
     const field = `link.evidence[${String(index)}].at`;
     const at = isRecord(entry) ? entry['at'] : undefined;
     if (!isRecord(at)) return `evidence_invalid: ${field}`;
-    if (!isSafeRelativePath(at['path'])) return `evidence_invalid: ${field}.path`;
+    if (!isSafeProjectPath(at['path']) || splitWorkspacePath(at['path']).path === '.') return `evidence_invalid: ${field}.path`;
     const hasRequest = at['symbolRequest'] !== undefined;
     const hasRange = at['range'] !== undefined;
     if (hasRequest && hasRange) return `evidence_invalid: ${field}`;
@@ -709,14 +714,32 @@ async function repairTrial(deps: NoteServiceDependencies, ctx: CoreCallContext,
   if (revision.value.baseline.contentDigest !== baseline.digest) {
     return { ok: false, rejection: rejected('invalid', 'the repair pin baseline digest does not match the recorded revision') };
   }
+  // The stored ops are project paths: qualify them to the request workspace
+  // before the trial and before they are stored. A bare path belongs to the
+  // caller, a prefixed one to its own, and a main-workspace prefix is refused.
+  let mainWorkspaceId = ctx.workspaceId ?? '';
+  if (deps.mainWorkspaceOf !== undefined) {
+    const main = await deps.mainWorkspaceOf(ctx.projectId);
+    if (main.status !== 'ready') {
+      return { ok: false, rejection: rejected('unavailable',
+        main.status === 'rejected' ? main.reason : 'the main workspace cannot be read') };
+    }
+    mainWorkspaceId = main.value ?? mainWorkspaceId;
+  }
+  let ops: CatalogRepairOpV1[];
+  try {
+    ops = qualifyOps(parsed.ops, ctx.workspaceId ?? '', mainWorkspaceId);
+  } catch {
+    return { ok: false, rejection: rejected('invalid', 'a repair op names the main workspace by prefix') };
+  }
   const trial = applyRepairOps(revision.value.catalog.catalog,
-    revision.value.baseline.content.dependencyRules ?? [], parsed.ops, ctx.projectId);
+    revision.value.baseline.content.dependencyRules ?? [], ops, ctx.projectId);
   if (!trial.ok) return { ok: false, rejection: rejected('invalid', trial.problem.reason) };
   const moves = repairMovesProblem(repair.responsibilityMoves, trial.catalog.modules, ctx.projectId);
   if (moves !== null) return { ok: false, rejection: rejected('invalid', moves.reason) };
-  return { ok: true, payload: { pin: repair.pin, ops: parsed.ops,
+  return { ok: true, payload: { pin: repair.pin, ops,
     responsibilityMoves: repair.responsibilityMoves as ResponsibilityMoveV1[],
-    structural: structuralOfRepair(parsed.ops) } };
+    structural: structuralOfRepair(ops) } };
 }
 
 // --------------------------------------------------------------------------
@@ -769,6 +792,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
   const checkedWorkspace = noteCheckWorkspace(deps.workspace);
   const anchorFacts: NoteAnchorFactsDeps = { records: deps.records,
     ...(deps.architecture === undefined ? {} : { architecture: deps.architecture }),
+    ...(deps.mainWorkspaceOf === undefined ? {} : { mainWorkspaceOf: deps.mainWorkspaceOf }),
     workspace: checkedWorkspace };
 
   /**
@@ -1592,14 +1616,37 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     // L3b: a link's ends, symbol key and evidence symbols are found in their single files, its
     // references go to the second tier once, and the write-time verification is fixed here. A
     // refusal writes nothing; the resolved anchors replace the anchor step's plain file anchors.
+    const requestWorkspaceId = ctx.workspaceId ?? '';
+    const mainWorkspaceId = resolved.mainWorkspaceId;
+    // A request path is qualified before any key, check or read: a bare path is
+    // the caller's workspace, a prefixed one its own, and a main-workspace
+    // prefix/alias is refused.
+    const qualifyEnd = (end: NoteDraftAnchorV1): NoteDraftAnchorV1 => end.kind === 'file'
+      ? { ...end, path: normalizeRequestProjectPath(requestWorkspaceId, end.path, mainWorkspaceId) } : end;
     let linkAnchors: NoteAnchorV1[] = resolved.anchors;
     let linkPayload: LinkPayloadV1 | undefined;
     if (draft.kind === 'link') {
       const window = await catalogWindowOf(call, ctx);
       if (window.status === 'rejected') return rejectedInput(input, 'unavailable', window.reason);
-      const checked = await checkLinkDraft(ctx, { draft,
+      let qualifiedDraft: LinkDraftV1;
+      try {
+        qualifiedDraft = { ...draft,
+          anchor: qualifyEnd(draft.anchor),
+          extraAnchors: draft.extraAnchors.map(qualifyEnd),
+          link: { ...draft.link,
+            ...(draft.link.key?.kind === 'symbol'
+              ? { key: { ...draft.link.key,
+                anchor: { ...draft.link.key.anchor,
+                  path: normalizeRequestProjectPath(requestWorkspaceId, draft.link.key.anchor.path, mainWorkspaceId) } } }
+              : {}),
+            evidence: draft.link.evidence.map(entry => ({ ...entry,
+              at: { ...entry.at, path: normalizeRequestProjectPath(requestWorkspaceId, entry.at.path, mainWorkspaceId) } })) } };
+      } catch {
+        return rejectedInput(input, 'invalid', 'evidence_invalid: link.evidence[0].at.path');
+      }
+      const checked = await checkLinkDraft(ctx, { draft: qualifiedDraft,
         anchors: resolved.anchors, catalog: window.status === 'ready' ? window : null },
-      { workspace: checkedWorkspace });
+      { workspace: checkedWorkspace, mainWorkspaceId });
       if (checked.status !== 'ok') return { ...checked, draft: input };
       linkAnchors = checked.anchors;
       linkPayload = checked.link;
@@ -1611,13 +1658,22 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     // Basis files (L11 write half): the platform reads each digest; too large is a refusal.
     const basisFiles: { path: string; digest: string }[] = [];
     for (const rawPath of draft.basisFiles) {
-      const path = typeof rawPath === 'string' ? normalizePath(rawPath) : rawPath;
-      if (typeof path !== 'string') return rejectedInput(input, 'invalid', 'basis_file_missing');
+      if (typeof rawPath !== 'string') return rejectedInput(input, 'invalid', 'basis_file_missing');
       // R15/L11: a path that escapes the workspace (`../…`) is a class-1 shape
       // problem, not a transient read failure.
-      if (!isSafeRelativePath(path)) return rejectedInput(input, 'invalid', 'basis_file_forbidden');
-      const read = await checkedWorkspace.readWorkspace(ctx, { workspace: { aggregateType: 'Workspace',
-        projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' }, path, maxBytes: basisFileMaxBytes,
+      if (!isSafeProjectPath(rawPath) || splitWorkspacePath(rawPath).path === '.') {
+        return rejectedInput(input, 'invalid', 'basis_file_forbidden');
+      }
+      let path: string;
+      try {
+        path = normalizeRequestProjectPath(requestWorkspaceId, rawPath, mainWorkspaceId);
+      } catch {
+        return rejectedInput(input, 'invalid', 'basis_file_forbidden');
+      }
+      const basis = resolveStoredProjectPath(path, mainWorkspaceId);
+      const basisCtx = { ...ctx, workspaceId: basis.workspaceId };
+      const read = await checkedWorkspace.readWorkspace(basisCtx, { workspace: { aggregateType: 'Workspace',
+        projectId: basisCtx.projectId, workspaceId: basis.workspaceId }, path: basis.path, maxBytes: basisFileMaxBytes,
         version: { kind: 'working_tree' } });
       if (read.status !== 'ready') {
         if (read.code === 'capacity') return rejectedInput(input, 'invalid', 'basis_file_too_large');
@@ -1625,7 +1681,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
         if (read.code === 'forbidden') return rejectedInput(input, 'invalid', 'basis_file_forbidden');
         return rejectedInput(input, 'unavailable', read.reason);
       }
-      basisFiles.push({ path: read.value.path, digest: read.value.digest });
+      basisFiles.push({ path, digest: read.value.digest });
     }
 
     // L4.3: relations must exist, share an anchor and match the kind family.
@@ -1683,8 +1739,13 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
       if (anchor.kind !== 'module' && anchor.kind !== 'interface' && anchor.kind !== 'file') {
         return rejectedInput(input, 'invalid', 'flow_anchor_mismatch');
       }
+      // The stored steps' ends are project paths: qualify this request's file
+      // anchors the same way before comparing identities.
+      let qualifiedAnchor: NoteDraftAnchorV1;
+      try { qualifiedAnchor = qualifyEnd(anchor); }
+      catch { return rejectedInput(input, 'invalid', 'flow_anchor_mismatch'); }
       const firstLink = relations.get(draft.flow.steps[0]!.link)!.link as LinkPayloadV1;
-      if (endpointIdentityOf(anchor) !== endpointIdentityOf(firstLink.ends.from)) {
+      if (endpointIdentityOf(qualifiedAnchor as LinkEndRequestV1) !== endpointIdentityOf(firstLink.ends.from)) {
         return rejectedInput(input, 'invalid', 'flow_anchor_mismatch');
       }
       const stepEnds = new Set<string>();
@@ -1698,7 +1759,10 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
         if (extra.kind !== 'module' && extra.kind !== 'interface' && extra.kind !== 'file') {
           return rejectedInput(input, 'invalid', 'flow_anchor_mismatch');
         }
-        if (!stepEnds.has(endpointIdentityOf(extra))) {
+        let qualifiedExtra: NoteDraftAnchorV1;
+        try { qualifiedExtra = qualifyEnd(extra); }
+        catch { return rejectedInput(input, 'invalid', 'flow_anchor_mismatch'); }
+        if (!stepEnds.has(endpointIdentityOf(qualifiedExtra as LinkEndRequestV1))) {
           return rejectedInput(input, 'invalid', 'flow_anchor_mismatch');
         }
       }
@@ -1966,6 +2030,18 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
       committedOverQuota = true;
     }
 
+    // The write stores a project path: a bare fact path is the caller's
+    // workspace, a prefixed one names its own. The read side resolves the same
+    // stored path back to a workspace before it reads the digest.
+    const qualifiedFacts: NoteFactV1[] = [];
+    for (const fact of draft.facts) {
+      if (fact.kind !== 'file') { qualifiedFacts.push(fact); continue; }
+      try {
+        qualifiedFacts.push({ ...fact, path: normalizeRequestProjectPath(requestWorkspaceId, fact.path, mainWorkspaceId) });
+      } catch {
+        return rejectedInput(input, 'invalid', 'a file fact path must be a safe project path');
+      }
+    }
     const noteId = deps.newId();
     const now = deps.now();
     const base = eventBase(ctx.projectId, ctx.workspaceId ?? '', now);
@@ -1975,7 +2051,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
         kind: draft.kind, topic: draft.topic, topicKey, conclusion: draft.conclusion,
         body: draft.kind === 'understanding' ? renderUnderstandingBody(draft.sections) : draft.body,
         ...(draft.kind === 'understanding' ? { sections: draft.sections } : {}),
-        anchor: linkAnchors[0]!, extraAnchors: linkAnchors.slice(1), facts: draft.facts,
+        anchor: linkAnchors[0]!, extraAnchors: linkAnchors.slice(1), facts: qualifiedFacts,
         basis: { planRevision: resolved.basisPlanRevision,
           catalogRevision: resolved.basisCatalogRevision, files: basisFiles },
         structural: platformStructural, replaces: [...draft.replaces], contradicts: [...draft.contradicts],
