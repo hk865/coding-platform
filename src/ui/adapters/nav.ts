@@ -286,3 +286,9 @@ export function adaptNav(
     scope,
   };
 }
+
+/** §2.2: a page link carries `?goal=` only when there is a Goal, encoded once,
+ * and never invents a target from an empty id. */
+export function goalHref(file: string, goalId: string | null): string {
+  return goalId === null || goalId === '' ? file : file + '?goal=' + encodeURIComponent(goalId);
+}

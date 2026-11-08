@@ -7,8 +7,14 @@ import {
 import { asRecord, asText } from './values.js';
 import { qualifyProjectPath } from '../contracts/workspace-path.js';
 import { createAutoRefresh, type RefreshRead, type RefreshSnapshot, type RefreshSources } from './refresh.js';
-import { adaptNav, type NavData, type NavLineDetail } from './adapters/nav.js';
+import { adaptNav, goalHref, type NavData, type NavLineDetail } from './adapters/nav.js';
 import { adaptGoals, goalOrderOf, type GoalsData } from './adapters/goals.js';
+import {
+  adaptArchOverview, type ArchCatalogRead, type ArchNoteRead, type ArchObservedRead, type ArchOverviewData,
+  type ArchOverviewSource,
+} from './adapters/arch-overview.js';
+import type { ArchitectureObservationStateV1 } from '../contracts/architecture-observation.js';
+import type { NoteAnchorV1 } from '../contracts/note.js';
 import { guardNotConnected, notConnectedAttrs } from './not-connected.js';
 import type { RequestReferenceInputV1 } from '../contracts/query-job.js';
 import {
@@ -60,6 +66,13 @@ export type TaskMapActions = {
  * line's `lines/read`; the archive row reads `lines/archived` only while open. */
 export type BoardReadDemand = TaskMapReadDemand & {
   archive?: boolean;
+  /** ArchOverview's page state: the search needle, the work-only switch, the
+   * directory view and the selected node's anchor. Explicit values replace the
+   * old demand, so closing one passes `''`, `false` or `null`. */
+  search?: string;
+  workOnly?: boolean;
+  dirView?: boolean;
+  noteAnchor?: NoteAnchorV1 | null;
 };
 
 /** The one action surface `pageProps` gives every board. TaskMap uses
@@ -105,11 +118,18 @@ export type BoardActions = {
 export async function bootBoardPage(): Promise<void> {
   const root = document.querySelector('x-dc');
   if (!root) return;
-  const board = parseBoard(document.title, await fetchPageText(location.href));
+  const goalParam = new URLSearchParams(location.search).get('goal');
+  let goalId = goalParam === null || goalParam === '' ? null : goalParam;
+  const boardName = boardNameOf(location.href);
+  /* A1/A24: the frozen template keeps `Main.dc.html`; the ArchOverview copy
+     carries the Goal through the one `goalHref` encoding. */
+  const source = await fetchPageText(location.href);
+  const board = parseBoard(document.title, boardName === 'ArchOverview'
+    ? source.split('href="Main.dc.html"').join('href="' + goalHref('Main.dc.html', goalId) + '"')
+    : source);
   if (board.helmetHtml.length > 0) hoistHelmet(board.helmetHtml);
 
   const documentToken = readPlatformToken(document);
-  const boardName = boardNameOf(location.href);
   const reader = BOARD_READERS[boardName];
   if (documentToken === null || reader === undefined) {
     new BoardView(board).mount(root);
@@ -136,8 +156,6 @@ export async function bootBoardPage(): Promise<void> {
     client = createHostClient(token);
     return token;
   }
-  const goalParam = new URLSearchParams(location.search).get('goal');
-  let goalId = goalParam === null || goalParam === '' ? null : goalParam;
   /* Ruling 3 "默认页": opening the board reads the DAG's today track and today
    * hour calendar, not only the six base reads. */
   const demand: BoardReadDemand = { track: true, win: 'today' };
@@ -376,6 +394,7 @@ const BOARD_READERS: Record<string, BoardReader<unknown>> = {
   TaskMap: readTaskMap as BoardReader<unknown>,
   Main: readMain,
   Goals: readGoals,
+  ArchOverview: readArchOverview as BoardReader<unknown>,
 };
 
 /** The board name a served page is for: `/workbench/TaskMap.dc.html` -> `TaskMap`. */
@@ -572,6 +591,120 @@ export async function readMain(
   demand: BoardReadDemand = {},
 ): Promise<RefreshRead<NavData>> {
   return readNav(client, goalId, demand);
+}
+
+/**
+ * E3-ARCH: the ArchOverview read. Scope is `taskMapScope`'s; catalog
+ * `not_found` is the ruled "not adopted" empty state, `tasks/query`
+ * `not_found` is "no plan", and `architecture/query` reads every page of the
+ * observed neighbourhood before the page sees it.
+ */
+export async function readArchOverview(
+  client: ReturnType<typeof createHostClient>, goalId: string | null,
+  demand: BoardReadDemand = {},
+): Promise<RefreshRead<ArchOverviewData>> {
+  const boot = await client.bootstrap();
+  const cursor = boot.changesHead ?? null;
+  const found = await taskMapScope(client, boot.workspaces, goalId);
+  if (found === null) return { data: null, cursor };
+  const scope = found.scope;
+
+  let catalog: ArchCatalogRead | null = null;
+  try {
+    catalog = readyRouteValue<ArchCatalogRead>(
+      await client.post('architecture/read', scope, { selection: { kind: 'current' } }), 'architecture/read',
+    );
+  } catch (error) {
+    if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
+  }
+
+  let observation: ArchitectureObservationStateV1 | null = null;
+  try {
+    observation = readyRouteValue<ArchitectureObservationStateV1>(
+      await client.post('architecture/observation-state', scope, { workspace: scope }), 'architecture/observation-state',
+    );
+  } catch (error) {
+    if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
+  }
+
+  let observed: ArchObservedRead | null = null;
+  const capture = observation?.current?.persistedRef ?? null;
+  if (capture !== null) {
+    const nodes: ArchObservedRead['nodes'] = [];
+    const edges: ArchObservedRead['edges'] = [];
+    const unresolved: string[] = [];
+    let after: string | null = null;
+    for (let guard = 0; guard < 1000; guard += 1) {
+      const page: ArchObservedRead = readyRouteValue<ArchObservedRead>(
+        await client.post('architecture/query', scope, {
+          selection: { kind: 'observed', capture },
+          depth: 2,
+          relations: ['dependency', 'interface'],
+          page: { limit: 200, ...(after === null ? {} : { cursor: after }) },
+        }), 'architecture/query',
+      );
+      nodes.push(...page.nodes);
+      edges.push(...page.edges);
+      unresolved.push(...page.unresolved);
+      after = page.nextCursor ?? null;
+      if (after === null) break;
+    }
+    if (after !== null) throw new RouteReadError('architecture/query', 'pagination_limit', 'over 1000 pages');
+    observed = { nodes, edges, unresolved, nextCursor: null };
+  }
+
+  /* The page's files are the workspace's real paths (A1); the observed graph
+     has no public file read, so its file nodes are never used here. */
+  const files = readyRouteValue<ArchOverviewSource['files']>(
+    await client.post('files/list', scope, {}), 'files/list',
+  );
+
+  const needle = (demand.search ?? '').trim();
+  const search = needle === '' ? null : readyRouteValue<ArchOverviewSource['search']>(
+    await client.post('architecture/find', scope, { needle, page: { afterCursor: null, limit: 6 } }), 'architecture/find',
+  );
+  const work = demand.workOnly === true ? readyRouteValue<ArchOverviewSource['work']>(
+    await client.post('architecture/work-scope', scope, {}), 'architecture/work-scope',
+  ) : null;
+
+  let tasks: ArchOverviewSource['tasks'] = null;
+  if (found.goal !== null) {
+    const reply = await client.post('tasks/query', scope, { goalRef: found.goal.ref });
+    if (reply.status !== 'not_found') tasks = readyRouteValue<ArchOverviewSource['tasks']>(reply, 'tasks/query');
+  }
+  const lines = readyRouteValue<ArchOverviewSource['lines']>(
+    await client.post('lines/list', scope, { workspace: scope }), 'lines/list',
+  );
+
+  const notes: Record<string, ArchNoteRead> = {};
+  const anchor = demand.noteAnchor ?? null;
+  if (anchor !== null && (anchor.kind === 'file' || anchor.kind === 'module')) {
+    const anchorKey = anchor.kind === 'file' ? 'file:' + anchor.path : 'module:' + anchor.moduleId;
+    try {
+      notes[anchorKey] = readyRouteValue<ArchNoteRead>(
+        await client.post('notes/list', scope, { anchor, limit: 1, cursor: null }), 'notes/list',
+      );
+    } catch (error) {
+      if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
+      notes[anchorKey] = { items: [] };
+    }
+  }
+
+  const workspace = boot.workspaces.find((entry) => entry.scope.workspaceId === scope.workspaceId);
+  const source: ArchOverviewSource = {
+    scope, projectName: workspace?.name ?? '',
+    goal: found.goal === null ? null : {
+      id: found.goal.ref.goalId, ordinal: found.goal.read.ordinal ?? null,
+      objective: asText(found.goal.read.goal.objective),
+    },
+    catalog, observation, observed, files, search, work, tasks, lines, notes,
+  };
+  const ui = {
+    level: 'SYS', view: demand.dirView === true ? 'dir' as const : 'sem' as const,
+    selected: anchor === null ? null : anchor.kind === 'file' ? anchor.path : null,
+    hover: null, q: needle, workOnly: demand.workOnly === true, legend: false, theme: 'dark' as const,
+  };
+  return { data: adaptArchOverview(source, ui), cursor };
 }
 
 /**

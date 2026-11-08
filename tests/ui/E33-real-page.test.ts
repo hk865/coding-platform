@@ -162,7 +162,8 @@ describe('E33-6 a Goal created after the empty page appears', () => {
   }, 30_000);
 });
 
-const UNWIRED_BOARDS = BOARD_NAMES.filter((name) => name !== 'TaskMap' && name !== 'Main' && name !== 'Goals');
+const UNWIRED_BOARDS = BOARD_NAMES.filter((name) => name !== 'TaskMap' && name !== 'Main' && name !== 'Goals'
+  && name !== 'ArchOverview');
 
 describe('E33-7 only a wired board opens a change stream', () => {
   it.each(UNWIRED_BOARDS)('E33-7 %s mounts the sample with zero changes requests', async (name) => {
