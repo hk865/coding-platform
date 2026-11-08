@@ -575,8 +575,16 @@ export async function openS7D2ColdStartWorld(
         const task = { taskId: input.taskId, title: `C1T ${input.label} work`, requirementLevel: 'required' as const,
           taskKind: 'work' as const, disposition: 'active' as const, phase: 'pending' as const,
           scope: { kind: 'goal' as const }, executionIntent: 'request_execution' as const };
+        // The cold start's Plan has no obligation (`coldStartPlanText`). A `request_execution` task adopted into it
+        // would fail `open_checks` (`verification-plan.ts:72`), park the Goal driver with no wait, and the next plan
+        // adoption would wake nobody (RL-24 step 7). The adopted task carries the registered static obligation.
         const draft = draftFrom(active, `c1t-${input.label}`,
           current => ({ ...current, tasks: [...current.tasks, task],
+            obligations: [...current.obligations, { obligationId: `c1t-${input.label}-obligation`,
+              title: `C1T ${input.label} delivery`, requirementLevel: 'required' as const,
+              taskIds: [input.taskId], verificationRequirements: [{ requirementId: 'ag2b-static',
+                requirementLevel: 'required' as const, kind: 'static' as const,
+                description: 'Registered static command check' }] }],
             assignments: [...(current.assignments ?? []), { taskId: input.taskId, role: PL_ADVISER_ROLE.templateId,
               instruction: `C1T ${input.label}` }] }));
         const proposed = valueOf<{ ref: unknown; revision: number }>((await world.post('plans/propose',
