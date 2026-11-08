@@ -192,6 +192,8 @@ function decisionCard(options: {
     staleReason: null,
     closedReason: null,
     openedAt: null,
+    taskRef: null,
+    runRef: null,
     readOnly: false,
     actions: ['answer'],
   };

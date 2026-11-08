@@ -136,6 +136,8 @@ export interface NoticePositionComparatorPort {
 export type GoalDecisionCauseReadV1 = {
   source: DecisionSourceV1;
   code: string; taskRef: TaskTriple | null; runRef: RunRef | null;
+  /** The cause's own stored time: the selected failure Run's `endedAt`, or the restart cause's `detectedAt`; null when the cause stores none. */
+  openedAt: string | null;
   action: DecisionActionV1 | null;
   objects: DecisionObjectV1[]; options: DecisionOptionV1[];
 };
@@ -398,6 +400,10 @@ export type DecisionCardV1 = {
   closedReason: 'goal_cancelled' | 'source_resolved' | null;
   /** The card's own stored fact time; null when the source has none. */
   openedAt: string | null;
+  /** 卡的来源 pins 里那一个 Task 设计；没有或不止一个写 null。 */
+  taskRef: TaskTriple | null;
+  /** 卡的来源 pins 里那一个 Run；没有或不止一个写 null。 */
+  runRef: RunRef | null;
   readOnly: boolean;
   actions: ('answer' | 'ask_secretary' | 'apply' | 'record_application'
     | 'adopt' | 'regenerate' | 'abandon' | 'adopt_architecture'

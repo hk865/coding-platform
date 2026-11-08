@@ -53,7 +53,7 @@ function project(item: FakeItem, subject: DecisionSubjectV1): DecisionCardV1 {
     state: 'waiting_answer', subject: structuredClone(subject), senderSessionRef: null, requestRef: null,
     objects: [], options: [],
     answerMessageRef: null, answer: null, application: null, candidateStatus: null, staleReason: null,
-    closedReason: null, openedAt: null, readOnly: false, actions: ['answer'],
+    closedReason: null, openedAt: null, taskRef: null, runRef: null, readOnly: false, actions: ['answer'],
   };
 }
 

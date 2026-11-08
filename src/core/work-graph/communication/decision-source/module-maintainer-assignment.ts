@@ -111,6 +111,7 @@ export function maintainerAssignmentCard(
     answerMessageRef: null, answer: null, application: null,
     candidateStatus: null, staleReason: null,
     closedReason: facts.closedReason, openedAt: facts.openedAt,
+    taskRef: null, runRef: null,
     readOnly: facts.closedReason !== null,
     actions: facts.closedReason === null ? ['answer'] : [],
   };

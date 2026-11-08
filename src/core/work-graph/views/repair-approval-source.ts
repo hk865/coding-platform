@@ -44,6 +44,7 @@ import { runActivityRefOf } from '../tasks/run-activity-service.js';
 import { readGoal } from '../tasks/plan-readers.js';
 import { nestedSourceObject, parseDecisionSourceKey } from '../tasks/decision-source-identity.js';
 import { createCollectionCardSource } from './decision-read-model.js';
+import { runRefOfPins, taskRefOfPins } from './decision-card-refs.js';
 import type { DecisionReadRecordsPort } from './goal-conflicts.js';
 
 export type RepairApprovalSourceDependencies = {
@@ -265,6 +266,7 @@ function repairApprovalCard(head: NoteHeadSnapshot, goalRef: GoalRef): DecisionC
     staleReason: null,
     closedReason: null,
     openedAt: head.createdAt,
+    taskRef: taskRefOfPins(source.pins), runRef: runRefOfPins(source.pins),
     readOnly: false,
     actions: ['answer'],
   };

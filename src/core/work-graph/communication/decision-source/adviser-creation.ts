@@ -168,6 +168,7 @@ export function adviserCreationCard(item: AdviserCreationNoticeItemV1, subject: 
     answerMessageRef: null, answer: null, application: null,
     candidateStatus: null, staleReason: null, closedReason: item.closedReason,
     openedAt: item.rework?.requestedAt ?? null, readOnly: !open, actions: open ? ['answer'] : [],
+    taskRef: null, runRef: null,
   };
 }
 

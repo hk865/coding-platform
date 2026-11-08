@@ -38,6 +38,7 @@ function card(cardKey: string, goalId: string, requestRef: QueryJobRef | null): 
     objects: [], options: [], answerMessageRef: null,
     answer: null, application: null, candidateStatus: 'candidate', staleReason: null, closedReason: null,
     openedAt: null,
+    taskRef: null, runRef: null,
     readOnly: false, actions: ['answer', 'adopt', 'abandon'],
   };
 }

@@ -77,8 +77,9 @@ export function projectReworkRequestCard(
   record: PendingReworkRequestV1, subject: DecisionSubjectV1, goal: GoalSnapshot | null,
 ): DecisionCardV1 {
   const key = decisionSourceKey({ kind: 'rework_request', requestRef: record.ref });
+  const requestPin = reworkRequestPinOf(record);
   const objects: DecisionObjectV1[] = [
-    { kind: 'aggregate', pin: reworkRequestPinOf(record), label: 'rework request' },
+    { kind: 'aggregate', pin: requestPin, label: 'rework request' },
     // A Task has no stored record; revision 0 is the absence pin `decision-source-facts` already knows.
     { kind: 'aggregate', pin: { ref: { aggregateType: 'Task', ...structuredClone(record.task) } as unknown as VersionPin['ref'],
       revision: 0 }, label: 'task' },
@@ -86,7 +87,7 @@ export function projectReworkRequestCard(
   return {
     cardKey: key,
     source: {
-      kind: 'rework_request', key, subject: structuredClone(subject), pins: [reworkRequestPinOf(record)],
+      kind: 'rework_request', key, subject: structuredClone(subject), pins: [requestPin],
       goalBases: goal === null ? [] : [goalDecisionBasis(goal)],
     },
     state: 'waiting_answer',
@@ -102,6 +103,7 @@ export function projectReworkRequestCard(
     staleReason: null,
     closedReason: null,
     openedAt: record.requestedAt,
+    taskRef: null, runRef: null,
     readOnly: false,
     actions: ['answer'],
   };

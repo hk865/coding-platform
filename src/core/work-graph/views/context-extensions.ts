@@ -31,6 +31,7 @@ import type {
 import type { SessionAnomalyPort } from '../tasks/session-anomaly-service.js';
 import { sessionAnomalyRefKey } from '../tasks/session-anomaly-codecs.js';
 import type { NoteMemoryMaterialInputV1, NoteMemoryMaterialPort, NoteMemoryMaterialV1 } from '../model/note-contracts.js';
+import { taskPinRefOf, type TaskPinRef } from './decision-card-refs.js';
 
 export type ContextExtensionsDependencies = {
   anomalies: Pick<SessionAnomalyPort, 'listSessionAnomalies'>;
@@ -58,21 +59,11 @@ const CARD_SOURCE_KINDS: readonly DecisionSourceV1['kind'][] = [
  * only this page size stays (P6). */
 const DECISION_PAGE_LIMIT = 100;
 
-type TaskTriple = { aggregateType: 'Task'; projectId: string; goalId: string; taskId: string };
-
-/** The formal Task designation `{aggregateType:'Task',projectId,goalId,taskId}`, or null. */
-function taskTripleOf(ref: unknown): TaskTriple | null {
-  if (!isRecord(ref) || ref['aggregateType'] !== 'Task') return null;
-  const { projectId, goalId, taskId } = ref;
-  if (typeof projectId !== 'string' || typeof goalId !== 'string' || typeof taskId !== 'string') return null;
-  return { aggregateType: 'Task', projectId, goalId, taskId };
-}
-
 /** §4.3.3: the formal Task designations of one card, from source pins and objects. */
-function taskTriplesOf(card: DecisionCardV1): TaskTriple[] {
-  const byKey = new Map<string, TaskTriple>();
+function taskTriplesOf(card: DecisionCardV1): TaskPinRef[] {
+  const byKey = new Map<string, TaskPinRef>();
   const consider = (ref: unknown): void => {
-    const triple = taskTripleOf(ref);
+    const triple = taskPinRefOf(ref);
     if (triple !== null) byKey.set(canonicalJson(triple as unknown as JsonValue), triple);
   };
   for (const pin of card.source.pins) consider(pin.ref);
@@ -95,7 +86,7 @@ function recordSourcesOf(pins: DecisionCardV1['source']['pins']): ContextSourceV
   for (const pin of pins) {
     if (pin.revision <= 0) continue;
     if (!isRecord(pin.ref)) continue;
-    if (taskTripleOf(pin.ref) !== null) continue;
+    if (taskPinRefOf(pin.ref) !== null) continue;
     const source: ContextSourceV1 = { kind: 'record', ref: pin.ref, revision: pin.revision, digest: null };
     byKey.set(canonicalJson(source as unknown as JsonValue), source);
   }

@@ -88,6 +88,7 @@ import {
 import type { WaitStateV1 } from '../state/message-machine.js';
 import { sameRef } from '../state/ref-equality.js';
 import { stopRequesterOf } from '../state/task-failure.js';
+import { taskTripleOfPin } from './decision-card-refs.js';
 
 /**
  * L1b: the per-line budget for the historical parts. The lead set this number
@@ -2229,14 +2230,14 @@ function toQueueCard(card: DecisionCardV1, messages: ReadonlyMap<string, Session
     } else {
       code = parsed.code;
       for (const pin of parsed.affected) {
-        const task = asTaskTriple(pin.ref);
+        const task = taskTripleOfPin(pin.ref);
         if (task !== null) taskPins.push(task);
       }
     }
   } else {
     for (const object of card.objects) {
       if (object.kind !== 'aggregate') continue;
-      const task = asTaskTriple(object.pin.ref);
+      const task = taskTripleOfPin(object.pin.ref);
       if (task !== null) taskPins.push(task);
     }
   }
@@ -2257,15 +2258,6 @@ function toQueueCard(card: DecisionCardV1, messages: ReadonlyMap<string, Session
     taskPins: dedupeTasks(taskPins),
     excluded: code !== null && EXCLUDED_GOAL_CAUSES.has(code),
   };
-}
-
-/** A stored-absent `Task` pin (`{aggregateType:'Task',...}`) as the plain TaskTriple. */
-function asTaskTriple(ref: unknown): TaskTriple | null {
-  if (typeof ref !== 'object' || ref === null) return null;
-  const value = ref as { aggregateType?: unknown; projectId?: unknown; goalId?: unknown; taskId?: unknown };
-  if (value.aggregateType !== 'Task' || typeof value.projectId !== 'string'
-    || typeof value.goalId !== 'string' || typeof value.taskId !== 'string') return null;
-  return { projectId: value.projectId, goalId: value.goalId, taskId: value.taskId };
 }
 
 function parseGoalCauseKey(key: string): { code: string; affected: VersionPin[] } | null {

@@ -16,7 +16,8 @@
  * (`goal-settings-machine.ts:286`) is the INTERSECTION of the two Goals' executed
  * files. Goal B planned M but executed no file, so `filePaths` is `[]`; the pair
  * overlaps only through `moduleRefs` (M). The public `GoalConflictReadV1`
- * (`model/decision-contracts.ts:288-297`) exposes `cards` (no file list) and
+ * (`model/decision-contracts.ts:288-297`) exposes `cards` (the overlapping files
+ * in `objects`, never a separate `filePaths`) and
  * `footprintCompleteness.unmappedFiles`, which is empty because F is MAPPED, not
  * unmapped. `tests/state/S5-goal-settings.test.ts:284` pins `filePaths: []` for
  * exactly this planned-vs-executed case. Producing "lists F" would need a

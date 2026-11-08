@@ -193,6 +193,7 @@ export function createGoalDecisionCauseReader(
   function cause(input: {
     goal: GoalSnapshot; code: string; action: GoalDecisionCauseReadV1['action'];
     affected: VersionPin[]; taskRef: GoalDecisionCauseReadV1['taskRef']; runRef: GoalDecisionCauseReadV1['runRef'];
+    openedAt?: string | null;
     objects?: DecisionObjectV1[]; options?: DecisionOptionV1[];
   }): GoalDecisionCauseReadV1 {
     const byKey = new Map<string, VersionPin>();
@@ -209,6 +210,7 @@ export function createGoalDecisionCauseReader(
       code: input.code,
       taskRef: input.taskRef,
       runRef: input.runRef,
+      openedAt: input.openedAt ?? null,
       action: input.action,
       objects: input.objects ?? [],
       options: input.options ?? [],
@@ -280,12 +282,13 @@ export function createGoalDecisionCauseReader(
   /** §3.3 line 629 / B2/defect-1: the formal pin of the failure Run one Task cause is about. */
   async function failureRunOf(
     rows: Map<string, TaskRow>, taskId: string,
-  ): Promise<{ ok: true; pin: VersionPin; runRef: RunRef } | { ok: false; rejection: Rej } | null> {
+  ): Promise<{ ok: true; pin: VersionPin; runRef: RunRef; endedAt: string | null }
+    | { ok: false; rejection: Rej } | null> {
     const failure = rows.get(taskId)?.failure;
     if (failure === undefined || failure.runRef === null) return null;
     const read = await runPinOf(failure.runRef, failure.runRevision);
     if (!read.ok) return read;
-    return { ok: true, pin: read.pin, runRef: failure.runRef };
+    return { ok: true, pin: read.pin, runRef: failure.runRef, endedAt: failure.run?.endedAt ?? null };
   }
 
   async function displayCauses(
@@ -320,7 +323,8 @@ export function createGoalDecisionCauseReader(
           if (!runRead.ok) return { ok: false, rejection: runRead.rejection };
           causes.push(cause({ goal, code: displayCause.code, action: null,
             affected: [taskPin(goal, displayCause.taskId), runRead.pin],
-            taskRef: taskTriple(goal, displayCause.taskId), runRef: displayCause.runRef }));
+            taskRef: taskTriple(goal, displayCause.taskId), runRef: displayCause.runRef,
+            openedAt: rows.get(displayCause.taskId)?.failure?.run?.endedAt ?? null }));
           break;
         }
         case 'auto_rework_pending':
@@ -333,6 +337,7 @@ export function createGoalDecisionCauseReader(
             // SMK3b §3.6: the Goal-level interruption pins its record and the Tasks it lists.
             if ('interruption' in displayCause) {
               causes.push(cause({ goal, code: displayCause.code, action: null, taskRef: null, runRef: null,
+                openedAt: displayCause.detectedAt,
                 affected: [displayCause.interruption, ...displayCause.taskIds.map((taskId) => taskPin(goal, taskId))] }));
             }
             break;
@@ -342,7 +347,8 @@ export function createGoalDecisionCauseReader(
           const affected = [taskPin(goal, displayCause.taskId)];
           if (failureRun !== null) affected.push(failureRun.pin);
           causes.push(cause({ goal, code: displayCause.code, action: null, affected,
-            taskRef: taskTriple(goal, displayCause.taskId), runRef: failureRun?.runRef ?? null }));
+            taskRef: taskTriple(goal, displayCause.taskId), runRef: failureRun?.runRef ?? null,
+            openedAt: failureRun?.endedAt ?? null }));
           break;
         }
       }
@@ -435,7 +441,8 @@ export function createGoalDecisionCauseReader(
       });
       if (derived === null) continue;
       causes.push(cause({ goal, code: derived.code, action: derived.action, affected: derived.affected,
-        taskRef: taskTriple(goal, row.ref.taskId), runRef: failure.runRef }));
+        taskRef: taskTriple(goal, row.ref.taskId), runRef: failure.runRef,
+        openedAt: failure.run?.endedAt ?? null }));
     }
     return { ok: true, causes };
   }

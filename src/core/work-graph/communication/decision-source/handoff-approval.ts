@@ -126,6 +126,7 @@ export function handoffApprovalCard(operation: HandoffApprovalOperationV1): Deci
     subject: structuredClone(facts.source.subject), senderSessionRef: null, requestRef: null,
     objects: facts.objects, options: facts.options, answerMessageRef: null, answer: null, application: null,
     candidateStatus: null, staleReason: null, closedReason: facts.closedReason, openedAt: facts.openedAt,
+    taskRef: null, runRef: null,
     readOnly: facts.closedReason !== null, actions: facts.closedReason === null ? ['answer'] : [],
   };
 }

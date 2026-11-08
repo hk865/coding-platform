@@ -38,6 +38,7 @@ import { goalConflictFacts } from '../state/goal-settings-machine.js';
 import { mapExecutedFilesToModules, plannedFootprintOf } from '../model/architecture-footprint.js';
 import { catalogForWorkspace } from '../../../contracts/workspace-catalog.js';
 import { goalDecisionBasis } from '../tasks/goal-basis.js';
+import { runRefOfPins, taskRefOfPins } from './decision-card-refs.js';
 
 // The two shared RecordStore failure helpers live in `persistence` (the
 // `tasks -> views` edge is forbidden); re-exported here for the existing
@@ -297,7 +298,7 @@ async function assembleGoalConflicts(
         cancelled: (leftTerminal?.cancelled ?? false) || (rightTerminal?.cancelled ?? false),
         completed: (leftTerminal?.completed ?? false) || (rightTerminal?.completed ?? false),
       };
-      cards.push(conflictCard(left.goal, right.goal, terminal));
+      cards.push(conflictCard(left.goal, right.goal, terminal, input.workspace, facts.filePaths));
     }
   }
   return { status: 'ready', value: { cards, labels, footprintCompleteness, sourceCursor: watermark } };
@@ -320,7 +321,8 @@ function labelFor(goal: GoalSnapshot, other: GoalSnapshot): GoalConflictReadV1['
     otherPlanRef: other.activePlanRevision === null ? null : { ...other.activePlanRevision } };
 }
 
-function conflictCard(left: GoalSnapshot, right: GoalSnapshot, terminal: GoalTerminalState): DecisionCardV1 {
+function conflictCard(left: GoalSnapshot, right: GoalSnapshot, terminal: GoalTerminalState,
+  workspace: WorkspaceScope, filePaths: readonly string[]): DecisionCardV1 {
   const pair = [left, right]
     .map((goal) => ({ goalRef: { ...goal.ref }, revision: goal.revision,
       activePlanRef: goal.activePlanRevision === null ? null : { ...goal.activePlanRevision } }))
@@ -344,10 +346,15 @@ function conflictCard(left: GoalSnapshot, right: GoalSnapshot, terminal: GoalTer
   return {
     cardKey: key, source, state: closed ? 'closed' : 'waiting_answer',
     subject: { kind: 'goal', goalRef: { ...pair[1]!.goalRef } },
-    senderSessionRef: null, requestRef: null, objects: [], options: closed ? [] : [...CONFLICT_OPTIONS],
+    senderSessionRef: null, requestRef: null,
+    // The one `goalConflictFacts` result, already ordered and deduped; no object for a module-only overlap.
+    objects: filePaths.map((path) => ({ kind: 'file' as const, workspace: { ...workspace },
+      path, digest: null, label: path })),
+    options: closed ? [] : [...CONFLICT_OPTIONS],
     answerMessageRef: null, answer: null, application: null, candidateStatus: null, staleReason: null,
     closedReason: closed ? (terminal.cancelled ? 'goal_cancelled' : 'source_resolved') : null,
     openedAt: null,
+    taskRef: taskRefOfPins(pins), runRef: runRefOfPins(pins),
     readOnly: closed, actions: closed ? [] : ['answer'],
   };
 }

@@ -545,6 +545,7 @@ export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
           goalBases: [goalBasis],
         },
         code: cause.code, taskRef: { ...row.ref }, runRef: failure.runRef,
+        openedAt: failure.run?.endedAt ?? null,
         action: cause.action, objects: [], options: [],
       },
     });

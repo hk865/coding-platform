@@ -190,6 +190,7 @@ export function createPlanningQuestionReader(
         staleReason: null,
         closedReason: null,
         openedAt: input.job.job.submittedAt,
+        taskRef: null, runRef: null,
         readOnly: false,
         actions: ['answer'],
       });

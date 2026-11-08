@@ -22,6 +22,7 @@ import { checkShape } from '../../../contracts/validation/data-format.js';
 import type { EncodedRecord } from '../../record-store/ports.js';
 import type { DecisionCardSourcePort, DecisionCardV1 } from '../model/decision-contracts.js';
 import { createCollectionCardSource } from './decision-read-model.js';
+import { runRefOfPins, taskRefOfPins } from './decision-card-refs.js';
 import { storeFailureToRejection } from '../persistence/read-result-failures.js';
 import { parseDecisionSourceKey, nestedSourceObject } from '../tasks/decision-source-identity.js';
 import {
@@ -182,6 +183,7 @@ function projectCard(facts: StructuralProposalCardFactsV1, subject: DecisionSour
     staleReason: null,
     closedReason: null,
     openedAt: null,
+    taskRef: taskRefOfPins(source.pins), runRef: runRefOfPins(source.pins),
     readOnly: false,
     actions: ['answer'],
   };

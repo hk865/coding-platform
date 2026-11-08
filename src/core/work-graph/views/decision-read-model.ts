@@ -124,6 +124,7 @@ import {
   type GoalConflictAssemblerPort,
   type GoalTerminalState,
 } from './goal-conflicts.js';
+import { runRefOfPins, taskRefOfPins } from './decision-card-refs.js';
 import { compareNoticePositions, mergeNoticePages, type NoticeSourceItemsV1 } from './notice-position.js';
 import { groupNotices, noticePage, seenThroughOfNotices, type NoticeLineV1 } from './notice-grouping.js';
 import { ROLE_CAPACITY_EPISODES_BY_PROJECT_DUTY_LOOKUP, ROLE_LINE_DUTIES,
@@ -480,6 +481,7 @@ function noteCard(card: NoteDecisionCardFactsV1, subject: DecisionSubjectV1,
     senderSessionRef: null, requestRef: null,
     objects: card.objects, options: card.options, answerMessageRef: null, answer: null, application: null,
     candidateStatus: null, staleReason: null, closedReason: null, openedAt: card.openedAt,
+    taskRef: taskRefOfPins(card.pins), runRef: runRefOfPins(card.pins),
     readOnly: false, actions: ['answer'],
   };
 }
@@ -946,6 +948,7 @@ function commandRerunRequestCard(facts: CommandRerunRequestCardFactsV1, subject:
     objects: facts.objects, options: facts.options, answerMessageRef: null, answer: null, application: null,
     candidateStatus: null, staleReason: null, closedReason: null,
     openedAt: facts.openedAt,
+    taskRef: taskRefOfPins(facts.source.pins), runRef: runRefOfPins(facts.source.pins),
     readOnly: false, actions: ['answer'],
   };
 }
@@ -958,6 +961,7 @@ function unknownCallReviewCard(facts: UnknownCallReviewCardFactsV1, subject: Dec
     objects: facts.objects, options: facts.options, answerMessageRef: null, answer: null, application: null,
     candidateStatus: null, staleReason: null, closedReason: null,
     openedAt: facts.openedAt,
+    taskRef: taskRefOfPins(facts.source.pins), runRef: runRefOfPins(facts.source.pins),
     readOnly: false, actions: ['answer'],
   };
 }
@@ -971,6 +975,7 @@ function closedCollectionCard(source: DecisionSourceV1, closedReason: DecisionCa
     state: 'closed', subject: source.subject, senderSessionRef: null, requestRef: null,
     objects: [], options: [], answerMessageRef: null, answer: null, application: null,
     candidateStatus: null, staleReason: null, closedReason, openedAt, readOnly: true, actions: [],
+    taskRef: taskRefOfPins(source.pins), runRef: runRefOfPins(source.pins),
   };
 }
 
@@ -1012,7 +1017,8 @@ function goalCauseCard(cause: GoalDecisionCauseReadV1): DecisionCardV1 | null {
     subject: { kind: 'goal', goalRef },
     senderSessionRef: null, requestRef: null, objects: cause.objects, options: [],
     answerMessageRef: null, answer: null, application: null, candidateStatus: null, staleReason: null,
-    closedReason: null, openedAt: null, readOnly: false, actions: goalCauseActions(cause),
+    closedReason: null, openedAt: cause.openedAt, readOnly: false, actions: goalCauseActions(cause),
+    taskRef: cause.taskRef, runRef: cause.runRef,
   };
 }
 
@@ -1566,8 +1572,7 @@ async function readDecisionCard(
           if (live.status === 'ready' && live.value !== null) {
             // The real source's stored time and its close win over the synthetic answer's; the answer result stays,
             // so the single card reads as resolved exactly when the queue does.
-            projectCard = { ...projectCard, openedAt: live.value.openedAt ?? projectCard.openedAt,
-              closedReason: live.value.closedReason ?? projectCard.closedReason };
+            projectCard = mergeCards(projectCard, live.value);
           }
         } catch {
           // A failed source read keeps the saved answer's card.
@@ -1636,8 +1641,7 @@ async function readDecisionCard(
             const live = await deriveOpenCard(deps, ctx, source, goal, candidateRead);
             // the source's stored time and its close win, as on the project arm
             if (live !== null) {
-              card = { ...answered, openedAt: live.openedAt ?? answered.openedAt,
-                closedReason: live.closedReason ?? answered.closedReason };
+              card = mergeCards(answered, live);
             }
           } catch {
             // A failed source read keeps the saved answer's card.
@@ -1927,6 +1931,7 @@ function messageCard(source: DecisionSourceV1, message: SessionMessage): Decisio
     answer: answered ? message.response as UserMessageResponseV1 : null,
     application: message.application ?? null,
     candidateStatus: null, staleReason: null, closedReason: null, openedAt: message.createdAt,
+    taskRef: taskRefOfPins(source.pins), runRef: runRefOfPins(source.pins),
     readOnly: false,
     actions: answered ? [] : ['answer'],
   };
@@ -1945,6 +1950,7 @@ function syntheticAnswerCard(message: SessionMessage): DecisionCardV1 | null {
     objects: message.decision?.objects ?? [], options: message.decision?.options ?? [],
     answerMessageRef: message.ref, answer: response, application: message.application ?? null,
     candidateStatus: null, staleReason: null, closedReason: null, openedAt: message.createdAt,
+    taskRef: taskRefOfPins(source.pins), runRef: runRefOfPins(source.pins),
     readOnly: false, actions: [],
   };
 }
@@ -1981,6 +1987,7 @@ function candidateCard(proposal: PlanProposal, goal: GoalSnapshot): DecisionCard
     answerMessageRef: null, answer: null, application: null,
     candidateStatus: closed ? null : stale ? 'stale' : 'candidate', staleReason: stale ? 'basedOn is not the active Plan pointer' : null,
     closedReason: closed ? 'source_resolved' : null, openedAt: null, readOnly: closed, actions,
+    taskRef: taskRefOfPins(pins), runRef: runRefOfPins(pins),
   };
 }
 
@@ -2196,15 +2203,22 @@ function messageReleaseCard(
     candidateStatus: stale ? 'stale' : null,
     staleReason: stale ? 'stale_pins' : null,
     closedReason: facts.closedReason, openedAt: facts.openedAt, readOnly: facts.closedReason !== null,
+    taskRef: taskRefOfPins(facts.source.pins), runRef: runRefOfPins(facts.source.pins),
     actions: facts.closedReason === null ? ['answer'] : [],
     messageRelease: { deadline: facts.deadline, releaseBlock: facts.releaseBlock },
   };
 }
 
 function mergeCards(existing: DecisionCardV1, incoming: DecisionCardV1): DecisionCardV1 {
+  const existingWins = existing.source.pins.length >= incoming.source.pins.length;
   return {
     ...existing,
-    source: existing.source.pins.length >= incoming.source.pins.length ? existing.source : incoming.source,
+    source: existingWins ? existing.source : incoming.source,
+    // The live source card arrives last at every merge site and owns the refs and the stored time — an explicit
+    // null `openedAt` included (§9a: plan-pending, deferred, governance and no-adviser causes). The saved answer
+    // only contributes its answer fields.
+    taskRef: incoming.taskRef,
+    runRef: incoming.runRef,
     answerMessageRef: existing.answerMessageRef ?? incoming.answerMessageRef,
     answer: existing.answer ?? incoming.answer,
     application: existing.application ?? incoming.application,
@@ -2213,8 +2227,7 @@ function mergeCards(existing: DecisionCardV1, incoming: DecisionCardV1): Decisio
     candidateStatus: existing.candidateStatus ?? incoming.candidateStatus,
     staleReason: existing.staleReason ?? incoming.staleReason,
     closedReason: existing.closedReason ?? incoming.closedReason,
-    // The real source card's stored time wins over the synthetic answer's; the answer result stays.
-    openedAt: incoming.openedAt ?? existing.openedAt,
+    openedAt: incoming.openedAt,
     // The message's live facts win over the answer's projection, and every other kind (neither side carries the
     // field) is unchanged.
     ...(existing.messageRelease === undefined && incoming.messageRelease === undefined
@@ -2281,6 +2294,7 @@ export function createMemberCreationCardSource(
         subject: structuredClone(subject), senderSessionRef: null, requestRef: null,
         objects: facts.objects, options: facts.options, answerMessageRef: null, answer: null, application: null,
         candidateStatus: null, staleReason: null, closedReason: facts.closedReason, openedAt: facts.openedAt,
+        taskRef: taskRefOfPins(facts.source.pins), runRef: runRefOfPins(facts.source.pins),
         readOnly: facts.closedReason !== null, actions: facts.closedReason === null ? ['answer'] : [],
       };
     },
@@ -2496,6 +2510,7 @@ function roleCapacityCard(episode: RoleCapacityEpisodeV1, subject: DecisionSubje
     candidateStatus: null, staleReason: null,
     closedReason: episode.closedAt === null ? null : 'source_resolved',
     openedAt: episode.openedAt, readOnly: episode.closedAt !== null,
+    taskRef: taskRefOfPins([pin]), runRef: runRefOfPins([pin]),
     actions: episode.closedAt === null ? ['answer'] : [],
   };
 }
@@ -2515,6 +2530,7 @@ function roleLineChangeCard(operation: RoleLineOperationV1, subject: DecisionSub
     answerMessageRef: null, answer: null, application: null,
     candidateStatus: null, staleReason: null, closedReason: null,
     openedAt: operation.requestedAt, readOnly: false, actions: ['answer'],
+    taskRef: taskRefOfPins([pin]), runRef: runRefOfPins([pin]),
   };
 }
 
