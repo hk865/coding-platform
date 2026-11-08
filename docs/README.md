@@ -6,6 +6,7 @@
 | --- | --- |
 | 做到哪里、缺什么、下一步是什么 | [STATUS](refactor/STATUS.md) |
 | 用户已定了什么 | [决定表](refactor/DECISIONS.md)（每条决定现在是否有效、按哪条读）；原文在 [HANDOFF 顶部：决定 1–116](refactor/HANDOFF.md) |
+| 技术上为什么这样选、还考虑过什么、什么时候要重新考虑 | [技术取舍记录](refactor/tradeoffs/README.md)（决定 121-70 起） |
 | 编排、记忆和生命周期怎样设计 | [设计目录](refactor/design/orchestration-2026-10/README.md)、[DESIGN](refactor/design/orchestration-2026-10/DESIGN.md)、[读法模型](refactor/design/orchestration-2026-10/model/README.md)、[记忆查找](refactor/design/orchestration-2026-10/MEMORY-LOOKUP.md) |
 | 接下来如何施工、怎样分工和测试 | [分片规格与任务书](refactor/design/orchestration-2026-10/slices/README.md)、[DSH-WORKFLOW §6.10](refactor/DSH-WORKFLOW.md#610-大片怎么交给-dsh决定-46)、[根 AGENTS](../AGENTS.md)的 2026-10-13 做法 |
 | 界面以什么为准 | [冻结原型](ui-reference/workbench-2026-10/README.md)、[UI-WORKBENCH §0](UI-WORKBENCH.md#ui-decisions-2026-10)、[E3 待办](refactor/design/orchestration-2026-10/E3-UI-ITEMS.md) |
