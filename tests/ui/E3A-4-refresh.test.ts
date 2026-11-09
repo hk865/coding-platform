@@ -29,11 +29,30 @@ describe('E3A-4 refresh and the relation set', () => {
   it('E3A-17 one notification rereads the same set, one stream, no other routes', async () => {
     const world = await openWithArch();
     const goalId = world.goals.first.goalId;
-    const { page, log } = await bootE3N(world, 'ArchOverview', { search: '?goal=' + goalId });
+    /* The row names exactly one notification. The real write publishes more
+       than one live change notice (the Session commit and its work link), so
+       the transport is controlled and only the frame below reaches the page;
+       the write itself is still the real Host's. `gate` holds the stream
+       request until the first read has settled, so boundary 2 is its own read. */
+    const { page, log } = await bootE3N(world, 'ArchOverview',
+      { search: '?goal=' + goalId, mode: 'controlled', gate: true });
     try {
-      await waitFor(() => log.changes === 1, 3_000);
-      /* Boundary 2: the stream-open reread; the notification row starts after it. */
-      await waitFor(() => countRoute(log, 'lines/list') >= 2, 3_000);
+      expect(log.changes).toBe(1);
+      await waitFor(() => countRoute(log, 'bootstrap') === 1
+        && countRoute(log, 'lines/list') === 1, 3_000);
+      log.releaseChanges();
+      /* Boundary 2: the stream-open reread. `lines/list` is the read's last
+         route, so the whole set back at its first-read values is the public
+         signal that the connection reread has reached its pre-notification
+         counts; only then are the before-counts taken and the notice sent. */
+      await waitFor(() => countRoute(log, 'bootstrap') === 2
+        && countRoute(log, 'goals/read') === 2
+        && countRoute(log, 'architecture/read') === 2
+        && countRoute(log, 'architecture/observation-state') === 2
+        && countRoute(log, 'architecture/query') === 2
+        && countRoute(log, 'files/list') === 2
+        && countRoute(log, 'tasks/query') === 2
+        && countRoute(log, 'lines/list') === 2, 3_000);
       const before = {
         lines: countRoute(log, 'lines/list'),
         read: countRoute(log, 'architecture/read'),
@@ -41,13 +60,21 @@ describe('E3A-4 refresh and the relation set', () => {
         query: countRoute(log, 'architecture/query'),
       };
       await world.createWorkSession('e3a-new');
+      const opening = log.openings.at(-1);
+      if (opening === undefined) throw new Error('the page did not open its change stream');
+      opening.enqueue(new TextEncoder().encode('event: change\nid: c0000000002\ndata: {}\n\n'));
+      /* The one notification starts one reread; `lines/list`, the read's last
+         route, is the public signal that the reread reached the page. With
+         exactly one frame here no second read can start, so once it is sent
+         the read set below is final. */
+      await waitFor(() => countRoute(log, 'lines/list') >= before.lines + 1, 3_000);
       /* 具名改坏: 在通知回调里再 `subscribeChanges` 一次；E3A-17 的
          `changes===1` 红。或每次通知读一次 `graph/detail`；`graph/detail` 0 次红。 */
-      await waitFor(() => countRoute(log, 'lines/list') === before.lines + 1, 3_000);
+      expect(log.changes).toBe(1);
+      expect(countRoute(log, 'lines/list')).toBe(before.lines + 1);
       expect(countRoute(log, 'architecture/read')).toBe(before.read + 1);
       expect(countRoute(log, 'architecture/observation-state')).toBe(before.state + 1);
       expect(countRoute(log, 'architecture/query')).toBe(before.query + 1);
-      expect(log.changes).toBe(1);
       for (const route of ['architecture/find', 'architecture/compare', 'graph/detail',
         'decisions/queue', 'goals/list', 'goals/display']) {
         expect(countRoute(log, route)).toBe(0);

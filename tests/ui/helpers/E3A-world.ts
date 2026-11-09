@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import type { WorkflowAdvanceInput, WorkflowAdvanceResult } from '../../../src/business/workflow/contracts.js';
 import type { GoalRef } from '../../../src/contracts/ledger.js';
 import { asRecord } from '../../../src/ui/values.js';
 import { ag2bPlanDraft, graphWrite, plain } from '../../helpers/AG2b-collaboration-fixture.js';
@@ -67,13 +68,19 @@ function persistedRefOf(state: Record<string, unknown>): unknown {
 
 /**
  * W1's architecture: `src/other/other.ts` (the capture input) plus the catalog
- * with WorkGraph and Other. The registration's L8 capture settles first; only a
- * workspace without one is captured by the test, with the one mapping §1.2
- * names. Returns the literals the rows assert.
+ * with WorkGraph and Other. `moduleFiles` adds further capture inputs under the
+ * WorkGraph module; they are workspace files, never records. The registration's
+ * L8 capture settles first; only a workspace without one is captured by the
+ * test, with the one mapping §1.2 names. Returns the literals the rows assert.
  */
-export async function seedArchWorld(world: S6ARequestWorld): Promise<E3AWorld> {
+export async function seedArchWorld(world: S6ARequestWorld,
+  options: { moduleFiles?: readonly string[] } = {}): Promise<E3AWorld> {
   await mkdir(join(world.root, 'src/other'), { recursive: true });
   await writeFile(join(world.root, E3A.otherFile), "import '../module';\n");
+  for (const file of options.moduleFiles ?? []) {
+    await mkdir(join(world.root, dirname(file)), { recursive: true });
+    await writeFile(join(world.root, file), 'export const e3aSearchFile = 1;\n');
+  }
   const scope = world.scope;
   committedBody((await world.post('architecture/adopt-initial', graphWrite(scope, {
     baselineId: 'e3a-baseline',
@@ -176,6 +183,40 @@ export async function seedArchPlan(world: S6ARequestWorld,
     }))).body, 'the executor line');
   }
   return { goal, tasks, lineName: first?.title ?? '' };
+}
+
+/**
+ * §5.2 item 9's non-empty A5 world: one real Work Run through the public
+ * Workflow, left live. `select_work` names the claim step and the next
+ * `workflow/advance` performs it; the later prepare/start steps are not driven,
+ * so the Run stays `starting` (a live status for `architecture/work-scope`)
+ * with the Plan's `plannedFiles`, and no model call is needed. The wait is the
+ * public work-scope read itself, never a fixed tick.
+ */
+export async function startWorkRun(world: S6ARequestWorld, plan: E3APlan): Promise<void> {
+  const task = plan.tasks[0];
+  if (task === undefined) throw new Error('E3A: startWorkRun needs one planned Task');
+  let input: WorkflowAdvanceInput = {
+    schemaVersion: 1, goalRef: plan.goal, flowId: 'e3a-work-scope', sessionHint: null,
+    kind: 'select_work', taskId: task.taskId,
+  };
+  for (let step = 0; step < 2; step += 1) {
+    const answer = await world.post('workflow/advance', plain(world.scope, input));
+    const body = answer.body as WorkflowAdvanceResult;
+    if (answer.httpStatus !== 200 || body.status !== 'ready') {
+      throw new Error(`E3A: workflow/advance step ${step + 1}: ${JSON.stringify(answer.body)}`);
+    }
+    if (body.value.next === null) throw new Error(`E3A: workflow/advance step ${step + 1} named no next step`);
+    input = body.value.next;
+  }
+  for (let turn = 0; turn < 500; turn += 1) {
+    const answer = await world.post('architecture/work-scope', plain(world.scope, {}));
+    const body = asRecord(answer.body);
+    const counts = asRecord(asRecord(body['value'])['counts']);
+    if (body['status'] === 'ready' && counts['files'] === task.plannedFiles.length) return;
+    await sleep(20);
+  }
+  throw new Error('E3A: the live Run never appeared in architecture/work-scope');
 }
 
 /** One note anchored at the selected file, written by the person. The page

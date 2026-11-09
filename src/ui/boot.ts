@@ -173,8 +173,11 @@ export async function bootBoardPage(): Promise<void> {
   const actions: BoardActions = {
     readMore(next: BoardReadDemand): void {
       /* Explicit fields replace the old demand, including `false`/`null`, so a
-       * closed view can withdraw its read instead of sticking forever. */
+       * closed view can withdraw its read instead of sticking forever. Closing
+       * a detail only withdraws its note anchor; the closed detail shows no
+       * note, so that withdrawal reads nothing (E3A-15). */
       Object.assign(demand, next);
+      if (Object.keys(next).length === 1 && next.noteAnchor === null) return;
       void refresh.reread();
     },
     async pinLine(key: TaskMapSessionRef, pinned: boolean): Promise<void> {

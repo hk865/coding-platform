@@ -3,7 +3,7 @@ import { findButton, findElement, findLink } from './helpers/boot-page.js';
 import { bootE3N, countRoute, waitFor } from './helpers/E3N-page.js';
 import { click, pressKey } from './helpers/E3N-interact.js';
 import { openW1 } from './helpers/E3N-world.js';
-import { seedArchPlan, seedArchWorld } from './helpers/E3A-world.js';
+import { seedArchPlan, seedArchWorld, startWorkRun } from './helpers/E3A-world.js';
 import {
   crumbButtons, currentCrumb, detailText, layerTitle, nodeNamed, resultRows, searchInput, searchNote,
 } from './helpers/E3A-page.js';
@@ -21,15 +21,25 @@ afterEach(async () => {
   for (const world of worlds.splice(0)) await world.close();
 });
 
+/** E3A-03's seed: `src/module.ts` plus seven matching files in the same
+ * WorkGraph module, so `architecture/find` has 8 hits and the first page (6)
+ * is what renders. */
+const SEARCH_FILES = [
+  'src/module-01.ts', 'src/module-02.ts', 'src/module-03.ts', 'src/module-04.ts',
+  'src/module-05.ts', 'src/module-06.ts', 'src/module-07.ts',
+] as const;
+
+const SEARCH_FIRST_PAGE = SEARCH_FILES.slice(0, 6);
+
 function urlOf(href: string | null): URL {
   expect(href).not.toBeNull();
   return new URL(href!, 'http://host/workbench/ArchOverview.dc.html');
 }
 
-async function openWithArch(): Promise<{ world: S6ARequestWorld; goalId: string }> {
+async function openWithArch(options: { moduleFiles?: readonly string[] } = {}): Promise<{ world: S6ARequestWorld; goalId: string }> {
   const opened = await openW1();
   worlds.push(opened.world);
-  await seedArchWorld(opened.world);
+  await seedArchWorld(opened.world, options);
   return { world: opened.world, goalId: opened.world.goals.first.goalId };
 }
 
@@ -83,23 +93,29 @@ describe('E3A-1 links, breadcrumb, search and work scope', () => {
     }
   }, 60_000);
 
-  it('E3A-03 searching module reads architecture/find and shows one hit', async () => {
-    const { world } = await openWithArch();
+  it('E3A-03 searching module shows the total hit count and the first page', async () => {
+    const { world } = await openWithArch({ moduleFiles: SEARCH_FILES });
     const { page, log } = await bootE3N(world, 'ArchOverview');
     try {
       const input = searchInput(page.root);
       expect(input).toBeDefined();
       input!.value = 'module';
       input!.dispatch('input', { target: input, currentTarget: input });
-      await waitFor(() => countRoute(log, 'architecture/find') >= 1, 5_000);
-      await waitFor(() => searchNote(page.root) === '1 个，在 1 个模块');
-      /* 具名改坏: `qNote` 的 `n` 改成 `items.length` 并对分页后的总数取
-         `counts.total` 以外的值；E3A-03 的 `1 个` 红。或搜索时不发
+      /* 具名改坏: `src/ui/adapters/arch-overview.ts:326` 的 `String(total)` 改成
+         `String(rows.length)`；E3A-03 的 `8 个` 红。或搜索时不发
          `architecture/find`；`find` 次数 0 红。 */
-      expect(searchNote(page.root)).toBe('1 个，在 1 个模块');
+      await waitFor(() => countRoute(log, 'architecture/find') >= 1, 5_000);
+      expect(countRoute(log, 'architecture/find')).toBeGreaterThanOrEqual(1);
+      /* The first page proves the find reply landed; the note's total is a
+         separate, hand-computed literal from the 8-file seed. */
+      await waitFor(() => resultRows(page.root).length === 6, 5_000);
+      expect(searchNote(page.root)).toBe('8 个，在 1 个模块');
+      expect(page.root.textContent).toContain('另有 2 个，图里保持高亮');
       const rows = resultRows(page.root);
-      expect(rows).toHaveLength(1);
-      expect(rows[0]!.textContent).toContain('src/module.ts');
+      expect(rows).toHaveLength(6);
+      for (const [index, path] of SEARCH_FIRST_PAGE.entries()) {
+        expect(rows[index]!.textContent).toContain(path);
+      }
     } finally {
       await page.restore();
     }
@@ -155,19 +171,30 @@ describe('E3A-1 links, breadcrumb, search and work scope', () => {
     const opened = await openW1();
     worlds.push(opened.world);
     await seedArchWorld(opened.world);
-    await seedArchPlan(opened.world);
+    const plan = await seedArchPlan(opened.world);
+    await startWorkRun(opened.world, plan);
     const { page, log } = await bootE3N(opened.world, 'ArchOverview');
     try {
       const button = findButton(page.root, '只看当前工作');
       expect(button).toBeDefined();
       expect(button!.getAttribute('aria-pressed')).toBe('false');
+      /* The connection's supplementary read (R3, `refresh.ts` `onOpen`) starts
+         after the first read; let it pass the work-scope branch before the
+         toggle, so the click's demand cannot race it into a second read. */
+      await waitFor(() => countRoute(log, 'lines/list') >= 2, 5_000);
       const before = countRoute(log, 'architecture/work-scope');
-      /* 具名改坏: 用 `tasks/query` 的 `plannedFiles` 数替 `counts.files`；
-         E3A-05 的 `0 个文件` 变成 `1 个文件`，红。 */
+      /* 具名改坏: `src/ui/adapters/arch-overview.ts:560` 的
+         `source.work.counts.files` 改 `+1`；E3A-05 的 post-read-back
+         `1 个文件` 红。 */
       click(button!);
       await waitFor(() => countRoute(log, 'architecture/work-scope') === before + 1, 5_000);
       expect(findButton(page.root, '只看当前工作')!.getAttribute('aria-pressed')).toBe('true');
-      expect(page.root.textContent).toContain('正在处理 0 个文件，在 0 个模块');
+      /* The frozen seed's 0/0 is indistinguishable from the pre-read fallback
+         (`R.work.length`); one real live Run makes the read-back 1 file in 1
+         module. Wait for the read-back render's module count (the fallback is
+         0 modules), then assert the post-read-back literal. */
+      await waitFor(() => page.root.textContent.includes('在 1 个模块'), 5_000);
+      expect(page.root.textContent).toContain('正在处理 1 个文件，在 1 个模块');
       click(findButton(page.root, '只看当前工作')!);
       expect(findButton(page.root, '只看当前工作')!.getAttribute('aria-pressed')).toBe('false');
       expect(countRoute(log, 'architecture/work-scope')).toBe(before + 1);

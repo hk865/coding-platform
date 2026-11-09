@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { findAllClass, findButton, findClass, findElement } from './helpers/boot-page.js';
-import { bootE3N, waitFor } from './helpers/E3N-page.js';
+import { bootE3N, textOf, waitFor } from './helpers/E3N-page.js';
 import { click, hover, leave } from './helpers/E3N-interact.js';
 import { openW1 } from './helpers/E3N-world.js';
 import { E3A, seedArchPlan, seedArchWorld, writeArchNote } from './helpers/E3A-world.js';
 import {
-  currentCrumb, crumbButtons, detail, detailText, foldRow, intro, nodeNamed, pageText, statusClasses,
+  currentCrumb, crumbButtons, detail, detailText, foldRow, intro, nodeNamed, pageText, relationGroup,
+  statusClasses,
 } from './helpers/E3A-page.js';
 import { asRecord } from '../../src/ui/values.js';
 import type { S6ARequestWorld } from '../helpers/S6A-request-fixture.js';
@@ -89,7 +90,16 @@ describe('E3A-3 details, files and edges', () => {
       expect(statusClasses(row!)).not.toContain('s-none');
       click(row!);
       /* A3: file-to-file imports have no public route, so the file detail says
-         还没接通 instead of claiming an empty (or zero) edge set. */
+         还没接通 instead of claiming an empty (or zero) edge set. Each named
+         row is its own value: the file's status/why also carries the word. */
+      const imported = relationGroup(page.root, '引用');
+      const importers = relationGroup(page.root, '被引用');
+      expect(imported).toBeDefined();
+      expect(importers).toBeDefined();
+      /* 具名改坏: 把 `引用`/`被引用` 的值改成 `0 处引用`/`0 个来源`（`:1864-1865`）；
+         E3A-11 的逐项 `还没接通` 等值断言红。 */
+      expect(textOf(imported!)).toBe('还没接通');
+      expect(textOf(importers!)).toBe('还没接通');
       expect(detailText(page.root)).toContain('引用');
       expect(detailText(page.root)).toContain('被引用');
       expect(detailText(page.root)).toContain('还没接通');
@@ -122,6 +132,16 @@ describe('E3A-3 details, files and edges', () => {
       expect(text).toContain('Other');
       expect(text).toContain('WorkGraph');
       expect(text).toContain('模块依赖');
+      /* Each file-level row is its own value: the edge's status word also
+         carries 还没接通, so a whole-panel substring proves nothing here. */
+      const occurrences = relationGroup(page.root, '引用处数');
+      const sourceFiles = relationGroup(page.root, '来源文件');
+      expect(occurrences).toBeDefined();
+      expect(sourceFiles).toBeDefined();
+      /* 具名改坏: `引用处数` 改成 `this.fmt(e.n)`（`:1930`，边数冒充处数），
+         或两项都改成数字（`:1930-1931`）；E3A-12 的逐项等值断言红。 */
+      expect(textOf(occurrences!)).toBe('还没接通');
+      expect(textOf(sourceFiles!)).toBe('还没接通');
       expect(text).toContain('引用处数');
       expect(text).toContain('来源文件');
       expect(text).toContain('还没接通');
@@ -181,6 +201,7 @@ describe('E3A-3 details, files and edges', () => {
 
   it('E3A-15 closing the detail, going up and entering the layer send no request', async () => {
     const world = await openWithArch();
+    await writeArchNote(world);
     const { page, log } = await bootE3N(world, 'ArchOverview', { search: '?goal=' + world.goals.first.goalId });
     try {
       const top = nodeNamed(page.root, 'WorkGraph');
@@ -188,14 +209,34 @@ describe('E3A-3 details, files and edges', () => {
       click(top!);
       click(findButton(page.root, '进入这一层')!);
       expect(currentCrumb(page.root)).toBe('WorkGraph');
+      const file = nodeNamed(page.root, E3A.filePath);
+      expect(file).toBeDefined();
+      click(file!);
+      /* The file detail reads its anchor note. The note text only renders after
+         that read publishes, so it is the row's own settle signal (no tick). */
+      await waitFor(() => detailText(page.root).includes('模块语义：只读源码'), 5_000);
       const close = findElement(page.root, (element) => element.tagName.toLowerCase() === 'button'
         && element.getAttribute('aria-label') === '关闭详情');
       expect(close).toBeDefined();
+      const beforeFetches = page.pageFetches();
+      /* Let every read in flight (the note write's notice included) land: the
+         count must stay still for 150 ms before it is the baseline. */
+      for (let last = -1; last !== log.calls.length;) {
+        last = log.calls.length;
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      }
       const beforeClose = log.calls.length;
+      /* 具名改坏: 关闭详情时调 `location.reload()` 或发路由；
+         E3A-15 的 `pageFetches`/`assigned` 断言红。 */
       click(close!);
       expect(detail(page.root)).toBeUndefined();
       expect(intro(page.root)).toBeDefined();
+      /* Closing withdraws the note demand; a withdrawal reads nothing (the
+         reread would be asynchronous, so give it a turn before counting). */
+      await new Promise((resolve) => setTimeout(resolve, 150));
       expect(log.calls.length).toBe(beforeClose);
+      expect(page.pageFetches()).toBe(beforeFetches);
+      expect(page.assigned()).toEqual([]);
       const crumbs = crumbButtons(page.root);
       expect(crumbs.length).toBeGreaterThanOrEqual(2);
       const beforeUp = log.calls.length;
