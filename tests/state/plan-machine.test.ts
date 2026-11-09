@@ -950,7 +950,7 @@ describe('futureChangeTraceProblem (untraced rule, plan-readers.ts:1238-1301)', 
 describe('tracedDispositionChangeProblem (TASK-19 guards 8, 1, 2, 2b, 3–7; C7)', () => {
   const check = (tasks: TracedTaskFactsV1[], overrides: Partial<Parameters<typeof tracedDispositionChangeProblem>[0]> = {}) =>
     tracedDispositionChangeProblem({ goalDesiredState: 'active', tasks, affectedTaskIds: tasks.map((task) => task.taskId),
-      adopterClass: 'agent', ...overrides });
+      adopterClass: 'agent', changes: [], ...overrides });
   const codeOf = (problem: ReturnType<typeof tracedDispositionChangeProblem>) => problem?.code ?? null;
   const yielded = (desiredState?: 'running' | 'paused' | 'cancelled'): TracedTaskFactsV1 => {
     const ref = runRef('run-y');

@@ -15,7 +15,6 @@
 做 Goal 决定/相位、初始规划、Task/Plan 形状、返工与命令重跑的去这组。
 - `command-rerun-request.ts` — `CommandRerunRequest` 聚合、状态与三个索引名；状态机在 `src/core/work-graph/state/`。
 - `goal-card.ts` — 目标卡确认/复制的输入、回执、事实与决定：`GoalConfirmDraftInputV1`/`GoalConfirmDraftReceiptV1`/`GoalConfirmFactsV1`/`GoalConfirmDecisionV1`、`GoalCopyDraftInputV1`/`GoalCopyDraftResultV1`/`GoalCopyConfirmInputV1`/`GoalCopyConfirmResultV1`/`GoalUnderstandingPinV1`/`GoalCopyFactsV1`/`GoalCopyDecisionV1`。复制的三处形状：`GoalCopyDraftResultV1.interventions` 为 `{ available: false }` 或带 `candidates` 的 `{ available: true }`（候选用 `goal-copy-retraction.ts` 的 `CopyInterventionCandidateV1`），`GoalCopyFactsV1.selected` 直接就是这个候选类型（没有 `intervened`），决定 create 臂的 `retract` 是未选中的候选 ref。
-- `goal-change.ts` — `UserDecisionV1`/`UserDecisionSnapshot`：有界的 Goal 决定记录。
 - `goal-copy-retraction.ts` — 复制取消的候选契约：`CopyInterventionStateV1`（候选状态闭集）与 `CopyInterventionCandidateV1`（消息 ref、版本、状态、可选/可撤回及各自原因）。
 - `goal-phase.ts` — `GoalPhaseRef`/`GoalPhaseSnapshot`：Goal 终止相位。
 - `initial-planning.ts` — `InitialPlanAssignment`、`InitialPlanOrigin`、`InitialPlanOriginSourceV1`（`binding`/`prepared_goal`/`plain`/`intervention` 四臂）与 `InterventionAnswerSourceV1`（`{ kind: 'intervention', messageRef }`，干预 Plan 答案的唯一来源选择器）、`InitializationSourceShape`/`InitializationSourceV1`（初始化计划读哪一份回答：绑定的草稿或已备好的 Goal）、初始规划响应/设置。

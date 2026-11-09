@@ -40,6 +40,7 @@ import type { ConsultationCreateV1, ConsultationFactsV1 } from '../work-graph/mo
 import type { QueryNoteAdmissionV1 } from '../work-graph/model/secretary-note-contracts.js';
 import type { SecretaryPreparationFactsV1 } from '../work-graph/model/secretary-contracts.js';
 import type { SecretaryHandoffFactsPort } from '../work-graph/model/secretary-lifecycle-contracts.js';
+import type { RequestFactsPort } from '../work-graph/tasks/request-facts.js';
 import { planningNoteAdmission, secretaryNoteAdmission } from '../work-graph/state/secretary-note.js';
 import { SECRETARY_QUERY_MAILBOX_TOOL_NAMES, SESSION_MAILBOX_TOOL_NAMES } from './communication-tools.js';
 import { CREATE_MEMBER_TOOL_NAME } from './member-tools.js';
@@ -235,6 +236,13 @@ export type QueryPreparationDependencies = RuntimeExecutionDependencies & {
   handoff?: Pick<SecretaryHandoffFactsPort, 'readBriefState'>;
   /** The saved planning-question read a `planresume:` preparation assembles from. */
   planningQuestions?: PlanningQuestionReader;
+  /**
+   * S1: the request-facts read that decides whether a request followup is a
+   * plan round. It reads the request's FULL round list (not `earlier`), so a
+   * selected-idea round stays decisive when it falls out of the preparation
+   * window. Absent makes only that decision `unavailable`.
+   */
+  requests?: Pick<RequestFactsPort, 'readRequest'>;
 };
 
 export function createQueryPreparation(deps: QueryPreparationDependencies, contextAssembler?: ContextAssembler): QueryPreparationPort {
@@ -421,8 +429,28 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
       // (§5.2.8): a request round keeps the secretary rule; every other Query
       // takes the planning rule, with only a shape-null planning Query reading
       // its source message to recognise the trusted Host system round.
+      // A request followup is a plan round once any round of THIS request selected an idea. The read is the
+      // request's full round list; a failed read is returned, never folded into "no idea selected".
+      let planTurn = false;
+      if (secretaryFacts !== null && secretaryFacts.executionKind === 'semantic_query'
+        && record.job.job.roundKind === 'followup') {
+        if (deps.requests === undefined) {
+          return rejected('unavailable', 'the request facts read is not bound');
+        }
+        let requestView;
+        try {
+          requestView = await deps.requests.readRequest(owned, { requestRoot: secretaryFacts.request.requestRoot });
+        } catch (error) {
+          return rejected('unavailable', `the request facts read failed: ${messageOf(error)}`);
+        }
+        if (requestView.status === 'rejected') return requestView;
+        if (requestView.status !== 'ready') {
+          return rejected('incomplete', 'the request facts did not reach a stable window');
+        }
+        planTurn = requestView.value.rounds.some((round) => round.selectedIdea !== null);
+      }
       const shape = queryAnswerShapeOf(
-        execution, secretaryFacts === null ? null : secretaryFacts.executionKind);
+        execution, secretaryFacts === null ? null : secretaryFacts.executionKind, planTurn);
       let hostSystemPlanningSource = false;
       if (shape === null && execution.kind === 'intervention_planning') {
         if (deps.messages === undefined) {

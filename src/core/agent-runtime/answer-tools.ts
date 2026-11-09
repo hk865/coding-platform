@@ -118,7 +118,7 @@ export type InitialPlanForm = { summary: string; plan: PlanForm; setup: SetupFor
   goalCardDrafts?: DraftForm[]; planDraftIndex?: number };
 /** The planning round's one-tool form: exactly one of `plan`/`questions` per `answerKind`. */
 export type PlanRoundForm = { answerKind: 'plan' | 'questions'; summary: string;
-  plan?: PlanForm; questions?: string[]; reason?: { text: string; affectedTaskIds?: string[] } };
+  plan?: PlanForm; questions?: string[]; reason?: { text: string; affectedTaskIds?: string[]; objective?: string } };
 /** One submit form as the Kernel parsed it against the per-Run schema. */
 export type AnswerForm = SemanticForm | QuestionsForm | InitialPlanForm | PlanRoundForm | PlanReviewFormV1;
 
@@ -447,6 +447,7 @@ function planRoundSchema(texts: ToolTextV1['parameters']): z.ZodType {
     questions: textField(z.array(z.string().min(1)).min(1).optional(), texts, 'questions'),
     reason: textField(z.object({
       text: z.string(), affectedTaskIds: z.array(z.string().min(1)).optional(),
+      objective: z.string().optional(),
     }).strict().optional(), texts, 'reason'),
   }).strict();
 }

@@ -53,6 +53,7 @@ import {
   memberCreationCardFacts, memberCreationClosedReason, memberCreationSourceIdentity,
   type MemberOperationRecordV1,
 } from '../communication/decision-source/member-creation.js';
+import { initialCauseActiveRef } from '../communication/decision-source/goal-cause.js';
 import {
   maintainerAssignmentCardSourceSpec,
 } from '../communication/decision-source/module-maintainer-assignment.js';
@@ -1341,6 +1342,9 @@ async function readDecisionQueueWindow(
     } catch (error) {
       return storeFailureToRejection(error as { code: string; reason: string });
     }
+    const resolved = await sourceResolvedInitialCause(deps, ctx, raw);
+    if (typeof resolved !== 'boolean') return resolved;
+    if (resolved) raw = { ...raw, closedReason: 'source_resolved' };
     finalized.push(finalizeCard({ ...raw, source }, goal, cardTerminalState(raw, goal, terminalByGoalKey)));
   }
   const waiting = sortCards(finalized.filter((card) => card.state === 'waiting_answer'));
@@ -1579,6 +1583,9 @@ async function readDecisionCard(
         }
       }
       if (projectCard === null) return { status: 'not_found' };
+      const resolved = await sourceResolvedInitialCause(deps, ctx, projectCard);
+      if (typeof resolved !== 'boolean') return resolved;
+      if (resolved) projectCard = { ...projectCard, closedReason: 'source_resolved' };
       const refreshed = await refreshSourcePins(deps.records, projectCard.source);
       return { status: 'ready', value: finalizeCard({ ...projectCard, source: refreshed }, null,
         { cancelled: false, completed: false }) };
@@ -1653,6 +1660,9 @@ async function readDecisionCard(
       }
     }
     if (card === null) return { status: 'not_found' };
+    const resolved = await sourceResolvedInitialCause(deps, ctx, card);
+    if (typeof resolved !== 'boolean') return resolved;
+    if (resolved) card = { ...card, closedReason: 'source_resolved' };
     const refreshed = await refreshSourcePins(deps.records, card.source);
     return { status: 'ready', value: finalizeCard({ ...card, source: refreshed }, goal,
       await readCardTerminalState(deps, card, goal)) };
@@ -2140,6 +2150,14 @@ function finalizeCard(card: DecisionCardV1, goal: GoalSnapshot | null, terminal:
       const stale = selection.kind === 'option' && selection.optionId === 'approve';
       return { ...card, state: 'closed', closedReason: 'source_resolved', readOnly: true, actions: [],
         ...(stale ? { staleReason: 'stale_pins' } : {}) };
+    }
+    // book §1.4: an answered missing-initialization cause is resolved once its
+    // governance pointer exists; the answer is history, not a pending application.
+    const identity = parseIdentity(card.source.key);
+    if (identity?.kind === 'goal_cause'
+      && (identity.code === 'missing_initial_architecture' || identity.code === 'missing_initial_completion_policy')
+      && card.application === null && card.closedReason === 'source_resolved') {
+      return { ...card, state: 'closed', closedReason: 'source_resolved', readOnly: true, actions: [] };
     }
     if (card.application !== null) return { ...card, state: 'applied', readOnly: false, actions: [] };
     if (card.answer.decision.requiresApplication) {
@@ -2901,6 +2919,33 @@ function parseIdentity(key: string): DecisionSourceIdentityV1 | null {
     return typeof parsed === 'object' && parsed !== null ? parsed as DecisionSourceIdentityV1 : null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * book §1.4: an ANSWERED missing-initialization cause whose governance pointer
+ * has since been written is resolved by the source itself. Only a real absence
+ * reads as unresolved; a read failure is returned as its own rejection.
+ */
+async function sourceResolvedInitialCause(
+  deps: DecisionReadModelDependencies, ctx: CoreCallContext, card: DecisionCardV1,
+): Promise<boolean | CoreRejection> {
+  const identity = parseIdentity(card.source.key);
+  if (identity === null || identity.kind !== 'goal_cause') return false;
+  if (identity.code !== 'missing_initial_architecture' && identity.code !== 'missing_initial_completion_policy') return false;
+  if (card.answer === null || card.application !== null) return false;
+  const ref = initialCauseActiveRef(identity.code, ctx.projectId);
+  try {
+    const record = await readOne(deps.records, canonicalJson(ref as unknown as JsonValue));
+    return record !== null;
+  } catch (error) {
+    // A store rejection carries its own code; a raw I/O error is still a failed read, never "absent".
+    if (isRecord(error) && error['status'] === 'rejected'
+      && typeof error['code'] === 'string' && typeof error['reason'] === 'string') {
+      return error as unknown as CoreRejection;
+    }
+    return { status: 'rejected', code: 'unavailable',
+      reason: `the active initialization pointer read failed: ${messageOf(error)}` };
   }
 }
 

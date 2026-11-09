@@ -88,8 +88,11 @@ export type PlanningAnswerShapeV1 = 'plan_round' | 'plan_review' | 'text';
 export function queryAnswerShapeOf(
     execution: QueryJobIntentV1['execution'],
     requestExecutionKind: SecretaryRequestManifestV1['executionKind'] | null,
+    /** The request is a plan round: one of its rounds already selected an idea (frozen at preparation). */
+    requestPlanTurn = false,
 ): QueryAnswerShapeV1 | null {
     if (requestExecutionKind !== null) {
+        if (requestExecutionKind === 'semantic_query' && requestPlanTurn) return 'plan_round';
         return requestExecutionKind === 'semantic_query' ? 'secretary' : 'initial';
     }
     if (execution.kind === 'intervention_planning') {
@@ -431,9 +434,6 @@ export function validQueryExecution(value: QueryJobIntentV1['execution']): boole
         return false;
     if ((value.kind === 'execution_coordination') !== !!value.feedback)
         return false;
-    if (value.feedback?.decisionRef && (value.feedback.decisionRef.aggregateType !== 'UserDecision' ||
-        typeof value.feedback.decisionRef.decisionId !== 'string' || !value.feedback.decisionRef.decisionId))
-        return false;
     if (value.feedback?.supersedesQueryJobId !== undefined && (typeof value.feedback.supersedesQueryJobId !== 'string' ||
         !value.feedback.supersedesQueryJobId || value.feedback.supersedesQueryJobId.length > 256))
         return false;
@@ -705,6 +705,8 @@ export type InitialPlanSourceResolutionV1 =
     | { kind: 'binding'; source: InitializationSourceV1; bindingRef: InitializationBindingRef;
         goal: GoalRef; goalRevision: 1 }
     | { kind: 'prepared_goal'; source: InitializationSourceV1; bindingRef: null;
+        goal: GoalRef; goalRevision: number }
+    | { kind: 'request_followup'; source: InitializationSourceV1; bindingRef: null;
         goal: GoalRef; goalRevision: number }
     | { kind: 'intervention'; source: InterventionAnswerSourceV1; bindingRef: null;
         goal: GoalRef; goalRevision: number };

@@ -553,7 +553,7 @@ export async function readPlan(
 export async function readProposal(
   records: GoalRecordTransactionPort,
   ref: PlanProposalRef,
-): Promise<{ status: 'ready'; proposal: PlanProposal; readThrough: CommitCursor | null } | Rejected> {
+): Promise<{ status: 'ready'; proposal: PlanProposal; record: EncodedRecord; readThrough: CommitCursor | null } | Rejected> {
   const key = planProposalRefKey(ref);
   const read = await readBatch(records, [key]);
   if (read.status !== 'ready') return read;
@@ -561,7 +561,7 @@ export async function readProposal(
   if (record === undefined) return { status: 'rejected', code: 'not_found', reason: `proposal ${ref.proposalId} does not exist` };
   const decoded = decodePlanProposalRecord(record);
   if (decoded.status !== 'decoded') return unavailable(`proposal ${ref.proposalId} is corrupt: ${decoded.reason}`);
-  return { status: 'ready', proposal: decoded.value, readThrough: read.batch.readThrough };
+  return { status: 'ready', proposal: decoded.value, record, readThrough: read.batch.readThrough };
 }
 
 /**
@@ -686,18 +686,21 @@ export async function findPendingProposal(
 export async function readRequestCandidateHead(
   records: GoalRecordTransactionPort & RecordLookupPort,
   input: { goalRef: GoalRef; requestRef: QueryJobRef },
-): Promise<{ status: 'ready'; head: PlanProposal | null; readThrough: CommitCursor | null } | Rejected> {
+): Promise<{ status: 'ready'; head: PlanProposal | null;
+  previous: { proposalRef: PlanProposalRef; revision: number } | null;
+  readThrough: CommitCursor | null } | Rejected> {
   const { goalRef, requestRef } = input;
   const values = [goalRef.projectId, requestRef.workspaceId, goalRef.goalId, requestRef.queryJobId];
   for (let attempt = 0; attempt < WINDOW_MAX_ATTEMPTS; attempt += 1) {
     const found = await readLookupKeys(records, S5_PLAN_PROPOSAL_BY_REQUEST, values);
     if (found.status !== 'ready') return found;
     if (found.refKeys.length === 0) {
-      return { status: 'ready', head: null, readThrough: found.readThrough };
+      return { status: 'ready', head: null, previous: null, readThrough: found.readThrough };
     }
     const canonical = await readBatch(records, found.refKeys);
     if (canonical.status !== 'ready') return canonical;
     if (!found.stable || !sameCursor(found.readThrough, canonical.batch.readThrough)) continue;
+    const decodedProposals: PlanProposal[] = [];
     let head: PlanProposal | null = null;
     for (const key of found.refKeys) {
       const record = canonical.batch.present.get(key);
@@ -705,6 +708,7 @@ export async function readRequestCandidateHead(
       const decoded = decodePlanProposalRecord(record);
       if (decoded.status !== 'decoded') continue;
       const proposal = decoded.value;
+      decodedProposals.push(proposal);
       // §4.2 source 3: one live head per request. Only a stored `candidate` is
       // live (it may still be derived stale); accepted/not_adopted are closed.
       if (proposal.kind !== 'candidate_v2' || proposal.status !== 'candidate') continue;
@@ -713,7 +717,17 @@ export async function readRequestCandidateHead(
         || candidateRequestRef(proposal)!.queryJobId !== requestRef.queryJobId) continue;
       if (head === null || planProposalRefKey(proposal.ref) < planProposalRefKey(head.ref)) head = proposal;
     }
-    return { status: 'ready', head, readThrough: canonical.batch.readThrough };
+    // The same decoded set names the head's predecessor: the record whose own `notAdopted.replacedBy` points at
+    // the head. Its CURRENT revision is what `plans/proposal` returns for that ref.
+    let previous: { proposalRef: PlanProposalRef; revision: number } | null = null;
+    if (head !== null) {
+      const headKey = planProposalRefKey(head.ref);
+      const predecessor = decodedProposals.find((proposal) => proposal.kind === 'candidate_v2'
+        && proposal.notAdopted?.replacedBy !== undefined && proposal.notAdopted.replacedBy !== null
+        && planProposalRefKey(proposal.notAdopted.replacedBy) === headKey);
+      if (predecessor !== undefined) previous = { proposalRef: predecessor.ref, revision: predecessor.revision };
+    }
+    return { status: 'ready', head, previous, readThrough: canonical.batch.readThrough };
   }
   return { status: 'rejected', code: 'revision_conflict',
     reason: 'the request-candidate window changed while it was being read' };

@@ -80,7 +80,7 @@ export type QueryStageDriverDependencies = {
    * threshold basis there and starts the automatic handoff only when it is too long; the owner continues an
    * unfinished operation instead of accepting a second one.
    */
-  onRoundEnded?: (ctx: CoreCallContext, session: SessionRef) => Promise<void>;
+  onRoundEnded?: (ctx: CoreCallContext, session: SessionRef, round: QueryJobRef) => Promise<void>;
 };
 
 /** The read-only projection of a formally closed or settled QueryRun: no Answer will follow. */
@@ -137,7 +137,7 @@ async function finished(
 ): Promise<QueryStageOutcome> {
   if (outcome.status !== 'terminal' || deps.onRoundEnded === undefined || !isRequestRound(record.job)) return outcome;
   const session = record.run.run.executionState?.sessionRef;
-  if (session !== undefined) await deps.onRoundEnded(ctx, session);
+  if (session !== undefined) await deps.onRoundEnded(ctx, session, record.job.ref);
   return outcome;
 }
 

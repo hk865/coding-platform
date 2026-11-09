@@ -1,8 +1,8 @@
 /** R3c plan/task slice. WorkGraph owns the rules; the Store owns atomic bytes. */
-import type { CommitCursor } from '../../../contracts/command-event.js';
+import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import type { ControlIntentRef, ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
-import type { VersionPin } from '../../../contracts/core/identity.js';
+import type { SessionRef, VersionPin } from '../../../contracts/core/identity.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { EffectWriteResultV1, SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { DecisionSourceV1 } from '../../../contracts/goal-decisions.js';
@@ -12,7 +12,7 @@ import type { GoalPhaseSnapshot } from '../../../contracts/goal-phase.js';
 import type { AdoptionGovernancePinsV1 } from '../../../contracts/initialization-adoption.js';
 import type { InitializationSourceV1, InterventionAnswerSourceV1 } from '../../../contracts/initial-planning.js';
 import type { QueryJobAnswerRef, QueryJobRef } from '../../../contracts/query-job.js';
-import type { DependencyRequirement, Disposition, Phase, PlanRevisionDraft, PlanRevisionRef,
+import type { DependencyRequirement, Disposition, FrozenTaskDefinition, Phase, PlanRevisionDraft, PlanRevisionRef,
   PlanRevisionSnapshot, RuntimeTask, TaskDispositionChangeV1, TaskInputRequirementV2,
   TaskRelationV2 } from '../../../contracts/plan.js';
 import type { TaskFailureFactsV1, TaskPhaseCauseV1, TaskReworkSummaryV1 } from '../../../contracts/task-failure.js';
@@ -36,6 +36,24 @@ export type {
   PlanChangeReason, PlanProposalRecord, PlanProposalRef,
 } from '../state/plan-machine.js';
 export type PlanProposal = PlanProposalRecord;
+
+/** The stored proposal plus its read-only adoption attribution (never part of the stored bytes). */
+export type PlanProposalWithAdoption = PlanProposal & { adoptedBy?: ActorRef };
+
+/** One changed/cancelled/superseded Task of a request candidate, with both complete frozen definitions. */
+export type PlanImpactMarkV1 = {
+  taskId: string;
+  change: 'changed' | 'cancelled' | 'superseded';
+  note: '有变化，要复查';
+  before: FrozenTaskDefinition;
+  after: FrozenTaskDefinition;
+  /** The Runs still doing this Task (`starting|running`); a Run not yet in a Session keeps `sessionRef: null`. */
+  lines: { runRef: RunRef; sessionRef: SessionRef | null }[];
+  evidence: { evidenceId: string; obligationId: string; requirementId: string }[];
+};
+
+/** The minimal impact marker of one request candidate (mechanical relations only, no applicability verdict). */
+export type RequestCandidateImpactV1 = { marks: PlanImpactMarkV1[] };
 /** Slice 5 proposePlan input (spec §2.4): the original fields plus the request slot facts. */
 export type ProposedPlanDraftRequestV1 = {
   goalRef: GoalRef; basedOn: PlanRevisionRef | null; draft: PlanRevisionDraft; reason: PlanChangeReason;
@@ -230,7 +248,7 @@ export type InitialPlanProposalResult = WriteResult<PlanProposal> | InitialPlanD
 
 export interface PlanTaskPort {
   queryGoal(ctx: CoreCallContext, ref: GoalRef): Promise<ReadResult<GoalDetail>>;
-  readPlanProposal(ctx: CoreCallContext, ref: PlanProposalRef): Promise<ReadResult<PlanProposal>>;
+  readPlanProposal(ctx: CoreCallContext, ref: PlanProposalRef): Promise<ReadResult<PlanProposalWithAdoption>>;
   proposePlan(ctx: CoreCallContext, request: GraphWrite<ProposedPlanRequestV1>): Promise<EffectWriteResultV1<PlanProposal>>;
   applyPlanChange(ctx: CoreCallContext, request: GraphWrite<{ proposalRef: PlanProposalRef;
     expectedProposalRevision: number; decisionRefs: VersionedRef[];

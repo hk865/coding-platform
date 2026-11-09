@@ -5,7 +5,7 @@ import type { AdoptedArchitecture } from '../../../contracts/architecture-catalo
 import type { CompletionPolicyContentV1 } from '../../../contracts/governance.js';
 import type {
   AcceptanceObligation, PlanRevisionDraft, PlanRevisionSnapshot, PlanValidationError,
-  RuntimeTask, TaskInputRequirementV2,
+  RuntimeTask, TaskInputRequirementV2, VerificationRequirement,
 } from '../../../contracts/plan.js';
 import { planValidationError, revisionAssignments } from '../../../contracts/plan.js';
 import { rejected } from '../../../contracts/core/rejections.js';
@@ -316,6 +316,23 @@ function canonicalObligation(obligation: AcceptanceObligation): string {
   return canonicalJson(JSON.parse(JSON.stringify(frozenObligationSemantics(obligation))) as JsonValue);
 }
 
+/**
+ * A person's adoption may change an obligation's semantics only when every
+ * changed verification requirement carries a NEW `requirementId`. Reusing an
+ * old id for different content is refused: old evidence would then read as
+ * covering the new requirement. Requirements that are unchanged keep their id.
+ */
+function changedRequirementKeepsOldId(source: AcceptanceObligation, target: AcceptanceObligation): boolean {
+  const canonicalRequirement = (requirement: VerificationRequirement): string =>
+    canonicalJson(JSON.parse(JSON.stringify(requirement)) as JsonValue);
+  const next = new Map(target.verificationRequirements
+    .map((requirement) => [requirement.requirementId, canonicalRequirement(requirement)]));
+  return source.verificationRequirements.some((requirement) => {
+    const sameId = next.get(requirement.requirementId);
+    return sameId !== undefined && sameId !== canonicalRequirement(requirement);
+  });
+}
+
 function sameOptionalJson(left: unknown, right: unknown): boolean {
   if (left === undefined || right === undefined) return left === right;
   try {
@@ -500,6 +517,8 @@ export function validateFutureObligationCoverage(input: {
   source: PlanRevisionSnapshot;
   target: PlanRevisionDraft;
   delta: FuturePlanDelta;
+  /** A person's explicit adoption may change acceptance semantics under `changedRequirementKeepsOldId`. */
+  personAdopts: boolean;
 }): FutureObligationCoverageResult {
   const { source, target, delta } = input;
   const issues: PlanValidationError[] = [];
@@ -531,11 +550,13 @@ export function validateFutureObligationCoverage(input: {
       continue;
     }
     if (canonicalObligation(obligation) !== canonicalObligation(candidate)) {
-      issues.push(planValidationError(`obligations[${obligation.obligationId}]`, 'obligation_semantics_changed',
-        `source obligation ${obligation.obligationId} changed its title, strength or verification requirements`));
-      continue;
+      if (!input.personAdopts || changedRequirementKeepsOldId(obligation, candidate)) {
+        issues.push(planValidationError(`obligations[${obligation.obligationId}]`, 'obligation_semantics_changed',
+          `source obligation ${obligation.obligationId} changed its title, strength or verification requirements`));
+        continue;
+      }
     }
-    if (obligation.requirementLevel === 'required') {
+    if (candidate.requirementLevel === 'required') {
       const hasRequiredCarrier = candidate.taskIds.some((taskId) => {
         const task = targetTaskById.get(taskId);
         return task !== undefined && task.disposition === 'active'

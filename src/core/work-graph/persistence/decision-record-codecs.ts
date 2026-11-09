@@ -159,7 +159,6 @@ const AGGREGATE_REF_RULES: Readonly<Record<string, AggregateRefRule>> = {
   QueryJobAnswer: { strings: ['projectId', 'workspaceId', 'queryJobId', 'answerId'] },
   Task: { strings: ['projectId', 'goalId', 'taskId'] },
   PlanProposal: { strings: ['projectId', 'workspaceId', 'proposalId'] },
-  UserDecision: { strings: ['projectId', 'workspaceId', 'decisionId'] },
   CoordinationPolicyRevision: { strings: ['projectId', 'policyId'], integers: ['revision'] },
   ProjectCoordinationPolicyActive: { strings: ['projectId'] },
   RoleSpecRevision: { strings: ['projectId', 'roleId'], integers: ['revision'] },

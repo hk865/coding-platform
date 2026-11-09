@@ -57,8 +57,10 @@ describe.each(['memory', 'sqlite'] as const)('S5 request candidates (%s)', kind 
   it('RC01 reads one live head per request and two real candidate queue cards', async () => {
     const f = await open();
     const before = await f.storeSnapshot(); const allocations = { ...f.allocationCounts };
-    expect(ready(await head(f, REQUEST_Q1))).toEqual({ status: 'candidate', closedReason: null, head: f.candidates.U1 });
-    expect(ready(await head(f, REQUEST_Q2))).toEqual({ status: 'candidate', closedReason: null, head: f.candidates.U2 });
+    expect(ready(await head(f, REQUEST_Q1))).toEqual({ status: 'candidate', closedReason: null, head: f.candidates.U1,
+      impact: { marks: [] }, previous: null });
+    expect(ready(await head(f, REQUEST_Q2))).toEqual({ status: 'candidate', closedReason: null, head: f.candidates.U2,
+      impact: { marks: [] }, previous: null });
     expect(await f.planProposalsByRequest('Q1')).toEqual([keyOf(CANDIDATE_U1)]);
     expect(await f.planProposalsByRequest('Q2')).toEqual([keyOf(CANDIDATE_U2)]);
     const page = await queue(f);
@@ -97,7 +99,8 @@ describe.each(['memory', 'sqlite'] as const)('S5 request candidates (%s)', kind 
     expect(captured.commits[0]!.input.claims).toContainEqual({
       claimKey: slot(REQUEST_Q1), expectedOwner: null, nextOwner: keyOf(winner.value.ref),
     });
-    expect(ready(await head(f, REQUEST_Q1))).toEqual({ status: 'candidate', closedReason: null, head: winner.value });
+    expect(ready(await head(f, REQUEST_Q1))).toEqual({ status: 'candidate', closedReason: null, head: winner.value,
+      impact: { marks: [] }, previous: null });
     const after = await f.storeSnapshot();
     expect(after.recordCount).toBe(before.recordCount + 1);
     expect(after.records.filter(record => !before.records.some(old => old.refKey === record.refKey)))
@@ -164,7 +167,8 @@ describe.each(['memory', 'sqlite'] as const)('S5 request candidates (%s)', kind 
     expect(eventProposals).toEqual([await proposalAt(f, CANDIDATE_U1), replacement.value]
       .sort((a, b) => keyOf(a.ref).localeCompare(keyOf(b.ref))));
     expect(replacement.value).toMatchObject({ revision: 1, status: 'candidate', requestRef: REQUEST_Q1 });
-    expect(ready(await head(f, REQUEST_Q1))).toEqual({ head: replacement.value, status: 'candidate', closedReason: null });
+    expect(ready(await head(f, REQUEST_Q1))).toEqual({ head: replacement.value, status: 'candidate', closedReason: null,
+      impact: { marks: [] }, previous: { proposalRef: CANDIDATE_U1, revision: 2 } });
     expect((await f.storeSnapshot()).claims.filter(claim => claim.claimKey === slot(REQUEST_Q1)))
       .toEqual([{ claimKey: slot(REQUEST_Q1), owner: keyOf(replacement.value.ref) }]);
     expect(await recordAt(f.records, CANDIDATE_U2)).toEqual(u2Before);
@@ -181,7 +185,8 @@ describe.each(['memory', 'sqlite'] as const)('S5 request candidates (%s)', kind 
     expect(await goalAt(f.records)).toMatchObject({ revision: 8, activePlanRevision: PLAN_B2 });
     expect(await proposalAt(f, CANDIDATE_U1)).toMatchObject({ status: 'accepted', revision: 2, requestRef: REQUEST_Q1 });
     const beforeRead = await f.storeSnapshot(); const allocations = { ...f.allocationCounts };
-    expect(ready(await head(f, REQUEST_Q2))).toEqual({ status: 'stale', closedReason: null, head: f.candidates.U2 });
+    expect(ready(await head(f, REQUEST_Q2))).toEqual({ status: 'stale', closedReason: null, head: f.candidates.U2,
+      impact: { marks: [] }, previous: null });
     const page = await queue(f);
     const stale = page.waitingAnswer.filter(card => card.source.key === candidateKey(REQUEST_Q2));
     expect(stale).toHaveLength(1);
@@ -189,7 +194,8 @@ describe.each(['memory', 'sqlite'] as const)('S5 request candidates (%s)', kind 
     expect(stale[0]!.actions).toEqual(expect.arrayContaining(['regenerate', 'abandon']));
     expect(stale[0]!.actions).not.toContain('adopt');
     expect(await recordAt(f.records, CANDIDATE_U2)).toEqual(u2Before);
-    expect(ready(await head(f, REQUEST_Q1))).toEqual({ status: 'closed', closedReason: null, head: null });
+    expect(ready(await head(f, REQUEST_Q1))).toEqual({ status: 'closed', closedReason: null, head: null,
+      impact: { marks: [] }, previous: null });
     expect(beforeRead.claims.filter(claim => claim.claimKey === slot(REQUEST_Q1))).toEqual([]);
     expect(beforeRead.claims.filter(claim => claim.claimKey === slot(REQUEST_Q2)))
       .toEqual([{ claimKey: slot(REQUEST_Q2), owner: keyOf(CANDIDATE_U2) }]);
@@ -215,12 +221,14 @@ describe.each(['memory', 'sqlite'] as const)('S5 request candidates (%s)', kind 
     expect(await f.storeSnapshot()).toEqual(beforeReplay);
     expect(f.allocationCounts).toEqual(allocations);
     expect(beforeReplay.claims.filter(claim => claim.claimKey === slot(REQUEST_Q2))).toEqual([]);
-    expect(ready(await head(f, REQUEST_Q2))).toEqual({ status: 'closed', closedReason: null, head: null });
+    expect(ready(await head(f, REQUEST_Q2))).toEqual({ status: 'closed', closedReason: null, head: null,
+      impact: { marks: [] }, previous: null });
     const nextCapture = captureCommits(f.records);
     const next = committed(await propose(f, 'rc06-new-first', request(f, { requestRef: REQUEST_Q2 }), nextCapture.records));
     expect(nextCapture.commits).toHaveLength(1);
     expect(nextCapture.commits[0]!.input.claims).toContainEqual({ claimKey: slot(REQUEST_Q2), expectedOwner: null, nextOwner: keyOf(next.value.ref) });
-    expect(ready(await head(f, REQUEST_Q2))).toEqual({ status: 'candidate', closedReason: null, head: next.value });
+    expect(ready(await head(f, REQUEST_Q2))).toEqual({ status: 'candidate', closedReason: null, head: next.value,
+      impact: { marks: [] }, previous: null });
     expect(await proposalAt(f, CANDIDATE_U2)).toEqual(first.value);
     expect((await f.storeSnapshot()).claims.filter(claim => claim.claimKey === slot(REQUEST_Q2)))
       .toEqual([{ claimKey: slot(REQUEST_Q2), owner: keyOf(next.value.ref) }]);
@@ -252,8 +260,8 @@ describe.each(['memory', 'sqlite'] as const)('S5 request candidates (%s)', kind 
       live: (await allCandidates(f)).map(proposal => ({ ref: proposal.ref, revision: proposal.revision, status: proposal.status })),
     });
     const before = await snapshot();
-    expect(before.q1).toEqual({ head: null, status: 'closed', closedReason: null });
-    expect(before.q2).toEqual({ head: f.candidates.U2, status: 'stale', closedReason: null });
+    expect(before.q1).toEqual({ head: null, status: 'closed', closedReason: null, impact: { marks: [] }, previous: null });
+    expect(before.q2).toEqual({ head: f.candidates.U2, status: 'stale', closedReason: null, impact: { marks: [] }, previous: null });
     expect(before.closed).toEqual(closed.value);
     expect(before.live).toEqual([{ ref: CANDIDATE_U2, revision: 1, status: 'candidate' }]);
     const stored = await f.storeSnapshot(); const allocations = { ...f.allocationCounts };

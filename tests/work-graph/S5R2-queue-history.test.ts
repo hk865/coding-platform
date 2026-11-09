@@ -31,11 +31,13 @@ describe.each(['memory', 'sqlite'] as const)('S5R2 queue history (%s)', kind => 
     expect(p1.basedOn).toEqual(PLAN_B1);
     const accepted = await adopt(f, p1, 's5r2-a01-adopt');
     expect(accepted.plan.ref).toEqual(PLAN_B2);
-    expect(await requestHead(f)).toEqual({ head: null, status: 'closed', closedReason: null });
+    expect(await requestHead(f)).toEqual({ head: null, status: 'closed', closedReason: null,
+      impact: { marks: [] }, previous: null });
     const p2 = await propose(f, 's5r2-a01-p2', { planId: 'PB3', requestRef: REQUEST_Q1 });
     expect(p2).toMatchObject({ basedOn: PLAN_B2, draft: { planRevision: 3 } });
     expect(await goalAt(f.records)).toMatchObject({ revision: 8, activePlanRevision: PLAN_B2 });
-    expect(await requestHead(f)).toEqual({ head: p2, status: 'candidate', closedReason: null });
+    expect(await requestHead(f)).toEqual({ head: p2, status: 'candidate', closedReason: null,
+      impact: { marks: [] }, previous: null });
     const abandoned = await abandon(f, p2, 's5r2-a01-abandon');
     await expectClosedQ1(f, accepted.proposal, abandoned);
   });
@@ -46,10 +48,12 @@ describe.each(['memory', 'sqlite'] as const)('S5R2 queue history (%s)', kind => 
     // planProposalIdFor hashes these requestIds to c310... and b115... respectively.
     const p1 = await propose(f, 's5r2-a02-first', { planId: 'PB2-A02-first', requestRef: REQUEST_Q1 });
     const firstClosed = await abandon(f, p1, 's5r2-a02-abandon-first');
-    expect(await requestHead(f)).toEqual({ head: null, status: 'closed', closedReason: null });
+    expect(await requestHead(f)).toEqual({ head: null, status: 'closed', closedReason: null,
+      impact: { marks: [] }, previous: null });
     const p2 = await propose(f, 's5r2-a02-second', { planId: 'PB2-A02-second', requestRef: REQUEST_Q1 });
     expect(planProposalRefKey(p2.ref) < planProposalRefKey(p1.ref)).toBe(true);
-    expect(await requestHead(f)).toEqual({ head: p2, status: 'candidate', closedReason: null });
+    expect(await requestHead(f)).toEqual({ head: p2, status: 'candidate', closedReason: null,
+      impact: { marks: [] }, previous: null });
     const lastClosed = await abandon(f, p2, 's5r2-a02-abandon-second');
     await expectClosedQ1(f, firstClosed, lastClosed);
   });
@@ -59,7 +63,8 @@ describe.each(['memory', 'sqlite'] as const)('S5R2 queue history (%s)', kind => 
     await emptyQ1(f, 's5r2-a03-clear-fixture');
     const p1 = await propose(f, 's5r2-a03-p1', { planId: 'PB2-A03-first', requestRef: REQUEST_Q1 });
     const firstClosed = await abandon(f, p1, 's5r2-a03-abandon');
-    expect(await requestHead(f)).toEqual({ head: null, status: 'closed', closedReason: null });
+    expect(await requestHead(f)).toEqual({ head: null, status: 'closed', closedReason: null,
+      impact: { marks: [] }, previous: null });
     const p2 = await propose(f, 's5r2-a03-p2', { planId: 'PB2', requestRef: REQUEST_Q1 });
     const accepted = await adopt(f, p2, 's5r2-a03-adopt');
     await expectClosedQ1(f, firstClosed, accepted.proposal);
@@ -81,7 +86,8 @@ describe.each(['memory', 'sqlite'] as const)('S5R2 queue history (%s)', kind => 
     const replaced = await readProposal(f, p1);
     expect(replaced).toMatchObject({ revision: 2, status: 'not_adopted',
       notAdopted: { reason: 'replaced', replacedBy: p2.ref } });
-    expect(await requestHead(f)).toEqual({ head: p2, status: 'candidate', closedReason: null });
+    expect(await requestHead(f)).toEqual({ head: p2, status: 'candidate', closedReason: null,
+      impact: { marks: [] }, previous: { proposalRef: p1.ref, revision: 2 } });
     const closed = await abandon(f, p2, 's5r2-a04-abandon');
     const page = await expectClosedQ1(f, replaced, closed);
     expect(page.history.filter(card => !baselineKeys.includes(card.cardKey))).toHaveLength(1);
@@ -94,10 +100,12 @@ describe.each(['memory', 'sqlite'] as const)('S5R2 queue history (%s)', kind => 
     await emptyQ1(f, 's5r2-a05-clear-fixture');
     const p1 = await propose(f, 's5r2-a05-p1', { planId: 'PB2', requestRef: REQUEST_Q1 });
     await adopt(f, p1, 's5r2-a05-adopt');
-    expect(await requestHead(f)).toEqual({ head: null, status: 'closed', closedReason: null });
+    expect(await requestHead(f)).toEqual({ head: null, status: 'closed', closedReason: null,
+      impact: { marks: [] }, previous: null });
     const p2 = await propose(f, 's5r2-a05-p2', { planId: 'PB3', requestRef: REQUEST_Q1 });
     expect(p2).toMatchObject({ basedOn: PLAN_B2, draft: { planRevision: 3 } });
-    expect(await requestHead(f)).toEqual({ head: p2, status: 'candidate', closedReason: null });
+    expect(await requestHead(f)).toEqual({ head: p2, status: 'candidate', closedReason: null,
+      impact: { marks: [] }, previous: null });
     const page = await readQueue(f, ['waiting_answer', 'history']);
     const cards = requestCards(page.waitingAnswer);
     expect(cards).toHaveLength(1);

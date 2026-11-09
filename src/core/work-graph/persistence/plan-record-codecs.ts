@@ -824,6 +824,11 @@ function proposalValueIssues(value: unknown, expectedRef: PlanProposalRef | null
         issues.push(...affectedTaskIdsIssues(reason['affectedTaskIds'], isRecord(draft) ? draft['tasks'] : null,
           'candidate_v2.reason.affectedTaskIds'));
       }
+      // Optional new Goal objective; null and absent both mean "no change".
+      if (reason['objective'] !== undefined && reason['objective'] !== null
+        && (typeof reason['objective'] !== 'string' || reason['objective'].length === 0)) {
+        issues.push('candidate_v2.reason.objective must be a non-empty string or null');
+      }
     }
     const status = value['status'];
     if (status !== 'candidate' && status !== 'accepted' && status !== 'rejected' && status !== 'not_adopted') {

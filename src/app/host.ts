@@ -52,7 +52,7 @@ import type {
 } from '../core/work-graph/model/communication-contracts.js';
 import type { PlanProposalRef } from '../core/work-graph/model/plan-contracts.js';
 import type { PlanRevisionDraft, PlanRevisionSnapshot } from '../contracts/plan.js';
-import { interventionPlanningQueryRefs, queryJobRefFor } from '../contracts/query-job.js';
+import { interventionPlanningQueryRefs, isRequestRound, queryJobRefFor, type QueryJobRef } from '../contracts/query-job.js';
 import type { RunSnapshot } from '../contracts/dispatch.js';
 import { planSourceLineageOf } from '../core/work-graph/tasks/plan-lineage.js';
 import { waitFactsOfRecord, waitStateOf } from '../core/work-graph/state/message-machine.js';
@@ -996,7 +996,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   }
   // The request driver's round-end hook (`recordRoundEnd`), set in that driver's block below when it runs: a request
   // round the drain starts records its end the same way, so the automatic-handoff trigger still reads it.
-  let markerRoundEnded: ((ctx: CoreCallContext, session: SessionRef) => Promise<void>) | undefined;
+  let markerRoundEnded: ((ctx: CoreCallContext, session: SessionRef, round: QueryJobRef) => Promise<void>) | undefined;
   // The lazy creation avoids the TDZ on `workflowConsumerId`, declared later in this Host; the first drain runs after
   // the request driver's block, so the hook above is set by then.
   let markerStageDriver: QueryStageDriver | undefined;
@@ -1178,12 +1178,18 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     // The round-end sources waiting for their basis read and start. Memory only: a crash between a round end and
     // its read loses one check until that line's next round end, which records it again.
     const pendingRoundEnds = new Map<string, Map<string, SessionRef>>();
-    /** The round-end hook: record the source for this workspace and wake its lifecycle queue. It never throws. */
-    const recordRoundEnd = async (ctx: CoreCallContext, session: SessionRef): Promise<void> => {
+    // The ended request rounds that may write their request's plan candidate. A separate memory-only table: a
+    // crash between the round end and this read loses one candidate until the person selects an idea or speaks again.
+    const pendingPlanTurns = new Map<string, Map<string, QueryJobRef>>();
+    /** The round-end hook: record both sources for this workspace and wake its lifecycle queue. It never throws. */
+    const recordRoundEnd = async (ctx: CoreCallContext, session: SessionRef, round: QueryJobRef): Promise<void> => {
       const key = scopeKey({ projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' });
       const sources = pendingRoundEnds.get(key) ?? new Map<string, SessionRef>();
       sources.set(plainSessionRefKey(session), session);
       pendingRoundEnds.set(key, sources);
+      const turns = pendingPlanTurns.get(key) ?? new Map<string, QueryJobRef>();
+      turns.set(round.queryJobId, round);
+      pendingPlanTurns.set(key, turns);
       loop.wake({ projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' }, LIFECYCLE_QUEUE, 'advance_settled');
     };
     markerRoundEnded = recordRoundEnd;                  // A1b: the drain's marker driver ends a request round the same way
@@ -1263,6 +1269,62 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       }
       if (sources.size === 0) pendingRoundEnds.delete(workspaceKey);
     };
+    /**
+     * S1: each ended request round gets one plan-turn attempt. The Host reads only the round; the entry reads the
+     * answer. A non-plan followup answers `skipped/no_plan` and writes nothing. A failed turn stays for the next
+     * pass; a transient skip does too, every other outcome removes the entry.
+     */
+    const startPendingPlanTurns = async (ctx: CoreCallContext, failures: string[]): Promise<void> => {
+      const workspaceKey = scopeKey({ projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' });
+      const turns = pendingPlanTurns.get(workspaceKey);
+      if (turns === undefined) return;
+      const propose = platform.workflow.proposeFromPlanTurn;
+      if (propose === undefined) { pendingPlanTurns.delete(workspaceKey); return; }
+      for (const [key, round] of [...turns]) {
+        try {
+          const read = await platform.queries.readQueryJob(ctx, round);
+          if (read.status !== 'ready') {
+            if (read.status === 'not_found') { turns.delete(key); continue; }
+            if (transient(read)) { failures.push(`the plan-turn round read of ${key} is not ready`); continue; }
+            turns.delete(key);
+            continue;
+          }
+          const job = read.value.job;
+          if (!isRequestRound(job) || job.job.roundKind !== 'followup' || job.job.requestRoot === null
+            || job.job.goalId === null || job.job.status !== 'answered') {
+            turns.delete(key);
+            continue;
+          }
+          const answerRef = job.job.answerRefs.at(-1);
+          if (answerRef === undefined) { turns.delete(key); continue; }
+          // The plan-turn write is the request's own candidate, not a fresh person command: the request's
+          // initiator authorizes the slot (the same actor the request's first round was submitted under).
+          const requestFacts = await platform.requestFacts.readFacts(ctx, { requestRoot: job.job.requestRoot });
+          if (requestFacts.status !== 'ready') {
+            if (transient(requestFacts)) { failures.push(`the plan-turn request facts of ${key} are not ready`); continue; }
+            turns.delete(key);
+            continue;
+          }
+          const turnCtx: CoreCallContext = ctx.principal.kind === 'host'
+            ? { ...ctx, principal: { kind: 'host', actor: { ...requestFacts.value.initiator } },
+              materialReader: ctx.materialReader.kind === 'host'
+                ? { ...ctx.materialReader, actor: { ...requestFacts.value.initiator } } : ctx.materialReader }
+            : ctx;
+          const result = await propose.call(platform.workflow, turnCtx, { ref: round, answerRef,
+            requestRoot: job.job.requestRoot, goalId: job.job.goalId });
+          if (result.status === 'done') { turns.delete(key); continue; }
+          if (result.status === 'skipped') {
+            if (!result.transient) turns.delete(key);
+            continue;
+          }
+          // A failed turn stays for the next pass; only a retryable one is reported so the loop backs off.
+          if (result.transient) failures.push(`the plan-turn candidate of ${key} failed: ${result.reason}`);
+        } catch (error) {
+          failures.push(`the plan-turn candidate of ${key} failed: ${failureText(error)}`);
+        }
+      }
+      if (turns.size === 0) pendingPlanTurns.delete(workspaceKey);
+    };
     /** Phase 2: every unfinished operation once, through its own arm; a wait or a failure never stops the next. */
     const continueUnfinished = async (ctx: CoreCallContext, failures: string[]):
       Promise<{ continued: number; blocked: number }> => {
@@ -1312,6 +1374,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       Promise<{ continued: number; blocked: number; queue: GoalDrainResultV1 | null }> => {
       const failures: string[] = [];
       await startPendingHandoffs(ctx, failures);
+      await startPendingPlanTurns(ctx, failures);
       let { continued, blocked } = await continueUnfinished(ctx, failures);
       const drained = await platform.goalAdviserQueue.drain(ctx, { limit: QUEUE_DRAIN_BATCH });
       let queue: GoalDrainResultV1 | null = null;

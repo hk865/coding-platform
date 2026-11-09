@@ -173,7 +173,7 @@ export function createInitialPlanAnswerReader(deps: InitialPlanAnswerDependencie
         if (sessionMessageRefFromValue(source.messageRef) === null) {
           return rejected('source_stale', 'the initial-plan intervention source is not a complete message ref');
         }
-      } else if ((source.kind !== 'binding' && source.kind !== 'prepared_goal')
+      } else if ((source.kind !== 'binding' && source.kind !== 'prepared_goal' && source.kind !== 'request_followup')
         || !isRecord(source.answerRef)
         || canonicalJson(source.answerRef as unknown as JsonValue) !== answerKey) {
         return rejected('source_stale', 'the initial-plan source does not name the requested answer');
@@ -334,6 +334,20 @@ export function createInitialPlanAnswerReader(deps: InitialPlanAnswerDependencie
       if (manifest.request?.executionKind !== 'initial_coordination') {
         return rejected('source_stale', 'the frozen request is not an initial_coordination preparation');
       }
+    } else if (source.kind === 'request_followup') {
+      // The plan-round request followup: the manifest's Goal and frozen shape are the authority. The round need
+      // not carry `selectedIdea` itself; preparation already checked the request's full round list.
+      if (job.job.intent.execution.kind !== 'semantic_query'
+        || job.job.roundKind !== 'followup'
+        || job.job.requestRoot === null
+        || job.job.goalId === null
+        || manifest.answerShape !== 'plan_round') {
+        return rejected('source_stale', 'the frozen Query is not a plan-round request followup');
+      }
+      if (!isRecord(manifest.goal) || !isRecord(manifest.goal.ref)
+        || manifest.goal.ref.projectId !== wanted.projectId || !nonEmpty(manifest.goal.ref.goalId)) {
+        return rejected('source_stale', 'the frozen prepared manifest does not carry the source Goal');
+      }
     }
     let sourceGuards: readonly RecordGuard[] = [];
     let resolution: InitialPlanSourceResolutionV1;
@@ -342,6 +356,11 @@ export function createInitialPlanAnswerReader(deps: InitialPlanAnswerDependencie
       resolution = { kind: 'plain', source: null, bindingRef: null,
         goal: { aggregateType: 'Goal', projectId: wanted.projectId, goalId: jobGoalId as string },
         goalRevision: (manifest.goal as { revision: number }).revision };
+    } else if (source.kind === 'request_followup') {
+      const manifestGoal = manifest.goal as { ref: { aggregateType: 'Goal'; projectId: string; goalId: string };
+        revision: number };
+      resolution = { kind: 'request_followup', source, bindingRef: null,
+        goal: { ...manifestGoal.ref }, goalRevision: manifestGoal.revision };
     } else if (source.kind === 'intervention') {
       if (!isRecord(manifest.goal) || !isRecord(manifest.goal.ref)
         || manifest.goal.ref.projectId !== wanted.projectId || !nonEmpty(manifest.goal.ref.goalId)

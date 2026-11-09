@@ -52,7 +52,7 @@ import type { MessageQueryAnswerSender, MessageSender, SessionMailboxPort, Sessi
   SessionMessageEventV1 } from './communication-contracts.js';
 import type { MaterialPort } from './material-contracts.js';
 import type { NoteDecisionApplicationInputV1, NoteDispositionResult } from './note-contracts.js';
-import type { PlanProposal, PlanProposalRef } from './plan-contracts.js';
+import type { PlanProposal, PlanProposalRef, RequestCandidateImpactV1 } from './plan-contracts.js';
 import type { GraphWrite } from './task-contracts.js';
 import type {
   MessageAppliedChangeV1, MessageExpiredChangeV1, MessageGuardContext, MessageReleaseDecidedChangeV1,
@@ -365,7 +365,11 @@ export interface RequestCandidatePort {
     goalRef: GoalRef; requestRef: QueryJobRef;
   }): Promise<ReadResult<{ head: PlanProposal | null;
     status: 'candidate' | 'stale' | 'closed' | null;
-    closedReason: 'goal_cancelled' | null }>>;
+    closedReason: 'goal_cancelled' | null;
+    /** S7: the mechanical marks of this candidate against its `basedOn`; `{marks:[]}` without a source. */
+    impact: RequestCandidateImpactV1;
+    /** S7: the request's previous candidate (the record whose `notAdopted.replacedBy` names the head). */
+    previous: { proposalRef: PlanProposalRef; revision: number } | null }>>;
   abandonPlanProposal(ctx: CoreCallContext, request: GraphWrite<{
     proposalRef: PlanProposalRef;
   }>): Promise<WriteResult<PlanProposal>>;

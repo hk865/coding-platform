@@ -14,6 +14,7 @@ export type InitialPlanAssignment = {
 export type InitialPlanOriginSourceV1 =
     | { kind: 'binding'; selector: InitializationSourceV1; bindingRef: InitializationBindingRef }
     | { kind: 'prepared_goal'; selector: InitializationSourceV1 }
+    | { kind: 'request_followup'; selector: InitializationSourceV1 }
     | { kind: 'plain' }
     | { kind: 'intervention'; selector: InterventionAnswerSourceV1 };
 
@@ -39,6 +40,7 @@ export const InitializationSourceShape = defineShape({ name: 'InitializationSour
   source: f.union('kind', {
     binding: { kind: f.literal('binding'), answerRef: f.ref(QueryJobAnswerRefShape), draftIndex: f.integer({ min: 0 }) },
     prepared_goal: { kind: f.literal('prepared_goal'), answerRef: f.ref(QueryJobAnswerRefShape) },
+    request_followup: { kind: f.literal('request_followup'), answerRef: f.ref(QueryJobAnswerRefShape) },
   }),
 } });
 export type InitializationSourceV1 = InferShape<(typeof InitializationSourceShape)['fields']>['source'];
@@ -82,4 +84,4 @@ export type InitialPlanningResponseV2 =
       /** Optional additive setup proposal; absent keeps the old v2 exactly. */
       setup?: InitialPlanningSetupV2;
       /** The model's optional change reason; the parser keeps it and the platform never invents it. */
-      reason?: { text: string; affectedTaskIds?: string[] } };
+      reason?: { text: string; affectedTaskIds?: string[]; objective?: string } };

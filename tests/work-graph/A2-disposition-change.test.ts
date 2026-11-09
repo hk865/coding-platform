@@ -476,7 +476,7 @@ describe('deriveFuturePlanDelta and the replacedByTaskId rule (pure, §3.3)', ()
     ['superseded without a replacement', { disposition: 'superseded', replacedByTaskId: null }, null],
   ])('replacedByTaskId: %s', (_name, patch, problem) => {
     const target = draft(base => disposed(base, 'A', patch));
-    const coverage = validateFutureObligationCoverage({ source, target, delta: deltaOf(target) });
+    const coverage = validateFutureObligationCoverage({ source, target, delta: deltaOf(target), personAdopts: false });
     if (problem === null) {
       expect(coverage).toEqual({ status: 'supported' });
       return;

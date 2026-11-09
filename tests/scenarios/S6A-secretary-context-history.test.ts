@@ -22,14 +22,16 @@ import type { PreparedQueryExecution } from '../../src/contracts/core/prepared-e
 import type { ReadResult } from '../../src/contracts/core/results.js';
 import type { QueryJobRef } from '../../src/contracts/query-job.js';
 import type { RequestCoreViewV1, RequestRoundViewV1 } from '../../src/core/work-graph/model/request-contracts.js';
+import { PLATFORM_PROMPT_PACK_V1 } from '../../src/contracts/prompts/platform-pack.generated.js';
+import { renderTemplate } from '../../src/contracts/prompts/render-template.js';
 import { readQuery } from '../helpers/A2-restart-fixture.js';
 import { commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import {
   answeredRound, buildAbsorbedSelection, buildDropEndedRound, buildLongAnswers, buildTenRoundEdge,
-  followUp, initializeProject, newRequest, secretaryAnswer, submitRound, waitForRound,
+  followUp, initializeProject, newRequest, secretaryAnswer, submitRound, threeIdeas, waitForRound,
   S6A_ANSWER_ASCII_2049, S6A_ANSWER_MULTIBYTE,
 } from '../helpers/S6A-history-fixture.js';
-import { openS6AHostWorld, type S6AHostWorld } from '../helpers/S6A-host-fixture.js';
+import { openS6AHostWorld, type S6AHostWorld, type S6AReply } from '../helpers/S6A-host-fixture.js';
 import { seedS6AMemory, type S6AMemory } from '../helpers/S6A-memory-fixture.js';
 import {
   architectureSample, secretaryInputText, selectIdeaInputText,
@@ -46,6 +48,24 @@ vi.mock('../../src/core/record-store/in-memory-record-store.js', async (importOr
   (await import('../helpers/S6A-commit-barrier.js')).inMemoryBarrierModule(importOriginal));
 vi.mock('../../src/core/record-store/sqlite-record-store.js', async (importOriginal) =>
   (await import('../helpers/S6A-commit-barrier.js')).sqliteBarrierModule(importOriginal));
+
+/** `initial-planning-answer` rendered for a plan round (its `submit_plan_round` block). */
+const PLAN_ROUND_ANSWER_FORMAT = renderTemplate(PLATFORM_PROMPT_PACK_V1, 'initial-planning-answer', {},
+  ['submit_plan_round']).text;
+
+/** The empty plan body the scripted plan-round answers carry: no task is what these rows are about. */
+const PLAN_BODY = { executionDag: { dependsOn: [] }, obligations: [], stages: [],
+  taskHierarchy: { parentOf: [] }, tasks: [] };
+
+function planRoundReply(callId: string, summary: string): S6AReply {
+  return { kind: 'calls', calls: [{ callId, name: 'submit_plan_round',
+    args: { answerKind: 'plan', summary, plan: PLAN_BODY } }] };
+}
+
+function planRoundAnswer(summary: string): string {
+  return JSON.stringify({ schemaVersion: 2, kind: 'plan', summary,
+    plan: { ...PLAN_BODY, schemaVersion: 2 } });
+}
 
 const worlds: S6AHostWorld[] = [];
 
@@ -262,6 +282,14 @@ describe('a secretary round shows the earlier rounds of other secretaries', () =
     const a = await world.createSecretary('a');
     const b = await world.createSecretary('b');
     const tag = 's6a-absorbed';
+    // The executing round is prepared after the selection, so it answers as a plan round; queue
+    // that answer first: the builder's own secretary texts then stay behind it unused.
+    const ideas = threeIdeas(tag);
+    await world.scripted.script(a, [
+      { kind: 'text', text: secretaryAnswer({ body: `${tag} answer with ideas`, ideas }) },
+      planRoundReply(`${tag}-batch`, `${tag} batch answer`),
+    ]);
+    await world.scripted.script(b, [planRoundReply(`${tag}-final`, `${tag} final answer`)]);
     const built = await buildAbsorbedSelection(world, { a, routeTo: b, tag });
     const view = await world.readRequest(built.requestRoot);
     // The builder selects the second idea by its 0-based index (the person's
@@ -277,6 +305,7 @@ describe('a secretary round shows the earlier rounds of other secretaries', () =
     const executingInput = await lastInput(world, a);
     expect(executingInput).toBe(secretaryInputText({
       ...baseSample(memory, true),
+      semanticAnswerFormat: PLAN_ROUND_ANSWER_FORMAT,
       round: roundOf(view, built.executing),
       batched: [selection, plain],
     }));
@@ -290,6 +319,7 @@ describe('a secretary round shows the earlier rounds of other secretaries', () =
     const bInput = await lastInput(world, b);
     expect(bInput).toBe(secretaryInputText({
       ...baseSample(memory, false),
+      semanticAnswerFormat: PLAN_ROUND_ANSWER_FORMAT,
       round: { since: final.since, input: final.input },
       earlier: [
         // A's first answered round is another Session's round too; the
@@ -298,7 +328,7 @@ describe('a secretary round shows the earlier rounds of other secretaries', () =
         {
           round: roundOf(view, built.executing),
           absorbed: [selection, plain],
-          result: { kind: 'answer', text: `${tag} batch answer` },
+          result: { kind: 'answer', text: planRoundAnswer(`${tag} batch answer`) },
         },
       ],
     }));

@@ -326,3 +326,14 @@ export function revisionAssignments(plan: {
   const source = plan.assignments ?? plan.origin?.assignments ?? [];
   return source.map((entry) => ({ taskId: entry.taskId, role: entry.role, instruction: entry.instruction }));
 }
+
+/** One Task-carried obligation's full semantics, with only the mutual carrier list (`taskIds`) removed. */
+export type FrozenObligation = Omit<AcceptanceObligation, 'taskIds'>;
+
+/** The execution-definition slice of one Task that a future-only delta and the basis check compare. */
+export type FrozenTaskDefinition = {
+  task: RuntimeTask;
+  assignment: PlanTaskAssignment | null;
+  inputRequirements: readonly TaskInputRequirementV2[];
+  carriedObligations: readonly FrozenObligation[];
+};

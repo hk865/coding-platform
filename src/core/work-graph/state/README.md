@@ -144,11 +144,12 @@
 | `decideGoalConfirm` | `src/core/work-graph/state/goal-confirm.ts:32` | confirm-draft 的唯一纯决定：拒绝顺序、草稿、objective、出生设置与 order | 确认草稿前；不要另写拒绝顺序 |
 | `confirmObjectiveText` | `src/core/work-graph/state/goal-confirm.ts:21` | 确认后的 objective：正文 + 空行 + `完成标准：` + 每条 `- ` 完成标准，两段都规范化 | 建确认 Goal 的 objective |
 | `newInitializationBinding` | `src/core/work-graph/state/goal-confirm.ts:60` | 不可变 `InitializationBinding@1` 的唯一构造：ref、answerRef、digest、requestRef、draftIndex、goalRef、screening | 确认提交；服务只编码，不自己构造 |
-| `goalStateOf` | `src/core/work-graph/state/goal-machine.ts:217` | Goal + GoalPhase 的机器状态；保留记录类型，预绑定 Goal 得 pending 状态 | Goal 迁移前 |
-| `goalCompletionProblem` | `src/core/work-graph/state/goal-machine.ts:451` | 完成事件的前置检查 | goal_completed 提交 |
+| `goalWithObjective` | `src/core/work-graph/state/goal-machine.ts:124` | 纯函数：只把候选带来的新目标说明写进 Goal 快照的 `objective`，不 bump revision；随后仍由 `nextGoalPointer` 移指针并 bump 一次 | 人采用带 `reason.objective` 的候选时，与计划指针同一次提交 |
+| `goalStateOf` | `src/core/work-graph/state/goal-machine.ts:228` | Goal + GoalPhase 的机器状态；保留记录类型，预绑定 Goal 得 pending 状态 | Goal 迁移前 |
+| `goalCompletionProblem` | `src/core/work-graph/state/goal-machine.ts:462` | 完成事件的前置检查 | goal_completed 提交 |
 | `transitionGoal` | `src/core/work-graph/state/goal-machine.ts:601` | Goal 主迁移：目标状态、计划指针、完成；`goal_created` 的 `next` 是预绑定 Goal | Goal 写入 |
-| `goalFanOutRequestId` | `src/core/work-graph/state/goal-machine.ts:646` | 派生 fan-out 请求的稳定 id | pause/cancel/resume 的扇出 |
-| `findGoalResumeContinuations` | `src/core/work-graph/state/goal-machine.ts:699` | 从任务事实找 resume 的续作 | 恢复 Goal 后规划续作 |
+| `goalFanOutRequestId` | `src/core/work-graph/state/goal-machine.ts:657` | 派生 fan-out 请求的稳定 id | pause/cancel/resume 的扇出 |
+| `findGoalResumeContinuations` | `src/core/work-graph/state/goal-machine.ts:710` | 从任务事实找 resume 的续作 | 恢复 Goal 后规划续作 |
 | `transitionGoalSettings` | `src/core/work-graph/state/goal-settings-machine.ts:189` | Goal 设置迁移（order_set 用已有顺序的下标） | 修改 Goal 设置 |
 | `goalStartPolicy` | `src/core/work-graph/state/goal-settings-machine.ts:237` | 启动准入策略 | 自动启动 Goal 前 |
 | `goalDecisionBasisMatches` | `src/core/work-graph/state/goal-settings-machine.ts:255` | 决策依据是否仍对应当前 Goal | 复用/重算决策时 |
@@ -189,12 +190,12 @@
 | `decidePlanCandidate`、`diagnosePlanCandidate` | `src/core/work-graph/state/plan-candidate.ts:126`、`src/core/work-graph/state/plan-candidate.ts:126` | 计划候选的唯一决定表（请求审阅/请求修复/采用/出卡/等待，首次匹配即返回）与机械诊断（必需验证要求必须有已注册检查覆盖；`checks: null` 是覆盖未知、`checks: []` 是全部诊断） | 规划环的候选推进与出卡；不要另写决定顺序或覆盖规则 |
 | `transitionNoticeSettings` | `src/core/work-graph/state/notice-settings-machine.ts:45` | 通知已读位置迁移；无前进更新则不写记录 | 标记通知已读 |
 | `newCandidateProposal`、`CandidatePlanProposal` | `src/core/work-graph/state/plan-machine.ts:132`、`src/core/work-graph/state/plan-machine.ts:92` | 建候选计划提案；候选带 `catalogPin`（只在创建时写，不受保护，采用重核不比较），并在它之后写必填可空的 `sourceMessageRef`（干预消息，其他写者为 `null`） | 提交计划草案 |
-| `derivePlanProposalReadVerdict` | `src/core/work-graph/state/plan-machine.ts:191` | 提案的读取结论（含 Goal 状态） | 读计划提案 |
-| `derivePlanRevisionStatus` | `src/core/work-graph/state/plan-machine.ts:213` | adopted/superseded 派生，不落库 | 读计划修订 |
-| `planRevisionTargetOf` | `src/core/work-graph/state/plan-machine.ts:225` | 由提案与草稿算目标修订 ref | 采纳提案前 |
-| `transitionPlanProposal` | `src/core/work-graph/state/plan-machine.ts:1674` | 提案主迁移；采纳与 Goal 指针同一提交 | 计划写入 |
-| `planProposalProblem` | `src/core/work-graph/state/plan-machine.ts:868` | 提案事件的前置检查 | 提案迁移前 |
-| `draftHasModuleTask` | `src/core/work-graph/state/plan-machine.ts:1482` | 草稿里有 module 作用域的任务（`scope.kind === 'module'`），采用时要读 catalog | 采用 effects 需要决定是否加 catalog guard 时 |
+| `derivePlanProposalReadVerdict` | `src/core/work-graph/state/plan-machine.ts:197` | 提案的读取结论（含 Goal 状态） | 读计划提案 |
+| `derivePlanRevisionStatus` | `src/core/work-graph/state/plan-machine.ts:219` | adopted/superseded 派生，不落库 | 读计划修订 |
+| `planRevisionTargetOf` | `src/core/work-graph/state/plan-machine.ts:231` | 由提案与草稿算目标修订 ref | 采纳提案前 |
+| `transitionPlanProposal` | `src/core/work-graph/state/plan-machine.ts:1689` | 提案主迁移；采纳与 Goal 指针同一提交 | 计划写入 |
+| `planProposalProblem` | `src/core/work-graph/state/plan-machine.ts:883` | 提案事件的前置检查 | 提案迁移前 |
+| `draftHasModuleTask` | `src/core/work-graph/state/plan-machine.ts:1497` | 草稿里有 module 作用域的任务（`scope.kind === 'module'`），采用时要读 catalog | 采用 effects 需要决定是否加 catalog guard 时 |
 | `newPendingQueryRecords` | `src/core/work-graph/state/query-run-recovery.ts:533` | 建 pending 的 QueryJob/QueryRun 对 | 新 Query 请求 |
 | `advanceQueryExecutionRecord` | `src/core/work-graph/state/query-run-recovery.ts:608` | 推进 claimed/prepared/entering/entered | Query 进入执行 |
 | `markQueryRunUnknownRecord` | `src/core/work-graph/state/query-run-recovery.ts:688` | 记录 unknown（Job 保持 running） | 结果未知 |

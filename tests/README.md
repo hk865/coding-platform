@@ -29,6 +29,8 @@ E3-6B 的新文件：`tests/work-graph/E36B-attempt-ordinal.test.ts`（真实 re
 
 E3-7 的新文件：`tests/contracts/E37-line-edit-counts-pure.test.ts`（`gitLines` 照 git 切行、`lineEditCounts` 和 Myers 的上限、`lineDelta` 不变，纯表）、`tests/app/E37-files-uncommitted.test.ts`（真实 Host 的 `files/uncommitted` 在真实 git 仓库上逐路径判、`not_git` 和三种拒绝，memory）、`tests/ui/E37-1-detail-lines.test.ts`（适配的“+2 −1（未提交）”标签、一个文件一行、`filesNote` 三种情形，以及页面按实际文件发 `files/uncommitted`）。
 
+6C 的新文件：`tests/scenarios/S6C-request-candidate.test.ts`（S1：选思路后的计划轮经真实 Host 生命周期变成请求候选、重放、第二版与 `previous`、真实 `submit_plan_round`、来源跌出 `earlier`；S7-1 经公开 `plans/request-candidate` 读影响标记，不直接 import `plan-impact`）、`tests/scenarios/S6C-c7-adoption.test.ts`（S3：人采用替代有执行记录的任务、新义务/新要求、PS 先停后采用、旧证据不完成新验收、采用人 `adoptedBy`）、`tests/work-graph/S6C-goal-objective.test.ts`（S4：目标说明随候选、人采用写入、平台自动拒绝、空值拒绝）、`tests/work-graph/S6C-source-resolved.test.ts`（S5：两个 `missing_initial_*` 指针生效后读成 `source_resolved`，读失败不折成已解决）。
+
 ## tests/helpers/ 的夹具
 
 ### Host 和平台

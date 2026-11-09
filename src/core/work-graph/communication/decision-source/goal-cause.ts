@@ -27,6 +27,19 @@ const KNOWN_CAUSE_CODES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * The active governance pointer a missing-initialization cause is resolved by.
+ * Shared so the source read and the card read resolve the same record.
+ */
+export function initialCauseActiveRef(
+  code: 'missing_initial_architecture' | 'missing_initial_completion_policy',
+  projectId: string,
+): { aggregateType: 'ProjectArchitectureBaselineActive' | 'ProjectCompletionPolicyActive'; projectId: string } {
+  return code === 'missing_initial_architecture'
+    ? { aggregateType: 'ProjectArchitectureBaselineActive', projectId }
+    : { aggregateType: 'ProjectCompletionPolicyActive', projectId };
+}
+
+/**
  * §4.2 source 2 / S5-MSG-03: prove a `goal_cause` source against the formal
  * reader. A cause that is absent is `not_found`; a read failure is returned
  * (`unavailable`/`forbidden`), never turned into "no such cause".
@@ -93,9 +106,7 @@ export async function readGoalCauseSource(
     }
   }
   if (identity.code === 'missing_initial_architecture' || identity.code === 'missing_initial_completion_policy') {
-    const active = identity.code === 'missing_initial_architecture'
-      ? { aggregateType: 'ProjectArchitectureBaselineActive', projectId: support.scope.projectId }
-      : { aggregateType: 'ProjectCompletionPolicyActive', projectId: support.scope.projectId };
+    const active = initialCauseActiveRef(identity.code, support.scope.projectId);
     const read = await support.readEncoded(active);
     // Present = the cause has been resolved; a genuine read failure is
     // returned, never folded into "absent".

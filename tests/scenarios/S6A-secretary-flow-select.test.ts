@@ -34,16 +34,18 @@ import type {
   RequestCoreViewV1, RequestRoundViewV1,
 } from '../../src/core/work-graph/model/request-contracts.js';
 import type { RequestSelectIdeaResultV1 } from '../../src/business/workflow/request-intake.js';
+import { PLATFORM_PROMPT_PACK_V1 } from '../../src/contracts/prompts/platform-pack.generated.js';
+import { renderTemplate } from '../../src/contracts/prompts/render-template.js';
 import {
   byIdentityPrefix, commitBarrier,
 } from '../helpers/S6A-commit-barrier.js';
-import { openS6AHostWorld, type S6AHostWorld } from '../helpers/S6A-host-fixture.js';
+import { openS6AHostWorld, type S6AHostWorld, type S6AReply } from '../helpers/S6A-host-fixture.js';
 import {
   buildAbsorbedSelection, buildLaterAnswer, followUp, initializeProject, newRequest, secretaryAnswer,
   submitRound, threeIdeas, waitForRound,
 } from '../helpers/S6A-history-fixture.js';
 import {
-  SECRETARY_ANSWER_FORMAT_V1, SECRETARY_STRINGS, roundMaterialText, selectIdeaInputText, taskBatchedSlot, taskRoundSlot,
+  SECRETARY_STRINGS, roundMaterialText, selectIdeaInputText, taskBatchedSlot, taskRoundSlot,
   type SampleSelectedIdea,
 } from '../helpers/S6A-prompt-samples.js';
 import type { S6ABackend, S6ASession } from '../helpers/S6A-request-fixture.js';
@@ -55,6 +57,25 @@ vi.mock('../../src/core/record-store/sqlite-record-store.js', async (importOrigi
   (await import('../helpers/S6A-commit-barrier.js')).sqliteBarrierModule(importOriginal));
 
 const BACKENDS = ['memory', 'sqlite'] as const;
+
+/** `initial-planning-answer` rendered for a plan round (its `submit_plan_round` block). */
+const PLAN_ROUND_ANSWER_FORMAT = renderTemplate(PLATFORM_PROMPT_PACK_V1, 'initial-planning-answer', {},
+  ['submit_plan_round']).text;
+
+/** The empty plan body the scripted plan-round answers carry: no task is what these rows are about. */
+const PLAN_BODY = { executionDag: { dependsOn: [] }, obligations: [], stages: [],
+  taskHierarchy: { parentOf: [] }, tasks: [] };
+
+/** One scripted `submit_plan_round` reply; `planRoundAnswer` is the text the platform saves from it. */
+function planRoundReply(callId: string, summary: string): S6AReply {
+  return { kind: 'calls', calls: [{ callId, name: 'submit_plan_round',
+    args: { answerKind: 'plan', summary, plan: PLAN_BODY } }] };
+}
+
+function planRoundAnswer(summary: string): string {
+  return JSON.stringify({ schemaVersion: 2, kind: 'plan', summary,
+    plan: { ...PLAN_BODY, schemaVersion: 2 } });
+}
 
 const worlds: S6AHostWorld[] = [];
 
@@ -106,7 +127,7 @@ describe.each(BACKENDS)('the selectIdea success (%s)', (backend: S6ABackend) => 
     const ideas = threeIdeas('s6a-select');
     await world.scripted.script(a, [
       { kind: 'text', text: secretaryAnswer({ body: 'S6A select answer with ideas', ideas }) },
-      { kind: 'text', text: secretaryAnswer({ body: 'S6A selection follow-up answer' }) },
+      planRoundReply('s6a-select-followup', 'S6A selection follow-up answer'),
     ]);
     const first = await submitRound(world, newRequest('s6a-select-1', a, 'S6A select question with ideas'));
     const answered = await waitForRound(world, first.requestRoot, first.round, 'ended');
@@ -140,10 +161,11 @@ describe.each(BACKENDS)('the selectIdea success (%s)', (backend: S6ABackend) => 
     // earlier round of the request, with the idea's title and detail.
     expect(await world.route({ commandId: 's6a-select-route', round: first.round, to: b }))
       .toMatchObject({ status: 'routed' });
-    await world.scripted.script(b, [{ kind: 'text', text: secretaryAnswer({ body: 'S6A select answer on B' }) }]);
+    await world.scripted.script(b, [planRoundReply('s6a-select-on-b', 'S6A select answer on B')]);
     const afterRoute = await submitRound(world, followUp('s6a-select-2', first.requestRoot, 'S6A select after the move'));
     const ended = await waitForRound(world, first.requestRoot, afterRoute.round, 'ended');
-    expect(roundOf(ended, afterRoute.round)).toMatchObject({ answer: 'S6A select answer on B', session: b.ref });
+    expect(roundOf(ended, afterRoute.round)).toMatchObject({
+      answer: planRoundAnswer('S6A select answer on B'), session: b.ref });
     const bInput = currentInput((await world.scripted.requests(b))[0]!);
     expect(bInput).toContain(SECRETARY_STRINGS['secretary.earlierHeading']);
     expect(bInput).toContain(selectionMaterial);
@@ -154,6 +176,13 @@ describe.each(BACKENDS)('the selectIdea success (%s)', (backend: S6ABackend) => 
     await initializeProject(world);
     const a = await world.createSecretary('a');
     const b = await world.createSecretary('b');
+    // The executing round is prepared after the selection, so it answers as a plan round; queue
+    // that answer first: the builder's own secretary texts then stay behind it unused.
+    const ideas = threeIdeas('s6a-absorbed');
+    await world.scripted.script(a, [
+      { kind: 'text', text: secretaryAnswer({ body: 's6a-absorbed answer with ideas', ideas }) },
+      planRoundReply('s6a-absorbed-batch', 's6a-absorbed batch answer'),
+    ]);
     const built = await buildAbsorbedSelection(world, { a, routeTo: b, index: 1, tag: 's6a-absorbed' });
     const view = await world.readRequest(built.requestRoot);
     const selection = roundOf(view, built.selection);
@@ -165,7 +194,8 @@ describe.each(BACKENDS)('the selectIdea success (%s)', (backend: S6ABackend) => 
       input: selectIdeaInputText(1, built.ideas[1]!.title),
       selectedIdea: { round: built.answered, index: 1 },
     });
-    expect(executing).toMatchObject({ status: 'ended', absorbedInto: null, answer: 's6a-absorbed batch answer' });
+    expect(executing).toMatchObject({ status: 'ended', absorbedInto: null,
+      answer: planRoundAnswer('s6a-absorbed batch answer') });
     const selectionMaterial = selectedMaterial(selection.since, selection.input,
       { title: built.ideas[1]!.title, detail: built.ideas[1]!.detail });
 
@@ -201,7 +231,7 @@ describe.each(BACKENDS)('a selection transferred before its round runs (%s)', (b
     const followup = selectionFollowup(selected);
     await claim.reached;
     // B's answer is queued before the route: the route wakes the driver, which may claim the round on B at once.
-    await world.scripted.script(b, [{ kind: 'text', text: secretaryAnswer({ body: 'S6A move answer on B' }) }]);
+    await world.scripted.script(b, [planRoundReply('s6a-move-answer', 'S6A move answer on B')]);
     expect(await world.route({ commandId: 's6a-move-route', round: first.round, to: b }))
       .toMatchObject({ status: 'routed' });
     claim.release();
@@ -210,7 +240,7 @@ describe.each(BACKENDS)('a selection transferred before its round runs (%s)', (b
     const selection = roundOf(ended, followup);
     expect(ended.owner).toEqual(b.ref);
     expect(selection).toMatchObject({
-      status: 'ended', session: b.ref, answer: 'S6A move answer on B',
+      status: 'ended', session: b.ref, answer: planRoundAnswer('S6A move answer on B'),
       input: selectIdeaInputText(1, ideas[1]!.title),
       selectedIdea: { round: first.round, index: 1 },
     });
@@ -221,7 +251,7 @@ describe.each(BACKENDS)('a selection transferred before its round runs (%s)', (b
     expect(onB).toHaveLength(1);
     const bInput = currentInput(onB[0]!);
     expect(bInput).toContain(taskRoundSlot({ since: selection.since, input: selectIdeaInputText(1, ideas[1]!.title),
-      selectedIdea: ideas[1]! }, SECRETARY_ANSWER_FORMAT_V1));
+      selectedIdea: ideas[1]! }, PLAN_ROUND_ANSWER_FORMAT));
     // A made its own round 1's request only; the claimed attempt it held made none.
     expect(await world.scripted.requests(a)).toHaveLength(1);
   }, 90_000);
@@ -247,14 +277,14 @@ describe.each(BACKENDS)('a selection transferred before its round runs (%s)', (b
     const selected = await world.selectIdea({ commandId: 's6a-move-batch-select', round: first.round, index: 1 });
     const selectionRef = selectionFollowup(selected);
     // B's answer is queued before the route: the route wakes the driver, which may claim the round on B at once.
-    await world.scripted.script(b, [{ kind: 'text', text: secretaryAnswer({ body: 'S6A move batch answer on B' }) }]);
+    await world.scripted.script(b, [planRoundReply('s6a-move-batch-answer', 'S6A move batch answer on B')]);
     expect(await world.route({ commandId: 's6a-move-batch-route', round: first.round, to: b }))
       .toMatchObject({ status: 'routed' });
     claim.release();
 
     const ended = await waitForRound(world, first.requestRoot, executing.round, 'ended');
     expect(roundOf(ended, executing.round)).toMatchObject({
-      status: 'ended', session: b.ref, answer: 'S6A move batch answer on B', absorbedInto: null,
+      status: 'ended', session: b.ref, answer: planRoundAnswer('S6A move batch answer on B'), absorbedInto: null,
     });
     const selection = roundOf(ended, selectionRef);
     expect(selection).toMatchObject({

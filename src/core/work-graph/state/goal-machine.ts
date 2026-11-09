@@ -117,6 +117,15 @@ export function newGoalSnapshot(input: {
 }
 
 /**
+ * The candidate's new objective, written into the same Goal snapshot that
+ * `nextGoalPointer` moves: it sets only `objective` and never bumps the
+ * revision, so the pointer move is the one revision bump of the adoption.
+ */
+export function goalWithObjective(goal: GoalSnapshot, objective: string): GoalSnapshot {
+  return { ...goal, objective };
+}
+
+/**
  * GOAL-02/03: the pointer moves onto `planRef`, revision + 1. The desired state,
  * its revision and requester are kept (pre-step-3 `plan-commit-compiler.ts:144,293`
  * spread the Goal the same way).

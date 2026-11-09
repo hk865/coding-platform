@@ -85,6 +85,7 @@ import { planSourceLineageOf } from '../../core/work-graph/tasks/plan-lineage.js
 import { sameRef } from '../../core/work-graph/state/ref-equality.js';
 import type { DeliveryEligibilityFactsV1 } from '../../core/work-graph/model/session-facts-contracts.js';
 import { createInterventionHandler } from './intervention.js';
+import { proposeFromPlanTurn } from './request-candidate.js';
 
 /**
  * R5c.1 stage-two adoption-first advancement loop.
@@ -3856,6 +3857,9 @@ export function createWorkflow(deps: WorkflowDependencies & {
     backfillRecentActivity, backfillActivityRange,
     handleIntervention: intervention.handleIntervention,
     readDeliveryEligibilityFacts,
+    // S1: one ended request round becomes this request's candidate; without the
+    // request-candidate dependency the entry answers "unsupported" and writes nothing.
+    proposeFromPlanTurn: (ctx, turn) => proposeFromPlanTurn(deps, ctx, turn),
     // Slice 1 §4.1/§4.2: the real archive/maintenance services are published
     // on the port; an outer `ready` never implies archived.
     archiveLine: archiveService.archiveLine,

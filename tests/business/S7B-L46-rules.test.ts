@@ -61,7 +61,7 @@ describe('formalDependencies: the one formal table', () => {
   });
 });
 const BASIS: GoalWaitBasisV1 = { projectId: 'P', goalId: 'G',
-  recordKinds: ['UserDecision', 'Goal', 'TaskRequeue', 'VerificationRound', 'Run'],
+  recordKinds: ['Goal', 'TaskRequeue', 'VerificationRound', 'Run'],
   reasons: ['automation_confirmation:system_requeue'] };
 const block = (taskId: string): L46BlockV1 => ({
   task: task(taskId), action: 'system_requeue', wakeBasis: BASIS,

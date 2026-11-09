@@ -22,6 +22,7 @@ import type { GoalTaskPort } from '../../core/work-graph/model/task-contracts.js
 import type { TaskRow } from '../../core/work-graph/model/plan-contracts.js';
 import type { PlanProposal, PlanProposalRef, PlanTaskPort } from '../../core/work-graph/model/plan-contracts.js';
 import type { GraphWrite } from '../../core/work-graph/model/task-contracts.js';
+import type { RequestFactsPort } from '../../core/work-graph/tasks/request-facts.js';
 import type { TaskInputUpstreamPort } from '../../core/work-graph/model/context-input-contracts.js';
 import type { SessionDirectoryPort } from '../../core/work-graph/model/session-contracts.js';
 import type {
@@ -47,6 +48,7 @@ import type { SendMessageResultV1, SessionMailboxPort } from '../../core/work-gr
 import type {
   DecisionCardV1, DecisionMessagePort, DecisionReadPort, GoalExecutedFilesPort,
   GoalSettingsPort, MessageDutiesFactsPort, MessageReleaseCandidatesPort, MessageReleasePort,
+  RequestCandidatePort,
 } from '../../core/work-graph/model/decision-contracts.js';
 import type { ProjectRegistrationPort } from '../../core/work-graph/configuration/project-bootstrap-contracts.js';
 import type { QueryExecutionRecord, QueryJobPort } from '../../core/work-graph/queries/contracts.js';
@@ -133,6 +135,18 @@ export type GoalWaitDrainPort = (scope: WorkspaceScope) => Promise<void>;
 export type WorkflowDependencies = {
   tasks: GoalTaskPort;
   plans: PlanTaskPort;
+  /**
+   * S1: the request-candidate head read the plan-turn entry replaces. Optional
+   * so every old narrow double stays type-compatible; the real composition
+   * installs it, and without it only `proposeFromPlanTurn` answers `unsupported`.
+   */
+  requestCandidates?: Pick<RequestCandidatePort, 'readRequestCandidate'>;
+  /**
+   * S1: the request's own round order, which the plan-turn entry compares with the head's source
+   * round before it replaces the head. Optional like `requestCandidates`; the real composition
+   * installs the same request-facts owner the Host and the Query preparation read.
+   */
+  requests?: Pick<RequestFactsPort, 'readRequest'>;
   sessions: SessionDirectoryPort;
   claims: TaskClaimPort;
   executions: ExecutionReadPort;
@@ -374,6 +388,28 @@ export type LineAskResultV1 =
   | { status: 'queued'; round: QueryJobRef }
   | CoreRejection;
 
+/** The facts of one ended request round that may write this request's plan candidate. */
+export type PlanTurnFactsV1 = {
+  /** The ended round. */
+  ref: QueryJobRef;
+  /** The round's last formal answer. */
+  answerRef: QueryJobAnswerRef;
+  /** The request this round belongs to. */
+  requestRoot: QueryJobRef;
+  /** The Goal id (not the full GoalRef). */
+  goalId: string;
+};
+
+/**
+ * The one outcome table of the plan-turn entry: `done` wrote (or replayed) the
+ * candidate; `skipped` did not write and a non-transient skip is final;
+ * `failed` names a real failure the next lifecycle pass may retry.
+ */
+export type PlanRoundEndResultV1 =
+  | { status: 'done' }
+  | { status: 'skipped'; reason: string; transient: boolean }
+  | { status: 'failed'; reason: string; transient: boolean };
+
 export interface WorkflowPort {
   handleGoalInput(ctx: CoreCallContext, input: InitialPlanningGoalInput): Promise<InitialPlanningGoalInputResult>;
   advanceWork(ctx: CoreCallContext, input: WorkflowAdvanceInput, internal?: WorkflowAdvanceInternal): Promise<WorkflowAdvanceResult>;
@@ -389,6 +425,13 @@ export interface WorkflowPort {
   askLine?(ctx: CoreCallContext, input: LineAskCommandV1): Promise<LineAskResultV1>;
   /** One saved person's or agent's message delivered to the line's existing Task (slice-7-SPEC L11). */
   handleIntervention?(ctx: CoreCallContext, input: InterventionInput): Promise<HandleInterventionResultV1>;
+  /**
+   * S1: one ended plan-turn request round becomes this request's candidate. The
+   * Host calls it from its own round-end table; the entry reads the saved answer
+   * facts and reuses `plans.proposePlan`. Optional so old narrow doubles stay
+   * type-compatible; the real composition publishes it.
+   */
+  proposeFromPlanTurn?(ctx: CoreCallContext, turn: PlanTurnFactsV1): Promise<PlanRoundEndResultV1>;
   /** S's `DeliveryEligibilityFactsPort['readDeliveryEligibilityFacts']`: the one fact read L injects into the Query
    *  and Host gates; absent keeps old narrow doubles type-compatible. */
   readDeliveryEligibilityFacts?(ctx: CoreCallContext, input: { messageRef: SessionMessageRef }):

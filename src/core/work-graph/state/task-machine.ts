@@ -1397,7 +1397,8 @@ function onDispositionChanged(
     return reject('guard_failed', 'invalid', `source gate task ${ctx.taskId} changed its definition or acceptance relationships`);
   }
   const problem = tracedDispositionChangeProblem({ goalDesiredState: disposition.goalDesiredState, tasks: [disposition.facts],
-    affectedTaskIds: disposition.affectedTaskIds, adopterClass: event.actorClass });
+    affectedTaskIds: disposition.affectedTaskIds, adopterClass: event.actorClass,
+    changes: [{ taskId: ctx.taskId, from: state.disposition, to: event.to, replacedByTaskId: event.replacedByTaskId }] });
   if (problem !== null) return reject(problem.reason ?? 'guard_failed', problem.code, problem.detail);
   return accept({ ...state, disposition: event.to },
     [{ kind: 'write_plan_revision' }, { kind: 'record_disposition_change' }, { kind: 'move_goal_pointer' }]);

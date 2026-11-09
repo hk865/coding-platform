@@ -52,7 +52,8 @@ export async function abandon(f: S5DecisionFixture, proposal: PlanProposal, requ
 /** Release the fixture's existing Q1 slot without deleting its history. */
 export async function emptyQ1(f: S5DecisionFixture, requestId: string) {
   await abandon(f, f.candidates.U1, requestId);
-  expect(await requestHead(f)).toEqual({ head: null, status: 'closed', closedReason: null });
+  expect(await requestHead(f)).toEqual({ head: null, status: 'closed', closedReason: null,
+    impact: { marks: [] }, previous: null });
 }
 
 /** Like the frozen fixture's futureDraft: retain every definition, add one
@@ -119,9 +120,11 @@ export async function readQueue(f: S5DecisionFixture,
 export async function expectClosedQ1(f: S5DecisionFixture, previous: Candidate, last: Candidate) {
   // The decisive RED assertion is below; prove the real slot and both stored
   // closures first, independently of either decision projection.
-  expect(await requestHead(f)).toEqual({ head: null, status: 'closed', closedReason: null });
+  expect(await requestHead(f)).toEqual({ head: null, status: 'closed', closedReason: null,
+    impact: { marks: [] }, previous: null });
   expect(await readProposal(f, previous)).toMatchObject({ revision: 2 });
-  expect(await readProposal(f, last)).toEqual(last);
+  // An accepted proposal carries its read-only adoption attribution, never a stored field.
+  expect(await readProposal(f, last)).toEqual(last.status === 'accepted' ? { ...last, adoptedBy: f.operatorActor } : last);
   expect(last).toMatchObject({ revision: 2 });
   const before = await f.storeSnapshot();
   const allocations = { ...f.allocationCounts };

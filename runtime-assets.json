@@ -13,7 +13,7 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "d38c94ea54d1a76fa12bcb9e3a3bf479e2ad71a6c242b5f6592f33f6e0c741a3"
+    "sha256": "ea7f04393099ae7b05db3ab077d13d08bbf5032c1fec7d4144e558fde4851647"
   },
   {
     "path": "resources/prompts/platform/strings.json",
@@ -21,7 +21,7 @@
   },
   {
     "path": "resources/prompts/platform/templates/initial-planning-answer.txt",
-    "sha256": "4601a71a11dc538d5b9667fc1cdf5bb4d66b31b22524fd25208fd42f1ca6346e"
+    "sha256": "a34231b808930bc7b7d357a774d0601a8fff212992446f20826c972ed1bd861b"
   },
   {
     "path": "resources/prompts/platform/templates/consultation-received-input.txt",
@@ -321,7 +321,7 @@
   },
   {
     "path": "resources/prompts/platform/tools/submit_plan_round.json",
-    "sha256": "4bc13fef522de755484841973eba70d9970be3f3fbdf52bbead5c25e16077d91"
+    "sha256": "040fdca4a72f5e8b1cd593dd62caa17565610efdc6dbec67dc96a01e8feae1ab"
   },
   {
     "path": "resources/prompts/platform/tools/hand_off.json",

@@ -73,7 +73,13 @@ export type PlanChangeReason = { text: string; sources: ArtifactRef[];
    * `TaskDispositionChangeV1`. Recording checks its shape (PLAN-01/02); an
    * adoption requires every traced disposition-only Task in it (TASK-19 guard 6).
    */
-  affectedTaskIds?: string[] };
+  affectedTaskIds?: string[];
+  /**
+   * The candidate's new Goal objective, when it changes one. Only a person may
+   * adopt such a candidate; the adoption writes it with the same commit that
+   * moves the Goal pointer.
+   */
+  objective?: string | null };
 
 /**
  * Slice 5 request-candidate extension (spec §2.4). `requestRef` names the first
@@ -631,6 +637,8 @@ export function tracedDispositionChangeProblem(input: {
   affectedTaskIds: readonly string[] | undefined;
   /** `reworkActorClassOf(principal, actor)` of the adopter. */
   adopterClass: ReworkActorClass;
+  /** Every disposition change of this candidate (`delta.dispositionChanges`; one Task's change on TASK-18). */
+  changes: readonly FutureDispositionChangeV1[];
 }): PlanGuardProblem | null {
   // Guard 8 (the same D-9 check as PLAN-05, checked once).
   if (input.goalDesiredState === 'cancelled') {
@@ -640,7 +648,7 @@ export function tracedDispositionChangeProblem(input: {
   const traced = input.tasks.filter(isTracedTask)
     .sort((left, right) => (left.taskId < right.taskId ? -1 : left.taskId > right.taskId ? 1 : 0));
   for (const task of traced) {
-    const problem = tracedTaskProblem(task, affected, input.adopterClass);
+    const problem = tracedTaskProblem(task, affected, input.adopterClass, input.changes);
     if (problem !== null) return problem;
   }
   return null;
@@ -655,6 +663,7 @@ function tracedTaskProblem(
   task: TracedTaskFactsV1,
   affected: ReadonlySet<string>,
   adopterClass: ReworkActorClass,
+  changes: readonly FutureDispositionChangeV1[],
 ): PlanGuardProblem | null {
   const id = task.taskId;
   // Guard 1: every Run of the Task (every Plan) has ended.
@@ -688,9 +697,15 @@ function tracedTaskProblem(
   } else if (task.lease.release === undefined) {
     return { code: 'busy', detail: `task ${id} still holds its TaskLease` };
   }
-  // Guard 5: a satisfied Task's disposition is final (the Reduction is only ever `satisfied`).
+  // Guard 5: a satisfied Task's disposition is final (the Reduction is only ever `satisfied`) unless a person
+  // explicitly supersedes it with a named replacement. The Task keeps its frozen execution definition and
+  // obligations; only the disposition and the replacement move.
   if (task.reduction !== null) {
-    return { code: 'invalid', detail: `task ${id} is satisfied; the disposition of a satisfied task is final`, reason: 'illegal' };
+    const change = changes.find((entry) => entry.taskId === id);
+    const personReplaces = adopterClass === 'human' && change?.to === 'superseded' && change.replacedByTaskId !== null;
+    if (!personReplaces) {
+      return { code: 'invalid', detail: `task ${id} is satisfied; the disposition of a satisfied task is final`, reason: 'illegal' };
+    }
   }
   // Guard 6: the candidate names the Task (candidates are immutable: resubmit).
   if (!affected.has(id)) {
@@ -1395,7 +1410,7 @@ function futureAdoptionStep(
   // The scope step refused a cancelled Goal (D-9) before any of this; guard 8 is the same check.
   if (facts.goal === undefined) return UNREAD;
   const traced = tracedDispositionChangeProblem({ goalDesiredState: facts.goal.desiredState, tasks: dispositionJudged,
-    affectedTaskIds: proposal.reason.affectedTaskIds, adopterClass });
+    affectedTaskIds: proposal.reason.affectedTaskIds, adopterClass, changes: delta.dispositionChanges });
   if (traced !== null) return reject(traced.reason ?? 'guard_failed', traced.code, traced.detail);
   // Guard 9 (LA-3): only a `system` (automation) adopter reads and judges the existing carriers.
   let carrierTaskIds: readonly string[] = [];

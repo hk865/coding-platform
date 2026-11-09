@@ -2365,7 +2365,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         }),
         dutyOfRole: sessionDutyResolver,
       };
-      const dependencies: RuntimeExecutionDependencies & Pick<QueryPreparationDependencies, 'handoff' | 'planningQuestions'> & {
+      const dependencies: RuntimeExecutionDependencies & Pick<QueryPreparationDependencies, 'handoff' | 'planningQuestions' | 'requests'> & {
         readTaskClosure: (ctx: CoreCallContext, task: { projectId: string; goalId: string; taskId: string }) => Promise<import('../contracts/core/results.js').ReadResult<TaskClosureV1>>;
         /** H: record 5's readiness read into Work preparation. */
         handoffBriefs: WorkHandoffBriefReadPort;
@@ -2479,6 +2479,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         commandRerunRequests, commandRecognizer,
         // The saved questions a `planresume:` preparation assembles its input from.
         planningQuestions: planningQuestionReader,
+        // S1: the SAME request-facts owner decides whether a request followup is a plan round.
+        requests: { readRequest: (...args) => rawRequestFacts.readRequest(...args) },
         ...(host.readonlyCommandAccess === undefined ? {}
           : { readonlyCommandAccess: (input: ReadonlyCommandAccessInput) => host.readonlyCommandAccess!(input) }),
         host, kernel, resourceCaps, now, newId: randomUUID,
@@ -3453,6 +3455,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       sessionHandoff?: HandoffWorkflowDependencies;
     } = {
       tasks: rawGoals,
+      // S1: the same per-request candidate head read and request-round order the Workflow entry uses.
+      requestCandidates: requestCandidatePort, requests: { readRequest: (...args) => rawRequestFacts.readRequest(...args) },
       // L-02 §6.4.3: an automatic adoption registers its export at the commit itself,
       // before the later candidate read and reply association can fail.
       plans: options.wrapPlanChange === undefined ? planService
@@ -3800,6 +3804,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       askLine: (...args) => trackedCall(() => rawWorkflow.askLine!(...args), unavailable),
       handleIntervention: (...args) => trackedCall(() => rawWorkflow.handleIntervention!(...args), unavailable),
       readDeliveryEligibilityFacts: (...args) => trackedCall(() => rawWorkflow.readDeliveryEligibilityFacts!(...args), unavailable),
+      // S1: the Host's plan-turn lifecycle entry, drained like every other Workflow call.
+      proposeFromPlanTurn: (...args) => trackedCall(() => rawWorkflow.proposeFromPlanTurn!(...args),
+        () => ({ status: 'failed' as const, reason: 'the platform is closing', transient: false })),
       // Slice 1 (spec §4.1, §4.2): the composite archive action, its recovery
       // entry and the bounded maintenance step, published by the Workflow. Each
       // is admitted by the Host instance lease before the composition runs.

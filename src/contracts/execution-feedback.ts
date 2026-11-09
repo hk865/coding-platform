@@ -14,5 +14,4 @@ export type FeedbackSource = {
     failureIssueIds?: string[];
     /** A new current-basis investigation preserves and supersedes this exact job. */
     supersedesQueryJobId?: string;
-    decisionRef?: import('./goal-change.js').UserDecisionSnapshot['ref'];
 };

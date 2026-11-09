@@ -37,6 +37,8 @@ import type { GoalRef } from '../../../contracts/ledger.js';
 import {
   revisionAssignments,
   type AcceptanceObligation,
+  type FrozenObligation,
+  type FrozenTaskDefinition,
   type PlanRevisionRef,
   type PlanRevisionSnapshot,
   type PlanTaskAssignment,
@@ -51,20 +53,8 @@ import { planRevisionRefKey } from '../persistence/plan-record-codecs.js';
  * silently reports two definitions as equal. */
 export type BasisUnsupported = { status: 'unsupported'; reason: string };
 
-/** One Task-carried obligation's full semantics, with ONLY the mutual carrier
- * membership list removed. Identity/title/requirementLevel/verificationRequirements
- * are all preserved. */
-export type FrozenObligation = Omit<AcceptanceObligation, 'taskIds'>;
-
-/** The execution-definition slice of one Task that a future-only delta and the
- * basis consistency check compare. Display hierarchy and advisory
- * `taskRelations` are deliberately excluded. */
-export type FrozenTaskDefinition = {
-  task: RuntimeTask;
-  assignment: PlanTaskAssignment | null;
-  inputRequirements: readonly TaskInputRequirementV2[];
-  carriedObligations: readonly FrozenObligation[];
-};
+/** The two pure frozen types live in contracts so `model/` can name them without importing `tasks/`. */
+export type { FrozenObligation, FrozenTaskDefinition } from '../../../contracts/plan.js';
 
 function unsupported(reason: string): BasisUnsupported {
   return { status: 'unsupported', reason };

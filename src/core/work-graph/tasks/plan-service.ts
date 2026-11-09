@@ -20,7 +20,7 @@
  */
 import type { AdoptedArchitecture, ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
-import { commandIdentityKey } from '../../../contracts/command-event.js';
+import { commandIdentityKey, normalizeObjective } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef, VersionPin } from '../../../contracts/core/identity.js';
 import type {
@@ -100,7 +100,9 @@ import type {
   InitialPlanProposalResult,
   PlanProposal,
   PlanProposalRef,
+  PlanProposalWithAdoption,
   PlanServicePort,
+  RequestCandidateImpactV1,
   ProposedPlanRequestV1,
   ReadyTask,
   TaskGraph,
@@ -124,7 +126,9 @@ import {
   sourceProposeFingerprint,
 } from './initial-plan.js';
 import { createInitialPlanAnswerReader, proveInterventionSource, sourceFactsGuards } from './initial-plan-answer.js';
+import { readPlanImpact } from './plan-impact.js';
 import {
+  decodePlanProposalOrigin,
   decodePlanProposalRecordedEvent,
   decodePlanRevisionAcceptedEvent,
   encodePlanProposal,
@@ -191,7 +195,8 @@ import {
 } from './plan-write-admission.js';
 import { mergeGuards } from './execution-entry-service.js';
 import {
-  GOAL_FAN_OUT_ACTOR, findGoalResumeContinuations, goalFanOutRequestId, goalStateOf, reduceGoalDisplay, transitionGoal,
+  GOAL_FAN_OUT_ACTOR, findGoalResumeContinuations, goalFanOutRequestId, goalStateOf, goalWithObjective,
+  reduceGoalDisplay, transitionGoal,
   type GoalDisplayTaskFactsV1, type GoalRunControlCapabilityV1, type GoalRunStopInputV1,
 } from '../state/goal-machine.js';
 import { notEnteredEntryPhase } from '../state/control-intent-machine.js';
@@ -1313,6 +1318,10 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     if (!isRecord(reasonRaw) || !nonEmpty(reasonRaw['text']) || !Array.isArray(reasonRaw['sources'])) {
       return rejected('invalid', 'proposePlan requires a reason with text and sources');
     }
+    if (reasonRaw['objective'] !== undefined && reasonRaw['objective'] !== null
+      && (typeof reasonRaw['objective'] !== 'string' || normalizeObjective(reasonRaw['objective']).length === 0)) {
+      return rejected('invalid', 'proposePlan reason.objective must be a non-empty string');
+    }
     const requestId = rawMeta['requestId'];
     if (!nonEmpty(requestId)) return rejected('invalid', 'proposePlan requires meta.requestId');
     if (draft.goalId !== goalRef.goalId) return rejected('invalid', 'the draft goalId does not match the GoalRef');
@@ -1413,6 +1422,10 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     const rawReason = rawInput['reason'];
     if (!isRecord(rawReason) || !nonEmpty(rawReason['text']) || !Array.isArray(rawReason['sources'])) {
       return rejected('invalid', 'proposePlan requires a reason with text and sources');
+    }
+    if (rawReason['objective'] !== undefined && rawReason['objective'] !== null
+      && (typeof rawReason['objective'] !== 'string' || normalizeObjective(rawReason['objective']).length === 0)) {
+      return rejected('invalid', 'proposePlan reason.objective must be a non-empty string');
     }
     const requestId = rawMeta['requestId'];
     if (!nonEmpty(requestId)) return rejected('invalid', 'proposePlan requires meta.requestId');
@@ -1554,6 +1567,12 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       const read = await readAdoption(records, adoption, rawMeta['expected']);
       if (read.status !== 'ready') return read;
       const { candidate, scope, adoptionScope } = read;
+      // The initial and the future adoption share this admission: only a person may adopt a candidate
+      // that changes the objective.
+      const adopterClass = reworkActorClassOf(null, bound.actor);
+      if (candidate.reason.objective !== undefined && candidate.reason.objective !== null && adopterClass !== 'human') {
+        return rejected('invalid', 'only a person may adopt a candidate that changes the objective');
+      }
       // Slice 5 §2.8 D8: attribution/proof data only, computed from the answer
       // source captured by the trusted caller; never a new authorization.
       let decisionProof: PlanAcceptanceDecisionProofV1 | null = null;
@@ -1871,7 +1890,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     return (await readGoalOrdinals(records, ref.projectId))?.get(ref.goalId) ?? null;
   }
 
-  async function readPlanProposal(ctx: CoreCallContext, ref: PlanProposalRef): Promise<ReadResult<PlanProposal>> {
+  async function readPlanProposal(ctx: CoreCallContext, ref: PlanProposalRef): Promise<ReadResult<PlanProposalWithAdoption>> {
     if (ctx?.signal?.aborted) return rejected('cancelled', 'readPlanProposal was cancelled');
     const validated = planProposalRefFromUnknown(ref);
     if (validated === null) return rejected('invalid', 'readPlanProposal requires a full PlanProposalRef');
@@ -1881,7 +1900,22 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     if (read.status !== 'ready') return asReadResult(read);
     const scopeError = authorizeProposal(authority.principal, read.proposal);
     if (scopeError !== null) return scopeError;
-    return { status: 'ready', value: read.proposal };
+    // The adoption attribution is a read-only projection of the SAME record's wire origin: the accepted
+    // event's actor. A stored accepted record without its origin/cursor is damaged, never silently unattributed.
+    if (read.proposal.status !== 'accepted') return { status: 'ready', value: read.proposal };
+    const origin = decodePlanProposalOrigin(read.record);
+    if (origin.status !== 'decoded' || origin.value.until === undefined) {
+      return rejected('unavailable', `proposal ${validated.proposalId} carries no readable adoption cursor`);
+    }
+    const at = await records.eventAt(origin.value.until);
+    if (at.status !== 'ready') {
+      return rejected('unavailable', `the adoption event of proposal ${validated.proposalId} is not readable`);
+    }
+    const event = decodePlanRevisionAcceptedEvent(at.value.event);
+    if (event.status !== 'decoded') {
+      return rejected('unavailable', `the adoption event of proposal ${validated.proposalId} is damaged`);
+    }
+    return { status: 'ready', value: { ...read.proposal, adoptedBy: event.value.actor } };
   }
 
   /**
@@ -2368,11 +2402,24 @@ export function createRequestCandidateService(deps: PlanServiceDependencies): Re
       const headRead = await readRequestCandidateHead(records, { goalRef: input.goalRef, requestRef: input.requestRef });
       if (headRead.status !== 'ready') return asReadResult(headRead);
       const head = headRead.head;
+      const previous = headRead.previous;
       if (head === null) {
-        return { status: 'ready', value: { head: null, status: 'closed', closedReason: null } };
+        return { status: 'ready', value: { head: null, status: 'closed', closedReason: null,
+          impact: { marks: [] }, previous: null } };
+      }
+      // S7: the marks compare the candidate with the exact Plan its `basedOn` names (never the active Plan). The
+      // read is the same Plan snapshot `tasks/query` projects; a stale candidate stays compared with its own source.
+      let impact: RequestCandidateImpactV1 = { marks: [] };
+      if (head.basedOn !== null) {
+        const sourceRead = await readPlan(records, head.basedOn);
+        if (sourceRead.status !== 'ready') return asReadResult(sourceRead);
+        const read = await readPlanImpact(records, input.goalRef, sourceRead.plan, head.draft);
+        if (read.status !== 'ready') return read;
+        impact = read.value;
       }
       const verdict = derivePlanProposalReadVerdict(head, goalRead.goal.activePlanRevision, goalRead.goal.desiredState);
-      return { status: 'ready', value: { head, status: verdict.status, closedReason: verdict.closedReason } };
+      return { status: 'ready', value: { head, status: verdict.status, closedReason: verdict.closedReason,
+        impact, previous } };
     },
 
     async abandonPlanProposal(ctx: CoreCallContext, request: GraphWrite<{ proposalRef: PlanProposalRef }>) {
@@ -2734,7 +2781,12 @@ function planCommitOf(
         plan = effect;
         break;
       case 'move_goal_pointer': {
-        const moved = transitionGoal(goalStateOf(sources.scope.goal, null),
+        // A person-adopted candidate may carry a new objective: it enters the SAME Goal snapshot the pointer
+        // move writes, so the plan and the objective are one commit and the pointer move is the one revision bump.
+        const objective = proposal.reason.objective;
+        const goalBefore = objective === undefined || objective === null
+          ? sources.scope.goal : goalWithObjective(sources.scope.goal, normalizeObjective(objective));
+        const moved = transitionGoal(goalStateOf(goalBefore, null),
           { type: 'plan_adopted', basedOn: effect.from, target: effect.to },
           // Read only by goal_created / goal_completed; PLAN-04/05 judged the scope.
           { callerClass: reworkActorClassOf(null, sources.actor), scopePinsAgree: true, goalInWorkspace: true, completion: null });
@@ -3069,7 +3121,12 @@ async function applyFutureRevision(input: {
   if (refused !== null) return refusalOf(refused);
   // PLAN-05 refused an unsupported delta above.
   const supported = deltaResult.status === 'supported' ? deltaResult.delta : null;
-  const coverage = validateFutureObligationCoverage({ source, target: proposal.draft, delta: supported! });
+  // C7 (TASK-19): the adopter's class also decides the two person-only arms (a satisfied Task's supersession and
+  // a change of acceptance semantics), so it is computed once here, before the coverage rule reads it.
+  const adopterClass = reworkActorClassOf(null, actor);
+  if (adopterClass === null) return rejected('forbidden', 'the plan adopter has no rework actor class');
+  const coverage = validateFutureObligationCoverage({ source, target: proposal.draft, delta: supported!,
+    personAdopts: adopterClass === 'human' });
   refused = ask({ coverage });
   if (refused !== null) return refusalOf(refused);
 
@@ -3127,10 +3184,7 @@ async function applyFutureRevision(input: {
   // The untraced rule judges the changed and added Tasks before any disposition-only read.
   refused = ask({ touchedTaskFacts: futureFacts.value.tasks });
   if (refused !== null) return refusalOf(refused);
-  // C7 (TASK-19): the disposition-only Tasks' facts, judged with the adopter's class (§1 `reworkActorClassOf`:
-  // a Host automation actor is `system`, any other Host actor `human`).
-  const adopterClass = reworkActorClassOf(null, actor);
-  if (adopterClass === null) return rejected('forbidden', 'the plan adopter has no rework actor class');
+  // C7 (TASK-19): the disposition-only Tasks' facts, judged with the adopter's class computed before coverage.
   const dispositionRead = await readDispositionChangeTaskFacts(records, proposal.goalRef, source, supported!.dispositionOnlyTaskIds);
   if (dispositionRead.status !== 'ready') return dispositionRead;
   const dispositionTaskFacts = dispositionRead.tasks.map((entry) => entry.facts);
