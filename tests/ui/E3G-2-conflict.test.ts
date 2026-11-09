@@ -289,10 +289,15 @@ describe('E3G-2 the conflict card', () => {
       expect(hasClass(again, 'is-off')).toBe(true);
       expect(again.getAttribute('title')).toBe('还没接通');
       expect(again.getAttribute('aria-disabled')).toBe('true');
+      /* Let every read in flight land: the count must stay still for 150 ms before it is the baseline. */
+      for (let last = -1; last !== log.calls.length;) {
+        last = log.calls.length;
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      }
       const before = log.calls.length;
       const text = textOf(page.root);
       click(again);
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 150));
       expect(log.calls.length).toBe(before);
       expect(textOf(page.root)).toBe(text);
     } finally {
