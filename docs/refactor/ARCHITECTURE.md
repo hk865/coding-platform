@@ -2,18 +2,32 @@
 
 ```yaml
 status: target-design
-updated: 2026-09-24
+updated: 2026-11-09（正文写于 2026-09-24；之后的变化见 §0 和各节的补注）
 basis: 用户要求先确定数据结构与行为，再设计编排状态机，最后推导模块与重构方案
-implementation: 在 coding-platform/next 独立目标工程分批实现；原 src 作为只读参考
+implementation: 本仓库根就是施工工程（原 coding-platform/next）；原 src 只作只读参考
 ```
 
-本稿是本轮重构的当前目标架构。共同产品依据为[当前PRODUCT](../PRODUCT.md)，修改时同时核对原始对话（已归档：`docs/refactor/intent/ORIGINAL-DIALOGUE.md`）、2026-09-24 独立目标工程纠偏（已归档：`docs/refactor/intent/2026-09-24-TARGET-PROJECT.md`）与相关模块。本仓库根就是施工工程，五模块目录已存在；Workspace、Goal 和材料/存储是已迁入子集，AgentRuntime 已补迁模型工具循环与 Work/Review/Query 来源绑定；编排各片、接线包 1/2 和 K 片 A/B 已合入，任务 E 的前端拆分/SSE 已做；旧目录说明（原 `coding-platform/next`）按[根 AGENTS](../../AGENTS.md)第 2 条映射（决定 1、43）。最新独立验收见干净迁移记录（已归档：`docs/refactor/reviews/next-completed-migration-2026-09-24.md`）。
+本稿是本轮重构的当前目标架构。共同产品依据为[当前PRODUCT](../PRODUCT.md)，修改时同时核对原始对话（已归档：`docs/refactor/intent/ORIGINAL-DIALOGUE.md`）、2026-09-24 独立目标工程纠偏（已归档：`docs/refactor/intent/2026-09-24-TARGET-PROJECT.md`）与相关模块。本仓库根就是施工工程，五模块目录都在；旧目录说明（原 `coding-platform/next`）按[根 AGENTS](../../AGENTS.md)第 2 条映射（决定 1、43）。做到哪里只看 [STATUS](STATUS.md)，本稿不复述进度。2026-09-24 的独立验收见干净迁移记录（已归档：`docs/refactor/reviews/next-completed-migration-2026-09-24.md`）。
 
 原 `coding-platform/src` 的 R3a/R3b 与 Kernel R4a 验收保留为旧工程历史与可复用证据，不代表新平台已支持连续 Session、范围并行或完整业务。旧源码归属仍由原 `scripts/module-map.mjs` 描述；新工程由 `next/scripts/check-boundaries.mjs` 检查。目标五模块八条允许依赖保持不变，不能把目录或边界检查通过当成功能完成。此前 13 Module／38 边原稿已保留（已归档：`docs/refactor/archive/2026-09-23-before-core-design/ARCHITECTURE.md`）。
 
 无对话记忆的接手者先读[HANDOFF](HANDOFF.md)。用户原话、草图与工程解释分开保存在[意图层](intent/INTENT-AND-DECISIONS.md)；关键文件、完整主要接口与内部逻辑见详细骨架（已归档：`docs/refactor/skeleton/README.md`），Host/UI贯通见END-TO-END（已归档：`docs/refactor/skeleton/END-TO-END.md`）。本稿负责总体边界，不能替代模块文件级施工说明。当前已实装原子能力、源码符号、装配状态和复用前提统一查 [IMPLEMENTED-CAPABILITIES](IMPLEMENTED-CAPABILITIES.md)；后续先核已有实现，再冻结真实缺口，不能把尚未接线误称架构空白。
 
 **静态技术图解：** 核心数据结构、原子操作与编排状态机（已归档：`docs/refactor/CORE-STRUCTURES-AND-ORCHESTRATION.md`）。从记录表、事件、幂等、唯一占用、正反邻接和查询索引展开，逐项说明原子操作的读写范围，并画出业务、Task、Session、Run/控制、恢复和检查返工的状态机；适合先审阅底层数据管理设计。
+
+## 0. 本稿之后的变化（2026-11-09 补注）
+
+本稿正文写于 2026-09-24，最后一次实质修改在 2026-10-14。之后的编排、记忆、生命周期设计写在 [DESIGN](design/orchestration-2026-10/DESIGN.md)，用户的决定在 [HANDOFF 顶部](HANDOFF.md)（现行读法见[决定表](DECISIONS.md)），技术取舍在 [tradeoffs](tradeoffs/README.md)。这些都**没有加模块、没有加边**（DESIGN §7.1）：仍是五个模块、八条依赖。下表只列会改变本稿读法的地方。
+
+| 方面 | 现在的样子 | 细节在哪 |
+| --- | --- | --- |
+| 角色和工作线 | 秘书、参谋、书记、审阅是项目级的角色线，执行者按任务开线；线有席位、上限和有效范围，可以拆线、交接、回收。新项目冷启动按相位探索、分区域开参谋线（7D2，含 C1 `aa2546e1`）。§7.3 的“未来方向”第 1、3 条多半已有实现，见该节补注 | DESIGN §1.5、§4.10；决定 110、116–121 |
+| 双图记忆 | 注记（`note`、`link`、`flow`）挂在双图上，按代码版本失效；`link` 写入时由平台核对证据，之后可重读。语义层分两档：WorkspaceTools 里的分析线程做单文件的语法和符号，第一档读在界面时间内回答，第二档在 Host 空闲时成批核对存疑的联系（8E-2） | DESIGN §3；[slice-8E2-SPEC](design/orchestration-2026-10/slices/slice-8E2-SPEC.md)；决定 114、115、117–120 |
+| 压缩和接续 | 同一 Session 接续、换手、关 Host 后在同一 Session 重驱都已实现。压缩整片进 MVP（K2）：按真实 token 计量和 Kernel 的压缩记录已合入，先清旧工具结果和写摘要还没做 | DESIGN §4.3、§4.4、§4.11；[slice-K2-SPEC](design/orchestration-2026-10/slices/slice-K2-SPEC.md)；决定 113-7 |
+| 多个工作区 | 第二个文件夹可以加入同一个项目，由它自己的探索和主工作区的线初始化（`3dd74d35`）；文件路径用 `/@ws:` 前缀区分工作区；系统通知能送到别的工作区的线（XWS）。规则 W：Run 根、文件、授权、基线、来源事实和任务审阅按 Run 的工作区快照，Host 设置、角色绑定、profile 和发消息的身份按线所在的工作区（A2 在做） | 决定 121-36、121-59、121-77；取舍 004 |
+| 存储 | 已冻结、还没施工（KLS 七包）：代码知识只写进 `.workbench/` 文件、文件为准，库只做索引；项目库默认放主工作区的 git 目录，Kernel 库和实例锁按项目；继续用 SQLite，不加图数据库和搜索引擎 | 决定 121-68–121-75；取舍 001、002、003、006 |
+| 界面 | 旧工作台已删（决定 86，标签 `old-ui-last`）。新界面在 `src/ui/`：改冻结原型画板的副本，只换数据层；只有 `host-client.ts` 发请求，适配器是纯函数；页面读 Host 的变更流、断了自己重连 | [UI-WORKBENCH §0](../UI-WORKBENCH.md#ui-decisions-2026-10)；决定 112-1、112-3 |
+| WorkGraph 子模块 | 从 13 个变成 15 个（加了 `views`、`notes`），以 [module-target.json](module-target.json) 为准 | [module-dag §6](module-dag.md)；DESIGN §7.2 |
 
 ## 1. 设计顺序与文档责任
 
@@ -87,7 +101,7 @@ implementation: 在 coding-platform/next 独立目标工程分批实现；原 sr
 
 五个模块是本次推导结果，不是先验优化指标。WorkGraph 内部按结构分责，不堆成一个大类；RecordStore 可继续使用原数据库／表，不为合并模块强行合库。数据结构数量也不等于顶层模块数量。
 
-2026-10-07 补注（任务 D，决定 40）：WorkGraph 内部现在分成 13 个子模块，按层上层依赖下层，规则写在 [module-target.json](module-target.json) 的 `submodules` 里，由边界检查执行；唯一的同层依赖是 model 可以依赖 state（L0 内部的例外，决定 40 修法 B），state 不依赖 WorkGraph 里的任何东西。表和禁止的方向见 [module-dag §6](module-dag.md#6-workgraph-的子模块2026-10-07决定-40)。五模块八条边不变。
+2026-10-07 补注（任务 D，决定 40）：WorkGraph 内部现在分成 13 个子模块，按层上层依赖下层，规则写在 [module-target.json](module-target.json) 的 `submodules` 里，由边界检查执行；唯一的同层依赖是 model 可以依赖 state（L0 内部的例外，决定 40 修法 B），state 不依赖 WorkGraph 里的任何东西。表和禁止的方向见 [module-dag §6](module-dag.md#6-workgraph-的子模块2026-10-07决定-40)。五模块八条边不变。2026-11-09 补注：之后加了 `views`（读模型，B0）和 `notes`（注记，决定 49），现在是 15 个子模块，分层见 DESIGN §7.2，逐次变化记在 module-dag §6。
 
 Host／UI、Contracts、fixtures／testing 是支撑面。Host 装配并驱动流程；核心不反调 Workflow 策略。核心返回意图受理或执行结果，业务调用方选择后续动作。
 
@@ -146,6 +160,8 @@ flowchart LR
 
 这里的连续执行是目标行为。冻结 Kernel R4a 的默认模式仍为 current_turn，显式历史模式和恢复接口已验收；平台 Session 装配尚未实现，不能把同 Session ID 等同上下文延续。`resumeCodingAgent`恢复原未结束 Run。按 Run 分配 Kernel 数据库的是旧参考平台行为。目标采用稳定的workspace存储映射和最小Kernel公开扩展，由Kernel内部选择历史、核算预算并持久恢复依据；平台不再复制一套历史选择器。原生compact没有实际实现，必须保持unsupported。具体前置与验收写在AgentRuntime骨架（已归档：`docs/refactor/modules/core/agent-runtime.md`），不能仅用ID相同证明能力已具备。
 
+2026-11-09 补注：上一段写的是 9 月底的情况。平台的 Session 接续已经实现：Run 结束后在同一个 Session 续作，换手时新线拿交接简报，关 Host 时在跑的 Work 在下一个安全点暂停、下次启动在同一个 Session 重驱（DESIGN §4.3、§4.4；决定 97-1）。压缩按 K2 做、整片进 MVP：按真实 token 计量（K2-M）和 Kernel 的压缩记录（K2-K）已合入；先清旧工具结果（K2-P1）和不够再写摘要（K2-P2）还没做，做完之前线太长时仍是换手。Kernel 库按存储设计（决定 121-75）以后搬进项目库目录、按项目一份。
+
 **产物与完成：** 工具结果与对应文件版本记录 → 更新受影响结构或标明待刷新 → 检查引用同版本 → WorkGraph 按采用条件汇合并提交状态 → Workflow 必要时选择返工。声明完成、执行结束和正式完成分别表达。
 
 执行前后的机械分析复用同一 Workspace 文件比较和 WorkGraph observed 图差分、邻域及反向影响，不另造冲突图。执行前返回已有事实提示，执行后以真实来源/变更核对；结构影响不冒充文本冲突或语义判决。现有能力与尚缺的符号差分、跨隔离根对齐/合并见WorkGraph复用矩阵（已归档：`docs/refactor/modules/core/work-graph.md`）。
@@ -171,9 +187,17 @@ flowchart LR
 
 当前提示词和装配可复用现有 Kernel，不需要角色专用 Factory。未来自动规模编排需要有界增量实现与行为验收；是否需要更深重构要以消费者缺口为依据。既有 MVP 已承诺的并行/恢复等仍按原范围推进，不能借本节移入未来而取消。
 
+2026-11-09 补注：本节写的时候是“未来方向”，之后有几项已经进了 MVP 并实现，仍然没有加模块、没有第二份 Agent 状态：
+- 第 1 条“从少量上下文建立粗图”：新项目冷启动按相位探索，分出区域、给每个区域开参谋线，结构提议成批冻结（7D2 C1）。
+- 第 3 条“按负担选择执行主体”：角色线有席位和同时运行上限，满额排队；参谋按有效区域分；容量不够时开容量卡，线可以拆，拆之前先写交接理解（7D2 O1–O5、SPLITUND）。
+- 第 4 条“容量反馈与交接”：计量改成按真实 token（K2-M），交接有简报；压缩的两步还没做（见 §7.2 补注）。
+- 上表第一行的“自动压缩/接续消费者”和第二行的“完整消费者”因此部分已有，还缺的以 [STATUS](STATUS.md) 为准。操作系统、游戏引擎这一级的规模放在 MVP 之后（PRODUCT §1.4、§9.2，决定 121-69）。
+
 ## 8. 兼容与旧前提的处置
 
 2026-09-28 异步感知/冷启动补充见 Agent 行为计划 §6–8（已归档：`docs/refactor/AGENT-BEHAVIOR-PLAN.md`）。双图定位相关参与者与变化范围；Workflow/Host 消费实际变化选择展示、等待、显式处理或控制，WorkGraph 继续只保存正式事实，不反向调用 Runtime。通知关系不是任务依赖或授权；已投递、已处理、控制已生效沿原消息/Query/Run/control记录表达。机制统计文件增删行量、双图结构/状态变化并由心跳补查，按配置条件通知；语义影响由相关执行者主动反馈或参谋收到线索后调查，不把“识别关键变化”变成常驻语义服务。无变化不调用模型，不新增每工具校验；具体阈值与自动消费者尚需接线。首次有界探索不以完整双图为前提，原 Session 待命唤醒与进程重启也不重做全项目初始化。
+
+2026-11-09 补注：通知这一块已经接上一部分：Run 改断的语义联系在下一个安全点送到相关的线（8E-2 R），书记按范围收到断开联系的提醒（8E-2 S），项目通知有 15 分钟的汇总（7D2 O3a），等待和到期由 Host 的心跳处理（7B）。规则见 DESIGN §2.10、§5.4。
 
 独立仓库的当前命令和配置以 [README](../../README.md) 与 `src/app/main.ts` 为准：Node24、npm 锁文件、`node dist/app/main.js <配置文件>`，Host 输出实际 loopback 地址。旧工程的 pnpm/start、4317/PORT、PLATFORM_GUI_DATA 只属于历史接入约定，不能当作独立仓库冷启动命令。Kernel 边界、历史引用及必要权限／版本／幂等／失败／恢复语义继续保留。
 

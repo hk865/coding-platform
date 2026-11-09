@@ -1,17 +1,17 @@
 # 文档入口
 
-更新：2026-10-24。本仓库根就是原 `coding-platform/next`，文档在 `docs/`。先读 [STATUS](refactor/STATUS.md) 和 [HANDOFF 顶部](refactor/HANDOFF.md)的决定 1–116（现行读法见[决定表](refactor/DECISIONS.md)），再按任务读[编排设计目录](refactor/design/orchestration-2026-10/README.md)。历史文档已移出 `docs/`，位置、清单和取回方法见 [ARCHIVE-INDEX](ARCHIVE-INDEX.md)；现行文档清单以本页为准。当前进度只看 [STATUS](refactor/STATUS.md)，本页不复述；整个 MVP 没有完成。
+更新：2026-11-09。本仓库根就是原 `coding-platform/next`，文档在 `docs/`。先读 [STATUS](refactor/STATUS.md) 和 [HANDOFF 顶部](refactor/HANDOFF.md)的决定 1–121（现行读法见[决定表](refactor/DECISIONS.md)），再按任务读[编排设计目录](refactor/design/orchestration-2026-10/README.md)。历史文档已移出 `docs/`，位置、清单和取回方法见 [ARCHIVE-INDEX](ARCHIVE-INDEX.md)；现行文档清单以本页为准。当前进度只看 [STATUS](refactor/STATUS.md)，本页不复述；整个 MVP 没有完成。
 
 | 要回答的问题 | 当前入口 |
 | --- | --- |
 | 做到哪里、缺什么、下一步是什么 | [STATUS](refactor/STATUS.md) |
-| 用户已定了什么 | [决定表](refactor/DECISIONS.md)（每条决定现在是否有效、按哪条读）；原文在 [HANDOFF 顶部：决定 1–116](refactor/HANDOFF.md) |
+| 用户已定了什么 | [决定表](refactor/DECISIONS.md)（每条决定现在是否有效、按哪条读）；原文在 [HANDOFF 顶部：决定 1–121](refactor/HANDOFF.md) |
 | 技术上为什么这样选、还考虑过什么、什么时候要重新考虑 | [技术取舍记录](refactor/tradeoffs/README.md)（决定 121-70 起） |
 | 编排、记忆和生命周期怎样设计 | [设计目录](refactor/design/orchestration-2026-10/README.md)、[DESIGN](refactor/design/orchestration-2026-10/DESIGN.md)、[读法模型](refactor/design/orchestration-2026-10/model/README.md)、[记忆查找](refactor/design/orchestration-2026-10/MEMORY-LOOKUP.md) |
 | 接下来如何施工、怎样分工和测试 | [分片规格与任务书](refactor/design/orchestration-2026-10/slices/README.md)、[DSH-WORKFLOW §6.10](refactor/DSH-WORKFLOW.md#610-大片怎么交给-dsh决定-46)、[根 AGENTS](../AGENTS.md)的 2026-10-13 做法 |
 | 界面以什么为准 | [冻结原型](ui-reference/workbench-2026-10/README.md)、[UI-WORKBENCH §0](UI-WORKBENCH.md#ui-decisions-2026-10)、[E3 待办](refactor/design/orchestration-2026-10/E3-UI-ITEMS.md) |
 | 产品承诺和 MVP 用户路径是什么 | [PRODUCT](PRODUCT.md)、[MVP-BEHAVIOR](MVP-BEHAVIOR.md)；后续决定以 HANDOFF 顶部为准 |
-| 目标架构、模块及依赖是什么 | [ARCHITECTURE](refactor/ARCHITECTURE.md)、[模块索引](refactor/modules/README.md)、[DAG](refactor/module-dag.md)、[机器可读规则](refactor/module-target.json) |
+| 目标架构、模块及依赖是什么 | [ARCHITECTURE](refactor/ARCHITECTURE.md)（正文是 9 月的，先读它的 §0“本稿之后的变化”）、[模块索引](refactor/modules/README.md)、[DAG](refactor/module-dag.md)、[机器可读规则](refactor/module-target.json) |
 | 原子能力已有何种实现、应复用哪里 | [能力索引](refactor/IMPLEMENTED-CAPABILITIES.md)，沿源码、消费者和相关证据核对 |
 | 状态怎样转换 | [STATE-MACHINES-SPEC](refactor/STATE-MACHINES-SPEC.md)和相关分片规格 |
 | 原话和旧方案在哪里 | 历史文档已移出 `docs/`：清单和取回方法见 [ARCHIVE-INDEX](ARCHIVE-INDEX.md)；现行意图整理见[意图来历](refactor/intent/INTENT-AND-DECISIONS.md)，只作追溯线索 |
