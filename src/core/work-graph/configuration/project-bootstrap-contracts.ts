@@ -114,7 +114,7 @@ export interface CompletionPolicyConfigurationPort {
  * backend the Goal/Plan writers use; `now`/`eventId` are materialized only for
  * a request that is not an exact replay. The Host supplies these, never model
  * input: no root, permission predicate, Store or actor is accepted, and the only
- * callback is the composition root's `startLines` encoder.
+ * callbacks are the composition root's `startLines` and `workspaceJoin` encoders.
  */
 export type ProjectBootstrapDependencies = {
   records: GoalRecordTransactionPort;
@@ -124,6 +124,9 @@ export type ProjectBootstrapDependencies = {
    *  The Host's composition supplies the sessions encoder (configuration may not import sessions); absent writes no
    *  birth (D-2 precedent). */
   startLines?: (input: { projectId: string; workspaceId: string; now: string }) => EncodedRecord;
+  /** The later workspace's `workspace_join` operation, born in that workspace's registration commit only. Configuration
+   *  may not import sessions, so the composition root supplies the sessions encoder; absent writes no join (D-2). */
+  workspaceJoin?: (input: { projectId: string; workspaceId: string; now: string }) => EncodedRecord;
 };
 
 /** The public grouping the composition root publishes as `platform.projects`

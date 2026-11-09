@@ -31,7 +31,7 @@ afterEach(async () => {
 });
 
 async function world(backend: 'memory' | 'sqlite', batchWindow: boolean | { isOpen: (ctx: never,
-  input: { projectRef: { projectId: string } }) => Promise<{ status: 'ready'; value: { open: boolean; revision: null } }> } = false): Promise<ProposalWorld> {
+  input: { projectRef: { projectId: string } }) => Promise<{ status: 'ready'; value: { open: boolean; operationRef: null; revision: null } }> } = false): Promise<ProposalWorld> {
   const opened = await openProposalWorld({ backend, ...(batchWindow === false ? {} : { batchWindow }) });
   worlds.push(opened);
   return opened;
@@ -151,10 +151,10 @@ describe.each(['memory', 'sqlite'] as const)('R11 (%s): the proposal path, its b
     let calls = 0;
     const target = await world(backend, { isOpen: async () => {
       calls += 1;
-      if (calls === 1) return { status: 'ready' as const, value: { open: true, revision: null } };
+      if (calls === 1) return { status: 'ready' as const, value: { open: true, operationRef: null, revision: null } };
       signalB();
       await aCommitted;
-      return { status: 'ready' as const, value: { open: false, revision: null } };
+      return { status: 'ready' as const, value: { open: false, operationRef: null, revision: null } };
     } });
     const hold = commitBarrier.hold(byIdentityPrefix('architecture-proposal-propose'), 'R1 A pending');
     const a = target.propose([{ baseCatalogPin: target.pin,

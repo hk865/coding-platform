@@ -386,7 +386,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
       // or Kernel call; two prepares with different briefs cannot both enter.
       const boundProblem = boundInputProblem(record.run, prepared);
       if (boundProblem !== null) return rejected('invalid', boundProblem);
-      const workspace: WorkspaceRef = { aggregateType: 'Workspace', projectId: runRef.projectId, workspaceId: record.session.workspaceId };
+      const workspace: WorkspaceRef = { aggregateType: 'Workspace', projectId: runRef.projectId, workspaceId: record.run.workspaceSnapshot.workspaceId };
 
       // 2. Fix the Kernel run/turn identity. A prior begin binding is reused
       //    verbatim; a fresh Run derives a stable identity from the claim so a
@@ -599,7 +599,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
       const goalRef: GoalRef = { aggregateType: 'Goal', projectId: runRef.projectId, goalId: runRef.goalId };
       const toolContext: CoreCallContext = {
         projectId: runRef.projectId,
-        workspaceId: record.session.workspaceId,
+        workspaceId: record.run.workspaceSnapshot.workspaceId,
         principal: { kind: 'work_run', runRef, roleBinding: structuredClone(record.run.roleBinding) },
         materialReader: { kind: 'run', requester: runRef },
         signal,
@@ -611,7 +611,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         // the draft's claim-Session origin and the owner lookups must match.
         return toolCommitRequestId({
           origin: { runRef, sessionRef, generation: record.outbox.claim.generation,
-            workspaceId: record.session.workspaceId },
+            workspaceId: record.run.workspaceSnapshot.workspaceId },
           toolName: call.name, kernelCallId: call.callId,
         });
       };
@@ -731,7 +731,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         ctx: toolContext,
         runRef,
         taskId: manifest.claim.task.taskId,
-        workspace: { projectId: runRef.projectId, workspaceId: record.session.workspaceId },
+        workspace: { projectId: runRef.projectId, workspaceId: record.run.workspaceSnapshot.workspaceId },
         binding: blockedBinding,
         reviews: deps.unknownCallReviews,
         requests: deps.commandRerunRequests,
@@ -1022,7 +1022,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         };
         sourceFactory = createRuntimeSourceCaptureFactory(
           { authority: deps.sourceAuthority, ...(deps.sourcePolicyFor === undefined ? {} : { sourcePolicyFor: deps.sourcePolicyFor }), hostSignal: signal, now: deps.now },
-          { projectId: runRef.projectId, workspaceId: record.session.workspaceId, goalId: runRef.goalId, runId: runRef.runId, taskId: manifest.claim.task.taskId, root: rootResolved.value.root },
+          { projectId: runRef.projectId, workspaceId: record.run.workspaceSnapshot.workspaceId, goalId: runRef.goalId, runId: runRef.runId, taskId: manifest.claim.task.taskId, root: rootResolved.value.root },
           prepared.envelope,
         );
       }

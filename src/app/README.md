@@ -3,7 +3,7 @@
 ## 负责什么，不负责什么
 - 外层 Host：依赖方向只允许 `src/composition`、`src/contracts` 和 `src/core`/`src/business` 各模块；`scripts/check-boundaries.mjs` 只按模块 owner 判方向，不细化到端口文件。不能开 store，不能被 core/business 反向 import。
 - 负责进程外壳：CLI、HTTP/SSE 传输、实例锁、启动 reconcile、Host 设置、提示词包、运行期配置，以及注意力、自动捕获、协作、Goal 扇出和请求驱动（唤醒循环加每 workspace 的两条请求队列）。
-- 平台端口：`create-platform.ts` 的 `platform` 对象上的方法都经 `trackedCall`（`src/composition/create-platform.ts:2235`）发布，`close()` 等所有在途调用做完；`secretaryProfiles` 也在发布端口里（`forSession` 是同步查表，`forNewLine` 经 `trackedCall`）。
+- 平台端口：`create-platform.ts` 的 `platform` 对象上的方法都经 `trackedCall`（`src/composition/create-platform.ts:2275`）发布，`close()` 等所有在途调用做完；`secretaryProfiles` 也在发布端口里（`forSession` 是同步查表，`forNewLine` 经 `trackedCall`）。
 - 不写状态：任何状态迁移只经 `src/core/work-graph/state/`（AGENTS 第 9 条）；本层只调用平台公开端口。
 - 请求体永远不提供 principal、root、token 或凭据；这些只来自受信任的 `options`。
 - `src/core`、`src/business` 不得反向 import 本层。
@@ -37,6 +37,7 @@
 - `goal-fan-out-driver.ts` — Goal 级 pause/resume/cancel 对受影响 Run 的幂等扇出。
 - `goal-wait-wakes.ts` — 目标等待的注册表与 `goal_waits` 队列 handler：`createGoalWaitWakes` 建每 scope 的 `GoalWaitWakes`，每个目标一条注册（记录种类取并集、保留较早的读游标），按 (project, kind) 维护已见提交的高水位，读游标落后即标记；`nextDrainBatch` 按 `canonicalKey(goalRef)` 顺序取不超过上限的一页，`queueAll` 把启动注册立即排队。`createGoalWaitQueue` 不自己持有注册表：`GoalWaitRegistries.all()` 取 scope 的 `GoalWaitWakes`，`rebuild` 先调组合根的 `rebuild` 再 `queueAll`，`drain` 对每个目标调一次 Workflow 的 `wake`，`onCommitted` 只转发给 project 被触及的注册表；队列键是 `GOAL_WAITS_QUEUE`、页预算是 `WAKE_LIMIT`、订阅 `GOAL_WAIT_WAKE_AGGREGATE_TYPES`（含 `SessionMessage`、`TaskRequeue`、`UnknownCallReview`、`CoreOperation`、`NoteHead`、`NoteVersion`、`CurrentPointer` 与 `ModuleOverlapGate`）。`createGoalWaitRebuild` 是 Host 启动时的重启组合：用已发布的 `findSessions` 和 `readSessionFacts.waits` 注册每个等待的目标，再用 `readReleasedActions` 注册每个已放行、未处理的 `action_request` 目标（读不是 `ready` 就抛 `notReady`）；`host.ts` 把它填进队列的 `rebuild`。重启组合会扣住本次启动留下待重启中断的目标（决定 97-9）。
 - `wake-loop.ts` — 请求队列和生命周期队列的唤醒循环：按（workspace, queue）合并脏标记，一次一个 pass，`more` 让出事件循环后再跑，整圈无进展即停到下次唤醒，处理器失败 1 秒翻倍退避到 60 秒，commit notice 按项目唤醒订阅了该聚合类型的队列（`register` 的 `aggregateTypes`，缺省是 `QueryJob`/`QueryRun`/`Session`），未武装的 workspace 只认 `request_command` 或 `release_armed`，`close` 中止自己的 `AbortSignal` 并等运行中的 pass。生命周期队列的键是 `LIFECYCLE_QUEUE`、订阅 `LIFECYCLE_WAKE_AGGREGATE_TYPES`（含 `CoreOperation`、`SessionActivity`、`PlanProposal`、`Goal`、三个注记类型，以及唤醒参谋队列 drain 的 `GoalPhase`、`ProjectRoleLimits`，和唤醒冷启动 `coarse_split`、`proposals` 的 `ArchitectureProposal`）：`createHandoffQueue` 的 `run` 一次跑完整趟（先结束待处理的轮，再把每个未完成操作各继续一次），按种类分派 `continueHandoff` / `manualArchive`，`close` 等它启动的调用；`run`/`pass` 回 `{ continued, blocked, queue }`，`queue` 是这一趟最后那一页参谋队列 drain 的 `GoalDrainResultV1`（关闭后为 `null`），lifecycle `drain` 的 `more` 取 `queue.more`；`notReady` 把任何非 `ready` 的读结果转成带 code/reason 的失败（不折成空结果），交给循环的退避重试。L 的 lifecycle `drain` 在这一趟之后按 `findSessions({includeArchived: true})` 分页（200/页），对 `availability === 'unavailable'` 的每条线用 `hostNotices` 的 `disconnect` 事实包调 `announceDisconnect`；干预被领取后、`collaborationDriver.start` 之前调 `announceInterruption`；两条都只经 `host-notices.ts` 的 builder，不另开队列、不另判 gone。
+- 7D2 XA：第二个工作区的 `workspace_join` 由现有的工作区生命周期循环驱动，`continueUnfinished` 按 `role_line` 把它交给 `roleLineOperations.continueOperation`；不新增扫描、队列或提交后的创建者，`addWorkspaceState` 的 `wakeLoop.addWorkspace` 原样。
 
 ### 配置与设置
 做 Host 设置、模型/工作区配置和运行期热替换的去这组。
@@ -97,7 +98,7 @@
 | `listDiskPromptPacks` | `src/app/prompt-packs.ts:335` | 生成 `prompts/packs/list`：platform 在前，其余按 id | 设置页列出提示词包时 |
 | `parseWorkbenchCliConfig` | `src/app/main.ts:72` | 把可序列化 CLI 文件纯转换成本地 Host 选项 | CLI 与测试复用同一份配置转换 |
 | `runWorkbenchCli` | `src/app/main.ts:196` | 读配置、启动 loopback Host、返回退出码 | `main` 入口；token 不落盘、不打印 |
-| `messageExpiry` | `src/composition/create-platform.ts:1386` | X 的过期 owner 组：`recordExpiry`/`readDueWaits` 逐成员经 `trackedCall` 发布（`readExpiryCount` 只进 Runtime，不在公开组里）；Host 心跳每 workspace 读一页到期等待并记录到期 | Host 的到期扫描；无路由、不可枚举 |
+| `messageExpiry` | `src/composition/create-platform.ts:1421` | X 的过期 owner 组：`recordExpiry`/`readDueWaits` 逐成员经 `trackedCall` 发布（`readExpiryCount` 只进 Runtime，不在公开组里）；Host 心跳每 workspace 读一页到期等待并记录到期 | Host 的到期扫描；无路由、不可枚举 |
 | `sendPendingNotice` / `runReworkNoticeCheck` | `src/app/host.ts:2483` / `:2621` | L2 的唯一待发发送与返工通知检查：`sendPendingNotice` 只在提交后回调、失败保留同一 `requestId`；attention 的收件人先问目标的负责参谋（`platform.recipients.resolveRecipient`，L35 的唯一责任收件人读），没有再回配置目标，读失败这一趟不处理、下趟重试；返工检查按 `platform.reworkNotices` 分页，按 source key + branch 复用已存投递，写 `platform.messages.appendHostSystemOutbox` 未提交就不发送、不推进，逐 workspace 捕获后下趟重试；本地执行者 grant 增 `request_rework`/`request_recheck`，秘书名单增 `send/ack/respond/withdraw_session_message` 与 `create_member`/`read_requests` | Host 的注意力发送与返工通知；不要另写待发 helper、收件人解析、outbox 写端或第二套 grant 名单 |
 
 ## 内部用
@@ -106,7 +107,7 @@
 ## 不要做
 - 不要在 Host 里实现领域规则、直接读写 RecordStore 或另建服务图；只调用 composition 暴露的公开端口。
 - 不要从 HTTP body 取 root、token、凭据或 store 路径；ctx 只由 `createHostCoreCallContext`（`src/app/core-call-context.ts:17`）构造。
-- 不要发布绕过 `trackedCall`（`src/composition/create-platform.ts:2235`）的异步 Host 端口：平台端口（含 `secretaryProfiles`）都经它发布，`close()` 等在途调用做完；没 drain 的调用会落在已关闭的 store 上（MH-07）。
+- 不要发布绕过 `trackedCall`（`src/composition/create-platform.ts:2275`）的异步 Host 端口：平台端口（含 `secretaryProfiles`）都经它发布，`close()` 等在途调用做完；没 drain 的调用会落在已关闭的 store 上（MH-07）。
 - 路径校验不要混用：`isPathWithin`（`src/app/prompt-packs.ts:31`）是真实路径包含判断（`preparePackWriteTarget` 也用它），不是词法副本；源相对路径的词法规则用 `isSafeSourceRelativePath`（`src/core/workspace/path-validation.ts:3`）。
 - 不要另写 duty 判定：用 `createSessionDutyResolver`（`src/composition/session-duty.ts:51`）；`forSession` 只按 workspace 与完整 `sessionRole` 查 profile，不做 duty 判断（FP-02、MH-01）。
 - 不要只改 Host 选项的类型或消费端：声明、校验、转发、adapter 构造与重开路径都要接上（FP-15、MH-02）。

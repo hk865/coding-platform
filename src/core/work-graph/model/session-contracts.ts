@@ -144,7 +144,7 @@ export interface SessionDirectoryPort {
   admitSessionCreation(ctx: CoreCallContext, request: GraphWrite<SessionCreationInput>): Promise<WriteResult<SessionCreateOperationRecord>>;
   recordSessionCreated(ctx: CoreCallContext, request: GraphWrite<SessionCreationResult>): Promise<WriteResult<SessionRecord>>;
   getSessionOperation(ctx: CoreCallContext, ref: OperationRef): Promise<ReadResult<SessionOperationRecord>>;
-  readSession(ctx: CoreCallContext, ref: SessionRef): Promise<ReadResult<SessionCard>>;
+  readSession(ctx: CoreCallContext, ref: SessionRef, scope?: 'workspace' | 'project'): Promise<ReadResult<SessionCard>>;
   findSessions(ctx: CoreCallContext, input: {
     workspace: { projectId: string; workspaceId?: string }; target?: WorkLinkTarget; role?: RoleConfigurationRef;
     includeArchived: boolean; page: SessionPageRequest & { afterSessionKey?: string };

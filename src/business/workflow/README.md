@@ -31,6 +31,7 @@
 - `session-archive.ts` — 单一 Session 归档组合入口：按不可变归档请求逐步提交，已提交的步骤不撤销；请求里的可信条件原样转发给 Session 生命周期 owner，恢复时沿用存储里的原值。
 - `pick-ranking.ts` — 六键选人的纯比较器：`firstPickKey` 返回左边严格领先的第一键（1 负责本任务、2 负责本任务模块、3 同目标历史、4 duty 过滤后为常量、5 更晚活动、6 Session 键），`comparePickCandidates` 经它双向判序，`pickBasisRank` 给出决定键。
 - `session-chooser.ts` — Session 选人的唯一正本：`createSessionChooser` 的可选 `PickReadsV1` 依赖读事实与授权，返回 `chooseSession`/`responsibleSessionFor`/`chooseExcluded`/`reusable`/`resolveRecipient`/`reuseStandby`，可选依赖 `recipients?`、`roleLineReuse?`、`standby?`，并导出 `roleReusable` 与 `SessionChoice`；由 `createWorkflow` 用自己的 `deps` 原位装配一次，`selectNext` 与 `claimContinuation` 的调用不变。`reuseStandby` 的第一个参数只要 `{ ctx }`（`Pick<Owned, 'ctx'>`），组合根给冷启动另建的 chooser 也调它。
+- 7D2 XA：负责线的选择（`readResponsibleSession`）、续接的复用判定（`roleReusable` 与 `claimContinuation`）和 `reuseStandby` 都按项目级读同项目、另一个工作区的线（项目范围 `findSessions` 加本地角色/链接核对，`readSession(..., 'project')`）；成员/执行线的普通 `chooseSession` 仍只在自己的工作区。
 - `session-maintenance.ts` — 有界单页 Session 维护：读到期事实并按到期归档，不启动任何东西。7D2 O2b：依赖可选 `roleLines?`，有就在 Session 页的循环之后跑一页角色线维护（`src/business/workflow/session-maintenance.ts:749`），那一页非 ready 时整页回它的拒绝或 `incomplete`，每条线的失败并进 `failures`；返回形状不变。内部巡检的续页记最后一张卡的 Session 键、按 `afterSessionKey` 翻（目录游标绑着账本水位，这一页自己的归档和拆线会让它过期，O2B-R1-02）；调用方显式传的 `after` 仍按目录游标的原契约。
 - `task-gate.ts` — 任务门与自动 requeue/reverify、自动化确认、gate perform；`createTaskGate` 由 `workflow.ts` 原位装配。
 - `task-order.ts` — 按真实 `executionDag.dependsOn` 的稳定 Kahn 软排序，只改选择顺序。

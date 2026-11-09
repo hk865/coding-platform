@@ -25,7 +25,7 @@
 | `createDecisionSettingsService` | `src/core/work-graph/configuration/decision-settings-service.ts:52` | `markNoticesSeen`：校验 display token/位置、走 notice-settings 状态机、提交 Workspace 快照 | 要推进请知悉 seenThrough 时；不要另写设置写入 |
 | `createLineSettingsService` | `src/core/work-graph/configuration/line-settings-service.ts:86` | `setLinePins`：校验操作者、`add`/`remove` 每项是完整 SessionRef（`sessionRefProblem`，不合格回 `invalid`）与新加 Session、走 line-pin 状态机、提交 Workspace | 要增删工作线 pin 时 |
 | `createMessageDutiesFactsAdapter` | `src/core/work-graph/configuration/message-duties-adapter.ts:47` | 解析 Role 绑定与 Session 自身角色，返回 duty、只读副本、独立评审与 guards | 消息路由/资格需要正式 duty 时；读失败不回落默认 duty |
-| `createProjectBootstrapServices` | `src/core/work-graph/configuration/project-bootstrap-service.ts:1135` | 返回 `projects` 与 `completionPolicies` 两组 Host 写/读（含冷启动读） | 新 Store 初始化、reopen 后取真实 revision 时 |
+| `createProjectBootstrapServices` | `src/core/work-graph/configuration/project-bootstrap-service.ts:1146` | 返回 `projects` 与 `completionPolicies` 两组 Host 写/读（含冷启动读） | 新 Store 初始化、reopen 后取真实 revision 时 |
 | `createRoleConfigurationService` | `src/core/work-graph/configuration/role-memory-service.ts:206` | `installRoleSpec`/`readRoleSpec`/`activateRoleSpec`/`resolveRoleBinding` 与内部 guards 版 | 角色规格与绑定解析的唯一入口 |
 | `ROLE_RECORD_SCHEMAS` | `src/core/work-graph/configuration/role-record-codecs.ts:491` | role-spec / coordination-policy 四类记录与两个事件的 backend schema 注册 | 组合根注册记录与事件 schema 时 |
 | `PROJECT_BOOTSTRAP_RECORD_SCHEMAS` | `src/core/work-graph/configuration/project-bootstrap-record-codecs.ts:425` | 四个初始化事件的 schema 注册 | 组合根注册事件 schema 时 |

@@ -28,6 +28,7 @@
 import type { CoreCallContext, CorePrincipal } from '../../../contracts/core/call-context.js';
 import type { CoreRejection } from '../../../contracts/core/results.js';
 import { rejected } from '../../../contracts/core/rejections.js';
+import type { OperationRef } from '../../../contracts/core/operations.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
 import type { QueryJobRef, QueryRunRef } from '../../../contracts/query-job.js';
@@ -49,6 +50,7 @@ import {
 } from '../sessions/session-record-codecs.js';
 import { sessionRoleFactsCodec } from '../sessions/role-line-record-codecs.js';
 import { coldStartOperationRef, type ColdStartActionV1 } from '../state/cold-start.js';
+import type { ColdStartExplorationQueryRefV1 } from '../state/role-line-action.js';
 import {
   hostSystemActionRequest, roleExplorationBindingOf, type RoleExplorationBindingV1,
 } from '../state/role-exploration.js';
@@ -250,9 +252,37 @@ async function readSessionRoleFacts(
 }
 
 /**
- * The exploration resolver: the round must be a `role_exploration` Query that the project's cold start opened on
- * this line, answering the Host system “please act” message (the one binding check in `state/role-exploration.ts`).
- * The duty is the adviser literal: only the cold start writes an exploration entry, on the adviser line it opened.
+ * The operation that opened the exploration run: the project's cold start. No A-package row reaches the second
+ * workspace's join here (the join's exploration rounds propose rather than write notes), so this read stays the
+ * cold start's; A2 adds the join arm with the rows that exercise it.
+ */
+type ExplorationOperationOwnerV1 = {
+  operationRef: OperationRef;
+  action: { explorations: ColdStartExplorationQueryRefV1[] };
+};
+
+async function readExplorationOperation(deps: PlanningQueryRunDependencies, projectId: string):
+  Promise<{ status: 'ready'; value: ExplorationOperationOwnerV1 } | CoreRejection> {
+  const coldStartRef = coldStartOperationRef(projectId);
+  const operation = await readOwnerRecord({ store: deps.records,
+    refKey: operationRefKey(coldStartRef),
+    decode: decodeSessionOperationRecord,
+    readError: (reason) => rejected('unavailable', `the cold-start operation cannot be read: ${reason}`) });
+  if (!operation.ok) {
+    return 'notFound' in operation
+      ? rejected('forbidden', 'the exploration QueryRun is not owned by a cold start')
+      : rejected('unavailable', 'the cold-start operation cannot be read');
+  }
+  const action = operation.value.action.kind === 'role_line' && operation.value.action.action === 'cold_start'
+    ? operation.value.action as ColdStartActionV1 : null;
+  if (action === null) return rejected('forbidden', 'the exploration QueryRun is not owned by a cold start');
+  return { status: 'ready', value: { operationRef: coldStartRef, action } };
+}
+
+/**
+ * The exploration resolver: the round must be a `role_exploration` Query that the exploration operation which opened
+ * it (the project's cold start or a second workspace's join) wrote on this line, answering the Host system “please
+ * act” message (the one binding check in `state/role-exploration.ts`). The duty is the adviser literal.
  */
 async function resolveExplorationQueryRun(
   ctx: CoreCallContext, deps: PlanningQueryRunDependencies, read: PlanningExecutionRead,
@@ -266,21 +296,11 @@ async function resolveExplorationQueryRun(
   }
   const facts = await readSessionRoleFacts(deps, read.execution.sessionRef);
   if (facts.status !== 'ready') return facts;
-  const coldStartRef = coldStartOperationRef(read.run.ref.projectId);
-  const operation = await readOwnerRecord({ store: deps.records,
-    refKey: operationRefKey(coldStartRef),
-    decode: decodeSessionOperationRecord,
-    readError: (reason) => rejected('unavailable', `the cold-start operation cannot be read: ${reason}`) });
-  if (!operation.ok) {
-    return 'notFound' in operation
-      ? rejected('forbidden', 'the exploration QueryRun is not owned by a cold start')
-      : rejected('unavailable', 'the cold-start operation cannot be read');
-  }
-  const action = operation.value.action.kind === 'role_line' && operation.value.action.action === 'cold_start'
-    ? operation.value.action as ColdStartActionV1 : null;
-  if (action === null) return rejected('forbidden', 'the exploration QueryRun is not owned by a cold start');
+  const owner = await readExplorationOperation(deps, read.run.ref.projectId);
+  if (owner.status !== 'ready') return owner;
+  const { action } = owner.value;
   const entry = action.explorations.find(candidate => candidate.queryRunRef.runId === read.run.run.runId);
-  if (entry === undefined) return rejected('forbidden', 'the QueryRun is not one this cold start opened');
+  if (entry === undefined) return rejected('forbidden', 'the QueryRun is not one this exploration operation opened');
   let messageRead;
   try {
     messageRead = await deps.messages.readMessage(ctx, entry.messageRef);
@@ -290,8 +310,8 @@ async function resolveExplorationQueryRun(
   if (messageRead.status !== 'ready') {
     return unavailable(`the exploration system message cannot be read: ${'reason' in messageRead ? messageRead.reason : messageRead.status}`);
   }
-  const binding = roleExplorationBindingOf({ coldStartRef, lineOperation: facts.value.originOperation,
-    action, queryRunRef: read.run.ref, message: messageRead.value });
+  const binding = roleExplorationBindingOf({ operationRef: owner.value.operationRef,
+    lineOperation: facts.value.originOperation, action, queryRunRef: read.run.ref, message: messageRead.value });
   if (binding.status === 'rejected') return binding;
   return { status: 'ready', value: { ...toPlanningFacts(principal, read, 'adviser'),
     duty: 'adviser', binding: binding.value } };

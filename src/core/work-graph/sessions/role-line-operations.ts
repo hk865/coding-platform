@@ -38,7 +38,7 @@ import type {
   RoleLineOperationV1, SessionCard, SessionDirectoryPort, SessionOperationRecord,
 } from '../model/session-contracts.js';
 import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
-import type { ColdStartPhaseV1, RoleLineActionV1, RoleLineStepStateV1 } from '../state/role-line-action.js';
+import type { ColdStartPhaseV1, RoleLineActionV1, RoleLineStepStateV1, WorkspaceJoinPhaseV1 } from '../state/role-line-action.js';
 import { allocationNext } from '../state/role-line-allocation.js';
 import {
   ROLE_LINE_CHANGE_SCOPE_PHASE, roleLineChildCommandId, roleLineOperationRef, roleLineStepTransition,
@@ -72,7 +72,10 @@ export type RoleLineContinueResultV1 = { revision: number;
 
 export type RoleLineCreateInputV1 = { commandId: string; duty: PlatformDutyV1; scope: { kind: 'project' };
   reason: string; provenance: SessionProvenanceV1; roleConfiguration: RoleConfigurationRef;
-  name: string | null; roleScopes: RoleScopeV1[]; parentOperation: OperationRef };
+  name: string | null; roleScopes: RoleScopeV1[];
+  /** `null` when the parent operation belongs to another workspace of the project (a project-level join): line
+   *  creation reads the parent through the line workspace's scope, so such a parent cannot be inherited. */
+  parentOperation: OperationRef | null };
 export type RoleLineCreateResultV1 =
   | { status: 'created' | 'replayed'; session: SessionRef }
   | { status: 'accepted'; operationRef: OperationRef }
@@ -162,6 +165,10 @@ export type RoleLineOperationsDeps = {
   /** C1: the cold-start driver (`cold-start-service.ts`), structurally; absent, a cold start stays `blocked`. */
   coldStart?: { drive(ctx: CoreCallContext, input: { projectId: string; workspaceId: string }):
     Promise<ReadResult<{ phase: ColdStartPhaseV1; revision: number; completed: boolean }>> };
+  /** §3.4: the second workspace's join driver (`workspace-join-service.ts`), structurally; absent, a join stays
+   *  `blocked`. */
+  workspaceJoin?: { drive(ctx: CoreCallContext, input: { projectId: string; workspaceId: string }):
+    Promise<ReadResult<{ phase: WorkspaceJoinPhaseV1; revision: number; completed: boolean }>> };
   now(): string;
 };
 
@@ -592,6 +599,16 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
         : driven.value.revision === record.revision ? 'waiting' : 'blocked';
       return { status: 'ready', value: { revision: driven.value.revision, state, capacity: null } };
     }
+    if (record.action.action === 'workspace_join' && deps.workspaceJoin !== undefined) {
+      // The join moves one of its three phases per pass; it is `done` only when its record completes.
+      const driven = await deps.workspaceJoin.drive(ctx,
+        { projectId: record.ref.projectId, workspaceId: record.workspaceId });
+      if (driven.status !== 'ready') return driven;
+      // A wait for a person (an exploration answer, a proposal card) is `waiting`; Host does not count it blocked.
+      const state = driven.value.completed ? 'done'
+        : driven.value.revision === record.revision ? 'waiting' : 'blocked';
+      return { status: 'ready', value: { revision: driven.value.revision, state, capacity: null } };
+    }
     if (record.action.action !== 'start_lines') {
       // Person commands carry their request in the caller, not the record: the same commandId replays them
       // through the writer; the Host never guesses a scope.
@@ -783,10 +800,16 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
     if (!trusted.ok) return trusted.rejection;
     const lineCtx = await lineContextOf(ctx);
     if (lineCtx.status !== 'ready') return roleLineReadFailure(lineCtx, 'the main workspace');
+    // A `workspace_join` parent is read at project scope and kept even when the line lives in the main workspace:
+    // its region line's origin is the join (the join owns the region exploration). Other parents outside the line's
+    // workspace cannot be inherited through line creation, so their line's stored origin is its own creation.
+    const parent = await readRoleLineOperationByRef(deps.records, input.parentOperation);
+    const parentOperation = parent.status === 'ready' && parent.value.workspaceId !== lineCtx.value.workspaceId
+      && parent.value.action.action !== 'workspace_join' ? null : input.parentOperation;
     const line = await deps.createLine.ensureLine(lineCtx.value, { commandId: input.commandId, duty: input.duty,
       scope: { kind: 'project' }, reason: 'cold_start', provenance: { schemaVersion: 1, kind: 'new' },
       roleConfiguration: deps.platformRole(input.duty), name: null,
-      roleScopes: [{ kind: 'region', moduleRef: input.module }], parentOperation: input.parentOperation });
+      roleScopes: [{ kind: 'region', moduleRef: input.module }], parentOperation });
     if (line.status === 'accepted' || line.status === 'capacity_blocked' || line.status === 'rejected') return line;
     // The line's own operation is its creation (the cold-start message names it, v4 :7933).
     const child = stableSessionCreationIdentity(trusted.actor, ctx.projectId, input.commandId).operationRef;

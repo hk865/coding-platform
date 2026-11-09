@@ -485,7 +485,7 @@ export const S7D2_TOO_LONG_INPUT_TOKENS = 160_000;
 
 const ADVISER_TOOLS: readonly string[] = ['read', 'send_session_message', 'create_member'];
 
-function adviserWorkOf(tools: readonly string[], queryProfile = false): S6AExtraBinding {
+export function adviserWorkOf(tools: readonly string[], queryProfile = false): S6AExtraBinding {
   const binding = bindingOf(PL_ADVISER_ROLE_BINDING.bindingId, PL_ADVISER_ROLE, 'S7D2 trusted adviser guidance', tools);
   return {
     binding: { ...binding, grant: { ...binding.grant, createMember: true } },
@@ -533,6 +533,10 @@ export async function addS7D2SecondWorkspace(world: S6AHostWorld, label = 's7d2-
     if (opened.status !== 'ready') throw new Error(`S7D2: the second workspace did not open: ${JSON.stringify(opened)}`);
     const scope: WorkspaceScope = { projectId: opened.value.scope.projectId, workspaceId: opened.value.scope.workspaceId };
     await world.settleDetached();
+    // The registration also births this workspace's `workspace_join`; its own lifecycle loop drives the join. Wait
+    // until the public read names it at its first waiting phase before creating the goal, so the two do not race.
+    await waitFor(() => readS7D2Operations(world, scope), rows => rows.some(row => row.action === 'role_line'
+      && row.actionPhase === 'coarse_split' && row.route === 'split'), 'the second workspace join operation');
     const workspace = s6aCardsWorkspace(world, scope);
     const goal = (await workspace.createGoal(`${label}-goal`, 'S7D2 goal of the second workspace')).ref;
     return { scope, workspace, goal, remove };
@@ -671,7 +675,18 @@ export async function openS7D2ProjectWorld(options: S7D2RoleLineWorldOptions): P
       ...(options.extraBindings ?? [])] });
   let second: S7D2SecondWorkspace | null = null;
   try {
+    // The registration births the second workspace's join exploration on the opening adviser's Session. This world
+    // does not assert the join: when the adviser has a Query profile, give that one Query a terminal step so it
+    // consumes its own Session queue and never advances the shared world model past the later steps these worlds script.
+    if (options.adviserQueryProfile === true) {
+      await world.world.scripted.script(world.lines.adviser, [{ kind: 'fail',
+        message: 'S7D2: the second workspace join exploration is not served by this world' }]);
+    }
     second = await addS7D2SecondWorkspace(world.world);
+    if (options.adviserQueryProfile === true) {
+      await waitFor(() => world.world.scripted.pending(world.lines.adviser), pending => pending === 0,
+        'the second workspace join exploration to consume its scripted step');
+    }
     await linkS7D2Scopes(world.world, { line: world.lines.adviser, label: 's7d2-scoped-adviser',
       targets: [{ kind: 'goal', ref: second.goal }, { kind: 'module', ref: world.modules.other }] });
     await linkS7D2Scopes(world.world, { line: world.lines.scribe, label: 's7d2-scoped-scribe',

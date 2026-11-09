@@ -1151,7 +1151,10 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
             : reject('unavailable', 'the parent Session operation is not readable');
         }
         const parent = parentRead.value;
-        if (parent.action.kind === 'role_line' && parent.action.action !== 'cold_start') {
+        // A workspace join opens its region line in the main workspace; a join has no steps to reserve, and its
+        // region line's origin is the join itself (the role-facts writer reads it at project scope).
+        if (parent.action.kind === 'role_line' && parent.action.action !== 'cold_start'
+          && parent.action.action !== 'workspace_join') {
           const counted = input.creation === null ? null : roleLineDutyOf(input.creation.duty);
           const index = parent.action.steps.findIndex((step) => step.duty === counted);
           const stepped = roleLineStepTransition(parent.action, index, { state: 'reserved', childOperation: operationRef });
@@ -1613,8 +1616,12 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     const decoded = decodeSessionOperationRecord(record);
     if (decoded.status !== 'decoded') return reject('unavailable', `the Session operation is damaged: ${decoded.reason}`);
     const operation = decoded.value;
-    // Every arm: the record's own project and workspace (the codec ties them to the arm's).
-    if (operation.ref.projectId !== scope.projectId || operation.workspaceId !== scope.workspaceId) {
+    // Every arm: the record's own project and workspace (the codec ties them to the arm's). A workspace join is
+    // project-level (one per project and joined workspace), so the main workspace may read it when opening a
+    // region line whose origin it is.
+    if (operation.ref.projectId !== scope.projectId
+      || (operation.workspaceId !== scope.workspaceId
+        && !(operation.action.kind === 'role_line' && operation.action.action === 'workspace_join'))) {
       return { status: 'not_found' };
     }
     return { status: 'ready', value: operation };
@@ -1738,7 +1745,8 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     return { ok: true, cards: filled };
   }
 
-  async function readSession(ctx: CoreCallContext, ref: SessionRef): Promise<ReadResult<SessionCard>> {
+  async function readSession(ctx: CoreCallContext, ref: SessionRef,
+    readScope: 'workspace' | 'project' = 'workspace'): Promise<ReadResult<SessionCard>> {
     // The read binding may suspend, so freeze the caller's ref BEFORE the first
     // await; a failed isolation keeps the original synchronous `invalid` shape.
     const ownedRef = ownRequest<unknown>(ref, 'readSession reference');
@@ -1760,7 +1768,9 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     const decoded = decodeSessionRecord(record);
     if (decoded.status !== 'decoded') return reject('unavailable', `the Session record is damaged: ${decoded.reason}`);
     const session = decoded.value;
-    if (session.ref.projectId !== scope.projectId || session.workspaceId !== scope.workspaceId) {
+    // `project` skips only the workspace check: a project-level line may act in another workspace of the same project.
+    if (session.ref.projectId !== scope.projectId
+      || (readScope !== 'project' && session.workspaceId !== scope.workspaceId)) {
       return { status: 'not_found' };
     }
     const links = await readSessionLinks(scope.projectId, session.ref.sessionId);

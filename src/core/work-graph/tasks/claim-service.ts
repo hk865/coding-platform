@@ -1029,7 +1029,12 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
     if (decodedSession !== null && decodedSession.status !== 'decoded') return unavailable(`the target Session is damaged: ${decodedSession.reason}`);
     const target = decodedSession === null ? null : decodedSession.value;
     if (target !== null && target.ref.projectId !== scope.projectId) return forbidden('the target Session belongs to another project');
-    if (target !== null && target.workspaceId !== scope.workspaceId) return forbidden('the target Session belongs to another workspace');
+    // A project-level line may be claimed from another workspace of the same project by the Host; no other caller
+    // reaches this (the selection layer never offers a member or executor line across workspaces).
+    if (target !== null && target.workspaceId !== scope.workspaceId && !(scopeCtx.principal.kind === 'host'
+      && target.ref.projectId === scope.projectId)) {
+      return forbidden('the target Session belongs to another workspace');
+    }
     // The link read is judged beside the Session: a damaged row is unreadable,
     // never "no link" (rule 5), and an OPEN link means this claim opens nothing.
     const responsibleLinkRecord = stateRead.value.records.find(record => record.refKey === responsibleLinkKey);

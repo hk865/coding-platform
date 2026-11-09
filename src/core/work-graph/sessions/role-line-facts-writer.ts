@@ -44,6 +44,7 @@ export async function roleFactsContribution(
   const session = input.session.ref;
   // A platform-born line's origin is its parent operation (lead 8); every other line's is its own create.
   const origin = parent.value?.kind === 'start_lines' || parent.value?.kind === 'cold_start'
+    || parent.value?.kind === 'workspace_join'
     ? parent.value.operation : input.operation.ref;
   const record: SessionRoleFactsV1 = sessionRoleFactsRecord({ session: input.session, decided,
     originOperation: origin, name: input.operation.action.creation?.name ?? null });
@@ -93,6 +94,11 @@ async function parentFactsOf(
       caller: caller.kind === 'host_pick' ? null : { session: caller.session } } };
   }
   if (parent.action.kind === 'role_line') {
+    // A workspace join's region line takes the join as its origin, the same platform-born arm as `start_lines` and
+    // `cold_start`; its stored kind is `workspace_join`, not a borrowed `cold_start`.
+    if (parent.action.action === 'workspace_join') {
+      return { status: 'ready', value: { kind: 'workspace_join', operation: parent.ref } };
+    }
     if (parent.action.action === 'start_lines') return { status: 'ready', value: { kind: 'start_lines', operation: parent.ref } };
     if (parent.action.action === 'cold_start') return { status: 'ready', value: { kind: 'cold_start', operation: parent.ref } };
     // A split's saved body names its source line and why it split (b02); the role facts follow the reason.

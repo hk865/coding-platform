@@ -1,7 +1,7 @@
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import { rejected as rejection } from '../../contracts/core/rejections.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
-import type { RoleConfigurationRef, SessionRef } from '../../contracts/core/identity.js';
+import type { RoleConfigurationRef, SessionRef, WorkLinkTarget } from '../../contracts/core/identity.js';
 import type { RunSnapshot, TaskTriple } from '../../contracts/dispatch.js';
 import type { GoalRef, GoalSnapshot } from '../../contracts/ledger.js';
 import { sameJson as sameCanonical } from '../../contracts/fingerprint.js';
@@ -39,17 +39,20 @@ export type PickReadsV1 = {
 
 type RoleVerdict = 'ok' | 'workspace' | 'archived' | 'unavailable' | 'occupied' | 'role';
 
-function roleVerdict(card: SessionCard, workspaceId: string, sessionRole: RoleConfigurationRef): RoleVerdict {
+/** `project` skips only the workspace check: a project-level line may be reused from another workspace of the project. */
+function roleVerdict(card: SessionCard, workspaceId: string, sessionRole: RoleConfigurationRef,
+  option: { scope: 'workspace' | 'project' } = { scope: 'workspace' }): RoleVerdict {
   const record = card.record;
-  if (record.workspaceId !== workspaceId) return 'workspace';
+  if (option.scope !== 'project' && record.workspaceId !== workspaceId) return 'workspace';
   if (record.lifecycle !== 'active') return 'archived';
   if (record.health !== 'available') return 'unavailable';
   if (record.occupancy !== null) return 'occupied';
   return sameCanonical(record.role, sessionRole) ? 'ok' : 'role';
 }
 
-export function roleReusable(card: SessionCard, workspaceId: string, binding: Binding): boolean {
-  return roleVerdict(card, workspaceId, binding.sessionRole) === 'ok';
+export function roleReusable(card: SessionCard, workspaceId: string, binding: Binding,
+  option?: { scope: 'workspace' | 'project' }): boolean {
+  return roleVerdict(card, workspaceId, binding.sessionRole, option) === 'ok';
 }
 
 type TaskLinkRead =
@@ -105,49 +108,63 @@ export function createSessionChooser(deps: {
 
   /**
    * E16 (§4.1 S:799): a Task transferred to a chosen Session carries an OPEN
-   * responsible link on that Session. The targeted read is 8 x 50; a failed or
-   * truncated read is a definite failure (A-10), never "no link".
+   * responsible link on that Session. The task-targeted read keeps the old
+   * workspace-scoped link page (A-10); when it finds nothing, the project-wide
+   * directory read finds a project-level line in any workspace of the project,
+   * with the same role/link/exclusion checks applied locally. The Goal target
+   * covers the one adviser O4a assigns. A failed or truncated read is a definite
+   * failure (A-10), never "no link".
    */
   async function readResponsibleSession(
     owned: Owned, goal: GoalSnapshot, binding: Binding, task: TaskTriple,
   ): Promise<TaskLinkRead> {
     if (deps.responsibilities === undefined) return { status: 'none' };
     const workspaceId = goal.workspaceRef.workspaceId;
-    const target = { kind: 'task' as const, ref: task };
-    let cursor: string | null = null;
-    for (let page = 0; page < 8; page += 1) {
-      let found: Awaited<ReturnType<SessionDirectoryPort['findSessions']>>;
-      try {
-        found = await deps.sessions.findSessions(owned.ctx, {
-          workspace: { projectId: owned.projectId, workspaceId },
-          target,
-          includeArchived: false,
-          page: cursor === null ? { limit: 50 } : { limit: 50, cursor },
-        });
-      } catch {
-        return { status: 'unavailable', rejection: rejection('unavailable', 'the responsible Session link read failed') };
-      }
-      if (found.status === 'not_found') return { status: 'none' };
-      if (found.status !== 'ready') {
-        if (found.status === 'rejected' && (found.code === 'cancelled' || found.code === 'forbidden')) {
-          return { status: 'unavailable', rejection: found };
+    const targets = [{ kind: 'task' as const, ref: task }, { kind: 'goal' as const, ref: goal.ref }];
+    const reads: { workspace: { projectId: string; workspaceId?: string }; target?: WorkLinkTarget }[] = [
+      { workspace: { projectId: owned.projectId, workspaceId }, target: targets[0]! },
+      { workspace: { projectId: owned.projectId } },
+    ];
+    for (const read of reads) {
+      let cursor: string | null = null;
+      let truncated = false;
+      for (let page = 0; page < 8; page += 1) {
+        let found: Awaited<ReturnType<SessionDirectoryPort['findSessions']>>;
+        try {
+          found = await deps.sessions.findSessions(owned.ctx, {
+            ...read,
+            includeArchived: false,
+            page: cursor === null ? { limit: 50 } : { limit: 50, cursor },
+          });
+        } catch {
+          return { status: 'unavailable', rejection: rejection('unavailable', 'the responsible Session link read failed') };
         }
+        if (found.status === 'not_found') break;
+        if (found.status !== 'ready') {
+          if (found.status === 'rejected' && (found.code === 'cancelled' || found.code === 'forbidden')) {
+            return { status: 'unavailable', rejection: found };
+          }
+          return { status: 'unavailable',
+            rejection: rejection('unavailable', 'the responsible Session link read is not ready') };
+        }
+        for (const card of found.value.items) {
+          if (!roleReusable(card, workspaceId, binding, { scope: 'project' })) continue;
+          const openResponsible = card.links.some(link => link.ref.relation === 'responsible'
+            && link.until === null && targets.some(target => sameCanonical(link.ref.target, target)));
+          if (!openResponsible) continue;
+          if ((await exclusionOf(owned.ctx, card)).excluded) continue;
+          return { status: 'found', card };
+        }
+        if (found.value.nextCursor === null) break;
+        cursor = found.value.nextCursor;
+        if (page === 7) truncated = true;
+      }
+      if (truncated) {
         return { status: 'unavailable',
-          rejection: rejection('unavailable', 'the responsible Session link read is not ready') };
+          rejection: rejection('incomplete', 'the responsible Session link read exceeded its page bound') };
       }
-      for (const card of found.value.items) {
-        if (!roleReusable(card, workspaceId, binding)) continue;
-        const openResponsible = card.links.some(link => link.ref.relation === 'responsible'
-          && link.until === null && sameCanonical(link.ref.target, target));
-        if (!openResponsible) continue;
-        if ((await exclusionOf(owned.ctx, card)).excluded) continue;
-        return { status: 'found', card };
-      }
-      if (found.value.nextCursor === null) return { status: 'none' };
-      cursor = found.value.nextCursor;
     }
-    return { status: 'unavailable',
-      rejection: rejection('incomplete', 'the responsible Session link read exceeded its page bound') };
+    return { status: 'none' };
   }
 
   async function responsibleSessionFor(
@@ -202,8 +219,8 @@ export function createSessionChooser(deps: {
     }
     let best: { session: SessionRef; activityAt: string } | null = null;
     for (const holder of allocation.value.duties[input.duty].holders) {
-      const card = await deps.sessions.readSession(owned.ctx, holder.session);
-      if (card.status === 'not_found') continue;            // another workspace's line (session-directory.ts:1613)
+      const card = await deps.sessions.readSession(owned.ctx, holder.session, 'project');
+      if (card.status === 'not_found') continue;            // not this project's line
       if (card.status !== 'ready') {
         return card.status === 'rejected' ? card : rejection('unavailable', 'a standby line read is not ready');
       }

@@ -1346,7 +1346,9 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       return rejectedWithNonEmptyCurrent('busy', 'the QueryRun is not awaiting a first claim');
     }
     if (job.job.runRef === null || !sameRef(job.job.runRef, queryRunRef)) return rejectedWithNonEmptyCurrent('invalid', 'the QueryJob is not bound to this QueryRun');
-    if (session.ref.projectId !== queryRunRef.projectId || session.workspaceId !== queryRunRef.workspaceId) {
+    // A project-level line may claim a QueryRun from another workspace of the same project; only the Host reaches this.
+    if (session.ref.projectId !== queryRunRef.projectId
+      || (session.workspaceId !== queryRunRef.workspaceId && owned.principal.kind !== 'host')) {
       return rejectedWithNonEmptyCurrent('forbidden', 'the target Session belongs to another scope');
     }
     // A request round runs with the profile of the Session that claims it: its
@@ -1386,7 +1388,10 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     // pending archive request or a Work wait is `busy`; a copy provenance admits
     // only its own pinned consultation Query and refuses every other Query.
     if (deps.sessionFacts !== undefined) {
-      const factsRead = await deps.sessionFacts.readSessionFacts(owned, sessionRef);
+      // A project-level Session may claim a QueryRun from another workspace of the same project; its facts (fence,
+      // activity, Work wait) are read where the Session lives, not where the QueryRun runs.
+      const factsCtx = session.workspaceId === owned.workspaceId ? owned : { ...owned, workspaceId: session.workspaceId };
+      const factsRead = await deps.sessionFacts.readSessionFacts(factsCtx, sessionRef);
       if (factsRead.status === 'not_found') return rejectedWithNonEmptyCurrent('not_found', 'the target Session does not exist');
       if (factsRead.status === 'not_ready') return rejectedWithNonEmptyCurrent('incomplete', 'the Session facts are not readable at the required watermark');
       if (factsRead.status !== 'ready') return factsRead;
@@ -2884,7 +2889,9 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       }
       let queryRunRef: QueryRunRef;
       try { queryRunRef = structuredClone(ref) as QueryRunRef; } catch { return rejectedWithNonEmptyCurrent('invalid', 'the read request cannot be isolated from the caller'); }
-      if (queryRunRef.projectId !== owned.projectId || queryRunRef.workspaceId !== owned.workspaceId) {
+      // The Host's own reads (the running-count admission, the marker scan) page a project's Sessions and read each
+      // Session's execution where that execution runs; a project-level line's QueryRun may be in another workspace.
+      if (queryRunRef.projectId !== owned.projectId) {
         return rejectedWithNonEmptyCurrent('forbidden', 'the QueryRun is outside the Host call scope');
       }
       return readExecutionRecord(deps, queryRunRef);

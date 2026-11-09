@@ -687,14 +687,27 @@ async function registerWorkspace(
     if (existing.status !== 'ready') return mapStoreFailure(existing);
     if (existing.value.records.every((record) => record.refKey !== birth.refKey)) born = birth;
   }
+  // A later workspace births its join only when start_lines already exists; without `startLines` this call cannot tell a
+  // first workspace from a later one, so it births neither (D-2 precedent). Same registration event, one commit.
+  let joined: EncodedRecord | null = null;
+  if (deps.startLines !== undefined && born === null) {
+    const join = deps.workspaceJoin?.({ projectId, workspaceId, now: event.occurredAt });
+    if (join !== undefined) {
+      const existing = await deps.records.readMany([join.refKey]);
+      if (existing.status !== 'ready') return mapStoreFailure(existing);
+      if (existing.value.records.every((record) => record.refKey !== join.refKey)) joined = join;
+    }
+  }
   return commitBootstrap(deps.records, {
     binding, signal: bound.signal, fingerprint: fingerprint.value,
     guards: [
       { refKey: project.key, expectedRevision: project.revision },
       { refKey: workspaceKey, expectedRevision: null },
       ...(born === null ? [] : [{ refKey: born.refKey, expectedRevision: null }]),
+      ...(joined === null ? [] : [{ refKey: joined.refKey, expectedRevision: null }]),
     ],
-    records: [encodeWorkspaceSnapshot(snapshot), ...(born === null ? [] : [born])],
+    records: [encodeWorkspaceSnapshot(snapshot), ...(born === null ? [] : [born]),
+      ...(joined === null ? [] : [joined])],
     event: encodeProjectWorkspaceRegisteredEvent(event),
     fresh: snapshot,
   });

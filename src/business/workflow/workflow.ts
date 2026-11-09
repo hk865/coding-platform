@@ -1030,7 +1030,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
     const assignment = revisionAssignments(plan).find((candidate) => candidate.taskId === task.taskId);
     if (assignment === undefined) return rejection('invalid', `the intervention Task ${task.taskId} has no role assignment`);
     const binding = bindingForRole(config, owned.projectId, goal.workspaceRef.workspaceId, assignment.role);
-    if (binding === null) return rejection('unsupported', `no trusted Workflow binding matches workspace ${goal.workspaceRef.workspaceId} and role ${assignment.role}`);
+    if (binding === null) { return rejection('unsupported', `no trusted Workflow binding matches workspace ${goal.workspaceRef.workspaceId} and role ${assignment.role}`); }
     // The consumed-wait arm is the continuation basis, which needs a prior Run; an intervention's post-adoption
     // claim targets a Task with no Run yet, so it is an ordinary first claim.
     const built = await buildClaimOperation(owned, base, goal, plan.ref, task, binding,
@@ -1258,7 +1258,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
     const afterRun = await deps.executions.readExecution(owned.ctx, afterRunRef);
     if (afterRun.status !== 'ready') return waiting(null, receiptReason(afterRun, 'the afterRun is not readable'));
     const workspaceId = goal.workspaceRef.workspaceId;
-    const claimSession = await deps.sessions.readSession(owned.ctx, afterRun.value.outbox.claim.sessionRef);
+    const claimSession = await deps.sessions.readSession(owned.ctx, afterRun.value.outbox.claim.sessionRef, 'project');
     // E16 (§4.1 S:799, rule 7): the continuation of a requeued Task follows the
     // same destination-first order as `chooseSession` — an open responsible link
     // of a transfer destination wins — and a source that is excluded (an archive
@@ -1273,9 +1273,9 @@ export function createWorkflow(deps: WorkflowDependencies & {
       const card = claimSession.value;
       const record = card.record;
       const excluded = await chooseExcluded(owned, card);
-      if (roleReusable(card, workspaceId, binding) && !excluded) {
+      if (roleReusable(card, workspaceId, binding, { scope: 'project' }) && !excluded) {
         chosen = { kind: 'reuse', card };
-      } else if (excluded || record.lifecycle === 'archived' || record.workspaceId !== workspaceId
+      } else if (excluded || record.lifecycle === 'archived'
         || !sameCanonical(record.role, binding.sessionRole)
         || (record.health === 'unavailable' && (record.healthConclusion === 'missing' || record.healthConclusion === 'damaged'))) {
         chosen = await chooseSession(owned, goal, binding, null, row.ref);

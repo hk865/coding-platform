@@ -8,7 +8,8 @@
  * identity + requestId): the same requestId replays one message, a changed
  * recipient is `idempotency_conflict`, and the message id is the sender
  * workspace's hash (hand-computed below, never `hostMessageId`).
- * R3: every other cross-workspace send is refused exactly as today.
+ * R3: apart from the Host system `notify` and `action_request`, every
+ * cross-workspace send is refused exactly as today.
  * R4 follows from R1 (the record's event lives with the record).
  *
  * XW-1 runs on memory and SQLite (S3: the recipient index and the receipt
@@ -134,6 +135,21 @@ describe.each(['memory', 'sqlite'] as const)('XWS cross-workspace delivery (%s)'
   });
 });
 
+describe('XWS a Host system action_request crosses', () => {
+  it('XW-3b delivers a Host system action_request into the recipient workspace', async () => {
+    /* Named mutation: narrow the cross-workspace condition back to `notify` only
+       (`src/core/work-graph/communication/mailbox-send.ts`, the recipient-scope refusal). The send is then
+       refused `not_found`, so the committed assertion and the recipient-inbox row go red. */
+    const { world, a } = await openWorld('memory');
+    const lineA = await createS6BLine(a, { label: 'xws-line-a', role: S6A_WORK_ROLE });
+    const messageId = idOf(HOST_SYSTEM, 'xws-3b');
+    const sent = await systemSend(world, 'xws-3b', { recipient: lineA.ref, intent: 'action_request', text: 'XWS-3b' });
+    expect(sent.status, `the send: ${JSON.stringify(sent)}`).toBe('committed');
+    if (sent.status !== 'committed') throw new Error(`XW-3b: the send was not committed: ${JSON.stringify(sent)}`);
+    expect((await inboxIn(a, lineA.ref)).map(item => item.ref.messageId)).toContain(messageId);
+  });
+});
+
 type XW3Send = (world: S6ARequestWorld, b: S6ACardsWorkspace, lineA: SessionRef) => Promise<unknown>;
 type XW3Case = { label: string; messageId: string; send: XW3Send };
 
@@ -145,12 +161,6 @@ const XW3_CASES: readonly XW3Case[] = [
   { label: "a person's messages/send notify", messageId: idOf(OPERATOR, 'xws-3a'),
     send: async (_world, b, lineA) => b.post('messages/send', graphWrite(S6A_SECOND_SCOPE,
       { recipient: lineA, intent: 'notify', text: 'XWS-3a' }, 'xws-3a', [])) },
-  /* Named mutation b: relax the intent check so a Host system `action_request` is admitted
-     (the same `message-machine.ts:731–:734` refusal). It then commits into A, so the two assertions
-     below go red. */
-  { label: 'a Host system action_request', messageId: idOf(HOST_SYSTEM, 'xws-3b'),
-    send: async (world, _b, lineA) => systemSend(world, 'xws-3b',
-      { recipient: lineA, intent: 'action_request', text: 'XWS-3b' }) },
 ];
 
 describe('XWS the refusals stay as they are', () => {

@@ -237,9 +237,11 @@ import type { RoleLinePositionV1 } from '../core/work-graph/state/role-line-posi
 import type { RoleScopeV1 } from '../contracts/role-lines.js';
 import { createRoleLineOperations, readMainWorkspace, startLinesInitialRecord } from '../core/work-graph/sessions/role-line-operations.js';
 import {
-  createColdStartProposalWindow, createColdStartService, type ColdStartStagePort,
+  createColdStartProposalWindow, createColdStartService, type ColdStartServiceDeps, type ColdStartStagePort,
 } from '../core/work-graph/sessions/cold-start-service.js';
+import { createWorkspaceJoinService } from '../core/work-graph/sessions/workspace-join-service.js';
 import { readColdStartAdoption, readColdStartCandidate } from '../core/work-graph/tasks/cold-start-reads.js';
+import { newWorkspaceJoinOperation } from '../core/work-graph/state/workspace-join.js';
 import {
   createRoleLineMaintenance, type RoleLineMaintenancePort,
 } from '../core/work-graph/sessions/role-line-maintenance.js';
@@ -342,7 +344,8 @@ import { canonicalJson, canonicalKey, sameJson, sha256Hex, type JsonValue } from
 import { isRecord } from '../contracts/validation/common.js';
 import type { RuntimeCapabilities } from '../core/agent-runtime/contracts.js';
 import type {
-  ContinuationWorkspaceSource, ReadonlyCommandAccessInput, RuntimeExecutionDependencies, RuntimeHostBindings,
+  ContinuationWorkspaceSource, QueryRuntimeConfigurationInput, ReadonlyCommandAccessInput,
+  RuntimeExecutionDependencies, RuntimeHostBindings,
 } from '../core/agent-runtime/execution-contracts.js';
 import type {
   AuthorizeConfiguration, ExecutionEntryDependencies, ExecutionEntryPort,
@@ -1183,7 +1186,10 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     });
     const bootstrap = createProjectBootstrapServices({ records: backend.records, now, eventId: randomUUID,
       // O1b (L26): the start_lines birth, encoded by the sessions codec.
-      startLines: (input) => encodeSessionOperationRecord(startLinesInitialRecord(input)) });
+      startLines: (input) => encodeSessionOperationRecord(startLinesInitialRecord(input)),
+      // 7D2 XA: a later workspace's join is born in the same registration commit, encoded the same way.
+      workspaceJoin: (input) => encodeSessionOperationRecord(newWorkspaceJoinOperation({
+        projectId: input.projectId, workspaceId: input.workspaceId, occurredAt: input.now })) });
     // Slice 5 §3.2: the configured operator is the Host's real start actor. The
     // production Host injects `operatorActor` from its trusted start snapshot,
     // never from HTTP JSON or a model tool argument. The checks-executor
@@ -1296,6 +1302,35 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const capacityAllocation = createAllocationRead({ records: backend.records });
     const sessionDirectory = createSessionDirectory({ records: backend.records, lookups: backend.records,
       duty: sessionDutyResolver, reclaim: () => roleLineMaintenance, roleCapacity: roleCapacityService });
+    /** A project-level line may drive a Query whose Run lives in another workspace; its trusted configuration is the
+     *  line's own, so the Query resolves the binding where its claimed Session lives, never where the Run runs
+     *  (the profile's workspace is the line's, not the Query's). */
+    const runtimeBindings: RuntimeHostBindings | undefined = (() => {
+      const runtime = options.runtime;
+      if (runtime === undefined) return undefined;
+      if (runtime.resolveQueryConfiguration === undefined) return runtime;
+      // The Work read stays live (a Host replaced after creation is the next resolution); only the Query branch is
+      // overridden, and the override is kept beside the host so a test's live replacement is never overwritten.
+      let queryOverride: RuntimeHostBindings['resolveQueryConfiguration'];
+      const queryBinding = async (ctx: CoreCallContext, input: QueryRuntimeConfigurationInput) => {
+        const card = await sessionDirectory.readSession(ctx, input.sessionRef, 'project');
+        if (card.status !== 'ready') return card;
+        const lineWorkspaceId = card.value.record.workspaceId;
+        return runtime.resolveQueryConfiguration!(lineWorkspaceId === ctx.workspaceId
+          ? ctx : { ...ctx, workspaceId: lineWorkspaceId }, input);
+      };
+      return new Proxy(runtime, {
+        get(target, property, receiver) {
+          return property === 'resolveQueryConfiguration'
+            ? queryOverride ?? queryBinding : Reflect.get(target, property, receiver);
+        },
+        set(target, property, value) {
+          if (property !== 'resolveQueryConfiguration') return Reflect.set(target, property, value);
+          queryOverride = value as RuntimeHostBindings['resolveQueryConfiguration'];
+          return true;
+        },
+      });
+    })();
     // Wiring 2 I-2 (§2.1, L1/L3): the formal duties adapter reads the Session's
     // own fixed role. The legacy half is the exact five platform templates and
     // their versions, injected here so `configuration/` never imports Runtime.
@@ -1409,7 +1444,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // Query methods stay unsupported while pending submit/read is unchanged.
     const queryExecution = options.runtime === undefined ? undefined : createQueryExecution({
       records: backend.records, roles: roleService, bodies,
-      authorizeConfiguration: createAuthorizeQueryConfiguration(options.runtime),
+      authorizeConfiguration: createAuthorizeQueryConfiguration(runtimeBindings!),
       now, eventId: randomUUID, sessionFacts, messages: mailbox, messageWrites,
       // The entered confirmation consumes a frozen handoff brief through the one owner read; without this port a
       // non-null briefRef would be `unavailable`, never "no brief".
@@ -1985,6 +2020,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       platformRole: (duty) => platformRoleProfile(duty).template, duty: sessionDutyResolver,
       // C1: the cold start is built later in this root; the arrow reads it only when the Host drives one.
       coldStart: { drive: (ctx, input) => coldStart.drive(ctx, input) },
+      // 7D2 XA: the later workspace's join driver; same late-binding shape, same one instance as the Host's arm.
+      workspaceJoin: { drive: (ctx, input) => workspaceJoin.drive(ctx, input) },
       adjustments: {
         // Card supplement C3: rules -> match -> the five-layer policy; the guards ride the writer's own first commit.
         async judge(ctx, input) {
@@ -2304,7 +2341,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     };
     let runtime = createAgentRuntime();
     if (options.runtime !== undefined) {
-      const host = options.runtime;
+      const host = runtimeBindings!;
       // The hoisted optional instance is guaranteed present by `options.runtime`.
       const entryAuthorizeConfiguration = authorizeConfiguration as AuthorizeConfiguration;
       const entryDependencies: ExecutionEntryDependencies = {
@@ -4353,8 +4390,9 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     };
     const coldStartReads = { ordered: backend.records, records: backend.records, facts: rawRequestFacts,
       answers: queryJobs, bindings: bindingReads };
-    // 7D2 C1: the one cold-start driver; `roleLineOperations.continueOperation` drives it from the Host's pass.
-    const coldStart = createColdStartService({
+    // 7D2 C1/XA: the one dependencies object the cold start and a later workspace's join share; the join builds the
+    // same shared exploration phases over the same owners, never a second copy.
+    const coldStartDeps: ColdStartServiceDeps = {
       records: backend.records, sessions: sessionDirectory, queries: queryJobs,
       requests: { readFacts: (ctx, input) => rawRequestFacts.readFacts(ctx, input) },
       route: {
@@ -4379,7 +4417,11 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         readOpenRegionLines: (ctx, input) => readOpenResponsibilityLines(backend.records, ctx, input, sessionDutyResolver),
       },
       stages: coldStartStages, now,
-    });
+    };
+    // 7D2 C1: the one cold-start driver; `roleLineOperations.continueOperation` drives it from the Host's pass.
+    const coldStart = createColdStartService(coldStartDeps);
+    // 7D2 XA: the second workspace's join driver; the same deps and the same shared phases, driven by the same arm.
+    const workspaceJoin = createWorkspaceJoinService(coldStartDeps);
     // O5b (v4 :6442–:6445): the ONE `role-lines/read` owner over the same line list, effective-scope read (BK-15's
     // instance, :4000) and allocation read the pick and the allocation route use; never a second array.
     const roleLineRead = createRoleLineRead({

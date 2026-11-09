@@ -256,7 +256,7 @@ async function linkExecutor(platform: Platform, ctx: CoreCallContext, sessionRef
 }
 
 type WindowPort = { isOpen: (ctx: never, input: { projectRef: { projectId: string } }) =>
-  Promise<{ status: 'ready'; value: { open: boolean; revision: null } }> };
+  Promise<{ status: 'ready'; value: { open: boolean; operationRef: null; revision: null } }> };
 export async function openProposalWorld(options: { backend?: 'memory' | 'sqlite';
   batchWindow?: boolean | WindowPort; roleSpecLine?: boolean } = {}): Promise<ProposalWorld> {
   let staff: S7C1World | undefined;
@@ -272,7 +272,7 @@ export async function openProposalWorld(options: { backend?: 'memory' | 'sqlite'
     proposalSpy = vi.spyOn(proposalServiceModule, 'createArchitectureProposalService').mockImplementation(deps => {
       // The one 7D2 seam: the window port is the test's world, the factory is the real one.
       const window = options.batchWindow === true
-        ? { isOpen: async () => ({ status: 'ready' as const, value: { open: true, revision: null } }) }
+        ? { isOpen: async () => ({ status: 'ready' as const, value: { open: true, operationRef: null, revision: null } }) }
         : typeof options.batchWindow === 'object' ? options.batchWindow : undefined;
       const withWindow = window === undefined ? deps : { ...deps, proposalBatchWindow: window };
       const real = realCreateProposal(withWindow);

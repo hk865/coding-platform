@@ -147,12 +147,13 @@ export type RoleFactsParentV1 =
   | { kind: 'member_create'; caller: { session: SessionRef } | null }
   | { kind: 'start_lines'; operation: OperationRef }
   | { kind: 'cold_start'; operation: OperationRef }
+  | { kind: 'workspace_join'; operation: OperationRef }
   | { kind: 'secretary_create'; caller: { session: SessionRef } }
   | { kind: 'handoff'; source: SessionRef; sourceCreator: CreatorRefV1 }
   | { kind: 'role_line_split'; source: SessionRef; reason: RoleLineSplitSavedV1['reason'] }
   | { kind: 'other' };
 export const SESSION_OPENED_BY = ['start_lines', 'human', 'platform_rule', 'agent_proposal', 'secretary_create',
-  'member_create', 'handoff', 'cold_start', 'legacy'] as const;
+  'member_create', 'handoff', 'cold_start', 'workspace_join', 'legacy'] as const;
 export type SessionOpenedByV1 = (typeof SESSION_OPENED_BY)[number];
 export const SessionRoleFactsRefShape = defineShape({ name: 'SessionRoleFactsRef', fields: {
   aggregateType: f.literal('SessionRoleFacts'), projectId: id, sessionId: id } });
@@ -170,6 +171,9 @@ export function roleFactsOf(input: { principal: CoreCallContext['principal']; du
   if (duty === 'unknown' || provenance.kind === 'readonly_copy') return null;
   if (parentOperation?.kind === 'start_lines' || parentOperation?.kind === 'cold_start') {
     return { creator: { kind: 'platform' }, openedBy: parentOperation.kind };
+  }
+  if (parentOperation?.kind === 'workspace_join') {
+    return { creator: { kind: 'platform' }, openedBy: 'workspace_join' };
   }
   if (parentOperation?.kind === 'secretary_create') {
     return { creator: { kind: 'session', ref: parentOperation.caller.session }, openedBy: 'secretary_create' };

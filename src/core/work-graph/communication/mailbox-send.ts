@@ -429,7 +429,7 @@ export async function sendMessage(mailbox: MailboxContext, ctx: CoreCallContext,
       recipientScope = target.value.record.ref.projectId === owned.projectId
         && target.value.record.workspaceId === owned.workspaceId ? 'same_workspace' : 'other_workspace';
     } else if (owned.principal.kind === 'host' && owned.principal.actor.kind === 'system'
-      && send.intent === 'notify') {
+      && (send.intent === 'notify' || send.intent === 'action_request')) {
       // The directory read compares the record's workspace with the caller's, so
       // it answers not_found for another workspace's line. Read that line once
       // by ref through the mailbox's own store.

@@ -224,6 +224,7 @@ commit 闸门、阻塞替身、store/Kernel 读故障和崩溃重启；只在规
 - `K3-tool-seams.ts` — §5.1 可开关替身：`shell` 保持名字/`process` 但去掉 `isolated_process` 并阻塞，`mailboxToolSeam` 同理；`tests/scenarios/K3-11-review-reasons-r2.test.ts` 在用。
 - `S1-runtime-scenario-fixture.ts` — 只给场景注入时钟、commit 观察和丢失的 transport 回复；`tests/scenarios/S1-archive-restart.test.ts` 在用。
 - `S2A-route-storage-support.ts` — 包住真实 records port，让 `readMany`/`lookup` 一律返回 `unavailable`，验路由如实带出读失败；`tests/app/S2A-decision-routes.test.ts` 在用。
+- `XWS2A-world.ts` — XWS2A 的第二工作区世界 `openXWS2AWorld`：`openS7D2RoleLineWorld`（memory/SQLite）+ 冻结的 `addS7D2SecondWorkspace`（Host 的 `workspaces/open` 生同项目第二个工作区和 `workspace_join`）；开局参谋由脚本模型答一次 `coarse_split` 探索（`propose_architecture_revision`），人经 `decisions/answer` 批结构提案，`role-lines/operations`/`queries/read`/`messages/inbox`/`architecture/read`/`executions/read` 只读观察；另有 `holdJoinProposals`（扣住 join 的 `proposals` 相提交回答）；`tests/work-graph/S7D2-XWS2A-join.test.ts`、`tests/scenarios/S7D2-XWS2A-work.test.ts` 在用。
 - `S2A-window-fixture.ts` — 在命名窗口第一次数据读后精确 commit 一次，验稳定窗口；`tests/work-graph/S2A-queue-window.test.ts` 在用。
 - `S2B-be1r-kernel-faults-support.ts` — 包真实 Kernel registry，在 `store.read` 注入故障，不写记录不造 fact；`tests/runtime/S2B-38-run08-unknown-activity.test.ts` 在用。
 - `S2B-be1r2-support.ts` — `withProbeMissing` 让 `store.get` 抛 not_found，`createPausingRecords` 在 records 边界暂停/放行；`tests/app/S2B-r2-backfill-probe-first.test.ts` 在用。

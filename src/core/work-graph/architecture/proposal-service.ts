@@ -49,7 +49,6 @@ import {
   newArchitectureProposalRecord, transitionArchitectureProposal,
   type ArchitectureProposalRecordV1,
 } from '../state/architecture-proposal-machine.js';
-import { coldStartOperationRef } from '../state/cold-start.js';
 import {
   ARCHITECTURE_PROPOSAL_CHANGED_EVENT, decodeArchitectureProposalBatchRecord,
   decodeArchitectureProposalChangedEvent, decodeArchitectureProposalRecord,
@@ -71,15 +70,17 @@ import {
 import { parseRepairOps } from './repair-ops.js';
 
 /**
- * The window read: `open` is the cold start's phase-and-pin verdict; `revision` is the cold-start record revision
- * the proposal commit guards, so a lifecycle pass that moves the record between this read and the commit makes the
- * proposal re-read the (now closed) window (`book-7d2-frozen.md:796`, `ports.ts:125`).
+ * The window read: `open` is the owning exploration operation's phase-and-pin verdict; `operationRef`/`revision`
+ * are that record's own, and the proposal commit guards them, so a lifecycle pass that moves the record between this
+ * read and the commit makes the proposal re-read the (now closed) window (`book-7d2-frozen.md:796`, `ports.ts:125`).
  */
-export type ProposalBatchWindowReadV1 = { open: boolean; revision: number | null };
+export type ProposalBatchWindowReadV1 = {
+  open: boolean; operationRef: OperationRef | null; revision: number | null;
+};
 
 /**
- * The optional cold-start window fact; absent means the immediate single-member freeze. The window takes the
- * proposal's own base pin: a cold-start batch binds one pin, so a proposal on any other pin freezes alone
+ * The optional exploration window fact; absent means the immediate single-member freeze. The window takes the
+ * proposal's own base pin: an exploration batch binds one pin, so a proposal on any other pin freezes alone
  * (`book-7d2-frozen.md:792`, `:796`).
  */
 export type ProposalBatchWindowPort = {
@@ -435,14 +436,15 @@ async function replayPropose(deps: ProposalServiceDeps, receipt: CommittedReceip
 }
 
 /**
- * One commit writes the proposal, and — unless the cold-start window is open — its
+ * One commit writes the proposal, and — unless the exploration window is open — its
  * single-member batch. The batch's trial already ran, so no second trial can see a
  * moved catalog between the two records.
  */
 async function writeProposal(deps: ProposalServiceDeps, ctx: CoreCallContext,
   input: ProposeArchitectureRevisionInputV1 & { commandId: string },
   proposer: SessionRef, keys: { identityKey: string; fingerprint: string },
-  write: Clock, immediate: boolean, coldStartRevision: number | null): Promise<ProposalResult> {
+  write: Clock, immediate: boolean,
+  guard: { operationRef: OperationRef; revision: number } | null): Promise<ProposalResult> {
   const proposalId = sha256Hex(canonicalJson({ projectId: ctx.projectId, commandId: input.commandId } as unknown as JsonValue));
   const ref: ArchitectureProposalRef = {
     aggregateType: 'ArchitectureProposal', projectId: ctx.projectId, proposalId,
@@ -471,11 +473,11 @@ async function writeProposal(deps: ProposalServiceDeps, ctx: CoreCallContext,
   }
   records.push(encodeArchitectureProposalRecord(record));
   guards.push({ refKey: canonicalKey(ref), expectedRevision: null });
-  // A proposal that read the window open guards the cold-start revision it read; a lifecycle pass that moves the
-  // record (freeze save or completion) makes this commit conflict, and the caller re-reads the closed window.
-  if (coldStartRevision !== null) {
-    guards.push({ refKey: canonicalKey(coldStartOperationRef(ctx.projectId) as unknown as JsonValue),
-      expectedRevision: coldStartRevision });
+  // A proposal that read the window open guards the exploration operation revision it read; a lifecycle pass that
+  // moves that record (freeze save or completion) makes this commit conflict, and the caller re-reads the window.
+  if (guard !== null) {
+    guards.push({ refKey: canonicalKey(guard.operationRef as unknown as JsonValue),
+      expectedRevision: guard.revision });
   }
   const event = encodeArchitectureProposalChangedEvent({
     eventId: write.eventId, eventType: ARCHITECTURE_PROPOSAL_CHANGED_EVENT, schemaVersion: 1,
@@ -776,19 +778,24 @@ export async function proposeArchitectureRevision(deps: ProposalServiceDeps, ctx
   if (trial !== null) return trial.code === 'invalid' ? { status: 'invalid', reason: trial.reason } : trial;
 
   const readBatchWindow = async (): Promise<ProposalBatchWindowReadV1 | CoreRejection> => {
-    if (deps.proposalBatchWindow === undefined) return { open: false, revision: null };
+    if (deps.proposalBatchWindow === undefined) return { open: false, operationRef: null, revision: null };
     const read = await deps.proposalBatchWindow.isOpen(ctx,
       { projectRef: { projectId: ctx.projectId }, baseCatalogPin: input.baseCatalogPin });
     if (read.status === 'ready') return read.value;
     if (read.status === 'rejected') return read;
     return rejected('unavailable', `proposal batch window is not readable (${read.status})`);
   };
-  const writeWith = (verdict: ProposalBatchWindowReadV1) => writeProposal(deps, ctx, qualifiedInput, facts.value.sessionRef,
-    keys, { now: deps.now(), eventId: deps.eventId() }, !verdict.open, verdict.open ? verdict.revision : null);
+  const writeWith = (verdict: ProposalBatchWindowReadV1) => {
+    // A window without its own record/revision (never a production verdict) carries no guard, like the closed one.
+    const guard = verdict.open && verdict.operationRef !== null && verdict.revision !== null
+      ? { operationRef: verdict.operationRef, revision: verdict.revision } : null;
+    return writeProposal(deps, ctx, qualifiedInput, facts.value.sessionRef,
+      keys, { now: deps.now(), eventId: deps.eventId() }, !verdict.open, guard);
+  };
   let window = await readBatchWindow();
   if ('status' in window) return window;
   let result = await writeWith(window);
-  // The cold-start revision moved between the window read and this commit: re-read; the window is closed now, so
+  // The exploration record moved between the window read and this commit: re-read; the window is closed now, so
   // the proposal freezes as its own single-member batch.
   if (window.open && result.status === 'rejected' && result.code === 'revision_conflict') {
     const again = await readBatchWindow();

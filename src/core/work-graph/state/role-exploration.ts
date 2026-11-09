@@ -11,7 +11,7 @@ import type { SessionMessageRef } from '../../../contracts/core/session-message.
 import type { QueryJobIntentV1, QueryRunRef } from '../../../contracts/query-job.js';
 import type { RoleBindingRefV1 } from '../../../contracts/dispatch.js';
 import type { RuntimeBudget } from '../../../contracts/runtime-budget.js';
-import type { ColdStartActionV1 } from './cold-start.js';
+import type { ColdStartExplorationQueryRefV1 } from './role-line-action.js';
 
 export type RoleExplorationSegmentV1 = 'coarse_split' | 'region';
 export type RoleExplorationBindingV1 = { operationRef: OperationRef; systemMessageRef: SessionMessageRef };
@@ -39,11 +39,12 @@ export function hostSystemActionRequest(message: { sender: { kind: string; actor
     && message.intent === 'action_request';
 }
 
-/** The one binding check: Session role facts + the cold-start payload + the Host system message. */
+/** The one binding check: Session role facts + the exploration operation's payload + the Host system message.
+ *  The payload is the common `explorations` list, so the cold start and the second workspace's join share it. */
 export function roleExplorationBindingOf(input: {
-  coldStartRef: OperationRef;
+  operationRef: OperationRef;
   lineOperation: OperationRef | null;
-  action: ColdStartActionV1;
+  action: { explorations: ColdStartExplorationQueryRefV1[] };
   queryRunRef: QueryRunRef;
   message: { sender: { kind: string; actor?: { kind: string } }; intent?: string } | null;
 }): { status: 'ready'; value: RoleExplorationBindingV1 } | CoreRejection {
@@ -52,17 +53,17 @@ export function roleExplorationBindingOf(input: {
     candidate.queryRunRef.projectId === input.queryRunRef.projectId
     && candidate.queryRunRef.queryJobId === input.queryRunRef.queryJobId
     && candidate.queryRunRef.runId === input.queryRunRef.runId);
-  if (entry === undefined) return rejected('forbidden', 'the QueryRun is not one this cold start opened');
+  if (entry === undefined) return rejected('forbidden', 'the QueryRun is not one this exploration operation opened');
   // The entry's `operationRef` is the line's stored origin (`SessionRoleFactsV1.originOperation`): the opening
-  // adviser's is `start_lines`; a region line's is the origin the chosen line stored, the cold-start operation for
+  // adviser's is `start_lines`; a region line's is the origin the chosen line stored, the exploration operation for
   // a newly opened line and its own earlier origin for a line reused from standby.
   if (input.lineOperation.projectId !== entry.operationRef.projectId
     || input.lineOperation.operationId !== entry.operationRef.operationId) {
-    return rejected('forbidden', 'the exploration line origin is not the adviser line the cold start opened');
+    return rejected('forbidden', 'the exploration line origin is not the adviser line the operation opened');
   }
   if (input.message === null || !hostSystemActionRequest(input.message)) {
     return rejected('forbidden', 'the exploration round has no Host system “please act” message');
   }
-  return { status: 'ready', value: { operationRef: { ...input.coldStartRef },
+  return { status: 'ready', value: { operationRef: { ...input.operationRef },
     systemMessageRef: { ...entry.messageRef } } };
 }

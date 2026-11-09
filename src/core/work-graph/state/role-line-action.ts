@@ -14,13 +14,16 @@ import {
 } from '../../../contracts/data-format-refs.js';
 
 export const ROLE_LINE_ACTIONS = ['start_lines', 'open', 'role_line_add', 'role_line_split', 'role_line_reuse',
-  'goal_queue_assign', 'cold_start'] as const;
+  'goal_queue_assign', 'cold_start', 'workspace_join'] as const;
 export const ROLE_LINE_STEP_KEYS = ['secretary', 'adviser', 'scribe'] as const;
 export const ROLE_LINE_STEP_STATES = ['pending', 'reserved', 'created', 'registered', 'linked', 'done', 'failed'] as const;
 export type RoleLineStepKeyV1 = string; // the three start_lines keys are ROLE_LINE_STEP_KEYS; open/reviewer use their own key
 export type RoleLineStepStateV1 = (typeof ROLE_LINE_STEP_STATES)[number];
 export const COLD_START_PHASES = ['candidates', 'adopted', 'route', 'coarse_split', 'regions', 'proposals'] as const;
 export type ColdStartPhaseV1 = (typeof COLD_START_PHASES)[number];
+/** The second workspace's join always explores; its three phases are a subset of `COLD_START_PHASES`. */
+export const WORKSPACE_JOIN_PHASES = ['coarse_split', 'regions', 'proposals'] as const;
+export type WorkspaceJoinPhaseV1 = (typeof WORKSPACE_JOIN_PHASES)[number];
 export type ColdStartExplorationQueryRefV1 = {
   queryRunRef: QueryRunRef; sessionRef: SessionRef; messageRef: SessionMessageRef;
   operationRef: OperationRef; segment: 'coarse_split' | 'region';
@@ -48,6 +51,17 @@ export type RoleLineActionV1 = {
   baseCatalogPin?: ArchitectureCatalogPinV1 | null;
   /** SPLITUND: an adviser tool split's admitted understanding versions, saved by its first write; absent otherwise. */
   understanding?: { noteId: string; version: number }[];
+};
+/** §3.1: the second workspace's join operation; always the split route, three phases over the cold-start vocabulary. */
+export type WorkspaceJoinActionV1 = RoleLineActionV1 & {
+  action: 'workspace_join';
+  phase: WorkspaceJoinPhaseV1;
+  lastCompleted: WorkspaceJoinPhaseV1 | null;
+  pendingRegions: ModuleRef[];
+  explorations: ColdStartExplorationQueryRefV1[];
+  batchRefs: ArchitectureProposalBatchRef[];
+  route: 'split';
+  baseCatalogPin: ArchitectureCatalogPinV1 | null;
 };
 /** One note version `{ noteId, version }`: the one field (`model/session-operation-arms.ts` imports it). */
 export const NoteVersionField = f.object({ noteId: id, version: f.integer({ min: 1 }) });
