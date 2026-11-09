@@ -50,7 +50,8 @@ import {
 } from '../sessions/session-record-codecs.js';
 import { sessionRoleFactsCodec } from '../sessions/role-line-record-codecs.js';
 import { coldStartOperationRef, type ColdStartActionV1 } from '../state/cold-start.js';
-import type { ColdStartExplorationQueryRefV1 } from '../state/role-line-action.js';
+import type { ColdStartExplorationQueryRefV1, WorkspaceJoinActionV1 } from '../state/role-line-action.js';
+import { workspaceJoinOperationRef } from '../state/workspace-join.js';
 import {
   hostSystemActionRequest, roleExplorationBindingOf, type RoleExplorationBindingV1,
 } from '../state/role-exploration.js';
@@ -252,17 +253,33 @@ async function readSessionRoleFacts(
 }
 
 /**
- * The operation that opened the exploration run: the project's cold start. No A-package row reaches the second
- * workspace's join here (the join's exploration rounds propose rather than write notes), so this read stays the
- * cold start's; A2 adds the join arm with the rows that exercise it.
+ * The operation that opened the exploration run. A Query in a joined workspace
+ * names its own `workspace_join` operation (keyed by project and workspace);
+ * the primary workspace has none, so that read falls back to the project's
+ * cold start. Both payloads share the `explorations` list
+ * `roleExplorationBindingOf` consumes.
  */
 type ExplorationOperationOwnerV1 = {
   operationRef: OperationRef;
   action: { explorations: ColdStartExplorationQueryRefV1[] };
 };
 
-async function readExplorationOperation(deps: PlanningQueryRunDependencies, projectId: string):
+async function readExplorationOperation(deps: PlanningQueryRunDependencies, projectId: string, workspaceId: string):
   Promise<{ status: 'ready'; value: ExplorationOperationOwnerV1 } | CoreRejection> {
+  // 1. The join operation of the Query's own workspace, when one exists.
+  const joinRef = workspaceJoinOperationRef(projectId, workspaceId);
+  const join = await readOwnerRecord({ store: deps.records,
+    refKey: operationRefKey(joinRef),
+    decode: decodeSessionOperationRecord,
+    readError: (reason) => rejected('unavailable', `the join operation cannot be read: ${reason}`) });
+  if (join.ok && join.value.action.kind === 'role_line' && join.value.action.action === 'workspace_join') {
+    return { status: 'ready', value: { operationRef: joinRef,
+      action: join.value.action as WorkspaceJoinActionV1 } };
+  }
+  if (!join.ok && !('notFound' in join)) {
+    return rejected('unavailable', 'the join operation cannot be read');
+  }
+  // 2. The project's cold start: the only operation on the primary workspace.
   const coldStartRef = coldStartOperationRef(projectId);
   const operation = await readOwnerRecord({ store: deps.records,
     refKey: operationRefKey(coldStartRef),
@@ -296,7 +313,7 @@ async function resolveExplorationQueryRun(
   }
   const facts = await readSessionRoleFacts(deps, read.execution.sessionRef);
   if (facts.status !== 'ready') return facts;
-  const owner = await readExplorationOperation(deps, read.run.ref.projectId);
+  const owner = await readExplorationOperation(deps, read.run.ref.projectId, read.run.ref.workspaceId);
   if (owner.status !== 'ready') return owner;
   const { action } = owner.value;
   const entry = action.explorations.find(candidate => candidate.queryRunRef.runId === read.run.run.runId);

@@ -925,7 +925,12 @@ export function createWorkflow(deps: WorkflowDependencies & {
   function bindingForRole(
     config: WorkflowHostConfiguration, projectId: string, workspaceId: string, role: string,
   ): Binding | null {
-    return servingBinding(config.bindings, projectId, workspaceId, role);
+    // The Goal's workspace is authoritative when it serves the role; a
+    // project-level line may be served from another workspace, so fall back to
+    // the project's single binding for that role. Two or more bindings do not
+    // pick one.
+    return servingBinding(config.bindings, projectId, workspaceId, role)
+      ?? servingBinding(config.bindings, projectId, workspaceId, role, 'project');
   }
 
   async function loadWorkspacePin(
@@ -1058,9 +1063,16 @@ export function createWorkflow(deps: WorkflowDependencies & {
     }
     if (deps.consultations === undefined) return { waiting: 'the continuation wait requires the consultation mailbox' };
     const messages = deps.consultations.messages;
-    const rootRead = await messages.readMessage(owned.ctx, continuation.messageRef);
+    // Rule W: the wait message belongs to the claim line's workspace, not the Run's.
+    const lineWorkspaceId = priorRead.value.session.workspaceId;
+    const hostReader = owned.ctx.materialReader as Extract<CoreCallContext['materialReader'], { kind: 'host' }>;
+    const lineCtx: CoreCallContext = lineWorkspaceId === owned.ctx.workspaceId
+      ? owned.ctx
+      : { ...owned.ctx, workspaceId: lineWorkspaceId,
+        materialReader: { ...hostReader, workspaceId: lineWorkspaceId } };
+    const rootRead = await messages.readMessage(lineCtx, continuation.messageRef);
     if (rootRead.status !== 'ready') return { waiting: receiptReason(rootRead, 'the continuation wait message is not readable') };
-    const chain = await liveWaitMessage((ref) => messages.readMessage(owned.ctx, ref), rootRead.value);
+    const chain = await liveWaitMessage((ref) => messages.readMessage(lineCtx, ref), rootRead.value);
     if (chain.status !== 'ready') return { waiting: receiptReason(chain, 'the continuation wait message is not readable') };
     const message = chain.tail;
     // The saved reply wins over an expired deadline (one state rule, message-machine.ts:1138).
@@ -1924,7 +1936,11 @@ export function createWorkflow(deps: WorkflowDependencies & {
           if (selected.status !== 'ready') {
             return waiting(null, receiptReason(selected, 'the selected Run is not readable'));
           }
-          const facts = await deps.sessionFacts.readSessionFacts(owned.ctx, selected.value.session.ref);
+          // Rule W: the line facts (Session record, wait/reply indexes) are in the line's workspace.
+          const lineWorkspaceId = selected.value.session.workspaceId;
+          const factsCtx = lineWorkspaceId === owned.ctx.workspaceId
+            ? owned.ctx : { ...owned.ctx, workspaceId: lineWorkspaceId };
+          const facts = await deps.sessionFacts.readSessionFacts(factsCtx, selected.value.session.ref);
           if (facts.status !== 'ready') {
             return waiting(null, receiptReason(facts, 'the continuation line facts are not readable'));
           }
@@ -1948,13 +1964,15 @@ export function createWorkflow(deps: WorkflowDependencies & {
           return waiting(null, continuation.waiting, undefined, basis);
         }
         consumedWait = continuation.value;
-        const original = await deps.sessions.readSession(owned.ctx, continuation.sessionRef);
+        // Rule W/M3: the original claim Session may be in another workspace of the project.
+        const original = await deps.sessions.readSession(owned.ctx, continuation.sessionRef, 'project');
         if (original.status !== 'ready') {
           const basis = goalWaitBasisOf(goal, ['session_available'], ['Session']);
           if (base.taskId === null) { rememberWaiting('the original continuation Session is not readable', basis); continue; }
           return waiting(null, 'the original continuation Session is not readable', undefined, basis);
         }
-        if (!roleReusable(original.value, goal.workspaceRef.workspaceId, binding)) {
+        // The continuation keeps the original claim Session's identity (the afterRun continuation shape).
+        if (!roleReusable(original.value, goal.workspaceRef.workspaceId, binding, { scope: 'project' })) {
           const basis = goalWaitBasisOf(goal, ['session_available'], ['Session']);
           if (base.taskId === null) {
             rememberWaiting('the original continuation Session is busy, archived or incompatible', basis);

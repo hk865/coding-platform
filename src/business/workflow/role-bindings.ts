@@ -7,9 +7,11 @@ import type { WorkflowHostConfiguration } from './ports.js';
  */
 export function servingBinding(
   bindings: WorkflowHostConfiguration['bindings'], projectId: string, workspaceId: string, role: string,
+  scope: 'workspace' | 'project' = 'workspace',
 ): WorkflowHostConfiguration['bindings'][number] | null {
   const matches = bindings.filter((binding) => binding.workspace.projectId === projectId
-    && binding.workspace.workspaceId === workspaceId && binding.roleBinding.templateId === role);
+    && (scope === 'project' || binding.workspace.workspaceId === workspaceId)
+    && binding.roleBinding.templateId === role);
   return matches.length === 1 ? matches[0]! : null;
 }
 

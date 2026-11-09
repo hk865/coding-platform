@@ -315,7 +315,7 @@ export async function authorizeDelegatedWrite(
   }
   const hostRole = await recheckHostRoleAdmission(
     { roles: deps.roles, authorizeConfiguration: deps.authorizeConfiguration },
-    readCtx,
+    { ...readCtx, workspaceId: session.workspaceId },
     {
       run,
       manifestRole: manifest.role,

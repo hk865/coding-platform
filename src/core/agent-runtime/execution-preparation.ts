@@ -403,9 +403,13 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
         return rejected('unavailable', 'the claim Session mapping is inconsistent');
       }
       if (run.status !== 'starting') return rejected('busy', 'the Run is not awaiting a fresh entry');
-      if (run.workspaceSnapshot.workspaceId !== session.workspaceId) {
-        return rejected('unavailable', 'the Run workspace disagrees with the Session workspace');
-      }
+      // Rule W: the Run executes in its own workspace while the Role binding,
+      // Host configuration and profile are read from the line's workspace. The
+      // claim layer already refused a cross-project Run and admitted a
+      // cross-workspace one, so no second workspace gate lives here.
+      const runWorkspaceId = run.workspaceSnapshot.workspaceId;
+      const lineCtx = session.workspaceId === owned.workspaceId
+        ? owned : { ...owned, workspaceId: session.workspaceId };
       // §6.1 (e), I-19: a Run whose input is already bound is never prepared
       // again; its own claim, envelope and binding are the Prepared value.
       if (run.inputBinding !== undefined) {
@@ -418,7 +422,7 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       // 1. Original Role resolution (same WorkGraph resolver the claim used).
       let roleFacts;
       try {
-        roleFacts = await deps.roles.resolveRoleBindingFacts(owned, { roleBinding: run.roleBinding, declaredPermissions: { tools: [], writeScope: [] } });
+        roleFacts = await deps.roles.resolveRoleBindingFacts(lineCtx, { roleBinding: run.roleBinding, declaredPermissions: { tools: [], writeScope: [] } });
       } catch (error) {
         return rejected('unavailable', `Role resolution failed: ${messageOf(error)}`);
       }
@@ -439,7 +443,7 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       // 2. Trusted Host configuration for this exact Run.
       let configured;
       try {
-        configured = await deps.host.resolveConfiguration(owned, { runRef, role: session.role, roleResolution });
+        configured = await deps.host.resolveConfiguration(lineCtx, { runRef, role: session.role, roleResolution });
       } catch (error) {
         return rejected('unavailable', `Host configuration resolution failed: ${messageOf(error)}`);
       }
@@ -504,7 +508,7 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
 
       const sourceRefs: SourceRefV1[] = [
         { kind: 'plan-revision', refId: plan.ref.planId, revision: String(plan.revision) },
-        { kind: 'workspace', refId: session.workspaceId, revision: String(run.workspaceSnapshot.revision) },
+        { kind: 'workspace', refId: runWorkspaceId, revision: String(run.workspaceSnapshot.revision) },
       ];
       const additionalMaterialRefs: ArtifactRef[] = [];
       // Rework 1 items 1 and 4: read the Task closure ONCE and, when open, the
@@ -520,7 +524,7 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
         const read = await readTaskReviews(owned, deps.unknownCallReviews,
           { goalRef: { aggregateType: 'Goal', projectId: claim.task.projectId, goalId: claim.task.goalId },
             taskId: claim.task.taskId,
-            workspace: { projectId: claim.task.projectId, workspaceId: session.workspaceId } });
+            workspace: { projectId: claim.task.projectId, workspaceId: runWorkspaceId } });
         if (read.status !== 'ready') return read;
         taskReviews = read.value;
         const binding = blockedBindingOf(taskReviews, claim.task.taskId);
@@ -565,7 +569,7 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       if (readonlyRequested && deps.workspaceHost !== undefined) {
         try {
           const authorized = await deps.workspaceHost.authorize(owned, {
-            aggregateType: 'Workspace', projectId: claim.task.projectId, workspaceId: session.workspaceId,
+            aggregateType: 'Workspace', projectId: claim.task.projectId, workspaceId: runWorkspaceId,
           });
           readonlyAllowsWholeWorkspace = authorized.status === 'ready' && authorized.value.allowsRead('.');
         } catch { readonlyAllowsWholeWorkspace = false; }
@@ -612,6 +616,9 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       // brief; the two are never offered together.
       let handoff: { binding: WorkHandoffBriefV1['binding']; material: WorkHandoffBriefV1['material'] } | undefined;
       if (deps.handoffBriefs !== undefined && run.requeueRef === undefined && reviewPurpose === undefined) {
+        // The handoff brief is keyed by the workspace of the line operation
+        // that wrote it, and that operation runs in the line's workspace, so
+        // this read stays on `session.workspaceId` rather than the Run's.
         const read = await deps.handoffBriefs.readForSuccessor(owned, {
           session: claim.sessionRef, workspaceId: session.workspaceId,
         });
@@ -712,7 +719,7 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       // NEVER fails preparation; a cancellation still ends it (slice 8 §13.8).
       const workspaceBaseline = permissions.writeScope.length === 0
         ? undefined
-        : await recordWorkspaceBaseline(deps, owned, session.workspaceId, runRef, hostConfig.deniedPrefixes, sourceRefs);
+        : await recordWorkspaceBaseline(deps, owned, runWorkspaceId, runRef, hostConfig.deniedPrefixes, sourceRefs);
       if (workspaceBaseline === 'cancelled') {
         return rejected('cancelled', 'the preparation was cancelled during the workspace baseline capture');
       }
@@ -734,7 +741,7 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
           schemaVersion: 1, kind: 'task_execution', claim, role: roleResolution,
           hostTemplate: roleResolution.status === 'resolved' ? null : hostConfig.hostTemplate,
           roleBinding: run.roleBinding, hostConfigurationRevision: hostConfig.configurationRevision, sessionRole: session.role,
-          workspaceSnapshot: { workspaceId: session.workspaceId, revision: run.workspaceSnapshot.revision },
+          workspaceSnapshot: { workspaceId: runWorkspaceId, revision: run.workspaceSnapshot.revision },
           permissions, budget: run.budget, selectedTaskInputs, materialBasis: hostConfig.materialBasis,
           materialAccessRefs: [], additionalMaterialRefs, deliveryRefs: [], sourceRefs,
           contextAssembly: assembly,
@@ -804,7 +811,7 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       }
       const bundleRef = stored.value.ref;
       const envelope: TaskEnvelopeV1 = {
-        schemaVersion: 1, envelopeId: deps.newId(), projectId: claim.task.projectId, workspaceId: session.workspaceId,
+        schemaVersion: 1, envelopeId: deps.newId(), projectId: claim.task.projectId, workspaceId: runWorkspaceId,
         goalId: claim.task.goalId, taskId: claim.task.taskId, runRef, attemptRef: claim.attemptRef, planRef: claim.planRef,
         roleBinding: run.roleBinding, workspaceSnapshot: manifest.workspaceSnapshot, permissions, budget: run.budget,
         sourceRefs, bundleRef,

@@ -7,6 +7,7 @@ import type { GoalRef, GoalSnapshot } from '../../contracts/ledger.js';
 import { sameJson as sameCanonical } from '../../contracts/fingerprint.js';
 import type { PickBasisV1 } from '../../contracts/pick-basis.js';
 import type { RoleLineDutyV1, RoleScopeV1 } from '../../contracts/role-lines.js';
+import { isRoleLineOpenDuty } from '../../contracts/role-lines.js';
 import type { SessionActivityReadPort } from '../../core/work-graph/model/session-activity-contracts.js';
 import type { RoleLineAllocationReadPort, SessionCard, SessionDirectoryPort } from '../../core/work-graph/model/session-contracts.js';
 import type { SessionFactsPort } from '../../core/work-graph/model/session-facts-contracts.js';
@@ -19,6 +20,7 @@ import { plainSessionRefKey } from '../../core/work-graph/sessions/session-recor
 import { latestActivityAt } from '../../core/work-graph/tasks/line-clock.js';
 import { comparePickCandidates, pickBasisRank, type PickCandidateV1 } from './pick-ranking.js';
 import type { Binding, Owned } from './workflow.js';
+import type { SessionDutyResolver } from './ports.js';
 
 export type SessionChoice =
   | { kind: 'reuse'; card: SessionCard }
@@ -73,6 +75,8 @@ export function createSessionChooser(deps: {
     tooLong(ctx: CoreCallContext, session: SessionRef): Promise<ReadResult<{ tooLong: boolean }>>;
   };
   pick?: PickReadsV1;
+  /** Reuses the platform's duty resolver; a project-level line is admitted by duty, never by role name. */
+  sessionDuty?: SessionDutyResolver;
 }) {
   /**
    * Rule 7: a readonly copy, an archive-requested or a waiting Session is never
@@ -87,7 +91,9 @@ export function createSessionChooser(deps: {
     }
     if (deps.sessionFacts !== undefined) {
       try {
-        const facts = await deps.sessionFacts.readSessionFacts(ctx, {
+        const factsCtx = record.workspaceId === ctx.workspaceId
+          ? ctx : { ...ctx, workspaceId: record.workspaceId };
+        const facts = await deps.sessionFacts.readSessionFacts(factsCtx, {
           projectId: record.ref.projectId, sessionId: record.ref.sessionId,
         });
         if (facts.status === 'not_found') return { excluded: true, incomplete: null };
@@ -104,6 +110,21 @@ export function createSessionChooser(deps: {
 
   async function chooseExcluded(owned: Owned, card: SessionCard): Promise<boolean> {
     return (await exclusionOf(owned.ctx, card)).excluded;
+  }
+
+  /**
+   * Rule W: a line in another workspace is usable only when it holds a
+   * project-level duty (the four lines of book :278-:280); members and
+   * executors never cross. A line in the Goal's workspace keeps the plain
+   * workspace rule.
+   */
+  async function projectReusable(owned: Owned, card: SessionCard, binding: Binding,
+    workspaceId: string): Promise<boolean> {
+    if (card.record.workspaceId === workspaceId) return roleReusable(card, workspaceId, binding);
+    if (!roleReusable(card, workspaceId, binding, { scope: 'project' })) return false;
+    if (deps.sessionDuty === undefined) return false;
+    const duty = await deps.sessionDuty(card.record.role, owned.ctx);
+    return duty.status === 'ready' && isRoleLineOpenDuty(duty.value);
   }
 
   /**
@@ -148,10 +169,10 @@ export function createSessionChooser(deps: {
             rejection: rejection('unavailable', 'the responsible Session link read is not ready') };
         }
         for (const card of found.value.items) {
-          if (!roleReusable(card, workspaceId, binding, { scope: 'project' })) continue;
           const openResponsible = card.links.some(link => link.ref.relation === 'responsible'
             && link.until === null && targets.some(target => sameCanonical(link.ref.target, target)));
           if (!openResponsible) continue;
+          if (!(await projectReusable(owned, card, binding, workspaceId))) continue;
           if ((await exclusionOf(owned.ctx, card)).excluded) continue;
           return { status: 'found', card };
         }
@@ -366,7 +387,16 @@ export function createSessionChooser(deps: {
 
     const candidates: PickCandidateV1[] = [];
     for (const card of cards) {
-      if (!roleReusable(card, workspaceId, binding)) continue;
+      // Only a card that already answers for this Goal or Task uses the project
+      // variant; every ordinary candidate keeps the workspace rule.
+      const responsibleTask = task !== null && card.links.some(link => link.ref.relation === 'responsible'
+        && link.until === null && sameCanonical(link.ref.target, { kind: 'task', ref: task }));
+      const responsibleGoal = card.links.some(link => link.ref.relation === 'responsible'
+        && link.until === null && sameCanonical(link.ref.target, { kind: 'goal', ref: goal.ref }));
+      const usable = responsibleTask || responsibleGoal
+        ? await projectReusable(owned, card, binding, workspaceId)
+        : roleReusable(card, workspaceId, binding);
+      if (!usable) continue;
       const exclusion = await exclusionOf(owned.ctx, card);
       if (exclusion.incomplete === 'waits') marks.add('waits');
       if (exclusion.excluded) continue;
@@ -381,8 +411,6 @@ export function createSessionChooser(deps: {
         }
       }
       const record = card.record;
-      const responsibleTask = task !== null && card.links.some(link => link.ref.relation === 'responsible'
-        && link.until === null && sameCanonical(link.ref.target, { kind: 'task', ref: task }));
       const responsibleModule = moduleRef !== null
         && card.links.some(link => link.ref.relation === 'responsible' && link.until === null
           && sameCanonical(link.ref.target,

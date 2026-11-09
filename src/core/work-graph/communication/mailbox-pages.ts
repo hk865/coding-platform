@@ -171,20 +171,7 @@ async function readInboxPage(mailbox: MailboxContext, owned: Owned, input: {
   if (page.rawCursor !== undefined && !nonEmpty(page.rawCursor)) {
     return reject('invalid', 'the inbox cursor must be a non-empty string');
   }
-  let decodedCursor: InboxCursorV1 | null = null;
-  if (page.rawCursor !== undefined) {
-    decodedCursor = decodeInboxCursor(page.rawCursor);
-    if (decodedCursor === null) return reject('invalid', 'the inbox cursor is not a valid continuation token');
-    if (decodedCursor.projectId !== owned.projectId || decodedCursor.workspaceId !== owned.workspaceId
-      || canonicalOf(decodedCursor.recipient) !== canonicalOf(recipient)
-      || (decodedCursor.status ?? null) !== (status ?? null)) {
-      return reject('invalid', 'the inbox cursor belongs to another scope, recipient or filter');
-    }
-  }
-  const atLeast = atLeastCursorOf(mailbox, page.rawAtLeast);
-  if (!atLeast.ok) return atLeast.rejection;
-  const after = decodedCursor?.after;
-
+  let messageWorkspaceId = owned.workspaceId;
   let secretary: { round: SecretaryQueryRunV1; reader: SessionRef } | null = null;
   if (owned.principal.kind === 'query_run') {
     const reading = await secretaryReader(mailbox, owned);
@@ -204,6 +191,8 @@ async function readInboxPage(mailbox: MailboxContext, owned: Owned, input: {
     if (sessionRef.projectId !== recipient.projectId || sessionRef.sessionId !== recipient.sessionId) {
       return reject('forbidden', 'a work_run inbox is limited to its own formal Session');
     }
+    // Rule W/M4: the messages and their indexes are in the sending line's workspace; the Run identity stays the Run's.
+    messageWorkspaceId = identity.session.workspaceId;
     callerKey = canonicalOf({ kind: 'work_run', sessionRef, runRef: identity.run.ref }) ?? '';
   } else {
     if (secretary === null) return reject('forbidden', 'the secretary inbox was not resolved');
@@ -213,6 +202,19 @@ async function readInboxPage(mailbox: MailboxContext, owned: Owned, input: {
     callerKey = canonicalOf({ kind: 'query_run', sessionRef: secretary.reader,
       queryRunRef: secretary.round.run }) ?? '';
   }
+  let decodedCursor: InboxCursorV1 | null = null;
+  if (page.rawCursor !== undefined) {
+    decodedCursor = decodeInboxCursor(page.rawCursor);
+    if (decodedCursor === null) return reject('invalid', 'the inbox cursor is not a valid continuation token');
+    if (decodedCursor.projectId !== owned.projectId || decodedCursor.workspaceId !== messageWorkspaceId
+      || canonicalOf(decodedCursor.recipient) !== canonicalOf(recipient)
+      || (decodedCursor.status ?? null) !== (status ?? null)) {
+      return reject('invalid', 'the inbox cursor belongs to another scope, recipient or filter');
+    }
+  }
+  const atLeast = atLeastCursorOf(mailbox, page.rawAtLeast);
+  if (!atLeast.ok) return atLeast.rejection;
+  const after = decodedCursor?.after;
   // Bind the ALREADY-DECODED snapshot to the trusted caller.
   if (decodedCursor !== null && decodedCursor.callerKey !== callerKey) {
     return reject('invalid', 'the inbox cursor does not belong to the current caller');
@@ -222,8 +224,8 @@ async function readInboxPage(mailbox: MailboxContext, owned: Owned, input: {
   const request: RecordLookupRequest = {
     index: filtered ? SESSION_MESSAGE_BY_RECIPIENT_STATUS_LOOKUP : SESSION_MESSAGE_BY_RECIPIENT_LOOKUP,
     values: filtered
-      ? [owned.projectId, owned.workspaceId, recipient.sessionId, status]
-      : [owned.projectId, owned.workspaceId, recipient.sessionId],
+      ? [owned.projectId, messageWorkspaceId, recipient.sessionId, status]
+      : [owned.projectId, messageWorkspaceId, recipient.sessionId],
     limit: page.limit,
     ...(after === undefined ? {} : { after }),
   };
@@ -246,7 +248,7 @@ async function readInboxPage(mailbox: MailboxContext, owned: Owned, input: {
     const candidateRecipient = message.recipient;
     if (sessionMessageRefKey(message.ref) !== record.refKey
       || message.ref.projectId !== owned.projectId
-      || message.ref.workspaceId !== owned.workspaceId
+      || message.ref.workspaceId !== messageWorkspaceId
       || isUserRecipient(candidateRecipient)
       || candidateRecipient.projectId !== owned.projectId
       || candidateRecipient.sessionId !== recipient.sessionId
@@ -263,7 +265,7 @@ async function readInboxPage(mailbox: MailboxContext, owned: Owned, input: {
   const nextCursor = pageResult.value.next === null ? null : encodeInboxCursor({
     v: 1,
     projectId: owned.projectId,
-    workspaceId: owned.workspaceId,
+    workspaceId: messageWorkspaceId,
     recipient,
     status: status ?? null,
     callerKey,
@@ -416,17 +418,9 @@ export async function readOutbox(mailbox: MailboxContext, ctx: CoreCallContext, 
     return { status: 'ready', value: { items, releaseBlocks, cursors, nextCursor, sourceCursor: progress.readThrough } };
   }
 
-  let decodedCursor: OutboxCursorV1 | null = null;
-  if (page.rawCursor !== undefined) {
-    decodedCursor = decodeOutboxCursor(page.rawCursor);
-    if (decodedCursor === null) return reject('invalid', 'the outbox cursor is not a valid continuation token');
-    if (decodedCursor.projectId !== owned.projectId || decodedCursor.workspaceId !== owned.workspaceId
-      || canonicalOf(decodedCursor.senderRun ?? decodedCursor.senderSession) !== canonicalOf(senderRun ?? senderSession)) {
-      return reject('invalid', 'the outbox cursor belongs to another scope or sender Run');
-    }
-  }
-  const after = decodedCursor?.after;
-
+  // Rule W/M4: a Work Run's outbox is its Session's, in the Session's workspace; the Run identity
+  // stays the Run's. Host reads keep the caller's workspace.
+  let messageWorkspaceId = owned.workspaceId;
   let callerKey: string;
   if (owned.principal.kind === 'host') {
     callerKey = canonicalOf({ kind: 'host', actor: { ...owned.principal.actor } }) ?? '';
@@ -437,18 +431,31 @@ export async function readOutbox(mailbox: MailboxContext, ctx: CoreCallContext, 
       : canonicalOf(identity.claim.sessionRef) !== canonicalOf(senderSession)) {
       return reject('forbidden', 'a work_run outbox read is limited to its own Run or Session');
     }
+    messageWorkspaceId = identity.session.workspaceId;
     callerKey = canonicalOf({ kind: 'work_run', sessionRef: identity.claim.sessionRef, runRef: identity.run.ref }) ?? '';
   } else {
     return reject('forbidden', 'the mailbox reader principal is not supported');
   }
+
+  let decodedCursor: OutboxCursorV1 | null = null;
+  if (page.rawCursor !== undefined) {
+    decodedCursor = decodeOutboxCursor(page.rawCursor);
+    if (decodedCursor === null) return reject('invalid', 'the outbox cursor is not a valid continuation token');
+    if (decodedCursor.projectId !== owned.projectId || decodedCursor.workspaceId !== messageWorkspaceId
+      || canonicalOf(decodedCursor.senderRun ?? decodedCursor.senderSession) !== canonicalOf(senderRun ?? senderSession)) {
+      return reject('invalid', 'the outbox cursor belongs to another scope or sender Run');
+    }
+  }
+  const after = decodedCursor?.after;
+
   if (decodedCursor !== null && decodedCursor.callerKey !== callerKey) {
     return reject('invalid', 'the outbox cursor does not belong to the current caller');
   }
 
   const request: RecordLookupRequest = {
     index: senderRun === undefined ? SESSION_MESSAGE_BY_SENDER_SESSION_LOOKUP : SESSION_MESSAGE_BY_SENDER_RUN_LOOKUP,
-    values: senderRun === undefined ? [owned.projectId, owned.workspaceId, senderSession!.sessionId]
-      : [owned.projectId, owned.workspaceId, senderRun.goalId, senderRun.runId],
+    values: senderRun === undefined ? [owned.projectId, messageWorkspaceId, senderSession!.sessionId]
+      : [owned.projectId, messageWorkspaceId, senderRun.goalId, senderRun.runId],
     limit: page.limit,
     ...(after === undefined ? {} : { after }),
   };
@@ -469,7 +476,7 @@ export async function readOutbox(mailbox: MailboxContext, ctx: CoreCallContext, 
     if (decoded.status !== 'decoded') return reject('unavailable', `an outbox candidate is damaged: ${decoded.reason}`);
     const message = decoded.value;
     if (sessionMessageRefKey(message.ref) !== record.refKey || message.ref.projectId !== owned.projectId
-      || message.ref.workspaceId !== owned.workspaceId) return reject('unavailable', 'an outbox candidate disagrees with the requested sender Run');
+      || message.ref.workspaceId !== messageWorkspaceId) return reject('unavailable', 'an outbox candidate disagrees with the requested sender Run');
     const since = decodeNoticeOrigin(record);
     if (since.status !== 'decoded' || since.value.since === undefined) {
       return reject('unavailable', 'an outbox candidate has no commit origin');
@@ -492,7 +499,7 @@ export async function readOutbox(mailbox: MailboxContext, ctx: CoreCallContext, 
   const nextCursor = pageResult.value.next === null ? null : encodeOutboxCursor({
     v: 1,
     projectId: owned.projectId,
-    workspaceId: owned.workspaceId,
+    workspaceId: messageWorkspaceId,
     ...(senderRun === undefined ? { senderSession: senderSession! } : { senderRun }),
     callerKey,
     after: pageResult.value.next,
@@ -508,11 +515,12 @@ export async function readOutbox(mailbox: MailboxContext, ctx: CoreCallContext, 
 
 // ---- readRoutedReplies / readUndeliveredReplies (slice 1 §2.5) ----------
 
-/** A work_run reads only its own Session; a Host reads within its workspace. */
+/** A work_run reads only its own Session, in that Session's workspace; a Host reads within its workspace. */
 async function replyCallerKey(mailbox: MailboxContext, owned: Owned, session: SessionRef, what: string):
-Promise<{ ok: true; key: string } | { ok: false; rejection: CoreRejection }> {
+Promise<{ ok: true; key: string; workspaceId: string } | { ok: false; rejection: CoreRejection }> {
   if (owned.principal.kind === 'host') {
-    return { ok: true, key: canonicalOf({ kind: 'host', actor: { ...owned.principal.actor } }) ?? '' };
+    return { ok: true, key: canonicalOf({ kind: 'host', actor: { ...owned.principal.actor } }) ?? '',
+      workspaceId: owned.workspaceId };
   }
   if (owned.principal.kind === 'work_run') {
     const identity = await readWorkRunIdentity(mailbox, owned, owned.principal, owned.principal.runRef);
@@ -520,7 +528,8 @@ Promise<{ ok: true; key: string } | { ok: false; rejection: CoreRejection }> {
     if (canonicalOf(identity.claim.sessionRef) !== canonicalOf(session)) {
       return { ok: false, rejection: reject('forbidden', `a work_run ${what} read is limited to its own Session`) };
     }
-    return { ok: true, key: canonicalOf({ kind: 'work_run', sessionRef: identity.claim.sessionRef, runRef: identity.run.ref }) ?? '' };
+    return { ok: true, key: canonicalOf({ kind: 'work_run', sessionRef: identity.claim.sessionRef, runRef: identity.run.ref }) ?? '',
+      workspaceId: identity.session.workspaceId };
   }
   return { ok: false, rejection: reject('forbidden', 'the mailbox reader principal is not supported') };
 }
@@ -555,7 +564,7 @@ export async function readRoutedReplies(
     decodedCursor = decodeReplyCursor(page.rawCursor);
     if (decodedCursor === null) return reject('invalid', 'the reply cursor is not a valid continuation token');
     if (decodedCursor.kind !== 'routed' || decodedCursor.projectId !== owned.projectId
-      || decodedCursor.workspaceId !== owned.workspaceId || decodedCursor.sessionId !== handler.sessionId) {
+      || decodedCursor.workspaceId !== caller.workspaceId || decodedCursor.sessionId !== handler.sessionId) {
       return reject('invalid', 'the reply cursor belongs to another scope or handler');
     }
   }
@@ -567,7 +576,7 @@ export async function readRoutedReplies(
   const after = decodedCursor?.after;
   const request: RecordLookupRequest = {
     index: SESSION_REPLY_BY_HANDLER_LOOKUP,
-    values: [owned.projectId, owned.workspaceId, handler.sessionId],
+    values: [owned.projectId, caller.workspaceId, handler.sessionId],
     limit: page.limit,
     ...(after === undefined ? {} : { after }),
   };
@@ -588,14 +597,14 @@ export async function readRoutedReplies(
     const message = decoded.value;
     const handlerRef = message.replyHandler ?? null;
     if (sessionMessageRefKey(message.ref) !== record.refKey
-      || message.ref.projectId !== owned.projectId || message.ref.workspaceId !== owned.workspaceId
+      || message.ref.projectId !== owned.projectId || message.ref.workspaceId !== caller.workspaceId
       || handlerRef === null || canonicalOf(handlerRef.sessionRef) !== canonicalOf(handler)) {
       return reject('unavailable', 'a routed-reply candidate disagrees with the requested handler');
     }
     items.push(message);
   }
   const nextCursor = pageResult.value.next === null ? null : encodeReplyCursor({
-    v: 1, kind: 'routed', projectId: owned.projectId, workspaceId: owned.workspaceId,
+    v: 1, kind: 'routed', projectId: owned.projectId, workspaceId: caller.workspaceId,
     sessionId: handler.sessionId, callerKey: caller.key, after: pageResult.value.next,
   });
   return { status: 'ready', value: { items, nextCursor, sourceCursor: readThrough } };

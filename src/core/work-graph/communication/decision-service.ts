@@ -258,9 +258,6 @@ export function createDecisionMessageService(
     if (session.ref.projectId !== sessionRef['projectId'] || session.ref.sessionId !== sessionRef['sessionId']) {
       return rejectedWithCurrent('unavailable', 'the caller Run claim Session mapping changed');
     }
-    if (session.workspaceId !== claim.workspaceId) {
-      return rejectedWithCurrent('forbidden', 'the caller Run claim Session is scoped to another workspace');
-    }
     return null;
   }
 

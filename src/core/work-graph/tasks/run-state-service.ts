@@ -255,7 +255,6 @@ function verifyChain(
     if (session === undefined) return unavailable('the claim Session record is unavailable');
     if (refKeyOf(session.ref) !== requested.sessionKey) return unavailable('the Session ref is not the claimed key');
     if (session.ref.projectId !== requested.projectId) return unavailable('the Session belongs to another project');
-    if (session.workspaceId !== outbox.claim.workspaceId) return unavailable('the Session workspace disagrees with the claim');
   }
   if (lease !== null && refKeyOf(lease.ref) !== requested.leaseKey) return unavailable('the Lease ref is not the claimed key');
   return null;
@@ -407,11 +406,11 @@ async function readTaskPendingAnchors(
 export function createRunStateReader(deps: ExecutionReadDependencies):
 ExecutionReadPort & Required<Pick<ExecutionReadPort, 'listExecutions'>> {
   const records = deps.records;
-  const readExecution = async (ctx: CoreCallContext, ref: RunRef,
-    options?: { atLeastCursor?: CommitCursor }): Promise<ReadResult<TaskExecutionRecord>> => {
+  const readExecution: ExecutionReadPort['readExecution'] = async (ctx, ref, options) => {
       const owned = ownCallContext(ctx);
       if (!owned.ok) return owned.rejection;
       const scope = owned.ctx;
+      const readScope = options?.scope ?? 'workspace';
       const atLeast = options?.atLeastCursor;
       // Reuse the ledger cursor parser for strict validation BEFORE any store read.
       let atLeastSeq: number | undefined;
@@ -512,8 +511,10 @@ ExecutionReadPort & Required<Pick<ExecutionReadPort, 'listExecutions'>> {
         const finalSessionKey = plainSessionRefKey(finalOutbox.claim.sessionRef);
         if (sessionKey === undefined || finalSessionKey !== sessionKey) continue;
 
-        // A self-consistent Host outside the claim workspace is out of scope.
-        if (finalOutbox.claim.workspaceId !== scope.workspaceId) {
+        // A self-consistent Host outside the claim workspace is out of scope. The
+        // project-level read (`readSession`'s `'project'` shape) skips only this
+        // comparison: the project and the trusted Host checks stay.
+        if (readScope !== 'project' && finalOutbox.claim.workspaceId !== scope.workspaceId) {
           return forbidden('the claim belongs to another workspace');
         }
         // Missing claim-linked records are incomplete, never fabricated absence.

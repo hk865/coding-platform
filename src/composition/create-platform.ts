@@ -877,7 +877,7 @@ function createPreClaimAuthorization(
     async check(ctx, input) {
       let card;
       try {
-        card = await sessions.readSession(ctx, input.session);
+        card = await sessions.readSession(ctx, input.session, 'project');
       } catch (error) {
         return { verdict: 'unavailable', reason: messageOf(error) };
       }
@@ -908,8 +908,8 @@ function createPreClaimAuthorization(
       }
       let configured;
       try {
-        // The same scope/Role binding lookup preparation uses, with no Run.
-        configured = await resolveRole(ctx, { role: card.value.record.role });
+        // The same scope/Role binding lookup preparation uses, with no Run; the Host binding is the line's.
+        configured = await resolveRole(card.value.record.workspaceId === ctx.workspaceId ? ctx : { ...ctx, workspaceId: card.value.record.workspaceId }, { role: card.value.record.role });
       } catch (error) {
         return { verdict: 'unavailable', reason: messageOf(error) };
       }

@@ -750,8 +750,13 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
     sessionRef: SessionRef,
     taskTriple: TaskTriple,
     consumedWait: ClaimTaskInput['consumedWait'],
+    sessionWorkspaceId: string,
   ): Promise<{ rejection: CoreRejection } | { guards: readonly RecordGuard[] }> {
-    const factsRead = await sessionFactsService.readSessionFacts(ctx, sessionRef);
+    // The Session record and its wait/reply indexes live in the line's
+    // workspace, which may differ from the claim's (the Run's) workspace.
+    const factsCtx = sessionWorkspaceId === ctx.workspaceId
+      ? ctx : { ...ctx, workspaceId: sessionWorkspaceId };
+    const factsRead = await sessionFactsService.readSessionFacts(factsCtx, sessionRef);
     if (factsRead.status !== 'ready') {
       if (factsRead.status === 'not_found') return { rejection: reject('not_found', 'the target Session does not exist') };
       if (factsRead.status === 'not_ready') return { rejection: incomplete('the Session facts are not readable at the required watermark') };
@@ -1182,7 +1187,8 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
     // archive request and a Work wait here, not only in `chooseSession`. The ONE
     // consumed-wait exception must name exactly this Task/Run/message.
     const dispatchTask: TaskTriple = { projectId: scope.projectId, goalId: input.goalRef.goalId, taskId: input.taskId };
-    const dispatch = await claimDispatchProblem(scopeCtx, input.sessionRef, dispatchTask, consumedWait);
+    const dispatch = await claimDispatchProblem(scopeCtx, input.sessionRef, dispatchTask, consumedWait,
+      target?.workspaceId ?? scope.workspaceId);
     if ('rejection' in dispatch) return dispatch.rejection;
     const dispatchGuards = dispatch.guards;
     if (consumedWait !== undefined) {
@@ -1206,7 +1212,9 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
         ? { kind: 'wait_reply',
             responseRefMatches: savedMessage !== null && savedMessage.response !== null
               && sameRef(savedMessage.response.bodyRef, consumedWait.responseRef),
-            sameWorkspace: savedMessage !== null && savedMessage.ref.workspaceId === scope.workspaceId,
+            // Rule W/M4: the wait message is in the claim Session's workspace, not the Run's.
+            sameWorkspace: savedMessage !== null
+              && savedMessage.ref.workspaceId === (target?.workspaceId ?? scope.workspaceId),
             consumed }
         : consumedWait.kind === 'expiry' ? { kind: 'expiry', consumed } : { kind: 'intervention' };
       const reply = messageSatisfiesWait(messageMachineStateOf(savedMessage), waitFacts);

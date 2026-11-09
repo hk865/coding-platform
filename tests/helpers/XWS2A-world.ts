@@ -17,24 +17,32 @@ import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { WorkspaceScope } from '../../src/contracts/core/identity.js';
 import type { OperationRef } from '../../src/contracts/core/operations.js';
 import type { QueryJobRef } from '../../src/contracts/query-job.js';
+import type { RunRef, TaskTriple } from '../../src/contracts/dispatch.js';
+import type { GoalRef } from '../../src/contracts/ledger.js';
+import type { NoteAnchorV1 } from '../../src/contracts/note.js';
+import type { WorkflowAdvanceInput, WorkflowAdvanceResult } from '../../src/business/workflow/contracts.js';
 import type { ArchitectureRevision } from '../../src/core/work-graph/architecture/catalog-contracts.js';
 import type { DecisionCardV1 } from '../../src/core/work-graph/model/decision-contracts.js';
+import type { TaskExecutionRecord } from '../../src/core/work-graph/model/execution-read-contracts.js';
+import type { NoteItemV1 } from '../../src/core/work-graph/model/note-contracts.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { QueryJobRecord } from '../../src/core/work-graph/queries/contracts.js';
 import type { RoleLineReadV1 } from '../../src/core/work-graph/views/role-line-read.js';
 import type { RoleLineOperationReadV1 } from '../../src/core/work-graph/views/role-line-operations-read.js';
 import { roleExplorationQuestion } from '../../src/core/work-graph/state/role-exploration.js';
-import { graphWrite, plain } from './AG2b-collaboration-fixture.js';
+import { ag2bPlanDraft, graphWrite, plain } from './AG2b-collaboration-fixture.js';
 import { readQuery } from './A2-restart-fixture.js';
 import { commitBarrier, type CommitHold } from './S6A-commit-barrier.js';
+import { s6aCardsWorkspace, type S6ACardsWorkspace } from './S6A-cards-fixture.js';
 import { readBody } from './IV-host-fixture.js';
+import { PL_ADVISER_ROLE } from './PL-consumption-fixture.js';
 import { readyValue } from './S6A-memory-fixture.js';
-import { S6A_SCOPE, type S6ABackend, type S6ASession } from './S6A-request-fixture.js';
+import { S6A_SCOPE, type S6ABackend, type S6ARequestWorld, type S6ASession } from './S6A-request-fixture.js';
 import type { S6AReply } from './S6A-host-fixture.js';
 import { valueOf } from './S6B3-fixture.js';
 import { queryJobRefOfRun } from './S7D2-coldstart-world.js';
 import {
-  addS7D2SecondWorkspace, adviserWorkOf, openS7D2RoleLineWorld, readS7D2Operations,
+  addS7D2SecondWorkspace, adviserWorkOf, openS7D2RoleLineWorld, readS7D2Operations, S7D2_MODULE_IDS,
   type S7D2RoleLineWorld, type S7D2SecondWorkspace,
 } from './S7D2-role-line-world.js';
 import { waitFor } from '../scenarios/harness.js';
@@ -77,6 +85,11 @@ export type XWS2AWorld = {
   scriptRegionProposal(): Promise<S6ASession>;
   waitProposals(): Promise<XWS2AJoinRow>;
   query(ref: QueryJobRef): Promise<QueryJobRecord>;
+  /** `notes/list` of the main workspace on one anchor (the `{ anchor, limit: 100, cursor: null }` read). */
+  notes(anchor: NoteAnchorV1): Promise<NoteItemV1[]>;
+  /** The one A2 work entry: adopt the Task, O4a-assign the Goal to the main adviser, script the line, drive in ws2. */
+  workRun(input: { label: string; replies: readonly S6AReply[] }):
+    Promise<{ run: RunRef; task: TaskTriple; line: S6ASession }>;
   inbox(line: S6ASession | { readonly ref: S6ASession['ref'] }): Promise<SessionMessage[]>;
   messageText(message: SessionMessage): Promise<string>;
   operations(scope?: WorkspaceScope): Promise<readonly RoleLineOperationReadV1[]>;
@@ -89,19 +102,25 @@ export type XWS2AWorld = {
   close(): Promise<void>;
 };
 
-const ADVISER_TOOLS = ['read', 'send_session_message', 'create_member', 'look_graph', 'find_graph',
-  'read_requests', 'record_note', 'propose_architecture_revision'] as const;
+const ADVISER_TOOLS = ['read', 'send_session_message', 'respond_session_message', 'read_session_inbox',
+  'read_session_message', 'read_session_message_body', 'ack_session_message', 'withdraw_session_message',
+  'create_member', 'look_graph', 'find_graph', 'read_requests', 'record_note',
+  'propose_architecture_revision'] as const;
 
 function moduleOf(moduleId: string, path: string): ModuleDefinition {
   return { ref: { projectId: S6A_SCOPE.projectId, moduleId }, name: moduleId,
     responsibility: `XWS2A ${moduleId}`, paths: [path], interfaces: [] };
 }
 
-function coarseProposal(baseCatalogPin: ArchitectureCatalogPinV1): S6AReply {
-  return { kind: 'calls', calls: [{ callId: 'xws2a-coarse', name: 'propose_architecture_revision', args: {
-    baseCatalogPin, ops: [{ op: 'add_module', module: moduleOf(XWS2A_MODULE_ID, XWS2A_MODULE_RAW_PATH) }],
-    responsibilityMoves: [], reason: 'XWS2A: the second workspace coarse split',
-  } }] };
+function coarseProposal(baseCatalogPin: ArchitectureCatalogPinV1, coarseNote: boolean): S6AReply {
+  const calls: Array<{ callId: string; name: string; args: Record<string, unknown> }> = [
+    { callId: 'xws2a-coarse', name: 'propose_architecture_revision', args: {
+      baseCatalogPin, ops: [{ op: 'add_module', module: moduleOf(XWS2A_MODULE_ID, XWS2A_MODULE_RAW_PATH) }],
+      responsibilityMoves: [], reason: 'XWS2A: the second workspace coarse split',
+    } },
+  ];
+  if (coarseNote) calls.push(joinNote);
+  return { kind: 'calls', calls };
 }
 
 async function xws2aCurrentPin(base: Pick<S7D2RoleLineWorld, 'world' | 'main'>): Promise<ArchitectureCatalogPinV1> {
@@ -119,6 +138,81 @@ async function rootOf(base: Pick<S7D2RoleLineWorld, 'world'>, scope: WorkspaceSc
   return root;
 }
 
+/** The join exploration's one `record_note` call: a decision on the project's existing region module. */
+const joinNote = {
+  callId: 'xws2a-join-note', name: 'record_note', args: {
+    op: 'write', kind: 'decision', topic: 'xws2a-join-note',
+    conclusion: 'XA-14: the join exploration wrote this note', body: 'XA-14',
+    anchor: { kind: 'module', moduleId: S7D2_MODULE_IDS.region }, extraAnchors: [],
+    structural: false, replaces: [], expectedPointerRevision: null,
+  } as Record<string, unknown>,
+};
+
+/**
+ * One `record_note` call; XA-10 uses ten of these. A general kind (`decision`) is the kind a Work Run's adviser may
+ * write on a file anchor (`contracts/note.ts:51–52`); the accepted join note on the region module shares the extra
+ * anchor, and the contradiction makes the agent write `pending_review` (`state/note-machine.ts:73`, `:76–78`) with no
+ * live user reason, so the scribe's to-do counts it (`state/note-machine.ts:231–234`).
+ */
+export const noteCall = (index: number, contradicts: readonly string[] = []):
+{ callId: string; name: string; args: Record<string, unknown> } => ({
+  callId: `xws2a-note-${String(index)}`, name: 'record_note', args: {
+    op: 'write', kind: 'decision', topic: `xws2a-reminder-${String(index)}`,
+    conclusion: `XWS2A reminder note ${String(index)}`, body: `XWS2A reminder note ${String(index)}`,
+    anchor: { kind: 'file', path: `src/note-${String(index)}.ts` },
+    extraAnchors: [{ kind: 'module', moduleId: S7D2_MODULE_IDS.region }],
+    structural: false, replaces: [], contradicts: [...contradicts], coexistWith: [],
+    expectedPointerRevision: null,
+  } as Record<string, unknown>,
+});
+
+/** `executions/read` of one Run through the SECOND workspace's own route (M5). */
+export async function readRun(world: XWS2AWorld, run: RunRef): Promise<TaskExecutionRecord> {
+  return valueOf<TaskExecutionRecord>((await world.second.workspace.route('executions/read', run)),
+    'ready', 'the Run');
+}
+
+/**
+ * One adviser/executor Task on the second workspace's Goal, adopted through the public `plans/propose`/`plans/apply`
+ * in that workspace's own trusted context. `second` is the `S6ACardsWorkspace` handle of the workspace that owns the
+ * Goal; the `role` names the Task's assignment (the adviser template by default, the Work role for XA-16).
+ */
+export async function adoptSecondPlan(base: Pick<S6ARequestWorld, 'dispatch'>,
+  second: S6ACardsWorkspace, goal: GoalRef,
+  label: string, role = PL_ADVISER_ROLE.templateId): Promise<{ taskId: string }> {
+  const taskId = `xws2a-${label}`;
+  const ctx = second.humanContext();
+  const draft = { ...ag2bPlanDraft([taskId]), planId: `xws2a-plan-${label}`, goalId: goal.goalId,
+    assignments: [{ taskId, role, instruction: `XWS2A ${label}` }] };
+  const proposed = valueOf<{ ref: unknown; revision: number }>(await base.dispatch('plans/propose', ctx,
+    graphWrite(second.scope, { goalRef: goal, basedOn: null, draft,
+      reason: { text: `XWS2A plan ${label}`, sources: [] } }, `xws2a-plan-${label}-propose`)),
+  'committed', `the XWS2A plan ${label}`);
+  valueOf<unknown>(await base.dispatch('plans/apply', ctx, graphWrite(second.scope, {
+    proposalRef: proposed.ref, expectedProposalRevision: proposed.revision, decisionRefs: [],
+  }, `xws2a-plan-${label}-apply`)), 'committed', `the adoption of ${label}`);
+  return { taskId };
+}
+
+/**
+ * One Workflow drive in the second workspace's own scope: its Goal and Run live there while the chosen line stays in
+ * the main workspace, so the main scope's `workflow/advance` would refuse the call. Stops before the Run's checks.
+ */
+export async function driveSecondWorkflow(second: S6ACardsWorkspace, input: WorkflowAdvanceInput,
+  stopBefore: string): Promise<string | null> {
+  let current = input;
+  let waiting: string | null = null;
+  for (let guard = 0; guard < 32; guard += 1) {
+    const result = await second.route('workflow/advance', current) as WorkflowAdvanceResult;
+    if (result.status !== 'ready') throw new Error(`XWS2A: the Workflow call was not ready: ${JSON.stringify(result)}`);
+    waiting = result.value.state === 'waiting' ? result.value.reason : null;
+    if (result.value.state === 'completed' || result.value.next === null) return waiting;
+    current = result.value.next;
+    if (current.kind === 'perform' && current.operation.kind === stopBefore) return waiting;
+  }
+  throw new Error('XWS2A: the Workflow did not settle');
+}
+
 /** Open the world and start its one join: the second workspace is born in the registration commit. */
 export async function openXWS2AWorld(options: {
   backend: S6ABackend;
@@ -127,6 +221,8 @@ export async function openXWS2AWorld(options: {
   mainFiles?: Readonly<Record<string, string>>;
   /** Writes into the second root after it opens. */
   secondFiles?: Readonly<Record<string, string>>;
+  /** Adds the join's one `record_note` call to the default coarse reply (XA-14's world). */
+  coarseNote?: boolean;
 }): Promise<XWS2AWorld> {
   const base = await openS7D2RoleLineWorld({ backend: options.backend,
     extraBindings: [adviserWorkOf([...ADVISER_TOOLS], true)],
@@ -139,7 +235,8 @@ export async function openXWS2AWorld(options: {
       await writeFile(target, text);
     }
     // The coarse proposal's base pin is the project's current pin, which is also the join's first-drive pin.
-    await base.world.scripted.script(base.lines.adviser, [coarseProposal(await xws2aCurrentPin(base)),
+    await base.world.scripted.script(base.lines.adviser, [coarseProposal(await xws2aCurrentPin(base),
+      options.coarseNote === true),
       { kind: 'text', text: 'XWS2A: the coarse split is proposed' }]);
     second = await addS7D2SecondWorkspace(base.world, 'xws2a-second');
     const root = await rootOf(base, second.scope);
@@ -225,6 +322,42 @@ export async function openXWS2AWorld(options: {
         // start's in the main one. Read each through its own workspace's public route.
         if (ref.workspaceId === S6A_SCOPE.workspaceId) return await readQuery(base.world.ag2b, ref);
         return readyValue<QueryJobRecord>(await secondWorkspace.workspace.route('queries/read', ref), 'the Query');
+      },
+      async notes(anchor) {
+        return valueOf<{ items: NoteItemV1[] }>((await base.world.post('notes/list',
+          plain(S6A_SCOPE, { anchor, limit: 100, cursor: null }))).body, 'ready',
+        `the notes on the ${anchor.kind} anchor`).items;
+      },
+      async workRun(input) {
+        const { taskId } = await adoptSecondPlan(base.world, secondWorkspace.workspace, secondWorkspace.goal, input.label);
+        const task: TaskTriple = { projectId: secondWorkspace.scope.projectId,
+          goalId: secondWorkspace.goal.goalId, taskId };
+        const adviser = base.lines.adviser;
+        // O4a's one assignment: the person assigns the second workspace's Goal to the main workspace adviser; the
+        // allocation writes the open responsible link (no sessions/create or sessions/link in the test).
+        const queue = valueOf<{ revision: number }>(await base.main.route('goals/adviser-queue', {}), 'ready',
+          'the Goal adviser queue');
+        const assigned = await base.world.post('goals/adviser-queue/assign', graphWrite(S6A_SCOPE, {
+          goalRef: secondWorkspace.goal, adviser: adviser.ref, expectedRevision: queue.revision,
+        }, `xws2a-assign-${input.label}`));
+        if ((assigned.body as { status?: string }).status !== 'committed') {
+          throw new Error(`XWS2A: the Goal assignment did not commit: ${JSON.stringify(assigned.body)}`);
+        }
+        await waitFor(async () => (await base.world.readSession(adviser.ref)).links,
+          links => links.some(link => link.until === null && link.ref.relation === 'responsible'
+            && link.ref.target.kind === 'goal' && link.ref.target.ref.goalId === secondWorkspace.goal.goalId),
+          'the main adviser Goal responsibility link');
+        await base.world.scripted.script(adviser, input.replies);
+        const waiting = await driveSecondWorkflow(secondWorkspace.workspace, { schemaVersion: 1,
+          goalRef: secondWorkspace.goal, flowId: `xws2a-${input.label}`, sessionHint: null, kind: 'select_work', taskId },
+        'open_checks');
+        if (await base.world.scripted.pending(adviser) !== 0) {
+          throw new Error(`XWS2A: the Work Run ${input.label} waits: ${waiting ?? 'no Work Run started'}`);
+        }
+        // M5: the Task graph read through the second workspace's own `tasks/query` (the Host workspace check).
+        const run = await secondWorkspace.workspace.taskRun(secondWorkspace.goal, task.taskId);
+        if (run === null) throw new Error(`XWS2A: the ${input.label} Run is not readable`);
+        return { run, task, line: adviser };
       },
       async inbox(line) {
         return valueOf<{ items: SessionMessage[] }>((await base.world.post('messages/inbox',

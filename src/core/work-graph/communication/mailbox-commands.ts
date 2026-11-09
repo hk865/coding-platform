@@ -9,6 +9,7 @@ import type { RecordGuard } from '../../record-store/ports.js';
 import type { MessageSender, SessionMessage, SessionMessageRespondInputV1 } from '../model/communication-contracts.js';
 import type { SessionMessageCommitCompanions, SessionMessageWriteCommandV1 } from '../model/decision-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
+import type { TaskExecutionRecord } from '../model/execution-read-contracts.js';
 import type { WriteCommand } from '../persistence/command-executor.js';
 import type { MessageGuardContext } from '../state/message-machine.js';
 import type { MailboxContext, Unknown, WithdrawFacts, WithdrawDecision, ReleaseFacts, ReleaseDecision, Owned, QueryAnswerFacts } from './mailbox-types.js';
@@ -24,7 +25,7 @@ import { sessionStoreFailureToRejection } from '../persistence/read-result-failu
 import { SESSION_MESSAGE_MAX_TEXT_BYTES } from '../sessions/message-record-codecs.js';
 import { effectiveReplyHandler, inputObserverProblem, nextSessionMessageRecord, waitFactsOfRecord } from '../state/message-machine.js';
 import { ownsInbox } from './mailbox-access.js';
-import { isUserRecipient, mapReadResult, isolatedContext, ownContext, ownWrite, normalizeText, normalizeMessageRef, scopeOfMessageRef, guardRejection, principalRefusal, pinsOf, judge, refusalOf, sameSessionRefAs, senderIdentityOf, identityKeyOf, fingerprintOf, eventIdOf, loadMessage, loadMessageForWrite, acceptedMessage } from './mailbox-common.js';
+import { isUserRecipient, mapReadResult, internalHostContext, ownContext, ownWrite, normalizeText, normalizeMessageRef, scopeOfMessageRef, guardRejection, principalRefusal, pinsOf, judge, refusalOf, sameSessionRefAs, senderIdentityOf, identityKeyOf, fingerprintOf, eventIdOf, loadMessage, loadMessageForWrite, acceptedMessage } from './mailbox-common.js';
 import { readFreshWorkRunFacts, readWorkRunIdentity, deriveWorkRunSender, authorizeNewWorkRunAction, loadQueryRun, readQueryAnswerFacts, resolveSecretaryRound, interventionSourceFormallyEnded } from './mailbox-identity.js';
 import { replayMessage, refuse, writeMessage, prepareSessionMessage, releaseDecidedChange, messageWriteResult, withdrawnResult, releaseDecidedResult } from './mailbox-write.js';
 
@@ -41,13 +42,14 @@ export async function ackMessage(mailbox: MailboxContext, ctx: CoreCallContext, 
   if (!isObject(raw)) return reject('invalid', 'ackMessage requires an input object');
   const normalized = normalizeMessageRef(raw['messageRef']);
   if (!normalized.ok) return reject('invalid', normalized.reason);
-  const scopeProblem = scopeOfMessageRef(owned, normalized.ref);
+  const identity = await readWorkRunIdentity(mailbox, owned, owned.principal, owned.principal.runRef);
+  if (!identity.ok) return identity.rejection;
+  // Rule W/M4: the message is in the sending line's workspace; the Run identity stays the Run's.
+  const scopeProblem = scopeOfMessageRef(owned, normalized.ref, identity.session.workspaceId);
   if (scopeProblem !== null) return scopeProblem;
   const pins = pinsOf(write.expected, normalized.ref);
   if (!pins.ok) return pins.rejection;
 
-  const identity = await readWorkRunIdentity(mailbox, owned, owned.principal, owned.principal.runRef);
-  if (!identity.ok) return identity.rejection;
   const derived = deriveWorkRunSender(mailbox, identity);
   if (!derived.ok) return derived.rejection;
   const sender = derived.sender;
@@ -112,7 +114,10 @@ export async function respondMessage(mailbox: MailboxContext, ctx: CoreCallConte
   const arm = 'reject' in value
     ? { reject: true as const, reason: value.reason }
     : { text: value.text };
-  const scopeProblem = scopeOfMessageRef(owned, messageRef);
+  const identity = await readWorkRunIdentity(mailbox, owned, owned.principal, owned.principal.runRef);
+  if (!identity.ok) return identity.rejection;
+  // Rule W/M4: the message is in the sending line's workspace; the Run identity stays the Run's.
+  const scopeProblem = scopeOfMessageRef(owned, messageRef, identity.session.workspaceId);
   if (scopeProblem !== null) return scopeProblem;
   const pins = pinsOf(write.expected, messageRef);
   if (!pins.ok) return pins.rejection;
@@ -120,8 +125,6 @@ export async function respondMessage(mailbox: MailboxContext, ctx: CoreCallConte
   const saved = normalizeText(arm.reject === true ? arm.reason : arm.text, SESSION_MESSAGE_MAX_TEXT_BYTES);
   if (!saved.ok) return saved.rejection;
 
-  const identity = await readWorkRunIdentity(mailbox, owned, owned.principal, owned.principal.runRef);
-  if (!identity.ok) return identity.rejection;
   const derived = deriveWorkRunSender(mailbox, identity);
   if (!derived.ok) return derived.rejection;
   const sender = derived.sender;
@@ -331,8 +334,6 @@ export async function recordInputAccepted(mailbox: MailboxContext,
 
   const normalized = normalizeMessageRef(raw['messageRef']);
   if (!normalized.ok) return reject('invalid', normalized.reason);
-  const scopeProblem = scopeOfMessageRef(owned, normalized.ref);
-  if (scopeProblem !== null) return scopeProblem;
   const part = raw['part'];
   if (part !== 'message' && part !== 'response' && part !== 'expiry')
     return reject('invalid', 'recordInputAccepted part must be message, response or expiry');
@@ -346,6 +347,19 @@ export async function recordInputAccepted(mailbox: MailboxContext,
   if (executionRef['projectId'] !== owned.projectId) {
     return reject('forbidden', 'the accepted input execution is outside the project');
   }
+  // Rule W/M4: the accepted input message belongs to the execution Session's workspace; the
+  // execution identity stays the Run's. The one fresh Run read also supplies the execution
+  // facts below, so it is taken here and reused.
+  let messageWorkspaceId = owned.workspaceId;
+  let runRecord: TaskExecutionRecord | null = null;
+  if (executionRef['aggregateType'] === 'Run') {
+    const runFacts = await readFreshWorkRunFacts(mailbox, owned, executionRef as unknown as RunRef);
+    if (!runFacts.ok) return runFacts.rejection;
+    runRecord = runFacts.record;
+    messageWorkspaceId = runRecord.session.workspaceId;
+  }
+  const scopeProblem = scopeOfMessageRef(owned, normalized.ref, messageWorkspaceId);
+  if (scopeProblem !== null) return scopeProblem;
   const kernel = raw['kernel'];
   if (!isObject(kernel) || Object.keys(kernel).some(key => !['adapterId', 'kernelSessionId', 'runId', 'turnId', 'position'].includes(key))
     || !nonEmpty(kernel['adapterId']) || !nonEmpty(kernel['kernelSessionId'])
@@ -373,13 +387,11 @@ export async function recordInputAccepted(mailbox: MailboxContext,
     let actualSession: SessionRef;
     let actualKernel: { adapterId: string; kernelSessionId: string; runId: string; turnId: string } | null | undefined;
     let consumedWait: ConsumedWaitV1 | null = null;
-    if (executionRef['aggregateType'] === 'Run') {
-      const runFacts = await readFreshWorkRunFacts(mailbox, owned, executionRef as unknown as RunRef);
-      if (!runFacts.ok) return runFacts.rejection;
-      actualSession = { projectId: runFacts.record.outbox.claim.sessionRef.projectId, sessionId: runFacts.record.outbox.claim.sessionRef.sessionId };
-      const authorization = runFacts.record.run.executionAuthorization;
-      actualKernel = runFacts.record.run.executionHistory?.kernel ?? authorization?.kernel;
-      consumedWait = runFacts.record.run.consumedWait ?? null;
+    if (runRecord !== null) {
+      actualSession = { projectId: runRecord.outbox.claim.sessionRef.projectId, sessionId: runRecord.outbox.claim.sessionRef.sessionId };
+      const authorization = runRecord.run.executionAuthorization;
+      actualKernel = runRecord.run.executionHistory?.kernel ?? authorization?.kernel;
+      consumedWait = runRecord.run.consumedWait ?? null;
     } else {
       if (executionRef['workspaceId'] !== owned.workspaceId) return reject('forbidden', 'Query execution is outside the workspace');
       const queryFacts = await loadQueryRun(mailbox, owned, executionRef as unknown as QueryRunRef);
@@ -515,7 +527,11 @@ Promise<{ status: 'ready'; facts: WithdrawFacts } | CoreRejection> {
     return reject('invalid', 'a message to the person has no recipient execution line');
   }
   const sessionRef: SessionRef = { projectId: recipient.projectId, sessionId: recipient.sessionId };
-  const open = await recipientExecutions.readRecipientOpenExecutions(isolatedContext(owned),
+  // Rule W/M4: the letter lives in the receiving line's workspace; the recipient Session's open
+  // executions are read there, not in the Run's workspace. The withdrawal itself stays the
+  // caller's (the machine judges `owned.principal`).
+  const open = await recipientExecutions.readRecipientOpenExecutions(
+    internalHostContext(mailbox, { ...owned, workspaceId: ref.workspaceId }),
     { sessionRef, messageRef: ref });
   if (open.status !== 'ready') {
     return open.status === 'rejected' ? open : mapReadResult(open) as CoreRejection;
@@ -599,7 +615,14 @@ Promise<WriteResult<SessionMessage>> {
   const normalized = normalizeMessageRef(rawRef);
   if (!normalized.ok) return reject('invalid', normalized.reason);
   const ref = normalized.ref;
-  const scopeProblem = scopeOfMessageRef(owned, ref);
+  // Rule W/M4: the message is in the sending line's workspace; the Run identity stays the Run's.
+  let messageWorkspaceId = owned.workspaceId;
+  if (owned.principal.kind === 'work_run') {
+    const identity = await readWorkRunIdentity(mailbox, owned, owned.principal, owned.principal.runRef);
+    if (!identity.ok) return identity.rejection;
+    messageWorkspaceId = identity.session.workspaceId;
+  }
+  const scopeProblem = scopeOfMessageRef(owned, ref, messageWorkspaceId);
   if (scopeProblem !== null) return scopeProblem;
 
   const withdrawCommand: WriteCommand<WithdrawFacts, WithdrawDecision, CoreRejection, SessionMessage, SessionMessage> = {
@@ -621,7 +644,7 @@ Promise<WriteResult<SessionMessage>> {
           occurredAt: decision.at,
           requestId: write.requestId,
           projectId: owned.projectId,
-          workspaceId: owned.workspaceId,
+          workspaceId: ref.workspaceId,
           actor: decision.actor,
         },
         change: decision.change,

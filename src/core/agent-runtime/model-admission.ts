@@ -26,6 +26,7 @@ export type ModelAdmissionResult = RunningAdmissionGrant | CoreRejection;
 export type ModelAdmissionDependencies = {
   limits: Pick<RoleLimitsPort, 'readRoleLimits'>;
   sessions: Pick<SessionDirectoryPort, 'findSessions'>;
+  /** The same `readExecution`, with the optional project-level read of `readSession(..., 'project')`. */
   executions: Pick<ExecutionReadPort, 'readExecution'>;
   queries: Pick<QueryExecutionPort, 'readQueryExecution'>;
   /** The one Session-duty resolver (`composition/session-duty.ts:51`), never a second role/template map. */
@@ -86,11 +87,14 @@ export function createModelAdmission(deps: ModelAdmissionDependencies): ModelAdm
         if (duty.status !== 'ready') return readProblem(duty, 'the Session duty');
         const ref = occupancy.executionRef;
         if (ref.aggregateType === 'Run') {
-          const run = await deps.executions.readExecution(sessionCtx, ref);
+          // The Run is read where it runs, with the caller's original Host identity: a project-level
+          // line's Run may sit in another workspace of the same project (ruling R1).
+          const run = await deps.executions.readExecution(ctx, ref, { scope: 'project' });
           if (run.status !== 'ready') return readProblem(run, 'the Run phase');
           entries.push({ duty: duty.value, phase: run.value.run.executionAuthorization?.phase });
         } else {
-          const query = await deps.queries.readQueryExecution(sessionCtx, ref);
+          // `QueryRunRef` carries its own workspace; `readQueryExecution` already admits Host + same project.
+          const query = await deps.queries.readQueryExecution(ctx, ref);
           if (query.status !== 'ready') return readProblem(query, 'the Query phase');
           entries.push({ duty: duty.value, phase: query.value.run.run.executionState?.phase });
         }

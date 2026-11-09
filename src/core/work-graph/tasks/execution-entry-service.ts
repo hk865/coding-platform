@@ -677,7 +677,7 @@ async function admitManifest(
   deps: Omit<ExecutionEntryDependencies, 'newId'>, ctx: CoreCallContext, facts: TaskExecutionRecord,
   manifest: PreparedTaskManifestV1,
 ): Promise<Admitted> {
-  const hostRole = await recheckHostRoleAdmission(deps, ctx, {
+  const hostRole = await recheckHostRoleAdmission(deps, facts.session.workspaceId === ctx.workspaceId ? ctx : { ...ctx, workspaceId: facts.session.workspaceId }, {
     run: facts.run, manifestRole: manifest.role, sessionRole: facts.session.role,
     roleBinding: facts.run.roleBinding, permissions: manifest.permissions,
     hostTemplate: manifest.hostTemplate, configurationRevision: manifest.hostConfigurationRevision,

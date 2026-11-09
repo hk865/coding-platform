@@ -18,7 +18,7 @@ import { PL_ADVISER_ROLE } from '../helpers/PL-consumption-fixture.js';
 import { queryJobRefOfRun } from '../helpers/S7D2-coldstart-world.js';
 import { jsonOf } from '../helpers/S7C-member-fixture.js';
 import {
-  openS7D2RoleLineWorld, startLinesOf, type S7D2RoleLineWorld,
+  openS7D2RoleLineWorld, S7D2_MODULE_IDS, startLinesOf, type S7D2RoleLineWorld,
 } from '../helpers/S7D2-role-line-world.js';
 import {
   XWS2A_COARSE_QUESTION, XWS2A_MODULE_ID, XWS2A_MODULE_RAW_PATH, openXWS2AWorld, xws2aJoinRef,
@@ -165,6 +165,18 @@ describe('XWS2A: the second workspace joins the project', () => {
     expect(rows.filter(row => row.row.duty === 'secretary' || row.row.duty === 'scribe')
       .every(row => row.scope.every(scope => scope.kind === 'project'))).toBe(true);
     expect(await projectSessions(world)).toHaveLength(4);
+  }, 120_000);
+
+  it('XA-14 the join exploration note comes from the join operation, not the cold start', async () => {
+    const world = await openXWS2AWorld({ backend: 'memory', coarseNote: true });
+    worlds.push(world);
+    const join = await world.waitCoarseAnswered();
+    const entry = (join.explorations ?? []).find(candidate => candidate.segment === 'coarse_split')!;
+    const notes = await world.notes({ kind: 'module', moduleId: S7D2_MODULE_IDS.region });
+    const note = notes.find(candidate => candidate.topic === 'xws2a-join-note');
+    expect(note).toBeDefined();
+    expect(note!.source).toMatchObject({ kind: 'agent', duty: 'adviser', queryRunRef: entry.queryRunRef });
+    expect(note!.anchor).toEqual({ kind: 'module', moduleId: S7D2_MODULE_IDS.region });
   }, 120_000);
 
   it('XA-13 the join proposals window guards the join record, not the cold start', async () => {

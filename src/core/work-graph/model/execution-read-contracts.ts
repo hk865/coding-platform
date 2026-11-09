@@ -95,7 +95,7 @@ export type ContinuationBasis = {
 
 export interface ExecutionReadPort {
   readExecution(ctx: CoreCallContext, ref: RunRef,
-    options?: { atLeastCursor?: CommitCursor }): Promise<ReadResult<TaskExecutionRecord>>;
+    options?: { atLeastCursor?: CommitCursor; scope?: 'workspace' | 'project' }): Promise<ReadResult<TaskExecutionRecord>>;
   /** Optional only so an existing narrow `ExecutionReadPort` test double keeps
    * compiling without a new method; the real composition always assembles it. */
   listExecutions?(ctx: CoreCallContext, request: ExecutionListPageRequest): Promise<ReadResult<TaskExecutionPage>>;

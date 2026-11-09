@@ -111,7 +111,9 @@ export function createConsumableSessions(deps: ConsumableSessionsDependencies):
     if (occupancy.kind === 'maintenance') return ready('archive_request');
     const executionRef = occupancy.executionRef;
     if (executionRef.aggregateType === 'Run') {
-      const read = await deps.executions.readExecution(ctx, executionRef);
+      // The Run is read where it runs, with the caller's original Host identity: a line in this
+      // workspace may be executing another workspace's Run in the same project (ruling R1/W).
+      const read = await deps.executions.readExecution(ctx, executionRef, { scope: 'project' });
       if (read.status !== 'ready') return read;
       const run = read.value.run;
       if (run.status === 'starting') return ready('claim_not_started');

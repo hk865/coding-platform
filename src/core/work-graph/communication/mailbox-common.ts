@@ -269,8 +269,9 @@ export function normalizeMessageRef(raw: unknown): { ok: true; ref: SessionMessa
   return { ok: true, ref: structuredClone(raw) as SessionMessageRef };
 }
 
-export function scopeOfMessageRef(owned: Owned, ref: SessionMessageRef): CoreRejection | null {
-  if (ref.projectId !== owned.projectId || ref.workspaceId !== owned.workspaceId) {
+export function scopeOfMessageRef(owned: Owned, ref: SessionMessageRef,
+  workspaceId: string = owned.workspaceId): CoreRejection | null {
+  if (ref.projectId !== owned.projectId || ref.workspaceId !== workspaceId) {
     return reject('invalid', 'the message ref is outside the bound project/workspace');
   }
   return null;

@@ -238,7 +238,7 @@ export function taskPayload(plan: PlanRevisionSnapshot, record: TaskExecutionRec
   const stage = task?.stageId === undefined ? undefined : plan.stages.find((candidate) => candidate.stageId === task.stageId);
   const run = record?.run;
   const session = record?.session;
-  const workspaceId = session?.workspaceId ?? run?.workspaceSnapshot?.workspaceId ?? plan.goalRef.projectId;
+  const workspaceId = run?.workspaceSnapshot?.workspaceId ?? session?.workspaceId ?? plan.goalRef.projectId;
   const workspaceRevision = run?.workspaceSnapshot?.revision ?? 0;
   const obligations = obligationsForTask(plan, taskId);
   const requirements = obligations

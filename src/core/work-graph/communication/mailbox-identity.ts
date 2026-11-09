@@ -262,9 +262,10 @@ export async function readWorkRunIdentity(mailbox: MailboxContext, owned: Owned,
       aggregateType: 'TaskAttempt', projectId: finalRun.task.projectId, goalId: finalRun.task.goalId,
       taskId: finalRun.task.taskId, attemptId: finalRun.attemptId,
     })) return { ok: false, rejection: reject('unavailable', 'the claim names another Attempt than the Run') };
-    if (claim.workspaceId !== owned.workspaceId || finalRun.workspaceSnapshot.workspaceId !== owned.workspaceId
-      || session.workspaceId !== owned.workspaceId) {
-      return { ok: false, rejection: reject('forbidden', 'the Run/claim/Session workspace is not the bound workspace') };
+    // Rule W: the Run and its claim live in the Run's workspace; the line may
+    // live elsewhere, so the Session's workspace is no longer compared here.
+    if (claim.workspaceId !== owned.workspaceId || finalRun.workspaceSnapshot.workspaceId !== owned.workspaceId) {
+      return { ok: false, rejection: reject('forbidden', 'the Run/claim workspace is not the bound workspace') };
     }
     if (canonicalOf(session.ref) !== sessionKey) return { ok: false, rejection: reject('unavailable', 'the Session ref is not the claimed key') };
     if (claim.sessionRef.projectId !== session.ref.projectId || claim.sessionRef.sessionId !== session.ref.sessionId) {
@@ -410,10 +411,13 @@ export async function authorizeNewWorkRunAction(mailbox: MailboxContext, args: {
   }
   if (owned.signal.aborted) return { ok: false, rejection: reject('cancelled', 'the mailbox action was cancelled before role resolution') };
   let hostRole;
+  // Rule W: the Host/Role recheck reads the line's workspace; the Run facts it
+  // compares stay the Run's.
+  const lineCtx = { ...internalHostContext(mailbox, owned), workspaceId: session.workspaceId };
   try {
     hostRole = await recheckHostRoleAdmission(
       { roles: mailbox.deps.roles, authorizeConfiguration: admission.authorizeConfiguration },
-      internalHostContext(mailbox, owned),
+      lineCtx,
       {
         run, manifestRole: manifest.role, sessionRole: session.role, roleBinding: run.roleBinding,
         permissions: manifest.permissions, hostTemplate: manifest.hostTemplate,

@@ -130,8 +130,8 @@ export async function assembleWorkContext(
     if (clock === undefined) {
       return rejected('unsupported', 'the context assembler needs the Host clock to assemble architecture reminders');
     }
-    const workspaceId = session?.workspaceId ?? run?.workspaceSnapshot?.workspaceId
-      ?? plan?.goalRef.projectId ?? claim.task.projectId;
+    const workspaceId = run?.workspaceSnapshot?.workspaceId
+      ?? session?.workspaceId ?? plan?.goalRef.projectId ?? claim.task.projectId;
     const task = plan?.tasks.find((candidate) => candidate.taskId === claim.task.taskId);
     const taskModuleRef = task?.scope.kind === 'module'
       ? { projectId: plan?.ref.projectId ?? claim.task.projectId, moduleId: task.scope.moduleRef }

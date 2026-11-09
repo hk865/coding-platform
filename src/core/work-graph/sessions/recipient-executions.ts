@@ -134,7 +134,11 @@ export function createRecipientExecutions(deps: {
         workRefs.add(refKey);
         let execution;
         try {
-          execution = await deps.executions.readExecution(ctx, claim.runRef, { atLeastCursor: horizon.readThrough });
+          // A recipient line may be executing a Run in another workspace of the project; the
+          // project read keeps the project and trusted-Host checks (the same read the
+          // consumable page takes for a line's busy Run).
+          execution = await deps.executions.readExecution(ctx, claim.runRef,
+            { atLeastCursor: horizon.readThrough, scope: 'project' });
         } catch (error) {
           return unavailable(`the Work execution could not be read: ${String(error)}`);
         }

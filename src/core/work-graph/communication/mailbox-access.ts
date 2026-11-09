@@ -77,12 +77,15 @@ export function ownsInbox(mailbox: MailboxContext, sessionRef: SessionRef, messa
  * Session; the per-message check is `canReadMessage`. `null` means allowed.
  */
 async function messageReadRight(mailbox: MailboxContext, owned: Owned, message: SessionMessage,
-  secretary: { round: SecretaryQueryRunV1; reader: SessionRef } | null): Promise<CoreRejection | null> {
+  secretary: { round: SecretaryQueryRunV1; reader: SessionRef } | null,
+  workReader: SessionRef | null = null): Promise<CoreRejection | null> {
   if (owned.principal.kind === 'host') return null;
   let reader: SessionRef;
   if (owned.principal.kind === 'query_run') {
     if (secretary === null) return reject('forbidden', 'the secretary read was not resolved');
     reader = secretary.reader;
+  } else if (workReader !== null) {
+    reader = workReader;
   } else {
     const identity = await readWorkRunIdentity(mailbox, owned, owned.principal, owned.principal.runRef);
     if (!identity.ok) return identity.rejection;
@@ -110,11 +113,20 @@ export async function readMessage(mailbox: MailboxContext, ctx: CoreCallContext,
   }
   const normalized = normalizeMessageRef(ref);
   if (!normalized.ok) return reject('invalid', normalized.reason);
-  const scopeProblem = scopeOfMessageRef(owned, normalized.ref);
+  // Rule W/M4: a Work Run's message belongs to the sending line's workspace, not the Run's.
+  let workReader: SessionRef | null = null;
+  let messageWorkspaceId = owned.workspaceId;
+  if (owned.principal.kind === 'work_run') {
+    const identity = await readWorkRunIdentity(mailbox, owned, owned.principal, owned.principal.runRef);
+    if (!identity.ok) return identity.rejection;
+    messageWorkspaceId = identity.session.workspaceId;
+    workReader = { projectId: identity.claim.sessionRef.projectId, sessionId: identity.claim.sessionRef.sessionId };
+  }
+  const scopeProblem = scopeOfMessageRef(owned, normalized.ref, messageWorkspaceId);
   if (scopeProblem !== null) return scopeProblem;
   const loaded = await loadMessage(mailbox, owned, normalized.ref);
   if (loaded.status !== 'ready') return loaded;
-  const right = await messageReadRight(mailbox, owned, loaded.value, secretary);
+  const right = await messageReadRight(mailbox, owned, loaded.value, secretary, workReader);
   if (right !== null) return right;
   return loaded;
 }
@@ -144,12 +156,21 @@ export async function readMessageBody(mailbox: MailboxContext, ctx: CoreCallCont
   if (part !== 'message' && part !== 'response') return reject('invalid', 'readMessageBody part must be message or response');
   const normalized = normalizeMessageRef(raw['messageRef']);
   if (!normalized.ok) return reject('invalid', normalized.reason);
-  const scopeProblem = scopeOfMessageRef(owned, normalized.ref);
+  // Rule W/M4: the message and its stored body belong to the sending line's workspace.
+  let workReader: SessionRef | null = null;
+  let messageWorkspaceId = owned.workspaceId;
+  if (owned.principal.kind === 'work_run') {
+    const identity = await readWorkRunIdentity(mailbox, owned, owned.principal, owned.principal.runRef);
+    if (!identity.ok) return identity.rejection;
+    messageWorkspaceId = identity.session.workspaceId;
+    workReader = { projectId: identity.claim.sessionRef.projectId, sessionId: identity.claim.sessionRef.sessionId };
+  }
+  const scopeProblem = scopeOfMessageRef(owned, normalized.ref, messageWorkspaceId);
   if (scopeProblem !== null) return scopeProblem;
   const loaded = await loadMessage(mailbox, owned, normalized.ref);
   if (loaded.status !== 'ready') return loaded;
   const message = loaded.value;
-  const right = await messageReadRight(mailbox, owned, message, secretary);
+  const right = await messageReadRight(mailbox, owned, message, secretary, workReader);
   if (right !== null) return right;
   const bodyRef = part === 'message' ? message.bodyRef : message.response?.bodyRef;
   const sourceRef = part === 'message' ? message.sourceRef : message.response?.sourceRef;
@@ -160,7 +181,8 @@ export async function readMessageBody(mailbox: MailboxContext, ctx: CoreCallCont
   if (owned.signal.aborted) return reject('cancelled', 'the message body read was cancelled before the material read');
   let opened: ReadResult<import('../../../contracts/artifact.js').ArtifactRecord>;
   try {
-    opened = await mailbox.deps.materials.openArtifact(internalHostContext(mailbox, owned), { ref: bodyRef, usage: 'historical_explanation' });
+    const bodyOwned = messageWorkspaceId === owned.workspaceId ? owned : { ...owned, workspaceId: messageWorkspaceId };
+    opened = await mailbox.deps.materials.openArtifact(internalHostContext(mailbox, bodyOwned), { ref: bodyRef, usage: 'historical_explanation' });
   } catch {
     return reject('unavailable', 'the message body could not be opened');
   }

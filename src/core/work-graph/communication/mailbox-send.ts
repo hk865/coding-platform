@@ -331,6 +331,7 @@ export async function sendMessage(mailbox: MailboxContext, ctx: CoreCallContext,
   let sender: MessageSender | null = null;
   let senderIdentity: Unknown;
   let workRunPrincipal: WorkRunPrincipal | null = null;
+  let workRunSessionWorkspaceId: string | null = null;
   let secretaryRound: SecretaryQueryRunV1 | null = null;
   if (owned.principal.kind === 'host') {
     sender = { kind: 'host', actor: { ...owned.principal.actor } };
@@ -342,6 +343,7 @@ export async function sendMessage(mailbox: MailboxContext, ctx: CoreCallContext,
     if (!derived.ok) return derived.rejection;
     sender = derived.sender;
     workRunPrincipal = owned.principal;
+    workRunSessionWorkspaceId = identity.session.workspaceId;
     senderIdentity = senderIdentityOf(sender);
   } else {
     senderIdentity = { kind: 'query_run', queryRunRef: { ...owned.principal.queryRunRef } };
@@ -391,6 +393,12 @@ export async function sendMessage(mailbox: MailboxContext, ctx: CoreCallContext,
   }
   if (sender === null) throw new Error('a send reached admission without its trusted sender facts');
   const committedSender: MessageSender = sender;
+  // Rule W: a Work Run's message belongs to the sending line's workspace, not
+  // the Run's. Host and secretary sends keep the caller's workspace.
+  const lineWorkspaceId = workRunSessionWorkspaceId ?? owned.workspaceId;
+  const lineCtx = lineWorkspaceId === owned.workspaceId
+    ? internalHostContext(mailbox, owned)
+    : { ...internalHostContext(mailbox, owned), workspaceId: lineWorkspaceId };
 
   // MSG-02's fresh admission comes before the target Session read; a refused
   // admission never reads the target (the machine asks the admission first).
@@ -404,7 +412,8 @@ export async function sendMessage(mailbox: MailboxContext, ctx: CoreCallContext,
     // source; when it is not bound the historical paths stay unchanged.
     if (authorized.ok && mailbox.deps.duties !== undefined && sender.kind === 'work_run') {
       if (owned.signal.aborted) return reject('cancelled', 'the send was cancelled before the duties read');
-      const duties = await mailbox.deps.duties.readMessageDutiesFacts(internalHostContext(mailbox, owned), {
+      // The duties facts are the sending line's: a Work Run may sit in another workspace of the project.
+      const duties = await mailbox.deps.duties.readMessageDutiesFacts(lineCtx, {
         sessionRef: sender.sessionRef, roleBinding: sender.roleBinding,
       });
       if (duties.status !== 'ready') return duties.status === 'rejected' ? duties : mapReadResult(duties) as CoreRejection;
@@ -419,15 +428,15 @@ export async function sendMessage(mailbox: MailboxContext, ctx: CoreCallContext,
   // sender's. Every other cross-workspace send keeps today's refusal.
   // busy/archived never blocks durable mail.
   let recipientScope: MessageGuardContext['recipientScope'] = null;
-  let receivingWorkspaceId = owned.workspaceId;
+  let receivingWorkspaceId = lineWorkspaceId;
   if (authorized === null || authorized.ok) {
     if (owned.signal.aborted) return reject('cancelled', 'the send was cancelled before the target Session read');
-    const target = await mailbox.deps.sessions.readSession(internalHostContext(mailbox, owned), send.recipient);
+    const target = await mailbox.deps.sessions.readSession(lineCtx, send.recipient);
     if (owned.signal.aborted) return reject('cancelled', 'the send was cancelled during the target Session read');
     if (target.status !== 'ready' && target.status !== 'not_found') return mapReadResult(target) as CoreRejection;
     if (target.status === 'ready') {
       recipientScope = target.value.record.ref.projectId === owned.projectId
-        && target.value.record.workspaceId === owned.workspaceId ? 'same_workspace' : 'other_workspace';
+        && target.value.record.workspaceId === lineWorkspaceId ? 'same_workspace' : 'other_workspace';
     } else if (owned.principal.kind === 'host' && owned.principal.actor.kind === 'system'
       && (send.intent === 'notify' || send.intent === 'action_request')) {
       // The directory read compares the record's workspace with the caller's, so

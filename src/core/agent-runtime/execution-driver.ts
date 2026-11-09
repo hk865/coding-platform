@@ -453,8 +453,13 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
       try { roleResolution = structuredClone(roleFacts.result.value); } catch { return rejected('invalid', 'the resolved Role cannot be isolated from the caller'); }
       if (!sameRef(roleResolution, manifest.role)) return rejected('forbidden', 'the current Role no longer matches the prepared Role');
       let configured;
+      // Rule W: the Host binding and profile are the line's, so the
+      // configuration read uses the Session's workspace even when the Run
+      // executes in another one.
+      const lineCtx = record.session.workspaceId === owned.workspaceId
+        ? owned : { ...owned, workspaceId: record.session.workspaceId };
       try {
-        configured = await deps.host.resolveConfiguration(owned, { runRef, role: manifest.sessionRole, roleResolution });
+        configured = await deps.host.resolveConfiguration(lineCtx, { runRef, role: manifest.sessionRole, roleResolution });
       } catch (error) {
         return rejected('unavailable', `Host configuration resolution failed: ${messageOf(error)}`);
       }
