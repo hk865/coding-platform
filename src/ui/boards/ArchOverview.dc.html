@@ -168,6 +168,13 @@ body { margin: 0; background: #1F1F1F; }
         </div>
       </sc-if>
 
+      <sc-if value="{{blank.show}}" hint-placeholder-val="{{ false }}">
+        <div class="ov-intro">
+          <p class="ov-intro-t">{{blank.text}}</p>
+          <sc-if value="{{blank.canRetry}}" hint-placeholder-val="{{ false }}"><button class="btn-text" type="button" onClick="{{blank.retry}}">重试</button></sc-if>
+        </div>
+      </sc-if>
+
       <div class="ov-stage" style="width: {{stage.w}}px; height: {{stage.h}}px;">
         <sc-if value="{{isGraph}}" hint-placeholder-val="{{ true }}">
           <sc-for list="{{boxes}}" as="b" hint-placeholder-count="4">
@@ -449,6 +456,20 @@ class Component extends DCLogic {
   worst(a, b) { const R = this.rank(); return R.indexOf(a) <= R.indexOf(b) ? a : b; }
   isActive(st) { return ['decide', 'failed', 'blocked', 'running', 'verifying', 'waiting', 'claimable'].indexOf(st) >= 0; }
   fmt(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+  /* The one actual-change wording for a file card, its detail, its row and the
+     count lines (R32). The sample keeps the old literal; a planned task state
+     wins over the actual change; `showStatus=false` asks only for the actual
+     change. A complete read with no planned state and no change writes 改动 0;
+     an incomplete one cannot call an unlisted node unchanged (R4). */
+  changeText(n, showStatus = true) {
+    if (!this.props.data) return '本目标未改动';
+    const C = this.props.data.changes;
+    if (C === null) return this.nt();
+    if (showStatus && n.st !== 'none') return this.words()[n.st];
+    if (n.touched > 0) return (C.complete ? '改动 ' : '改动至少 ') + this.fmt(n.touched);
+    if (n.possible) return '可能改过';
+    return C.complete ? '改动 0' : this.nt();
+  }
 
   /* ------------------------------------------------------------ goal 1's tasks: copied from Main (std40) so squares and words match */
   std40() {
@@ -781,7 +802,8 @@ class Component extends DCLogic {
     model.nodes.forEach((n) => {
       const node = { id: n.id, name: n.name, kind: n.kind, path: n.path, sem: n.responsibility,
         st: n.state || 'none', tasks: (n.taskIds || []).slice(), owner: '未分配', ownerId: n.id,
-        kids: [], parent: n.parentId || null, depth: 0, leaves: 0, sat: 0, touched: 0,
+        kids: [], parent: n.parentId || null, depth: 0, leaves: 0, sat: 0,
+        touched: n.touched ?? 0, possible: n.possible === true,
         code: 0, cnt: {}, worstAll: 'none', worstAct: null, hasAct: false,
         group: n.group, area: n.area };
       byId[n.id] = node; all.push(node);
@@ -804,7 +826,7 @@ class Component extends DCLogic {
       if (!n.kids.length) {
         const f = n.kind === 'file';
         n.leaves = f ? 1 : 0; n.sat = f && n.st === 'satisfied' ? 1 : 0;
-        n.touched = 0; n.code = f && isCode(n.id) ? 1 : 0;
+        n.touched = n.touched ?? 0; n.code = f && isCode(n.id) ? 1 : 0;
         n.cnt = {}; if (f) n.cnt[n.st] = 1;
         n.worstAll = n.st; n.worstAct = null; n.hasAct = false;
         return;
@@ -820,7 +842,7 @@ class Component extends DCLogic {
       /* The adapter's node state already includes a module's own task scope;
          keep it when the node has no files but a task claims the module. */
       const st = this.worst(wa, n.st || 'none');
-      Object.assign(n, { leaves: leaves, sat: sat, touched: 0, code: code, cnt: cnt,
+      Object.assign(n, { leaves: leaves, sat: sat, code: code, cnt: cnt,
         worstAll: st, worstAct: null, hasAct: false, st: st });
     };
     agg(top);
@@ -835,7 +857,8 @@ class Component extends DCLogic {
     (model.dirNodes || []).forEach((d) => {
       const n = { id: d.id, name: d.name, kind: 'folder', path: d.path, sem: d.responsibility,
         parent: d.parentId || null, depth: 2, kids: [], st: d.state || 'none', tasks: (d.taskIds || []).slice(),
-        leaves: d.counts ? d.counts.files : 0, touched: 0, code: 0, cnt: {}, worstAll: d.state || 'none', worstAct: null, hasAct: false };
+        leaves: d.counts ? d.counts.files : 0, touched: d.touched ?? 0, possible: d.possible === true,
+        code: 0, cnt: {}, worstAll: d.state || 'none', worstAct: null, hasAct: false };
       dirById[n.id] = n;
       if (n.parent === 'src/core/work-graph') wgDirs.push(n);
     });
@@ -852,9 +875,9 @@ class Component extends DCLogic {
     const fedges = []; const imports = {}; const importers = {}; const edgeKind = {};
     (model.edges || []).forEach((e) => {
       const t = e.kind === 'type_references';
-      fedges.push([e.from, e.to, t]);
-      (imports[e.from] = imports[e.from] || []).push([e.to, t]);
-      (importers[e.to] = importers[e.to] || []).push([e.from, t]);
+      fedges.push([e.from, e.to, t, e.count]);
+      (imports[e.from] = imports[e.from] || []).push([e.to, t, e.count]);
+      (importers[e.to] = importers[e.to] || []).push([e.from, t, e.count]);
       edgeKind[e.from + '|' + e.to] = e.kind;
     });
     const work = (model.workPaths || []).slice();
@@ -1043,13 +1066,19 @@ class Component extends DCLogic {
     const map = {}; const list = []; const bout = {}; const bin = {};
     R.fedges.forEach((x) => {
       const ra = rep(x[0]); const rb = rep(x[1]);
+      /* Data mode's fourth slot is `ArchRepoEdge.count`; the sample's edges carry
+         no count, so there the weight stays one per edge. A data edge whose count
+         is missing (an old scene) is unknown, not 1: it adds nothing and its label
+         says 还没接通; `lpLayers`'s `e.n || 1` still gives it the layout weight 1. */
+      const weight = this.props.data ? (x[3] === undefined ? 0 : x[3]) : 1;
       if (ra && rb) {
         if (ra === rb) return;
         const k = ra + '|' + rb;
         let e = map[k];
         if (!e) { e = map[k] = { id: 'E|' + lid + '|' + ra + '|' + rb, lid: lid, view: view, from: ra, to: rb, n: 0, nt: 0, tf: {}, sf: {},
           rawKind: R.edgeKind && R.edgeKind[x[0] + '|' + x[1]] }; list.push(e); }
-        e.n += 1; if (x[2]) e.nt += 1;
+        if (this.props.data && x[3] === undefined) e.noCount = true;
+        e.n += weight; if (x[2]) e.nt += 1;
         e.tf[x[1]] = (e.tf[x[1]] || 0) + 1; e.sf[x[0]] = (e.sf[x[0]] || 0) + 1;
       } else if (!dir && lid !== 'SYS' && (ra || rb)) {
         /* it leaves this level: name it at the first level up where its two ends part */
@@ -1059,7 +1088,7 @@ class Component extends DCLogic {
         if (k < 0) return;
         const bag = ra ? bout : bin; const kk = ai[k] + '|' + ao[k + 1];
         const it = bag[kk] || (bag[kk] = { lid: ai[k], mine: ai[k + 1], other: ao[k + 1], n: 0 });
-        it.n += 1;
+        it.n += weight;
       } else if (!dir && lid !== 'SYS' && !ra && !rb) {
         /* a module-level edge (the only kind `architecture/query` publishes):
            it leaves this level when exactly one module end is this level or above */
@@ -1071,7 +1100,7 @@ class Component extends DCLogic {
         if (k < 0) return;
         const bag = out ? bout : bin; const kk = ai[k] + '|' + ao[k + 1];
         const it = bag[kk] || (bag[kk] = { lid: ai[k], mine: ai[k + 1], other: ao[k + 1], n: 0 });
-        it.n += 1;
+        it.n += weight;
       }
     });
     /* declared in module-target.json but not imported (drawn dotted) */
@@ -1253,18 +1282,13 @@ class Component extends DCLogic {
       const lp = this.lpLayers(core, real.filter((e) => core.indexOf(e.from) >= 0 && core.indexOf(e.to) >= 0));
       this.layerRows(core, lp).forEach((r) => spec.push({ ids: r, box: GN.core }));
       base = by('shared'); band = by('band');
-    } else if (wgSem) {
-      if (this.props.data) {
-        /* the catalog's declared submodules, not the frozen proposal */
-        for (let s0 = 0; s0 < ids.length; s0 += 4) spec.push({ ids: ids.slice(s0, s0 + 4), box: null, grid: true });
-      } else {
-        /* the proposal's layers L6 → L2 as rows; L1 (持久层, persistence) and L0 (共享层, model and state) are used by
-           nearly every submodule, so they form the bottom band and their lines are drawn on demand */
-        const Lof = {}; P.groups.forEach((g) => { Lof[WG + '/' + g.id] = g.L; });
-        for (let l = 6; l >= 2; l -= 1) { const r = ids.filter((id) => Lof[id] === l); if (r.length) spec.push({ ids: r, box: P.layerNames[l] || null }); }
-        base = ids.filter((id) => Lof[id] === 1 || Lof[id] === 0);
-        ids.filter((id) => Lof[id] === undefined).forEach((id) => band.push(id));
-      }
+    } else if (wgSem && !this.props.data) {
+      /* the proposal's layers L6 → L2 as rows; L1 (持久层, persistence) and L0 (共享层, model and state) are used by
+         nearly every submodule, so they form the bottom band and their lines are drawn on demand */
+      const Lof = {}; P.groups.forEach((g) => { Lof[WG + '/' + g.id] = g.L; });
+      for (let l = 6; l >= 2; l -= 1) { const r = ids.filter((id) => Lof[id] === l); if (r.length) spec.push({ ids: r, box: P.layerNames[l] || null }); }
+      base = ids.filter((id) => Lof[id] === 1 || Lof[id] === 0);
+      ids.filter((id) => Lof[id] === undefined).forEach((id) => band.push(id));
     } else {
       const linked = {}; real.forEach((e) => { linked[e.from] = true; linked[e.to] = true; });
       const main = ids.filter((id) => linked[id] || nodeOf(id).code > 0);
@@ -1272,7 +1296,9 @@ class Component extends DCLogic {
       else {
         band = ids.filter((id) => main.indexOf(id) < 0);
         const lp = this.lpLayers(main, real.filter((e) => main.indexOf(e.from) >= 0 && main.indexOf(e.to) >= 0));
-        this.layerRows(main, lp).forEach((r) => spec.push({ ids: r, box: null }));
+        /* Data-mode WorkGraph uses the catalog's own layer name as the one box
+           title; the proposal's five names are sample data, not a catalog field. */
+        this.layerRows(main, lp).forEach((r) => spec.push({ ids: r, box: this.props.data && wgSem ? L.name : null }));
       }
     }
     if (base.length && wgSem) {
@@ -1352,7 +1378,7 @@ class Component extends DCLogic {
     const paths = this.routePaths(plan, geo);
     const rects = Object.keys(pos).map((id) => ({ x: pos[id].x, y: pos[id].y, w: pos[id].w, h: pos[id].h }))
       .concat(boxes.map((b) => ({ x: b.x + 10, y: b.y + 8, w: 60, h: 40 }))).concat([{ x: bx0, y: 12, w: 420, h: 32 }]);
-    paths.forEach((p) => { p.text = p.e.decl ? '未用' : this.fmt(p.e.n); });
+    paths.forEach((p) => { p.text = p.e.decl ? '未用' : p.e.noCount ? this.nt() : this.fmt(p.e.n); });
     const labels = this.placeLabels(paths, rects, []);
     const order = []; spec.forEach((r) => r.ids.forEach((id) => order.push(id)));
     return { mode: 'graph', view: view, spec: spec, order: order, pos: pos, size: size, rowOf: rowOf, geo: geo, plan: plan, boxes: boxes,
@@ -1606,7 +1632,7 @@ class Component extends DCLogic {
     lay.plan.info.forEach((x) => { if (x.kind === 'side') return; take(x.e.from + '>', x.sx); take(x.e.to + '<', x.tx); });
     const plan = this.planEdges(lay.spec, lay.pos, edges, { solo: true, avoid: lay.plan.bundles, occupied: occupied });
     const paths = this.routePaths(plan, lay.geo, lay.plan);
-    paths.forEach((p) => { p.text = p.e.decl ? '未用' : this.fmt(p.e.n); });
+    paths.forEach((p) => { p.text = p.e.decl ? '未用' : p.e.noCount ? this.nt() : this.fmt(p.e.n); });
     const taken = lay.rects.concat(Object.keys(lay.labels).map((k) => ({ x: lay.labels[k].x, y: lay.labels[k].y, w: lay.labels[k].w, h: 16 })));
     const labels = this.placeLabels(paths, taken, lay.paths);
     const res = { paths: paths, labels: labels };
@@ -1628,8 +1654,8 @@ class Component extends DCLogic {
 
   /* ------------------------------------------------------------ squares, counts, words */
   archSq(n, mode) {
-    /* Data mode has no actual-change aggregate; the square shows the planned
-       task state of the node (same state class the files carry). */
+    /* The square stays the planned task state (same state class the files
+       carry); actual changes are words, not a fill. */
     if (this.props.data) return 's-' + (n.worstAll || n.st || 'none');
     if (mode === 'collapsed') return 's-' + n.worstAll;
     return n.touched ? 's-pending' : 's-none';
@@ -1637,17 +1663,17 @@ class Component extends DCLogic {
   countLine(n) {
     const W = this.countWords();
     const parts = this.rank().filter((k) => n.cnt[k] && k !== 'none').map((k) => W[k] + ' ' + this.fmt(n.cnt[k]));
-    if (this.props.data) return this.fmt(n.leaves) + ' 个文件 · 改动 ' + this.nt() + (parts.length ? ' · ' + parts.join(' · ') : '');
+    if (this.props.data) return this.fmt(n.leaves) + ' 个文件 · ' + this.changeText(n, false) + (parts.length ? ' · ' + parts.join(' · ') : '');
     return n.touched ? '改动 ' + this.fmt(n.touched) + ' / ' + this.fmt(n.leaves) + ' 个文件' + (parts.length ? ' · ' + parts.join(' · ') : '') : this.fmt(n.leaves) + ' 个文件，本目标未改动';
   }
   cardCount(n) {
     const W = this.countWords();
     const parts = ['decide', 'failed', 'blocked', 'running', 'verifying', 'waiting'].filter((k) => n.cnt[k]).map((k) => W[k] + ' ' + this.fmt(n.cnt[k]));
-    if (this.props.data) return ['改动 ' + this.nt() + ' / ' + this.fmt(n.leaves) + ' 个文件'].concat(parts).join(' · ');
+    if (this.props.data) return [this.changeText(n, false) + ' / ' + this.fmt(n.leaves) + ' 个文件'].concat(parts).join(' · ');
     if (!parts.length) return this.countLine(n);
     return ['改动 ' + this.fmt(n.touched) + ' / ' + this.fmt(n.leaves) + ' 个文件'].concat(parts).join(' · ');
   }
-  nodeCount(n) { return this.fmt(n.leaves) + ' 个文件' + (this.props.data ? ' · 改动 ' + this.nt() : n.touched ? ' · 改动 ' + this.fmt(n.touched) : ''); }
+  nodeCount(n) { return this.fmt(n.leaves) + ' 个文件' + (this.props.data ? ' · ' + this.changeText(n, false) : n.touched ? ' · 改动 ' + this.fmt(n.touched) : ''); }
   /* 负责 (rework 2026-10-06, decisions 25 and 30), read from the work lines (data/worklines-snap.js at 10-04 14:15): the root is
      架构参谋's line. A file that tasks of goal 1 change: the work line of its most urgent task — the task whose state the file's
      square shows ("执行者 · 启动核对 · 停下（失败）"; a task no line has run yet says 未分配, with its name when the file
@@ -1696,8 +1722,7 @@ class Component extends DCLogic {
   }
   shortPath(id) { const c = this.crumbsOf(id); const up = c.slice(1, -1).map((x) => x.name); return up.length ? up.join(' / ') : c.length > 1 ? c[0].name : ''; }
   tip(n) {
-    if (this.props.data && !n.kids.length && n.st === 'none' && !this.props.data.hasGoal) return n.name + '，' + this.noGoalText();
-    return n.name + '，' + (n.kids.length ? this.countLine(n) : n.st === 'none' ? (this.props.data && !this.props.data.hasGoal ? this.noGoalText() : '本目标未改动') : this.words()[n.st]);
+    return n.name + '，' + (n.kids.length ? this.countLine(n) : n.st === 'none' ? this.changeText(n, false) : this.words()[n.st]);
   }
   pathParts(p) { const a = String(p).split('/'); return { full: p, parts: a.map((x, ii) => (ii < a.length - 1 ? x + '/' : x)) }; }
   edgeName(e) {
@@ -1749,15 +1774,14 @@ class Component extends DCLogic {
     const c = { show: true, hasSq: true, name: n.name, path: path, hasPath: !!path, agent: this.ownerOf(id), sem: sem, hasSem: !!sem, extra: extra || [], tasks: [], hasTasks: false, more: '', hasMore: false, hint: hint };
     if (n.kids.length) return Object.assign(c, { sq: 'sq z10 ' + this.archSq(n, 'collapsed'), word: this.cardCount(n), tx: 'tx-plain', why: '' });
     const known = (n.tasks || []).filter((t) => tm.byId[t]);
-    const noneWord = this.props.data && !this.props.data.hasGoal ? this.noGoalText() : '本目标未改动';
-    return Object.assign(c, { sq: 'sq z10 ' + this.sqAt(n.st), word: n.st === 'none' ? noneWord : W[n.st], tx: 'tx-' + n.st,
-      why: this.props.data ? ' · 改动 ' + this.nt() : '',
+    return Object.assign(c, { sq: 'sq z10 ' + this.sqAt(n.st), word: n.st === 'none' || this.props.data ? this.changeText(n) : W[n.st], tx: 'tx-' + n.st,
+      why: this.props.data && n.st !== 'none' ? ' · ' + this.changeText(n, false) : '',
       tasks: known.slice(0, 3).map((t) => ({ name: tm.byId[t].name, sq: 'sq z8 ' + this.sqAt(tm.byId[t].st) })), hasTasks: known.length > 0,
       more: known.length > 3 ? '另有 ' + (known.length - 3) + ' 个任务' : '', hasMore: known.length > 3 });
   }
   edgeCard(e) {
     const status = this.edgeStatus(e).replace('（module-target.json）', ''); const lvl = this.nodeOf(e.lid);
-    return { show: true, hasSq: false, sq: '', name: this.edgeName(e), word: this.props.data ? (e.decl ? '没有引用' : this.nt()) : e.decl ? '没有引用' : this.fmt(e.n) + ' 处引用', tx: 'tx-plain',
+    return { show: true, hasSq: false, sq: '', name: this.edgeName(e), word: this.props.data ? (e.decl ? '没有引用' : e.noCount ? this.nt() : this.fmt(e.n) + ' 处引用') : e.decl ? '没有引用' : this.fmt(e.n) + ' 处引用', tx: 'tx-plain',
       why: this.props.data ? (status ? ' · ' + status : '') : (e.nt ? ' · 只用类型 ' + this.fmt(e.nt) : '') + (status ? ' · ' + status : ''), path: lvl.name + (e.view === 'dir' ? '（按文件夹观测）' : ''), hasPath: true,
       agent: '引用方 ' + this.nodeOf(e.from).name + '：' + this.ownerOf(e.from), sem: this.edgePhrase(e), hasSem: true, extra: [], tasks: [], hasTasks: false, more: '', hasMore: false, hint: '点一下看这条引用用到了哪些文件' };
   }
@@ -1875,8 +1899,8 @@ class Component extends DCLogic {
     const acts = [];
     if (isGroup && id !== lid) acts.push({ label: '进入这一层', go: () => set({ aroot: id, view: 'sem', hover: null, hoverE: null }) });
     return { isEdge: false, hasSq: true, sq: 'sq ' + (isGroup ? this.archSq(n, 'collapsed') : this.sqAt(n.st)), name: n.name,
-      tx: isGroup ? 'tx-plain' : 'tx-' + n.st, word: isGroup ? this.countLine(n) : n.st === 'none' ? (this.props.data && !this.props.data.hasGoal ? this.noGoalText() : '本目标未改动') : W[n.st],
-      why: this.props.data ? (!isGroup && n.tasks.length ? '：' + n.tasks.length + ' 个任务计划改它 · 改动 ' + this.nt() : '') : !isGroup && n.tasks.length ? '：' + n.tasks.length + ' 个任务改动它' : '',
+      tx: isGroup ? 'tx-plain' : 'tx-' + n.st, word: isGroup ? this.countLine(n) : n.st === 'none' ? this.changeText(n, false) : W[n.st],
+      why: this.props.data ? (!isGroup && n.tasks.length ? '：' + n.tasks.length + ' 个任务计划改它 · ' + this.changeText(n, false) : '') : !isGroup && n.tasks.length ? '：' + n.tasks.length + ' 个任务改动它' : '',
       crumbs: crumbs, agent: this.ownerOf(id), sem: this.semOf(n) || (this.props.data ? '' : '这一层还没有写下语义说明。'), rel: rel, acts: acts, close: () => set({ asel: null, hover: null, hoverE: null }) };
   }
   /* a folder of the comparison overlay (WorkGraph · 按文件夹观测) */
@@ -1927,7 +1951,7 @@ class Component extends DCLogic {
       rel.push(this.grp('循环', { hasText: true, text: sc.members.map((m) => this.nodeOf(m).name).join('、') + ' 互相引用（观测）' }));
     }
     if (!e.decl && this.props.data) {
-      rel.push(this.grp('引用处数', { hasText: true, text: this.nt() }));
+      rel.push(this.grp('引用处数', { hasText: true, text: e.noCount ? this.nt() : this.fmt(e.n) + ' 处引用' }));
       rel.push(this.grp('来源文件', { hasText: true, text: this.nt() }));
     } else if (!e.decl) {
       rel.push(this.grp('用到', { items: tf.slice(0, 6).map(fit(e.tf, B)), hasText: tf.length > 6, text: '另有 ' + (tf.length - 6) + ' 个文件' }));
@@ -1937,7 +1961,7 @@ class Component extends DCLogic {
     if (A.kind !== 'folder' && A.kids.length) acts.push({ label: '进入 ' + A.name, go: () => set({ aroot: A.id, view: 'sem', asel: A.id, hover: null, hoverE: null }) });
     if (B.kind !== 'folder' && B.kids.length) acts.push({ label: '进入 ' + B.name, go: () => set({ aroot: B.id, view: 'sem', asel: B.id, hover: null, hoverE: null }) });
     return { isEdge: true, hasSq: false, sq: '', name: this.edgeName(e), tx: 'tx-plain',
-      word: this.props.data ? (e.decl ? '没有引用' : this.nt()) : e.decl ? '没有引用' : this.fmt(e.n) + ' 处引用', why: this.props.data ? '' : e.nt ? ' · 其中只用类型 ' + this.fmt(e.nt) : '',
+      word: this.props.data ? (e.decl ? '没有引用' : e.noCount ? this.nt() : this.fmt(e.n) + ' 处引用') : e.decl ? '没有引用' : this.fmt(e.n) + ' 处引用', why: this.props.data ? '' : e.nt ? ' · 其中只用类型 ' + this.fmt(e.nt) : '',
       crumbs: crumbs, agent: '引用方 ' + A.name + '：' + this.ownerOf(e.from), sem: this.edgePhrase(e), rel: rel, acts: acts, close: () => set({ asel: null, hover: null, hoverE: null }) };
   }
 
@@ -1987,7 +2011,7 @@ class Component extends DCLogic {
         y += 28; return;
       }
       const f = R.byId[it.id]; const isSel = it.id === sel;
-      const why = isSel && f.st !== 'none' ? W[f.st] + (this.props.data ? ' · 改动 ' + this.nt() : '') : '';
+      const why = isSel && f.st !== 'none' ? W[f.st] + (this.props.data ? ' · ' + this.changeText(f, false) : '') : '';
       rows.push({ id: f.id, cls: 'tr ln leaf' + (focus && !bright(f.id) ? ' dim' : '') + (isSel ? ' is-sel on' : ''), gut: [], elb: elb, nb: 'nb' + (isSel ? ' is-sel' : ''), nc: 'nc',
         sq: 'sq ' + this.sqAt(f.st), name: f.name, hasWhy: !!why, why: why, hasSum: false, sum: '', ex: null, on: isSel,
         pick: () => set({ asel: isSel ? null : f.id, hover: null }), hover: () => set({ hover: f.id }) });
@@ -2593,10 +2617,49 @@ class Component extends DCLogic {
       entries: rows.map((v) => { const e = {}; K.forEach((k, i) => { e[k] = v[i]; }); return e; }), acts: rec.acts || [] });
   }
   /* @@rework-1006 shared end */
+  /* With a Host the page draws no prototype sample. A first-read failure
+     shows the base's error text (readState.message) and its retry button;
+     loading and empty are empty data, never the sample or a made-up world. */
+  blankVals(read) {
+    const s = this.state || {};
+    const set = (p) => this.setState(p);
+    const theme = s.theme || this.props.theme || 'dark';
+    const status = read && read.status ? read.status : 'error';
+    const text = status === 'loading' ? ''
+      : read && read.message ? String(read.message) : '还没有采用的架构图';
+    const retry = read && typeof read.retry === 'function' ? read.retry : () => {};
+    const blankNoop = () => {};
+    return {
+      rootMod: theme === 'light' ? 't-light' : '',
+      themeLabel: theme === 'light' ? '切换到深色' : '切换到浅色',
+      toggleTheme: () => set({ theme: theme === 'light' ? 'dark' : 'light' }),
+      crumbs: [],
+      q: '', hasQ: false, hasQNote: false, qNote: '',
+      onQ: blankNoop, onQKey: blankNoop, clearQ: blankNoop,
+      qlist: [], hasQList: false, hasQMore: false, qmore: '',
+      workOnly: false, workCls: 'seg-btn', toggleWork: blankNoop, hasWorkNote: false, workNote: '',
+      legend: false, legendCls: 'seg-btn', toggleLegend: blankNoop, legendSrc: '',
+      vsw: { show: false, isSem: true, isDir: false, semCls: 'seg-btn is-on', dirCls: 'seg-btn', toSem: blankNoop, toDir: blankNoop },
+      cap: { main: '', src: '' },
+      bnd: { ins: [], outs: [], hasIn: false, hasOut: false },
+      isGraph: false, isFiles: false,
+      stage: { w: 0, h: 0 }, boxes: [],
+      lvl: { x: 0, y: 0, cls: 'ov-top', sq: 'sq z14 s-none', name: '', cnt: '', on: false, pick: blankNoop, hover: blankNoop },
+      edges: [], nodes: [], counts: [],
+      ft: { x: 0, y: 0, w: 0, cls: 'tree g-outline' }, frows: [], arcs: [],
+      card: this.noCard(), unhover: blankNoop, unhoverE: blankNoop,
+      hasDet: false, noDet: true,
+      det: { isEdge: false, hasSq: false, sq: '', name: '', tx: '', word: '', why: '', crumbs: [], agent: '', sem: '', rel: [], acts: [], close: blankNoop },
+      intro: { name: '', count: '', lines: [] },
+      blank: { show: true, text: text, canRetry: status === 'error', retry: retry }
+    };
+  }
   renderVals() {
     const s = this.state || {};
     const set = (p) => this.setState(p);
     const theme = s.theme || this.props.theme || 'dark';
+    const read = this.props.readState || null;
+    if (read && (read.status !== 'ready' || !this.props.data)) return this.blankVals(read);
     const WG = 'src/core/work-graph';
     const R = this.repo(); const byId = R.byId;
     /* The frozen board opens at the project root; the project's modules are
@@ -2679,12 +2742,12 @@ class Component extends DCLogic {
       counts = shown.filter((p) => allLabels[p.id]).map((p) => {
         const e = p.e; const l = allLabels[p.id];
         return { id: p.id, cls: 'ov-count' + (e.kind === 'back' ? ' back' : '') + (litE[p.id] ? ' lit' : hl[p.id] ? ' hl' : edgeDim(e) ? ' dim' : ''), x: l.x, y: l.y,
-          text: p.text, tip: this.edgeName(e) + '，' + (e.decl ? '声明了但没有引用' : this.props.data ? this.nt() : this.fmt(e.n) + ' 处引用'),
+          text: p.text, tip: this.edgeName(e) + '，' + (e.decl ? '声明了但没有引用' : this.props.data ? (e.noCount ? this.nt() : this.fmt(e.n) + ' 处引用') : this.fmt(e.n) + ' 处引用'),
           pick: () => set({ asel: s.asel === p.id ? null : p.id, hover: null, hoverE: null }), hover: () => set({ hoverE: p.id }) };
       });
       boxes = lay.boxes;
       topV = { x: lay.head.x, y: lay.head.y, cls: 'ov-top' + (s.asel === lid ? ' is-sel' : ''), sq: 'sq z14 ' + this.archSq(L, 'expanded'),
-        name: L.name + (view === 'dir' ? '（按文件夹观测）' : ''), cnt: lid === 'SYS' ? this.fmt(L.leaves) + ' 个文件 · 改动 ' + (this.props.data ? this.nt() : '目标 1 改动 ' + this.fmt(L.touched) + ' 个') : this.nodeCount(L),
+        name: L.name + (view === 'dir' ? '（按文件夹观测）' : ''), cnt: lid === 'SYS' ? this.fmt(L.leaves) + ' 个文件 · ' + (this.props.data ? this.changeText(L, false) : '目标 1 改动 ' + this.fmt(L.touched) + ' 个') : this.nodeCount(L),
         on: s.asel === lid, pick: () => set({ asel: s.asel === lid ? null : lid, hover: null, hoverE: null }), hover: () => set({ hover: lid }) };
       stage = { w: lay.w, h: lay.h };
       /* hover card: beside the hovered element, flipped to the left near the right edge, never over it */
@@ -2820,7 +2883,7 @@ class Component extends DCLogic {
     }
     lines.push((this.props.data && !this.props.data.hasGoal ? this.noGoalText() : this.props.data ? '格子的颜色是当前目标的任务状态。' : '格子的颜色是目标 1 的任务状态。')
       + '悬停看信息卡，点一下看详情；点节点分支上的小格子进入下一层，顶上的路径回到上一层。');
-    const intro = { name: L.name, count: lid === 'SYS' ? this.fmt(L.leaves) + ' 个文件 · 改动 ' + (this.props.data ? this.nt() : '目标 1 改动其中 ' + this.fmt(L.touched) + ' 个') + ' · 正在处理 ' + workFiles + ' 个' : this.countLine(L), lines: lines };
+    const intro = { name: L.name, count: lid === 'SYS' ? this.fmt(L.leaves) + ' 个文件 · ' + (this.props.data ? this.changeText(L, false) : '目标 1 改动其中 ' + this.fmt(L.touched) + ' 个') + ' · 正在处理 ' + workFiles + ' 个' : this.countLine(L), lines: lines };
     const SS = this.semSource();
     const legendSrc = this.props.data ? '来源：架构目录的模块与包含关系（声明）；连线是观测到的文件引用'
       : '来源：分组取自 module-target.json、边界检查' + (SS[lid] ? '与 ' + SS[lid] : '、模块文档与 WorkGraph 拆分提案') + '；连线是 ' + this.dataHead() + ' 的源码 import';
@@ -2852,7 +2915,8 @@ class Component extends DCLogic {
       ft: ft, frows: frows, arcs: arcs,
       card: card, unhover: () => set({ hover: null }), unhoverE: () => set({ hoverE: null }),
       hasDet: !!det, noDet: !det, det: det || { isEdge: false, hasSq: false, sq: '', name: '', tx: '', word: '', why: '', crumbs: [], agent: '', sem: '', rel: [], acts: [], close: () => {} },
-      intro: intro
+      intro: intro,
+      blank: { show: false, text: '', canRetry: false, retry: () => {} }
     };
     if (this.props.data) {
       const D = this.props.data;

@@ -6,11 +6,9 @@ import { asRecord } from '../../../src/ui/values.js';
 import { ag2bPlanDraft, graphWrite, plain } from '../../helpers/AG2b-collaboration-fixture.js';
 import { S6A_POLICY_CONTENT } from '../../helpers/S6A-memory-fixture.js';
 import { S6A_WORK_ROLE, type S6ARequestWorld } from '../../helpers/S6A-request-fixture.js';
-import { bootPage, type BootedPage, type PageFetch } from './boot-page.js';
-import {
-  bootE3N, countRoute, forwardPage, newPageLog, routeOf, sleep, waitFor,
-  type PageLog,
-} from './E3N-page.js';
+import type { BootedPage } from './boot-page.js';
+import { bootArchAnswers } from './E3A-fixed.js';
+import { bootE3N, countRoute, sleep, waitFor, type PageLog } from './E3N-page.js';
 
 /**
  * E3A ArchOverview worlds (E3ARCH tests §1.2): the one architecture seed the
@@ -244,23 +242,9 @@ export async function writeArchNote(world: S6ARequestWorld): Promise<void> {
  * no-observation text is what the row checks.
  */
 export async function bootArchMissingObservation(world: S6ARequestWorld, search?: string): Promise<{ page: BootedPage; log: PageLog }> {
-  const log = newPageLog();
-  const forward = forwardPage(world, log);
-  const pageRequest: PageFetch = async (url, init, realFetch) => {
-    if (routeOf(url) === 'architecture/observation-state') {
-      return new Response(JSON.stringify({ status: 'ready', value: {
-        current: null, previous: null, previousPersistedRef: null, autoCapture: null,
-      } }), { status: 200, headers: { 'content-type': 'application/json' } });
-    }
-    return forward(url, init, realFetch);
-  };
-  const page = await bootPage({
-    name: 'ArchOverview',
-    ...(search === undefined ? {} : { search }),
-    token: () => world.token,
-    request: pageRequest,
-  });
-  return { page, log };
+  return await bootArchAnswers(world, { 'architecture/observation-state': { status: 'ready', value: {
+    current: null, previous: null, previousPersistedRef: null, autoCapture: null,
+  } } }, search);
 }
 
 /** The two page reads every row shares; exported for the request-set row. */

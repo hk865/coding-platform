@@ -33,6 +33,7 @@ import type { TaskGraph } from '../contracts/task-graph.js';
 import type { SessionHistoryEntry } from '../contracts/session-activity.js';
 import type { UncommittedFilesV1 } from '../contracts/workspace-files.js';
 import type { MemberCopySource } from './adapters/member.js';
+import type { ArchitectureChangeScopeV1 } from '../contracts/architecture-search.js';
 import type { NoteAnchorV1 } from '../contracts/note.js';
 import type { DecisionCardV1, DecisionQueueReadV1 } from './adapters/decide.js';
 import { guardNotConnected, notConnectedAttrs } from './not-connected.js';
@@ -1429,6 +1430,14 @@ export async function readArchOverview(
     const reply = await client.post('tasks/query', scope, { goalRef: found.goal.ref });
     if (reply.status !== 'not_found') tasks = readyRouteValue<ArchOverviewSource['tasks']>(reply, 'tasks/query');
   }
+  /* The Goal's actual changes: one more read in the same loop, and only when a
+     Goal is in scope (`not_found` is not swallowed). */
+  let changes: ArchitectureChangeScopeV1 | null = null;
+  if (found.goal !== null) {
+    changes = readyRouteValue<ArchitectureChangeScopeV1>(
+      await client.post('architecture/change-scope', scope, { goalRef: found.goal.ref }), 'architecture/change-scope',
+    );
+  }
   const lines = readyRouteValue<ArchOverviewSource['lines']>(
     await client.post('lines/list', scope, { workspace: scope }), 'lines/list',
   );
@@ -1454,7 +1463,7 @@ export async function readArchOverview(
       id: found.goal.ref.goalId, ordinal: found.goal.read.ordinal ?? null,
       objective: asText(found.goal.read.goal.objective),
     },
-    catalog, observation, observed, files, search, work, tasks, lines, notes,
+    catalog, observation, observed, changes, files, search, work, tasks, lines, notes,
   };
   const ui = {
     level: 'SYS', view: demand.dirView === true ? 'dir' as const : 'sem' as const,

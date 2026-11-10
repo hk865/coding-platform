@@ -84,7 +84,7 @@
 | `plainSessionRefToAggregate`、`sessionAggregateRefKey` | `src/core/work-graph/sessions/session-record-codecs.ts:1381`、`src/core/work-graph/sessions/session-record-codecs.ts:1381` | 普通 SessionRef 转聚合引用，并生成规范键 | guard、claim 与引用比较；不要内联序列化 Session 聚合 |
 | `oldestPendingRound` | `src/core/work-graph/queries/request-rounds-read.ts:464` | 选最老的 pending 非 routing round；**正本**（只此一份） | intake 转移、未分配遍历、Workflow 计划；不要另写排序（M1-16、M1-18、MH-24） |
 | `oldestPending`（私有） | `src/business/workflow/request-intake.ts:173` | 把正本结果投影成 `QueryJobRef` 的私有包装 | 本层 intake/drain 使用；不要在这里重写选轮规则 |
-| `sameJson` | `src/contracts/fingerprint.ts:50` | 按规范 JSON 判等（不可编码即不相等）；**正本** | 引用/输入判等；不要另写比较 |
+| `sameJson` | `src/contracts/fingerprint.ts:7` | 按规范 JSON 判等（不可编码即不相等）；**正本** | 引用/输入判等；不要另写比较 |
 | `rejected`、`rejectedWithCurrent` | `src/contracts/core/rejections.ts:13`、`src/contracts/core/rejections.ts:13` | 领域 rejection 构造器，区分是否保留 `current` | 返回失败；本层 `reject` 只保留 owner 专属文案，不重建结果机器（M1-29） |
 
 ## 内部用

@@ -1,8 +1,9 @@
 /**
- * The ArchOverview adapter: one pure conversion from the eight read replies
+ * The ArchOverview adapter: one pure conversion from the nine read replies
  * (`architecture/read`, `architecture/observation-state`, `architecture/query`,
- * `architecture/find`, `architecture/work-scope`, `tasks/query`, `lines/list`
- * and `notes/list`) into the model the page copy reads through `props.data`.
+ * `architecture/change-scope`, `architecture/find`,
+ * `architecture/work-scope`, `tasks/query`, `lines/list` and `notes/list`) into
+ * the model the page copy reads through `props.data`.
  *
  * It touches no DOM, no network and no page module. Layout and geometry stay in
  * `src/ui/boards/ArchOverview.dc.html`; the page turns this model into `R` and
@@ -12,10 +13,13 @@
 import type { AdoptedArchitecture, ModuleDefinition } from '../../contracts/architecture-catalog.js';
 import type { CodeGraphEdge, CodeGraphNode } from '../../contracts/architecture-inspection.js';
 import type { ArchitectureObservationStateV1 } from '../../contracts/architecture-observation.js';
-import type { ArchitectureFindResultV1, ArchitectureWorkScopeV1 } from '../../contracts/architecture-search.js';
+import type {
+  ArchitectureChangeScopeV1, ArchitectureFindResultV1, ArchitectureWorkScopeV1,
+} from '../../contracts/architecture-search.js';
 import type { NoteAnchorV1 } from '../../contracts/note.js';
 import type { WorkLineListV1 } from '../../contracts/work-line.js';
 import { pathOwnershipOf } from '../../contracts/path-ownership.js';
+import { canonicalJson } from '../../contracts/canonical-json.js';
 import { adaptTaskMap, type TaskMapGraphRead } from './task-map.js';
 import { NOT_CONNECTED_TEXT } from '../not-connected.js';
 import { asRecord, asText } from '../values.js';
@@ -54,6 +58,8 @@ export type ArchOverviewSource = {
   catalog: ArchCatalogRead | null;
   observation: ArchitectureObservationStateV1 | null;
   observed: ArchObservedRead | null;
+  /** `architecture/change-scope`: what this Goal's Runs changed; null = not read. */
+  changes: ArchitectureChangeScopeV1 | null;
   /** `files/list`: the page's file leaves and folder nesting come from here. */
   files: ArchFilesRead | null;
   search: ArchitectureFindResultV1 | null;
@@ -92,11 +98,16 @@ export type ArchRepoNode = {
   taskIds: string[];
   state: string;
   counts: { files: number; tasks: number };
+  /** Files this Goal's Runs changed, definite only; modules add their descendants. */
+  touched: number;
+  /** A possible-only change: at least one changed file is not certain. */
+  possible: boolean;
   /** SYS row grouping only (outer/business/core/shared/band); layout data, not a fact. */
   group?: string;
 };
 
-export type ArchRepoEdge = { from: string; to: string; kind: CodeGraphEdge['kind'] };
+/** `count` is `CodeGraphEdge.count`: the references between the two endpoints. */
+export type ArchRepoEdge = { from: string; to: string; kind: CodeGraphEdge['kind']; count: number };
 
 export type ArchTaskModelRow = {
   id: string;
@@ -144,6 +155,8 @@ export type ArchOverviewData = {
   qMore: string;
   hasQMore: boolean;
   hasGoal: boolean;
+  /** `architecture/change-scope` was read and whether it is complete; null = not read. */
+  changes: { known: boolean; complete: boolean } | null;
   /** Page-owned empty text kind; the page writes the ruled sentence. */
   empty: 'no_catalog' | 'no_observation' | null;
   unresolved: number;
@@ -343,22 +356,82 @@ export function adaptArchOverview(source: ArchOverviewSource, ui: ArchOverviewUi
   const deps = taskDeps(source.tasks);
   const rail = buildRail(source.lines, facts);
 
+  /* `architecture/change-scope` is read once per refresh; every changed number
+     below comes from it and no node sums a subtree a second time. */
+  const changes = source.changes;
+  const changedFiles = new Map<string, ArchitectureChangeScopeV1['files'][number]>();
+  for (const row of changes?.files ?? []) changedFiles.set(row.path, row);
+  const changedModules = new Map<string, { changed: number; possible: number }>();
+  for (const row of changes?.modules ?? []) changedModules.set(row.moduleRef.moduleId, row);
+  /* One row per interface group: files[]'s moduleRef + interfaceId, never the
+     module's own changed number (that would count the files twice). */
+  const changedGroups = new Map<string, { definite: number; possible: number }>();
+  for (const row of changes?.files ?? []) {
+    if (row.moduleRef === null || row.interfaceId === null) continue;
+    const key = canonicalJson([row.moduleRef.moduleId, row.interfaceId]);
+    const counts = changedGroups.get(key) ?? { definite: 0, possible: 0 };
+    if (row.certainty === 'definite') counts.definite += 1;
+    else counts.possible += 1;
+    changedGroups.set(key, counts);
+  }
+  /* a module's number is its own row plus every containment descendant's;
+     the recursion is safe because adoption rejects a containment cycle. */
+  const childModules = new Map<string, string[]>();
+  for (const [child, parent] of parentOf) {
+    childModules.set(parent, [...(childModules.get(parent) ?? []), child]);
+  }
+  const moduleTotals = new Map<string, { changed: number; possible: number }>();
+  const totalsOf = (moduleId: string): { changed: number; possible: number } => {
+    const cached = moduleTotals.get(moduleId);
+    if (cached !== undefined) return cached;
+    const own = changedModules.get(moduleId) ?? { changed: 0, possible: 0 };
+    const total = { changed: own.changed, possible: own.possible };
+    for (const child of childModules.get(moduleId) ?? []) {
+      const below = totalsOf(child);
+      total.changed += below.changed;
+      total.possible += below.possible;
+    }
+    moduleTotals.set(moduleId, total);
+    return total;
+  };
+  /* A file row is definite or possible; a missing row is 0 either way, and the
+     page writes 还没接通 when the read was incomplete (R4). */
+  const changeOfFile = (path: string): { touched: number; possible: boolean } => {
+    const row = changedFiles.get(path);
+    if (row === undefined) return { touched: 0, possible: false };
+    return row.certainty === 'definite' ? { touched: 1, possible: false } : { touched: 0, possible: true };
+  };
+  /* A directory shows the files under it, never its modules' own numbers. */
+  const changeUnder = (dirPath: string): { touched: number; possible: boolean } => {
+    let definite = 0;
+    let possible = 0;
+    for (const row of changes?.files ?? []) {
+      if (!row.path.startsWith(dirPath + '/')) continue;
+      if (row.certainty === 'definite') definite += 1;
+      else possible += 1;
+    }
+    return { touched: definite, possible: possible > 0 && definite === 0 };
+  };
+
   const nodes: DraftNode[] = [];
   const byId = new Map<string, DraftNode>();
   const push = (node: DraftNode): DraftNode => { nodes.push(node); byId.set(node.id, node); return node; };
   push({
     id: 'SYS', name: source.projectName || source.scope.projectId, kind: 'system', parentId: null,
     path: '', responsibility: '', taskIds: [], state: 'none', counts: { files: 0, tasks: 0 },
+    touched: 0, possible: false,
   });
 
   const moduleNodes = new Map<string, DraftNode>();
   for (const module of modules) {
     const id = asText(module.ref.moduleId);
     const parent = parentOf.get(id) ?? null;
+    const total = totalsOf(id);
     const node = push({
       id, name: asText(module.name), kind: parent === null ? 'module' : 'group', parentId: parent,
       path: modulePath(module), responsibility: asText(module.responsibility), taskIds: [],
       state: 'none', counts: { files: 0, tasks: 0 }, group: areaOfPath(modulePath(module)),
+      touched: total.changed, possible: total.possible > 0,
     });
     moduleNodes.set(id, node);
   }
@@ -375,11 +448,15 @@ export function adaptArchOverview(source: ArchOverviewSource, ui: ArchOverviewUi
     for (const entry of module.interfaces ?? []) {
       const interfaceId = asText(entry.id);
       if (interfaceId === '') continue;
-      const groupId = id + '#' + interfaceId;
+      /* The group id is B1's interface identity (an interface id is unique only
+         inside its module); an edge's `interface:` endpoint is this same string. */
+      const groupId = canonicalJson([id, interfaceId]);
+      const counts = changedGroups.get(groupId) ?? { definite: 0, possible: 0 };
       interfaceGroups.set(groupId, push({
         id: groupId, name: interfaceId, kind: 'group', parentId: id, path: parent.path,
         responsibility: asText(entry.description), taskIds: [], state: 'none',
         counts: { files: 0, tasks: 0 },
+        touched: counts.definite, possible: counts.possible > 0 && counts.definite === 0,
       }));
     }
   }
@@ -410,10 +487,12 @@ export function adaptArchOverview(source: ArchOverviewSource, ui: ArchOverviewUi
     for (const id of taskIds) state = worst(state, states.get(id) ?? 'none');
     if (owners.length === 0) {
       /* No declared owner: the file is kept as the adapter's `loose` node and
-         drawn by the folder view; the declared tree does not show it. */
+         turned into a band file below (the declared tree shows it under its
+         top-level support directory). */
       const file: DraftNode = {
         id: path, name, kind: 'loose', parentId: null, path,
         responsibility: '', taskIds, state, counts: { files: 1, tasks: taskIds.length },
+        ...changeOfFile(path),
       };
       push(file);
       fileNodes.set(path, file);
@@ -427,13 +506,14 @@ export function adaptArchOverview(source: ArchOverviewSource, ui: ArchOverviewUi
          the file, and no interface match keeps it directly under the module. */
       const interfaces = owner.interfaces ?? [];
       const groupAt = pathOwnershipOf(path, interfaces.map((entry) => ({ value: entry.id, paths: entry.paths })));
-      const groupId = groupAt.status === 'owner' ? moduleId + '#' + groupAt.owner : null;
+      const groupId = groupAt.status === 'owner' ? canonicalJson([moduleId, groupAt.owner]) : null;
       const parentId = groupId !== null && interfaceGroups.has(groupId) ? groupId : moduleId;
       if (parentId !== moduleId) usedInterfaceGroups.add(parentId);
       const id = index === 0 ? path : path + '#@' + moduleId;
       const file: DraftNode = {
         id, name, kind: 'file', parentId, path,
         responsibility: '', taskIds, state, counts: { files: 1, tasks: taskIds.length },
+        ...changeOfFile(path),
       };
       push(file);
       if (index === 0) fileNodes.set(path, file);
@@ -449,6 +529,38 @@ export function adaptArchOverview(source: ArchOverviewSource, ui: ArchOverviewUi
     byId.delete(groupId);
   }
 
+  /* a file no catalog module claims belongs to a support directory. One
+     `band` node per top-level directory, its id a fresh `band:<n>` (the display
+     name is the directory name, so a module named `tests` cannot be shadowed);
+     root files (no `/`) share the prototype's 项目根目录文件 band. */
+  const bandFiles = new Map<string, DraftNode[]>();
+  for (const node of nodes) {
+    if (node.kind !== 'loose') continue;
+    const slash = node.path.indexOf('/');
+    const key = slash < 0 ? ':files' : node.path.slice(0, slash);
+    bandFiles.set(key, [...(bandFiles.get(key) ?? []), node]);
+  }
+  let bandIndex = 0;
+  for (const key of Array.from(bandFiles.keys()).sort()) {
+    const files = bandFiles.get(key) ?? [];
+    while (byId.has('band:' + String(bandIndex))) bandIndex += 1;
+    const bandId = 'band:' + String(bandIndex);
+    bandIndex += 1;
+    let touched = 0;
+    let possible = false;
+    for (const file of files) {
+      touched += file.touched;
+      possible = possible || file.possible;
+      file.kind = 'file';
+      file.parentId = bandId;
+    }
+    push({
+      id: bandId, name: key === ':files' ? '项目根目录文件' : key, kind: 'band', parentId: 'SYS',
+      path: key === ':files' ? '' : key, responsibility: '', taskIds: [], state: 'none',
+      counts: { files: files.length, tasks: 0 }, touched, possible,
+    });
+  }
+
   /* Directory view: one folder node per observed file's directory (the
      prototype's folder-of-path grouping), whatever module owns the file; the
      files with no directory get the prototype's loose folder. */
@@ -462,7 +574,7 @@ export function adaptArchOverview(source: ArchOverviewSource, ui: ArchOverviewUi
       if (existing !== undefined) return existing;
       const node: DraftNode = {
         id, name, kind: 'folder', parentId: WG, path, responsibility: '',
-        taskIds: [], state: 'none', counts: { files: 0, tasks: 0 },
+        taskIds: [], state: 'none', counts: { files: 0, tasks: 0 }, ...changeUnder(path),
       };
       dirs.set(id, node);
       dirNodes.push(node);
@@ -514,21 +626,43 @@ export function adaptArchOverview(source: ArchOverviewSource, ui: ArchOverviewUi
     node.taskIds = Array.from(taskSet(node));
   }
 
+  /* SYS adds its children once: a top-level module already carries its own
+     containment descendants, and a band already carries its files. */
+  const sys = byId.get('SYS');
+  if (sys !== undefined) {
+    let touched = 0;
+    let possible = false;
+    for (const node of nodes) {
+      if (node.id === 'SYS') continue;
+      if (node.parentId !== null && node.parentId !== 'SYS') continue;
+      touched += node.touched;
+      possible = possible || node.possible;
+    }
+    sys.touched = touched;
+    sys.possible = possible;
+  }
+
   /* Only module-to-module edges have a public read (`architecture/query`'s
      module nodes); file-to-file imports have none, so the page never invents
-     them (its file details say 还没接通 instead). */
+     them (its file details say 还没接通 instead). Inside one module, B1 also
+     reports `interface_uses` between interface groups, keyed by the group id. */
   const edges: ArchRepoEdge[] = [];
-  const moduleEndpoint = (nodeId: string): string | null => {
-    const prefix = 'module:';
-    if (!nodeId.startsWith(prefix)) return null;
-    const id = nodeId.slice(prefix.length);
-    return moduleNodes.has(id) ? id : null;
+  const endpointOf = (nodeId: string): string | null => {
+    if (nodeId.startsWith('module:')) {
+      const id = nodeId.slice('module:'.length);
+      return moduleNodes.has(id) ? id : null;
+    }
+    if (nodeId.startsWith('interface:')) {
+      const id = nodeId.slice('interface:'.length);
+      return usedInterfaceGroups.has(id) ? id : null;
+    }
+    return null;
   };
   for (const edge of source.observed?.edges ?? []) {
-    const from = moduleEndpoint(asText(edge.fromNode));
-    const to = moduleEndpoint(asText(edge.toNode));
+    const from = endpointOf(asText(edge.fromNode));
+    const to = endpointOf(asText(edge.toNode));
     if (from === null || to === null) continue;
-    edges.push({ from, to, kind: edge.kind });
+    edges.push({ from, to, kind: edge.kind, count: edge.count });
   }
 
   const tasks: ArchTaskModelRow[] = [];
@@ -572,6 +706,8 @@ export function adaptArchOverview(source: ArchOverviewSource, ui: ArchOverviewUi
     notes: source.notes,
     ...search,
     hasGoal: source.goal !== null,
+    changes: source.changes === null ? null
+      : { known: true, complete: source.changes.complete },
     empty: emptyOf(source.catalog, source.observation),
     unresolved: unresolved.length,
     unresolvedPaths: unresolved.slice(),

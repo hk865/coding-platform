@@ -36,7 +36,7 @@
 | `deriveEffectiveGoalId` | `src/core/work-graph/queries/request-rounds-read.ts:434` | 取最新非空 `goalAttribution`，否则请求自己的 goal | 请求事实投影 |
 | `deriveCoveredByDrop` | `src/core/work-graph/queries/request-rounds-read.ts:450` | 被后续 drop 轮覆盖的轮次 ref 列表 | 请求事实投影/取消判断 |
 | `oldestPendingRound` | `src/core/work-graph/queries/request-rounds-read.ts:464` | 最老的 pending 非 routing 轮，按 `since`、再按规范 key；**正本**（6A-1 已合成一份，不列副本） | 请求 intake、未分配 drain 和 Workflow 选最老 pending；调用方各自投影快照或 ref |
-| `canonicalKey` **正本** | `src/contracts/fingerprint.ts:59` | 记录 ref 的规范 key（规范 JSON，不可编码时抛错） | 写 `request-tail`/intake claim 与比较记录 key；本层和 `tasks` 都直接 import 这一份，不要另写编码 |
+| `canonicalKey` **正本** | `src/contracts/fingerprint.ts:16` | 记录 ref 的规范 key（规范 JSON，不可编码时抛错） | 写 `request-tail`/intake claim 与比较记录 key；本层和 `tasks` 都直接 import 这一份，不要另写编码 |
 | `rootOfFacts` | `src/core/work-graph/queries/request-round-claims.ts:49` | 一次请求的根轮 ref | 写 `request-tail` claim 时取请求根；本层不能 import `tasks`，两边都用这一份 |
 | `noopTailClaim` | `src/core/work-graph/queries/request-round-claims.ts:44` | 不加轮也占住 `request-tail` 的空操作 CAS，排除并发 append | 不加轮的请求提交（`end_unbound`、被 drop 覆盖的轮结束） |
 | `requestStartCheck` | `src/core/work-graph/queries/request-round-claims.ts:66` | 起跑检查：attempt 的 Session 必须是请求当前 owner；owner 已归档先于换人判定 | entry 前；不 pass 就放弃本 attempt |

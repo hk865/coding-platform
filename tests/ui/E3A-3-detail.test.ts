@@ -45,8 +45,9 @@ describe('E3A-3 details, files and edges', () => {
       click(top!);
       const text = detailText(page.root);
       expect(text).toContain('1 个文件');
-      /* 具名改坏: 把“改动”写成 `0`；E3A-09 的 `还没接通` 等值断言红。 */
-      expect(text).toContain('还没接通');
+      /* DARR B2 §4: the change scope is read now; this Goal has no Run, so the
+         real count is 0. 具名改坏: 把“改动”留在 `还没接通`；E3A-09 的 `改动 0` 红。 */
+      expect(text).toContain('改动 0');
     } finally {
       await page.restore();
     }
@@ -103,6 +104,9 @@ describe('E3A-3 details, files and edges', () => {
       expect(detailText(page.root)).toContain('引用');
       expect(detailText(page.root)).toContain('被引用');
       expect(detailText(page.root)).toContain('还没接通');
+      /* DARR B2 §4: the file's actual change is read now; no Run, so 改动 0.
+         具名改坏: 把文件的“改动”留在 `还没接通`；E3A-11 的 `改动 0` 红。 */
+      expect(detailText(page.root)).toContain('改动 0');
       expect(detailText(page.root)).not.toContain('不引用其它源码文件');
     } finally {
       await page.restore();
@@ -125,8 +129,7 @@ describe('E3A-3 details, files and edges', () => {
       /* The label's hand-computed number is 1. */
       const count = findAllClass(page.root, 'ov-count').find((element) => element.textContent.trim() === '1');
       expect(count).toBeDefined();
-      /* 具名改坏: 把边详情的“引用处数”写成 `n`（边数冒充处数）；
-         E3A-12 的 `还没接通` 红。 */
+      /* 具名改坏: 把边详情的“引用处数”留在 `还没接通`；E3A-12 的 `1 处引用` 红。 */
       click(count!);
       const text = detailText(page.root);
       expect(text).toContain('Other');
@@ -138,9 +141,10 @@ describe('E3A-3 details, files and edges', () => {
       const sourceFiles = relationGroup(page.root, '来源文件');
       expect(occurrences).toBeDefined();
       expect(sourceFiles).toBeDefined();
-      /* 具名改坏: `引用处数` 改成 `this.fmt(e.n)`（`:1930`，边数冒充处数），
-         或两项都改成数字（`:1930-1931`）；E3A-12 的逐项等值断言红。 */
-      expect(textOf(occurrences!)).toBe('还没接通');
+      /* DARR B2 §4: `count` reaches the page; the seed has one reference, so
+         `引用处数` is the real 1; `来源文件` stays 还没接通.
+         具名改坏: `引用处数` 留在 `this.nt()`，或 `来源文件` 写成数字；E3A-12 的逐项等值断言红。 */
+      expect(textOf(occurrences!)).toBe('1 处引用');
       expect(textOf(sourceFiles!)).toBe('还没接通');
       expect(text).toContain('引用处数');
       expect(text).toContain('来源文件');

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import raw from './scenes/ArchOverview.scene.json' with { type: 'json' };
 import type { BootstrapReply } from '../../src/ui/host-client.js';
+import { canonicalJson } from '../../src/contracts/fingerprint.js';
 import type {
   ArchCatalogRead, ArchFilesRead, ArchObservedRead,
 } from '../../src/ui/adapters/arch-overview.js';
@@ -91,7 +92,7 @@ const lines = routes['lines/list'].value as unknown as WorkLineListV1;
 describe('ArchOverview fixed scene (prototype sample)', () => {
   it('keeps the prototype sample counts and the route reply shapes', () => {
     expect(bootstrap.workspaces[0]?.name).toBe('coding-platform');
-    expect(catalogRead.catalog.catalog.modules).toHaveLength(18);
+    expect(catalogRead.catalog.catalog.modules).toHaveLength(11);
     const codeModuleIds = new Set([
       'src/ui', 'src/app', 'src/composition', 'src/business/workflow',
       'src/core/agent-runtime', 'src/core/work-graph', 'src/core/workspace', 'src/core/record-store',
@@ -102,8 +103,8 @@ describe('ArchOverview fixed scene (prototype sample)', () => {
       .filter((id) => codeModuleIds.has(id));
     expect(codeModules).toEqual([...codeModuleIds]);
     expect(files.paths).toHaveLength(2709);
-    expect(observed.nodes).toHaveLength(18);
-    expect(observed.edges).toHaveLength(29);
+    expect(observed.nodes).toHaveLength(17);
+    expect(observed.edges).toHaveLength(31);
     expect(observation.current?.persistedRef.capture.captureId).toBe('0543261');
     expect(work.counts).toEqual({ runs: 0, files: 7, modules: 3 });
     expect(goal.ordinal).toBe(1);
@@ -112,13 +113,27 @@ describe('ArchOverview fixed scene (prototype sample)', () => {
     expect(lines.rows).toHaveLength(3);
     expect(lines.rows.map((row) => row.duty)).toEqual(['secretary', 'executor', 'reviewer']);
 
-    const moduleIds = new Set(catalogRead.catalog.catalog.modules.map((module) => module.ref.moduleId));
+    const catalogModules = catalogRead.catalog.catalog.modules;
+    const moduleIds = new Set(catalogModules.map((module) => module.ref.moduleId));
+    const interfaceIds = new Set(catalogModules.flatMap((module) =>
+      module.interfaces.map((entry) => 'interface:' + canonicalJson([module.ref.moduleId, entry.id]))));
     const observedModules = new Set(observed.nodes.map((node) => node.nodeId));
-    for (const node of observed.nodes) expect(node.nodeId.startsWith('module:')).toBe(true);
+    for (const node of observed.nodes) {
+      const isModule = node.nodeId.startsWith('module:');
+      expect(isModule || node.nodeId.startsWith('interface:')).toBe(true);
+      if (isModule) expect(moduleIds.has(node.nodeId.slice('module:'.length))).toBe(true);
+      else expect(interfaceIds.has(node.nodeId)).toBe(true);
+    }
     for (const edge of observed.edges) {
       expect(observedModules.has(edge.fromNode)).toBe(true);
       expect(observedModules.has(edge.toNode)).toBe(true);
-      expect(moduleIds.has(edge.fromNode.slice('module:'.length))).toBe(true);
+      for (const endpoint of [edge.fromNode, edge.toNode]) {
+        if (endpoint.startsWith('module:')) {
+          expect(moduleIds.has(endpoint.slice('module:'.length))).toBe(true);
+        } else {
+          expect(interfaceIds.has(endpoint)).toBe(true);
+        }
+      }
     }
     const paths = new Set(files.paths);
     for (const module of catalogRead.catalog.catalog.modules) {

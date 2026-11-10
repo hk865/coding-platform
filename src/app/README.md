@@ -73,7 +73,7 @@
 | `sendSystemRound` | `src/app/system-round.ts:18` | 系统轮的唯一 Host 发送包装：先组请求，按身份查自己的已提交回执（已提交答 `skipped`），否则交 `sendMessage`；`undetermined` 不是拒绝 | Workflow 的 refine/deviation/planreview/planfix/planresume 发送；不要另写回执检查或第二份发送 |
 | `createSecretaryProfiles` | `src/app/secretary-profiles.ts:50` | Host 的 `SecretaryProfilePort`：`forSession` 只按实时 profile 列表匹配 workspace 与完整 `sessionRole`（`sameJson`），不做 duty 判定；`forNewLine` 调真正的 duty resolver | Host 在 `src/app/secretary-profiles.ts:50` 构造并作为 `secretaryProfiles` 选项注入（`src/app/secretary-profiles.ts:50`）；duty 正本是 `createSessionDutyResolver`（`src/composition/session-duty.ts:51`），不要另写判断 |
 | `createSessionDutyResolver` | `src/composition/session-duty.ts:51` | **正本**：受信任 duty 解析；RoleSpec 的 `platformDuty` 与精确 legacy 模板任一侧可定，缺证据才回退 Work binding 的 `sessionRole`，否则 `unknown` | admission、secretary 判定都调它；本层 `forNewLine` 经它，不要另写 duty 判断 |
-| `sameJson` | `src/contracts/fingerprint.ts:50` | **正本**：按规范 JSON 做与键序无关的相等比较；不能编码的值永不相等 | 比较完整 `sessionRole` 等结构时；不要另写比较 |
+| `sameJson` | `src/contracts/fingerprint.ts:7` | **正本**：按规范 JSON 做与键序无关的相等比较；不能编码的值永不相等 | 比较完整 `sessionRole` 等结构时；不要另写比较 |
 | `createWorkspaceAccessFactory` | `src/core/workspace/access.ts:95` | **正本**（路径校验这一层的入口）：经 Host 绑定的 root realpath 与当前授权开工作区读访问 | 判断工作区路径是否可读/在根内时；不要用本层 `isPathWithin` 当通用校验 |
 | `createHostSettings` | `src/app/host-settings.ts:652` | 读写 Host 本地设置：目录、模型、检查、自动化、资源上限、Work Run token 预算、规划环上限（§10.3）、提示词包，并推送私有快照 | Host 启动或设置路由；凭据只写不读 |
 | `ChecksAdoptionEntryPort` | `src/app/host-settings-types.ts:216` | P11 的窄检查入口：`applyChecksForAdoption`（同子恢复不重写、保存/回滚/未确认）、只读设置文件的 `readSavedChecks`、转发的 `confirmInstalledChecks`，以及与 `checks/approve` 共用一条队列的 `runExclusive` | L 的 initialization-adoption 阶段调用 `createHostSettings` 返回的对象；不要另写设置写入、检查校验或安装映射 |

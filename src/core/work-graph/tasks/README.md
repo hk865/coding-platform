@@ -160,7 +160,7 @@
 | `workspaceOf` **正本** | `request-service.ts:258` | 把 `CoreCallContext` 折成 `WorkspaceScope`（缺省 workspace 为空串） | 请求、秘书与读取统一 scope；不要各写一份 |
 | `requestAssignmentRow` **正本** | `request-service.ts:793` | submit/route 的提交行唯一纯判定（follow_owner/wait/pick/recipient） | Workflow 决定是否 pick；append 复核 |
 | `readLiveGoal` **正本** | `request-service.ts:492` | 请求与追问 append 前的唯一 Goal 复核：存在、属于本工作区、且不是 `cancelled`；`active` 与 `paused` 都放行（DESIGN :343、slice-6 :215） | submit 与 follow-up；不要另写一份 live 判断 |
-| `sameJson` **正本** | `src/contracts/fingerprint.ts:50` | 无视键顺序的 JSON 内容相等（F 行副本的正本）；`src/core/work-graph/state/ref-equality.ts:2` 的 `sameRef` 是按结构逐字段比较，不等价 | 判等引用/内容时；不要另写副本 |
+| `sameJson` **正本** | `src/contracts/fingerprint.ts:7` | 无视键顺序的 JSON 内容相等（F 行副本的正本）；`src/core/work-graph/state/ref-equality.ts:2` 的 `sameRef` 是按结构逐字段比较，不等价 | 判等引用/内容时；不要另写副本 |
 | `sessionAggregateRefKey` **正本** | `src/core/work-graph/sessions/session-record-codecs.ts:1381` | Session 聚合键的规范序列化 | 拼 canonical key；不要内联序列化 |
 | `plainSessionRefKey` **正本** | `src/core/work-graph/sessions/session-record-codecs.ts:1391` | 普通 `{projectId, sessionId}` 输入的规范 Session 键（即 Session 记录 refKey），丢掉输入的额外字段 | 给 Session 做内存 Map 键（请求队列、执行读取、秘书选择）；不要内联序列化 |
 | `plainSessionRef` **正本** | `src/core/work-graph/sessions/session-record-codecs.ts:1396` | 普通 Session 引用投影成 `{projectId, sessionId}`，丢掉额外字段 | 目录卡/聚合 ref 要变成普通 SessionRef（职责解析、异常记录）；不要另写一份 |

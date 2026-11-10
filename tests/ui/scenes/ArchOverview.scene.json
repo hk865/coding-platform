@@ -281,78 +281,48 @@
                       "src/core/work-graph/architecture/catalog-contracts.ts",
                       "src/core/work-graph/architecture/catalog-record-codecs.ts",
                       "src/core/work-graph/architecture/catalog-service.ts",
-                      "src/core/work-graph/architecture/contracts.ts",
-                      "src/core/work-graph/architecture/graph-index.ts"
+                      "src/core/work-graph/architecture/contracts.ts"
                     ]
                   },
                   {
                     "id": "model",
-                    "description": "各子模块共享的端口和数据契约，外加少量纯工具；不做 I/O，不做记录编码。提案新建这个目录，文件现在还在原来的目录里。",
+                    "description": "共享端口与数据契约。",
                     "paths": [
                       "src/core/work-graph/communication/contracts.ts",
                       "src/core/work-graph/configuration/contracts.ts",
+                      "src/core/work-graph/configuration/project-bootstrap-contracts.ts",
                       "src/core/work-graph/evidence/contracts.ts",
                       "src/core/work-graph/materials/contracts.ts",
+                      "src/core/work-graph/materials/grant-contracts.ts",
+                      "src/core/work-graph/queries/contracts.ts",
                       "src/core/work-graph/sessions/contracts.ts",
+                      "src/core/work-graph/sessions/lifecycle-contracts.ts",
                       "src/core/work-graph/tasks/claim-contracts.ts",
                       "src/core/work-graph/tasks/contracts.ts",
+                      "src/core/work-graph/tasks/control-contracts.ts",
                       "src/core/work-graph/tasks/execution-entry-contracts.ts",
                       "src/core/work-graph/tasks/execution-history-contracts.ts",
                       "src/core/work-graph/tasks/execution-read-contracts.ts",
+                      "src/core/work-graph/tasks/model-call-contracts.ts",
                       "src/core/work-graph/tasks/plan-contracts.ts",
                       "src/core/work-graph/tasks/task-index.ts"
                     ]
                   },
                   {
-                    "id": "communication",
-                    "description": "工作记录之间的邮箱：投递、读取、回复。",
-                    "paths": [
-                      "src/core/work-graph/communication/mailbox-service.ts"
-                    ]
-                  },
-                  {
-                    "id": "sessions",
-                    "description": "工作记录目录、生命周期与工作目标，以及工作记录和消息的记录编码。",
-                    "paths": [
-                      "src/core/work-graph/communication/message-record-codecs.ts",
-                      "src/core/work-graph/sessions/lifecycle-contracts.ts",
-                      "src/core/work-graph/sessions/lifecycle-record-codecs.ts",
-                      "src/core/work-graph/sessions/session-directory.ts",
-                      "src/core/work-graph/sessions/session-lifecycle.ts",
-                      "src/core/work-graph/sessions/session-record-codecs.ts",
-                      "src/core/work-graph/sessions/session-targets.ts"
-                    ]
-                  },
-                  {
-                    "id": "configuration",
-                    "description": "项目、工作区与完成策略的引导；角色配置与角色记忆。",
-                    "paths": [
-                      "src/core/work-graph/configuration/project-bootstrap-contracts.ts",
-                      "src/core/work-graph/configuration/project-bootstrap-record-codecs.ts",
-                      "src/core/work-graph/configuration/project-bootstrap-service.ts",
-                      "src/core/work-graph/configuration/role-memory-service.ts",
-                      "src/core/work-graph/configuration/role-record-codecs.ts"
-                    ]
-                  },
-                  {
                     "id": "tasks",
-                    "description": "计划的读、写、校验与采用；领取；执行入口与历史；控制；模型调用；运行状态；完成判定与证据覆盖。",
+                    "description": "计划的读写、领取、执行与完成判定。",
                     "paths": [
                       "src/core/work-graph/evidence/coverage.ts",
-                      "src/core/work-graph/persistence/model-request-codecs.ts",
-                      "src/core/work-graph/tasks/claim-record-codecs.ts",
                       "src/core/work-graph/tasks/claim-service.ts",
                       "src/core/work-graph/tasks/completion-policy.ts",
-                      "src/core/work-graph/tasks/completion-record-codecs.ts",
                       "src/core/work-graph/tasks/completion.ts",
-                      "src/core/work-graph/tasks/control-contracts.ts",
                       "src/core/work-graph/tasks/control-service.ts",
                       "src/core/work-graph/tasks/eligibility.ts",
+                      "src/core/work-graph/tasks/entry-plan-reader.ts",
                       "src/core/work-graph/tasks/execution-entry-service.ts",
                       "src/core/work-graph/tasks/execution-history-binding.ts",
                       "src/core/work-graph/tasks/execution-history-service.ts",
                       "src/core/work-graph/tasks/initial-plan.ts",
-                      "src/core/work-graph/tasks/model-call-contracts.ts",
                       "src/core/work-graph/tasks/model-call-service.ts",
                       "src/core/work-graph/tasks/plan-commit-compiler.ts",
                       "src/core/work-graph/tasks/plan-readers.ts",
@@ -360,89 +330,70 @@
                       "src/core/work-graph/tasks/plan-task-basis.ts",
                       "src/core/work-graph/tasks/plan-validation.ts",
                       "src/core/work-graph/tasks/plan-write-admission.ts",
+                      "src/core/work-graph/tasks/requeue-service.ts",
                       "src/core/work-graph/tasks/run-state-service.ts",
                       "src/core/work-graph/tasks/task-service.ts"
                     ]
                   },
                   {
                     "id": "persistence",
-                    "description": "目标创建的编译和仓储；多个子模块共读的记录与事件编解码。",
+                    "description": "记录与事件的编解码和仓储。",
                     "paths": [
+                      "src/core/work-graph/communication/message-record-codecs.ts",
+                      "src/core/work-graph/configuration/project-bootstrap-record-codecs.ts",
+                      "src/core/work-graph/configuration/role-record-codecs.ts",
                       "src/core/work-graph/evidence/evidence-record-codecs.ts",
+                      "src/core/work-graph/materials/grant-record-codecs.ts",
                       "src/core/work-graph/persistence/commit-compiler.ts",
                       "src/core/work-graph/persistence/control-record-codecs.ts",
                       "src/core/work-graph/persistence/execution-entry-codecs.ts",
                       "src/core/work-graph/persistence/execution-history-codecs.ts",
                       "src/core/work-graph/persistence/graph-repository.ts",
+                      "src/core/work-graph/persistence/model-request-codecs.ts",
                       "src/core/work-graph/persistence/record-codecs.ts",
+                      "src/core/work-graph/persistence/rework-codecs.ts",
+                      "src/core/work-graph/queries/query-record-codecs.ts",
+                      "src/core/work-graph/sessions/lifecycle-record-codecs.ts",
+                      "src/core/work-graph/sessions/session-record-codecs.ts",
+                      "src/core/work-graph/tasks/claim-record-codecs.ts",
+                      "src/core/work-graph/tasks/completion-record-codecs.ts",
                       "src/core/work-graph/tasks/plan-record-codecs.ts"
                     ]
                   },
                   {
-                    "id": "evidence",
-                    "description": "验证轮次与证据写入、验证计划。",
+                    "id": "notes",
+                    "description": "工作记录目录、消息与会话生命周期。",
                     "paths": [
-                      "src/core/work-graph/evidence/evidence-service.ts",
-                      "src/core/work-graph/evidence/verification-plan.ts"
+                      "src/core/work-graph/communication/mailbox-service.ts",
+                      "src/core/work-graph/sessions/session-directory.ts",
+                      "src/core/work-graph/sessions/session-lifecycle.ts",
+                      "src/core/work-graph/sessions/session-targets.ts"
                     ]
                   },
                   {
-                    "id": "materials",
-                    "description": "材料访问、授权与适用性；运行快照、查询运行与授权的只读编码。",
+                    "id": "views",
+                    "description": "模块与文件的结构索引。",
                     "paths": [
+                      "src/core/work-graph/architecture/graph-index.ts"
+                    ]
+                  },
+                  {
+                    "id": "runtime",
+                    "description": "查询、配置、材料、证据与来源权威的运行时服务。",
+                    "paths": [
+                      "src/core/work-graph/configuration/project-bootstrap-service.ts",
+                      "src/core/work-graph/configuration/role-memory-service.ts",
+                      "src/core/work-graph/evidence/evidence-service.ts",
+                      "src/core/work-graph/evidence/verification-plan.ts",
                       "src/core/work-graph/materials/applicability.ts",
-                      "src/core/work-graph/materials/grant-contracts.ts",
-                      "src/core/work-graph/materials/grant-record-codecs.ts",
                       "src/core/work-graph/materials/grant-service.ts",
                       "src/core/work-graph/materials/material-facts-service.ts",
                       "src/core/work-graph/materials/material-service.ts",
                       "src/core/work-graph/materials/record-ports.ts",
-                      "src/core/work-graph/materials/record-readers.ts"
-                    ]
-                  },
-                  {
-                    "id": "other",
-                    "description": "拆分提案之后新增、还没有归入子模块的文件。",
-                    "paths": [
-                      "src/core/work-graph/persistence/rework-codecs.ts",
-                      "src/core/work-graph/state/attempt-machine.ts",
-                      "src/core/work-graph/state/control-intent-machine.ts",
-                      "src/core/work-graph/state/goal-machine.ts",
-                      "src/core/work-graph/state/message-machine.ts",
-                      "src/core/work-graph/state/no-progress.ts",
-                      "src/core/work-graph/state/plan-machine.ts",
-                      "src/core/work-graph/state/query-run-recovery.ts",
-                      "src/core/work-graph/state/run-machine.ts",
-                      "src/core/work-graph/state/session-availability.ts",
-                      "src/core/work-graph/state/task-failure.ts",
-                      "src/core/work-graph/state/task-machine.ts",
-                      "src/core/work-graph/state/transition.ts",
-                      "src/core/work-graph/state/verification-machine.ts",
-                      "src/core/work-graph/tasks/entry-plan-reader.ts",
-                      "src/core/work-graph/tasks/requeue-service.ts"
-                    ]
-                  },
-                  {
-                    "id": "queries",
-                    "description": "查询任务和它的每次执行：提交、执行、答复与记录编码。",
-                    "paths": [
-                      "src/core/work-graph/queries/contracts.ts",
+                      "src/core/work-graph/materials/record-readers.ts",
                       "src/core/work-graph/queries/query-execution.ts",
                       "src/core/work-graph/queries/query-job-service.ts",
-                      "src/core/work-graph/queries/query-record-codecs.ts"
-                    ]
-                  },
-                  {
-                    "id": "source-authority-ports",
-                    "description": "对 Runtime 和 Workflow 公开的来源权威读取端口（单文件）。",
-                    "paths": [
-                      "src/core/work-graph/source-authority-ports.ts"
-                    ]
-                  },
-                  {
-                    "id": "source-authority-reader",
-                    "description": "来源权威精确事实的读取适配器（单文件）。",
-                    "paths": [
+                      "src/core/work-graph/source-authority-ports.ts",
                       "src/core/work-graph/source-authority-reader.ts"
                     ]
                   }
@@ -620,96 +571,12 @@
               {
                 "ref": {
                   "projectId": "coding-platform",
-                  "moduleId": "tests"
+                  "moduleId": "src/core/work-graph/state"
                 },
-                "name": "tests",
-                "responsibility": "单元、场景、回放与边界测试。",
+                "name": "State",
+                "responsibility": "状态机、迁移与恢复的纯规则。",
                 "paths": [
-                  "tests"
-                ],
-                "interfaces": []
-              },
-              {
-                "ref": {
-                  "projectId": "coding-platform",
-                  "moduleId": "docs"
-                },
-                "name": "docs",
-                "responsibility": "产品与架构设计、模块文档、交接、审阅与验收证据。",
-                "paths": [
-                  "docs"
-                ],
-                "interfaces": []
-              },
-              {
-                "ref": {
-                  "projectId": "coding-platform",
-                  "moduleId": "scripts"
-                },
-                "name": "scripts",
-                "responsibility": "构建、边界检查、import 图与隔离验证脚本。",
-                "paths": [
-                  "scripts"
-                ],
-                "interfaces": []
-              },
-              {
-                "ref": {
-                  "projectId": "coding-platform",
-                  "moduleId": "resources"
-                },
-                "name": "resources",
-                "responsibility": "角色 Skill：秘书、参谋、书记、审阅与执行的提示和配置。",
-                "paths": [
-                  "resources"
-                ],
-                "interfaces": []
-              },
-              {
-                "ref": {
-                  "projectId": "coding-platform",
-                  "moduleId": "tools"
-                },
-                "name": "tools",
-                "responsibility": "DSH 重构执行器。",
-                "paths": [
-                  "tools"
-                ],
-                "interfaces": []
-              },
-              {
-                "ref": {
-                  "projectId": "coding-platform",
-                  "moduleId": ".github"
-                },
-                "name": ".github",
-                "responsibility": "持续集成。",
-                "paths": [
-                  ".github"
-                ],
-                "interfaces": []
-              },
-              {
-                "ref": {
-                  "projectId": "coding-platform",
-                  "moduleId": ".local"
-                },
-                "name": ".local",
-                "responsibility": "源码分析器的本地包。",
-                "paths": [
-                  ".local"
-                ],
-                "interfaces": []
-              },
-              {
-                "ref": {
-                  "projectId": "coding-platform",
-                  "moduleId": ":files"
-                },
-                "name": "项目根目录文件",
-                "responsibility": "项目说明、包与 TypeScript、测试配置。",
-                "paths": [
-                  "."
+                  "src/core/work-graph/state"
                 ],
                 "interfaces": []
               }
@@ -806,7 +673,18 @@
             ],
             "requireDag": true,
             "containment": {
-              "parentOf": []
+              "parentOf": [
+                {
+                  "parent": {
+                    "projectId": "coding-platform",
+                    "moduleId": "src/core/work-graph"
+                  },
+                  "child": {
+                    "projectId": "coding-platform",
+                    "moduleId": "src/core/work-graph/state"
+                  }
+                }
+              ]
             }
           }
         }
@@ -961,67 +839,59 @@
             "contentDigest": "d"
           },
           {
-            "nodeId": "module:tests",
-            "kind": "module",
-            "name": "tests",
-            "path": "tests",
-            "structuralKey": "module:tests",
+            "nodeId": "interface:[\"src/core/work-graph\",\"architecture\"]",
+            "kind": "interface",
+            "name": "architecture",
+            "path": "src/core/work-graph",
+            "structuralKey": "interface:[\"src/core/work-graph\",\"architecture\"]",
             "contentDigest": "d"
           },
           {
-            "nodeId": "module:docs",
-            "kind": "module",
-            "name": "docs",
-            "path": "docs",
-            "structuralKey": "module:docs",
+            "nodeId": "interface:[\"src/core/work-graph\",\"model\"]",
+            "kind": "interface",
+            "name": "model",
+            "path": "src/core/work-graph",
+            "structuralKey": "interface:[\"src/core/work-graph\",\"model\"]",
             "contentDigest": "d"
           },
           {
-            "nodeId": "module:scripts",
-            "kind": "module",
-            "name": "scripts",
-            "path": "scripts",
-            "structuralKey": "module:scripts",
+            "nodeId": "interface:[\"src/core/work-graph\",\"tasks\"]",
+            "kind": "interface",
+            "name": "tasks",
+            "path": "src/core/work-graph",
+            "structuralKey": "interface:[\"src/core/work-graph\",\"tasks\"]",
             "contentDigest": "d"
           },
           {
-            "nodeId": "module:resources",
-            "kind": "module",
-            "name": "resources",
-            "path": "resources",
-            "structuralKey": "module:resources",
+            "nodeId": "interface:[\"src/core/work-graph\",\"persistence\"]",
+            "kind": "interface",
+            "name": "persistence",
+            "path": "src/core/work-graph",
+            "structuralKey": "interface:[\"src/core/work-graph\",\"persistence\"]",
             "contentDigest": "d"
           },
           {
-            "nodeId": "module:tools",
-            "kind": "module",
-            "name": "tools",
-            "path": "tools",
-            "structuralKey": "module:tools",
+            "nodeId": "interface:[\"src/core/work-graph\",\"notes\"]",
+            "kind": "interface",
+            "name": "notes",
+            "path": "src/core/work-graph",
+            "structuralKey": "interface:[\"src/core/work-graph\",\"notes\"]",
             "contentDigest": "d"
           },
           {
-            "nodeId": "module:.github",
-            "kind": "module",
-            "name": ".github",
-            "path": ".github",
-            "structuralKey": "module:.github",
+            "nodeId": "interface:[\"src/core/work-graph\",\"views\"]",
+            "kind": "interface",
+            "name": "views",
+            "path": "src/core/work-graph",
+            "structuralKey": "interface:[\"src/core/work-graph\",\"views\"]",
             "contentDigest": "d"
           },
           {
-            "nodeId": "module:.local",
-            "kind": "module",
-            "name": ".local",
-            "path": ".local",
-            "structuralKey": "module:.local",
-            "contentDigest": "d"
-          },
-          {
-            "nodeId": "module::files",
-            "kind": "module",
-            "name": "项目根目录文件",
-            "path": ".",
-            "structuralKey": "module::files",
+            "nodeId": "interface:[\"src/core/work-graph\",\"runtime\"]",
+            "kind": "interface",
+            "name": "runtime",
+            "path": "src/core/work-graph",
+            "structuralKey": "interface:[\"src/core/work-graph\",\"runtime\"]",
             "contentDigest": "d"
           }
         ],
@@ -1257,6 +1127,22 @@
             "kind": "type_references",
             "structuralKey": "module:src/ui->module:src/app",
             "count": 59
+          },
+          {
+            "edgeId": "i1",
+            "fromNode": "interface:[\"src/core/work-graph\",\"tasks\"]",
+            "toNode": "interface:[\"src/core/work-graph\",\"architecture\"]",
+            "kind": "interface_uses",
+            "structuralKey": "[\"interface:[\\\"src/core/work-graph\\\",\\\"tasks\\\"]\",\"interface:[\\\"src/core/work-graph\\\",\\\"architecture\\\"]\"]",
+            "count": 114
+          },
+          {
+            "edgeId": "i2",
+            "fromNode": "interface:[\"src/core/work-graph\",\"architecture\"]",
+            "toNode": "interface:[\"src/core/work-graph\",\"model\"]",
+            "kind": "interface_uses",
+            "structuralKey": "[\"interface:[\\\"src/core/work-graph\\\",\\\"architecture\\\"]\",\"interface:[\\\"src/core/work-graph\\\",\\\"model\\\"]\"]",
+            "count": 59
           }
         ],
         "unresolved": [],
@@ -1285,12 +1171,12 @@
             "module": {
               "ref": {
                 "projectId": "coding-platform",
-                "moduleId": "src/core/work-graph"
+                "moduleId": "src/core/work-graph/state"
               },
-              "name": "WorkGraph",
-              "path": "src/core/work-graph",
+              "name": "State",
+              "path": "src/core/work-graph/state",
               "paths": [
-                "src/core/work-graph"
+                "src/core/work-graph/state"
               ],
               "ancestor": []
             },
@@ -1312,12 +1198,12 @@
             "module": {
               "ref": {
                 "projectId": "coding-platform",
-                "moduleId": "src/core/work-graph"
+                "moduleId": "src/core/work-graph/state"
               },
-              "name": "WorkGraph",
-              "path": "src/core/work-graph",
+              "name": "State",
+              "path": "src/core/work-graph/state",
               "paths": [
-                "src/core/work-graph"
+                "src/core/work-graph/state"
               ],
               "ancestor": []
             },
@@ -1393,12 +1279,12 @@
             "module": {
               "ref": {
                 "projectId": "coding-platform",
-                "moduleId": "src/core/work-graph"
+                "moduleId": "src/core/work-graph/state"
               },
-              "name": "WorkGraph",
-              "path": "src/core/work-graph",
+              "name": "State",
+              "path": "src/core/work-graph/state",
               "paths": [
-                "src/core/work-graph"
+                "src/core/work-graph/state"
               ],
               "ancestor": []
             },
@@ -1471,19 +1357,19 @@
               "kind": "module",
               "ref": {
                 "projectId": "coding-platform",
-                "moduleId": "src/core/work-graph"
+                "moduleId": "src/core/work-graph/state"
               }
             },
-            "label": "WorkGraph",
+            "label": "State",
             "module": {
               "ref": {
                 "projectId": "coding-platform",
-                "moduleId": "src/core/work-graph"
+                "moduleId": "src/core/work-graph/state"
               },
-              "name": "WorkGraph",
-              "path": "src/core/work-graph",
+              "name": "State",
+              "path": "src/core/work-graph/state",
               "paths": [
-                "src/core/work-graph"
+                "src/core/work-graph/state"
               ],
               "ancestor": []
             },
@@ -6807,6 +6693,124 @@
           "vitest.config.ts"
         ],
         "partial": false
+      }
+    },
+    "architecture/change-scope": {
+      "status": "ready",
+      "value": {
+        "goalRef": {
+          "aggregateType": "Goal",
+          "projectId": "coding-platform",
+          "goalId": "arch-goal"
+        },
+        "files": [
+          {
+            "path": "src/core/work-graph/architecture/architecture-service.ts",
+            "moduleRef": {
+              "projectId": "coding-platform",
+              "moduleId": "src/core/work-graph"
+            },
+            "interfaceId": "architecture",
+            "certainty": "definite"
+          },
+          {
+            "path": "src/core/work-graph/tasks/contracts.ts",
+            "moduleRef": {
+              "projectId": "coding-platform",
+              "moduleId": "src/core/work-graph"
+            },
+            "interfaceId": "model",
+            "certainty": "definite"
+          },
+          {
+            "path": "src/core/work-graph/tasks/task-service.ts",
+            "moduleRef": {
+              "projectId": "coding-platform",
+              "moduleId": "src/core/work-graph"
+            },
+            "interfaceId": "tasks",
+            "certainty": "definite"
+          },
+          {
+            "path": "src/core/work-graph/persistence/record-codecs.ts",
+            "moduleRef": {
+              "projectId": "coding-platform",
+              "moduleId": "src/core/work-graph"
+            },
+            "interfaceId": "persistence",
+            "certainty": "definite"
+          },
+          {
+            "path": "src/core/work-graph/sessions/session-directory.ts",
+            "moduleRef": {
+              "projectId": "coding-platform",
+              "moduleId": "src/core/work-graph"
+            },
+            "interfaceId": "notes",
+            "certainty": "definite"
+          },
+          {
+            "path": "src/core/work-graph/architecture/graph-index.ts",
+            "moduleRef": {
+              "projectId": "coding-platform",
+              "moduleId": "src/core/work-graph"
+            },
+            "interfaceId": "views",
+            "certainty": "definite"
+          },
+          {
+            "path": "src/core/work-graph/queries/query-job-service.ts",
+            "moduleRef": {
+              "projectId": "coding-platform",
+              "moduleId": "src/core/work-graph"
+            },
+            "interfaceId": "runtime",
+            "certainty": "definite"
+          },
+          {
+            "path": "src/core/work-graph/state/task-machine.ts",
+            "moduleRef": {
+              "projectId": "coding-platform",
+              "moduleId": "src/core/work-graph/state"
+            },
+            "interfaceId": null,
+            "certainty": "definite"
+          },
+          {
+            "path": "src/core/work-graph/tasks/plan-service.ts",
+            "moduleRef": {
+              "projectId": "coding-platform",
+              "moduleId": "src/core/work-graph"
+            },
+            "interfaceId": "tasks",
+            "certainty": "possible"
+          }
+        ],
+        "modules": [
+          {
+            "moduleRef": {
+              "projectId": "coding-platform",
+              "moduleId": "src/core/work-graph"
+            },
+            "changed": 7,
+            "possible": 1
+          },
+          {
+            "moduleRef": {
+              "projectId": "coding-platform",
+              "moduleId": "src/core/work-graph/state"
+            },
+            "changed": 1,
+            "possible": 0
+          }
+        ],
+        "counts": {
+          "files": 9,
+          "changed": 8,
+          "possible": 1
+        },
+        "complete": true,
+        "sourceCursor": null
       }
     }
   }
