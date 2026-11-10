@@ -58,6 +58,11 @@
       "version": 1,
       "mentionsTools": []
     },
+    "context-summary-request": {
+      "file": "templates/context-summary-request.txt",
+      "version": 1,
+      "mentionsTools": []
+    },
     "intervention-planning": {
       "file": "templates/intervention-planning.txt",
       "version": 1,

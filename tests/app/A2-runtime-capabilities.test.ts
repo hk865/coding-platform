@@ -122,7 +122,8 @@ it('reports continuation, safe-point pause, cancel and start-up reconciliation a
     continueHistory: { supported: true }, safePointPause: { supported: true }, cancel: { supported: true },
     // Step 5.7 reports start-up reconciliation; nothing else changes in A.2.
     recoverRun: { supported: true },
-    nativeCompact: { supported: false }, scopedWorkspaceWrites: { supported: false },
+    // slice-K2-SPEC: compaction between turns is supported.
+    nativeCompact: { supported: true }, scopedWorkspaceWrites: { supported: false },
   });
   // Slice K2 L7: 4 adds the context.compacted record and appendCompactionRecord (slice K made it 3).
   expect(report.kernelSessionApiVersion).toBe(4);

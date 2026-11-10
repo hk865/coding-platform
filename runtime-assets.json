@@ -13,7 +13,7 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "ea7f04393099ae7b05db3ab077d13d08bbf5032c1fec7d4144e558fde4851647"
+    "sha256": "9448bdc4aecc80cbac5958a5dc32178400fa11e11638f9870fd80aa36b34c60e"
   },
   {
     "path": "resources/prompts/platform/strings.json",
@@ -374,5 +374,9 @@
   {
     "path": "resources/prompts/platform/tools/check_links.json",
     "sha256": "bf8d74f844bdc1a70a542afe8a86c3001b76a791ef167c46edf43042044aad38"
+  },
+  {
+    "path": "resources/prompts/platform/templates/context-summary-request.txt",
+    "sha256": "b32c1b765884283df8b8dc598d7389bd73153ca6ec45ba4089d3bb2084ae34e4"
   }
 ]

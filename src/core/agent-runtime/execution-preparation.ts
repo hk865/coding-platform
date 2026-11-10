@@ -860,6 +860,8 @@ export function snapshotRuntimeConfiguration(config: ResolvedRuntimeConfiguratio
     // Slice 3 (§2.4 item 3): the Host's explicit duty and resident budget reach the assembler.
     ...(config.platformDuty === undefined ? {} : { platformDuty: config.platformDuty }),
     ...(config.contextResidentBytes === undefined ? {} : { contextResidentBytes: config.contextResidentBytes }),
+    // slice-K2-SPEC: the startup compaction ratios reach the Work start's compaction point.
+    ...(config.compaction === undefined ? {} : { compaction: { ...config.compaction } }),
   };
 }
 

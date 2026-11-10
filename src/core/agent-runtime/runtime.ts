@@ -50,6 +50,7 @@ import { bookLateEvidenceInProcess, stopPausedRunInProcess } from './run-reconci
 import { isPausedInterrupted } from '../work-graph/state/run-machine.js';
 import { createQueryPreparation } from './query-preparation.js';
 import { createQueryExecutionDriver } from './query-execution.js';
+import { COMPACTION_DEFAULTS, wouldCompactNext } from './compaction.js';
 import { createQueryObservation } from './query-observation.js';
 import type { RuntimeExecutionDependencies, TurnClosureDependencies, ReadonlyCommandHostFacts } from './execution-contracts.js';
 import { readonlyCommandSandboxOptions } from './readonly-command-tool.js';
@@ -1033,6 +1034,18 @@ export function createAgentRuntime(requestedDeps?: RuntimeExecutionDependencies)
     const reread = await deps.executions.readExecution(ctx, run.ref);
     return reread.status === 'ready' ? reread : observed;
   };
+  // slice-K2-SPEC L16: the line's own Host binding (rule W: the line's workspace) gives its window and ratios; an
+  // unresolved binding is not "would compact".
+  const readWouldCompactNext: NonNullable<RuntimeExecutionPort['wouldCompactNext']> = async (ctx, input) => {
+    const read = await deps.sessions.readSession(ctx, input.sessionRef);
+    if (read.status !== 'ready') return read;
+    const session = read.value.record;
+    const configured = await deps.host.resolveRoleConfiguration?.({ ...ctx, workspaceId: session.workspaceId },
+      { role: session.role });
+    if (configured?.status !== 'ready') return { status: 'ready', value: false };
+    return { status: 'ready', value: await wouldCompactNext({ ctx, session, kernelStores: deps.kernelStores,
+      windowTokens: configured.value.budget.contextWindowTokens, ratios: configured.value.compaction ?? COMPACTION_DEFAULTS }) };
+  };
   const driver = createExecutionDriver({ ...deps, observation, control });
   const queryPreparation = createQueryPreparation(deps, contextAssembler);
   const queryDriver = createQueryExecutionDriver(deps);
@@ -1054,6 +1067,7 @@ export function createAgentRuntime(requestedDeps?: RuntimeExecutionDependencies)
     readAttentionGraph: (ctx, request) => contextAssembler.readAttentionGraph(ctx, request),
     countRunActivity: (ctx, input) => countRunActivity(ctx, input),
     countQueryActivity: (ctx, input) => countQueryActivity(ctx, input),
+    wouldCompactNext: (ctx, input) => readWouldCompactNext(ctx, input),
   };
   // M1: without the injected closure dependency the port does not publish the
   // operation, and the Workflow's `close_open_turn` answers `unsupported`.

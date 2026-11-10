@@ -137,6 +137,12 @@ export interface RuntimeExecutionPort {
   turnClosureSupport?(ctx: CoreCallContext, input: { sessionRef: SessionRef }):
     Promise<{ status: 'supported' } | { status: 'unsupported'; reason: string }>;
   /**
+   * slice-K2-SPEC L16: whether this line's next turn would compact its history first, by its own Host binding's
+   * window and ratios. Read-only. The "too long" readers keep such a line instead of handing it off; any failure,
+   * or a just-ended turn that started on a failed compaction, is not "would compact".
+   */
+  wouldCompactNext?(ctx: CoreCallContext, input: { sessionRef: SessionRef }): Promise<ReadResult<boolean>>;
+  /**
    * K3 L13/U5/R3: whether the review/proposal round for this workspace+Role
    * could register the real `run_readonly_command` tool. It probes with exactly
    * the options the real tool is built with and requires the Host switch on and

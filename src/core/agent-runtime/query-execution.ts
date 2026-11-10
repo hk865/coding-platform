@@ -44,6 +44,10 @@ import { projectQueryConfiguration } from './query-preparation.js';
 import { createQueryObservation } from './query-observation.js';
 import { createQuerySourceCaptureFactory } from './source-capture-access.js';
 import { createSessionHistoryCursorOwner } from './session-operations.js';
+import {
+  COMPACTION_DEFAULTS, compactionAtStart, runSummaryCall, type CompactionWriteResult, type SummaryCallOptions,
+} from './compaction.js';
+import { renderTemplate } from '../../contracts/prompts/render-template.js';
 import { createQueryGraphToolGroup, finalToolNamesOf, type ToolGroup } from './tool-group-assembly.js';
 import { createLinkCheckTools, LINK_CHECK_TOOL_NAMES } from './link-check-tool.js';
 import {
@@ -896,19 +900,64 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       const historyDecision = !manifest.takesSessionHistory && currentHistory.takesSessionHistory
         ? { mode: 'current_turn' as const, takesSessionHistory: false as const }
         : currentHistory;
+      // The options this round shares with its summary call (slice-K2-SPEC L18); the per-turn ones are below.
+      const shared: SummaryCallOptions = {
+        kernel: deps.kernel,
+        bound: hostConfig.model,
+        meter,
+        root: rootResolved.value.root,
+        databasePath: location.databasePath,
+        budget: manifest.runtimeBudget,
+        readOnly: true,
+        // Null removes only the cumulative token cap; the explicit deadline
+        // still reaches Kernel to stop an in-flight model/tool.
+        taskBudget,
+        now: deps.now,
+        signal,
+        deniedPrefixes: hostConfig.deniedPrefixes,
+        modelCalls,
+        manifestDigest: prepared.bundleRef.digest,
+        allowedTools: builtinTools,
+        ...(coordinationTools === null ? {} : { coordinationTools }),
+        ...(readonlyCommandTool === undefined ? {} : { readonlyCommandTool }),
+        // Ruling 22: the frozen base (Host instruction merged), frozen Skills
+        // and frozen replay; the Host options no longer exist here.
+        prompt: frozenPrompt,
+        texts: toolTexts,
+        bodies: deps.bodies,
+        origin: { kind: 'run', owner: queryRunRef },
+        promptFacts,
+        processSandboxOptions: hostConfig.processSandboxOptions,
+        ...(deps.resourceCaps === undefined ? {} : { resourceCaps: deps.resourceCaps }),
+        ...(sourceTools === undefined ? {} : { sourceTools }),
+        ...(sourceFactory === undefined ? {} : { projectSource: { mode: 'frozen' as const, open: sourceFactory, openOn: 'first_use' as const } }),
+        publish: async () => { /* best-effort live events are never terminal evidence */ },
+      };
+      // slice-K2-SPEC L12: a round that continues this Session's own history first compacts it when it is too long; the
+      // record written or reused becomes this round's history boundary. A failed Kernel read is the same
+      // `unavailable` as a failed boundary read.
+      let compaction: CompactionWriteResult | null = null;
+      if (historyDecision.mode === 'session_history' && historyDecision.sourceSessionId === null) {
+        compaction = await compactionAtStart({ ctx: owned, session: record.session,
+          cursor: historyDecision.throughPosition, windowTokens: manifest.runtimeBudget.contextWindowTokens,
+          ratios: hostConfig.compaction ?? COMPACTION_DEFAULTS, kernelStores: deps.kernelStores, now: deps.now,
+          ...(deps.workRunRefsOf === undefined ? {} : { readWorkRunRefs: deps.workRunRefsOf }),
+          summarize: (boundary, cursor) => runSummaryCall({ options: shared, kernelStores: deps.kernelStores,
+            session: record.session, boundary, cursor,
+            text: () => renderTemplate(promptTexts.value, 'context-summary-request', {}, manifest.promptSet.toolNames).text,
+            inputDigest: manifest.inputDigest, newId: deps.newId, now: deps.now }) });
+        if (compaction.status === 'rejected') return compaction;
+      }
       const sessionContext = historyDecision.mode === 'session_history'
-        ? { version: 1 as const, mode: 'session_history' as const, throughPosition: historyDecision.throughPosition,
+        ? { version: 1 as const, mode: 'session_history' as const,
+          throughPosition: compaction?.status === 'compacted' ? compaction.position : historyDecision.throughPosition,
           ...(historyDecision.sourceSessionId === null ? {} : { sourceSessionId: historyDecision.sourceSessionId }) }
         : { version: 1 as const, mode: 'current_turn' as const };
 
       let thrown: unknown;
       try {
         await runObservedModel({
-          kernel: deps.kernel,
-          bound: hostConfig.model,
-          meter,
-          root: rootResolved.value.root,
-          databasePath: location.databasePath,
+          ...shared,
           sessionId: record.session.kernel.kernelSessionId,
           input: manifest.input,
           // A request round (all request kinds) takes the notify-only supply; it
@@ -925,35 +974,10 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
                   sessionRef: state.sessionRef, runRef: queryRunRef,
                   texts: promptTexts.value, toolNames: manifest.promptSet.toolNames }),
               })),
-          budget: manifest.runtimeBudget,
-          readOnly: true,
-          // Null removes only the cumulative token cap; the explicit deadline
-          // still reaches Kernel to stop an in-flight model/tool.
-          taskBudget,
-          now: deps.now,
           sessionContext,
           executionIdentity: { runId: kernel.runId, turnId: kernel.turnId },
-          signal,
-          deniedPrefixes: hostConfig.deniedPrefixes,
-          modelCalls,
-          manifestDigest: prepared.bundleRef.digest,
-          allowedTools: builtinTools,
-          ...(coordinationTools === null ? {} : { coordinationTools }),
-          ...(readonlyCommandTool === undefined ? {} : { readonlyCommandTool }),
           controlHooks: hasFileRead ? [enteredHook, toolPathHook] : [enteredHook],
           ...(answerBarrier === undefined ? {} : { toolGroupBarrier: answerBarrier }),
-          // Ruling 22: the frozen base (Host instruction merged), frozen Skills
-          // and frozen replay; the Host options no longer exist here.
-          prompt: frozenPrompt,
-          texts: toolTexts,
-          bodies: deps.bodies,
-          origin: { kind: 'run', owner: queryRunRef },
-          promptFacts,
-          processSandboxOptions: hostConfig.processSandboxOptions,
-          ...(deps.resourceCaps === undefined ? {} : { resourceCaps: deps.resourceCaps }),
-          ...(sourceTools === undefined ? {} : { sourceTools }),
-          ...(sourceFactory === undefined ? {} : { projectSource: { mode: 'frozen' as const, open: sourceFactory, openOn: 'first_use' as const } }),
-          publish: async () => { /* best-effort live events are never terminal evidence */ },
         });
       } catch (error) {
         if (error instanceof RuntimeModelCallRejected) enteredFailure ??= rejected(error.code, error.message);

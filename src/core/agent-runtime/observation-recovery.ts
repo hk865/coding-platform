@@ -173,7 +173,8 @@ function decodeExecutionHistoryCursor(raw: string): ExecutionHistoryCursor | nul
 
 function kernelKind(record: KernelSessionRecord): SessionHistoryEntry['kind'] {
   return record.recordType === 'session.created' ? 'session_created'
-    : record.recordType === 'turn.started' ? 'turn_started' : 'agent_event';
+    : record.recordType === 'turn.started' ? 'turn_started'
+      : record.recordType === 'context.compacted' ? 'context_compacted' : 'agent_event';
 }
 
 type EntryInspection =

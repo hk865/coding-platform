@@ -39,6 +39,10 @@ import type { RuntimeSourceCaptureFactory } from './source-tool-ports.js';
 import { ModelBudget } from './model-budget.js';
 import { createRuntimeModelCallAccess, RuntimeModelCallRejected } from './model-call-access.js';
 import { createSessionHistoryCursorOwner } from './session-operations.js';
+import {
+  COMPACTION_DEFAULTS, compactionAtStart, runSummaryCall, workKernelRunIdOf, type CompactionWriteResult,
+  type SummaryCallOptions,
+} from './compaction.js';
 import { loadPreparedManifest, snapshotRuntimeConfiguration } from './execution-preparation.js';
 import { createRuntimeSourceCaptureFactory } from './source-capture-access.js';
 import { registerReadonlyCommandTool, READONLY_COMMAND_TOOL_NAME } from './readonly-command-tool.js';
@@ -81,7 +85,7 @@ export type ExecutionDriverDependencies = Pick<RuntimeExecutionDependencies,
   | 'claims' | 'evidence'
   | 'sessions' | 'runReconcile'
   | 'graphHistory' | 'graphContext' | 'taskInputs' | 'unknownCallReviews'
-  | 'commandRerunRequests' | 'commandRecognizer' | 'admission' | 'pythonSyntax'> & {
+  | 'commandRerunRequests' | 'commandRecognizer' | 'admission' | 'pythonSyntax' | 'workRunRefsOf'> & {
   /** Slice 4C: the SAME `platform.notes` ports the note tools call. */
   notes?: RuntimeExecutionDependencies['notes'];
   /**
@@ -400,7 +404,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
       }
       const kernelBinding: KernelExecutionBinding = existingKernel ?? {
         adapterId: record.session.kernel.adapterId, kernelSessionId: record.session.kernel.kernelSessionId,
-        runId: 'krun-' + sha256Hex(canonicalJson(runRef as never)),
+        runId: workKernelRunIdOf(runRef),
         turnId: 'kturn-' + sha256Hex(canonicalJson({ runRef, attemptRef: manifest.claim.attemptRef } as never)),
       };
 
@@ -830,10 +834,6 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
       const historyDecision = !manifest.takesSessionHistory && currentHistory.takesSessionHistory
         ? { mode: 'current_turn' as const, takesSessionHistory: false as const }
         : currentHistory;
-      const sessionContext = historyDecision.mode === 'session_history'
-        ? { version: 1 as const, mode: 'session_history' as const, throughPosition: historyDecision.throughPosition,
-          ...(historyDecision.sourceSessionId === null ? {} : { sourceSessionId: historyDecision.sourceSessionId }) }
-        : { version: 1 as const, mode: 'current_turn' as const };
 
       // R4.3a: the ONE independent live handle for this fixed Run identity. The
       // caller signal is linked to this own controller so a caller cancel stops
@@ -1231,11 +1231,10 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
               texts: promptTexts.value,
               toolNames: manifest.promptSet.toolNames,
             });
-          await runObservedModel({
+          // The options this turn shares with its summary call (slice-K2-SPEC L18); the per-turn ones are below.
+          const shared: SummaryCallOptions = {
             kernel: deps.kernel, bound: hostConfig.model, meter, root: rootResolved.value.root, databasePath: location.databasePath,
-            sessionId: record.session.kernel.kernelSessionId, input: manifest.input, budget: hostConfig.budget, readOnly,
-            taskBudget: record.run.budget, sessionContext, executionIdentity: { runId: kernelBinding.runId, turnId: kernelBinding.turnId },
-            ...(inputSupply === undefined ? {} : { inputSupply }),
+            budget: hostConfig.budget, readOnly, taskBudget: record.run.budget,
             now: deps.now, signal: controller.signal, deniedPrefixes: hostConfig.deniedPrefixes, modelCalls, manifestDigest: bundleRef.digest,
             allowedTools: builtinTools,
             ...(coordinationTools === null ? {} : { coordinationTools }),
@@ -1244,14 +1243,6 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
             ...(unknownCallReviewToolName === undefined ? {} : { unknownCallReviewToolName }),
             ...(commandRerunTool === undefined ? {} : { commandRerunTool }),
             ...(commandRerunToolName === undefined ? {} : { commandRerunToolName }),
-            // The file path check is only installed when `read` is actually
-            // granted; an ungranted builtin read is rejected by the Kernel as an
-            // unknown tool and must never open the source read policy.
-            controlHooks: [
-              enteredHook,
-              ...(hasFileRead ? [toolPathHook] : []),
-              ...(shellBlockedHook === undefined ? [] : [shellBlockedHook]),
-            ],
             // Ruling 22: the frozen base (with the Host instruction already
             // merged), the frozen Skills and the frozen thinking policy. The
             // Host's `skills`/`systemInstruction` options no longer exist here.
@@ -1264,6 +1255,41 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
             ...(deps.resourceCaps === undefined ? {} : { resourceCaps: deps.resourceCaps }),
             ...(sourceTools === undefined ? {} : { sourceTools }),
             ...(sourceFactory === undefined ? {} : { projectSource: { mode: 'frozen' as const, open: sourceFactory, openOn: 'first_use' as const } }),
+            publish: async () => { /* best-effort live events are never terminal evidence */ },
+          };
+          // slice-K2-SPEC L12: a turn that continues this Session's own history first compacts it when it is too long; the
+          // record written or reused becomes this turn's history boundary. A failed Kernel read leaves the Run
+          // entering, as a failed boundary read does.
+          let compaction: CompactionWriteResult | null = null;
+          if (historyDecision.mode === 'session_history' && historyDecision.sourceSessionId === null) {
+            compaction = await compactionAtStart({ ctx: lineCtx, session: record.session,
+              cursor: historyDecision.throughPosition, windowTokens: hostConfig.budget.contextWindowTokens,
+              ratios: hostConfig.compaction ?? COMPACTION_DEFAULTS, kernelStores: deps.kernelStores, now: deps.now,
+              ...(deps.workRunRefsOf === undefined ? {} : { readWorkRunRefs: deps.workRunRefsOf }),
+              summarize: (boundaryPosition, cursor) => runSummaryCall({ options: shared, kernelStores: deps.kernelStores,
+                session: record.session, boundary: boundaryPosition, cursor,
+                text: () => renderTemplate(promptTexts.value, 'context-summary-request', {}, manifest.promptSet.toolNames).text,
+                inputDigest: (prepared.inputBinding as RuntimeInputBindingV1).inputDigest, newId: deps.newId, now: deps.now }) });
+            if (compaction.status === 'rejected') enteredFailure = compaction;
+          }
+          const sessionContext = historyDecision.mode === 'session_history'
+            ? { version: 1 as const, mode: 'session_history' as const,
+              throughPosition: compaction?.status === 'compacted' ? compaction.position : historyDecision.throughPosition,
+              ...(historyDecision.sourceSessionId === null ? {} : { sourceSessionId: historyDecision.sourceSessionId }) }
+            : { version: 1 as const, mode: 'current_turn' as const };
+          if (enteredFailure === undefined) await runObservedModel({
+            ...shared,
+            sessionId: record.session.kernel.kernelSessionId, input: manifest.input,
+            sessionContext, executionIdentity: { runId: kernelBinding.runId, turnId: kernelBinding.turnId },
+            ...(inputSupply === undefined ? {} : { inputSupply }),
+            // The file path check is only installed when `read` is actually
+            // granted; an ungranted builtin read is rejected by the Kernel as an
+            // unknown tool and must never open the source read policy.
+            controlHooks: [
+              enteredHook,
+              ...(hasFileRead ? [toolPathHook] : []),
+              ...(shellBlockedHook === undefined ? [] : [shellBlockedHook]),
+            ],
             ...(toolGroupBarrier === undefined ? {} : { toolGroupBarrier }),
             // The cleanup proof is published by the ONE existing finally after
             // every owned resource was attempted and awaited. It is a private
@@ -1274,7 +1300,6 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
             // `resourcesClosed` fires after every owned resource was attempted
             // and awaited. Neither is forwarded to the Kernel/model.
             onKernelExited: () => { handle.kernelExited = true; },
-            publish: async () => { /* best-effort live events are never terminal evidence */ },
           });
         } catch (error) {
           // A model/provider failure is reconciled from the genuine history below;

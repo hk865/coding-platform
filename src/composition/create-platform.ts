@@ -762,7 +762,8 @@ function workspaceRuntimeCapabilities(
       + 'change the Task disposition instead. A cancel of a yielded wait only fences its continuation. A Query '
       + 'cannot be cancelled: a control on a Query Run is refused as invalid and there is no QueryJob close, so a '
       + 'running Query ends only with its own terminal' },
-    nativeCompact: { supported: false, reason: 'native Kernel compaction is not implemented' },
+    nativeCompact: { supported: true, reason: 'compaction runs between turns in the same Session: old tool results '
+      + 'become stubs first, then a summary if needed; original records are not deleted' },
     scopedWorkspaceWrites: { supported: false, reason: 'the Host checks only that the prepared writeScope is '
       + 'within its grant; whether the Kernel enforces sub-path writes is not verified' },
   };
@@ -2460,6 +2461,22 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
         // H: record 5's readiness read, over the SAME record backend and Session
         // operations owner the handoff lifecycle uses.
         handoffBriefs: createWorkHandoffBriefRead({ records: backend.records, operations: sessionDirectory }),
+        // slice-K2-SPEC L13: a compaction stub's read-back finds a Work turn's RunRef among the line's claims.
+        workRunRefsOf: async (ctx, session) => {
+          try {
+            const claims = await lookupAll(backend.records, WORK_EXECUTION_BY_SESSION_LOOKUP,
+              [session.projectId, ctx.workspaceId ?? '', session.sessionId]);
+            const runRefs: RunRef[] = [];
+            for (const encoded of claims.items) {
+              const decoded = decodeDispatchOutboxEntry(encoded);
+              if (decoded.status !== 'decoded') return rejected('unavailable', `a Work claim is damaged: ${decoded.reason}`);
+              runRefs.push(decoded.value.claim.runRef);
+            }
+            return { status: 'ready', value: runRefs };
+          } catch {
+            return rejected('unavailable', 'the line\'s Work claims could not be read');
+          }
+        },
         // T's Runtime port takes H's `requestHandoff` caller shape directly. H's one entry is built later in this root
         // (it needs the note read model); the closure reads the constructed entry at Run start, never before.
         handoffs: (ctx, input) => handoffEntry.requestHandoff(ctx, input),
@@ -2950,6 +2967,17 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       materialReader: { kind: 'host', projectId: scope.projectId, workspaceId: scope.workspaceId, actor: SYSTEM_ACTOR },
       signal: new AbortController().signal,
     });
+    /**
+     * slice-K2-SPEC L16: a "too long" basis is kept only when the line's next turn will not compact first. The pure
+     * table is not changed; a failed or absent read keeps today's handoff.
+     */
+    async function unlessCompactsNext(ctx: CoreCallContext, session: SessionRef,
+      read: Promise<ReadResult<SecretaryHandoffBasisV1>>): Promise<ReadResult<SecretaryHandoffBasisV1>> {
+      const basis = await read;
+      if (basis.status !== 'ready' || !basis.value.tooLong) return basis;
+      const next = await runtime.port.wouldCompactNext?.(ctx, { sessionRef: session }).catch(() => null);
+      return next?.status === 'ready' && next.value ? { ...basis, value: { ...basis.value, tooLong: false } } : basis;
+    }
     /** D's one threshold reader over the source Session's own secretary profile window (never a fixed number). */
     async function readHandoffBasis(ctx: CoreCallContext, session: SessionRef):
       Promise<ReadResult<SecretaryHandoffBasisV1>> {
@@ -2964,8 +2992,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
         return { status: 'rejected', code: 'unavailable',
           reason: 'the handoff source has no secretary profile window' };
       }
-      return readSecretaryHandoffBasis(backend.records, workspace, session,
-        profile.runtimeBudget.contextWindowTokens);
+      return unlessCompactsNext(ctx, session, readSecretaryHandoffBasis(backend.records, workspace, session,
+        profile.runtimeBudget.contextWindowTokens));
     }
     /** The workspace's unfinished operations through the one phase index; a damaged record is `unavailable`. */
     async function readUnfinishedOperations(ctx: CoreCallContext):
@@ -3465,7 +3493,9 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       handoff: { startHandoff: (ctx, input) => rawWorkflow.sessionHandoff!.startHandoff(ctx, input) },
       records: backend.records, eventPage: rawBackend.eventPage, observed,
       mainWorkspaceOf: mainWorkspaceOf,
-      readGoal, readGoalPhase, readGoalsByProject, roleLineInputBasis,
+      readGoal, readGoalPhase, readGoalsByProject,
+      roleLineInputBasis: (records, scope, session, window, tasks) => unlessCompactsNext(lifecycleReadContext(scope),
+        session, roleLineInputBasis(records, scope, session, window, tasks)),
       contextWindowOf: lineContextWindowOf,
       bindings: bindingReads, notes: { countCurrentNotes }, scribeTodos: noteScribeTodos, plans: planService,
       sessionFacts, now,
@@ -4250,6 +4280,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       profiles: rawSecretaryProfiles,
       scope: createProjectSecretaryScope(effectiveScope),
       duty: sessionDutyResolver,
+      // slice-K2-SPEC L16: a line whose next round compacts first stays selectable.
+      ...(runtime.port.wouldCompactNext === undefined ? {} : { wouldCompactNext: runtime.port.wouldCompactNext }),
     });
     // The one Goal-secretary resolver the Host's rework notifier asks: the newest kept request owner, else the same
     // selection the request intake uses. It shares the same request-facts instance and the same duty instance as
@@ -4369,9 +4401,9 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
         if (card.status !== 'ready') return card;
         const record = card.value.record;
         const window = await lineContextWindowOf(ctx, record.role);
-        const basis = await roleLineInputBasis(backend.records,
+        const basis = await unlessCompactsNext(ctx, session, roleLineInputBasis(backend.records,
           { projectId: record.ref.projectId, workspaceId: record.workspaceId }, session,
-          window ?? Number.POSITIVE_INFINITY);
+          window ?? Number.POSITIVE_INFINITY));
         if (basis.status !== 'ready') return basis;
         return { status: 'ready', value: { tooLong: basis.value.tooLong } };
       } },

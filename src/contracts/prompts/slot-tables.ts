@@ -169,6 +169,8 @@ export const TEMPLATE_SLOTS: Readonly<Record<string, TemplateSlotTableV1>> = {
     },
     // The stale-files reminder is fixed text with no slots.
     'stale-files-reminder': {},
+    // The compaction summary prompt is fixed text with no slots.
+    'context-summary-request': {},
     // Ruling 11: `base` and the five platform Skills are fixed text with no slots.
     'base': {},
     'skill-platform-work': {},

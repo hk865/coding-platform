@@ -79,7 +79,7 @@
 | `DEFAULT_SESSION_ARCHIVE_POLICY` | `src/business/workflow/ports.ts:102` | 冻结默认归档策略：一天、每页 100 | 组合根未显式配置时 |
 | `stableSessionCreationIdentity` | `src/core/work-graph/sessions/session-directory.ts:182` | 由同一稳定 `commandId` 派生 Session 创建身份 | 建线与崩溃重试；不要另写身份配方（MH-03、FP-13） |
 | `compareRequestRounds` | `src/core/work-graph/queries/request-rounds-read.ts:96` | request round 的稳定先后比较，只取 `ref` 与 `since` 两项 | drain、最老 pending 选择与请求队列候选的排序；不要另写排序 |
-| `orderCandidates`、`createSecretarySelection` | `src/core/work-graph/tasks/secretary-selection.ts:464`、`src/core/work-graph/tasks/secretary-selection.ts:464` | 秘书候选的准入子集、busy 分类与稳定排序 | 请求分配；不要另算候选或另写排序 |
+| `orderCandidates`、`createSecretarySelection` | `src/core/work-graph/tasks/secretary-selection.ts:469`、`src/core/work-graph/tasks/secretary-selection.ts:469` | 秘书候选的准入子集、busy 分类与稳定排序 | 请求分配；不要另算候选或另写排序 |
 | `servingBinding`、`servedRoleIds` **正本** | `src/business/workflow/role-bindings.ts:8`、`src/business/workflow/role-bindings.ts:19` | 角色绑定的唯一正本：恰好一个受信绑定的判据，以及一个 workspace scope 下被服务的 distinct `roleBinding.templateId`（UTF-16 code units 排序） | Workflow 选角色与可用角色读取；不要另写绑定匹配或第二份角色过滤 |
 | `plainSessionRefToAggregate`、`sessionAggregateRefKey` | `src/core/work-graph/sessions/session-record-codecs.ts:1381`、`src/core/work-graph/sessions/session-record-codecs.ts:1381` | 普通 SessionRef 转聚合引用，并生成规范键 | guard、claim 与引用比较；不要内联序列化 Session 聚合 |
 | `oldestPendingRound` | `src/core/work-graph/queries/request-rounds-read.ts:464` | 选最老的 pending 非 routing round；**正本**（只此一份） | intake 转移、未分配遍历、Workflow 计划；不要另写排序（M1-16、M1-18、MH-24） |

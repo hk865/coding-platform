@@ -637,8 +637,11 @@ export async function admitEnteredRun(
   const v2 = entryV2Binding(run);
   if (!v2.ok) return { ok: false, rejection: runRefusal(v2) };
   const auth = v2.next;
-  if (auth.phase !== 'entered') return { ok: false, rejection: busy('the Run entry is not entered') };
-  if (run.status !== 'running') return { ok: false, rejection: busy('the Run is not running') };
+  // slice-K2-SPEC L18: a turn's summary call asks before the line's own Kernel Turn exists, while the Run is
+  // entering and starting; the line's own first request always comes after the entered fact.
+  const summaryWindow = auth.phase === 'entering' && run.status === 'starting';
+  if (auth.phase !== 'entered' && !summaryWindow) return { ok: false, rejection: busy('the Run entry is not entered') };
+  if (run.status !== 'running' && !summaryWindow) return { ok: false, rejection: busy('the Run is not running') };
   const permitRefused = refusalOf(permitClaimGuard(outbox.claim, permit) ?? entryPermitGuard(auth, permit));
   if (permitRefused !== null) return { ok: false, rejection: permitRefused };
   if (outbox.claim.sessionRef.projectId !== session.ref.projectId

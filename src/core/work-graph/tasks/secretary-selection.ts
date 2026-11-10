@@ -76,6 +76,11 @@ export type SecretarySelectionDependencies = {
   scope: SecretaryScopePort;
   /** The real `SessionDutyResolver` (composition/session-duty.ts). */
   duty: SessionDutyReadPort;
+  /**
+   * slice-K2-SPEC L16: the Runtime's read of whether a line's next round compacts first; such a line is not too long.
+   * Absent, or a failed read, keeps today's "too long".
+   */
+  wouldCompactNext?: (ctx: CoreCallContext, input: { sessionRef: SessionRef }) => Promise<ReadResult<boolean>>;
 };
 
 export interface SecretarySelectionPort {
@@ -530,6 +535,8 @@ export function createSecretarySelection(deps: SecretarySelectionDependencies): 
         return basis.status === 'rejected' ? basis : unavailable('the Session QueryRuns read is not ready');
       }
       watermark = laterCursor(watermark, basis.value.readThrough);
+      const compactsNext = basis.value.tooLong && deps.wouldCompactNext !== undefined
+        ? await deps.wouldCompactNext(ctx, { sessionRef: entry.ref }).catch(() => null) : null;
       const ran = await readRanGoal(deps.records, scope, entry.ref, input.goalId);
       if (ran.status !== 'ready') return unavailable(ran.reason);
       watermark = laterCursor(watermark, ran.watermark);
@@ -549,7 +556,7 @@ export function createSecretarySelection(deps: SecretarySelectionDependencies): 
           || openRead.value.liveAttempts.has(sessionKeyOfEntry),
         ranGoal: ran.value,
         lastInputTokens: basis.value.lastInputTokens,
-        tooLong: basis.value.tooLong,
+        tooLong: basis.value.tooLong && !(compactsNext?.status === 'ready' && compactsNext.value),
         lastActivityAt: latestActivityAt(session.createdAt, instants),
       });
     }

@@ -1681,7 +1681,9 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         nextProfiles.push(profileOf(workspace.scope, dutyBindingId, selected));
       }
     }
-    return { schemaVersion: 1, bindings: nextBindings, queryProfiles: nextProfiles };
+    // slice-K2-SPEC: the startup compaction ratios are not a setting; every rebuilt version keeps them.
+    return { schemaVersion: 1, bindings: nextBindings, queryProfiles: nextProfiles,
+      ...(base.compaction === undefined ? {} : { compaction: structuredClone(base.compaction) }) };
   }
 
   /** The one trusted checks configuration of a saved or adopted source: its revision is a function of the exact

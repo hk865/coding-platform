@@ -195,6 +195,7 @@ Kernel 公共入口 harness、blocked/CRR/review 世界、受控命令替身和�
 - `B2-crr-world.ts` — 真实 RUN-20/RUN-22 blocked record、UCR `skip_as_done`、真实 CRR owner，Run 由 `openRealRunHarness` claim/prepare/start；`tests/scenarios/K3-29-startup-reconcile-2b.test.ts` 在用。
 - `K-boundary-facts-support.ts` — 在已开 Turn 上经 `SqliteStores.append` 追加真实 Kernel fact，模拟平台 locator 落后；只在 Kernel 存储边界用；`tests/scenarios/K-R-attested-facts-source.test.ts` 在用。
 - `K-readonly-work-support.ts` — 复用真实 claim/entry/Runtime，改可信配置造空写 scope、只有 Host 上限的只读 Work；`tests/runtime/K-readonly-command.test.ts` 在用。
+- `K2-world.ts` — K2 的公开世界：`openK2WorkWorld`/`openK2QueryWorld` 在 `openS6AHostWorld` 上经 `withConfiguredHost` 写启动配置的 `runtime.compaction`（只写这一行给的比例，缺的由 Host 解析补），Work 世界经 `governS6B`/`adoptS6BPlan`/`createS6BLine` 建 Plan 和线、`runTask` 经 `workflow/advance` 跑一个任务，Query 世界经 `requests/submit` 跑一轮；同一条线上重复的工具调用 id 改成 `<id>@<任务或轮>`（Kernel 不收重复 id 的历史）；`tests/runtime/K2P1-compaction-start.test.ts`、`K2P2-compaction-summary.test.ts`、`K2P2-work-summary.test.ts` 在用。
 - `K3-35-continuation-fixture.ts` — K3-35 一条真实事实：批准记录、八个 anomaly anchor、continuation basis、九个 Run 全走 claim/prepare/`startRun`；`tests/scenarios/K3-29-startup-reconcile-2b.test.ts` 在用。
 - `K3-35-prepare.ts` — 对上述事实跑生产 `createExecutionPreparation`（含 `plan-readers.readTaskClosure`）；`tests/runtime/K3-35-approved-methods-brief.test.ts` 在用。
 - `K3-35-runtime.ts` — 同一 K3-35 链上的生产 Runtime：claim 后 authorize/begin/`recordExecutionEntered`，用真实 Turn facts；`tests/runtime/K3-19-review-admission.test.ts` 在用。

@@ -27,6 +27,7 @@ import {
 import type { RoleConfigurationRef, WorkspaceScope } from '../contracts/core/identity.js';
 import { PLATFORM_DUTIES, type PlatformDutyV1 } from '../contracts/platform-duty.js';
 import { createObservedInputCounter } from '../core/agent-runtime/model-budget.js';
+import { COMPACTION_DEFAULTS, type CompactionRatios } from '../core/agent-runtime/compaction.js';
 import { platformRoleProfile } from '../core/agent-runtime/role-profiles.js';
 import type { CoreRejection, ReadResult } from '../contracts/core/results.js';
 import type { RoleBindingRefV1 } from '../contracts/dispatch.js';
@@ -156,7 +157,7 @@ export type WorkbenchRuntimeBinding = {
   role: RoleConfigurationRef;
   configurationRevision: string;
   model: WorkbenchModelConfiguration;
-  grant: Omit<ResolvedRuntimeConfiguration, 'configurationRevision' | 'model' | 'skills'> & {
+  grant: Omit<ResolvedRuntimeConfiguration, 'configurationRevision' | 'model' | 'skills' | 'compaction'> & {
     skills: WorkbenchSkillConfiguration;
   };
 };
@@ -181,6 +182,11 @@ export type WorkbenchRuntimeConfiguration = {
   schemaVersion: 1;
   bindings: WorkbenchRuntimeBinding[];
   queryProfiles: WorkbenchQueryProfile[];
+  /**
+   * slice-K2-SPEC: the compaction ratios, one set for every binding (trigger and target of the window, the tail
+   * of the target); each absent ratio takes its `COMPACTION_DEFAULTS` value at the parse.
+   */
+  compaction?: Partial<CompactionRatios>;
 };
 
 /**
@@ -304,6 +310,12 @@ export function validateWorkbenchRuntimeConfiguration(
     return { code: 'invalid', reason: 'runtime configuration must be { schemaVersion: 1, bindings, queryProfiles }' };
   if (!Array.isArray(configuration.bindings) || !Array.isArray(configuration.queryProfiles))
     return { code: 'invalid', reason: 'runtime configuration requires bindings and queryProfiles arrays' };
+  const compaction: unknown = configuration.compaction;
+  const ratioKeys = Object.keys(COMPACTION_DEFAULTS);
+  if (compaction !== undefined && (!isPlainObject(compaction)
+    || Object.entries(compaction).some(([key, ratio]) => !ratioKeys.includes(key)
+      || typeof ratio !== 'number' || !(ratio > 0 && ratio < 1))))
+    return { code: 'invalid', reason: 'runtime.compaction takes only triggerRatio, targetRatio and tailRatio, each a number in (0, 1)' };
   const bindingIds = new Set<string>();
   const seenBindings: { scope: WorkspaceScope; role: RoleConfigurationRef }[] = [];
   for (const [index, binding] of configuration.bindings.entries()) {
@@ -434,6 +446,9 @@ export function createWorkbenchRuntimeHostBindings(
   const registry: Pick<ProviderRegistry, 'get' | 'create'> = dependencies.registry ?? createBuiltinProviderRegistry();
   const secretSource: SecretSource = dependencies.secretSource ?? { get: (name: string) => process.env[name] };
   const config = structuredClone(configuration);
+  // slice-K2-SPEC: parsed once, each absent ratio filled, so a resolved configuration carries all three or none.
+  const compaction: CompactionRatios | undefined = config.compaction === undefined ? undefined
+    : { ...COMPACTION_DEFAULTS, ...config.compaction };
   const bind = (scope: WorkspaceScope, role: RoleConfigurationRef): WorkbenchRuntimeBinding | null =>
     config.bindings.find(candidate => candidate.scope.projectId === scope.projectId
       && candidate.scope.workspaceId === scope.workspaceId
@@ -541,6 +556,7 @@ export function createWorkbenchRuntimeHostBindings(
       // Absent is false; the resolved grant always carries the boolean.
       createMember: binding.grant.createMember === true,
       skills: resolveSkillSelection(binding.grant.skills),
+      ...(compaction === undefined ? {} : { compaction: { ...compaction } }),
     };
     return narrowResolvedReadonlyCommands({ status: 'ready', value: assembled },
       { projectId: ctx.projectId, workspaceId: ctx.workspaceId },

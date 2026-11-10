@@ -22,6 +22,7 @@
  * intersection before it authorizes anything.
  */
 import type { BoundModel } from './source-tool-ports.js';
+import type { CompactionRatios } from './compaction.js';
 import type { RoleSplitToolOwnerV1 } from './role-split-tool.js';
 import type { CommitCursor } from '../../contracts/command-event.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
@@ -169,6 +170,11 @@ export type ResolvedRuntimeConfiguration = {
   platformDuty?: PlatformDutyV1;
   /** Slice 3 resident budget of the four optional sections; default 4096. */
   contextResidentBytes?: number;
+  /**
+   * slice-K2-SPEC: the Host startup `runtime.compaction`, all three ratios after the startup parse; absent (a
+   * programmatic configuration without it) the users take `COMPACTION_DEFAULTS`.
+   */
+  compaction?: CompactionRatios;
 };
 
 /** R5b.2 trusted Query Host configuration input. */
@@ -454,6 +460,11 @@ export type RuntimeExecutionDependencies = {
   turnClosure?: TurnClosureDependencies;
   /** (W-11): the closing Host's signal; a live Run pauses at its next safe point, no intent recorded. */
   hostClosing?: AbortSignal;
+  /**
+   * slice-K2-SPEC L13: the RunRefs of a line's Work claims in the call's workspace, for the compaction stubs'
+   * read-back. Absent, every stub gets the fixed read-back text.
+   */
+  workRunRefsOf?: (ctx: CoreCallContext, session: SessionRef) => Promise<ReadResult<readonly RunRef[]>>;
   now: () => string;
   newId: () => string;
 };

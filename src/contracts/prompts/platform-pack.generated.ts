@@ -62,6 +62,11 @@ export const PLATFORM_PROMPT_PACK_V1 = {
         "version": 1,
         "mentionsTools": [] as [],
       },
+      "context-summary-request": {
+        "file": "templates/context-summary-request.txt",
+        "version": 1,
+        "mentionsTools": [] as [],
+      },
       "intervention-planning": {
         "file": "templates/intervention-planning.txt",
         "version": 1,
@@ -244,6 +249,7 @@ export const PLATFORM_PROMPT_PACK_V1 = {
     "intervention-delivery": "用户插话（消息 {{messageId}}）：\n{{body}}",
     "link-breaks-input": "联系 {{noteId}}（版本 {{version}}）被这次改动改断了：证据对不上（下标 {{missing}}）。交结果之前请重写或撤下它。",
     "python-syntax-input": "Python 文件有语法错：{{problems}}。先改语法错，再继续。",
+    "context-summary-request": "请把上面这段对话写成一份压缩摘要。之后这条线只看这份摘要和最近几轮的原文，更早的原文不再交给你；原记录不会删除。\n\n只回答摘要正文，不要调用工具。摘要按顺序分成下面六段，每段用给定的标题，一段都不能少；某段没有内容就写“无”。\n\n## 目标和验收义务\n## 用户原话和要求\n## 做过的决定和依据\n## 没解决的事\n## 试过什么、结果如何\n## 来源\n\n写的时候：\n- 用户的原话照抄，不改写；你推测的，标“推测”。\n- “没解决的事”写待处理的请求、在等的回复、待放行的事和未决问题。\n- “试过什么、结果如何”也写失败的和排除的路。\n- 注记和当前理解只写链接，不抄内容。\n- 计划和派工只写引用和版本；下一轮照旧重读正式事实。\n- 还在等批准的，不能写成已批准。\n- 已经撤下的结论，不要从旧摘要里再写回来。\n- “来源”一行一条，只用下面四种写法：\n  - 文件 <工作区相对路径>\n  - 文件 <路径> 提交 <40–64 位小写十六进制>\n  - 消息 <messageId>\n  - 检查 <goalId>/<taskId>/<runId>/<roundId>\n  提交只能写成“文件在某个提交里的版本”，不要单写提交号。",
     "intervention-planning": "{{prelude}}\n\n{{role}}{{goal}}{{plan}}{{message}}",
     "plan-review-input": "{{prelude}}\n\n## 计划候选审阅\n这一轮只审计划，不执行任务、不改工作区、不写证据。\n**审阅范围：只审这一版新写或改动的任务书、义务和依赖差异。已采用的目标、阶段骨架和已采用的段是依据，不是被审对象；不要重审它们。发现上层缺陷时按第 7 节另走。**\n## 目标与已采用计划（依据）\n{{goal}}\n{{plan}}\n## 这一版的候选（这一版新写内容的完整任务书、义务和依赖差异）\n{{candidate}}\n## 请求\n{{message}}\n## 你要回答\n1. 任务边界是否合适；2. 任务书够不够让执行者不猜（范围、先看什么、怎么做、接口、验收、不做什么、复用什么）；\n3. 依赖和并行安排；4. 前提对不对；5. 有没有漏掉义务；6. 有没有该复用的；\n7. 这一版写到的每一段有没有阶段 gate（`taskKind: gate`、`scope: stage`，已采用计划里已有的也算）及其义务；缺了写成 finding，写清哪一段。\n结论只能是 pass 或 fix；fix 时每条 finding 写清哪个任务、要改什么。\n{{#tool:submit_plan_review}}用 `submit_plan_review` 填这张表：`verdict` 和 `findings` 是你要填的全部；`schemaVersion`/`kind` 由工具填。pass 可以不带 findings，fix 至少要一条。{{/tool:submit_plan_review}}\n如果这一轮没有这个工具（例如夹具直接写文字），按同一 JSON 形状交出全文，目标循环同样解析。\n",
     "scribe-reminder": "{{marker}}待审 {{pendingCount}} 条，该更新 {{updateDueCount}} 条，断了的联系 {{brokenCount}} 条。锚点：{{anchors}}",
@@ -1115,6 +1121,11 @@ export const PLATFORM_PROMPT_PACK_V1 = {
       "mentionsTools": [],
     },
     "python-syntax-input": {
+      "packId": "platform",
+      "version": 1,
+      "mentionsTools": [],
+    },
+    "context-summary-request": {
       "packId": "platform",
       "version": 1,
       "mentionsTools": [],

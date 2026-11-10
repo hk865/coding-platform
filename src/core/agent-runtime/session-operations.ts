@@ -19,6 +19,7 @@ import type {
   ConsultationHistoryFailureV1, ConsultationHistoryReadV1, ConsultationHistoryRecordV1,
 } from '../work-graph/queries/platform-facts.js';
 import type { KernelStoreRegistry } from './kernel-store-locator.js';
+import { decodeKernelEntry } from './kernel-turn-facts.js';
 import { StoreError, sessionRecordSchema } from '../../../vendor/coding-agent/dist/public-api.js';
 import type {
   SessionRecord as KernelSessionRecord,
@@ -65,7 +66,8 @@ export type SessionHistoryRequest = {
 };
 export type SessionHistoryEntry = {
   recordId: string; cursor: string; recordedAt: string;
-  kind: 'session_created' | 'turn_started' | 'agent_event';
+  /** `context_compacted` is a compaction record (slice-K2-SPEC L14); its body is the record as written. */
+  kind: 'session_created' | 'turn_started' | 'agent_event' | 'context_compacted';
   source: { adapterId: string; kernelSessionId: string; position: number };
   body: ArtifactRef | { encoding: 'kernel_session_record_json'; text: string };
 };
@@ -370,7 +372,8 @@ function toHistoryEntry(
 ): SessionHistoryEntry {
   const validated = sessionRecordSchema.parse(record);
   const kind = validated.recordType === 'session.created' ? 'session_created'
-    : validated.recordType === 'turn.started' ? 'turn_started' : 'agent_event';
+    : validated.recordType === 'turn.started' ? 'turn_started'
+      : validated.recordType === 'context.compacted' ? 'context_compacted' : 'agent_event';
   return {
     recordId: validated.recordId,
     cursor: encodeHistoryCursor({ ...binding, upper, lower, position: validated.position }),
@@ -1112,4 +1115,122 @@ export function createSessionHistoryCursorOwner(deps: {
       }
     },
   };
+}
+
+// ------------------------------------------------------------------------ //
+// slice-K2-SPEC (decision 121-51): the compaction's reads of a line's own Kernel records. The record format is read  //
+// here, beside `readPositionWindow`; `compaction.ts` only judges, writes and summarizes.                           //
+// ------------------------------------------------------------------------ //
+
+/** One backward block of positions, the bounded history window's own page size. */
+const COMPACTION_SCAN_BLOCK = 200;
+
+type DecodedWindowRecord = { position: number; record: KernelSessionRecord; chars: number };
+
+/** One window `(after, through]` of a line's records, decoded, with each record's JSON characters; throws on failure. */
+async function readDecodedWindow(
+  owner: SessionHistoryCursorOwner, session: SessionRecord, after: number, through: number | null, limit: number,
+  signal: AbortSignal,
+): Promise<DecodedWindowRecord[]> {
+  const window = await owner.readPositionWindow({ session, afterPosition: after, throughPosition: through, limit, signal });
+  if (window.status !== 'ready') {
+    throw new Error(window.status === 'rejected' ? window.reason : `the history window is ${window.status}`);
+  }
+  return window.value.entries.map(entry => {
+    const decoded = decodeKernelEntry(entry);
+    if (decoded === null) throw new Error(`the Kernel record at position ${String(entry.source.position)} is damaged`);
+    return { ...decoded, chars: (entry.body as { text: string }).text.length };
+  });
+}
+
+/**
+ * slice-K2-SPEC R20: the first record after `cursor`, `null` when there is none. A compaction record carries the
+ * position it was based on; any other record carries `null` there. Throws on a failed read or a damaged record.
+ */
+export async function readRecordAfterCursor(
+  owner: SessionHistoryCursorOwner, session: SessionRecord, cursor: number, signal: AbortSignal,
+): Promise<{ position: number; compactionBasedOn: number | null } | null> {
+  const [first] = await readDecodedWindow(owner, session, cursor, null, 1, signal);
+  if (first === undefined) return null;
+  return { position: first.position,
+    compactionBasedOn: first.record.recordType === 'context.compacted' ? first.record.payload.basedOnPosition : null };
+}
+
+/** One complete Turn of a line's history as the compaction reads it (slice-K2-SPEC R4, R25). */
+export type CompactionHistoryTurn = {
+  /** The Turn's last record (its terminal event). */
+  endPosition: number;
+  runId: string;
+  /** The Turn ended with `run.interrupted`. */
+  interrupted: boolean;
+  /** The JSON characters of the Turn's records; a compaction record belongs to no Turn. */
+  chars: number;
+  /** The output JSON characters of each successful tool result. */
+  resultChars: number[];
+  /** The Turn's last reported model input tokens. */
+  lastInput: number | null;
+  /** The Turn's `turn.started.contextBasis.throughPosition`. */
+  basisThrough: number | null;
+};
+export type CompactionHistoryScan = {
+  /** Newest first. */
+  turns: CompactionHistoryTurn[];
+  /** The latest successful compaction record's view; a failed record changes no view. */
+  view: { summaryThrough: number; stubsThrough: number } | null;
+  /** The positions of the failed compaction records read. */
+  failedAt: ReadonlySet<number>;
+};
+
+/**
+ * slice-K2-SPEC R25: a line's records backward from `cursor` in blocks `(lo, end]`, `lo = max(0, end − 200)`,
+ * `end = lo` next, down to the latest compacted summary's position or the head. A Turn runs from its `turn.started`
+ * to the last record before the next one. When the newest Turn's input is under `minNewestInput` nothing older is
+ * read: no compaction can follow. Throws on a failed read, a damaged record or an incomplete block.
+ */
+export async function scanCompactionHistory(owner: SessionHistoryCursorOwner, input: {
+  session: SessionRecord; cursor: number; minNewestInput: number; signal: AbortSignal;
+}): Promise<CompactionHistoryScan> {
+  const turns: CompactionHistoryTurn[] = [];
+  let open: Omit<CompactionHistoryTurn, 'runId' | 'basisThrough'> | null = null;
+  let view: CompactionHistoryScan['view'] = null;
+  const failedAt = new Set<number>();
+  let stopAt = 0;
+  scan: for (let end = input.cursor; end > stopAt; ) {
+    const lo = Math.max(0, end - COMPACTION_SCAN_BLOCK);
+    const block = await readDecodedWindow(owner, input.session, lo, end, end - lo, input.signal);
+    if (block.length !== end - lo) throw new Error('the Kernel history block is not complete');
+    for (let index = block.length - 1; index >= 0; index -= 1) {
+      const { position, record, chars } = block[index]!;
+      if (position <= stopAt) break scan;
+      if (record.recordType === 'context.compacted') {
+        if (record.payload.outcome === 'failed') failedAt.add(position);
+        else if (view === null) {
+          view = { summaryThrough: record.payload.summary?.throughPosition ?? 0,
+            stubsThrough: record.payload.stubs?.throughPosition ?? 0 };
+          stopAt = view.summaryThrough;
+        }
+        continue;
+      }
+      if (record.recordType === 'session.created') continue;
+      open ??= { endPosition: position, chars: 0, resultChars: [], lastInput: null,
+        interrupted: record.recordType === 'agent.event' && record.payload.event.type === 'run.interrupted' };
+      open.chars += chars;
+      if (record.recordType === 'agent.event') {
+        const event = record.payload.event;
+        if (event.type === 'model.usage_recorded') {
+          open.lastInput ??= (event.payload as { delta: { inputTokens: number } }).delta.inputTokens;
+        } else if (event.type === 'tool.completed') {
+          const result = (event.payload as { result: { status: string; output: unknown } }).result;
+          if (result.status === 'success') open.resultChars.push(JSON.stringify(result.output).length);
+        }
+      } else {
+        turns.push({ ...open, runId: record.payload.run.runId,
+          basisThrough: record.payload.contextBasis?.throughPosition ?? null });
+        open = null;
+        if (turns.length === 1 && (turns[0]!.lastInput ?? 0) < input.minNewestInput) break scan;
+      }
+    }
+    end = lo;
+  }
+  return { turns, view, failedAt };
 }
