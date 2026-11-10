@@ -37,6 +37,7 @@ import { PLATFORM_TOKEN_HEADER, PLATFORM_TOKEN_PLACEHOLDER, type CoreScope } fro
 import { SETTINGS_API_PREFIX } from '../../src/app/host-settings-types.js';
 import { PLATFORM_TOKEN_META_NAME } from '../helpers/host-page.js';
 import { createRuntimeCapabilitiesFixture } from '../helpers/runtime-capabilities-fixture.js';
+import { hostReconcile } from '../helpers/KLS1B-host-store.js';
 
 const at = '2026-10-05T00:00:00.000Z';
 const scope: CoreScope = { projectId: 'a2-capabilities-project', workspaceId: 'a2-capabilities-workspace' };
@@ -215,7 +216,7 @@ it('states the start-up position (ask, auto, off) in the recoverRun reason, with
   const off = await startHost(paths);
   // The start-up reconciliation ran on this Host (it holds the instance lease); the setting only
   // decides whether a driver starts after it.
-  expect(off.host.reconcile).toMatchObject({ lease: 'owned', report: { redriveGoals: [], problems: [] } });
+  expect(hostReconcile(off.host, scope.projectId)).toMatchObject({ lease: 'owned', report: { redriveGoals: [], problems: [] } });
   const offReport = await readCapabilities(off.origin, off.token);
   expect(offReport.recoverRun.supported).toBe(true);
   expectAllIn(offReport.recoverRun.reason, [...RECOVER_RUN_BOUNDARIES, RESUME_ON_STARTUP_OFF]);
@@ -223,7 +224,7 @@ it('states the start-up position (ask, auto, off) in the recoverRun reason, with
   // reconciles nor drives; its report says the same about its own setting and points to no entry
   // that this Host refuses as busy.
   const held = await startHost(paths);
-  expect(held.host.reconcile).toMatchObject({ lease: 'held_by_other', report: null });
+  expect(hostReconcile(held.host, scope.projectId)).toMatchObject({ lease: 'held_by_other', report: null });
   expect(await readCapabilities(held.origin, held.token)).toEqual(offReport);
   await held.host.close();
   await off.host.close();

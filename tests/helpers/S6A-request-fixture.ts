@@ -8,7 +8,7 @@
  *   configuration, a controlled provider registry) with three runtime bindings (secretary, plain consultation,
  *   Work), the query profiles of the chosen configuration, the Host Workflow binding for the Work role, one
  *   scripted model (no network, no real model) and a Kernel store. The Host's own platform object comes from the
- *   real `createTargetPlatform` call through a delegating spy that records the result and returns it unchanged
+ *   real `openTargetPlatform` call through a delegating spy that records the platform and returns the result unchanged
  *   (rule sheet A3; installed only while the Host starts). Reopen (restart on the same directory) is SQLite, or
  *   memory through the A4 seam's `sharedMemoryStore` flag (the test's one records backend and body store).
  * - Secretary profiles come from the Host configuration (book ruling 4.1). `with_secretary` publishes a
@@ -71,6 +71,7 @@ import { fileURLToPath } from 'node:url';
 import { vi } from 'vitest';
 import { ProviderRegistry } from '../../vendor/coding-agent/dist/public-api.js';
 import * as platformModule from '../../src/composition/create-platform.js';
+import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
 import { createLocalWorkbenchHost, type LocalWorkbenchHost, type LocalWorkbenchHostOptions } from '../../src/app/host.js';
 import { createHostCoreCallContext } from '../../src/app/core-call-context.js';
 import {
@@ -256,6 +257,8 @@ let starting: Promise<void> = Promise.resolve();
 type StartedHost = {
   host: LocalWorkbenchHost;
   platform: S6APlatform;
+  /** The platform of the project and workspace this request names (KLS-1b: one platform per project). */
+  platformFor(projectId: string, workspaceId: string): Promise<S6APlatform>;
   /** Resolves once every detached task the platform tracked (the automatic capture) has settled. */
   settleDetached(): Promise<void>;
 };
@@ -265,15 +268,17 @@ async function startCapturingPlatform(options: LocalWorkbenchHostOptions): Promi
   let done!: () => void;
   starting = new Promise<void>(resolve => { done = resolve; });
   await previous;
-  const real = platformModule.createTargetPlatform;
-  const built: S6APlatform[] = [];
+  const real = platformModule.openTargetPlatform;
+  const built: Array<{ platform: S6APlatform; directory: string | null; workspace: WorkspaceHostBindings }> = [];
   // The Host hands its detached work (the automatic capture driver, `src/app/host.ts:577`,
   // `src/app/auto-capture-driver.ts:97`) to `platform.trackDetached`, which it reads after this factory returns.
   // The wrapper calls the real tracker and returns its result unchanged; it only remembers when each task settles.
   const detached = new Set<Promise<void>>();
-  const spy = vi.spyOn(platformModule, 'createTargetPlatform').mockImplementation(async (platformOptions) => {
-    const platform = await real(platformOptions);
-    built.push(platform);
+  const spy = vi.spyOn(platformModule, 'openTargetPlatform').mockImplementation(async (platformOptions) => {
+    const made = await real(platformOptions);
+    const platform = made.platform;
+    built.push({ platform, directory: platformOptions.storage?.kind === 'sqlite' ? platformOptions.storage.directory : null,
+      workspace: platformOptions.workspace });
     const track = platform.trackDetached;
     platform.trackDetached = <T>(work: Promise<T>): Promise<T> => {
       const result = track(work);
@@ -282,7 +287,7 @@ async function startCapturingPlatform(options: LocalWorkbenchHostOptions): Promi
       void settled.then(() => { detached.delete(settled); });
       return result;
     };
-    return platform;
+    return made;
   });
   try {
     let host: LocalWorkbenchHost;
@@ -290,16 +295,35 @@ async function startCapturingPlatform(options: LocalWorkbenchHostOptions): Promi
       host = await createLocalWorkbenchHost(options);
     } catch (error) {
       // As tests/helpers/PC2-host-fixture.ts:191: a platform built before the Host failed is closed here.
-      await Promise.allSettled(built.map(platform => platform.close()));
+      await Promise.allSettled(built.map(entry => entry.platform.close()));
       throw error;
     }
-    const platform = built[0];
-    if (built.length !== 1 || platform === undefined) {
+    // KLS-1b: one platform per project (S1), so a Host with another project builds that project's platform too.
+    // Each platform is matched to the project whose registered workspace its own bindings serve; the capture keeps
+    // the S6A project's platform, and with SQLite its store is the one `rememberHostStore` recorded in `allocate`.
+    const store = options.storage.kind === 'sqlite' ? storeDirOf(options.storage.directory) : null;
+    const mine: typeof built = [];
+    for (const entry of built) {
+      if (store !== null && entry.directory !== store) continue;
+      const resolved = await entry.workspace.resolveRoot({ aggregateType: 'Workspace', ...S6A_SCOPE });
+      if (resolved.status === 'ready') mine.push(entry);
+    }
+    const platform = mine[0]?.platform;
+    if (mine.length !== 1 || platform === undefined) {
       await host.close();
-      throw new Error(`S6A: the Host built ${built.length} platforms; the capture expects exactly one`);
+      throw new Error(`S6A: the Host built ${mine.length} platforms for the S6A store; the capture expects exactly one`);
     }
     return {
       host, platform,
+      async platformFor(projectId, workspaceId) {
+        for (const entry of built) {
+          const resolved = await entry.workspace.resolveRoot({ aggregateType: 'Workspace', projectId, workspaceId });
+          if (resolved.status === 'ready') return entry.platform;
+        }
+        // A project this Host did not open keeps the route's own answer: the S6A platform's bindings reject a
+        // foreign project or workspace as `not_found`, the same answer the real route gives.
+        return platform;
+      },
       async settleDetached() { while (detached.size > 0) await Promise.all([...detached]); },
     };
   } finally {
@@ -511,6 +535,8 @@ export async function openS6ARequestWorld(options: S6AWorldOptions): Promise<S6A
     const publicDir = await publicDirectory();
     made.push(publicDir);
     await writeAG2bWorkspace(root);
+    // KLS-1b: the old readers of `database` follow the Host's project store.
+    await rememberHostStore(database, S6A_SCOPE.projectId, root);
     releaseClock = holdFakeDate();
     vi.setSystemTime(new Date(options.at ?? S6A_AT));
     return { root, database, publicDir };
@@ -732,7 +758,9 @@ export async function openS6ARequestWorld(options: S6AWorldOptions): Promise<S6A
         return { status: 'rejected', code: 'not_found', reason: `unpublished core route ${suffix}` };
       }
       const route = suffix as CoreRouteSuffix;
-      const bindings = createPlatformCoreRouteBindings(current().platform);
+      // KLS-1b: a route for another project runs on that project's own platform.
+      const bindings = createPlatformCoreRouteBindings(
+        await current().platformFor(ctx.projectId, ctx.workspaceId ?? S6A_SCOPE.workspaceId));
       try {
         return await dispatchCoreRoute(bindings, route, ctx, parseCoreRouteRequest(route, body));
       } catch (error) {
@@ -929,6 +957,7 @@ export async function openS6ARequestWorld(options: S6AWorldOptions): Promise<S6A
 // ---------------------------------------------------------------------------
 import { dirname } from 'node:path';
 import * as hostModule from '../../src/app/host.js';
+import { rememberHostStore, storeDirOf } from './KLS1B-host-store.js';
 
 /** The second workspace `openS6ATwoWorkspaceWorld` configures: the same project, its own root and Kernel store. */
 export const S6A_SECOND_SCOPE = { projectId: S6A_SCOPE.projectId, workspaceId: 's6a-second-workspace' } as const;

@@ -35,6 +35,11 @@ it('preserves candidate byte identity, sorted paths, file modes and its historic
     await writeFile(join(root, 'src', name, 'nested.txt'), 'also ignored');
   }
   expect(await digestOf(root)).toBe(expected);
+  // KLS-1b X1: the project store a workspace that is not a git work tree keeps at `.workbench/local/` is not
+  // candidate content: its writes never move the digest.
+  await mkdir(join(root, '.workbench', 'local', 'projects', 'p'), { recursive: true });
+  await writeFile(join(root, '.workbench', 'local', 'projects', 'p', 'ledger.sqlite'), 'store');
+  expect(await digestOf(root)).toBe(expected);
   await chmod(join(root, 'src', 'main.ts'), 0o755);
   expect(await digestOf(root)).not.toBe(expected);
   await chmod(join(root, 'src', 'main.ts'), 0o644);

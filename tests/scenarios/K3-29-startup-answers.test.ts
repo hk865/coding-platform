@@ -100,9 +100,10 @@ async function reconcile(f: S5DecisionFixture, world: K3ReviewCardWorld,
         listOpenRounds: nothing,
         listGoals: async () => ({ status: 'ready', value: { records: [await goalOf(f)], damaged: [] } }) } },
   };
-  return await runStartupReconcile({ platform, hostInstanceId: HOST, resumeOnStartup: 'auto', scopes: [f.base.scope],
-    context: () => f.ctx as CoreCallContext,
-    fanOut: async () => { throw new Error('an unchanged active Goal needs no fan-out pass'); } });
+  const reports = await runStartupReconcile({ scopes: [f.base.scope], context: () => f.ctx as CoreCallContext,
+    forScope: () => ({ platform, hostInstanceId: HOST, resumeOnStartup: 'auto',
+      fanOut: async () => { throw new Error('an unchanged active Goal needs no fan-out pass'); } }) });
+  return reports.get(f.base.scope.projectId)!;
 }
 
 const worlds: K3ReviewCardWorld[] = [];

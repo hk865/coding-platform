@@ -35,6 +35,7 @@ import {
 } from '../../helpers/A2-restart-fixture.js';
 import { eventTypesIn, fileCounts, readSqlite, type Driven, type HostScenario, type InvariantTarget } from '../harness.js';
 import { driveChecked, kernelRecordRows, READ_THEN_TEXT } from './common.js';
+import { hostReconcile, storeDirOf } from '../../helpers/KLS1B-host-store.js';
 
 /** Run 1 answers without writing the result file, so its round FAILs (the automation then requeues it). */
 export const RUN1_WITHOUT_FILE = { kind: 'text' as const, text: 'restart scenario: Run 1 answers without the result file' };
@@ -55,7 +56,7 @@ export function ledgerEvents(database: string, eventType?: string): number {
 
 /** How many stored artifact bodies mention `text` (artifacts.sqlite, its own read-only connection). */
 export function artifactsMentioning(database: string, text: string): number {
-  return readSqlite(join(database, 'artifacts.sqlite'), artifacts =>
+  return readSqlite(join(storeDirOf(database), 'artifacts.sqlite'), artifacts =>
     Number((artifacts.prepare('SELECT COUNT(*) AS n FROM artifacts WHERE instr(record, ?) > 0').get(text) as { n: number }).n), 0);
 }
 
@@ -171,7 +172,7 @@ type LedgerRow = { eventType: string; requestId?: unknown;
 
 /** The ledger's rows after its first `fromEvent`, in commit order (its own read-only connection; none without the file). */
 function ledgerRowsAfter(database: string, fromEvent: number): LedgerRow[] {
-  return readSqlite(join(database, 'ledger.sqlite'), ledger => (ledger.prepare('SELECT event_json FROM events ORDER BY id LIMIT -1 OFFSET ?')
+  return readSqlite(join(storeDirOf(database), 'ledger.sqlite'), ledger => (ledger.prepare('SELECT event_json FROM events ORDER BY id LIMIT -1 OFFSET ?')
     .all(fromEvent) as Array<{ event_json: string }>).map(row => JSON.parse(row.event_json) as LedgerRow), []);
 }
 
@@ -203,7 +204,7 @@ export function reworkNoticesSince(database: string, fromEvent: number): number 
 
 /** The ledger's row count (its own read-only connection; 0 without the file). */
 function ledgerRowCount(database: string): number {
-  return readSqlite(join(database, 'ledger.sqlite'), ledger =>
+  return readSqlite(join(storeDirOf(database), 'ledger.sqlite'), ledger =>
     Number((ledger.prepare('SELECT COUNT(*) AS n FROM events').get() as { n: number }).n), 0);
 }
 
@@ -277,7 +278,7 @@ export async function expectQuietRestart(database: string, publicDir: string, ro
   const before = fileCounts(database);
   const host = await startAG2bHost(publicDir, { ...options.start, root, database });
   try {
-    const reconcile = host.host.reconcile;
+    const reconcile = hostReconcile(host.host, AG2B_SCOPE.projectId);
     expect(reconcile, label).toMatchObject({ lease: 'owned', report: { problems: [] } });
     expect(reportChanges(reconcile.report), `${label}: the reconcile changes nothing again`).toEqual([]);
     const allowed = await countsAllowingStartWrites(database, before, reconcile.report, label);
@@ -315,12 +316,14 @@ export type Crashed = {
 export async function crashMidTurn(root: string, database: string, publicDir: string, actions: {
   beforeBlock?: (host: AG2bHost, runRef: RunRef) => Promise<void>;
   whileBlocked?: (host: AG2bHost, runRef: RunRef) => Promise<void>;
+  /** KLS-1b row 03: further Host start options of the crashed Host (a second command-line workspace). */
+  host?: Pick<AG2bOverrides, 'extraWorkspace'>;
 } = {}, flowId = 'a2-crash', inv: InvariantTarget = { database }): Promise<Crashed> {
   const reached = deferred();
   const hold = deferred();
   const firstRequest = deferred<RunRef>();
   let first: AG2bHost | undefined;
-  first = await startAG2bHost(publicDir, { root, database, replies: READ_THEN_TEXT,
+  first = await startAG2bHost(publicDir, { ...actions.host, root, database, replies: READ_THEN_TEXT,
     beforeReply: async (_request, index) => {
       if (first === undefined) return;
       if (index === 0) {

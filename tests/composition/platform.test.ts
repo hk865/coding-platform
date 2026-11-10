@@ -11,6 +11,7 @@ import type { SessionHandoffWorkflowPort } from '../../src/core/work-graph/model
 import { createTargetPlatform } from '../../src/composition/create-platform.js';
 import { seedS6BArchiveSource } from '../helpers/S6B1-fixture.js';
 import { s6b2Accept, s6b2Scene, s6b2Workspace } from '../helpers/S6B2-handoff-scene.js';
+import { storeDirOf } from '../helpers/KLS1B-host-store.js';
 
 const at = '2026-09-24T00:00:00.000Z';
 const actor = { kind: 'human' as const, id: 'trusted-test-human' };
@@ -116,7 +117,8 @@ it('rejects: the four published handoff entries admit only the Host that holds t
     const archive = accepted.value.operation;
     const basis = await seededWorld.platform.readSecretaryHandoffBasis(seededWorld.systemContext(), handoffSeed.source);
     if (basis.status !== 'ready') throw new Error(`the handoff basis is not readable: ${JSON.stringify(basis)}`);
-    held = await createTargetPlatform({ storage: { kind: 'sqlite', directory: seededWorld.database },
+    // KLS-1b (121-75): the project store follows its workspace; `database` is the Host's old storage directory.
+    held = await createTargetPlatform({ storage: { kind: 'sqlite', directory: storeDirOf(seededWorld.database) },
       workspace: (await fixture()).bindings, now: () => at,
       hostInstance: { hostInstanceId: 'held-peer', lease: 'held_by_other' } });
     const ctx = seededWorld.systemContext();

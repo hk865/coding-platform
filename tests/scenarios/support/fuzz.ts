@@ -84,6 +84,7 @@ import {
 } from '../../state/invariants.js';
 import { hostCtx, openHostScenario, stepOfReceipt, workRunCtx, type HostScenario, type Platform } from '../harness.js';
 import { authorizeWithoutBegin, openWorkRoot, ownerStep } from './common.js';
+import { storeDirOf } from '../../helpers/KLS1B-host-store.js';
 
 // ---------------------------------------------------------------------------
 // Seeded randomness
@@ -184,13 +185,13 @@ export class InvariantGate {
 
   async check(label: string, step?: FuzzStep): Promise<InvariantWorld> {
     const started = performance.now();
-    const ledgerPath = join(this.directory, 'ledger.sqlite');
+    const ledgerPath = join(storeDirOf(this.directory), 'ledger.sqlite');
     const mark = ledgerWrites(ledgerPath);
     if (step === undefined && this.world !== undefined && mark === this.mark) {
       this.skipped += 1;
       return this.world;
     }
-    const world = await readInvariantWorld(invariantStoreOf(this.directory), this.projectId);
+    const world = await readInvariantWorld(invariantStoreOf(storeDirOf(this.directory)), this.projectId);
     this.reading += Math.round(performance.now() - started);
     const findings = [...checkAllInvariants(world, this.world, step), ...legacyFindings(world, this.world, step)];
     this.checks += 1;
@@ -768,7 +769,7 @@ export class HostFuzz {
    */
   private async advanceCall(input: WorkflowAdvanceInput, label: string, sentAtOnce = true): Promise<AdvanceValue | null> {
     const quiet = this.turn === null && input.kind === 'perform' && input.operation.kind !== 'start' && input.operation.kind !== 'run_check';
-    const ledger = join(this.h.database, 'ledger.sqlite');
+    const ledger = join(storeDirOf(this.h.database), 'ledger.sqlite');
     const before = quiet ? ledgerWrites(ledger) : 0;
     const mechanical = sentAtOnce ? this.mechanicalRetry(input) : null;
     const result = await this.h.answer('workflow/advance', plain(AG2B_SCOPE, input)) as WorkflowAdvanceResult;
@@ -1494,7 +1495,7 @@ export class HostFuzz {
    */
   private async quietRefusal<T>(what: string, write: () => Promise<T>): Promise<T> {
     const quiet = this.turn === null;
-    const ledger = join(this.h.database, 'ledger.sqlite');
+    const ledger = join(storeDirOf(this.h.database), 'ledger.sqlite');
     const before = quiet ? ledgerWrites(ledger) : 0;
     const answer = await write();
     const outcome = outcomeOf(answer);

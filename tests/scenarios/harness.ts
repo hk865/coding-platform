@@ -90,6 +90,7 @@ import {
   checkAllInvariants, invariantStoreOf, legacyFindings, readInvariantWorld, type FuzzStep, type FuzzStepKind, type InvariantWorld,
 } from '../state/invariants.js';
 import { initGitWorkspace, type GitWorkspaceInfo, type GitWorkspaceOption } from './support/git-workspace.js';
+import { hostReconcile, storeDirOf } from '../helpers/KLS1B-host-store.js';
 
 export type Platform = Awaited<ReturnType<typeof createTargetPlatform>>;
 
@@ -369,7 +370,7 @@ export function readSqlite<T>(path: string, read: (database: DatabaseSync) => T,
 
 /** A store's ledger event types in commit order (none without the file). */
 export function eventTypesIn(database: string): string[] {
-  return readSqlite(join(database, 'ledger.sqlite'), ledger => (ledger.prepare('SELECT event_json FROM events ORDER BY id')
+  return readSqlite(join(storeDirOf(database), 'ledger.sqlite'), ledger => (ledger.prepare('SELECT event_json FROM events ORDER BY id')
     .all() as Array<{ event_json: string }>).map(row => (JSON.parse(row.event_json) as { eventType: string }).eventType), []);
 }
 
@@ -720,7 +721,7 @@ export type InvariantTarget = { database: string; lastWorld?: InvariantWorld | u
  * case with its own `startAG2bHost` setup calls it with `{ database }`.
  */
 export async function assertInvariantsAt(target: InvariantTarget, label: string, step?: FuzzStep): Promise<InvariantWorld> {
-  const world = await readInvariantWorld(invariantStoreOf(target.database), target.projectId ?? AG2B_SCOPE.projectId);
+  const world = await readInvariantWorld(invariantStoreOf(storeDirOf(target.database)), target.projectId ?? AG2B_SCOPE.projectId);
   const findings = [...checkAllInvariants(world, target.lastWorld, step), ...legacyFindings(world, target.lastWorld, step)]
     .map((finding) => `${finding.invariant}${finding.legacy === true ? ' (legacy)' : ''} ${finding.ref}: ${finding.message}`);
   target.lastWorld = world;
@@ -862,7 +863,7 @@ function workflowBinding(tokenBudget: number): WorkflowHostConfiguration['bindin
 async function openComposition(root: string, database: string, settings: CompositionSettings, policy: TaskAutomationPolicyV1,
   model: (() => ScriptedModel) | null, tools?: readonly string[]): Promise<Platform> {
   const platform = await createTargetPlatform({
-    storage: { kind: 'sqlite', directory: database },
+    storage: { kind: 'sqlite', directory: storeDirOf(database) },
     workspace: ag2bWorkspaceBindings(root, { value: 1 }, permissionRevision(settings.actor, AG2B_SCOPE, ['.'])),
     now: () => '2026-10-06T00:00:00.000Z',
     kernelStores: { entries: [{ adapterId: 'ag2b-kernel', storeKey: 'ag2b-kernel-store', workspace: AG2B_SCOPE,
@@ -1091,7 +1092,7 @@ export class HostScenario extends ScenarioBase {
   override async settleAutoCapture(): Promise<void> { await settleAutoCapture(this.current.host); }
   override async settleStartLines(): Promise<void> { await settleStartLines(this.current.host); }
   /** The start-up reconcile report of the live Host (§12.1 step 7). */
-  get reconcile(): HostReconcileReportV1 { return this.current.host.host.reconcile; }
+  get reconcile(): HostReconcileReportV1 { return hostReconcile(this.current.host.host, AG2B_SCOPE.projectId); }
   stepActor(): WorkbenchActor { return this.settings.actor; }
 
   /**
@@ -1175,7 +1176,7 @@ export class HostScenario extends ScenarioBase {
     this.current = await HostScenario.start(this.root, this.database, this.publicDir, this.models, this.settings, 'live');
     this.restarts += 1;
     if (options.invariants !== false) await assertInvariants(this, `restart ${this.restarts}${options.crash === true ? ' (crash)' : ''}`);
-    return this.current.host.host.reconcile;
+    return hostReconcile(this.current.host.host, AG2B_SCOPE.projectId);
   }
 
   /**

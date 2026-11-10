@@ -18,6 +18,7 @@ import { kernelRunLimits } from './run-limits.js';
 import { createExplorationTools, type ExplorationToolsHandle, type SourceToolOptions } from './exploration-tools.js';
 import type { ToolTextV1 } from '../../contracts/prompts/prompt-pack.js';
 import { readSourceIdentity } from '../../core/workspace/source-identity.js';
+import { PROJECT_STORE_PREFIX } from '../../core/workspace/denied-prefixes.js';
 import type { RuntimeSourceCaptureAccess, RuntimeSourceCaptureFactory } from './source-tool-ports.js';
 import { assembleObservedExtensions, kernelEnabledToolNames } from './tool-group-assembly.js';
 
@@ -459,7 +460,10 @@ export async function runObservedModel(o: ObservedModelRunOptions) {
         // R4.3a 可选工具组安全点：缺省不调用任何新逻辑。
         ...(toolGroupBarrier !== undefined ? { toolGroupBarrier } : {}),
         secretSource: { get: () => 'platform-bound-client' }, providerRegistry,
-        workspaceOptions: { deniedPrefixes: o.deniedPrefixes },
+        // X1: the project store kept in a workspace (`.workbench/local`) is not workspace content. As a denied
+        // prefix the Kernel leaves it out of its workspace snapshot (and its tools), so the store's own writes never
+        // move the revision a paused or recovered Turn is checked against. Added at this last hop only.
+        workspaceOptions: { deniedPrefixes: [...new Set([...o.deniedPrefixes, PROJECT_STORE_PREFIX])] },
         // L13: the resource-cap source is merged in at this last hop only; the
         // Kernel reads `current()` once per command, so a settings change reached
         // the holder is used by the next command of this same Run.

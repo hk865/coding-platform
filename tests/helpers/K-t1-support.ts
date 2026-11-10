@@ -28,6 +28,7 @@ import { createScriptedModel } from './B2-runtime-fixture.js';
 import { publicDirectory, readExecution, tempDir, writeAutomationSettings } from './A2-restart-fixture.js';
 import { ag2bWorkRuntime, ag2bWorkspaceBindings, SCENARIO_OPERATOR, type InvariantTarget, type Platform } from '../scenarios/harness.js';
 import { operatorRequeue, pausedRunOnClosedHostChecked } from '../scenarios/support/common.js';
+import { storeDirOf } from './KLS1B-host-store.js';
 
 /** A real Runtime root over a scenario's files that holds the instance lease.
  * `options.kernelRegistered: false` leaves the Session's Kernel adapter
@@ -35,7 +36,7 @@ import { operatorRequeue, pausedRunOnClosedHostChecked } from '../scenarios/supp
 export async function ownedRuntimeRoot(root: string, database: string,
   options: { kernelRegistered?: boolean } = {}): Promise<Platform> {
   return await createTargetPlatform({
-    storage: { kind: 'sqlite', directory: database },
+    storage: { kind: 'sqlite', directory: storeDirOf(database) },
     workspace: ag2bWorkspaceBindings(root, { value: 1 }, permissionRevision(SCENARIO_OPERATOR, AG2B_SCOPE, ['.'])),
     now: () => AG2B_AT,
     kernelStores: options.kernelRegistered === false ? { entries: [] }

@@ -9,6 +9,8 @@ import {
   dexcBarrier, dexcCommand, dexcProposal, dexcRounds, openS7D2ColdStartWorld, type DexcRow,
   type S7D2ColdStartWorld,
 } from '../helpers/S7D2-coldstart-world.js';
+import { hostReconcile } from '../helpers/KLS1B-host-store.js';
+import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
 
 vi.mock('../../src/core/record-store/in-memory-record-store.js', async importOriginal =>
   (await import('../helpers/S6A-commit-barrier.js')).inMemoryBarrierModule(importOriginal));
@@ -47,6 +49,6 @@ describe('DEXC-04: a stopped exploration across a Host restart', () => {
     expect([(await dexcRounds(cold.host, lines['src']!)).length, (await dexcRounds(cold.host, lines['docs']!)).length])
       .toEqual(rounds);
     expect(await cold.proposalCards()).toEqual([]);
-    expect(JSON.stringify(cold.host.host.reconcile)).not.toContain('operation(s) waiting');
+    expect(JSON.stringify(hostReconcile(cold.host.host, S6A_SCOPE.projectId))).not.toContain('operation(s) waiting');
   }, 300_000);
 });

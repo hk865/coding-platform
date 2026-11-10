@@ -57,6 +57,7 @@ import { createAgentRuntime } from '../../src/core/agent-runtime/runtime.js';
 import type { RuntimeExecutionDependencies, RuntimeHostBindings, ContinuationWorkspaceSource } from '../../src/core/agent-runtime/execution-contracts.js';
 import type { AuthorizeConfiguration } from '../../src/core/work-graph/model/execution-entry-contracts.js';
 import type { ArchiveRequeueOriginV1 } from '../../src/contracts/session-anomaly.js';
+import { storeDirOf } from './KLS1B-host-store.js';
 
 export const S1_T0 = '2026-10-08T00:00:00.000Z';
 
@@ -73,11 +74,11 @@ export function installS1DateClock(): () => void {
 export function installS1ScenarioClock(): () => void {
   const restoreDate = installS1DateClock();
   const createHost = hostFactory.createLocalWorkbenchHost;
-  const createPlatform = platformFactory.createTargetPlatform;
+  const openPlatform = platformFactory.openTargetPlatform;
   const host = vi.spyOn(hostFactory, 'createLocalWorkbenchHost').mockImplementation(options =>
     createHost({ ...options, now: () => S1_T0 }));
-  const platform = vi.spyOn(platformFactory, 'createTargetPlatform').mockImplementation(options =>
-    createPlatform({ ...options, now: () => S1_T0 }));
+  const platform = vi.spyOn(platformFactory, 'openTargetPlatform').mockImplementation(options =>
+    openPlatform({ ...options, now: () => S1_T0 }));
   return () => { platform.mockRestore(); host.mockRestore(); restoreDate(); };
 }
 
@@ -94,9 +95,9 @@ export function committed<T>(result: WriteResult<T>): T {
 /** Every owner mutation is checked against the preceding committed world. */
 export async function checkedRecords(records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort,
   directory: string, projectId: string) {
-  let previous: InvariantWorld = await readInvariantWorld(invariantStoreOf(directory), projectId);
+  let previous: InvariantWorld = await readInvariantWorld(invariantStoreOf(storeDirOf(directory)), projectId);
   const check = async () => {
-    const world = await readInvariantWorld(invariantStoreOf(directory), projectId);
+    const world = await readInvariantWorld(invariantStoreOf(storeDirOf(directory)), projectId);
     expect(checkAllInvariants(world, previous)).toEqual([]);
     previous = world;
     return world;
@@ -117,7 +118,7 @@ export async function checkedRecords(records: GoalRecordTransactionPort & Record
 
 /** Physical records, events and receipts on the store the owners write. */
 export function ledgerCounts(directory: string) {
-  const db = new DatabaseSync(join(directory, 'ledger.sqlite'), { readOnly: true });
+  const db = new DatabaseSync(join(storeDirOf(directory), 'ledger.sqlite'), { readOnly: true });
   try {
     const count = (table: 'snapshots' | 'events' | 'idempotency') =>
       Number((db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n);
@@ -129,7 +130,7 @@ export function ledgerCounts(directory: string) {
  * the Session. This seam does not manufacture a Session/Run/Attempt snapshot. */
 export async function retireS1Session(directory: string, ctx: CoreCallContext, sessionRef: SessionRef) {
   const bundles = [SESSION_RECORD_SCHEMAS, SESSION_LIFECYCLE_RECORD_SCHEMAS];
-  const backend = createSqliteRecordBackend({ path: join(directory, 'ledger.sqlite'), schemas: {
+  const backend = createSqliteRecordBackend({ path: join(storeDirOf(directory), 'ledger.sqlite'), schemas: {
     records: bundles.flatMap(b => b.records), events: bundles.flatMap(b => b.events),
     lookups: bundles.flatMap(b => b.lookups ?? []),
   } });

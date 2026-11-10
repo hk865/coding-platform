@@ -406,9 +406,10 @@ async function installSqliteBackendWrapper(controls: BackendControls): Promise<(
  */
 async function installPublishedExecutionWrapper(controls: BackendControls): Promise<() => void> {
   const platformComposition = await import('../../src/composition/create-platform.js');
-  const original = platformComposition.createTargetPlatform;
-  const spy = vi.spyOn(platformComposition, 'createTargetPlatform').mockImplementation(async options => {
-    const platform = await original(options);
+  const original = platformComposition.openTargetPlatform;
+  const spy = vi.spyOn(platformComposition, 'openTargetPlatform').mockImplementation(async options => {
+    const made = await original(options);
+    const platform = made.platform;
     const read = platform.executions.readExecution;
     platform.executions.readExecution = async (ctx, ref) => {
       if (controls.failRunRefKeyOnce !== null && canonicalJson(ref as never) === controls.failRunRefKeyOnce) {
@@ -418,7 +419,7 @@ async function installPublishedExecutionWrapper(controls: BackendControls): Prom
       }
       return await read(ctx, ref);
     };
-    return platform;
+    return made;
   });
   return () => { spy.mockRestore(); };
 }

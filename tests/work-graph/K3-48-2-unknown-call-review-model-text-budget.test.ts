@@ -372,7 +372,7 @@ describe('K3-48 (二) optional model text admission', () => {
     expect(accepted.value.revision).toBe(revision + 1);
   }, 120_000);
 
-  it.each([['memory', 422], ['sqlite', 341]] as const)('K3-48 (二) %s: the real near-budget proposal refuses 2,000 characters as capacity and admits 100', async (kind, cwdBytes) => {
+  it.each([['memory', 403], ['sqlite', 322]] as const)('K3-48 (二) %s: the real near-budget proposal refuses 2,000 characters as capacity and admits 100', async (kind, cwdBytes) => {
     const fx = await nearBudgetProposalFixture(kind);
     const reviewRef = fx.round.record.ref;
     const before = await fx.world.reviews.readReview(fx.round.context, { ref: reviewRef });
@@ -413,8 +413,8 @@ describe('K3-48 (二) optional model text admission', () => {
     // record is exactly B - 2,000 = 156,720 bytes BEFORE the rationale text.
     // The precondition is asserted against that fixed literal; the pre-write
     // size below is only the independent after-the-fact check of it:
-    //   memory: 156,024 + 274 + 422 = 156,720
-    //   sqlite: 156,105 + 274 + 341 = 156,720
+    //   memory: 156,043 + 274 + 403 = 156,720
+    //   sqlite: 156,124 + 274 + 322 = 156,720
     // W2b-21: the record Run's Session is now the real one. Its Kernel Session id
     // is the platform's `session-` + 64 hex = 72 bytes, where the handwritten
     // `s5-kernel-session-k3-48-2-near-<kind>` was 18 + 19 = 37 bytes; the record
@@ -426,6 +426,12 @@ describe('K3-48 (二) optional model text admission', () => {
     //   "artifacts.sqlite" 19 + "artifacts.sqlite-shm" 23
     //   + "artifacts.sqlite-wal" 23 + "ledger.sqlite" 16 = 81,
     // so the sqlite cwd is 81 bytes shorter (422 - 81 = 341).
+    // KLS-1b (V9): the record carries the denied-prefix list once, and it gained
+    // `,".workbench/local"` = 1 (comma) + 18 (16 characters and two quotes) = 19
+    // bytes on both backends (156,024 -> 156,043; 156,105 -> 156,124), so each cwd
+    // is 19 bytes shorter (422 -> 403; 341 -> 322). No Host runs here: the sqlite
+    // fixture keeps its store in its own directory, so the notVisible list above
+    // still names the four store files and the 81-byte gap stays (403 - 81 = 322).
     const BEFORE_TEXT = 156_720;
     expect(B - 2_000).toBe(BEFORE_TEXT);
     expect(k3SerializedBytes(before.value) + REVISION_BYTES + PROPOSAL_JSON_BYTES + cwdBytes)

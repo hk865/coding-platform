@@ -90,6 +90,7 @@ import {
   claimedRun, control, createTargetPlatform, display, fanOutIntentRef, goalControlled, hostOptions, intentOf, readIntentAnswer,
   reenter, refused, startHost, submit, submitRunControl,
 } from './support/control.js';
+import { hostReconcile } from '../helpers/KLS1B-host-store.js';
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -1141,7 +1142,7 @@ it('G-04 and GOAL-29: a Run the Goal fan-out paused ends paused-interrupted at t
   const second = await startAG2bHost(publicDir, { root, database, replies: editThenText('a2-goal29') });
   try {
     // W-20 + step 6 (GOAL-16): the paused Goal's fan-out pass finds the Run already ended; nothing is continued while paused.
-    expect(second.host.reconcile).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: {
+    expect(hostReconcile(second.host, AG2B_SCOPE.projectId)).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: {
       runs: [{ ref: JSON.stringify(runRef), row: 'W-20', status: 'reconciled' }],
       fanOut: [{ goalId: AG2B_GOAL_REF.goalId, control: 'pause', problem: null, continuations: 0 }], problems: [] } });
     const reconciled = await readExecution(second, runRef);
@@ -1404,13 +1405,13 @@ it('G-04 and G-06 at a restart: a Goal resumed (and paused and resumed again) on
   const owner = await startAG2bHost(publicDir, { root, database });
   let pausedEpoch: number;
   try {
-    expect(owner.host.reconcile).toMatchObject({ report: { runs: [{ ref: JSON.stringify(runRef), row: 'W-20', status: 'reconciled' }] } });
+    expect(hostReconcile(owner.host, AG2B_SCOPE.projectId)).toMatchObject({ report: { runs: [{ ref: JSON.stringify(runRef), row: 'W-20', status: 'reconciled' }] } });
     pausedEpoch = (await readGoal(owner)).desiredStateRevision ?? 1;
     await assertInvariantsAt(inv, 'A7-G6 paused-interrupted');
     // HL-07, L-10: a second Host commits the Goal controls (owner writes stay), but its fan-out reaches no Run.
     const other = await startAG2bHost(publicDir, { root, database });
     try {
-      expect(other.host.reconcile).toMatchObject({ lease: 'held_by_other', leaseRow: 'HL-02', report: null });
+      expect(hostReconcile(other.host, AG2B_SCOPE.projectId)).toMatchObject({ lease: 'held_by_other', leaseRow: 'HL-02', report: null });
       for (const [control, requestId] of [['resume', 'a2-g06-resume-1'], ['pause', 'a2-g06-pause-2'], ['resume', 'a2-g06-resume-3']] as const) {
         const written = await controlGoal(other, control, requestId);
         if (written.status !== 'committed') throw new Error(`${control}: ${JSON.stringify(written)}`);
@@ -1436,7 +1437,7 @@ it('G-04 and G-06 at a restart: a Goal resumed (and paused and resumed again) on
   try {
     const resumedEpoch = (await readGoal(third)).desiredStateRevision ?? 1;
     expect(resumedEpoch).toBe(pausedEpoch + 3);
-    expect(third.host.reconcile).toMatchObject({ lease: 'owned', report: { runs: [],
+    expect(hostReconcile(third.host, AG2B_SCOPE.projectId)).toMatchObject({ lease: 'owned', report: { runs: [],
       fanOut: [{ goalId: AG2B_GOAL_REF.goalId, control: 'resume', problem: null, runs: 0, continuations: 1 }],
       // §12.1 step 6b (a) (5.8): step 6's continuation reads claim_requeued, so the Goal is selected either way.
       redriveGoals: [{ goalRef: { goalId: AG2B_GOAL_REF.goalId }, taskIds: [AG2B_WORK_TASK_ID] }] } });
@@ -1455,7 +1456,7 @@ it('G-04 and G-06 at a restart: a Goal resumed (and paused and resumed again) on
   // A further start adds nothing: the TaskRequeue covers the Run.
   const fourth = await startAG2bHost(publicDir, { root, database, replies: editThenText('a2-g04') });
   try {
-    expect(fourth.host.reconcile).toMatchObject({ report: { runs: [],
+    expect(hostReconcile(fourth.host, AG2B_SCOPE.projectId)).toMatchObject({ report: { runs: [],
       fanOut: [{ goalId: AG2B_GOAL_REF.goalId, control: 'resume', problem: null, continuations: 0 }] } });
     const row = await workRow(fourth);
     expect((row['rework'] as { entries: unknown[] }).entries).toHaveLength(1);

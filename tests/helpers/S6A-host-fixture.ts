@@ -543,7 +543,7 @@ export async function openS6AHostWorld(options: S6AHostWorldOptions): Promise<S6
       // A peer start keeps the live lock: the abandoned Host still runs and holds the instance lease (HL-02).
       if (instance.keepsLease !== true) await writeStaleLock(database);
     },
-    get reconcile() { return real.reconcile; },
+    reconcileOf: projectId => real.reconcileOf(projectId),
     get consumeStatus() { return real.consumeStatus; },
     consumeBarrier: () => real.consumeBarrier(),
   });

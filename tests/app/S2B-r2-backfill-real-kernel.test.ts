@@ -28,6 +28,7 @@ import {
 } from '../helpers/S2B-r2-backfill-kernel-support.js';
 import { resetActivityBackfillGate, viewOf } from '../helpers/S2B-activity-fixture.js';
 import { readPageToken } from '../helpers/AG2b-collaboration-fixture.js';
+import { hostReconcile } from '../helpers/KLS1B-host-store.js';
 
 /** §7 counting-off double: while `off`, end commits carry no `activity` and the reader retries. */
 const countingOff = vi.hoisted(() => ({ off: false }));
@@ -87,7 +88,7 @@ describe('S2B round-2 Group B — real Kernel history backfill (BE3)', () => {
     countingOff.off = false;
     const backfillCompleted = resetActivityBackfillGate();
     host = await startKernelBackfillHost(f, () => at(0));
-    expect(host.reconcile.lease).toBe('owned');
+    expect(hostReconcile(host, f.scope.projectId).lease).toBe('owned');
 
     await backfillCompleted;
 
@@ -119,7 +120,7 @@ describe('S2B round-2 Group B — real Kernel history backfill (BE3)', () => {
     countingOff.off = false;
     // The leased Host itself writes the epoch at start-up; the test never writes it.
     host = await startKernelBackfillHost(f, () => at(0));
-    expect(host.reconcile.lease).toBe('owned');
+    expect(hostReconcile(host, f.scope.projectId).lease).toBe('owned');
     // The Host-written epoch makes these two ended Runs read `not_backfilled`
     // (before it they would read `no_recording_epoch`).
     const beforeRange = await f.reads().readRunActivities(f.fx.ctx, { runRefs: [older.ref, oldest.ref] });

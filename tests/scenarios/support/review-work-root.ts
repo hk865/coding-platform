@@ -43,6 +43,7 @@ import type { ReadResult } from '../../../src/contracts/core/results.js';
 import type { RunRef } from '../../../src/contracts/dispatch.js';
 import type { UnknownCallReviewV1 } from '../../../src/contracts/unknown-call-review.js';
 import { crashOneCommand } from './review-card-round.js';
+import { storeDirOf } from '../../helpers/KLS1B-host-store.js';
 
 /** `openWorkRoot` (./common.ts) with the read-only command grant a review round needs. */
 export async function openReviewWorkRoot(h: HostScenario, model: ScriptedModel,
@@ -71,7 +72,7 @@ export async function openReviewWorkRoot(h: HostScenario, model: ScriptedModel,
     async readonlyCommandAccess(_input: ReadonlyCommandAccessInput) { return facts; },
   };
   return await createTargetPlatform({
-    storage: { kind: 'sqlite', directory: h.database },
+    storage: { kind: 'sqlite', directory: storeDirOf(h.database) },
     workspace: ag2bWorkspaceBindings(h.root, { value: 1 }, permissionRevision(h.stepActor(), AG2B_SCOPE, ['.'])),
     now: () => AG2B_AT,
     kernelStores: { entries: [{ adapterId: 'ag2b-kernel', storeKey: 'ag2b-kernel-store', workspace: AG2B_SCOPE,
@@ -118,7 +119,7 @@ export async function openMissingReadReviewRoot(h: HostScenario,
   };
   const runtime = createWorkbenchRuntimeHostBindings(configuration, { secretSource: { get: () => undefined } });
   return await createTargetPlatform({
-    storage: { kind: 'sqlite', directory: h.database },
+    storage: { kind: 'sqlite', directory: storeDirOf(h.database) },
     workspace: ag2bWorkspaceBindings(h.root, { value: 1 }, permissionRevision(h.stepActor(), AG2B_SCOPE, ['.'])),
     now: () => AG2B_AT,
     kernelStores: { entries: [{ adapterId: 'ag2b-kernel', storeKey: 'ag2b-kernel-store', workspace: AG2B_SCOPE,

@@ -28,6 +28,7 @@ import {
 } from './harness.js';
 import { committedOutcomesOf, editThenText, execution, taskRefOf } from './support/common.js';
 import { countsAllowingInterruptions } from './support/restart.js';
+import { hostReconcile } from '../helpers/KLS1B-host-store.js';
 
 afterEach(cleanupScenarios);
 
@@ -74,7 +75,7 @@ it('host mode: claim → Run → PASS → satisfied; a clean restart and a peer 
   expect(await h.taskRow()).toMatchObject({ effectivePhase: 'satisfied' });
   // HL-02: a second live Host on the same files reconciles nothing and writes nothing.
   const peer = await h.startPeer();
-  expect(peer.host.reconcile).toMatchObject({ lease: 'held_by_other', leaseRow: 'HL-02', report: null });
+  expect(hostReconcile(peer.host, AG2B_SCOPE.projectId)).toMatchObject({ lease: 'held_by_other', leaseRow: 'HL-02', report: null });
   expect(h.counts()).toEqual(afterRestart);
   // The composition root on the same files reads the same records.
   const graph = await (await h.direct()).plans.queryTaskGraph(hostCtx(), { goalRef: { aggregateType: 'Goal',

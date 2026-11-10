@@ -29,6 +29,7 @@ import {
   applyCandidate, markNoticesSeen, proposeCandidate, queryDecisionQueue, queryGoalConflicts, readActivePlan,
   reorderGoals, s5AgentRequeue, s5ConflictKey, s5StoreSnapshot, seedConflictWorld,
 } from './support/S5-decisions.js';
+import { storeDirOf } from '../helpers/KLS1B-host-store.js';
 
 afterEach(async () => {
   await cleanupScenarios();
@@ -156,7 +157,7 @@ it('SC02 two Goals conflicting on module M: no labels before the accepted risk, 
   // One category's first page: mark only the displayed item, then restart and
   // show the remaining notices are still there.
   const platformAfterReverify = await h.direct();
-  const beforeRead = s5StoreSnapshot(join(h.database, 'ledger.sqlite'));
+  const beforeRead = s5StoreSnapshot(join(storeDirOf(h.database), 'ledger.sqlite'));
   const firstPage = await queryDecisionQueue(platformAfterReverify, world.ctx,
     { sections: ['notices'], categories: ['automatic_rework'], page: { limit: 1 } });
   if (firstPage.status !== 'ready') throw new Error(`the notice page must be ready: ${JSON.stringify(firstPage)}`);
@@ -165,7 +166,7 @@ it('SC02 two Goals conflicting on module M: no labels before the accepted risk, 
   const displayed = firstPage.value.notices[0];
   if (displayed === undefined) throw new Error('the displayed notice must exist');
   expect(firstPage.value.seenThrough).toEqual({ automatic_rework: displayed.position });
-  expect(s5StoreSnapshot(join(h.database, 'ledger.sqlite'))).toEqual(beforeRead);
+  expect(s5StoreSnapshot(join(storeDirOf(h.database), 'ledger.sqlite'))).toEqual(beforeRead);
   if (firstPage.value.displayToken === null) throw new Error('the notice page must carry a display token');
   const marked = await markNoticesSeen(platformAfterReverify, world.ctx, { displayToken: firstPage.value.displayToken,
     seenThrough: firstPage.value.seenThrough });

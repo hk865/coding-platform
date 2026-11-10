@@ -181,7 +181,7 @@ export async function openSearchWorld(kind: Backend): Promise<SearchWorld> {
   let adopted = false;
   const architecture = { ...catalog, ...observed } as unknown as CoreRoutePlatform['architecture'];
   const server: WorkbenchServer = createWorkbenchServer({
-    token: TOKEN, bindings: createPlatformCoreRouteBindings(routePlatform(architecture)), actor: ACTOR,
+    token: TOKEN, bindings: () => createPlatformCoreRouteBindings(routePlatform(architecture)), actor: ACTOR,
     bootstrap: () => ({ workspaces: [], review: null, execution: { queryProfiles: [], workflowScopes: [] } }),
     allowsScope: () => true,
   });

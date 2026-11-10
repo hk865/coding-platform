@@ -133,6 +133,7 @@ async function hostFacts(): Promise<HostSettingsWorkspaceFacts> {
     modelId: facts.modelId,
     writeAllowed: facts.writeAllowed,
     commandsAllowed: facts.commandsAllowed,
+    storeLocation: facts.storeLocation ?? null,
   };
 }
 

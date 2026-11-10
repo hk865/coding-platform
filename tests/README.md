@@ -35,6 +35,7 @@ E3-7 的新文件：`tests/contracts/E37-line-edit-counts-pure.test.ts`（`gitLi
 6C 的新文件：`tests/scenarios/S6C-request-candidate.test.ts`（S1：选思路后的计划轮经真实 Host 生命周期变成请求候选、重放、第二版与 `previous`、真实 `submit_plan_round`、来源跌出 `earlier`；S7-1 经公开 `plans/request-candidate` 读影响标记，不直接 import `plan-impact`）、`tests/scenarios/S6C-c7-adoption.test.ts`（S3：人采用替代有执行记录的任务、新义务/新要求、PS 先停后采用、旧证据不完成新验收、采用人 `adoptedBy`）、`tests/work-graph/S6C-goal-objective.test.ts`（S4：目标说明随候选、人采用写入、平台自动拒绝、空值拒绝）、`tests/work-graph/S6C-source-resolved.test.ts`（S5：两个 `missing_initial_*` 指针生效后读成 `source_resolved`，读失败不折成已解决）。
 
 7D2 DKTID 的新文件：`tests/kernel/S7D2-DKTID-call-ids.test.ts`（R1：跨轮、同一 Turn 的两次回复、同一 Session 的两个 `current_turn` 都用 `call_0`，第一次原样、重复的记成 `call_0@<turnId>`，下一次请求带同一个新 id；真实 SQLite Kernel）、`tests/app/S7D2-DKTID-history-rejection.test.ts`（R2/R3：历史被确定性拒绝的线，下一个 Query 轮以 `history_rejected` 关闭、下一个 Work Run 以 `crashed` 结束，都释放线；两个坏 Turn 经 `K-session-support.ts` 的 `KernelSessionFixture.open` 预置，是裁定 K4/K9 点名的 F3 例外，别的测试不要照搬；Work 线用 `S7A-fixture.ts` 末尾的 `openS7AWorkSetup` 建，memory）。
+7D2 DKLS1B 的新文件：`tests/app/KLS1B-startup-projects.test.ts`（01/02/09/11/12/13/14：每项目启动、缺库不重建、清单登记、Kernel 入口与旧单库拒绝、库位置，以及清单里的项目工作区目录没了仍照常启动）、`tests/app/KLS1B-change-feed-projects.test.ts`（05/05b：Host 序号 id、项目身份和该项目库 cursor、恢复时每个项目一条合并 change）、`tests/app/KLS1B-project-lease-waits.test.ts`（07/08/10：每项目锁、等待水位、运行中新开项目）、`tests/scenarios/KLS1B-scope-reconcile-close.test.ts`（03/06：同一项目多工作区合成一份核对报告、关闭顺序）、`tests/composition/KLS1B-read-across-projects.test.ts`（04/04b：跨项目读和未知项目）。
 
 ## tests/helpers/ 的夹具
 
@@ -52,6 +53,7 @@ E3-7 的新文件：`tests/contracts/E37-line-edit-counts-pure.test.ts`（`gitLi
 - `K-readonly-host-support.ts` — 生产 `createLocalWorkbenchHost` + 只读命令开关 + 显式 runtime binding，经公共 HTTP 路由种 AG2b 图，再由 `workflow/driver-start` 驱动只读 Work；`tests/runtime/K-readonly-command.test.ts` 在用。
 - `K-t1-support.ts` — 公共流程搭平台状态，开带 `hostInstance: { lease: 'owned' }` 的真实组合根；`buildRun24KernelOpen` 造人暂停后关 Host 的 RUN-24；`tests/composition/K-R-close-open-turn.test.ts` 在用。
 - `KLS1A-project-store-fixture.ts` — 真实临时根、真实 `acquireHostInstanceLease` 和 `openTargetPlatform` 工厂，按位置函数注入挂载表；给 `tests/composition/KLS1A-project-store-location.test.ts`、`KLS1A-open-target-platform.test.ts`、`KLS1A-project-runtime.test.ts` 三个文件共用。
+- `KLS1B-two-projects.ts` — 同一个真实 Host 上两个项目（A 是命令行工作区，B 经公开 settings `workspaces/open` 打开或也是命令行工作区），SQLite/memory、可选 git 根；`post`/`settings`/`createGoal`/`start`/`restart`/`dispose` 和按路径加载的 `hostReconcile`/`hostProjectStoreDirectory`；给 `tests/app/KLS1B-startup-projects.test.ts`、`KLS1B-project-lease-waits.test.ts`、`tests/scenarios/KLS1B-scope-reconcile-close.test.ts` 共用；`tests/app/KLS1B-change-feed-projects.test.ts` 按 05 的要求直接起两个工作区的 Host。
 - `PC-platform-fixture.ts` — 冻结，只能在末尾追加导出；经公共步骤给 Work/Query/K3 review 世界，带可注入 prompt-pack 源、自定义 Skill 目录、失败 body store 和命令捕获；`tests/state/PC2-G-query-bind-order.test.ts` 在用。
 - `PC2-host-fixture.ts` — 冻结，只能在末尾追加导出；真实 Host 和 HTTP handler，只换 socket 绑定，请求流交给真实 listener；`tests/app/PC2-H-tool-routes.test.ts` 在用。
 - `PC2-pack-fixture.ts` — 冻结，只能在末尾追加导出；PC-2 pack 的输入与观察值（prompt 包/文本），期望留给测试行；`tests/app/PC2-H-tool-routes.test.ts` 在用。
@@ -229,6 +231,7 @@ Kernel 公共入口 harness、blocked/CRR/review 世界、受控命令替身和�
 
 commit 闸门、阻塞替身、store/Kernel 读故障和崩溃重启；只在规则表允许的边界注入，不手写平台事实。
 
+- `KLS1B-host-store.ts` — Host 给一个项目用的库目录（`hostProjectStoreDirectory`，生产位置规则）和按项目取启动核对报告（`hostReconcile`）；起 Host 的夹具记下 `database` → 库目录（`rememberHostStore`），旧的账本、产物和锁读法经 `storeDirOf(database)` 找到它；旧 B2 夹具先用自己的 platform 写库、再在同一目录起 Host 的，用 `linkHostStore` 把位置目录链到那里；`tests/scenarios/harness.ts` 和 KLS-1b 迁移过的夹具在用。
 - `A2-restart-fixture.ts` — 两个真实 Host 共享一个 SQLite ledger/Kernel store；`closed` 正常 drain 后写 stale lock，`abandoned` 留一个 blocked 请求并改 lock 模拟崩溃；`tests/scenarios/S2C-K2-paused-transfer.test.ts` 在用。
 - `B2-09b-crash.ts` — 经 composition 发布的 owner read port 读真实 `CommandRerunRequest`，Task closure 用生产 `plan-readers.readTaskClosure`；`tests/scenarios/B2-09b-allowance-crash.test.ts` 在用。
 - `K3-mailbox-seam.ts` — 可开关地阻塞 `send_session_message` handler，制造 Kernel 已 started、消息未提交的 K3-02 崩溃点；`tests/scenarios/K3-R1-restart-flows.test.ts` 在用。

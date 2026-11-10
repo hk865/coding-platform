@@ -2,17 +2,22 @@
  * R6.1a local workbench Host.
  *
  * The Host is the ONE place that assembles the trusted startup configuration
- * into the single `createTargetPlatform` instance. It converts the serializable
- * workspace descriptions of the CLI config into the existing
+ * into one project runtime per project (its own store, lease, Kernel store
+ * directory and `openTargetPlatform` instance, KLS-1b). Scheduling stays per
+ * workspace scope: a scope's work takes its project's platform
+ * (`platformFor(scope.projectId)`), and only the drivers that bind a platform
+ * when they are built exist once per project (`HostProject`). It converts the
+ * serializable workspace descriptions of the CLI config into the existing
  * `WorkspaceHostBindings`, owns the per-instance temporary token, and exposes
  * an idempotent `close()` that first stops new HTTP work, drains the requests
- * already accepted, then closes the platform.
+ * already accepted, then closes every project runtime.
  *
- * Local settings (`/api/real/settings/`) extend the SAME instance at runtime:
- * a newly opened directory is registered through the real Project/Workspace
- * owner and enters `byScope`, the source/tool roots, `allowedScopes`, the live
- * bootstrap, the Kernel store registry, the trusted Query profiles and the
- * Workflow configuration without stopping the Host. A settings model change is
+ * Local settings (`/api/real/settings/`) extend the Host at runtime: a newly
+ * opened directory is registered through the real Project/Workspace owner (a
+ * new project opens its runtime first) and enters `byScope`, the source/tool
+ * roots, `allowedScopes`, the live bootstrap, the Kernel store registry, the
+ * trusted Query profiles and the Workflow configuration without stopping the
+ * Host. A settings model change is
  * delivered as a private snapshot; the Host keeps its original bindings/grants
  * and installs a NEW immutable runtime version behind the per-ref resolver
  * registry.
@@ -31,7 +36,7 @@ import { mkdir, realpath, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { canonicalJson, canonicalKey, sha256Hex, type JsonValue } from '../contracts/fingerprint.js';
 import type { CommitCursor } from '../contracts/command-event.js';
-import { makeCommitCursor, seqOfCommitCursor, type GoalRef, type WorkspaceRef } from '../contracts/ledger.js';
+import type { GoalRef, WorkspaceRef } from '../contracts/ledger.js';
 import {
   createGoalWaitQueue, createGoalWaitWakes, GOAL_WAITS_QUEUE, GOAL_WAIT_WAKE_AGGREGATE_TYPES, WAKE_LIMIT,
   createGoalWaitRebuild, type GoalWaitRegistries, type GoalWaitWakes, type MarkerQueryCandidateV1,
@@ -39,8 +44,13 @@ import {
 } from './goal-wait-wakes.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../contracts/prompts/platform-pack.generated.js';
 import { renderTemplate } from '../contracts/prompts/render-template.js';
-import { COLD_START_STAGE_NOT_BOUND, createTargetPlatform, type TargetPlatformOptions } from '../composition/create-platform.js';
-import type { RecordCommitNotice, RecordCommitObserver } from '../composition/commit-observer.js';
+import { COLD_START_STAGE_NOT_BOUND, openTargetPlatform, type TargetPlatformOptions } from '../composition/create-platform.js';
+import type { RecordCommitObserver } from '../composition/commit-observer.js';
+import {
+  createProjectRuntimeRegistry, type ProjectPlatform, type ProjectRuntime, type ProjectRuntimeWorkspace,
+  type ProjectStoreLease,
+} from '../composition/project-runtime.js';
+import { kernelStoreDirectory, kernelStoreEntry } from '../composition/project-store-paths.js';
 import type { WorkspaceHostBindings } from '../core/workspace/access.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { SessionRef, WorkspaceScope } from '../contracts/core/identity.js';
@@ -63,7 +73,9 @@ import type { WorkspaceResult } from '../core/workspace/ports.js';
 import { createPlatformCoreRouteBindings, type CoreRouteBindings, type HostReconcileReportV1 } from './core-routes.js';
 import { acquireHostInstanceLease } from './host-instance-lease.js';
 import { announceDisconnect, announceInterruption, interventionClosingNoticeRequest, systemNotifyRequest } from './host-notices.js';
-import { HOST_RECONCILE_ACTOR, runStartupReconcile, type StartupReconcileReportV1 } from './startup-reconcile.js';
+import {
+  emptyStartupReport, HOST_RECONCILE_ACTOR, runStartupReconcile, type StartupReconcileReportV1,
+} from './startup-reconcile.js';
 import { parseInitialPlanningResponseV2 } from '../core/work-graph/tasks/initial-plan.js';
 import { DEFAULT_TASK_AUTOMATION_POLICY, type TaskRequeueRef } from '../contracts/task-requeue.js';
 import type { VerificationRoundRef } from '../contracts/verification.js';
@@ -107,6 +119,7 @@ import type { BootstrapExecution, BootstrapResponse, BootstrapReviewMaterial, Co
 import {
   createHostRuntimeResolverRegistry,
   createHostSettings,
+  readPersistedWorkspaces,
   validateSettingsBaseUrl,
   type HostSettingsAssembly,
   type HostSettingsModelDefinition,
@@ -255,14 +268,39 @@ export type LocalWorkbenchHostOptions = {
 export type LocalWorkbenchHost = {
   /** Returns the real loopback address. Repeated calls keep the same token. */
   listen(port?: number): Promise<WorkbenchAddress>;
-  /** Idempotent: reject new requests, drain accepted ones, then close the platform. */
+  /** Idempotent: reject new requests, drain accepted ones, then close every project's platform and lease. */
   close(): Promise<void>;
-  /** A.2 step 5.6 (§12.8, §12.1 step 7): the instance lease and the start-up reconcile report (null without the lease). */
-  readonly reconcile: HostReconcileReportV1;
+  /** A.2 step 5.6 (§12.8, §12.1 step 7), per project (V7): that project's lease and its start-up reconcile report
+   * (`report` null without the lease); null when the project is not open in this Host. */
+  reconcileOf(projectId: string): HostReconcileReportV1 | null;
   /** the last heartbeat's skips, in Session-key order; replaced each pass, never persisted, no route. */
   readonly consumeStatus: readonly HostConsumeSkipV1[];
   /** Resolves after the next real `consumeIdle` pass settles; it observes that pass and changes nothing. */
   consumeBarrier(): Promise<void>;
+};
+
+/**
+ * One open project's drivers (S7): only what captures that project's platform when it is built. Stage one is built
+ * when the runtime opens; `bindings` (stage two) once the settings exist. Everything else in the Host is shared and
+ * takes a scope's platform with `platformFor(scope.projectId)`.
+ */
+type HostProject = {
+  projectId: string;
+  runtime: ProjectRuntime;
+  autoCapture: ReturnType<typeof createAutoCaptureDriver>;
+  /** Set only while this Host holds the project's lease: a Host without it writes nothing, so it never captures. */
+  captureTrigger?: NonNullable<TargetPlatformOptions['onArchitectureCaptureTrigger']>;
+  collaborationDriver: ReturnType<typeof createCollaborationDriver>;
+  goalFanOut: ReturnType<typeof createGoalFanOutDriver>;
+  hostNotices: Parameters<typeof announceDisconnect>[1];
+  /** The request driver's pieces: with the lease and the request driver on only. */
+  coldStartStages?: NonNullable<TargetPlatformOptions['coldStartStages']>;
+  requestQueues?: ReturnType<typeof createRequestRoundQueues>;
+  handoffOwner?: ProjectPlatform['workflow']['sessionHandoff'];
+  /** Built at the first marker Query start (the goal-waits drain). */
+  markerStageDriver?: QueryStageDriver;
+  bindings?: CoreRouteBindings;
+  report: HostReconcileReportV1;
 };
 
 const scopeKey = (scope: CoreScope): string => `${scope.projectId}\u0000${scope.workspaceId}`;
@@ -347,7 +385,7 @@ async function preparePromptsDirectory(settingsDirectory: string): Promise<strin
   return await realpath(directory);
 }
 
-/** A configured/restored root is compared by real path. A root whose real path
+/** A configured start-up root is compared by real path. A root whose real path
  * cannot be taken cannot be proved outside the prompt directory, so startup
  * fails instead of admitting it unchecked. */
 async function assertRootOutsidePrompts(root: string, promptsRoot: string): Promise<void> {
@@ -715,53 +753,59 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     },
   };
 
-  // Task E: the one in-process change feed. It observes every RecordStore
-  // commit of the platform below and the two in-memory handle owners the page
-  // used to poll, and publishes change NOTIFICATIONS only.
+  /** A project's platform sees only that project's workspaces: another project's workspace is `not_found`. */
+  const projectBindings = (projectId: string): WorkspaceHostBindings => ({
+    async resolveRoot(workspace: WorkspaceRef) {
+      if (workspace.projectId !== projectId) {
+        return rejected('not_found', 'the workspace is not registered in this Host configuration');
+      }
+      return bindings.resolveRoot(workspace);
+    },
+    async authorize(ctx: CoreCallContext, workspace: WorkspaceRef) {
+      if (workspace.projectId !== projectId) {
+        return rejected('not_found', 'the workspace is not registered in this Host configuration');
+      }
+      return bindings.authorize(ctx, workspace);
+    },
+  });
+
+  // Task E: the one in-process change feed. Every project store's commit observer hands its commits in (each takes the
+  // Host's next sequence number, S5), and the two in-memory handle owners the page used to poll publish through it.
   const changes = createChangeFeed();
-  // A.2 step 5.5: the Goal fan-out driver (assembled below, over this
-  // platform) also observes the commits, so a fan-out pause that lands later
-  // re-drives the waiting Goal resume (GOAL-14). Neither observer can affect a
-  // commit or the other observer.
-  let goalFanOutCommitted: ((notice: RecordCommitNotice) => void) | undefined;
-  // The request driver's wake loop is built over the platform's published
-  // owners, so it exists only after the platform. Both bindings below are set
-  // right after it: until then a wake or a notice starts nothing, and the
-  // rounds stay on record for the start-up rebuild.
-  let requestDriverCommitted: ((notice: RecordCommitNotice) => void) | undefined;
+  /** Each project store's own head, kept by its commit observer: the store cursor a wait registers with (U2). */
+  const databaseHeads = new Map<string, CommitCursor | null>();
+  const databaseHead = (projectId: string): CommitCursor | null => databaseHeads.get(projectId) ?? null;
+  // The request driver's sinks are set inside its switch below; with it off a wake or an arm starts nothing, and the
+  // rounds stay on record for a later Host with the driver on.
   let requestWakeSink: ((scope: WorkspaceScope, source: 'request_command') => void) | undefined;
   let armMessageRelease: ((scope: WorkspaceScope) => void) | undefined;
-  // C1: the cold start's exploration rounds run on the request driver's stage driver; until it exists (and with no
-  // request driver or no lease at all) the sink is empty and those rounds wait where they are.
-  let coldStartStageSink: NonNullable<TargetPlatformOptions['coldStartStages']> | undefined;
-  // L8 (book ruling 1): the mutable trigger sink handed to the platform BEFORE
-  // the driver exists; each formal adoption/revision/PASS calls it after its
-  // non-replayed commit, and the driver is installed right after the platform.
-  let architectureCaptureTrigger:
-    ((event: { kind: 'catalog_adopted' | 'catalog_revised' | 'check_passed'; projectId: string }) => void) | undefined;
-  const commitObserver: RecordCommitObserver = {
-    started(head) { changes.started(head); },
+  /** Every open project's drivers, by project id. */
+  const projects = new Map<string, HostProject>();
+  /** Set once the settings exist: from then on a project's stage two is built with its stage one. */
+  let settingsReady = false;
+  /**
+   * One project store's commit observer: the store's head, the shared change feed, that project's Goal fan-out (a
+   * fan-out pause that lands later re-drives the waiting Goal resume, GOAL-14) and the shared wake loop. No observer
+   * can affect a commit or another observer.
+   */
+  const commitObserverFor = (projectId: string): RecordCommitObserver => ({
+    started(head) { databaseHeads.set(projectId, head === 'unknown' ? null : head); },
     committed(notice) {
-      try { changes.committed(notice); } catch { /* the change feed keeps its own state */ }
-      try { goalFanOutCommitted?.(notice); } catch { /* the driver never affects a commit */ }
-      try { requestDriverCommitted?.(notice); } catch { /* the loop never affects a commit */ }
+      databaseHeads.set(projectId, notice.cursor);
+      try { changes.committed(projectId, notice); } catch { /* the change feed keeps its own state */ }
+      try { projects.get(projectId)?.goalFanOut.committed(notice); } catch { /* the driver never affects a commit */ }
+      try { wakeLoop.committed(notice); } catch { /* the loop never affects a commit */ }
     },
-  };
-  // A.2 step 5.6 (§12.1 step 0, §12.8): the Host instance lease is taken BEFORE the platform. Without it
-  // this Host serves reads and owner writes only: no reconcile, no execution driver, no Kernel entry (L-10).
-  if (storage.kind === 'sqlite') mkdirSync(storage.directory, { recursive: true });
-  const instanceLease = await acquireHostInstanceLease({ directory: storage.kind === 'sqlite' ? storage.directory : null,
-    now: options.now ?? (() => new Date().toISOString()) });
-  const leaseOwned = instanceLease.lease === 'owned';
-  // Slice 6A §3.4.1: the Host's `SecretaryProfilePort` over its live query
-  // profiles. The duty resolver is installed below, once the platform's role
-  // read exists; a command can only run after this function returns.
-  let hostDutyResolver: SessionDutyResolver | undefined;
+  });
+  // Slice 6A §3.4.1: the Host's `SecretaryProfilePort` over its live query profiles, with the SAME duty rule the
+  // composition's own instance applies; the role read goes to the context's project (one not open is unavailable).
+  const hostDutyResolver: SessionDutyResolver = createSessionDutyResolver({
+    readRoleSpec: (ctx, input) => projectPlatform(ctx.projectId).roles.readRoleSpec(ctx, input),
+    configuration: workflow,
+  });
   const secretaryProfiles = createSecretaryProfiles({
     profiles: () => runtimeProfiles,
-    duty: async (role, ctx) => hostDutyResolver === undefined
-      ? { status: 'rejected' as const, code: 'unavailable' as const, reason: 'the Host duty resolver is not ready' }
-      : await hostDutyResolver(role, ctx),
+    duty: (role, ctx) => hostDutyResolver(role, ctx),
   });
   // (W-11): one process-local closing signal, trusted option only; not a setting, route or
   // persisted field. `close()` aborts it first so live Work pauses at its next safe point.
@@ -797,18 +841,23 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       return result;
     };
   }
-  let platform: Awaited<ReturnType<typeof createTargetPlatform>>;
-  try {
-    platform = await createTargetPlatform({
-      storage,
-      workspace: bindings,
-      commitObserver,
-      hostInstance: { hostInstanceId: instanceLease.hostInstanceId, lease: instanceLease.lease, takeover: instanceLease.takeover },
+  const explicitKernelEntries = options.kernelStores?.entries ?? [];
+  // KLS-1b: one runtime per project (S1, T3): its own store directory, lease, Kernel store directory and platform. The
+  // memory store takes the same path with one in-memory store per project (V3). A project opens at start (the list
+  // and the start-up workspaces, §4.2) or when a directory opens a new one (U4); nothing else makes a runtime.
+  const registry = createProjectRuntimeRegistry({
+    storage: storage.kind === 'sqlite' ? { kind: 'sqlite', legacyDirectory: storage.directory } : { kind: 'memory' },
+    acquireLease: directory => acquireHostInstanceLease({ directory, now: options.now ?? (() => new Date().toISOString()) }),
+    createPlatform: input => openTargetPlatform({
+      storage: input.storage,
+      workspace: projectBindings(input.projectId),
+      commitObserver: commitObserverFor(input.projectId),
+      hostInstance: { hostInstanceId: input.lease.hostInstanceId, lease: input.lease.lease, takeover: input.lease.takeover },
       hostClosing: hostClosing.signal,
       ...(options.now === undefined ? {} : { now: options.now }),
       ...(architectureSource === undefined ? {} : { architectureSource }),
       ...(options.lightScan === undefined ? {} : { lightScan: options.lightScan }),
-      ...(options.kernelStores === undefined ? {} : { kernelStores: options.kernelStores }),
+      kernelStores: { entries: explicitKernelEntries.filter(entry => entry.workspace.projectId === input.projectId) },
       ...(runtime === undefined ? {} : { runtime }),
       ...(checks === undefined ? {} : { checks }),
       ...(workflow === undefined ? {} : { workflow }),
@@ -836,33 +885,36 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         ? { plan: result.value, scope: { projectId: result.value.goalRef.projectId,
           workspaceId: ctx.workspaceId ?? '', goalId: result.value.goalRef.goalId } }
         : null),
-      // L8: the sink exists before the driver; its calls are ignored until then.
-      onArchitectureCaptureTrigger: event => { architectureCaptureTrigger?.(event); },
+      // L8: a formal adoption/revision/PASS reaches the trigger of the event's project (set only with its lease).
+      onArchitectureCaptureTrigger: event => { projects.get(event.projectId)?.captureTrigger?.(event); },
       // A request command's commit reaches the wake loop of the workspace it
       // landed in; the sink is bound once the loop exists, and the platform
       // never drives a round by itself.
       requestWake: (scope, source) => { requestWakeSink?.(scope, source); },
+      // C1: the cold start's exploration rounds run on the stage driver of the context's project; without it (no
+      // request driver, no lease) those rounds wait where they are.
       coldStartStages: {
-        advance: (ctx, input) => coldStartStageSink === undefined
-          ? Promise.resolve(COLD_START_STAGE_NOT_BOUND) : coldStartStageSink.advance(ctx, input),
-        wake: (scope) => { coldStartStageSink?.wake(scope); },
+        advance: (ctx, stage) => projects.get(ctx.projectId)?.coldStartStages?.advance(ctx, stage)
+          ?? Promise.resolve(COLD_START_STAGE_NOT_BOUND),
+        wake: scope => { projects.get(scope.projectId)?.coldStartStages?.wake(scope); },
       },
       // A committed approval through the trusted entry arms the release queue; a replay included, and
       // arming twice is harmless (`7a2-rgp-v7.md:1076`).
       onMessageReleaseApproved: approved => { armMessageRelease?.({
         projectId: approved.messageRef.projectId, workspaceId: approved.messageRef.workspaceId,
       }); },
-    });
-  } catch (error) {
-    await instanceLease.release().catch(() => undefined);
-    throw error;
-  }
-  // Slice 6A §3.4.1: the SAME resolver rule the composition's own instance
-  // applies, over this Host's platform role read and Workflow configuration.
-  hostDutyResolver = createSessionDutyResolver({
-    readRoleSpec: platform.roles.readRoleSpec.bind(platform.roles),
-    configuration: workflow,
+    }),
   });
+  /** A scope's platform: its project's, or null when that project is not open in this Host. */
+  const platformFor = (projectId: string): ProjectPlatform | null => registry.get(projectId)?.platform ?? null;
+  /** Whether this Host holds the project's lease (U1): every execution, driver and background write checks it. */
+  const ownedProject = (projectId: string): boolean => registry.get(projectId)?.lease.lease === 'owned';
+  /** The platform of a project a background step or a shared read works on; one not open is a read failure. */
+  const projectPlatform = (projectId: string): ProjectPlatform => {
+    const platform = platformFor(projectId);
+    if (platform === null) throw new Error(`the project store of ${projectId} is not available`);
+    return platform;
+  };
 
   /**
    * PL §6.4.3: a candidate result (`value.source`) exports its draft once through
@@ -872,7 +924,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
    * nothing is recorded, so the next round tries again. A started export is
    * recorded even if it later fails (no retry; the card shows the failure line).
    */
-  async function exportAdvanceResult(ctx: CoreCallContext, result: WorkflowAdvanceResult): Promise<void> {
+  async function exportAdvanceResult(platform: ProjectPlatform, ctx: CoreCallContext,
+    result: WorkflowAdvanceResult): Promise<void> {
     if (result.status !== 'ready') return;
     const value = result.value;
     const source = value.source;
@@ -888,37 +941,17 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     scheduleTaskbookExport({ plan: proposal.value.draft, scope: { projectId: goalRef.projectId,
       workspaceId: ctx.workspaceId ?? '', goalId: goalRef.goalId } });
   }
-  const workflowForDriver = { ...platform.workflow,
-    advanceWork: async (ctx: CoreCallContext, input: Parameters<typeof platform.workflow.advanceWork>[1],
-      internal?: Parameters<typeof platform.workflow.advanceWork>[2]) => {
-      const result = await platform.workflow.advanceWork(ctx, input, internal);
-      await exportAdvanceResult(ctx, result);
-      return result;
-    } };
-
-  // L8 (book ruling 2): ONE automatic-capture driver for this Host, over the
-  // platform's observed/catalog ports. Its detached work is the platform's own
-  // tracked work, so `platform.close()` waits for exactly the same set.
-  const autoCapture = createAutoCaptureDriver({
-    architecture: platform.architecture,
-    boundWorkspaces: () => workspaces.map(workspace => ({
-      projectId: workspace.scope.projectId, workspaceId: workspace.scope.workspaceId,
-    })),
-    actor: AUTO_CAPTURE_ACTOR,
-    ...(platform.trackDetached === undefined ? {} : { track: platform.trackDetached }),
-  });
-  // The platform's formal triggers now reach the driver, everywhere in this Host.
-  // A Host without the lease writes nothing (HL-02, HL-07), so it never captures.
-  if (leaseOwned) architectureCaptureTrigger = event => autoCapture.projectChanged(event.projectId, event.kind);
   /**
    * L8 (book ruling 1): the ONE shared registration step of both paths. It
-   * triggers only once the scope's root is bound in this Host's `byScope`; the
-   * settings path calls it after `addWorkspaceState`, the route path after a
-   * non-replayed committed `registerWorkspace` (wrapped below).
+   * triggers only once the scope's root is bound in this Host's `byScope`, and only
+   * while this Host holds the scope's project lease; the settings path calls it
+   * after `addWorkspaceState`, the route path after a non-replayed committed
+   * `registerWorkspace` (wrapped below).
    */
   const captureWorkspaceRegistration = (scope: CoreScope): void => {
-    if (!leaseOwned || !byScope.has(scopeKey(scope))) return;
-    autoCapture.workspaceRegistered({ projectId: scope.projectId, workspaceId: scope.workspaceId });
+    const project = projects.get(scope.projectId);
+    if (project === undefined || !ownedProject(scope.projectId) || !byScope.has(scopeKey(scope))) return;
+    project.autoCapture.workspaceRegistered({ projectId: scope.projectId, workspaceId: scope.workspaceId });
   };
 
   // The Host's one goal-wait registry per start workspace scope, in start order. The
@@ -931,14 +964,6 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   const goalWaitWakesOf = (scope: WorkspaceScope): GoalWaitWakes =>
     goalWaitRegistries.find(candidate => candidate.scope.projectId === scope.projectId
       && candidate.scope.workspaceId === scope.workspaceId)!.waits;
-  /** `ChangeFeed.head()` is the feed's already-typed commit cursor, but its public type erases the brand; the one
-   *  ledger codec turns it back into the cursor the driver registers with. A null head stays null (nothing seen yet). */
-  const observedCursor = (): CommitCursor | null => {
-    const head = changes.head();
-    return head === null ? null : makeCommitCursor(seqOfCommitCursor(head as CommitCursor));
-  };
-  // The AG2b collaboration driver is a Host-layer handle over the ONE platform
-  // above. Newly opened scopes append their trusted profiles at runtime.
   const workbenchTools = createWorkbenchTools({
     workspaces: workspaces.map(workspace => ({
       scope: workspace.scope,
@@ -947,12 +972,12 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       ...(workspace.writePrefixes === undefined ? {} : { writePrefixes: workspace.writePrefixes }),
       ...(workspace.allowCommands === undefined ? {} : { allowCommands: workspace.allowCommands }),
     })),
-    onCommandChange: changes.commandChanged,
+    onCommandChange: change => changes.commandChanged(change, databaseHead(change.scope.projectId)),
     resourceCaps,
   });
   // PL §5.5.1 steps 5–6: the driver registers a wait, drains the Host's one
-  // goal-waits handler, then parks/sends. The handler is created below, inside
-  // the lease block; the closure runs only after this Host has returned.
+  // goal-waits handler, then parks/sends. The handler is created below, beside
+  // the wake loop; the closure runs only after this Host has returned.
   let goalWaitQueueOwner: ReturnType<typeof createGoalWaitQueue> | undefined;
   /** One Session-page cursor per scope, kept across drain pages; no new queue or timer. */
   const admissionCursors = new Map<string, string>();
@@ -966,10 +991,11 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     if (page === undefined) return;
     if (page.continuation === null) admissionCursors.delete(key);
     else admissionCursors.set(key, page.continuation);
-    if (page.more) wakeLoop?.wake(scope, GOAL_WAITS_QUEUE, 'commit'); // the next page, same queue
+    if (page.more) wakeLoop.wake(scope, GOAL_WAITS_QUEUE, 'commit'); // the next page, same queue
   };
   // The marker page behind the drain: one Session page's Query marks kept at `prepared` + `running_cap`.
   async function readMarkerQueries(ctx: CoreCallContext, scope: WorkspaceScope, cursor: string | null) {
+    const platform = projectPlatform(scope.projectId);
     const found = await platform.sessions.findSessions(ctx, {
       workspace: { projectId: scope.projectId }, includeArchived: false,
       // The page key is the last card's Session key: a directory cursor binds the ledger head, and this
@@ -996,17 +1022,19 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   // The request driver's round-end hook (`recordRoundEnd`), set in that driver's block below when it runs: a request
   // round the drain starts records its end the same way, so the automatic-handoff trigger still reads it.
   let markerRoundEnded: ((ctx: CoreCallContext, session: SessionRef, round: QueryJobRef) => Promise<void>) | undefined;
-  // The lazy creation avoids the TDZ on `workflowConsumerId`, declared later in this Host; the first drain runs after
-  // the request driver's block, so the hook above is set by then.
-  let markerStageDriver: QueryStageDriver | undefined;
+  // The candidate's project builds its marker stage driver at the first start: the first drain runs after the request
+  // driver's block, so the hook above is set by then.
   const startMarkerQuery = async (ctx: CoreCallContext, candidate: MarkerQueryCandidateV1): Promise<void> => {
-    markerStageDriver ??= createQueryStageDriver({
+    const project = projects.get(candidate.queryRunRef.projectId);
+    if (project === undefined) throw new Error(`the project store of ${candidate.queryRunRef.projectId} is not available`);
+    const platform = project.runtime.platform;
+    project.markerStageDriver ??= createQueryStageDriver({
       queries: platform.queries, runtime: platform.runtime, facts: platform.requestFacts,
       fence: platform.readHandoffFence, consumerId: workflowConsumerId,
       ...(markerRoundEnded === undefined ? {} : { onRoundEnded: markerRoundEnded }),
     });
     // The marker page is project-wide: the start runs in the candidate's own workspace, as its read does.
-    await markerStageDriver.advance({ ...ctx, workspaceId: candidate.queryRunRef.workspaceId }, {
+    await project.markerStageDriver.advance({ ...ctx, workspaceId: candidate.queryRunRef.workspaceId }, {
       queryJobRef: { aggregateType: 'QueryJob', projectId: candidate.queryRunRef.projectId,
         workspaceId: candidate.queryRunRef.workspaceId, queryJobId: candidate.queryRunRef.queryJobId },
       expectedRunRef: candidate.queryRunRef, profile: null,
@@ -1020,13 +1048,14 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   const isPersonSender = (sender: { kind: string; actor?: { kind: string } } | undefined): boolean =>
     sender?.kind === 'host' && sender.actor?.kind === 'human';
   async function senderClass(ctx: CoreCallContext, ref: SessionMessageRef, part: 'message' | 'response'): Promise<0 | 2> {
-    const read = await platform.messages.readMessage(ctx, ref);
+    const read = await projectPlatform(ctx.projectId).messages.readMessage(ctx, ref);
     if (read.status !== 'ready') throw notReady('the L5 source message', read);
     return isPersonSender(part === 'message' ? read.value.sender : read.value.response?.sender) ? 0 : 2;
   }
   /** One `starting` scan per drain pass: the drain builds one ctx per pass and reads every priority before any start. */
   const startingRuns = new WeakMap<CoreCallContext, Promise<readonly RunSnapshot[]>>();
   const l5PriorityOf = async (ctx: CoreCallContext, call: WaitingCallV1): Promise<0 | 1 | 2> => {
+    const platform = projectPlatform(ctx.projectId);
     if (call.kind === 'query') {
       const ref = call.queryRunRef;
       const qctx: CoreCallContext = { ...ctx, workspaceId: ref.workspaceId };
@@ -1078,6 +1107,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       ...hostScopeContext({ projectId: trigger.projectId, workspaceId: trigger.workspaceId! }, actor),
       signal: trigger.signal,
     };
+    const platform = platformFor(trigger.projectId);
+    if (platform === null) return;
     const read = await platform.reconcile.reviews?.readRepairAnswers?.(ctx, input);
     if (read?.status !== 'ready' || read.value.answers.length === 0) return;
     await platform.workflow.advanceWork(ctx, {
@@ -1087,74 +1118,29 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         answerMessageRef: answer.answerMessageRef })),
     });
   };
-  const collaborationDriver = createCollaborationDriver({
-    workflow: workflowForDriver,
-    runtime: platform.runtime,
-    sessions: platform.sessions,
-    executions: platform.executions,
-    mailbox: platform.messages,
-    controls: platform.controls,
-    profiles: runtimeConfiguration?.queryProfiles ?? [],
-    // The same per-scope registries the goal-waits queue drains: one instance per scope,
-    // shared with the adapter, and the Host's observed head stamped before the fact read.
-    goalWaits: goalWaitWakesOf,
-    // The one admission drain entry: merge the marked Goals with the marker Queries, order and page.
-    drainGoalWaits,
-    observedCursor,
-    // The one activation owner and the common answer hand-over this Goal-level
-    // start runs after the seed is accepted and before the driver starts.
-    repairs: platform.repairs,
-    redriveRepairAnswers,
-    onChange: changes.driverChanged,
-    // The Goal interruption is resolved only once a driver actually starts: a same-seed replay never reaches here.
-    onStarted: async (ctx, goalRef) => {
-      try { await platform.reconcile.recordGoalInterruption?.(ctx, { goalRef, to: 'resumed' }); }
-      catch { /* a failed resolve leaves the record pending, so the cause stays visible */ }
-    },
-  });
-  // A.2 step 5.5 (G7): the Goal-control fan-out over the same platform; its
-  // commits reach the change feed through the platform's commit observer, and
-  // it watches the commits for a fan-out pause a waiting resume follows.
-  const goalFanOut = createGoalFanOutDriver({ goals: platform.goals, plans: platform.plans,
-    executions: platform.executions, controls: platform.controls, runtime: platform.runtime,
-    // GOAL-29 (A.2 step 5.6): the continuation of a fan-out-paused Task goes through the requeue owner.
-    claims: { requeueTask: (...args) => platform.claims.requeueTask!(...args) },
-    // L-10: only the Host holding the instance lease reaches the Runs.
-    driving: () => leaseOwned,
-    // The resumed Goal's staged repairs and its approved answer get one retry
-    // before the pass reports; neither changes the report.
-    repairs: platform.repairs,
-    redriveRepairAnswers });
-  goalFanOutCommitted = notice => goalFanOut.committed(notice);
-
-  // The Host's one system-notice bag: the published send/fact/line-detail ports and the same `{records, sessions}` bag
-  // the disconnect projection reads. Declared before the wake loop, so every drain sees it initialized.
-  const hostNotices = { messages: platform.messages, facts: platform.sessionFacts, nodeDetail: platform.nodeDetail, disconnect: platform.disconnect };
-
-  // The one wake loop exists whenever the Host owns the instance lease. The goal-waits
-  // queue is registered on it in every case; the two request queues, the lifecycle and
-  // release queues and their sinks stay inside the request-driver switch, so with it off
-  // a submitted round waits where the command left it but a goal wait still wakes.
-  let wakeLoop: WakeLoop | undefined;
-  let requestQueues: ReturnType<typeof createRequestRoundQueues> | undefined;
+  // The one wake loop of this Host (U1): a pass of a workspace runs only while this Host holds that workspace's project
+  // lease. The goal-waits queue is registered on it in every case; the two request queues, the lifecycle and release
+  // queues and their sinks stay inside the request-driver switch, so with it off a submitted round waits where the
+  // command left it but a goal wait still wakes. The queues are shells: a pass takes its scope's project.
+  const wakeLoop: WakeLoop = createWakeLoop({ driving: scope => ownedProject(scope.projectId) });
   let lifecycleQueue: ReturnType<typeof createHandoffQueue> | undefined;
   // The Host consumer id a plain Query start records; the request driver's stage driver below reads it too.
   const workflowConsumerId = workflow?.consumerId ?? 'local-workbench-consumer';
-  if (leaseOwned) {
-    const loop = createWakeLoop({ driving: () => leaseOwned });
-    // The queue must see a commit even when the request driver is off, or a goal parked
-    // on a registration would never be woken by the Host's own consume turns.
-    requestDriverCommitted = notice => loop.committed(notice);
-    const goalWaitRegistriesV1: GoalWaitRegistries = { all: () => goalWaitRegistries };
-    const goalWaitQueue = createGoalWaitQueue({
-      registries: goalWaitRegistriesV1,
-      // BW's one Workflow advance for the goal; the same host context every consume pass uses.
-      wake: (scope, goalRef) => collaborationDriver.wake(hostContext(scope), goalRef),
-      ctx: scope => hostScopeContext(scope, actor),
-      readMarkerQueries,
-      startMarkerQuery,
-      l5PriorityOf,
-      rebuild: createGoalWaitRebuild({ ctx: scope => hostScopeContext(scope, actor), sessions: platform.sessions, facts: platform.sessionFacts, released: platform.messageRelease,
+  const goalWaitRegistriesV1: GoalWaitRegistries = { all: () => goalWaitRegistries };
+  const goalWaitQueue = createGoalWaitQueue({
+    registries: goalWaitRegistriesV1,
+    // BW's one Workflow advance for the goal; the same host context every consume pass uses.
+    wake: async (scope, goalRef) => { await projects.get(scope.projectId)?.collaborationDriver.wake(hostContext(scope), goalRef); },
+    ctx: scope => hostScopeContext(scope, actor),
+    readMarkerQueries,
+    startMarkerQuery,
+    l5PriorityOf,
+    // The restart composition over the scope's own project.
+    rebuild: async (scope, registry) => {
+      const project = projects.get(scope.projectId);
+      if (project === undefined) throw new Error(`the project store of ${scope.projectId} is not available`);
+      const platform = project.runtime.platform;
+      await createGoalWaitRebuild({ ctx: target => hostScopeContext(target, actor), sessions: platform.sessions, facts: platform.sessionFacts, released: platform.messageRelease,
         // The goal loop's own candidate reads (§6.1.6); the accepted arm walks the source lineage with the
         // same mailbox/Query/Plan reads the readers use.
         planCandidates: platform.planReaders.planCandidates.bind(platform.planReaders),
@@ -1162,18 +1148,18 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         messages: platform.messages, queries: platform.queries, plans: platform.plans,
         held: async (ctx, goalRef) => {
           if (platform.automationPolicy().resumeOnStartup === 'auto') return false;
-          const read = await goalFanOut.readGoalDisplay(ctx, { goalRef });
+          const read = await project.goalFanOut.readGoalDisplay(ctx, { goalRef });
           if (read.status !== 'ready') throw notReady('the Goal interruption read', read);
           return read.value.display.causes.some(cause => 'interruption' in cause);
-        } }),
-    });
-    goalWaitQueueOwner = goalWaitQueue;
-    loop.register(GOAL_WAITS_QUEUE, goalWaitQueue, {
-      aggregateTypes: GOAL_WAIT_WAKE_AGGREGATE_TYPES, maxItems: WAKE_LIMIT,
-    });
-    if (options.requestDriver !== 'off') {
-      // The automatic entry after a secretary round: the published Workflow's own two entries.
-      const handoffOwner = platform.workflow.sessionHandoff;
+        } })(scope, registry);
+    },
+  });
+  goalWaitQueueOwner = goalWaitQueue;
+  wakeLoop.register(GOAL_WAITS_QUEUE, goalWaitQueue, {
+    aggregateTypes: GOAL_WAIT_WAKE_AGGREGATE_TYPES, maxItems: WAKE_LIMIT,
+  });
+  if (options.requestDriver !== 'off') {
+    const loop = wakeLoop;
     // The round-end sources waiting for their basis read and start. Memory only: a crash between a round end and
     // its read loses one check until that line's next round end, which records it again.
     const pendingRoundEnds = new Map<string, Map<string, SessionRef>>();
@@ -1192,41 +1178,20 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       loop.wake({ projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' }, LIFECYCLE_QUEUE, 'advance_settled');
     };
     markerRoundEnded = recordRoundEnd;                  // A1b: the drain's marker driver ends a request round the same way
-    // The one Query stage driver: a request round starts under its claimed profile's consumer id, a cold-start
-    // exploration round (through the sink) under the Host's.
-    const stageDriver = createQueryStageDriver({
-      queries: platform.queries, runtime: platform.runtime, facts: platform.requestFacts,
-      fence: platform.readHandoffFence, consumerId: workflowConsumerId,
-      onRoundEnded: recordRoundEnd,
+    // Both queues are registered once per loop: a handler takes the scope and hands the pass to the request queues of
+    // the scope's project (built with its stage driver, `buildStageOne`), so every workspace the loop covers runs the
+    // same two. The loop covers the start-up workspaces in `start` and a later one in `addWorkspace`.
+    const requestQueue = (pick: 'rounds' | 'unassigned'): QueueHandler => ({
+      async rebuild(scope) { await projects.get(scope.projectId)?.requestQueues?.[pick].rebuild(scope); },
+      async drain(scope, input) {
+        const queues = projects.get(scope.projectId)?.requestQueues;
+        if (queues === undefined) throw new Error(`the request queues of ${scope.projectId} are not available`);
+        return await queues[pick].drain(scope, input);
+      },
     });
-    coldStartStageSink = {
-      advance: (ctx, input) => stageDriver.advance(ctx, input),
-      wake: (scope) => { loop.wake(scope, LIFECYCLE_QUEUE, 'advance_settled'); },
-    };
-    const queues = createRequestRoundQueues({
-      rounds: platform.requestRounds,
-      facts: platform.requestFacts,
-      sessions: platform.sessionFacts,
-      profiles: platform.secretaryProfiles,
-      drain: platform.requestIntake.drainUnassigned,
-      driver: stageDriver,
-      // Every pass runs as the Host's own system actor; the loop's abort signal
-      // goes into the context, so closing stops a pass at its next request. A
-      // pass starts only at `start`, `addWorkspace` or a wake, all of which come
-      // after the Host's context builder below exists.
-      context: (scope: WorkspaceScope, signal: AbortSignal) =>
-        ({ ...hostScopeContext(scope, HOST_RECONCILE_ACTOR), signal }),
-      // An advance settling can make the next round of that workspace runnable
-      // at once; a `blocked` advance leaves it for the next commit notice, the
-      // next request command or a line registration.
-      wake: (scope: WorkspaceScope) => { loop.wake(scope, REQUEST_ROUNDS_QUEUE, 'advance_settled'); },
-    });
-    // Both queues are registered once per loop: a handler takes the scope, so
-    // every workspace the loop covers runs the same two. The loop covers the
-    // start-up workspaces in `start` and a later one in `addWorkspace`.
-    loop.register(REQUEST_ROUNDS_QUEUE, queues.rounds,
+    loop.register(REQUEST_ROUNDS_QUEUE, requestQueue('rounds'),
       { aggregateTypes: ['QueryJob', 'QueryRun', 'Session', 'SessionMessage'] });
-    loop.register(REQUEST_UNASSIGNED_QUEUE, queues.unassigned,
+    loop.register(REQUEST_UNASSIGNED_QUEUE, requestQueue('unassigned'),
       { aggregateTypes: ['QueryJob', 'QueryRun', 'Session', 'ProjectRoleLimits'] });
     // A request command's commit reaches every queue of its workspace: the round it appended needs a claim or a
     // drain, a waiting request needs the unassigned pass, and an arming command reaches the lifecycle work at once.
@@ -1244,7 +1209,9 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
      * Phase 1 counts nothing: a start may continue an operation that is already waiting without writing, and the same
      * traversal's operation read (phase 2) is where a revision that really moved is seen.
      */
-    const startPendingHandoffs = async (ctx: CoreCallContext, failures: string[]): Promise<void> => {
+    type HandoffOwner = NonNullable<HostProject['handoffOwner']>;
+    const startPendingHandoffs = async (platform: ProjectPlatform, handoffOwner: HandoffOwner, ctx: CoreCallContext,
+      failures: string[]): Promise<void> => {
       const workspaceKey = scopeKey({ projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' });
       const sources = pendingRoundEnds.get(workspaceKey);
       if (sources === undefined) return;
@@ -1273,7 +1240,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
      * answer. A non-plan followup answers `skipped/no_plan` and writes nothing. A failed turn stays for the next
      * pass; a transient skip does too, every other outcome removes the entry.
      */
-    const startPendingPlanTurns = async (ctx: CoreCallContext, failures: string[]): Promise<void> => {
+    const startPendingPlanTurns = async (platform: ProjectPlatform, ctx: CoreCallContext,
+      failures: string[]): Promise<void> => {
       const workspaceKey = scopeKey({ projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' });
       const turns = pendingPlanTurns.get(workspaceKey);
       if (turns === undefined) return;
@@ -1325,8 +1293,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       if (turns.size === 0) pendingPlanTurns.delete(workspaceKey);
     };
     /** Phase 2: every unfinished operation once, through its own arm; a wait or a failure never stops the next. */
-    const continueUnfinished = async (ctx: CoreCallContext, failures: string[]):
-      Promise<{ continued: number; blocked: number }> => {
+    const continueUnfinished = async (platform: ProjectPlatform, handoffOwner: HandoffOwner, ctx: CoreCallContext,
+      failures: string[]): Promise<{ continued: number; blocked: number }> => {
       let continued = 0;
       let blocked = 0;
       let unfinished: Awaited<ReturnType<typeof platform.listUnfinishedOperations>>;
@@ -1367,14 +1335,18 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
      * project's Goal adviser queue. A transient item is recorded and stepped past; only a traversal that progressed
      * nothing throws, so the loop's own back-off reruns the whole traversal. The drain runs after
      * `continueUnfinished`, so a `role_line_add` the previous drain accepted is driven first; `more` is the next
-     * pass's continuation, never a loop inside this one.
+     * pass's continuation, never a loop inside this one. It runs on the context's project; a project without its
+     * lifecycle owner here (not open, or no lease) has nothing to traverse.
      */
     const runLifecyclePass = async (ctx: CoreCallContext):
       Promise<{ continued: number; blocked: number; queue: GoalDrainResultV1 | null }> => {
+      const project = projects.get(ctx.projectId);
+      if (project?.handoffOwner === undefined) return { continued: 0, blocked: 0, queue: null };
+      const platform = project.runtime.platform;
       const failures: string[] = [];
-      await startPendingHandoffs(ctx, failures);
-      await startPendingPlanTurns(ctx, failures);
-      let { continued, blocked } = await continueUnfinished(ctx, failures);
+      await startPendingHandoffs(platform, project.handoffOwner, ctx, failures);
+      await startPendingPlanTurns(platform, ctx, failures);
+      let { continued, blocked } = await continueUnfinished(platform, project.handoffOwner, ctx, failures);
       const drained = await platform.goalAdviserQueue.drain(ctx, { limit: QUEUE_DRAIN_BATCH });
       let queue: GoalDrainResultV1 | null = null;
       if (drained.status !== 'ready') {
@@ -1398,15 +1370,17 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       async rebuild() {},
       async drain(scope, input) {
         const ctx: CoreCallContext = { ...hostScopeContext(scope, HOST_RECONCILE_ACTOR), signal: input.signal };
+        const project = projects.get(scope.projectId);
         const announceDisconnections = async (): Promise<void> => {
+          if (project === undefined) return;
           let cursor: string | null = null;
           do {
-            const page = await platform.sessions.findSessions(ctx, { workspace: scope, includeArchived: true,
+            const page = await project.runtime.platform.sessions.findSessions(ctx, { workspace: scope, includeArchived: true,
               page: { limit: 200, ...(cursor === null ? {} : { cursor }) } });
             if (page.status !== 'ready') return;                       // the next Session commit / start retries
             for (const card of page.value.items) {
               if (card.availability !== 'unavailable') continue;       // the one derived gone test
-              await announceDisconnect(ctx, hostNotices, { scope,
+              await announceDisconnect(ctx, project.hostNotices, { scope,
                 sessionRef: { projectId: card.record.ref.projectId, sessionId: card.record.ref.sessionId } });
             }
             cursor = page.value.nextCursor;
@@ -1427,6 +1401,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     // the loop parks the pair until the next wake; a blocked item is never a handler failure (`:386–:389`;
     // `wake-loop.ts:19–:24`).
     const runReleasePass = async (ctx: CoreCallContext): Promise<{ released: number; blocked: number }> => {
+      const platform = projectPlatform(ctx.projectId);
       const goals = await platform.reconcile.candidates.listGoals(
         { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' }, ctx.signal);
       // A Goals read failure is the failure: the loop's own back-off retries it (`wake-loop.ts:194`, `:22–:24`).
@@ -1477,10 +1452,130 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     // The explicit arm (`book-7a.md:382–:383`): the person's approval, a Goal resume or an explicit advance. A
     // commit notice alone never arms it, which is why `resumeOnStartup: 'off'` is respected (`:383–:384`).
     armMessageRelease = scope => loop.wake(scope, MESSAGE_RELEASE_QUEUE, 'release_armed');
-    requestQueues = queues;
     lifecycleQueue = lifecycle;
+  }
+
+  /**
+   * Stage one of a project's drivers (§4.4, S7): built once when its runtime opens, over that runtime's platform. A
+   * project opened after the settings exist also gets the last settings snapshot here.
+   */
+  function buildStageOne(runtime: ProjectRuntime): HostProject {
+    const { projectId, platform } = runtime;
+    const owned = runtime.lease.lease === 'owned';
+    // PL §6.4.3: the driver's advance takes the same candidate export path as the public advance.
+    const workflowForDriver = { ...platform.workflow,
+      advanceWork: async (ctx: CoreCallContext, input: Parameters<typeof platform.workflow.advanceWork>[1],
+        internal?: Parameters<typeof platform.workflow.advanceWork>[2]) => {
+        const result = await platform.workflow.advanceWork(ctx, input, internal);
+        await exportAdvanceResult(platform, ctx, result);
+        return result;
+      } };
+    // L8 (book ruling 2): one automatic-capture driver per project, so at most one capture runs per project (S7),
+    // over the platform's observed/catalog ports. Its detached work is the platform's own tracked work, so
+    // `platform.close()` waits for exactly the same set.
+    const autoCapture = createAutoCaptureDriver({
+      architecture: platform.architecture,
+      boundWorkspaces: () => workspaces.filter(workspace => workspace.scope.projectId === projectId).map(workspace => ({
+        projectId: workspace.scope.projectId, workspaceId: workspace.scope.workspaceId,
+      })),
+      actor: AUTO_CAPTURE_ACTOR,
+      ...(platform.trackDetached === undefined ? {} : { track: platform.trackDetached }),
+    });
+    // The AG2b collaboration driver over this project's platform. Newly opened scopes append their trusted profiles at
+    // runtime.
+    const collaborationDriver = createCollaborationDriver({
+      workflow: workflowForDriver,
+      runtime: platform.runtime,
+      sessions: platform.sessions,
+      executions: platform.executions,
+      mailbox: platform.messages,
+      controls: platform.controls,
+      profiles: runtimeProfiles.filter(profile => profile.scope.projectId === projectId),
+      // The same per-scope registries the goal-waits queue drains: one instance per scope,
+      // shared with the adapter, and the project store's head stamped before the fact read (U2).
+      goalWaits: goalWaitWakesOf,
+      // The one admission drain entry: merge the marked Goals with the marker Queries, order and page.
+      drainGoalWaits,
+      observedCursor: () => databaseHead(projectId),
+      // The one activation owner and the common answer hand-over this Goal-level
+      // start runs after the seed is accepted and before the driver starts.
+      repairs: platform.repairs,
+      redriveRepairAnswers,
+      onChange: change => changes.driverChanged(change, databaseHead(projectId)),
+      // The Goal interruption is resolved only once a driver actually starts: a same-seed replay never reaches here.
+      onStarted: async (ctx, goalRef) => {
+        try { await platform.reconcile.recordGoalInterruption?.(ctx, { goalRef, to: 'resumed' }); }
+        catch { /* a failed resolve leaves the record pending, so the cause stays visible */ }
+      },
+    });
+    // A.2 step 5.5 (G7): the Goal-control fan-out over the same platform; its
+    // commits reach the change feed through the platform's commit observer, and
+    // it watches the commits for a fan-out pause a waiting resume follows.
+    const goalFanOut = createGoalFanOutDriver({ goals: platform.goals, plans: platform.plans,
+      executions: platform.executions, controls: platform.controls, runtime: platform.runtime,
+      // GOAL-29 (A.2 step 5.6): the continuation of a fan-out-paused Task goes through the requeue owner.
+      claims: { requeueTask: (...args) => platform.claims.requeueTask!(...args) },
+      // L-10: only the Host holding the project's lease reaches the Runs.
+      driving: () => ownedProject(projectId),
+      // The resumed Goal's staged repairs and its approved answer get one retry
+      // before the pass reports; neither changes the report.
+      repairs: platform.repairs,
+      redriveRepairAnswers });
+    const lease = runtime.lease;
+    const project: HostProject = { projectId, runtime, autoCapture, collaborationDriver, goalFanOut,
+      // The project's system-notice bag: the published send/fact/line-detail ports and the same `{records, sessions}`
+      // bag the disconnect projection reads.
+      hostNotices: { messages: platform.messages, facts: platform.sessionFacts, nodeDetail: platform.nodeDetail,
+        disconnect: platform.disconnect },
+      // A project opened after the start-up reconcile starts from an empty report (with its lease).
+      report: { hostInstanceId: lease.hostInstanceId, lease: lease.lease, leaseRow: lease.row, leaseReason: lease.reason,
+        report: owned && reconcileAddedScope !== null ? emptyStartupReport(lease.hostInstanceId) : null } };
+    // The platform's formal triggers reach the driver. A Host without the lease writes nothing (HL-02, HL-07), so it
+    // never captures.
+    if (owned) project.captureTrigger = event => autoCapture.projectChanged(event.projectId, event.kind);
+    if (owned && options.requestDriver !== 'off') {
+      // The automatic entry after a secretary round: the published Workflow's own two entries.
+      project.handoffOwner = platform.workflow.sessionHandoff;
+      // The project's Query stage driver: a request round starts under its claimed profile's consumer id, a cold-start
+      // exploration round (through the platform's stage port) under the Host's.
+      const stageDriver = createQueryStageDriver({
+        queries: platform.queries, runtime: platform.runtime, facts: platform.requestFacts,
+        fence: platform.readHandoffFence, consumerId: workflowConsumerId,
+        ...(markerRoundEnded === undefined ? {} : { onRoundEnded: markerRoundEnded }),
+      });
+      project.coldStartStages = {
+        advance: (ctx, stage) => stageDriver.advance(ctx, stage),
+        wake: scope => { wakeLoop.wake(scope, LIFECYCLE_QUEUE, 'advance_settled'); },
+      };
+      project.requestQueues = createRequestRoundQueues({
+        rounds: platform.requestRounds,
+        facts: platform.requestFacts,
+        sessions: platform.sessionFacts,
+        profiles: platform.secretaryProfiles,
+        drain: platform.requestIntake.drainUnassigned,
+        driver: stageDriver,
+        // Every pass runs as the Host's own system actor; the loop's abort signal
+        // goes into the context, so closing stops a pass at its next request.
+        context: (scope: WorkspaceScope, signal: AbortSignal) =>
+          ({ ...hostScopeContext(scope, HOST_RECONCILE_ACTOR), signal }),
+        // An advance settling can make the next round of that workspace runnable
+        // at once; a `blocked` advance leaves it for the next commit notice, the
+        // next request command or a line registration.
+        wake: (scope: WorkspaceScope) => { wakeLoop.wake(scope, REQUEST_ROUNDS_QUEUE, 'advance_settled'); },
+      });
     }
-    wakeLoop = loop;
+    if (lastSnapshot !== undefined) installIntoProject(project, lastSnapshot);
+    return project;
+  }
+  /** U4: a project's drivers, built once: stage one when its runtime opens, stage two once the settings exist. */
+  function ensureHostProject(runtime: ProjectRuntime): HostProject {
+    let project = projects.get(runtime.projectId);
+    if (project === undefined) {
+      project = buildStageOne(runtime);
+      projects.set(runtime.projectId, project);
+    }
+    if (project.bindings === undefined && settingsReady) buildStageTwo(project);
+    return project;
   }
 
   // Live projections the Host rebuilds for every bootstrap read / settings open.
@@ -1528,18 +1623,16 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     try { return await realpath(root); } catch { return root; }
   };
 
-  async function registerKernelStore(scope: CoreScope): Promise<void> {
-    if (platform.kernelStores.registerCurrent === undefined) return;
-    const directory = storage.kind === 'sqlite'
-      ? join(storage.directory, 'kernel-stores')
+  /** U5: a workspace's Kernel store goes into its project's Kernel directory (memory: beside the settings), and only
+   *  when the platform has none for it yet (an explicit entry or an earlier registration). */
+  async function registerKernelStore(runtime: ProjectRuntime, scope: CoreScope): Promise<void> {
+    const stores = runtime.platform.kernelStores;
+    if (stores.registerCurrent === undefined || stores.forWorkspace(scope) !== null) return;
+    const directory = runtime.paths !== null
+      ? kernelStoreDirectory(runtime.paths)
       : join(settingsDirectory as string, 'kernel-stores');
     mkdirSync(directory, { recursive: true });
-    const suffix = sha256Hex(scopeKey(scope)).slice(0, 32);
-    await platform.kernelStores.registerCurrent({
-      adapterId: `host-settings-kernel-${suffix}`, storeKey: `host-settings-kernel-${suffix}`,
-      workspace: { projectId: scope.projectId, workspaceId: scope.workspaceId },
-      databasePath: join(directory, `${suffix}.sqlite`),
-    });
+    await stores.registerCurrent(kernelStoreEntry(directory, scope.projectId, scope.workspaceId));
   }
 
   function builtinQueryProfile(scope: CoreScope, bindingId: string, idPrefix: string, label: string,
@@ -1705,25 +1798,21 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     };
   };
 
-  const installFromSettings = (snapshot: HostSettingsPrivateSnapshot): void => {
+  /** The last settings snapshot this Host installed: a project opened later gets it when its drivers are built. */
+  let lastSnapshot: HostSettingsPrivateSnapshot | undefined;
+  /** The parts of a settings snapshot that live in one project's platform. */
+  const installIntoProject = (project: HostProject, snapshot: HostSettingsPrivateSnapshot): void => {
+    const platform = project.runtime.platform;
     // C8 (A.2 step 5.6): the Host setting `automation` (defaults 3 / ask) governs the
     // requeue owner, the read model and the start-up re-drive (`resumeOnStartup`).
     platform.registerAutomationPolicy(snapshot.automation);
-    // L13: install the effective resource-cap values into the ONE holder. The
-    // already-built platform, Runtime and workbench page read `current()` live,
-    // so the next command of an already-running execution uses the new values.
-    resourceCapsRequest = { memoryMaxBytes: snapshot.resourceCaps.memoryMaxBytes, tasksMax: snapshot.resourceCaps.tasksMax };
-    // PL §10.3: the same one holder for the plan-loop limits; the reader's getter
-    // already points at it, so this push reaches the next judgment.
-    planLoopLimits = structuredClone(snapshot.planLoopLimits ?? DEFAULT_PLAN_LOOP_LIMITS);
-    // The Work Run token budget is installed here, on the first settings push and
-    // every later one. The platform's Workflow configuration reads the binding
-    // live, so re-registering each scope with the new budget makes the next Work
-    // Run use it without a restart; an already claimed Run keeps the budget in its
-    // own record. An existing binding keeps its role and deadline; a scope with
-    // no startup binding uses the local workbench role and no deadline.
-    workRunTokenBudget = snapshot.workRunTokenBudget;
+    // The platform's Workflow configuration reads the binding live, so
+    // re-registering each scope with the current budget makes the next Work Run
+    // use it without a restart; an already claimed Run keeps the budget in its own
+    // record. An existing binding keeps its role and deadline; a scope with no
+    // startup binding uses the local workbench role and no deadline.
     for (const scope of workflowScopes) {
+      if (scope.projectId !== project.projectId) continue;
       const original = workflow?.bindings.find(binding => scopeKey(binding.workspace) === scopeKey(scope));
       platform.registerWorkflowBinding({
         consumerId: workflowConsumerId,
@@ -1741,10 +1830,26 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     // An approved empty array installs too: it replaces the old configuration
     // and the static fallback (AM1 A3).
     for (const entry of snapshot.checks) {
-      if (!workspaces.some(candidate => scopeKey(candidate.scope) === scopeKey(entry.scope))) continue;
+      if (entry.scope.projectId !== project.projectId
+        || !workspaces.some(candidate => scopeKey(candidate.scope) === scopeKey(entry.scope))) continue;
       platform.registerCheckConfiguration({ configuration: buildCheckConfiguration({ scope: entry.scope,
         source: { answerRef: entry.answerRef, answerDigest: entry.answerDigest }, checks: entry.checks }) });
     }
+  };
+
+  const installFromSettings = (snapshot: HostSettingsPrivateSnapshot): void => {
+    lastSnapshot = snapshot;
+    // L13: install the effective resource-cap values into the ONE holder. The
+    // already-built platform, Runtime and workbench page read `current()` live,
+    // so the next command of an already-running execution uses the new values.
+    resourceCapsRequest = { memoryMaxBytes: snapshot.resourceCaps.memoryMaxBytes, tasksMax: snapshot.resourceCaps.tasksMax };
+    // PL §10.3: the same one holder for the plan-loop limits; the reader's getter
+    // already points at it, so this push reaches the next judgment.
+    planLoopLimits = structuredClone(snapshot.planLoopLimits ?? DEFAULT_PLAN_LOOP_LIMITS);
+    // The Work Run token budget is installed here, on the first settings push and
+    // every later one, before each project registers its scopes' bindings with it.
+    workRunTokenBudget = snapshot.workRunTokenBudget;
+    for (const project of projects.values()) installIntoProject(project, snapshot);
     if (!rebuildRuntimeFromSettings || resolverRegistry === undefined) return;
     const configuration = buildRuntimeConfiguration(snapshot);
     const installed = createWorkbenchRuntimeHostBindings(configuration,
@@ -1759,7 +1864,10 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     const added = nextProfiles.filter(profile => !publishedProfileIds.has(profile.id));
     runtimeProfiles.splice(0, runtimeProfiles.length, ...nextProfiles);
     for (const profile of added) publishedProfileIds.add(profile.id);
-    if (added.length > 0) collaborationDriver.addProfiles(added);
+    for (const project of projects.values()) {
+      const own = added.filter(profile => profile.scope.projectId === project.projectId);
+      if (own.length > 0) project.collaborationDriver.addProfiles(own);
+    }
   };
 
   /** Project the trusted startup runtime configuration into the settings model
@@ -1822,7 +1930,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
    * are part of that reconcile.
    */
   let reconcileAddedScope: ((scope: CoreScope) => Promise<void>) | null = null;
-  async function addWorkspaceState(config: WorkbenchWorkspaceConfig): Promise<void> {
+  async function addWorkspaceState(runtime: ProjectRuntime, config: WorkbenchWorkspaceConfig): Promise<void> {
     const key = scopeKey(config.scope);
     if (byScope.has(key)) return;
     workspaces.push(config);
@@ -1832,12 +1940,12 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       ...(config.writePrefixes === undefined ? {} : { writePrefixes: config.writePrefixes }),
       ...(config.allowCommands === undefined ? {} : { allowCommands: config.allowCommands }),
     });
-    await registerKernelStore(config.scope);
+    await registerKernelStore(runtime, config.scope);
     // A newly opened workspace publishes NO executable profile here: until a
     // model is selected and the settings install succeeds there is no installed
     // runtime binding for this scope. The workflow binding below is role/grant
     // metadata, not a model binding, and stays.
-    platform.registerWorkflowBinding({
+    runtime.platform.registerWorkflowBinding({
       consumerId: workflowConsumerId,
       binding: {
         workspace: { projectId: config.scope.projectId, workspaceId: config.scope.workspaceId },
@@ -1854,29 +1962,45 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     // A workspace opened later joins the request driver only after its
     // reconcile, in the same order the start takes, so the reconcile's own
     // commits wake nothing; its rounds then stand where the records leave them.
-    if (wakeLoop !== undefined) {
+    // Only a workspace of a project this Host holds the lease of joins the loop.
+    if (runtime.lease.lease === 'owned') {
       await wakeLoop.addWorkspace({ projectId: config.scope.projectId, workspaceId: config.scope.workspaceId });
     }
   }
 
   async function openWorkspaceImpl(request: OpenSettingsWorkspace & { workspaceId?: string }): Promise<SettingsResponse<HostSettingsOpenedHost>> {
-    let canonical: string;
-    try {
-      const resolved = await realpath(request.path);
-      const info = await stat(resolved);
-      if (!info.isDirectory()) throw new Error('not a directory');
-      canonical = resolved;
-    } catch {
-      return { status: 'rejected', code: 'not_found', reason: 'the requested directory does not exist or is not a directory' };
-    }
-    // a new root may not equal or cover the prompt directory;
-    // this runs before the existing-root shortcut and any registration.
-    if (promptsRoot !== undefined && isPathWithin(canonical, promptsRoot)) {
-      return { status: 'rejected', code: 'invalid',
-        reason: `the workspace root ${canonical} would cover the prompt directory ${promptsRoot}` };
-    }
     const requestedProjectId = request.projectId;
     const isRestore = request.workspaceId !== undefined;
+    // A listed workspace whose project store could not be opened has no runtime here. A root that no longer resolves
+    // is kept as the listed scope without a proof; one that still resolves is still checked against the prompt
+    // directory, so a covering root cannot be admitted through an unavailable project.
+    const unavailableRestore = isRestore && requestedProjectId !== undefined && registry.get(requestedProjectId) === null;
+    let canonical: string;
+    if (unavailableRestore) {
+      canonical = request.path;
+      try {
+        const resolved = await realpath(request.path);
+        if (promptsRoot !== undefined && isPathWithin(resolved, promptsRoot)) {
+          return { status: 'rejected', code: 'invalid',
+            reason: `the workspace root ${resolved} would cover the prompt directory ${promptsRoot}` };
+        }
+      } catch { /* a missing root has no proof to make; the scope-only branch below keeps it */ }
+    } else {
+      try {
+        const resolved = await realpath(request.path);
+        const info = await stat(resolved);
+        if (!info.isDirectory()) throw new Error('not a directory');
+        canonical = resolved;
+      } catch {
+        return { status: 'rejected', code: 'not_found', reason: 'the requested directory does not exist or is not a directory' };
+      }
+      // a new root may not equal or cover the prompt directory;
+      // this runs before the existing-root shortcut and any registration.
+      if (promptsRoot !== undefined && isPathWithin(canonical, promptsRoot)) {
+        return { status: 'rejected', code: 'invalid',
+          reason: `the workspace root ${canonical} would cover the prompt directory ${promptsRoot}` };
+      }
+    }
     // A PUBLIC explicit projectId must be a CURRENT Host project. The private
     // restore path (identified only by the internal `workspaceId` parameter,
     // which the HTTP route never carries) may re-attach an original ledger
@@ -1885,7 +2009,9 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       && !workspaces.some(workspace => workspace.scope.projectId === requestedProjectId))
       return { status: 'rejected', code: 'invalid', reason: 'the target project is not a Host project' };
     // Idempotent lookup by canonical root: without an explicit project search
-    // every current workspace; with one search only that project.
+    // every current workspace; with one search only that project. A root that no
+    // longer resolves compares by its listed path, so a repeated entry still
+    // returns the scope it already has.
     for (const workspace of workspaces) {
       if (requestedProjectId !== undefined && workspace.scope.projectId !== requestedProjectId) continue;
       if (await canonicalExisting(workspace.root) === canonical)
@@ -1894,6 +2020,36 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     const projectId = requestedProjectId ?? randomBytes(16).toString('hex');
     const workspaceId = request.workspaceId ?? randomBytes(16).toString('hex');
     const scope: CoreScope = { projectId, workspaceId };
+    // U4: a new project opens its own runtime, and its drivers and route bindings, before its records are written;
+    // a workspace of an existing project uses that project's open runtime.
+    let runtime: ProjectRuntime | null;
+    if (requestedProjectId === undefined) {
+      const opened = await registry.open(projectId, [{ workspaceId, root: canonical }], { create: true });
+      if (opened.status !== 'ready') return { status: 'rejected', code: 'unavailable', reason: 'the project store could not be opened' };
+      // The close snapshot was taken before this open was accepted; a project that finished opening after the
+      // closing signal keeps no drivers or bindings, and `registry.closeAll()` closes the runtime it registered.
+      if (hostClosing.signal.aborted)
+        return { status: 'rejected', code: 'unavailable', reason: 'the project store is not available' };
+      runtime = opened.value;
+      ensureHostProject(runtime);
+    } else {
+      runtime = registry.get(projectId);
+    }
+    if (runtime === null) {
+      if (!isRestore) return { status: 'rejected', code: 'unavailable', reason: 'the project store is not available' };
+      // A listed workspace of a project whose store is not available: only its scope is known here, so the restore
+      // goes on and every request of it answers `unavailable`; no tool, Kernel store or loop entry is registered.
+      // A scope already present from a start-up workspace keeps its one entry.
+      if (!byScope.has(scopeKey(scope))) {
+        const config: WorkbenchWorkspaceConfig = { scope, name: request.name ?? basename(canonical), root: canonical,
+          workspaceRevision: 0, readPrefixes: ['.'], ...(request.writeAllowed ? { writePrefixes: ['.'] } : {}),
+          ...(request.commandsAllowed && request.writeAllowed ? { allowCommands: true } : {}) };
+        workspaces.push(config);
+        byScope.set(scopeKey(scope), config);
+      }
+      return { status: 'ready', value: { scope: { ...scope } } };
+    }
+    const platform = runtime.platform;
     const ctx = settingsContext(scope);
     try {
       let projectRevision: number;
@@ -1929,7 +2085,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       }
       const registration = await platform.projects.readWorkspaceRegistration(ctx, scope);
       const workspaceRevision = registration.status === 'ready' ? registration.value.workspace.revision : 0;
-      await addWorkspaceState({
+      await addWorkspaceState(runtime, {
         scope,
         name: request.name ?? basename(canonical),
         root: canonical,
@@ -1965,6 +2121,11 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         || (Array.isArray(check.taskIds) && check.taskIds.every(id => typeof id === 'string' && id.length > 0)));
   }
 
+  const storeLocationOf = (projectId: string): { place: 'git-common' | 'workspace-local' | 'user-data';
+    reason: string | null } | null => {
+    const location = registry.get(projectId)?.storeLocation ?? null;
+    return location === null ? null : { place: location.place, reason: location.reason };
+  };
   const hostAssembly: HostSettingsAssembly = {
     listWorkspaces: () => workspaces.map(workspace => ({
       scope: { projectId: workspace.scope.projectId, workspaceId: workspace.scope.workspaceId },
@@ -1974,11 +2135,15 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       modelId: null,
       writeAllowed: (workspace.writePrefixes?.length ?? 0) > 0,
       commandsAllowed: workspace.allowCommands === true,
+      // U8: where the workspace's project store lives (no directory); a memory store or a project not open has none.
+      storeLocation: storeLocationOf(workspace.scope.projectId),
     })),
     readCheckProposal: async (scope, answerRef) => {
       if (answerRef.projectId !== scope.projectId || answerRef.workspaceId !== scope.workspaceId) {
         return { status: 'rejected', code: 'not_found', reason: 'the saved Answer is outside this workspace scope' };
       }
+      const platform = platformFor(scope.projectId);
+      if (platform === null) return { status: 'rejected', code: 'unavailable', reason: 'the project store is not available' };
       const answer = await platform.queries.readQueryAnswer(settingsContext(scope), answerRef);
       if (answer.status !== 'ready') {
         return answer.status === 'not_found'
@@ -2012,6 +2177,45 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     resourceCapStatus: () => resourceCapStatus(),
   };
 
+  // §4.2: the start opens every declared project: the project list (`host-settings.json`, in file order) and then the
+  // start-up workspaces not on it, grouped by project; a project's first workspace is its main one. A project with no
+  // listed workspace is declared by the person now and may be created (U3); a listed one whose store is missing stays
+  // unavailable and is never rebuilt. The old single-store layout stops the start (U6). A store directory not on the
+  // list is never opened or scanned.
+  const manifest = settingsEnabled ? await readPersistedWorkspaces(settingsDirectory as string) : [];
+  const declared = new Map<string, { inManifest: boolean; workspaces: ProjectRuntimeWorkspace[] }>();
+  for (const [scope, root, listed] of [
+    ...manifest.map(entry => [entry.scope, entry.root, true] as const),
+    ...workspaces.map(workspace => [workspace.scope, workspace.root, false] as const),
+  ]) {
+    const project = declared.get(scope.projectId) ?? { inManifest: false, workspaces: [] };
+    if (listed) project.inManifest = true;
+    if (!project.workspaces.some(entry => entry.workspaceId === scope.workspaceId)) {
+      project.workspaces.push({ workspaceId: scope.workspaceId, root });
+    }
+    declared.set(scope.projectId, project);
+  }
+  for (const [projectId, project] of declared) {
+    const opened = await registry.open(projectId, project.workspaces, { create: !project.inManifest });
+    if (opened.status === 'rejected' && opened.code === 'unsupported') {
+      await registry.closeAll();
+      throw new Error(opened.reason);
+    }
+    if (opened.status === 'ready') ensureHostProject(opened.value);
+  }
+  // V12: a start-up workspace not on the list joins it once its project opened and holds its Project record; the
+  // next start then opens that project from the list.
+  const declareWorkspaces = [];
+  for (const workspace of settingsEnabled ? workspaces : []) {
+    if (manifest.some(entry => scopeKey(entry.scope) === scopeKey(workspace.scope))) continue;
+    const platform = platformFor(workspace.scope.projectId);
+    if (platform === null) continue;
+    const read = await platform.projects.readProject?.(settingsContext(workspace.scope), workspace.scope.projectId);
+    if (read?.status !== 'ready') continue;
+    declareWorkspaces.push({ scope: { ...workspace.scope }, name: workspace.name, root: workspace.root,
+      writeAllowed: (workspace.writePrefixes?.length ?? 0) > 0, commandsAllowed: workspace.allowCommands === true });
+  }
+
   // The awaited startup restore of every persisted directory registration
   // happens here, before the server exists and before `listen`.
   const settingsCatalog = settingsEnabled
@@ -2020,89 +2224,94 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   const hostSettings: (HostSettingsPort & ChecksAdoptionEntryPort) | undefined = settingsEnabled
     ? await createHostSettings({
       settingsDirectory: settingsDirectory as string,
-      ...(promptsRoot === undefined ? {} : {
-        promptsRoot,
-        assertWorkspaceRoot: async (root: string) => {
-          await assertRootOutsidePrompts(root, promptsRoot as string);
-        },
-      }),
+      ...(promptsRoot === undefined ? {} : { promptsRoot }),
       models: [
         ...settingsCatalog.models,
         ...((options.settings?.models ?? []).map(model => structuredClone(model))),
       ],
       seedSelection: settingsCatalog.seedSelection,
+      declareWorkspaces,
       assembly: hostAssembly,
     }, {
       onConfigurationChanged: installFromSettings,
-      adoption: { buildConfiguration: buildCheckConfiguration, confirmInstalledChecks: platform.confirmInstalledChecks },
+      adoption: { buildConfiguration: buildCheckConfiguration,
+        confirmInstalledChecks: (ctx, input) => projectPlatform(ctx.projectId).confirmInstalledChecks(ctx, input) },
     })
     : undefined;
-  // The adoption composite over J's operation owner and the settings object J publishes (its entry, saved read,
-  // serial gate and the forwarded confirmation); a Host without settings publishes no adoption (`unsupported`).
-  const adoptionHost = hostSettings === undefined ? undefined : createInitializationAdoptionHost({
-    operations: platform.initializationAdoption,
-    checks: hostSettings, savedChecks: hostSettings, settingsGate: hostSettings, confirmChecks: hostSettings,
-    plans: platform.plans as InitializationAdoptionDependencies['plans'],
-    architecture: platform.architecture,
-    policies: platform.completionPolicies as InitializationAdoptionDependencies['policies'],
-    registration: platform.projects,
-    leaseOwned,
-    buildConfiguration: buildCheckConfiguration,
-  });
+  // Every open project's stage two (its route bindings) now that the settings exist; a project opened later builds
+  // both stages at once.
+  settingsReady = true;
+  for (const project of projects.values()) buildStageTwo(project);
 
   // A.2 step 5.6 (§12.1 steps 1..7): the start-up reconcile, on the Host holding the instance lease only,
   // after the settings restore registered every workspace's Kernel Store and installed the automation
   // policy, and before any execution driver, the attention delivery or the HTTP server starts.
   // The reconcile writes as the Host's own system actor (R source, §12.1; VR-04 "Host system actor +
   // hostInstanceId"); the start-up re-drive starts the driver as `workflow/driver-start` does, as the Host actor.
-  const hostScopeContext = (scope: CoreScope, as: WorkbenchActor): CoreCallContext => ({
-    projectId: scope.projectId, workspaceId: scope.workspaceId,
-    principal: { kind: 'host', actor: { ...as } },
-    materialReader: { kind: 'host', projectId: scope.projectId, workspaceId: scope.workspaceId, actor: { ...as } },
-    signal: new AbortController().signal,
-  });
+  function hostScopeContext(scope: CoreScope, as: WorkbenchActor): CoreCallContext {
+    return {
+      projectId: scope.projectId, workspaceId: scope.workspaceId,
+      principal: { kind: 'host', actor: { ...as } },
+      materialReader: { kind: 'host', projectId: scope.projectId, workspaceId: scope.workspaceId, actor: { ...as } },
+      signal: new AbortController().signal,
+    };
+  }
   const reconcileContext = (scope: CoreScope): CoreCallContext => hostScopeContext(scope, HOST_RECONCILE_ACTOR);
-  // Slice 2B L7: with the instance lease, every served workspace records its
+  /** The workspaces of the projects this Host holds the lease of (U1), in start order. */
+  const ownedScopes = (): CoreScope[] => workspaces.filter(workspace => ownedProject(workspace.scope.projectId))
+    .map(workspace => ({ projectId: workspace.scope.projectId, workspaceId: workspace.scope.workspaceId }));
+  // Slice 2B L7: with its project's lease, every served workspace records its
   // start-of-recording epoch BEFORE the start-up reconcile, so a Run that ends
   // after this instant and has no tally reads `not_recorded` (an error) rather
   // than an old `not_backfilled` one. A Host without the lease writes nothing.
-  if (leaseOwned) {
-    for (const workspace of workspaces) {
-      const recorded = await platform.runActivity.ensureActivityRecording(hostScopeContext(workspace.scope, actor), {
-        input: { workspace: { projectId: workspace.scope.projectId, workspaceId: workspace.scope.workspaceId } },
-        meta: { requestId: `host-activity-recording:${scopeKey(workspace.scope)}`, expected: [] },
+  for (const scope of ownedScopes()) {
+    const recorded = await projectPlatform(scope.projectId).runActivity.ensureActivityRecording(
+      hostScopeContext(scope, actor), {
+        input: { workspace: { projectId: scope.projectId, workspaceId: scope.workspaceId } },
+        meta: { requestId: `host-activity-recording:${scopeKey(scope)}`, expected: [] },
       });
-      if (recorded.status !== 'committed') {
-        throw new Error(`the start-of-recording write failed: ${JSON.stringify(recorded)}`);
-      }
+    if (recorded.status !== 'committed') {
+      throw new Error(`the start-of-recording write failed: ${JSON.stringify(recorded)}`);
     }
   }
+  // The reconcile still runs scope by scope (R4); each scope takes its project's platform, lease facts and drivers
+  // (U1), and a scope of a project not open or held by another Host is skipped. One report per project.
   const reconcileScopes = (scopes: readonly CoreScope[]) => runStartupReconcile({
-    platform: { sessions: platform.sessions, executions: platform.executions, controls: platform.controls,
-      plans: platform.plans, reconcile: platform.reconcile,
-      repairs: platform.repairs, redriveRepairAnswers },
-    hostInstanceId: instanceLease.hostInstanceId,
-    resumeOnStartup: platform.automationPolicy().resumeOnStartup,
-    takeover: instanceLease.takeover,
     scopes: scopes.map(scope => ({ projectId: scope.projectId, workspaceId: scope.workspaceId })),
     context: reconcileContext,
-    members: platform.memberCreations,
-    fanOut: (ctx, goalRef, options) => goalFanOut.fanOut(ctx, goalRef, options),
-    wakeRounds: async scope => { await drainGoalWaits(scope); },
-    ...(lifecycleQueue === undefined ? {} : { handoffQueue: lifecycleQueue }),
+    forScope: scope => {
+      const project = projects.get(scope.projectId);
+      if (project === undefined || project.runtime.lease.lease !== 'owned') return null;
+      const { platform, lease } = project.runtime;
+      return {
+        platform: { sessions: platform.sessions, executions: platform.executions, controls: platform.controls,
+          plans: platform.plans, reconcile: platform.reconcile,
+          repairs: platform.repairs, redriveRepairAnswers },
+        hostInstanceId: lease.hostInstanceId,
+        resumeOnStartup: platform.automationPolicy().resumeOnStartup,
+        takeover: lease.takeover,
+        members: platform.memberCreations,
+        fanOut: (ctx, goalRef, options) => project.goalFanOut.fanOut(ctx, goalRef, options),
+        wakeRounds: async target => { await drainGoalWaits(target); },
+        ...(lifecycleQueue === undefined ? {} : { handoffQueue: lifecycleQueue }),
+      };
+    },
   });
-  const reconcileReport = leaseOwned ? await reconcileScopes(workspaces.map(workspace => workspace.scope)) : null;
-  const hostReconcile: HostReconcileReportV1 = { hostInstanceId: instanceLease.hostInstanceId, lease: instanceLease.lease,
-    leaseRow: instanceLease.row, leaseReason: instanceLease.reason, report: reconcileReport };
+  const startupReports = await reconcileScopes(workspaces.map(workspace => workspace.scope));
+  for (const project of projects.values()) {
+    const report = startupReports.get(project.projectId);
+    if (report !== undefined) project.report.report = report;
+  }
   // L8 (book ruling 5): after the workspaces are bound (settings restore included)
   // every pending bound workspace gets a `startup_retry`; detached, and a pending
   // workspace not bound in this Host is simply not passed here. Like the start-up
-  // re-drive below it needs the lease and `automation.resumeOnStartup`: only `'off'`
+  // re-drive below it needs the project's lease and `automation.resumeOnStartup`: only `'off'`
   // stops the retry, as a start then only reconciles (§12.10 step 5) and the next trigger retries.
-  if (leaseOwned && platform.automationPolicy().resumeOnStartup !== 'off') {
-    autoCapture.retryPending(workspaces.map(workspace => ({
-      projectId: workspace.scope.projectId, workspaceId: workspace.scope.workspaceId,
-    })));
+  for (const project of projects.values()) {
+    if (project.runtime.lease.lease !== 'owned'
+      || project.runtime.platform.automationPolicy().resumeOnStartup === 'off') continue;
+    project.autoCapture.retryPending(workspaces.filter(workspace => workspace.scope.projectId === project.projectId)
+      .map(workspace => ({ projectId: workspace.scope.projectId, workspaceId: workspace.scope.workspaceId })));
   }
   // The one start both the start-up re-drive and an adopted first plan use: the Goal's own profile ids, the Host
   // actor's scope context, and a `select_work` advance. A refused start leaves the Goal for the next
@@ -2112,7 +2321,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     const profileIds = runtimeProfiles.filter(profile => profile.scope.projectId === scope.projectId
       && profile.scope.workspaceId === scope.workspaceId).map(profile => profile.id);
     try {
-      await collaborationDriver.start(hostScopeContext(scope, actor), {
+      await projects.get(scope.projectId)?.collaborationDriver.start(hostScopeContext(scope, actor), {
         advance: { schemaVersion: 1, goalRef, flowId, sessionHint: null, kind: 'select_work',
           ...(answers === undefined || answers.length === 0 ? {} : { answers }) },
         queryProfileIds: profileIds,
@@ -2122,8 +2331,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   // §12.1 step 6b (LA-6): the start-up re-drive starts the existing collaboration driver for each selected
   // Goal (a pending automation verdict or a not-entered Run), gated by `automation.resumeOnStartup` being `'auto'`; every
   // step it takes is judged by the owners, and its rework steps run as the Workflow's automation actor.
-  const startRedrive = async (report: StartupReconcileReportV1): Promise<void> => {
-    if (platform.automationPolicy().resumeOnStartup !== 'auto') return;
+  const startRedrive = async (project: HostProject, report: StartupReconcileReportV1): Promise<void> => {
+    if (project.runtime.platform.automationPolicy().resumeOnStartup !== 'auto') return;
     // The 6b selection keeps its own entries and their answers; a candidate-only Goal is driven once, with no answers.
     const byGoal = new Map<string, StartupReconcileReportV1['redriveGoals'][number]>();
     for (const goal of report.redriveGoals) byGoal.set(canonicalKey(goal.goalRef), goal);
@@ -2135,33 +2344,32 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       await startGoalDriver(goal.scope, goal.goalRef, `startup-redrive:${goal.goalRef.goalId}`, goal.answers);
     }
   };
-  if (reconcileReport !== null) await startRedrive(reconcileReport);
+  for (const project of projects.values()) {
+    if (project.report.report !== null) await startRedrive(project, project.report.report);
+  }
   // The request driver starts only now, after the start-up reconcile and its
   // re-drive: their commits must not wake a pass, and both queues rebuild
   // read-only from the records. With `resumeOnStartup` off each workspace's
   // queues stay unarmed until the first request command wakes them, so nothing
-  // starts on its own after a restart.
-  if (wakeLoop !== undefined) {
-    await wakeLoop.start(workspaces.map(workspace => ({
-      projectId: workspace.scope.projectId, workspaceId: workspace.scope.workspaceId,
-    })), { resumeOnStartup: platform.automationPolicy().resumeOnStartup !== 'off' });
-  }
+  // starts on its own after a restart. Only the workspaces of the projects this
+  // Host holds the lease of join it.
+  await wakeLoop.start(ownedScopes(),
+    { resumeOnStartup: (lastSnapshot?.automation ?? DEFAULT_TASK_AUTOMATION_POLICY).resumeOnStartup !== 'off' });
   // Slice 2B L8/B2: after the start-up reconcile, the leased Host backfills the
   // last 14 days in the background, one batch at a time, until done, a
   // `retry_later` or close. The cursor is memory-only: the records are the
   // progress, so nothing is written when nothing needs doing.
   const backfillAbort = new AbortController();
-  const backfillDone: Promise<void> = !leaseOwned ? Promise.resolve() : (async () => {
-    for (const workspace of workspaces) {
+  const backfillDone: Promise<void> = (async () => {
+    for (const scope of ownedScopes()) {
       if (backfillAbort.signal.aborted) return;
-      const scope = { projectId: workspace.scope.projectId, workspaceId: workspace.scope.workspaceId };
       const ctx: CoreCallContext = { ...hostScopeContext(scope, actor), signal: backfillAbort.signal };
       let cursor: string | null = null;
       try {
         for (;;) {
           if (backfillAbort.signal.aborted) return;
           const batch: ReadResult<import('../business/workflow/contracts.js').ActivityBackfillBatchV1> | undefined =
-            await platform.workflow.backfillRecentActivity?.(ctx, { workspace: scope, cursor });
+            await projectPlatform(scope.projectId).workflow.backfillRecentActivity?.(ctx, { workspace: scope, cursor });
           if (batch === undefined || batch.status !== 'ready') return;
           if (batch.value.done || batch.value.next === null) break;
           cursor = batch.value.next;
@@ -2172,14 +2380,17 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   // A workspace this Host opens after its start is reconciled the same way before it serves an execution
   // (§12.1): its lines join the report, and its re-drive follows the same switch.
   reconcileAddedScope = async (scope: CoreScope): Promise<void> => {
-    const report = hostReconcile.report;
-    if (!leaseOwned || report === null) return;
-    const recorded = await platform.runActivity.ensureActivityRecording(hostScopeContext(scope, actor), {
+    // The project's report is null without its lease.
+    const project = projects.get(scope.projectId);
+    const report = project?.report.report ?? null;
+    if (project === undefined || report === null) return;
+    const recorded = await project.runtime.platform.runActivity.ensureActivityRecording(hostScopeContext(scope, actor), {
       input: { workspace: { projectId: scope.projectId, workspaceId: scope.workspaceId } },
       meta: { requestId: `host-activity-recording:${scopeKey(scope)}`, expected: [] },
     });
     if (recorded.status !== 'committed') return;
-    const added = await reconcileScopes([scope]);
+    const added = (await reconcileScopes([scope])).get(scope.projectId);
+    if (added === undefined) return;
     report.sessions.push(...added.sessions);
     report.runs.push(...added.runs);
     report.queries.push(...added.queries);
@@ -2192,7 +2403,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     report.redriveGoals.push(...added.redriveGoals);
     report.interruptedGoals.push(...added.interruptedGoals);
     report.problems.push(...added.problems);
-    await startRedrive(added);
+    await startRedrive(project, added);
   };
 
   // Explicit mechanical attention: the Host scans the configured real sources on
@@ -2227,6 +2438,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
    * `not_completed`. */
   type InputCompletion = 'completed' | 'not_completed' | 'unknown';
   async function inputCompletion(ctx: CoreCallContext, message: import('../core/work-graph/model/communication-contracts.js').SessionMessage): Promise<InputCompletion> {
+    const platform = projectPlatform(ctx.projectId);
     let sawUnknown = false;
     for (const accepted of message.acceptedInputs ?? []) {
       if (accepted.part !== 'message') continue;
@@ -2261,6 +2473,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   async function executorWaitOf(ctx: CoreCallContext, message: SessionMessage): Promise<boolean> {
     const executorSender = (sender: SessionMessage['sender']): boolean =>
       sender.kind === 'work_run' || sender.kind === 'secretary_round';
+    const platform = projectPlatform(ctx.projectId);
     let targetRef = message.ref;
     if (message.sender.kind === 'host' && message.sender.actor.kind === 'system') {
       const query = await platform.queries.readQueryJob(ctx,
@@ -2298,6 +2511,9 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
    */
   async function consumeIdle(scope: WorkspaceScope, after: string | null): Promise<string | null> {
     const ctx = hostContext(scope);
+    const project = projects.get(scope.projectId);
+    if (project === undefined) return after;
+    const platform = project.runtime.platform;
     const page = await platform.consumableSessions.readConsumableSessions(ctx,
       { workspace: scope, after, limit: CONSUME_BATCH });
     if (page.status !== 'ready') return after;
@@ -2332,12 +2548,12 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         const claimed = await platform.workflow.handleIntervention?.(ctx, interventionInput);
         if (claimed?.status === 'claimed') {
           const addressed = claimed.claim.task;
-          await announceInterruption({ ...reconcileContext(scope), signal: ctx.signal }, hostNotices, {
+          await announceInterruption({ ...reconcileContext(scope), signal: ctx.signal }, project.hostNotices, {
             scope: { projectId: addressed.projectId, workspaceId: read.value.ref.workspaceId },
             sessionRef: candidate.session,
             personMessageRef: offer.messageRef,
           });
-          await collaborationDriver.start(hostScopeContext({ projectId: addressed.projectId,
+          await project.collaborationDriver.start(hostScopeContext({ projectId: addressed.projectId,
             workspaceId: read.value.ref.workspaceId }, actor), {
             advance: { schemaVersion: 1, flowId: `intervention:${claimed.claim.runRef.runId}`,
               goalRef: { aggregateType: 'Goal' as const, projectId: addressed.projectId, goalId: addressed.goalId },
@@ -2390,12 +2606,16 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   }
   // Slice 4C-2 §11.5/U-10: the scribe reminder shell. One check per configured
   // workspace per heartbeat; the to-do port and the recipient resolver are the
-  // narrow seams (the platform's by default), and the send reuses the EXISTING
-  // platform sender, never a second one.
-  const noteScribeTodos: NoteScribeTodoPort | undefined = options.noteScribeTodos
-    ?? { readScribeTodos: platform.notes.readScribeTodos, readLedgerCursor: platform.notes.readLedgerCursor };
-  const resolveScribeRecipient = options.resolveScribeRecipient ?? platform.notes.resolveScribeRecipient;
-  const sendScribeReminder = options.sendScribeReminder ?? platform.messages.sendMessage.bind(platform.messages);
+  // narrow seams (by default those of the context's project platform), and the
+  // send reuses the EXISTING platform sender, never a second one.
+  const noteScribeTodos: NoteScribeTodoPort | undefined = options.noteScribeTodos ?? {
+    readScribeTodos: (ctx, input) => projectPlatform(ctx.projectId).notes.readScribeTodos(ctx, input),
+    readLedgerCursor: ctx => projectPlatform(ctx.projectId).notes.readLedgerCursor(ctx),
+  };
+  const resolveScribeRecipient = options.resolveScribeRecipient
+    ?? ((ctx: CoreCallContext, scope: NoteScopeV1) => projectPlatform(ctx.projectId).notes.resolveScribeRecipient(ctx, scope));
+  const sendScribeReminder: SessionMailboxPort['sendMessage'] = options.sendScribeReminder
+    ?? ((ctx, input) => projectPlatform(ctx.projectId).messages.sendMessage(ctx, input));
   const scribeReminderPeriodMs = options.scribeReminderPeriodMs ?? SCRIBE_REMINDER_PERIOD_MS;
   const linkBatchIdleMs = options.linkBatchIdleMs ?? NOTE_LINK_IDLE_MS;
   const linkBatchBacklog = options.linkBatchBacklog ?? NOTE_LINK_BACKLOG;
@@ -2486,6 +2706,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   async function scribeRecipientWorkspace(ctx: CoreCallContext, recipient: SessionRef):
   Promise<CoreScope | 'unknown'> {
     const sending: CoreScope = { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' };
+    const platform = projectPlatform(ctx.projectId);
     const here = await platform.sessions.readSession(ctx, recipient);
     if (here.status === 'ready') return sending;
     if (here.status !== 'not_found') return 'unknown';
@@ -2500,6 +2721,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   }
   async function scribeReminderDisposition(ctx: CoreCallContext, recipient: SessionRef,
     state: ScribeReminderState): Promise<ReminderDisposition> {
+    const platform = projectPlatform(ctx.projectId);
     const memory = recipientMemory(state, recipient);
     if (memory.ref !== null) {
       // The memory ref is checked in the workspace the message record lives in.
@@ -2596,6 +2818,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     const existing = savedReworkByScope.get(key);
     if (existing !== undefined) return existing;
     const built: SavedReworkDeliveries = new Map();
+    const platform = projectPlatform(scope.projectId);
     let after: HostOutboxKeysetV1 | null = null;
     for (;;) {
       const page = await platform.messages.readHostSystemOutbox(ctx,
@@ -2622,7 +2845,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     const stored: HostOutboxStoredItemV1 = branch === 'no_adviser_card'
       ? { source, branch, cardSource: input as DecisionSourceV1 }
       : { source, branch, request: input as SessionMessageSendInputV1 };
-    const written = await platform.messages.appendHostSystemOutbox(ctx, {
+    const written = await projectPlatform(scope.projectId).messages.appendHostSystemOutbox(ctx, {
       input: { workspace: { projectId: scope.projectId, workspaceId: scope.workspaceId }, item: stored },
       meta: { requestId: `rework-outbox:${item.itemKey}:${branch}`, expected: [] },
     });
@@ -2640,6 +2863,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
    */
   async function deliverReworkNotice(ctx: CoreCallContext, scope: CoreScope, item: NoticeItemV1,
     saved: SavedReworkDeliveries): Promise<boolean> {
+    const platform = projectPlatform(scope.projectId);
     const rework = item.rework!;
     const source: HostOutboxSourceV1 = rework.operation === 'requeue'
       ? { kind: 'requeue', ref: rework.sourceRef as TaskRequeueRef, position: item.position }
@@ -2708,6 +2932,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     const workspace = { projectId: scope.projectId, workspaceId: scope.workspaceId };
     const saved = await savedReworkDeliveries(ctx, scope);
     if (saved === null) return;
+    const platform = projectPlatform(scope.projectId);
     let cursor: string | undefined;
     do {
       const page = await platform.reworkNotices.readPage(ctx, { workspace,
@@ -2726,6 +2951,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
 
   async function runScribeReminderCheck(scope: CoreScope): Promise<void> {
     if (noteScribeTodos === undefined) return;
+    const platform = projectPlatform(scope.projectId);
     const state = scribeReminderState(scopeKey(scope));
     // 1. the reminder's OWN period, on the INJECTED clock.
     const atMs = clockMs();
@@ -2924,6 +3150,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   const lastLinkBatch = new Map<string, number>();
   const linkBatchFrom = clockMs();
   async function runLinkBatchCheck(scope: CoreScope): Promise<void> {
+    const platform = projectPlatform(scope.projectId);
     const queued = platform.notes.doubtfulLinks(scope, Math.max(NOTE_LINK_VERIFY_MAX, linkBatchBacklog));
     if (queued.length === 0) return;
     const now = clockMs();
@@ -2937,21 +3164,29 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       { items: queued.slice(0, NOTE_LINK_VERIFY_MAX), verifyLinks: { priority: 'background' } });
   }
 
-  // L-10: without the instance lease this Host delivers no attention and wakes no consumer (no execution driver).
-  const attentionDone: Promise<void> = !leaseOwned ? Promise.resolve() : (async () => {
-    const scanner = createAttentionScanner({ workspace: platform.workspace, messages: platform.messages,
-      readAttentionGraph: platform.runtime.readAttentionGraph.bind(platform.runtime) });
-    const entries = attentionScopes.map(scope => ({
-      scope, observer: createAttentionObserver(scope.config),
-      confirmedSequences: new Map<string, number>(), nextSequence: 0,
-      pending: [] as { signals: readonly import('./attention-observer.js').AttentionSignal[]; sequence: number; messageRef: import('../contracts/core/session-message.js').SessionMessageRef; snapshot: Awaited<ReturnType<typeof scanner.scan>> }[],
-    }));
+  // L-10: without a project's lease this Host delivers no attention and wakes no consumer there (no execution
+  // driver); every step below skips a workspace of such a project.
+  const attentionDone: Promise<void> = (async () => {
+    type AttentionScanner = ReturnType<typeof createAttentionScanner>;
+    const entries = attentionScopes.map(scope => {
+      const platform = ownedProject(scope.scope.projectId) ? platformFor(scope.scope.projectId) : null;
+      return {
+        scope, observer: createAttentionObserver(scope.config),
+        // The scanner over the scope's project platform; none without that project's lease.
+        scanner: platform === null ? null : createAttentionScanner({ workspace: platform.workspace,
+          messages: platform.messages, readAttentionGraph: platform.runtime.readAttentionGraph.bind(platform.runtime) }),
+        confirmedSequences: new Map<string, number>(), nextSequence: 0,
+        pending: [] as { signals: readonly import('./attention-observer.js').AttentionSignal[]; sequence: number; messageRef: import('../contracts/core/session-message.js').SessionMessageRef; snapshot: Awaited<ReturnType<AttentionScanner['scan']>> }[],
+      };
+    });
     const period = Math.max(1, Math.min(...attentionScopes.map(scope => scope.config.heartbeatMs),
       ...inputConsumers.map(entry => entry.heartbeatMs), scribeReminderPeriodMs));
     const lastInputScan = new Map<string, number>();
     const expiryCursors = new Map<string, DueWaitPageInputV1['after']>();
     const expireDueWaits = async (): Promise<void> => {
       for (const workspace of workspaces) {
+        if (!ownedProject(workspace.scope.projectId)) continue;
+        const platform = projectPlatform(workspace.scope.projectId);
         const key = scopeKey(workspace.scope);
         const ctx = hostContext(workspace.scope);
         const before = expiryCursors.get(key) ?? null;
@@ -2980,6 +3215,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       // it would stop an idle Session from ever re-scanning. One `inputJobs` key per
       // workspace keeps a slow pass from overlapping the next heartbeat.
       for (const workspace of workspaces) {
+        if (!ownedProject(workspace.scope.projectId)) continue;
         const key = scopeKey(workspace.scope);
         if (inputJobs.has(key) || Date.now() - (lastInputScan.get(key) ?? 0) < period) continue;
         lastInputScan.set(key, Date.now());
@@ -2987,8 +3223,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         const job = consumeIdle(workspace.scope, after)
           .then(next => { consumeCursors.set(key, next); })
           // 7D2 O2 (book :395-:400): one bounded maintenance page in the same idle job; no second loop or timer.
-          .then(async () => { await platform.workflow.maintainSessions?.(hostContext(workspace.scope),
-            { workspace: workspace.scope, after: null }); })
+          .then(async () => { await projectPlatform(workspace.scope.projectId).workflow.maintainSessions?.(
+            hostContext(workspace.scope), { workspace: workspace.scope, after: null }); })
           .catch(() => { /* original facts remain retryable */ })
           .finally(() => inputJobs.delete(key))
           .finally(() => { for (const resolve of consumeBarrierWaiters.splice(0)) resolve(); });
@@ -2996,7 +3232,9 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       }
       for (const entry of entries) {
         if (attentionAbort.signal.aborted) break;
+        if (entry.scanner === null) continue;
         const scope = entry.scope.scope;
+        const platform = projectPlatform(scope.projectId);
         const hostCtx: CoreCallContext = {
           projectId: scope.projectId, workspaceId: scope.workspaceId,
           principal: { kind: 'host', actor: { ...actor } },
@@ -3024,7 +3262,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
           entry.pending = remaining;
         }
         let snapshot;
-        try { snapshot = await scanner.scan(hostCtx, entry.scope); }
+        try { snapshot = await entry.scanner.scan(hostCtx, entry.scope); }
         catch { continue; }
         if (attentionAbort.signal.aborted) break;
         if (entry.observer.processed === null) entry.observer.prime(snapshot);
@@ -3078,6 +3316,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       // is retried on the next heartbeat.
       for (const workspace of workspaces) {
         if (attentionAbort.signal.aborted) break;
+        if (!ownedProject(workspace.scope.projectId)) continue;
         try { await runScribeReminderCheck(workspace.scope); } catch { /* retried next heartbeat */ }
         try { await runReworkNoticeCheck(workspace.scope); } catch { /* retried next heartbeat */ }
         try { await runLinkBatchCheck(workspace.scope); } catch { /* retried next heartbeat */ }
@@ -3088,15 +3327,16 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   })();
 
   /**
-   * HL-07 (L-1, L-10): a Host without the instance lease keeps every read and
-   * owner write, but each entry that would enter the Kernel or start an
-   * execution driver, and the attestations, answer `busy`: only the Host that
-   * holds the lease enters the Kernel, so its reconcile proofs stay sound.
+   * HL-07 (L-1, L-10), per project (U1): a Host without a project's lease keeps
+   * every read and owner write of that project, but each entry that would enter
+   * the Kernel or start an execution driver, and the attestations, answer `busy`:
+   * only the Host that holds the lease enters the Kernel, so its reconcile proofs
+   * stay sound.
    */
-  function leaseGated(bindings: CoreRouteBindings): CoreRouteBindings {
-    if (leaseOwned) return bindings;
+  function leaseGated(lease: ProjectStoreLease, bindings: CoreRouteBindings): CoreRouteBindings {
+    if (lease.lease === 'owned') return bindings;
     const busy = (what: string) => async () => ({ status: 'rejected' as const, code: 'busy' as const,
-      reason: `another Host holds the instance lease of this store; ${what} runs only there (${instanceLease.reason})` });
+      reason: `another Host holds the instance lease of this store; ${what} runs only there (${lease.reason})` });
     const gated: CoreRouteBindings = { ...bindings,
       startRun: busy('executions/start') as unknown as CoreRouteBindings['startRun'],
       startQuery: busy('queries/start') as unknown as CoreRouteBindings['startQuery'],
@@ -3113,10 +3353,30 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     return gated;
   }
 
-  // The real route bindings share the ONE platform instance assembled above.
-  const routeBindings = createPlatformCoreRouteBindings(platform, collaborationDriver, workbenchTools.tools, goalFanOut,
-    { readReconcileReport: async () => ({ status: 'ready', value: structuredClone(hostReconcile) }) }, adoptionHost,
-    scope => { armMessageRelease?.(scope); }, platform.readArchitectureProposal);
+  /**
+   * Stage two of a project's drivers (§4.4): its adoption composite and its route bindings over its own platform and
+   * drivers, behind its own lease gate. It needs the settings object, so it runs after them; a project opened later
+   * builds it with stage one.
+   */
+  function buildStageTwo(project: HostProject): void {
+    const platform = project.runtime.platform;
+    const lease = project.runtime.lease;
+  // The adoption composite over J's operation owner and the settings object J publishes (its entry, saved read,
+  // serial gate and the forwarded confirmation); a Host without settings publishes no adoption (`unsupported`).
+  const adoptionHost = hostSettings === undefined ? undefined : createInitializationAdoptionHost({
+    operations: platform.initializationAdoption,
+    checks: hostSettings, savedChecks: hostSettings, settingsGate: hostSettings, confirmChecks: hostSettings,
+    plans: platform.plans as InitializationAdoptionDependencies['plans'],
+    architecture: platform.architecture,
+    policies: platform.completionPolicies as InitializationAdoptionDependencies['policies'],
+    registration: platform.projects,
+    leaseOwned: lease.lease === 'owned',
+    buildConfiguration: buildCheckConfiguration,
+  });
+  // The real route bindings over this project's platform; `host/reconcile-report` answers this project's report.
+  const routeBindings = createPlatformCoreRouteBindings(platform, project.collaborationDriver, workbenchTools.tools,
+    project.goalFanOut, { readReconcileReport: async () => ({ status: 'ready', value: structuredClone(project.report) }) },
+    adoptionHost, scope => { armMessageRelease?.(scope); }, platform.readArchitectureProposal);
   // L8 (book ruling 1): the route-registration path uses the SAME shared step as
   // the settings flow, only after a NON-REPLAYED committed registration. The
   // step itself triggers only when `byScope` already holds the scope.
@@ -3205,13 +3465,16 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   // driver; the route's own release arming stays inside `routeBindings.advanceWork`.
   const advanceWorkWithExport: CoreRouteBindings['advanceWork'] = async (ctx, input, internal) => {
     const advanced = await routeBindings.advanceWork(ctx, input, internal);
-    await exportAdvanceResult(ctx, advanced);
+    await exportAdvanceResult(platform, ctx, advanced);
     return advanced;
   };
+  project.bindings = leaseGated(lease, { ...routeBindings, registerWorkspace, adoptInitialization,
+    applyPlanChange: applyPlanChangeWithExport, advanceWork: advanceWorkWithExport, askLine });
+  }
   const server: WorkbenchServer = createWorkbenchServer({
     token,
-    bindings: leaseGated({ ...routeBindings, registerWorkspace, adoptInitialization,
-      applyPlanChange: applyPlanChangeWithExport, advanceWork: advanceWorkWithExport, askLine }),
+    // V13: a request takes its project's bindings; a project not open answers `unavailable`.
+    bindings: projectId => projects.get(projectId)?.bindings ?? null,
     actor,
     bootstrap: buildBootstrap,
     changes,
@@ -3225,7 +3488,10 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   let closePromise: Promise<void> | undefined;
 
   return {
-    get reconcile(): HostReconcileReportV1 { return structuredClone(hostReconcile); },
+    reconcileOf(projectId: string): HostReconcileReportV1 | null {
+      const project = projects.get(projectId);
+      return project === undefined ? null : structuredClone(project.report);
+    },
     get consumeStatus(): readonly HostConsumeSkipV1[] { return lastConsumeSkips; },
     consumeBarrier(): Promise<void> {
       return new Promise<void>(resolve => { consumeBarrierWaiters.push(() => resolve()); });
@@ -3241,11 +3507,12 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         // FIRST, before the other drains. A queued B accepted just before the
         // close must not start while those drains run; the cancelled capture
         // writes nothing, so its request stays pending for the next start.
-        const autoCaptureClosed = autoCapture.close();
+        const open = [...projects.values()];
+        const autoCaptureClosed = Promise.all(open.map(project => project.autoCapture.close()));
         // the closing signal goes before the HTTP drain (an in-flight `executions/start`
         // must see it), and the driver's `stopRequested` before its loop reads the unavailable result.
         hostClosing.abort('host_closing');
-        const collaborationClosed = collaborationDriver.close();
+        const collaborationClosed = Promise.all(open.map(project => project.collaborationDriver.close()));
         await server.close();
         const workbenchToolsClosed = workbenchTools.close();
         attentionAbort.abort('host_closing');
@@ -3258,19 +3525,19 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         // The loop stops scheduling, aborts the signal every drain and every
         // in-flight advance got, and waits for them; the queues then settle
         // what they launched, so no advance is left running into `close`.
-        if (wakeLoop !== undefined) await wakeLoop.close();
+        await wakeLoop.close();
         if (lifecycleQueue !== undefined) await lifecycleQueue.close();
-        if (requestQueues !== undefined) await requestQueues.settle();
-        if (goalWaitQueueOwner !== undefined) await goalWaitQueueOwner.settle();
+        for (const project of open) await project.requestQueues?.settle();
+        await goalWaitQueue.settle();
         await collaborationClosed;
-        await goalFanOut.close();
+        for (const project of open) await project.goalFanOut.close();
         await workbenchToolsClosed;
         await autoCaptureClosed;
         // PL §6.4.3: every detached taskbook write finishes before the stores go away.
         await Promise.all([...pendingTaskbookExports]);
-        await platform.close();
-        // HL-06: the lock file goes only while it still names this instance; a Host that never held it never touches it.
-        await instanceLease.release().catch(() => undefined);
+        // Each runtime closes its platform, then releases its lease (HL-06: the lock file goes only while it still
+        // names this instance; a Host that never held it never touches it).
+        await registry.closeAll();
       })();
       return closePromise;
     },

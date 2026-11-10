@@ -21,6 +21,7 @@ import { readTaskClosure } from '../../src/core/work-graph/tasks/plan-readers.js
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
 import type { WorkspaceScope } from '../../src/contracts/core/identity.js';
 import { platformRecordSchemas } from '../state/invariants.js';
+import { storeDirOf } from './KLS1B-host-store.js';
 
 /** The platform's one record registry; it already carries the CRR schemas and their three lookup indexes. */
 function crrSchemas() {
@@ -35,7 +36,7 @@ export async function listCommandRerunRequests(
   filter: { goalId: string; taskId: string },
 ): Promise<CommandRerunRequestV1[]> {
   const backend = await createSqliteRecordBackend({
-    path: join(database, 'ledger.sqlite'), schemas: crrSchemas(),
+    path: join(storeDirOf(database), 'ledger.sqlite'), schemas: crrSchemas(),
   });
   try {
     const requests = createCommandRerunRequestService({

@@ -208,7 +208,7 @@ describe('S3 graph routes', () => {
         },
       },
     }));
-    const server = createWorkbenchServer({ token: TOKEN, bindings, actor,
+    const server = createWorkbenchServer({ token: TOKEN, bindings: () => bindings, actor,
       bootstrap: () => ({ workspaces: [], review: null, execution: { queryProfiles: [], workflowScopes: [] } }),
       allowsScope: () => true });
     servers.push(server);

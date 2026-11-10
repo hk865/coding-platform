@@ -40,7 +40,7 @@ afterEach(async () => {
 async function start(overrides: Partial<WorkbenchServerOptions> = {}): Promise<{ server: WorkbenchServer; origin: string }> {
   const server = createWorkbenchServer({
     token: TOKEN,
-    bindings: {} as CoreRouteBindings,
+    bindings: () => ({}) as CoreRouteBindings,
     actor: { kind: 'human', id: 'change-stream-operator' },
     bootstrap: () => ({ workspaces: [], review: null, execution: { queryProfiles: [], workflowScopes: [] } }),
     allowsScope: () => false,
@@ -61,7 +61,7 @@ const changesUrl = (origin: string): string => new URL(CORE_API_PREFIX + CHANGES
 
 function seededFeed(head: number | null, bufferSize?: number): ChangeFeed {
   const feed = createChangeFeed(bufferSize === undefined ? {} : { bufferSize });
-  feed.started(head === null ? null : c(head));
+  for (let i = 1; i <= (head ?? 0); i += 1) feed.committed('p0', { cursor: c(i), aggregates: [] });
   return feed;
 }
 
@@ -103,7 +103,7 @@ describe('change stream boundary', () => {
     const stream = await open(origin);
     expect(stream.response.headers.get('content-type')).toBe('text/event-stream; charset=utf-8');
     expect(stream.response.headers.get('cache-control')).toBe('no-store');
-    expect(await stream.nextEvent()).toEqual({ comment: false, event: 'ready', id: 'c0000000041', data: { cursor: 'c0000000041' } });
+    expect(await stream.nextEvent()).toEqual({ comment: false, event: 'ready', id: 'h0000000041', data: { cursor: 'h0000000041' } });
 
     const empty = await start({ changes: seededFeed(null) });
     const emptyStream = await open(empty.origin);
@@ -117,17 +117,17 @@ describe('change stream notices', () => {
     const { origin } = await start({ changes: feed });
     const stream = await open(origin);
     expect((await stream.nextEvent())?.event).toBe('ready');
-    feed.committed({ cursor: c(44), aggregates: [
+    feed.committed(scope.projectId, { cursor: c(44), aggregates: [
       { aggregateType: 'Task', projectId: scope.projectId }, { aggregateType: 'Run', projectId: scope.projectId },
     ] });
-    expect(await stream.nextEvent()).toEqual({ comment: false, event: 'change', id: 'c0000000044',
-      data: { cursor: 'c0000000044', kinds: ['executions', 'tasks'], projects: [scope.projectId] } });
-    feed.driverChanged({ scope, goalId: 'stream-goal', taskId: null });
+    expect(await stream.nextEvent()).toEqual({ comment: false, event: 'change', id: 'h0000000042',
+      data: { projectId: scope.projectId, cursor: 'c0000000044', kinds: ['executions', 'tasks'], projects: [scope.projectId] } });
+    feed.driverChanged({ scope, goalId: 'stream-goal', taskId: null }, c(44));
     expect(await stream.nextEvent()).toEqual({ comment: false, event: 'change', id: null,
-      data: { cursor: 'c0000000044', kinds: ['driver'], projects: [scope.projectId], scope, goalId: 'stream-goal', taskId: null } });
-    feed.commandChanged({ scope, commandId: 'workbench-command-7', state: 'settled' });
+      data: { projectId: scope.projectId, cursor: 'c0000000044', kinds: ['driver'], projects: [scope.projectId], scope, goalId: 'stream-goal', taskId: null } });
+    feed.commandChanged({ scope, commandId: 'workbench-command-7', state: 'settled' }, c(44));
     expect(await stream.nextEvent()).toEqual({ comment: false, event: 'change', id: null,
-      data: { cursor: 'c0000000044', kinds: ['command'], projects: [scope.projectId], scope,
+      data: { projectId: scope.projectId, cursor: 'c0000000044', kinds: ['command'], projects: [scope.projectId], scope,
         commandId: 'workbench-command-7', state: 'settled' } });
     // Nothing else is pushed while nothing changes (the default heartbeat is 15 s).
     expect(await stream.quiet(300)).toBe(true);
@@ -145,39 +145,49 @@ describe('change stream notices', () => {
 describe('change stream Last-Event-ID resume', () => {
   it('replays a kept gap as one change, and resets a cursor that is too old, unknown or malformed', async () => {
     const feed = seededFeed(10, 3);
-    feed.committed({ cursor: c(11), aggregates: [{ aggregateType: 'Goal', projectId: 'p1' }] });
-    feed.committed({ cursor: c(12), aggregates: [{ aggregateType: 'SessionMessage', projectId: 'p2' }] });
-    feed.committed({ cursor: c(13), aggregates: [{ aggregateType: 'Task', projectId: 'p1' }] });
+    feed.committed('p1', { cursor: c(11), aggregates: [{ aggregateType: 'Goal', projectId: 'p1' }] });
+    feed.committed('p2', { cursor: c(12), aggregates: [{ aggregateType: 'SessionMessage', projectId: 'p2' }] });
+    feed.committed('p1', { cursor: c(13), aggregates: [{ aggregateType: 'Task', projectId: 'p1' }] });
     const { origin } = await start({ changes: feed });
-    const first = async (lastEventId: string) => {
+    // The opening frames: one per project that missed a notice, or the one ready/reset.
+    const first = async (lastEventId: string, count = 1) => {
       const stream = await open(origin, lastEventId);
-      const frame = await stream.nextEvent();
+      const frames = [];
+      for (let index = 0; index < count; index += 1) frames.push(await stream.nextEvent());
       stream.abort();
-      return frame;
+      return frames;
     };
-    expect(await first('c0000000013')).toEqual({ comment: false, event: 'ready', id: 'c0000000013', data: { cursor: 'c0000000013' } });
-    expect(await first('c0000000011')).toEqual({ comment: false, event: 'change', id: 'c0000000013',
-      data: { cursor: 'c0000000013', kinds: ['messages', 'tasks'], projects: ['p1', 'p2'] } });
-    expect(await first('c0000000010')).toEqual({ comment: false, event: 'change', id: 'c0000000013',
-      data: { cursor: 'c0000000013', kinds: ['goals', 'messages', 'tasks'], projects: ['p1', 'p2'] } });
-    // A fourth commit evicts c11 from the 3-notice window.
-    feed.committed({ cursor: c(14), aggregates: [{ aggregateType: 'Project', projectId: 'p3' }] });
-    expect(await first('c0000000010')).toEqual({ comment: false, event: 'reset', id: 'c0000000014',
-      data: { cursor: 'c0000000014', reason: 'cursor_too_old' } });
-    expect(await first('c0000000099')).toEqual({ comment: false, event: 'reset', id: 'c0000000014',
-      data: { cursor: 'c0000000014', reason: 'cursor_unknown' } });
-    expect(await first('not-a-cursor')).toEqual({ comment: false, event: 'reset', id: 'c0000000014',
-      data: { cursor: 'c0000000014', reason: 'cursor_invalid' } });
+    expect(await first('h0000000013')).toEqual([{ comment: false, event: 'ready', id: 'h0000000013', data: { cursor: 'h0000000013' } }]);
+    expect(await first('h0000000011', 2)).toEqual([
+      { comment: false, event: 'change', id: 'h0000000012',
+        data: { projectId: 'p2', cursor: 'c0000000012', kinds: ['messages'], projects: ['p2'] } },
+      { comment: false, event: 'change', id: 'h0000000013',
+        data: { projectId: 'p1', cursor: 'c0000000013', kinds: ['tasks'], projects: ['p1'] } }]);
+    expect(await first('h0000000010', 2)).toEqual([
+      { comment: false, event: 'change', id: 'h0000000012',
+        data: { projectId: 'p2', cursor: 'c0000000012', kinds: ['messages'], projects: ['p2'] } },
+      { comment: false, event: 'change', id: 'h0000000013',
+        data: { projectId: 'p1', cursor: 'c0000000013', kinds: ['goals', 'tasks'], projects: ['p1'] } }]);
+    // A fourth commit evicts h11 from the 3-notice window.
+    feed.committed('p3', { cursor: c(14), aggregates: [{ aggregateType: 'Project', projectId: 'p3' }] });
+    expect(await first('h0000000010')).toEqual([{ comment: false, event: 'reset', id: 'h0000000014',
+      data: { cursor: 'h0000000014', reason: 'cursor_too_old' } }]);
+    expect(await first('h0000000099')).toEqual([{ comment: false, event: 'reset', id: 'h0000000014',
+      data: { cursor: 'h0000000014', reason: 'cursor_unknown' } }]);
+    for (const value of ['not-a-cursor', 'c0000000013']) {
+      expect(await first(value)).toEqual([{ comment: false, event: 'reset', id: 'h0000000014',
+        data: { cursor: 'h0000000014', reason: 'cursor_invalid' } }]);
+    }
   });
 
   it('continues live after a resume', async () => {
     const feed = seededFeed(20);
-    feed.committed({ cursor: c(21), aggregates: [{ aggregateType: 'Session', projectId: 'p1' }] });
+    feed.committed('p1', { cursor: c(21), aggregates: [{ aggregateType: 'Session', projectId: 'p1' }] });
     const { origin } = await start({ changes: feed });
-    const stream = await open(origin, 'c0000000020');
-    expect((await stream.nextEvent())?.data).toEqual({ cursor: 'c0000000021', kinds: ['sessions'], projects: ['p1'] });
-    feed.committed({ cursor: c(22), aggregates: [{ aggregateType: 'Session', projectId: 'p1' }] });
-    expect((await stream.nextEvent())?.id).toBe('c0000000022');
+    const stream = await open(origin, 'h0000000020');
+    expect((await stream.nextEvent())?.data).toEqual({ projectId: 'p1', cursor: 'c0000000021', kinds: ['sessions'], projects: ['p1'] });
+    feed.committed('p1', { cursor: c(22), aggregates: [{ aggregateType: 'Session', projectId: 'p1' }] });
+    expect((await stream.nextEvent())?.id).toBe('h0000000022');
   });
 });
 
@@ -230,12 +240,13 @@ describe('change stream limits and cleanup', () => {
     await until(() => feed.subscribers() === 1);
     await new Promise(resolvePromise => setTimeout(resolvePromise, 200));
     expect(feed.subscribers()).toBe(1);
-    // Notices of ~40 KB each (200 long project ids) until the socket buffers are
+    // Notices of ~40 KB each (a notice names its one project: a long project id) until the socket buffers are
     // full and the response starts to queue.
     const aggregates = Array.from({ length: 200 }, (_, index) =>
       ({ aggregateType: 'Task', projectId: `backlog-project-${index}-${'x'.repeat(180)}` }));
+    const project = `backlog-project-${'x'.repeat(20_000)}`;
     for (let seq = 6; seq < 406 && feed.subscribers() > 0; seq += 1) {
-      feed.committed({ cursor: c(seq), aggregates });
+      feed.committed(project, { cursor: c(seq), aggregates });
       await new Promise(resolvePromise => setImmediate(resolvePromise));
     }
     await until(() => feed.subscribers() === 0, 5_000);
@@ -267,10 +278,10 @@ describe('bootstrap head', () => {
     const feed = seededFeed(41);
     const { origin } = await start({ changes: feed });
     expect(await readBootstrap(origin)).toEqual({
-      workspaces: [], review: null, execution: { queryProfiles: [], workflowScopes: [] }, changesHead: 'c0000000041',
+      workspaces: [], review: null, execution: { queryProfiles: [], workflowScopes: [] }, changesHead: 'h0000000041',
     });
-    feed.committed({ cursor: c(42), aggregates: [{ aggregateType: 'Goal', projectId: 'p1' }] });
-    expect((await readBootstrap(origin)).changesHead).toBe('c0000000042');
+    feed.committed('p1', { cursor: c(42), aggregates: [{ aggregateType: 'Goal', projectId: 'p1' }] });
+    expect((await readBootstrap(origin)).changesHead).toBe('h0000000042');
     expect((await readBootstrap((await start({ changes: seededFeed(null) })).origin)).changesHead).toBeNull();
     expect('changesHead' in await readBootstrap((await start()).origin)).toBe(false);
   });

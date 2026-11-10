@@ -20,8 +20,7 @@ import { canonicalJson, sha256Hex } from '../contracts/fingerprint.js';
 import type { UnknownCallReviewV1 } from '../contracts/unknown-call-review.js';
 import { reworkFenceOf } from '../core/work-graph/state/task-failure.js';
 import type { QueryRunRef } from '../contracts/query-job.js';
-import type { CommitCursor } from '../contracts/command-event.js';
-import { seqOfCommitCursor, type GoalRef } from '../contracts/ledger.js';
+import type { GoalRef } from '../contracts/ledger.js';
 import type { RuntimeExecutionPort } from '../core/agent-runtime/ports.js';
 import type { ArchitectureCatalogPort } from '../core/work-graph/architecture/catalog-contracts.js';
 import type { ArchitectureProposalService } from '../core/work-graph/architecture/proposal-service.js';
@@ -893,24 +892,28 @@ export function parseCoreRouteRequest(suffix: CoreRouteSuffix, raw: unknown): Pa
  * Task E change stream request. The stream (`GET changes`) is a transport
  * endpoint served by `server.ts` beside bootstrap, NOT a row of the frozen POST
  * route table above; its only request input is the optional SSE
- * `Last-Event-ID` header, parsed here. A value that is not a ledger commit
- * cursor is `invalid`, which the feed answers with an explicit `reset` instead
- * of guessing a position.
+ * `Last-Event-ID` header, parsed here. The stream's ids are the Host's own
+ * sequence numbers (`h` + 10 digits), shaped apart from a store cursor (`c…`),
+ * so a store cursor read back as a resume point, or a stream id handed to a
+ * store read, is refused. Anything else is `invalid`, which the feed answers
+ * with an explicit `reset` instead of guessing a position.
  */
 export type ChangeStreamResume =
   | { kind: 'fresh' }
-  | { kind: 'resume'; cursor: CommitCursor; seq: number }
+  | { kind: 'resume'; seq: number }
   | { kind: 'invalid' };
+
+/** The change stream's event id for one Host sequence number (from 1). */
+export function hostSequenceId(seq: number): string {
+  return `h${String(seq).padStart(10, '0')}`;
+}
 
 export function parseChangeStreamResume(header: string | string[] | undefined): ChangeStreamResume {
   if (header === undefined || header === '') return { kind: 'fresh' };
   if (typeof header !== 'string') return { kind: 'invalid' };
-  try {
-    const seq = seqOfCommitCursor(header as CommitCursor);
-    return { kind: 'resume', cursor: header as CommitCursor, seq };
-  } catch {
-    return { kind: 'invalid' };
-  }
+  const match = /^h(\d{10})$/.exec(header);
+  const seq = match === null ? 0 : Number.parseInt(match[1]!, 10);
+  return seq >= 1 ? { kind: 'resume', seq } : { kind: 'invalid' };
 }
 
 /**

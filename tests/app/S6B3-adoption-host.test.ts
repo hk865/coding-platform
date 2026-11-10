@@ -23,6 +23,7 @@ import {
   holdS6B3AdoptionGate, holdS6B3DraftAnswer, holdS6B3PreparedGoalAnswer, installS6B3SettingsSpy, openS6B3World,
   readReady, releaseS6B3DraftAnswer, settingsWithChecks, valueOf, type S6B3World,
 } from '../helpers/S6B3-fixture.js';
+import { hostReconcile } from '../helpers/KLS1B-host-store.js';
 
 // The stage gates need the barrier's two module mocks; each passes the real backend through unchanged.
 vi.mock('../../src/core/record-store/in-memory-record-store.js', async importOriginal => {
@@ -202,7 +203,7 @@ describe('row 35b: P11 storage, receipt replay and the file-level crash', () => 
     inRow('sqlite', 'host-35b-lease', [setupWith([CHECK])], async row => {
       const { body, ref } = submission(row, 0, 's6b3-host-35b-lease');
       await crashS6B3Host(row.world, undefined, 'keeps-lease');
-      expect(row.world.host.host.reconcile.lease).toBe('held_by_other');
+      expect(hostReconcile(row.world.host.host, row.scope.projectId).lease).toBe('held_by_other');
       expect(await adoptRoute(row, body))
         .toEqual({ status: 'rejected', code: 'busy', reason: 'this Host does not hold the instance lease' });
       expect(await owner(row, 'read', { operationRef: ref })).toEqual({ status: 'not_found' });

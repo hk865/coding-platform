@@ -72,6 +72,7 @@ import {
   ag2bWorkRuntime, ag2bWorkspaceBindings, assertInvariantsAt, hostCtx, readSqlite, SCENARIO_OPERATOR, seedThroughOwners,
   stepOfReceipt, type Driven, type HostScenario, type InvariantTarget, type Platform, type ScenarioBase,
 } from '../harness.js';
+import { hostReconcile, storeDirOf } from '../../helpers/KLS1B-host-store.js';
 
 // ---------------------------------------------------------------------------
 // Scripted replies, automation policies, §11.11 steps
@@ -362,7 +363,7 @@ export function turnStarts(database: string): Array<{ sessionId: string; runId: 
  * store. `release()` rolls back and closes the connection.
  */
 export function lockLedger(database: string): { release(): void } {
-  return lockStore(join(database, 'ledger.sqlite'));
+  return lockStore(join(storeDirOf(database), 'ledger.sqlite'));
 }
 
 /** The same write lock on the Kernel's own store: its next write fails after the Kernel's 1 s busy wait. */
@@ -381,7 +382,7 @@ function lockStore(path: string): { release(): void } {
 
 /** The type of the ledger's last event (its own read-only connection); null for an empty ledger. */
 export function lastEventType(database: string): string | null {
-  const ledger = new DatabaseSync(join(database, 'ledger.sqlite'), { readOnly: true });
+  const ledger = new DatabaseSync(join(storeDirOf(database), 'ledger.sqlite'), { readOnly: true });
   try {
     const row = ledger.prepare('SELECT event_json FROM events ORDER BY id DESC LIMIT 1').get() as { event_json: string } | undefined;
     return row === undefined ? null : (JSON.parse(row.event_json) as { eventType: string }).eventType;
@@ -486,7 +487,7 @@ Promise<PausedOnClosedHost> {
   let pauseIntentRef: ControlIntentSnapshotV1['ref'];
   let oldSession: TaskExecutionRecord['session'];
   try {
-    expect(first.host.reconcile).toMatchObject({ lease: 'owned', leaseRow: 'HL-01',
+    expect(hostReconcile(first.host, AG2B_SCOPE.projectId)).toMatchObject({ lease: 'owned', leaseRow: 'HL-01',
       report: { runs: [], queries: [], checks: [], controls: [], redriveGoals: [], problems: [] } });
     await seedAG2bWorkGraph(first);
     const steps = (await driveChecked(first, inv, selectWork('a2-restart-1'))).steps;
@@ -516,7 +517,7 @@ Promise<PausedOnClosedHost> {
   }
 
   // HL-06: the closed Host removed its own lock. A crashed Host leaves one naming an exited process.
-  const lockPath = join(database, HOST_INSTANCE_LOCK_FILE);
+  const lockPath = join(storeDirOf(database), HOST_INSTANCE_LOCK_FILE);
   expect(existsSync(lockPath)).toBe(false);
   const stale = await writeStaleLock(database);
   return { runRef, pauseIntentRef, oldSession, lockPath, crashedPid: stale.crashedPid };
@@ -704,7 +705,7 @@ export class PlanBoard {
   async routeResponse(suffix: string, body: unknown): Promise<Response> {
     if (this.routes === null) {
       const token = 'plan-board-route-token';
-      const server = createWorkbenchServer({ token, bindings: createPlatformCoreRouteBindings(this.platform), actor: { ...SCENARIO_OPERATOR },
+      const server = createWorkbenchServer({ token, bindings: () => createPlatformCoreRouteBindings(this.platform), actor: { ...SCENARIO_OPERATOR },
         bootstrap: () => ({ workspaces: [], review: null, execution: { queryProfiles: [], workflowScopes: [] } }),
         allowsScope: scope => scope.projectId === AG2B_SCOPE.projectId && scope.workspaceId === AG2B_SCOPE.workspaceId });
       boardServers.push(server);
@@ -738,7 +739,7 @@ export async function openWorkRoot(h: HostScenario, model: ScriptedModel = creat
   observer?: RecordCommitObserver, queryModel?: ScriptedModel, tools?: readonly string[],
   hostInstance?: HostInstanceFacts): Promise<Platform> {
   return await createTargetPlatform({
-    storage: { kind: 'sqlite', directory: h.database },
+    storage: { kind: 'sqlite', directory: storeDirOf(h.database) },
     workspace: ag2bWorkspaceBindings(h.root, { value: 1 }, permissionRevision(h.stepActor(), AG2B_SCOPE, ['.'])),
     now: () => AG2B_AT,
     kernelStores: { entries: [{ adapterId: 'ag2b-kernel', storeKey: 'ag2b-kernel-store', workspace: AG2B_SCOPE,

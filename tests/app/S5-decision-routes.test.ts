@@ -36,6 +36,7 @@ import {
   CANDIDATE_U1, GOAL_B, GOAL_REVISION, OPERATOR, REQUEST_Q1, T, WORKSPACE, WORKSPACE_REVISION, WORKSPACE_SCOPE,
   openS5DecisionFixture,
 } from '../helpers/S5-decision-fixture.js';
+import { storeDirOf } from '../helpers/KLS1B-host-store.js';
 
 const P = WORKSPACE_SCOPE.projectId;
 const SESSION = { projectId: P, sessionId: 'S' };
@@ -289,7 +290,7 @@ it('RT08 an unsupported-source queue returns capabilities, not a fake completion
   const caller = h.ctx();
   const scope = { projectId: caller.projectId, workspaceId: caller.workspaceId };
   const realBindings = createPlatformCoreRouteBindings(h.platform);
-  const before = s5StoreSnapshot(join(h.database, 'ledger.sqlite'));
+  const before = s5StoreSnapshot(join(storeDirOf(h.database), 'ledger.sqlite'));
   // Wiring 2 (§4.4.8) registered undelivered_reply; second_expiry still has no production notice source.
   const result = await dispatchCoreRoute(realBindings, 'decisions/queue', caller,
     parseCoreRouteRequest('decisions/queue', { scope, input: { workspace: scope,
@@ -297,6 +298,6 @@ it('RT08 an unsupported-source queue returns capabilities, not a fake completion
   expect(result).toMatchObject({ status: 'ready', value: { countsComplete: false,
     capabilities: expect.arrayContaining([{ source: 'second_expiry', availability: 'not_available' },
       { source: 'undelivered_reply', availability: 'available' }]) } });
-  expect(s5StoreSnapshot(join(h.database, 'ledger.sqlite'))).toEqual(before);
+  expect(s5StoreSnapshot(join(storeDirOf(h.database), 'ledger.sqlite'))).toEqual(before);
   expect(h.modelCalls(), 'the actual scripted provider received no request').toBe(0);
 });

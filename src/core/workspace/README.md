@@ -14,7 +14,7 @@
 - `ports.ts` — 本层请求/结果/端口 DTO，`deepFreeze` 与 `validateSourceQuery`；第二档引用核对的六个类型（`ReferencePriority`、`ReferenceQuestionV1`、`ReferenceAnswerV1`、`ReferenceCheckRequestV1`、`ReferenceCheckResultV1`、`ReferenceAnalyzerPort`，slice-8E2-SPEC §2.0）。未提交读的 `UncommittedFileV1`/`UncommittedFilesV1` 的正本在 `contracts/workspace-files.ts`，这里转出。
 - `workspace-tools.ts` — 装配唯一公开工具面 `WorkspaceToolsPort`、Host 限额校验与 continuation 读取；句柄另有 `readWorkspaceFiles`（一次访问读多个工作树文件）和 `listWorkspaceInputs`（列当前项目输入路径），都不在 `WorkspaceToolsPort` 上。
 - `capture.ts` — `CaptureRegistry`：捕获/观测、查询、导出、核验、释放、架构源、文件图、读/比较、一次访问读多个文件（`readFiles`）、列项目输入（`listInputs`）、关闭。文件图的边一对 `(from,to)` 一行，`count` 是这一对的引用处数：TS/JS 的每条 `scan.edges`（一条已解析引用）算 1，C/C++、Python 加 provider 给的 `count`；自环丢掉。
-- `denied-prefixes.ts` — `WORKSPACE_DENIED_PREFIXES`：拒绝前缀的唯一来源。
+- `denied-prefixes.ts` — `WORKSPACE_DENIED_PREFIXES`：拒绝前缀的唯一来源；`PROJECT_STORE_PREFIX`/`withinProjectStore`：工作区里的项目库目录不是工作区内容的唯一规则。
 - `git-read.ts` — 固定 argv/环境、只读的 Git 文件/树读取与 commit↔commit、git↔工作树比较。
 - `workspace-read.ts` — 当前或冻结文件的精确读取与同范围内容比较；`readWorkingTreeFiles` 是多个工作树文件的同一套前置检查和错误码。
 - `duplicate-candidates.ts` — 比较后侧的重复候选：顶层声明与字符串字面量经 `readTopLevelDeclarations`/`readStringLiterals` 两读，按新位置、上限与字节预算出报告。
@@ -51,7 +51,8 @@
 | `WorkspaceToolsPort` | `src/core/workspace/ports.ts:226` | 本模块对外的窄端口与结果类型 | 消费方只注入端口，不拿 registry/sandbox |
 | `WorkspaceToolsPort.readUncommittedFiles` | `src/core/workspace/ports.ts:232` | `files/uncommitted` 的 owner | Host 路由和界面 |
 | `UNCOMMITTED_FILES_MAX_PATHS` | `src/core/workspace/ports.ts:182` | 一次未提交读最多几条路径（100） | 校验请求与界面截断路径时 |
-| `WORKSPACE_DENIED_PREFIXES` | `src/core/workspace/denied-prefixes.ts:31` | 拒绝前缀的唯一清单（内核默认 + 平台追加） | 命令检查、取材、运行时读源码需要同一路径边界时 |
+| `WORKSPACE_DENIED_PREFIXES` | `src/core/workspace/denied-prefixes.ts:43` | 拒绝前缀的唯一清单（内核默认 + 平台追加；含放项目库的 `.workbench/local`） | 命令检查、取材、运行时读源码需要同一路径边界时 |
+| `PROJECT_STORE_PREFIX` / `withinProjectStore` | `src/core/workspace/denied-prefixes.ts:6` / `:9` | 非 git 工作区里放项目库的 `.workbench/local`，和判断一条工作区相对路径在不在它里面（KLS-1b X1）；候选摘要（`candidateWorkspaceIncludesPath` 和遍历）和 Kernel 工作区快照（`observed-model-run.ts` 把它加进 Kernel 的拒绝前缀）都经它排除 | 任何枚举、摘要或快照工作区的地方；不要另写 `.workbench/local` 字面量 |
 | `isProtectedWorkspacePath` | `src/core/workspace/continuation-diff-reads.ts:58` | 规范化 workspace 相对路径后判断是否落在 Host 拒绝前缀内 | AgentRuntime 过滤受保护路径；先 `normalizeWorkspaceRelativePath`，不要另写前缀匹配 |
 | `CaptureRegistry` | `src/core/workspace/capture.ts:124` | 有界保留的捕获、游标、容量、失效与导出 | 只要实现捕获/查询语义时；不直接实例化第二份 |
 | `createWorkspaceGitReadAccess` | `src/core/workspace/git-read.ts:399` | 绑定到已授权 root 的只读 Git 读取能力 | 已有 `WorkspaceReadAccess` 时要 commit/树读取 |
@@ -68,7 +69,7 @@
 | `readContinuationBaselineBlob` | `src/core/workspace/continuation-diff-reads.ts:89` | 用 `git cat-file blob` 读 diff 旧侧，失败返回 typed unavailable；给了 signal 时每次读后查取消，取消了就抛 | continuation 文件 diff 的旧侧 |
 | `readContinuationCurrentFile` | `src/core/workspace/continuation-diff-reads.ts:130` | 读 diff 新侧，拒绝 protected prefix 与符号链接逃逸；文件不存在时原因是 missing；给了 `allowsRead` 时，看路径之前先核真实上层目录加文件名，读字节之前再核真实路径；signal 同上 | continuation 文件 diff 的新侧 |
 | `VerificationWorkspaceReader` | `src/core/workspace/verification-workspace-reader.ts:12` | 验证轮的当前源码/基准比较/requeue digest 来源 | 装配 `VerificationRoundSourcePort` 时 |
-| `CandidateWorkspaceReader` | `src/core/workspace/candidate-workspace-reader.ts:64` | candidate 范围的整树快照与 git entry | 需要 candidate 级摘要或验证基准时 |
+| `CandidateWorkspaceReader` | `src/core/workspace/candidate-workspace-reader.ts:68` | candidate 范围的整树快照与 git entry | 需要 candidate 级摘要或验证基准时 |
 | `SourceIndex` | `src/core/workspace/source-index.ts:29` | 显式文件集的只读 TS 语义查询与有界 excerpt | 探索工具要符号/定义/引用时；不是全仓索引 |
 | `TypeScriptSourceAnalyzer` | `src/core/workspace/typescript-source-query.ts:145` | 对一份冻结快照做同步 TS 分析 | 捕获后重复分析且不能再有 I/O 时 |
 | `readTopLevelDeclarations` | `src/core/workspace/typescript-source-query.ts:332` | 只列顶层声明，不走进嵌套节点 | 需要在比较材料里按顶层名字找重复时 |

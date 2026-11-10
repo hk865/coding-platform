@@ -13,7 +13,8 @@
  * persisted store, never by a timed loop.
  */
 import { afterAll, beforeAll, expect, it } from 'vitest';
-import { rename } from 'node:fs/promises';
+import { chmod } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { CoreScope } from '../../src/app/core-http-types.js';
 import {
   adoptInitial, cleanupTemporary, makeWorkspace, observationPoint, observationState, settingsPost,
@@ -65,7 +66,8 @@ it('a settings Host restart with a satisfied request starts no capture (sqlite)'
 it('a settings Host restart with a pending request captures exactly once (sqlite)', async () => {
   const settingsDirectory = await temporaryDirectory('s8a-l8-settings-pending-');
   const root = await makeWorkspace();
-  const away = `${root}-away`;
+  // X3: the source directory becomes unreadable; the root (and the project store in it) stays where it is.
+  const source = join(root, 'src');
   let scope!: CoreScope;
   let database!: string;
   let firstCaptureId!: string;
@@ -80,7 +82,7 @@ it('a settings Host restart with a pending request captures exactly once (sqlite
   } finally { await first.host.close(); }
 
   // A second Host restores the same registration from the same ledger and
-  // settings file. The root is moved away only after the restore, so the real
+  // settings file. The source directory is made unreadable only after the restore, so the real
   // adoption request's automatic capture is the one that fails.
   const second = await startHost({ backend: 'sqlite', workspaces: [], settingsDirectory, database });
   try {
@@ -88,14 +90,14 @@ it('a settings Host restart with a pending request captures exactly once (sqlite
     expect(restored.status).toBe('ready');
     if (restored.status !== 'ready') return;
     expect(restored.value.autoCapture).toMatchObject({ requestSeq: 1, pending: false });
-    await rename(root, away);
+    await chmod(source, 0o000);
     expect(await adoptInitial(second, scope, 'l8-restart-pending-baseline')).toMatchObject({ status: 'committed' });
     const failed = await waitState(second.base, second.token, scope,
       value => value.autoCapture?.requestSeq === 2 && value.autoCapture.status === 'failed' && value.autoCapture.pending === true);
     // The failed request kept the restarted observation; it was not replaced.
     expect(failed.current?.captureRef.captureId).toBe(firstCaptureId);
   } finally {
-    await rename(away, root).catch(() => undefined);
+    await chmod(source, 0o755).catch(() => undefined);
     await second.host.close();
   }
 

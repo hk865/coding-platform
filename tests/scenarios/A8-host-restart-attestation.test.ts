@@ -23,7 +23,7 @@ import { createQueryExecution } from '../../src/core/work-graph/queries/query-ex
 import { createRunReconcileService } from '../../src/core/work-graph/tasks/run-reconcile-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import {
-  AG2B_AT, claimBusyQuery, createAG2bSession, seedAG2bWorkGraph, startAG2bHost, startBusyQuery,
+  AG2B_AT, AG2B_SCOPE, claimBusyQuery, createAG2bSession, seedAG2bWorkGraph, startAG2bHost, startBusyQuery,
 } from '../helpers/AG2b-collaboration-fixture.js';
 import {
   deferred, moveKernelAside, publicDirectory, readExecution, readQuery, tempDir, writeStaleLock,
@@ -32,6 +32,7 @@ import { platformRecordSchemas } from '../state/invariants.js';
 import { assertInvariantsAt, cleanupScenarios, hostCtx, type InvariantTarget } from './harness.js';
 import { pausedRunOnClosedHostChecked } from './support/common.js';
 import { ledgerEvents } from './support/restart.js';
+import { hostReconcile, storeDirOf } from '../helpers/KLS1B-host-store.js';
 
 afterEach(cleanupScenarios);
 
@@ -43,7 +44,7 @@ function ownerBackend(database: string): SqliteRecordBackend {
   // K3: the RUN-22 owner writes the UnknownCallReview record; the shared
   // platform set already registers its schemas (I-23), so add nothing twice.
   return createSqliteRecordBackend({ schemas: platformRecordSchemas(),
-    path: join(database, 'ledger.sqlite') });
+    path: join(storeDirOf(database), 'ledger.sqlite') });
 }
 
 function ownerIds(prefix: string): () => string {
@@ -61,7 +62,7 @@ it('RUN-22 (LA-8): the owner answers a same-identity attestation retry with the 
   let unknown: TaskExecutionRecord | undefined;
   const restarted = await startAG2bHost(publicDir, { root, database });
   try {
-    expect(restarted.host.reconcile).toMatchObject({ report: { runs: [{ ref: JSON.stringify(runRef), row: 'W-14',
+    expect(hostReconcile(restarted.host, AG2B_SCOPE.projectId)).toMatchObject({ report: { runs: [{ ref: JSON.stringify(runRef), row: 'W-14',
       status: 'reconciled', reason: 'unknown' }] } });
     unknown = await readExecution(restarted, runRef);
   } finally {
@@ -70,7 +71,7 @@ it('RUN-22 (LA-8): the owner answers a same-identity attestation retry with the 
   expect(unknown.run).toMatchObject({ status: 'ended', outcome: 'outcome_unknown' });
 
   const backend = ownerBackend(database);
-  const bodies = createSqliteRawArtifactStore(join(database, 'artifacts.sqlite'));
+  const bodies = createSqliteRawArtifactStore(join(storeDirOf(database), 'artifacts.sqlite'));
   try {
     const records = backend.records;
     const reads = createRunStateReader({ records });
@@ -132,7 +133,7 @@ it('QRR-06 (LA-8): the owner answers a same-identity QueryRun attestation retry 
     let unknown: QueryJobRecord | undefined;
     const restarted = await startAG2bHost(publicDir, { root, database });
     try {
-      expect(restarted.host.reconcile).toMatchObject({ report: { queries: [{ ref: JSON.stringify(refs.queryRunRef), row: 'Q-05',
+      expect(hostReconcile(restarted.host, AG2B_SCOPE.projectId)).toMatchObject({ report: { queries: [{ ref: JSON.stringify(refs.queryRunRef), row: 'Q-05',
         status: 'reconciled' }] } });
       unknown = await readQuery(restarted, refs.queryJobRef);
     } finally {
@@ -141,7 +142,7 @@ it('QRR-06 (LA-8): the owner answers a same-identity QueryRun attestation retry 
     expect(unknown.run.run.executionState).toMatchObject({ phase: 'unknown' });
 
     const backend = ownerBackend(database);
-    const bodies = createSqliteRawArtifactStore(join(database, 'artifacts.sqlite'));
+    const bodies = createSqliteRawArtifactStore(join(storeDirOf(database), 'artifacts.sqlite'));
     try {
       const records = backend.records;
       const eventId = ownerIds('a8-attest-owner-query-event');

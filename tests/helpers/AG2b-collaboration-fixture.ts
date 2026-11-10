@@ -57,6 +57,7 @@ import {
   type WorkbenchActor,
 } from '../../src/app/core-http-types.js';
 import { PLATFORM_TOKEN_META_NAME } from './host-page.js';
+import { hostReconcile, rememberHostStore } from './KLS1B-host-store.js';
 
 export const AG2B_AT = '2026-09-28T00:00:00.000Z';
 export const AG2B_SCOPE: CoreScope = { projectId: 'ag2b-collab-project', workspaceId: 'ag2b-collab-workspace' };
@@ -163,6 +164,9 @@ export type AG2bOverrides = {
   actor?: WorkbenchActor;
   /** A.2 step 5.6: start without the trusted Kernel Store entry (the mapped adapter is then unregistered, `host_config`). */
   noKernelStores?: boolean;
+  /** KLS-1b row 03: a second command-line workspace of the same project, after the AG2b one, with its own work and
+   * query bindings and query profile (the AG2b ones over its scope). The scenario registers no Workspace record for it. */
+  extraWorkspace?: { scope: CoreScope; root: string };
 };
 
 /** The isolated project's source files. Only missing files are written, so a Host restarted on the same
@@ -217,6 +221,8 @@ export type CliHostOptions = {
   workflow: WorkflowHostConfiguration;
   kernelStore?: { adapterId: string; storeKey: string };
   secret: { variable: string; value: string };
+  /** Further command-line workspaces after the main one (same read prefixes); their bindings come in `bindings`. */
+  extraWorkspaces?: ReadonlyArray<{ scope: CoreScope; name: string; root: string }>;
   /** Which model name routes to the query scripted client (the default mirrors the AG2b fixture). */
   queryModel?: (model: string) => boolean;
   replies?: readonly ScriptedReply[];
@@ -261,7 +267,9 @@ export async function startCliHost(options: CliHostOptions): Promise<AG2bHost> {
     sqliteDirectory: database,
     actor: options.actor,
     workspaces: [{ scope: options.scope, name: options.workspaceName, root, workspaceRevision: 1,
-      readPrefixes: options.readPrefixes }],
+      readPrefixes: options.readPrefixes },
+    ...(options.extraWorkspaces ?? []).map(extra => ({ scope: extra.scope, name: extra.name, root: extra.root,
+      workspaceRevision: 1, readPrefixes: options.readPrefixes }))],
     architectureSource: { provider: 'typescript', configPath: 'tsconfig.json' },
     ...(options.kernelStore === undefined ? {} : { kernelStores: { entries: [{ adapterId: options.kernelStore.adapterId,
       storeKey: options.kernelStore.storeKey, workspace: options.scope, databasePath: join(database, 'kernel.sqlite') }] } }),
@@ -269,6 +277,8 @@ export async function startCliHost(options: CliHostOptions): Promise<AG2bHost> {
     ...(options.checks === undefined ? {} : { checks: options.checks }),
     workflow: options.workflow,
   }));
+  // KLS-1b: the Host keeps this project's store by its location rule; the old readers of `database` follow it.
+  await rememberHostStore(database, options.scope.projectId, root);
   const loaded = await loadWorkbenchCliConfig(configPath);
   const host = await createLocalWorkbenchHost({
     ...loaded,
@@ -342,6 +352,16 @@ export async function startAG2bHost(publicDir: string, overrides: AG2bOverrides 
       runtimeBudget: AG2B_RUNTIME_BUDGET, budget: AG2B_QUERY_BUDGET, consumerId: AG2B_CONSUMER_ID,
     });
   }
+  const extra = overrides.extraWorkspace;
+  if (extra !== undefined) {
+    for (const binding of bindings.filter(entry => entry.scope === AG2B_SCOPE)) {
+      bindings.push({ ...binding, id: `${binding.id}-${extra.scope.workspaceId}`, scope: extra.scope });
+    }
+    for (const profile of queryProfiles.filter(entry => entry.scope === AG2B_SCOPE)) {
+      queryProfiles.push({ ...profile, id: `${profile.id}-${extra.scope.workspaceId}`, scope: extra.scope,
+        runtimeBindingId: `${profile.runtimeBindingId}-${extra.scope.workspaceId}` });
+    }
+  }
   const workflow: WorkflowHostConfiguration = {
     consumerId: AG2B_CONSUMER_ID,
     bindings: [{ workspace: AG2B_SCOPE, sessionRole: AG2B_WORK_ROLE, roleBinding: AG2B_WORK_ROLE_BINDING,
@@ -370,6 +390,7 @@ export async function startAG2bHost(publicDir: string, overrides: AG2bOverrides 
     ...(overrides.queryReplies === undefined ? {} : { queryReplies: overrides.queryReplies }),
     ...(overrides.queryBeforeReply === undefined ? {} : { queryBeforeReply: overrides.queryBeforeReply }),
     ...(overrides.hostOptions === undefined ? {} : { hostOptions: overrides.hostOptions }),
+    ...(extra === undefined ? {} : { extraWorkspaces: [{ scope: extra.scope, name: 'AG2b second workspace', root: extra.root }] }),
   });
 }
 
@@ -449,7 +470,7 @@ export async function seedAG2bWorkGraph(host: AG2bHost, workIds: readonly string
  * recorded. A Host without the lease never captures, so nothing is awaited there.
  */
 export async function settleAutoCapture(host: AG2bHost): Promise<void> {
-  if (host.host.reconcile.lease !== 'owned') return;
+  if (hostReconcile(host.host, AG2B_SCOPE.projectId).lease !== 'owned') return;
   const deadline = Date.now() + 30_000;
   for (;;) {
     const state = await (await corePost(host.base, 'architecture/observation-state', host.token,
@@ -471,7 +492,7 @@ export async function settleAutoCapture(host: AG2bHost): Promise<void> {
  */
 export async function settleStartLines(host: Pick<AG2bHost, 'host' | 'base' | 'token'>,
   scope: CoreScope = AG2B_SCOPE): Promise<void> {
-  if (host.host.reconcile.lease !== 'owned') return;
+  if (hostReconcile(host.host, scope.projectId).lease !== 'owned') return;
   const workspace = { projectId: scope.projectId, workspaceId: scope.workspaceId };
   await startLinesEnded(async () => await (await corePost(host.base, 'role-lines/operations', host.token,
     plain(scope, { workspace }))).json() as unknown);

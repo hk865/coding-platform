@@ -1127,9 +1127,9 @@ export type BootstrapResponse = {
   workspaces: BootstrapWorkspace[];
   review: BootstrapReviewMaterial | null;
   execution: BootstrapExecution;
-  /** Task E: the change-feed head (commit cursor; null for an empty or unknown
-   * ledger) when the Host answered `GET bootstrap`. Absent when the Host
-   * publishes no change stream, and in the settings `workspaces/open` reply. */
+  /** Task E: the change-feed head (the Host sequence id `h…`; null before the
+   * first commit notice) when the Host answered `GET bootstrap`. Absent when the
+   * Host publishes no change stream, and in the settings `workspaces/open` reply. */
   changesHead?: string | null;
 };
 
@@ -1138,11 +1138,12 @@ export type BootstrapResponse = {
 //
 // The stream carries CHANGE NOTIFICATIONS only, never domain data: the page
 // re-reads the affected resources through the ordinary POST routes above. A
-// notice derived from a RecordStore commit carries that commit's cursor as its
-// SSE `id`, so `Last-Event-ID` resumes from the ledger order. Notices of the two
-// Host in-memory handle owners (collaboration driver, command handles) have no
-// commit cursor and therefore no `id`; a page re-reads its live handles after
-// any reconnect instead.
+// notice derived from a RecordStore commit carries the Host's next sequence
+// number as its SSE `id`, so `Last-Event-ID` resumes from the Host's order; its
+// data names the project and that project store's own commit cursor. Notices
+// of the two Host in-memory handle owners (collaboration driver, command
+// handles) have no `id`; a page re-reads its live handles after any reconnect
+// instead.
 // ---------------------------------------------------------------------------
 
 /** Coarse resource families. `driver`/`command` are the in-memory Host handles;
@@ -1155,11 +1156,13 @@ export type ChangeKind =
  * missed notices cannot be replayed and everything shown must be re-read. */
 export type ChangeEventName = 'ready' | 'change' | 'reset';
 
-/** `change` data. `cursor` is the commit cursor for a commit notice and, for a
- * driver/command notice, only the current head for information. `projects` are
- * the touched project ids; workspace ids are not part of most aggregate refs,
- * so a page matches commit notices by project. */
+/** `change` data. `projectId` is the one project the notice belongs to;
+ * `cursor` is that project store's commit cursor for a commit notice and, for a
+ * driver/command notice, only that store's current head for information.
+ * `projects` is `[projectId]`; workspace ids are not part of most aggregate
+ * refs, so a page matches commit notices by project. */
 export type ChangeNotice = {
+  projectId: string;
   cursor: string | null;
   kinds: ChangeKind[];
   projects: string[];
@@ -1173,7 +1176,8 @@ export type ChangeNotice = {
   state?: WorkbenchCommandState;
 };
 
-/** `ready` data: the head cursor at connect time (null for an empty ledger). */
+/** `ready` data: the Host head (`h…`) at connect time, the same value as `changesHead` (null before the first
+ * commit notice). */
 export type ChangeReady = { cursor: string | null };
 
 export type ChangeResetReason = 'cursor_invalid' | 'cursor_unknown' | 'cursor_too_old' | 'head_unknown';

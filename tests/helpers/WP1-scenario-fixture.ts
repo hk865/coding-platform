@@ -72,6 +72,7 @@ import { execution, NO_REDRIVE, preparedOf, readCall, requeueBodyOf, selectedRun
 import { AG2B_GOAL_REF, AG2B_SCOPE, AG2B_WORK_TASK_ID, plain } from './AG2b-collaboration-fixture.js';
 import { readControl, submitControl } from './A2-restart-fixture.js';
 import { installS1ScenarioClock, ledgerCounts, ready } from './S1-runtime-scenario-fixture.js';
+import { storeDirOf } from './KLS1B-host-store.js';
 
 type ScenarioStepValue = Extract<WorkflowAdvanceResult, { status: 'ready' }>['value'];
 type ScenarioDrive = {
@@ -222,7 +223,7 @@ async function openHeldWork(id: string): Promise<HeldWork> {
 
 /** Read-only SQLite SELECT, as support/restart.ts; decode through the real codec. */
 function archiveRequests(h: HostScenario, P: SessionRef): ArchiveRequestObservation[] {
-  return readSqlite<ArchiveRequestObservation[]>(join(h.database, 'ledger.sqlite'), db => {
+  return readSqlite<ArchiveRequestObservation[]>(join(storeDirOf(h.database), 'ledger.sqlite'), db => {
     const found: ArchiveRequestObservation[] = [];
     for (const row of db.prepare('SELECT id, event_json FROM events ORDER BY id').all()) {
       if (typeof row.event_json !== 'string') throw new Error('event_json must be text');
@@ -247,7 +248,7 @@ async function observations(work: HeldWork): Promise<ScenarioObservations> {
   const { h, P, runRef, setup, running } = work;
   const platform = await h.direct();
   const ctx = hostCtx(h.stepActor());
-  const readWorld = () => readInvariantWorld(invariantStoreOf(h.database), AG2B_SCOPE.projectId);
+  const readWorld = () => readInvariantWorld(invariantStoreOf(storeDirOf(h.database)), AG2B_SCOPE.projectId);
   const readAnomalies = async (): Promise<SessionAnomalyViewV1[]> => {
     const all: SessionAnomalyViewV1[] = [];
     let cursor: string | null = null;

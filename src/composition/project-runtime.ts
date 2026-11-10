@@ -164,3 +164,29 @@ function ensureLocalIgnore(root: string): void {
   if (current.split(/\r?\n/).includes('local/')) return;
   writeFileSync(file, `${current}${current !== '' && !current.endsWith('\n') ? '\n' : ''}local/\n`);
 }
+
+/**
+ * The one read across projects: each project's records read once, in the order given, and each result handed back as
+ * it is. Nothing is merged, sorted or compared, and two projects' cursors never meet (each store numbers its own
+ * events). A project that is not open, or whose read throws, is `unavailable`; nothing is retried or written.
+ */
+export async function readAcrossProjects<T>(
+  registry: ProjectRuntimeRegistry,
+  projectIds: readonly string[],
+  read: (records: GoalRecordTransactionPort) => Promise<T>,
+): Promise<Array<{ projectId: string; result: StoreResult<T> }>> {
+  const out: Array<{ projectId: string; result: StoreResult<T> }> = [];
+  for (const projectId of projectIds) {
+    const runtime = registry.get(projectId);
+    if (runtime === null) {
+      out.push({ projectId, result: rejected('unavailable', `the project ${projectId} is not open`) });
+      continue;
+    }
+    try {
+      out.push({ projectId, result: { status: 'ready', value: await read(runtime.records) } });
+    } catch (error) {
+      out.push({ projectId, result: rejected('unavailable', `the project ${projectId} could not be read: ${messageOf(error)}`) });
+    }
+  }
+  return out;
+}

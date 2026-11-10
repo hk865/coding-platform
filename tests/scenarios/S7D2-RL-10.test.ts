@@ -189,7 +189,11 @@ describe('RL-10 SQLite only: Host restart', () => {
     let wakes = 0;
     const real = startupReconcileModule.runStartupReconcile;
     const reconcile = vi.spyOn(startupReconcileModule, 'runStartupReconcile').mockImplementation(deps =>
-      real({ ...deps, wakeRounds: async scope => { wakes += 1; await deps.wakeRounds?.(scope); } }));
+      real({ ...deps, forScope: scope => {
+        const scoped = deps.forScope(scope);
+        return scoped === null ? null
+          : { ...scoped, wakeRounds: async target => { wakes += 1; await scoped.wakeRounds?.(target); } };
+      } }));
     try {
       const submitted = await world.submit({ commandId: 's7d2-off-round', goalId: world.goals.first.goalId,
         text: 'S7D2 round', recipient: secretary });

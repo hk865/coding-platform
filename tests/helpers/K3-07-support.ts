@@ -13,7 +13,7 @@
  *   grant also needs the whole-workspace `shellWorkspaceAccess` preparation
  *   requires (execution-preparation.ts §shell);
  * - an `AG2bHost`-shaped handle over HTTP for the existing seed/advance helpers.
- *   Those helpers only read `base`, `token` and `host.reconcile.lease`, so this
+ *   Those helpers only read `base`, `token` and `host.reconcileOf(...).lease`, so this
  *   is a route handle, not a second Host: no record is read from the database;
  * - spawn/ready-line plumbing and the signal that the command has started.
  *
@@ -106,12 +106,12 @@ export function k307HostConfig(options: { database: string; root: string }): Rec
 /**
  * A route handle for the seed/advance helpers in `AG2b-collaboration-fixture.ts`,
  * `A2-restart-fixture.ts` and the K3 tests. They call `corePost(host.base, …,
- * host.token, …)` and, only in `settleAutoCapture`, read `host.host.reconcile.lease`.
+ * host.token, …)` and, only in `settleAutoCapture`, read `host.host.reconcileOf(...).lease`.
  * The child Host always owns its fresh lease, so `'owned'` is the true value; the
  * cast is the price of reusing those helpers without starting a second Host.
  */
 export function k307RemoteHost(base: string, token: string): AG2bHost {
-  return { base, token, host: { reconcile: { lease: 'owned' } } } as unknown as AG2bHost;
+  return { base, token, host: { reconcileOf: () => ({ lease: 'owned' }) } } as unknown as AG2bHost;
 }
 
 export type K307ResourceCaps = { status: string; reason?: string };

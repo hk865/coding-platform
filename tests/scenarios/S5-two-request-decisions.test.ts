@@ -29,6 +29,7 @@ import {
   readRequestCandidate, recordDecisionApplication, s5AnnotatedObject, s5Annotation, s5CandidateKey, s5CommitReceipt,
   s5GoalPin, s5PlanAcceptances, s5StoreSnapshot, seedTwoRequestWorld,
 } from './support/S5-decisions.js';
+import { storeDirOf } from '../helpers/KLS1B-host-store.js';
 
 afterEach(async () => {
   await cleanupScenarios();
@@ -96,23 +97,23 @@ it('SC01 two root requests: Q2 candidate@1 until replaced, the same card key, a 
   const paused = await controlGoal(world.platform, world.ctx, { goalRef: S5_GOAL_A, control: 'pause', requestId: 's5-pause' });
   expect(paused).toMatchObject({ status: 'committed' });
   const atPause = h.counts();
-  const storeAtPause = s5StoreSnapshot(join(h.database, 'ledger.sqlite'));
+  const storeAtPause = s5StoreSnapshot(join(storeDirOf(h.database), 'ledger.sqlite'));
   const pending = await queryDecisionQueue(world.platform, world.ctx, { goalRef: S5_GOAL_A, sections: ['answered_pending_application'] });
   if (pending.status !== 'ready') throw new Error(`the pending queue must be readable: ${JSON.stringify(pending)}`);
   expect(pending.value.counts).toMatchObject({ waitingAnswer: 0, answeredPendingApplication: 1 });
   expect(pending.value.answeredPendingApplication).toMatchObject([{ cardKey, answerMessageRef: answer.ref }]);
   expect(h.counts(), 'a paused Goal changes nothing behind the answer').toEqual(atPause);
-  expect(s5StoreSnapshot(join(h.database, 'ledger.sqlite'))).toEqual(storeAtPause);
+  expect(s5StoreSnapshot(join(storeDirOf(h.database), 'ledger.sqlite'))).toEqual(storeAtPause);
 
   // Continue.
   const resumed = await controlGoal(world.platform, world.ctx, { goalRef: S5_GOAL_A, control: 'resume', requestId: 's5-resume' });
   expect(resumed).toMatchObject({ status: 'committed' });
 
   // Adopting the unchanged stale U2 must fail (PC07 / S5-PLAN-03).
-  const beforeStale = s5StoreSnapshot(join(h.database, 'ledger.sqlite'));
+  const beforeStale = s5StoreSnapshot(join(storeDirOf(h.database), 'ledger.sqlite'));
   const stale = await applyCandidate(world.platform, world.ctx, world.candidates.U2, { requestId: 's5-apply-q2-stale' });
   expect(stale).toMatchObject({ status: 'rejected', code: 'revision_conflict' });
-  expect(s5StoreSnapshot(join(h.database, 'ledger.sqlite'))).toEqual(beforeStale);
+  expect(s5StoreSnapshot(join(storeDirOf(h.database), 'ledger.sqlite'))).toEqual(beforeStale);
   const original = await world.platform.plans.readPlanProposal(world.ctx, world.candidates.U2.ref);
   expect(original).toMatchObject({ status: 'ready', value: { ref: world.candidates.U2.ref, revision: 1, status: 'candidate' } });
 

@@ -78,6 +78,7 @@ import type {
   SettingsResponse,
   SettingsRoute,
   SettingsRoutes,
+  SettingsStoreLocation,
   PromptPackCreateV1,
   PromptPackListV1,
   PromptTemplateReadV1,
@@ -203,6 +204,8 @@ export type HostSettingsWorkspaceFacts = {
   modelId: string | null;
   writeAllowed: boolean;
   commandsAllowed: boolean;
+  /** Where the workspace's project store lives (U8); null for a memory store or a project that is not open. */
+  storeLocation: SettingsStoreLocation | null;
 };
 
 /** Host-owned result of opening (or finding) one directory. */
@@ -286,15 +289,14 @@ export type HostSettingsConfig = {
   /** The real `<settings directory>/prompts` the Host created at start-up; the
    * editing routes read and write exactly this tree. */
   promptsRoot?: string;
-  /** The Host's own start-up directory check for a restored workspace root. It
-   * throws a configuration error naming both paths, so a restored root that
-   * covers the prompt directory never reaches the restore loop. */
-  assertWorkspaceRoot?: (root: string) => Promise<void>;
   models?: HostSettingsModelDefinition[];
   /** Trusted startup selection projected from the Host runtime configuration.
    * Used only when no private file exists yet; an explicit user selection later
    * overwrites it. */
   seedSelection?: Readonly<Record<string, string | null>>;
+  /** V12: start-up workspaces to add to the project list after the restore, in one write; an entry already listed is
+   *  skipped. The Host passes only those whose project opened and has its Project record. */
+  declareWorkspaces?: readonly PersistedWorkspaceRef[];
   provider?: WorkbenchRuntimeProviderDependencies;
   now?: () => string;
 };
@@ -390,6 +392,8 @@ type PersistedWorkspaceV1 = {
   /** The monotonic checks save counter; absent in old files and read as 0. */
   checksRevision?: number;
 };
+/** One listed workspace as the project list holds it: the Host's start-up manifest. */
+export type PersistedWorkspaceRef = Pick<PersistedWorkspaceV1, 'scope' | 'name' | 'root' | 'writeAllowed' | 'commandsAllowed'>;
 /** The saved-state read's two real outcomes: a saved entry or none at all. */
 type SavedChecksState = { status: 'ready'; value: StoredChecksStateV1 } | { status: 'not_found' };
 type PersistedSettingsV1 = {
@@ -636,6 +640,24 @@ function parsePersisted(text: string): PersistedSettingsV1 {
       ? {} : { planLoopLimits: parseStoredPlanLoopLimits(raw['planLoopLimits']) }) };
 }
 
+/** The settings file of one directory: null when it does not exist. A present but unreadable or corrupt file is an
+ *  explicit startup failure, never silently treated as an empty configuration. */
+async function readPersistedSettings(settingsDirectory: string): Promise<PersistedSettingsV1 | null> {
+  try {
+    return parsePersisted(await readFile(join(settingsDirectory, 'host-settings.json'), 'utf8'));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw new Error('the private host settings file could not be loaded');
+  }
+}
+
+/** The Host's start-up project list: the listed workspaces in file order, `[]` when there is no file. */
+export async function readPersistedWorkspaces(settingsDirectory: string): Promise<PersistedWorkspaceRef[]> {
+  const persisted = await readPersistedSettings(settingsDirectory);
+  return (persisted?.workspaces ?? []).map(entry => ({ scope: { ...entry.scope }, name: entry.name, root: entry.root,
+    writeAllowed: entry.writeAllowed, commandsAllowed: entry.commandsAllowed }));
+}
+
 function toStoredModel(model: HostSettingsModelDefinition): HostSettingsStoredModel {
   if (model.baseUrl !== undefined && validateSettingsBaseUrl(model.baseUrl) !== null)
     throw new Error('a trusted startup settings model has an invalid baseUrl');
@@ -660,23 +682,12 @@ export async function createHostSettings(
   const filePath = join(settingsDirectory, 'host-settings.json');
   const promptsRoot = options.promptsRoot ?? join(settingsDirectory, 'prompts');
 
-  let persisted: PersistedSettingsV1;
-  try {
-    persisted = parsePersisted(await readFile(filePath, 'utf8'));
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      persisted = {
-        schemaVersion: 1,
-        models: (options.models ?? []).map(toStoredModel),
-        selection: { ...(options.seedSelection ?? {}) },
-        workspaces: [],
-      };
-    } else {
-      // A present-but-unreadable/corrupt file is an explicit startup failure,
-      // never silently treated as an empty configuration.
-      throw new Error('the private host settings file could not be loaded');
-    }
-  }
+  const persisted: PersistedSettingsV1 = await readPersistedSettings(settingsDirectory) ?? {
+    schemaVersion: 1,
+    models: (options.models ?? []).map(toStoredModel),
+    selection: { ...(options.seedSelection ?? {}) },
+    workspaces: [],
+  };
 
   const models: HostSettingsStoredModel[] = persisted.models;
   const selection: Record<string, string | null> = persisted.selection;
@@ -838,6 +849,8 @@ export async function createHostSettings(
         writeAllowed: facts.writeAllowed,
         commandsAllowed: facts.commandsAllowed,
         ...(persistedFacts?.checks === undefined ? {} : { checks: structuredClone(persistedFacts.checks) }),
+        ...(facts.storeLocation === null
+          ? {} : { storeLocation: { place: facts.storeLocation.place, reason: facts.storeLocation.reason } }),
       };
     }),
     // C8 (A.2 step 5.8): the stored policy, the defaults when none was saved (after an
@@ -864,17 +877,24 @@ export async function createHostSettings(
 
   // Restore every persisted directory registration through the real owners
   // BEFORE the Host listens. A failed restore is an explicit startup failure.
-  // Every restored root is checked against the prompt directory first, so a
-  // covering root fails before any earlier entry's restore has run.
-  if (options.assertWorkspaceRoot !== undefined) {
-    for (const entry of workspaces) await options.assertWorkspaceRoot(entry.root);
-  }
+  // Each entry is handled by its own project: an unavailable project keeps its
+  // listed scope (a root that still resolves is checked; a gone one has no proof
+  // to make), and an open project's root is checked before it registers.
   for (const entry of workspaces) {
     const opened = await assembly.openWorkspace({
       path: entry.root, projectId: entry.scope.projectId, workspaceId: entry.scope.workspaceId,
       name: entry.name, writeAllowed: entry.writeAllowed, commandsAllowed: entry.commandsAllowed,
     });
-    if (opened.status !== 'ready') throw new Error('a persisted host settings workspace could not be restored');
+    if (opened.status !== 'ready') throw new Error(opened.reason);
+  }
+  // V12: the start-up workspaces the Host declares join the list in one write, so the next start opens their project
+  // from the list.
+  const declared = (options.declareWorkspaces ?? [])
+    .filter(entry => !workspaces.some(listed => scopeKey(listed.scope) === scopeKey(entry.scope)));
+  if (declared.length > 0) {
+    workspaces.push(...declared.map(entry => ({ scope: { ...entry.scope }, name: entry.name, root: entry.root,
+      writeAllowed: entry.writeAllowed, commandsAllowed: entry.commandsAllowed })));
+    await persist();
   }
   await notify();
 
@@ -1031,6 +1051,16 @@ export async function createHostSettings(
       ...(existing?.checksRevision === undefined ? {} : { checksRevision: existing.checksRevision }),
     };
     const index = workspaces.findIndex(entry => scopeKey(entry.scope) === key);
+    // X2 (KLS-1b): the start opens a project from its first listed workspace (its main one, whose root places the
+    // store). A workspace joining an open project none of whose workspaces is listed yet (a start-up workspace
+    // V12 did not list) puts the project's main workspace, its first in the Host, on the list before itself.
+    if (index < 0 && !workspaces.some(entry => entry.scope.projectId === facts.scope.projectId)) {
+      const main = assembly.listWorkspaces().find(workspace => workspace.scope.projectId === facts.scope.projectId);
+      if (main !== undefined && scopeKey(main.scope) !== key) {
+        workspaces.push({ scope: { ...main.scope }, name: main.name, root: main.root,
+          writeAllowed: main.writeAllowed, commandsAllowed: main.commandsAllowed });
+      }
+    }
     if (index >= 0) workspaces[index] = descriptor; else workspaces.push(descriptor);
     if (request.modelId !== undefined) selection[key] = request.modelId;
     try { await persist(); }

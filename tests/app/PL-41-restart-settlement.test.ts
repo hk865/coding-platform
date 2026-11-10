@@ -34,6 +34,7 @@ import {
 } from '../helpers/PL-consumption-fixture.js';
 import { runPLAutomaticChain, type PLWorkflowWorld } from '../helpers/PL-workflow-fixture.js';
 import { startGoalDriver, waitDriver } from '../helpers/DRV-fixture.js';
+import { hostReconcile } from '../helpers/KLS1B-host-store.js';
 
 vi.mock('../../src/core/record-store/in-memory-record-store.js', async (importOriginal) =>
   (await import('../helpers/S6A-commit-barrier.js')).inMemoryBarrierModule(importOriginal));
@@ -302,7 +303,7 @@ describe('KA-16: a plain planning Query is no planning round', () => {
       .catch(() => undefined);
     await Promise.race([held.reached, run]);
     await world.crash();
-    expect(world.host.reconcile.report?.queries).toEqual([expect.objectContaining({ row: 'Q-04', status: 'reconciled' })]);
+    expect(hostReconcile(world.host, S6A_SCOPE.projectId).report?.queries).toEqual([expect.objectContaining({ row: 'Q-04', status: 'reconciled' })]);
     expect((await world.readSession(line)).record, 'KA-16: the Query line is not closed').toMatchObject({
       lifecycle: 'active', occupancy: null, health: 'unavailable', healthConclusion: 'kernel_turn_open' });
   }, 120_000);

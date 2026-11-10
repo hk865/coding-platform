@@ -56,6 +56,7 @@ import { readPageToken } from '../helpers/AG2b-collaboration-fixture.js';
 import { openS2BTimelineFixture, type S2BTimelineFixture } from '../helpers/S2B-task-timeline-fixture.js';
 import { countedFacts } from '../helpers/S2B-activity-fixture.js';
 import { B2_AT } from '../helpers/B2-execution-fixture.js';
+import { hostProjectStoreDirectory, hostReconcile } from '../helpers/KLS1B-host-store.js';
 
 const TOKEN = 's2b-activity-routes-token';
 const FAILURE_REASON = 's2b-activity-route-storage-read-failure';
@@ -166,7 +167,7 @@ beforeAll(async () => {
     ...composed, activity: activityReads, timeline: timelineReads,
   } as unknown as Parameters<typeof createPlatformCoreRouteBindings>[0]);
   successServer = createWorkbenchServer({
-    token: TOKEN, bindings: routeBindings, actor: { kind: 'human', id: 's2b-35-operator' },
+    token: TOKEN, bindings: () => routeBindings, actor: { kind: 'human', id: 's2b-35-operator' },
     bootstrap: () => ({ workspaces: [], review: null, execution: { queryProfiles: [], workflowScopes: [] } }),
     allowsScope: () => true,
   });
@@ -174,14 +175,15 @@ beforeAll(async () => {
 
   // The failure row: the SAME real reads over a records port whose reads fail.
   const failing = failingRecords();
+  const failingBindings = createPlatformCoreRouteBindings({
+    ...composed,
+    activity: { ...createActivityReadModel({ records: failing as never, now }),
+      ...createTrackReadModel({ records: failing as never, now }) },
+    timeline: createTaskStateTimeline({ records: failing as never }),
+  } as unknown as Parameters<typeof createPlatformCoreRouteBindings>[0]);
   failingServer = createWorkbenchServer({
     token: TOKEN,
-    bindings: createPlatformCoreRouteBindings({
-      ...composed,
-      activity: { ...createActivityReadModel({ records: failing as never, now }),
-        ...createTrackReadModel({ records: failing as never, now }) },
-      timeline: createTaskStateTimeline({ records: failing as never }),
-    } as unknown as Parameters<typeof createPlatformCoreRouteBindings>[0]),
+    bindings: () => failingBindings,
     actor: { kind: 'human', id: 's2b-35-operator' },
     bootstrap: () => ({ workspaces: [], review: null, execution: { queryProfiles: [], workflowScopes: [] } }),
     allowsScope: () => true,
@@ -208,8 +210,10 @@ async function startHost(actor: { kind: 'human' | 'system'; id: string }, scope:
   await writeFile(join(directory, 'README.md'), '# s2b-35 host workspace\n');
   if (lock) {
     // The live peer is the real lease this process would hold: acquire it through
-    // the production path and keep it, so the next Host reads a live pid.
-    await acquireHostInstanceLease({ directory, now: () => B2_AT });
+    // the production path and keep it, so the next Host reads a live pid. The lock sits in the project store.
+    const store = await hostProjectStoreDirectory(scope.projectId, directory);
+    await mkdir(store, { recursive: true });
+    await acquireHostInstanceLease({ directory: store, now: () => B2_AT });
   }
   // PC-2 ruling 2: `<settings>/prompts` must not be under the workspace root.
   const settingsDirectory = await mkdtemp(join(tmpdir(), 's2b-35-settings-'));
@@ -294,7 +298,7 @@ describe('S2B-35 activity and timeline routes (BE5)', () => {
     const leased = await startHost({ kind: 'human', id: 's2b-35-leased' },
       { projectId: 's2b-35-leased-project', workspaceId: 's2b-35-leased-workspace' }, false);
     leasedHost = leased.host;
-    expect(leasedHost.reconcile.lease).toBe('owned');
+    expect(hostReconcile(leasedHost, 's2b-35-leased-project').lease).toBe('owned');
     const admitted = await postWithToken(leased.base, leased.token, 'activity/backfill',
       { projectId: 's2b-35-leased-project', workspaceId: 's2b-35-leased-workspace' },
       { workspace: { projectId: 's2b-35-leased-project', workspaceId: 's2b-35-leased-workspace' },
@@ -306,7 +310,7 @@ describe('S2B-35 activity and timeline routes (BE5)', () => {
     const noLease = await startHost({ kind: 'human', id: 's2b-35-no-lease' },
       { projectId: 's2b-35-nolease-project', workspaceId: 's2b-35-nolease-workspace' }, true);
     noLeaseHost = noLease.host;
-    expect(noLeaseHost.reconcile.lease).toBe('held_by_other');
+    expect(hostReconcile(noLeaseHost, 's2b-35-nolease-project').lease).toBe('held_by_other');
     const busy = await postWithToken(noLease.base, noLease.token, 'activity/backfill',
       { projectId: 's2b-35-nolease-project', workspaceId: 's2b-35-nolease-workspace' },
       { workspace: { projectId: 's2b-35-nolease-project', workspaceId: 's2b-35-nolease-workspace' },

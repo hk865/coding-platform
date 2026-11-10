@@ -29,7 +29,7 @@ describe('E32-5 board token', () => {
   it('injects the token into a board page only, with no-store', async () => {
     server = createWorkbenchServer({
       token: TOKEN,
-      bindings: {} as CoreRouteBindings,
+      bindings: () => ({}) as CoreRouteBindings,
       actor: { kind: 'human', id: 'e32-operator' },
       bootstrap: () => ({ workspaces: [], review: null, execution: { queryProfiles: [], workflowScopes: [] } }),
       allowsScope: () => false,

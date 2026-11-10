@@ -44,6 +44,7 @@ import {
 import { NO_REDRIVE, execution, lastEventType, openWorkRoot, putKernelBack, stepOf } from './support/common.js';
 import { failCommitOf } from './support/receipts.js';
 import { expectQuietHarnessRestart, expectQuietRestart, kernelTurnOf, ledgerEvents, recordedInterruptions } from './support/restart.js';
+import { hostReconcile, storeDirOf } from '../helpers/KLS1B-host-store.js';
 
 afterEach(cleanupScenarios);
 
@@ -60,14 +61,14 @@ it('A8-L5 (HL-05, HL-06, HL-07): a lock naming a live process that is no Host (t
   try { await seedAG2bWorkGraph(seeded, undefined, { settle: false }); } finally { await seeded.host.close(); }
   const inv: InvariantTarget = { database };
   await assertInvariantsAt(inv, 'A8-L5 seeded');
-  const lockPath = join(database, HOST_INSTANCE_LOCK_FILE);
+  const lockPath = join(storeDirOf(database), HOST_INSTANCE_LOCK_FILE);
   const lock = JSON.stringify({ pid: process.pid, hostInstanceId: 'a8-l5-unrelated-process', startedAt: '2026-10-06T00:00:00.000Z' });
   await writeFile(lockPath, lock);
   const before = ledgerEvents(database);
   const held = await startAG2bHost(publicDir, { root, database });
   try {
     // HL-05 is judged alive like HL-02 (the report names the row of the action it takes).
-    expect(held.host.reconcile).toMatchObject({ lease: 'held_by_other', leaseRow: 'HL-02', report: null,
+    expect(hostReconcile(held.host, AG2B_SCOPE.projectId)).toMatchObject({ lease: 'held_by_other', leaseRow: 'HL-02', report: null,
       leaseReason: `another live process (pid ${String(process.pid)}) holds the store` });
     await expectHeldHost(held);
     expect(ledgerEvents(database), 'no fact changes on a Host without the lease').toBe(before);
@@ -102,10 +103,10 @@ it('A8-Q7 (Q-07, SD-2): a QueryRun interrupted mid-Turn under a host_config prob
     // The crash; the next Host has no Kernel Store registration: the probe proves nothing (SD-2), nothing is written.
     const second = await startAG2bHost(publicDir, { root, database, noKernelStores: true });
     try {
-      expect(second.host.reconcile).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: {
+      expect(hostReconcile(second.host, AG2B_SCOPE.projectId)).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: {
         sessions: [{ row: 'H-03', status: 'left' }],
         queries: [{ ref: JSON.stringify(refs.queryRunRef), row: 'Q-07', status: 'left' }], problems: [] } });
-      expect(ledgerEvents(database)).toBe(atCrash + recordedInterruptions(second.host.reconcile.report, 'A8-Q7'));
+      expect(ledgerEvents(database)).toBe(atCrash + recordedInterruptions(hostReconcile(second.host, AG2B_SCOPE.projectId).report, 'A8-Q7'));
       expect((await readQuery(second, refs.queryJobRef)).run).toEqual(entered.run);
       const card = await post<{ status: string; value: { record: TaskExecutionRecord['session'] } }>(second, 'sessions/read',
         plain(AG2B_SCOPE, session.sessionRef));
@@ -118,7 +119,7 @@ it('A8-Q7 (Q-07, SD-2): a QueryRun interrupted mid-Turn under a host_config prob
     // With the Kernel registered again the same QueryRun is reconciled by its Kernel facts (Q-04).
     const third = await startAG2bHost(publicDir, { root, database });
     try {
-      expect(third.host.reconcile).toMatchObject({ report: { queries: [{ ref: JSON.stringify(refs.queryRunRef), row: 'Q-04',
+      expect(hostReconcile(third.host, AG2B_SCOPE.projectId)).toMatchObject({ report: { queries: [{ ref: JSON.stringify(refs.queryRunRef), row: 'Q-04',
         status: 'reconciled' }] } });
       expect((await readQuery(third, refs.queryJobRef)).run.run).toMatchObject({ status: 'closed', outcome: 'failed' });
       await assertInvariantsAt(inv, 'A8-Q7 closed');
@@ -301,16 +302,16 @@ it('HL-02/HL-07: a second Host on a store another live Host holds reconciles not
   const root = await tempDir('a2-lease-ws-');
   const database = await tempDir('a2-lease-db-');
   const publicDir = await publicDirectory();
-  const lockPath = join(database, HOST_INSTANCE_LOCK_FILE);
   const owner = await startAG2bHost(publicDir, { root, database });
+  const lockPath = join(storeDirOf(database), HOST_INSTANCE_LOCK_FILE);
   try {
     await seedAG2bWorkGraph(owner);
-    expect(owner.host.reconcile).toMatchObject({ lease: 'owned', leaseRow: 'HL-01' });
+    expect(hostReconcile(owner.host, AG2B_SCOPE.projectId)).toMatchObject({ lease: 'owned', leaseRow: 'HL-01' });
     const ownerLock = await readFile(lockPath, 'utf8');
     const before = ledgerEvents(database);   // A.2 step 6
     const other = await startAG2bHost(publicDir, { root, database });
     try {
-      expect(other.host.reconcile).toMatchObject({ lease: 'held_by_other', leaseRow: 'HL-02', report: null,
+      expect(hostReconcile(other.host, AG2B_SCOPE.projectId)).toMatchObject({ lease: 'held_by_other', leaseRow: 'HL-02', report: null,
         leaseReason: `another live process (pid ${String(process.pid)}) holds the store` });
       await expectHeldHost(other);
       expect(ledgerEvents(database), 'the Host without the lease changed no fact').toBe(before);   // A.2 step 6
@@ -335,12 +336,12 @@ it('HL-04: a damaged lock is held as another Host\'s: no reconcile, no Kernel en
   // L8: the seed's automatic capture is left running, so the close leaves it pending (book ruling 5); the Host
   // without the lease below meets it and must not retry it.
   try { await seedAG2bWorkGraph(seeded, undefined, { settle: false }); } finally { await seeded.host.close(); }
-  const lockPath = join(database, HOST_INSTANCE_LOCK_FILE);
+  const lockPath = join(storeDirOf(database), HOST_INSTANCE_LOCK_FILE);
   await writeFile(lockPath, 'a damaged lock');
   const before = ledgerEvents(database);   // A.2 step 6
   const held = await startAG2bHost(publicDir, { root, database });
   try {
-    expect(held.host.reconcile).toMatchObject({ lease: 'held_by_other', leaseRow: 'HL-04', report: null });
+    expect(hostReconcile(held.host, AG2B_SCOPE.projectId)).toMatchObject({ lease: 'held_by_other', leaseRow: 'HL-04', report: null });
     await expectHeldHost(held);
     expect(ledgerEvents(database), 'the Host without the lease changed no fact').toBe(before);   // A.2 step 6
     await assertInvariantsAt({ database }, 'A8-L4 held Host');   // A.2 step 6
@@ -365,7 +366,7 @@ async function expectHeldHost(host: Awaited<ReturnType<typeof startAG2bHost>>): 
   const queryRunRef = { aggregateType: 'QueryRun', ...AG2B_SCOPE, queryJobId: 'a2-lease-job', runId: 'a2-lease-query' };
   expect(await answer(host, 'queries/resolve-unknown', graphWrite(AG2B_SCOPE, { queryRunRef, reason: 'operator check' },
     'a2-lease-attest-query', [{ ref: queryRunRef, revision: 1 }]))).toMatchObject({ status: 'rejected', code: 'busy' });
-  expect(await post(host, 'host/reconcile-report', plain(AG2B_SCOPE, {}))).toEqual({ status: 'ready', value: host.host.reconcile });
+  expect(await post(host, 'host/reconcile-report', plain(AG2B_SCOPE, {}))).toEqual({ status: 'ready', value: hostReconcile(host.host, AG2B_SCOPE.projectId) });
   expect(host.scripted.calls()).toBe(0);
 }
 
@@ -400,7 +401,7 @@ it('Q-01 and Q-04: at the restart a claimed QueryRun is closed not_entered and o
   }
   const second = await startAG2bHost(publicDir, { root, database });
   try {
-    const report = second.host.reconcile.report;
+    const report = hostReconcile(second.host, AG2B_SCOPE.projectId).report;
     expect(report?.queries).toEqual(expect.arrayContaining([
       { ref: JSON.stringify(claimed.queryRunRef), row: 'Q-01', status: 'reconciled', reason: 'not_entered' },
       { ref: JSON.stringify(started.queryRunRef), row: 'Q-04', status: 'reconciled', reason: 'interrupted_clean' },
@@ -493,7 +494,7 @@ it('Q-05 and QRR-06: an unreadable Kernel marks the interrupted QueryRun unknown
   }
   const second = await startAG2bHost(publicDir, { root, database });
   try {
-    expect(second.host.reconcile).toMatchObject({ report: { queries: [{ ref: JSON.stringify(refs.queryRunRef), row: 'Q-05',
+    expect(hostReconcile(second.host, AG2B_SCOPE.projectId)).toMatchObject({ report: { queries: [{ ref: JSON.stringify(refs.queryRunRef), row: 'Q-05',
       status: 'reconciled', reason: 'unknown (Kernel missing)' }] } });
     // QRR-05: phase unknown with its persisted cause; the occupancy is kept.
     const unknown = await readQuery(second, refs.queryJobRef);
@@ -506,7 +507,7 @@ it('Q-05 and QRR-06: an unreadable Kernel marks the interrupted QueryRun unknown
       'a2-q6-blank', pin))).toMatchObject({ status: 'rejected', code: 'invalid' });
     const other = await startAG2bHost(publicDir, { root, database });
     try {
-      expect(other.host.reconcile).toMatchObject({ lease: 'held_by_other' });
+      expect(hostReconcile(other.host, AG2B_SCOPE.projectId)).toMatchObject({ lease: 'held_by_other' });
       expect(await answer(other, 'queries/resolve-unknown', graphWrite(AG2B_SCOPE, { queryRunRef: refs.queryRunRef,
         reason: 'checked by hand' }, 'a2-q6-other', pin))).toMatchObject({ status: 'rejected', code: 'busy' });
     } finally {

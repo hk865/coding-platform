@@ -38,9 +38,9 @@ vi.mock('../../src/composition/create-platform.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/composition/create-platform.js')>();
   return {
     ...actual,
-    createTargetPlatform: (options: Parameters<typeof actual.createTargetPlatform>[0]) => {
+    openTargetPlatform: (options: Parameters<typeof actual.openTargetPlatform>[0]) => {
       captured.runtime = options.runtime;
-      return actual.createTargetPlatform(options);
+      return actual.openTargetPlatform(options);
     },
   };
 });
@@ -162,7 +162,7 @@ function runtimeInput(runId: string): RuntimeConfigurationInput {
 }
 
 async function resolvedModel(runId: string) {
-  if (captured.runtime === undefined) throw new Error('the Host passed no trusted runtime binding to createTargetPlatform');
+  if (captured.runtime === undefined) throw new Error('the Host passed no trusted runtime binding to openTargetPlatform');
   const resolved = await captured.runtime.resolveConfiguration(callContext(), runtimeInput(runId));
   if (resolved.status !== 'ready') throw new Error(`runtime configuration was not ready: ${resolved.status}`);
   return resolved.value.model;

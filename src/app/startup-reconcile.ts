@@ -156,21 +156,19 @@ export type StartupReconcilePlatform = {
   redriveRepairAnswers?: (ctx: CoreCallContext, input: { goalRef: GoalRef }) => Promise<void>;
 };
 
-export type StartupReconcileDependencies = {
+/** What the reconcile of one workspace scope uses: its project's platform, lease facts and drivers. */
+export type StartupReconcileScopeDependencies = {
   platform: StartupReconcilePlatform;
+  /** The scope's project lease's instance id. */
   hostInstanceId: string;
   /** The Host's start-up position: ask/off record the candidates, auto drives them without a record. */
   resumeOnStartup: ResumeOnStartupMode;
   /**
-   * K3 (L2): this Host instance's takeover proof (`HostInstanceFacts.takeover`),
+   * K3 (L2): the takeover proof of the scope's project lease (`HostInstanceFacts.takeover`),
    * copied into every Run classification so a Run-25 candidate can be judged.
    * Absent/null means no proof and every candidate is blocked.
    */
   takeover?: HostTakeoverProofV1 | null;
-  /** The workspaces this Host serves (its Kernel Stores are registered before the reconcile runs). */
-  scopes: readonly Scope[];
-  /** The Host's own context for one workspace (the Host actor, a never-aborted signal). */
-  context(scope: Scope): CoreCallContext;
   /** LD-14: continue every pending member child before Runs or Sessions are classified. */
   members?: Pick<MemberRequestPortV1, 'resumePendingMemberCreations'>;
   /** Step 6: one idempotent fan-out pass for the Goal's current epoch (GOAL-16/14, then GOAL-29 on a resume). */
@@ -186,6 +184,15 @@ export type StartupReconcileDependencies = {
    * handoff/archive operation once), so a crash resumes instead of waiting for a new commit.
    */
   handoffQueue?: Pick<HandoffQueuePort, 'run'>;
+};
+
+export type StartupReconcileDependencies = {
+  /** The workspaces this Host serves (its Kernel Stores are registered before the reconcile runs). */
+  scopes: readonly Scope[];
+  /** The Host's own context for one workspace (the Host actor, a never-aborted signal). */
+  context(scope: Scope): CoreCallContext;
+  /** The scope's project dependencies while this Host holds that project's lease; null skips the scope. */
+  forScope(scope: Scope): StartupReconcileScopeDependencies | null;
 };
 
 export type ReconcileLine = { ref: string; row: string; status: 'reconciled' | 'left' | 'failed'; reason: string;
@@ -329,20 +336,29 @@ export function emptyStartupReport(hostInstanceId: string): StartupReconcileRepo
     redriveGoals: [], interruptedGoals: [], problems: [] };
 }
 
-export async function runStartupReconcile(deps: StartupReconcileDependencies): Promise<StartupReconcileReportV1> {
-  const { platform, hostInstanceId } = deps;
-  const report = emptyStartupReport(hostInstanceId);
+/** One report per project: the scopes of a project share its report, and a scope without its project's lease is
+ *  skipped. */
+export async function runStartupReconcile(
+  deps: StartupReconcileDependencies,
+): Promise<ReadonlyMap<string, StartupReconcileReportV1>> {
+  const reports = new Map<string, StartupReconcileReportV1>();
   for (const scope of deps.scopes) {
+    const scoped = deps.forScope(scope);
+    if (scoped === null) continue;
+    const report = reports.get(scope.projectId) ?? emptyStartupReport(scoped.hostInstanceId);
+    reports.set(scope.projectId, report);
     const ctx = deps.context(scope);
     try {
-      await reconcileScope(scope, ctx, report);
+      await reconcileScope(scope, ctx, report, scoped);
     } catch (error) {
       report.problems.push(`${scope.projectId}/${scope.workspaceId}: the reconcile stopped: ${messageOf(error)}`);
     }
   }
-  return report;
+  return reports;
 
-  async function reconcileScope(scope: Scope, ctx: CoreCallContext, out: StartupReconcileReportV1): Promise<void> {
+  async function reconcileScope(scope: Scope, ctx: CoreCallContext, out: StartupReconcileReportV1,
+    deps: StartupReconcileScopeDependencies): Promise<void> {
+    const { platform, hostInstanceId } = deps;
     /** Set when a Query is left for the one admission drain after step 3. */
     let keptAny = false;
     // Step 0 (LD-14): the Host start-up continues a pending member child under
@@ -438,7 +454,7 @@ export async function runStartupReconcile(deps: StartupReconcileDependencies): P
 
     // Step 2b (L28): the `open = 'yes'` review records, after step 2 (which may
     // have just created one), read only, 100 per page and at most 100 pages.
-    const openReviews = await readOpenReviews(scope, ctx, out);
+    const openReviews = await readOpenReviews(platform, scope, ctx, out);
     for (const record of openReviews) {
       const reasons = record.decisionReasons.length === 0 ? '' : ` ${record.decisionReasons.join(',')}`;
       const round = record.activeRound === null ? '' : ' active_round';
@@ -528,8 +544,8 @@ export async function runStartupReconcile(deps: StartupReconcileDependencies): P
         }
         // Step 2 settles the intents of a Run it ends, or leaves an open Run (W-07) with them.
         if (run.status === 'starting' || run.status === 'running') continue;
-        const pointer = await queuedIntent(ctx, run.controlState === undefined ? [] : [run.controlState.intentRef]);
-        const steers = await queuedIntent(ctx, run.controlInputs ?? []);
+        const pointer = await queuedIntent(platform, ctx, run.controlState === undefined ? [] : [run.controlState.intentRef]);
+        const steers = await queuedIntent(platform, ctx, run.controlInputs ?? []);
         if (!pointer && !steers) continue;
         const result = await platform.reconcile.reconcileControls(ctx, { record: read.value, hostInstanceId, queuedSteers: steers });
         out.controls.push({ ref: refText(result.runRef), row: result.row, status: result.status, reason: result.reason });
@@ -625,7 +641,7 @@ export async function runStartupReconcile(deps: StartupReconcileDependencies): P
     for (const goal of goalRecords) {
       if (goal.desiredState !== 'active') continue;
       const goalReviews = openReviews.filter(record => record.ref.goalId === goal.ref.goalId);
-      const selection = await pendingAutomationTaskIds(ctx, goal, out);
+      const selection = await pendingAutomationTaskIds(platform, ctx, goal, out);
       const taskIds = [...selection.pending,
         ...notEntered.filter(run => run.ref.goalId === goal.ref.goalId).map(run => run.task.taskId),
         ...goalReviews.filter(record => reviewRedriveKindOf(record) !== null).map(record => record.task.taskId)];
@@ -706,7 +722,8 @@ export async function runStartupReconcile(deps: StartupReconcileDependencies): P
    * (the same owner the routes use). Never throws: a missing read or a failed
    * page is a `problems` line; after the 100-page bound the unread rest is one.
    */
-  async function readOpenReviews(scope: Scope, ctx: CoreCallContext, out: StartupReconcileReportV1):
+  async function readOpenReviews(platform: StartupReconcilePlatform, scope: Scope, ctx: CoreCallContext,
+    out: StartupReconcileReportV1):
   Promise<UnknownCallReviewV1[]> {
     const read = platform.reconcile.reviews;
     if (read === undefined) {
@@ -744,7 +761,8 @@ export async function runStartupReconcile(deps: StartupReconcileDependencies): P
    * GOAL-30 stop (an `unknown_outcome`/`unknown_call_review` Task stays unfinished). An unreadable Task graph is
    * reported and selects nothing.
    */
-  async function pendingAutomationTaskIds(ctx: CoreCallContext, goal: GoalSnapshot, out: StartupReconcileReportV1):
+  async function pendingAutomationTaskIds(platform: StartupReconcilePlatform, ctx: CoreCallContext, goal: GoalSnapshot,
+    out: StartupReconcileReportV1):
   Promise<{ pending: string[]; unfinished: string[] }> {
     if (goal.activePlanRevision === null) return { pending: [], unfinished: [] };
     let graph: Awaited<ReturnType<PlanTaskPort['queryTaskGraph']>>;
@@ -775,7 +793,8 @@ export async function runStartupReconcile(deps: StartupReconcileDependencies): P
   }
 
   /** Whether any of the intents is still queued (a failed read counts as not queued: the Run is reconciled next start). */
-  async function queuedIntent(ctx: CoreCallContext, refs: readonly ControlIntentSnapshotV1['ref'][]): Promise<boolean> {
+  async function queuedIntent(platform: StartupReconcilePlatform, ctx: CoreCallContext,
+    refs: readonly ControlIntentSnapshotV1['ref'][]): Promise<boolean> {
     for (const ref of refs) {
       const intent: ReadResult<ControlIntentSnapshotV1> = await platform.controls.readControl(ctx, ref);
       if (intent.status === 'ready' && intent.value.status === 'queued') return true;

@@ -38,6 +38,7 @@ import { driveChecked, editThenText } from './support/common.js';
 import {
   artifactsMentioning, checksHeld, expectQuietHarnessRestart, HOLDABLE_CHECK, holdChecks, ledgerEvents, releaseHeldCheck, reportChanges,
 } from './support/restart.js';
+import { hostReconcile, storeDirOf } from '../helpers/KLS1B-host-store.js';
 
 // Draining an abandoned Host waits for its sleeping check process (at most 20 s when a test failed before releasing it).
 afterEach(cleanupScenarios, 60_000);
@@ -129,7 +130,7 @@ it('VR-04 (C-01): a check left executing by a crashed Host is interrupted at the
     // A.2 step 6: §12.10 step 4, no check process and no model call during the reconcile.
     expect(ledgerEvents(database, 'VerificationCheckBegun'), 'the reconcile starts no check').toBe(begunBefore);
     expect(second.scripted.calls(), 'the reconcile calls no model').toBe(0);
-    const report = second.host.reconcile.report;
+    const report = hostReconcile(second.host, AG2B_SCOPE.projectId).report;
     expect(report?.checks).toEqual([expect.objectContaining({ row: 'C-01', status: 'reconciled', reason: 'interrupted (host_restart)' })]);
     expect(report?.problems).toEqual([]);
     // §12.1 step 6b condition (a), 5.9: the Goal with the reverify verdict is selected for the re-drive.
@@ -150,9 +151,9 @@ it('VR-04 (C-01): a check left executing by a crashed Host is interrupted at the
     const quiet = fileCounts(database);   // A.2 step 6
     const third = await startAG2bHost(publicDir, { root, database, checkCommand });
     try {
-      expect(third.host.reconcile).toMatchObject({ report: { checks: [], runs: [], problems: [] } });
+      expect(hostReconcile(third.host, AG2B_SCOPE.projectId)).toMatchObject({ report: { checks: [], runs: [], problems: [] } });
       // A.2 step 6: §12.10 step 4, it changes and writes nothing and calls no model.
-      expect(reportChanges(third.host.reconcile.report)).toEqual([]);
+      expect(reportChanges(hostReconcile(third.host, AG2B_SCOPE.projectId).report)).toEqual([]);
       expect(fileCounts(database)).toEqual(quiet);
       expect(third.scripted.calls()).toBe(0);
     } finally {
@@ -266,7 +267,7 @@ it('A10-R2 (C-02 under GAP-24, VD-10): a check whose process ended with its repo
   const { inFlight } = await checkInFlight(h, h.select('a10-r2', AG2B_WORK_TASK_ID));
   // The ledger stays locked past the check's end and the runner's bounded retries (VD-10): the report body is stored
   // in the artifact store, the result is never booked, and the check stays `executing` on the live Host.
-  const ledger = new DatabaseSync(join(h.database, 'ledger.sqlite'));
+  const ledger = new DatabaseSync(join(storeDirOf(h.database), 'ledger.sqlite'));
   try {
     ledger.exec('BEGIN IMMEDIATE');
     await releaseHeldCheck(h.root);

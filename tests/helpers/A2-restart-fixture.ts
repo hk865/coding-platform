@@ -43,6 +43,7 @@ import {
   AG2B_WORK_ROLE_BINDING, AG2B_WORK_TASK_ID, AG2B_WORKSPACE_REF, corePost, createAG2bSession, graphWrite, plain,
   type AG2bHost,
 } from './AG2b-collaboration-fixture.js';
+import { storeDirOf } from './KLS1B-host-store.js';
 
 const temporary: string[] = [];
 
@@ -231,9 +232,10 @@ export function exitedPid(): number {
   return child.pid;
 }
 
-/** The lock a crashed Host leaves: it names a process that no longer exists (the next start is HL-03). */
-export async function writeStaleLock(database: string): Promise<{ lockPath: string; crashedPid: number }> {
-  const lockPath = join(database, HOST_INSTANCE_LOCK_FILE);
+/** The lock a crashed Host leaves in the project store it held (`storeDirOf`): it names a process that no longer
+ * exists (the next start is HL-03). */
+export async function writeStaleLock(directory: string): Promise<{ lockPath: string; crashedPid: number }> {
+  const lockPath = join(storeDirOf(directory), HOST_INSTANCE_LOCK_FILE);
   const crashedPid = exitedPid();
   await writeFile(lockPath, JSON.stringify({ pid: crashedPid, hostInstanceId: 'a2-crashed-host', startedAt: '2026-10-05T00:00:00.000Z' }));
   return { lockPath, crashedPid };

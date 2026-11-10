@@ -326,8 +326,8 @@ describe('HOST settings workspace open and isolation', () => {
         { path: root, writeAllowed: false, commandsAllowed: true });
       expect(await deniedCommands.json()).toMatchObject({ status: 'rejected', code: 'invalid' });
 
-      // Opening a directory never writes into the target project.
-      expect(await readdir(root)).toEqual(['hello world.txt']);
+      // 打开一个非 git 目录只写进 `.workbench/`（项目库，乙）。
+      expect((await readdir(root)).sort()).toEqual(['.workbench', 'hello world.txt']);
 
       // Re-opening the same canonical root WITHOUT a project is a ready
       // idempotent lookup of the SAME scope, never a new project.

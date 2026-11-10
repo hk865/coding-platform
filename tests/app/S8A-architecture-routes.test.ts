@@ -81,7 +81,7 @@ describe('S8A architecture read routes', () => {
         queryImpact: spy('queryImpact'),
       } as unknown as CoreRoutePlatform['architecture'];
       const bindings = createPlatformCoreRouteBindings(routePlatform(architecture));
-      const server = createWorkbenchServer({ token: TOKEN, bindings, actor,
+      const server = createWorkbenchServer({ token: TOKEN, bindings: () => bindings, actor,
         bootstrap: () => ({ workspaces: [], review: null, execution: { queryProfiles: [], workflowScopes: [] } }),
         allowsScope: () => true });
       servers.push(server);
@@ -153,7 +153,7 @@ describe('S8A architecture read routes', () => {
         captureId: captured.value.capture.captureId };
 
       const bindings = createPlatformCoreRouteBindings(routePlatform(architecture));
-      const server = createWorkbenchServer({ token: TOKEN, bindings, actor,
+      const server = createWorkbenchServer({ token: TOKEN, bindings: () => bindings, actor,
         bootstrap: () => ({ workspaces: [], review: null, execution: { queryProfiles: [], workflowScopes: [] } }),
         allowsScope: () => true });
       servers.push(server);

@@ -31,6 +31,7 @@ import {
 } from '../../helpers/AG2b-collaboration-fixture.js';
 import { assertInvariants, readSqlite, type HostScenario } from '../harness.js';
 import { kernelRecordRows, NOTES_FILE, stepOf } from './common.js';
+import { storeDirOf } from '../../helpers/KLS1B-host-store.js';
 
 const execute = promisify(execFile);
 
@@ -92,13 +93,13 @@ export async function archiveSession(h: HostScenario, sessionRef: SessionRef, la
 
 /** The stored artifact bodies (artifacts.sqlite rows; content addressed, so a replayed put adds none). */
 export function artifactCount(database: string): number {
-  return readSqlite(join(database, 'artifacts.sqlite'),
+  return readSqlite(join(storeDirOf(database), 'artifacts.sqlite'),
     db => Number((db.prepare('SELECT COUNT(*) AS n FROM artifacts').get() as { n: number }).n), 0);
 }
 
 /** The prepared manifest a `prepare` stored, by its digest (`inputBinding.manifestDigest`). */
 export function manifestOf(database: string, digest: string): PreparedTaskManifestV1 {
-  const rows = readSqlite(join(database, 'artifacts.sqlite'), db => db.prepare('SELECT record FROM artifacts WHERE key LIKE ?')
+  const rows = readSqlite(join(storeDirOf(database), 'artifacts.sqlite'), db => db.prepare('SELECT record FROM artifacts WHERE key LIKE ?')
     .all(`%|${digest}|%`) as Array<{ record: string }>, []);
   if (rows.length !== 1) throw new Error(`exactly one stored body must have digest ${digest}: ${String(rows.length)}`);
   return JSON.parse((JSON.parse(rows[0]!.record) as { body: string }).body) as PreparedTaskManifestV1;

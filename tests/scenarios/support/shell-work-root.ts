@@ -28,6 +28,7 @@ import type { ScriptedModel } from '../../helpers/B2-runtime-fixture.js';
 import {
   AG2B_WORK_TOOLS, ag2bWorkRuntime, ag2bWorkspaceBindings, hostCtx, type HostScenario, type Platform,
 } from '../harness.js';
+import { storeDirOf } from '../../helpers/KLS1B-host-store.js';
 
 /** `openWorkRoot` (./common.ts) with a `shell` grant and whole-workspace process access. */
 export async function openShellWorkRoot(h: HostScenario, model: ScriptedModel,
@@ -51,7 +52,7 @@ export async function openShellWorkRoot(h: HostScenario, model: ScriptedModel,
     },
   };
   return await createTargetPlatform({
-    storage: { kind: 'sqlite', directory: h.database },
+    storage: { kind: 'sqlite', directory: storeDirOf(h.database) },
     workspace: ag2bWorkspaceBindings(h.root, { value: 1 }, permissionRevision(h.stepActor(), AG2B_SCOPE, ['.'])),
     now: () => AG2B_AT,
     kernelStores: { entries: [{ adapterId: 'ag2b-kernel', storeKey: 'ag2b-kernel-store', workspace: AG2B_SCOPE,

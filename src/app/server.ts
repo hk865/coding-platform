@@ -87,7 +87,9 @@ export type WorkbenchAddress = { host: string; port: number; url: string };
 export type WorkbenchServerOptions = {
   /** One random per-Host-instance temporary bearer token. */
   token: string;
-  bindings: CoreRouteBindings;
+  /** The route bindings of one project, taken after the scope check; null when that project's store is not
+   * available, which is answered `unavailable` (no runtime is made here). */
+  bindings: (projectId: string) => CoreRouteBindings | null;
   actor: HostActor;
   /** Trusted LIVE projection; never built by scanning the ledger. It is a
    * function so a newly opened scope is visible without restarting the Host. */
@@ -269,8 +271,14 @@ export function createWorkbenchServer(options: WorkbenchServerOptions): Workbenc
           reason: 'the requested scope is not part of the trusted Host configuration',
         });
       }
+      const bindings = options.bindings(parsed.scope.projectId);
+      if (bindings === null) {
+        throw new CoreRouteRejectionError({
+          status: 'rejected', code: 'unavailable', reason: 'the project store is not available',
+        });
+      }
       const ctx = createHostCoreCallContext({ scope: parsed.scope, actor: options.actor, signal: controller.signal });
-      const result = await dispatchCoreRoute(options.bindings, suffix as CoreRouteSuffix, ctx, parsed);
+      const result = await dispatchCoreRoute(bindings, suffix as CoreRouteSuffix, ctx, parsed);
       sendJson(response, 200, result);
     } catch (error) {
       if (error instanceof CoreRouteRejectionError) sendJson(response, statusForCode(error.rejection.code), error.rejection);
@@ -335,7 +343,7 @@ export function createWorkbenchServer(options: WorkbenchServerOptions): Workbenc
     changeStreams.add(end);
     try {
       if (response.destroyed) return;
-      write(sseFrame(subscription.opening));
+      for (const event of subscription.opening) write(sseFrame(event));
       await closed;
     } finally {
       clearInterval(heartbeat);

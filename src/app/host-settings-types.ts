@@ -36,7 +36,11 @@ export type SettingsWorkspace = {
    * Absent for a scope that never approved any. The model's own suggestion is
    * never stored here; only an explicit Host user approval is. */
   checks?: RegisteredCommandCheck[];
+  /** U8: where the workspace's project store lives; absent for a memory store or a project that is not open. */
+  storeLocation?: SettingsStoreLocation;
 };
+/** A project store's place and, only for the local data directory, the one sentence saying why. */
+export type SettingsStoreLocation = { place: 'git-common' | 'workspace-local' | 'user-data'; reason: string | null };
 export type HostSettingsSnapshot = {
   models: SettingsModel[]; workspaces: SettingsWorkspace[];
   /**

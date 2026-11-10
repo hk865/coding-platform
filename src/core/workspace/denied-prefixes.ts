@@ -1,4 +1,16 @@
 /**
+ * KLS-1b (V9, X1): the project store a workspace that is not a git work tree keeps at `<root>/.workbench/local/`.
+ * It is not workspace content: it is a denied prefix below, and every digest and snapshot of a workspace (the
+ * candidate reader, the Kernel's workspace snapshot) leaves it out through `withinProjectStore`.
+ */
+export const PROJECT_STORE_PREFIX = '.workbench/local';
+
+/** Whether a workspace-relative path (`/`-separated) is the project store directory or inside it. */
+export function withinProjectStore(path: string): boolean {
+  return path === PROJECT_STORE_PREFIX || path.startsWith(`${PROJECT_STORE_PREFIX}/`);
+}
+
+/**
  * 路径边界归位 WorkspaceReader — 工作区**路径边界**的唯一权威：拒绝前缀清单。
  *
  * ── 为什么这一份放在本 Module ────────────────────────────────────────────────
@@ -29,5 +41,5 @@
  * 这条边），所以后者的收敛需要先有架构决定，而不是顺手加一条未声明依赖。
  */
 export const WORKSPACE_DENIED_PREFIXES: readonly string[] = [
-  '.evaluator', '.oracle', 'hidden-tests', '.git', '.env', '.env.local', '.platform-runtime',
+  '.evaluator', '.oracle', 'hidden-tests', '.git', '.env', '.env.local', '.platform-runtime', PROJECT_STORE_PREFIX,
 ];

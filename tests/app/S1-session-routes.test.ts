@@ -38,6 +38,7 @@ import {
 } from '../scenarios/harness.js';
 import { NO_REDRIVE, readCall, selectedRun, textReply, WORK_TARGET } from '../scenarios/support/common.js';
 import { failCommitOf, rawPost } from '../scenarios/support/receipts.js';
+import { storeDirOf } from '../helpers/KLS1B-host-store.js';
 
 const T0 = '2026-10-08T00:00:00.000Z';
 beforeEach(() => {
@@ -46,9 +47,9 @@ beforeEach(() => {
   // The shared harness supplies older clocks. Delegate to the actual factories,
   // changing only their trusted `now` callback; all Host/owner code still runs.
   const createHost = hostFactory.createLocalWorkbenchHost;
-  const createPlatform = platformFactory.createTargetPlatform;
+  const openPlatform = platformFactory.openTargetPlatform;
   vi.spyOn(hostFactory, 'createLocalWorkbenchHost').mockImplementation(options => createHost({ ...options, now: () => T0 }));
-  vi.spyOn(platformFactory, 'createTargetPlatform').mockImplementation(options => createPlatform({ ...options, now: () => T0 }));
+  vi.spyOn(platformFactory, 'openTargetPlatform').mockImplementation(options => openPlatform({ ...options, now: () => T0 }));
 });
 const pendingStarts: Array<Promise<{ ok: true } | { ok: false; error: unknown }>> = [];
 afterEach(async () => {
@@ -153,7 +154,7 @@ it('IT17 (route table): each of the eleven new suffixes maps to its exact kind, 
 
 /** The ledger's committed events as `(cursor, event type)`, read with its own connection. */
 function ledgerEvents(database: string): Array<{ cursor: CommitCursor; type: string }> {
-  return readSqlite(join(database, 'ledger.sqlite'), (ledger) =>
+  return readSqlite(join(storeDirOf(database), 'ledger.sqlite'), (ledger) =>
     (ledger.prepare('SELECT id, event_json FROM events ORDER BY id').all() as Array<{ id: number; event_json: string }>)
       .map(row => ({ cursor: makeCommitCursor(Number(row.id)),
         type: (JSON.parse(row.event_json) as { eventType: string }).eventType })),

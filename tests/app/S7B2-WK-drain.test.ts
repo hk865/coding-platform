@@ -25,9 +25,9 @@ vi.mock('../../src/composition/create-platform.js', async (importOriginal) => {
   const actual = await importOriginal<Module>();
   return {
     ...actual,
-    createTargetPlatform: (options: Parameters<Module['createTargetPlatform']>[0]) => {
+    openTargetPlatform: (options: Parameters<Module['openTargetPlatform']>[0]) => {
       const observer = options.commitObserver;
-      return actual.createTargetPlatform({
+      return actual.openTargetPlatform({
         ...options,
         commitObserver: {
           started: head => observer?.started(head),

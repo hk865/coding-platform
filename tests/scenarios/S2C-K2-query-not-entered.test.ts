@@ -17,7 +17,7 @@
  */
 import { rename } from 'node:fs/promises';
 import { afterEach, expect, it } from 'vitest';
-import { cleanupScenarios, openHostScenario, performs } from './harness.js';
+import { cleanupScenarios, openHostScenario, performs, type ScenarioCommitGate } from './harness.js';
 import {
   AG2B_CONSUMER_ID, AG2B_SCOPE, claimBusyQuery, createAG2bSession, plain,
 } from '../helpers/AG2b-collaboration-fixture.js';
@@ -84,21 +84,36 @@ it('2C-41 a Query reconciled entering -> not_entered keeps the entering startedA
 }, 240_000);
 
 it('a Query whose Kernel run throws answers its start with the reason, not a ready unsettled run', async () => {
-  const h = await openHostScenario();
+  // KLS-1b (X3): the project store follows the workspace root, so moving the root before the route
+  // would fail the entering commit instead. The root is moved only after that commit is durable
+  // (the harness's existing commit gate), so the Kernel's open of the root is the failure the row proves.
+  let root = '';
+  let aside = '';
+  let moveAfterEntering: (() => Promise<void>) | null = null;
+  const gate: ScenarioCommitGate = async batch => {
+    if (moveAfterEntering === null) return;
+    if (!batch.events.some(event => event.eventType === 'QueryExecutionRecorded'
+      && (JSON.parse(event.json) as { payload?: { operation?: string } }).payload?.operation === 'entering')) return;
+    const move = moveAfterEntering;
+    moveAfterEntering = null;
+    await move();
+  };
+  const h = await openHostScenario({ commitGate: gate });
+  root = h.root;
+  aside = `${root}-aside`;
   const session = await createAG2bSession(h.host, 'kernel-throw-session');
   const query = await claimBusyQuery(h.host, session, 'kernel-throw');
   const prepared = await h.post<ReadResult<unknown>>('queries/prepare', plain(AG2B_SCOPE, { queryRunRef: query.queryRunRef,
     requestId: 'kernel-throw-prepare' }));
   expect(prepared.status).toBe('ready');
-  // The root is moved away and back: the Kernel cannot open the workspace, so its run throws.
-  const aside = `${h.root}-aside`;
-  await rename(h.root, aside);
+  moveAfterEntering = () => rename(root, aside);
   let started: Record<string, unknown>;
   try {
     started = await h.answer('queries/start', plain(AG2B_SCOPE, { prepared: (prepared as { value: unknown }).value,
       consumerId: AG2B_CONSUMER_ID, requestId: 'kernel-throw-start' }));
   } finally {
-    await rename(aside, h.root);
+    moveAfterEntering = null;
+    await rename(aside, root);
   }
   expect(started).toMatchObject({ status: 'rejected', code: 'unavailable' });
   expect(started['reason']).toEqual(expect.stringMatching(/^running the Query failed: /));

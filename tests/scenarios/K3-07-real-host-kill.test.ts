@@ -48,6 +48,7 @@ import {
 } from '../helpers/RL-resource-caps-support.js';
 import { initGitWorkspace } from './support/git-workspace.js';
 import { redrivePolicy } from './support/common.js';
+import { hostReconcile } from '../helpers/KLS1B-host-store.js';
 
 afterEach(async () => {
   await cleanupAG2b();
@@ -206,7 +207,7 @@ describe('K3-07 real Host SIGKILL during a real shell command', () => {
       // reconcile's takeover records (the K3-01 crash-scenario convention).
       await writeAutomationSettings(database, redrivePolicy(false));
       second = await startAG2bHost(publicDir, { root, database, replies: [] });
-      const report: HostReconcileReportV1 = second.host.reconcile;
+      const report: HostReconcileReportV1 = hostReconcile(second.host, AG2B_SCOPE.projectId);
       expect(report, 'the second Host took over the dead instance lease').toMatchObject({
         lease: 'owned', leaseRow: 'HL-03',
       });

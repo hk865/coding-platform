@@ -7,7 +7,7 @@
  *     `ExecutionEntryPort` entries/ends, with NO `RunActivity` for the Runs;
  *   - the workspace `ActivityRecording` and the automatic recent backfill only
  *     through `createLocalWorkbenchHost`'s own start-up;
- *   - assertions only through `host.reconcile` (the public Host return) and the
+ *   - assertions only through `hostReconcile(host, scope.projectId)` (the public Host return) and the
  *     public `readActivityCalendar`/`readRunActivities` reads over a secondary
  *     connection.
  *
@@ -30,6 +30,7 @@ import { acquireHostInstanceLease } from '../../src/app/host-instance-lease.js';
 import { openS2BActivityFixture, resetActivityBackfillGate, WORK_TASK_IDS, type S2BActivityFixture } from '../helpers/S2B-activity-fixture.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
+import { hostReconcile, linkHostStore } from '../helpers/KLS1B-host-store.js';
 
 vi.mock('../../src/business/workflow/activity-backfill.js', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
@@ -83,6 +84,7 @@ describe('S2B Group B — Host backfill wiring (BE3)', () => {
     await f.b2.base.closeBackend();
 
     const scope: WorkspaceScope = { projectId: f.b2.base.scope.projectId, workspaceId: f.b2.base.scope.workspaceId };
+    await linkHostStore(scope.projectId, directory, directory);
     let now = at(0);
     const backfillCompleted = resetActivityBackfillGate();
     host = await createLocalWorkbenchHost({
@@ -152,6 +154,7 @@ describe('S2B Group B — Host backfill wiring (BE3)', () => {
     await acquireHostInstanceLease({ directory, now: () => at(0) });
 
     const scope: WorkspaceScope = { projectId: f.b2.base.scope.projectId, workspaceId: f.b2.base.scope.workspaceId };
+    await linkHostStore(scope.projectId, directory, directory);
     host = await createLocalWorkbenchHost({
       storage: { kind: 'sqlite', directory },
       actor: { kind: 'human', id: 's2b-host-operator' },
@@ -161,7 +164,7 @@ describe('S2B Group B — Host backfill wiring (BE3)', () => {
       settings: { settingsDirectory: await isolatedSettingsDirectory() },
       now: () => at(0),
     });
-    expect(host.reconcile.lease).toBe('held_by_other');
+    expect(hostReconcile(host, scope.projectId).lease).toBe('held_by_other');
     secondary = await f.b2.base.reopenService();
     const reads = readModelOver(secondary.records as unknown as RecordOrderedLookupPort, () => at(0));
 

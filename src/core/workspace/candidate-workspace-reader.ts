@@ -2,11 +2,12 @@ import { createHash } from 'node:crypto';
 import { readdir, readFile, lstat, readlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { canonicalJson } from '../../contracts/fingerprint.js';
+import { withinProjectStore } from './denied-prefixes.js';
 const digest = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
 const ignored = new Set(['.git', '.platform-runtime', 'node_modules', 'dist', 'coverage', 'test-results', '.cache']);
 /** The existing candidate digest scope, shared by labelled source comparisons. */
 export function candidateWorkspaceIncludesPath(path: string): boolean {
-  return !path.split('/').some(part => ignored.has(part));
+  return !path.split('/').some(part => ignored.has(part)) && !withinProjectStore(path);
 }
 export type CandidateWorkspaceGitEntry = { path: string; mode: string; sha1: string; sha256: string };
 function gitEntry(path: string, mode: string, body: Buffer): CandidateWorkspaceGitEntry {
@@ -31,8 +32,11 @@ async function candidateWorkspaceSnapshot(root: string): Promise<{ digest: strin
     for (const name of (await readdir(dir)).sort()) {
       if (ignored.has(name))
         continue;
-      const path = prefix ? prefix + '/' + name : name,
-        absolute = join(dir, name),
+      const path = prefix ? prefix + '/' + name : name;
+      // X1: the project store kept in the workspace is never candidate content.
+      if (withinProjectStore(path))
+        continue;
+      const absolute = join(dir, name),
         stat = await lstat(absolute);
       ensure(++count <= 60000, '工作区文件过多，无法冻结候选');
       if (stat.isSymbolicLink()) {

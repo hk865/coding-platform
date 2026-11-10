@@ -10,7 +10,7 @@
  *   entry: no second request record is written.
  * - A trigger for a workspace whose capture is running writes its new request
  *   immediately and queues exactly one more capture.
- * - At most one capture runs for the whole Host; the queue is drained in order.
+ * - At most one capture runs per project (one driver per project runtime); the queue is drained in order.
  *
  * A capture start reads the request record ONCE and the public observation
  * state ONCE. That snapshot's `requestSeq` is the capture identity

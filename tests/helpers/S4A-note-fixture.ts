@@ -36,6 +36,7 @@ import type { NoteWritePort, WriteNoteResult } from '../../src/core/work-graph/m
 import type { TaskRequeueRef } from '../../src/contracts/task-requeue.js';
 import type { RuntimeHostBindings } from '../../src/core/agent-runtime/execution-contracts.js';
 import { createTargetPlatform } from '../../src/composition/create-platform.js';
+import { hostProjectStoreDirectory } from './KLS1B-host-store.js';
 
 export type S4ANoteFixtureKind = 'memory' | 'sqlite';
 
@@ -146,8 +147,11 @@ export async function createS4ANoteFixture(kind: S4ANoteFixtureKind,
     ...(options.anchorQuota === undefined ? {} : { anchorQuota: options.anchorQuota }),
     ...(options.goalQuota === undefined ? {} : { goalQuota: options.goalQuota }),
   };
+  // KLS-1b: a SQLite fixture keeps its store where a Host opens this project's store, so a Host shares it.
+  const storeDirectory = kind === 'memory' ? null : await hostProjectStoreDirectory(PROJECT, root);
+  if (storeDirectory !== null) await mkdir(storeDirectory, { recursive: true });
   const platform = await createTargetPlatform({
-    storage: kind === 'memory' ? { kind: 'memory' } : { kind: 'sqlite', directory: join(directory, 'storage') },
+    storage: storeDirectory === null ? { kind: 'memory' } : { kind: 'sqlite', directory: storeDirectory },
     workspace: bindings,
     now,
     kernelStores: { entries: [{ adapterId: 's4a-kernel', storeKey: 's4a-kernel-store', workspace: scope,

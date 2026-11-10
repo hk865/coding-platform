@@ -86,12 +86,13 @@ async function reconcile(goals: readonly GoalSnapshot[], graphs: Record<string, 
       listGoals: async () => ({ status: 'ready', value: { records: [...goals], damaged: [] } }),
     } },
   };
-  const report = await runStartupReconcile({ platform, hostInstanceId: 'a2-redrive-host', resumeOnStartup: 'auto', scopes: [scope], context,
-    fanOut: async (_ctx, goalRef) => {
-      fanOuts.push(goalRef.goalId);
-      return { goalRef, epoch: 2, control: 'pause', runs: [], problem: null } as never;
-    } });
-  return { report, reads, fanOuts };
+  const reports = await runStartupReconcile({ scopes: [scope], context,
+    forScope: () => ({ platform, hostInstanceId: 'a2-redrive-host', resumeOnStartup: 'auto',
+      fanOut: async (_ctx, goalRef) => {
+        fanOuts.push(goalRef.goalId);
+        return { goalRef, epoch: 2, control: 'pause', runs: [], problem: null } as never;
+      } }) });
+  return { report: reports.get(scope.projectId)!, reads, fanOuts };
 }
 
 it('§12.1 step 6b (a): only a required active Task with a pending verdict selects its Goal', async () => {

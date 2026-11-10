@@ -61,6 +61,7 @@ import {
   countsAllowingStartWrites, crashMidTurn, expectQuietHarnessRestart, expectQuietRestart, forceTurnOnKernelSession, performedOf,
   reworkNoticesSince,
 } from './support/restart.js';
+import { hostReconcile } from '../helpers/KLS1B-host-store.js';
 
 afterEach(cleanupScenarios);
 
@@ -603,17 +604,17 @@ it('a Run paused at a safe point when its Host stopped ends paused-interrupted a
   let reconciled: TaskExecutionRecord;
   try {
     await assertInvariantsAt(inv, 'A8-3o reconciled');   // A.2 step 6
-    const hostInstanceId = second.host.reconcile.hostInstanceId;
+    const hostInstanceId = hostReconcile(second.host, AG2B_SCOPE.projectId).hostInstanceId;
     const runKey = JSON.stringify(runRef);
-    expect(second.host.reconcile).toMatchObject({ lease: 'owned', leaseRow: 'HL-03',
+    expect(hostReconcile(second.host, AG2B_SCOPE.projectId)).toMatchObject({ lease: 'owned', leaseRow: 'HL-03',
       leaseReason: `the stale lock of pid ${String(crashedPid)} was taken over`,
       report: { hostInstanceId, sessions: [{ ref: sessionKey(oldSession), row: 'H-01' }],
         runs: [{ ref: runKey, row: 'W-20', status: 'reconciled' }], queries: [], checks: [], problems: [] } });
-    expect(JSON.stringify(second.host.reconcile.report?.sessions)).not.toContain(idleSession.sessionId);
+    expect(JSON.stringify(hostReconcile(second.host, AG2B_SCOPE.projectId).report?.sessions)).not.toContain(idleSession.sessionId);
     expect(JSON.parse(await readFile(lockPath, 'utf8'))).toMatchObject({ hostInstanceId, pid: process.pid });
     // §12.1 step 7: the same report over the public route.
     expect(await post<ReadResult<HostReconcileReportV1>>(second, 'host/reconcile-report', plain(AG2B_SCOPE, {})))
-      .toEqual({ status: 'ready', value: second.host.reconcile });
+      .toEqual({ status: 'ready', value: hostReconcile(second.host, AG2B_SCOPE.projectId) });
 
     // RUN-24 (C4): crashed, paused-interrupted, on the takeover basis; SES-06 + LA-1: released, cursor kept, retired.
     reconciled = await readExecution(second, runRef);
@@ -649,7 +650,7 @@ it('a Run paused at a safe point when its Host stopped ends paused-interrupted a
   await writeAutomationSettings(database, { schemaVersion: 1, autoReworkLimit: 0, resumeOnStartup: 'off' });
   const third = await startAG2bHost(publicDir, { root, database, replies: editThenText('a2-restart') });
   try {
-    expect(third.host.reconcile).toMatchObject({ lease: 'owned', leaseRow: 'HL-01', report: {
+    expect(hostReconcile(third.host, AG2B_SCOPE.projectId)).toMatchObject({ lease: 'owned', leaseRow: 'HL-01', report: {
       sessions: [{ ref: sessionKey(oldSession), row: 'H-01', status: 'left' }],
       runs: [], queries: [], checks: [], controls: [], redriveGoals: [], problems: [] } });
     const again = await readExecution(third, runRef);
@@ -702,8 +703,8 @@ it('G-05, W-20 and CTL-08(f): a pause queued before the safe point ends the Run 
   const second = await startAG2bHost(publicDir, { root, database });
   try {
     if (pauseRef === undefined) throw new Error('the pause must be submitted');
-    const hostInstanceId = second.host.reconcile.hostInstanceId;
-    expect(second.host.reconcile).toMatchObject({ report: {
+    const hostInstanceId = hostReconcile(second.host, AG2B_SCOPE.projectId).hostInstanceId;
+    expect(hostReconcile(second.host, AG2B_SCOPE.projectId)).toMatchObject({ report: {
       runs: [{ ref: JSON.stringify(crashed.runRef), row: 'W-20', status: 'reconciled', reason: 'interrupted_clean' }] } });
     const ended = await readExecution(second, crashed.runRef);
     expect(ended.run).toMatchObject({ status: 'ended', outcome: 'crashed',
@@ -780,7 +781,7 @@ it('LA-1 and contract (e) (closing supported; KA-07, KA-09, A8-3l step 5, A8-3r)
 
   const second = await startAG2bHost(publicDir, { root, database, replies: [{ kind: 'text', text: 'A2 seeded: continued in the same Session' }] });
   try {
-    expect(second.host.reconcile).toMatchObject({ report: { runs: [{ ref: JSON.stringify(interrupted), row: 'W-20' }] } });
+    expect(hostReconcile(second.host, AG2B_SCOPE.projectId)).toMatchObject({ report: { runs: [{ ref: JSON.stringify(interrupted), row: 'W-20' }] } });
     await assertInvariantsAt(inv, 'A8-3r reconciled');   // A.2 step 6
     const ended = await readExecution(second, interrupted);
     const requeue = async (afterRunRef: RunRef, requestId: string) => {
@@ -902,7 +903,7 @@ it('LA-1 and contract (e) (closing unsupported; A8-3l step 5, A8-3r, K L8): the 
   kernelClosure.supported = false;
   const second = await startAG2bHost(publicDir, { root, database, replies: [{ kind: 'text', text: 'A2 seeded: continued in a new Session' }] });
   try {
-    expect(second.host.reconcile).toMatchObject({ report: { runs: [{ ref: JSON.stringify(interrupted), row: 'W-20' }] } });
+    expect(hostReconcile(second.host, AG2B_SCOPE.projectId)).toMatchObject({ report: { runs: [{ ref: JSON.stringify(interrupted), row: 'W-20' }] } });
     await assertInvariantsAt(inv, 'A8-3r reconciled');   // A.2 step 6
     const ended = await readExecution(second, interrupted);
     const requeue = async (afterRunRef: RunRef, requestId: string) => {

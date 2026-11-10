@@ -33,8 +33,9 @@ vi.mock('../../src/composition/create-platform.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/composition/create-platform.js')>();
   return {
     ...actual,
-    createTargetPlatform: async (...args: Parameters<typeof actual.createTargetPlatform>) => {
-      const platform = await actual.createTargetPlatform(...args);
+    openTargetPlatform: async (...args: Parameters<typeof actual.openTargetPlatform>) => {
+      const made = await actual.openTargetPlatform(...args);
+      const platform = made.platform;
       const advance = platform.workflow.advanceWork;
       platform.workflow.advanceWork = async (ctx, input, internal) => {
         if (observed.record) {
@@ -53,7 +54,7 @@ vi.mock('../../src/composition/create-platform.js', async (importOriginal) => {
         }
         return result;
       };
-      return platform;
+      return made;
     },
   };
 });

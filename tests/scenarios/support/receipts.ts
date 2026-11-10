@@ -42,6 +42,7 @@ import {
 import type { AdvanceValue } from '../../helpers/A2-restart-fixture.js';
 import { assertInvariants, stepOfReceipt, type HostScenario, type PlatformScenario } from '../harness.js';
 import { requeueBodyOf, taskRefOf } from './common.js';
+import { storeDirOf } from '../../helpers/KLS1B-host-store.js';
 
 /**
  * One `workflow/advance` call on the live Host (a `select_work` or one `perform`), then the
@@ -72,7 +73,7 @@ export type CommitFault = {
  */
 export function failCommitOf(database: string, eventType: string): CommitFault {
   if (!/^[A-Za-z]+$/.test(eventType)) throw new Error(`the event type ${eventType} cannot be quoted safely`);
-  const path = join(database, 'ledger.sqlite');
+  const path = join(storeDirOf(database), 'ledger.sqlite');
   const ddl = new DatabaseSync(path);
   try {
     const armedAt = Number((ddl.prepare('SELECT COALESCE(MAX(id), 0) AS id FROM events').get() as { id: number }).id);

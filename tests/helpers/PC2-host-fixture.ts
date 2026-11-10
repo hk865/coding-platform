@@ -147,6 +147,8 @@ export async function openPC2HostFixture(options: PC2HostOptions = {}) {
   } | undefined;
   let current: PC2HostStart = {};
   let closed = false;
+  /** Ends a capture still waiting for the Host's first platform (see `start`). */
+  let releaseCapture: (() => void) | undefined;
   const defaults: LocalWorkbenchHostOptions = {
     storage: { kind: 'sqlite', directory: paths.database },
     actor: { kind: 'human', id: 'pc2-host-operator' },
@@ -173,6 +175,8 @@ export async function openPC2HostFixture(options: PC2HostOptions = {}) {
   const stop = async (): Promise<void> => {
     const prior = live;
     live = undefined;
+    releaseCapture?.();
+    releaseCapture = undefined;
     await prior?.host.close();
   };
   const start = async (overrides: PC2HostStart = {}) => {
@@ -182,29 +186,45 @@ export async function openPC2HostFixture(options: PC2HostOptions = {}) {
     let platform: Platform | undefined;
     let runtime: RuntimeBinding;
     let host: LocalWorkbenchHost | undefined;
-    const actual = platformModule.createTargetPlatform;
-    const spy = vi.spyOn(platformModule, 'createTargetPlatform').mockImplementation(async input => {
+    const actual = platformModule.openTargetPlatform;
+    const spy = vi.spyOn(platformModule, 'openTargetPlatform').mockImplementation(async input => {
       runtime = input.runtime;
-      platform = await actual(input);
-      return platform;
+      const made = await actual(input);
+      platform ??= made.platform;
+      return made;
     });
     try {
       host = await createLocalWorkbenchHost({ ...defaults, ...current });
     } catch (error) {
+      spy.mockRestore();
       await platform?.close();
       throw error;
-    } finally { spy.mockRestore(); }
+    }
+    // KLS-1b: a Host with no project on its list or among its start-up workspaces builds its first platform only
+    // when a directory opens one (U4); the capture then waits for that one, at the latest until this Host stops.
+    if (platform !== undefined) spy.mockRestore(); else releaseCapture = () => spy.mockRestore();
     try {
-      if (!platform) throw new Error('The Host did not construct its platform');
       const transport = await listenInProcess(host);
       const page = await dispatch(transport.server, transport.address, '', '/workbench/', undefined, {
         method: 'GET', token: null,
       });
       const token = new RegExp(`<meta name="${PLATFORM_TOKEN_META_NAME}" content="([^"]+)">`).exec(page.text)?.[1];
       if (page.status !== 200 || token === undefined) throw new Error('The Host page supplied no token');
-      live = { host, platform, runtime, ...transport, token };
+      live = {
+        host, ...transport, token,
+        get platform(): Platform {
+          if (platform === undefined) throw new Error('The Host did not construct its platform');
+          return platform;
+        },
+        get runtime(): RuntimeBinding { return runtime; },
+      };
       return live;
-    } catch (error) { await host.close(); throw error; }
+    } catch (error) {
+      releaseCapture?.();
+      releaseCapture = undefined;
+      await host.close();
+      throw error;
+    }
   };
   const close = async (): Promise<void> => {
     if (closed) return;

@@ -270,7 +270,7 @@ async function openWorld(input: { backend: Backend; catalog: AdoptedArchitecture
   const startServer = async (): Promise<void> => {
     const created = createWorkbenchServer({
       token: serverTokens,
-      bindings: createPlatformCoreRouteBindings(platform as Parameters<typeof createPlatformCoreRouteBindings>[0]),
+      bindings: () => createPlatformCoreRouteBindings(platform as Parameters<typeof createPlatformCoreRouteBindings>[0]),
       actor: hostActor,
       bootstrap: () => ({ workspaces: [], review: null, execution: { queryProfiles: [], workflowScopes: [] } }),
       allowsScope: candidate => candidate.projectId === MAINTAINER_PROJECT_ID

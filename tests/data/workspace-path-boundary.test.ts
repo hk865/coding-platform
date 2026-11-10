@@ -9,8 +9,8 @@ import { WORKSPACE_DENIED_PREFIXES } from '../../src/core/workspace/denied-prefi
 
 it('拒绝前缀的唯一来源是内核默认值 + 平台追加，二者都逐字保留', () => {
   // 内核（vendor/coding-agent 的 WorkspaceSandbox）在调用方不传 deniedPrefixes 时用的三项；
-  // 平台在此之上追加 .git／.env／.env.local／.platform-runtime。顺序不参与语义（内核会排序）。
+  // 平台在此之上追加 .git／.env／.env.local／.platform-runtime／.workbench/local。顺序不参与语义（内核会排序）。
   expect([...WORKSPACE_DENIED_PREFIXES].sort()).toEqual(
-    ['.evaluator', '.oracle', 'hidden-tests', '.git', '.env', '.env.local', '.platform-runtime'].sort(),
+    ['.evaluator', '.oracle', 'hidden-tests', '.git', '.env', '.env.local', '.platform-runtime', '.workbench/local'].sort(),
   );
 });

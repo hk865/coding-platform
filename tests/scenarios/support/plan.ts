@@ -72,6 +72,7 @@ import {
   assertInvariants, assertInvariantsAt, performs, stepOfReceipt, type HostScenario, type InvariantTarget, type Platform,
 } from '../harness.js';
 import { draftFrom, type PhaseLog } from './common.js';
+import { storeDirOf } from '../../helpers/KLS1B-host-store.js';
 
 type Perform = Extract<WorkflowAdvanceInput, { kind: 'perform' }>;
 type DraftV2 = Extract<PlanRevisionDraft, { schemaVersion: 2 }>;
@@ -96,7 +97,7 @@ export async function cleanupPlan(): Promise<void> {
 
 /** Every `ExecutionEntryAuthorized` audit body of a ledger, in commit order (read with its own connection). */
 export function authorizedEventsIn(directory: string): Array<{ permit: { claim: TaskClaim }; activePlanRef?: PlanRevisionRef }> {
-  const database = new DatabaseSync(join(directory, 'ledger.sqlite'), { readOnly: true });
+  const database = new DatabaseSync(join(storeDirOf(directory), 'ledger.sqlite'), { readOnly: true });
   try {
     const rows = database.prepare('SELECT event_json FROM events ORDER BY id').all() as Array<{ event_json: string }>;
     type Authorized = { eventType: string; permit: { claim: TaskClaim }; activePlanRef?: PlanRevisionRef };
@@ -107,7 +108,7 @@ export function authorizedEventsIn(directory: string): Array<{ permit: { claim: 
 
 /** Every `PlanRevisionAccepted` event of a ledger in commit order: the adopted planId and the actor production recorded. */
 export function planAcceptedEventsIn(directory: string): Array<{ aggregateId: string; actor: ActorRef }> {
-  const database = new DatabaseSync(join(directory, 'ledger.sqlite'), { readOnly: true });
+  const database = new DatabaseSync(join(storeDirOf(directory), 'ledger.sqlite'), { readOnly: true });
   try {
     const rows = database.prepare('SELECT event_json FROM events ORDER BY id').all() as Array<{ event_json: string }>;
     type Accepted = { eventType: string; aggregateId: string; actor: ActorRef };
@@ -839,7 +840,7 @@ let raceIds = 0;
  */
 export function raceWindow(database: string, writer: RaceWriter, inside: () => Promise<void>,
   host: { now: () => string; workspace?: Pick<WorkspaceHostBindings, 'resolveRoot'> }): RaceWindow {
-  const backend = createSqliteRecordBackend({ schemas: platformRecordSchemas(), path: join(database, 'ledger.sqlite') });
+  const backend = createSqliteRecordBackend({ schemas: platformRecordSchemas(), path: join(storeDirOf(database), 'ledger.sqlite') });
   raceBackends.push(backend);
   let raced = false;
   const records: SqliteRecordBackend['records'] = { ...backend.records, async commit(prepared) {

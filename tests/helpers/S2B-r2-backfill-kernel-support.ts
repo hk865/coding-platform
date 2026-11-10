@@ -38,6 +38,7 @@ import {
   createS2BRuntimeStoreFixture, type S2BRuntimeStoreFixture,
 } from './S2B-runtime-store-fixture.js';
 import type { ScriptedReply } from './B2-runtime-fixture.js';
+import { linkHostStore } from './KLS1B-host-store.js';
 
 /** The one real workspace file every scripted `read` call opens. */
 const READ_PATH = 'b2-read.txt';
@@ -138,6 +139,7 @@ export async function startKernelBackfillHost(
   // PC-2 ruling 2: the prompt directory lives under the settings directory, so
   // the settings directory must be outside the workspace root.
   const settingsDirectory = await mkdtemp(join(tmpdir(), 's2b-r2-kernel-settings-'));
+  await linkHostStore(fixture.scope.projectId, fixture.directory, fixture.directory);
   const host = await hostModule.createLocalWorkbenchHost({
     storage: { kind: 'sqlite', directory: fixture.directory },
     actor: { kind: 'human', id: actorId },

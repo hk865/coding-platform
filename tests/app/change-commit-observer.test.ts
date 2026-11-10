@@ -169,7 +169,9 @@ describe('Host change stream over real commits', () => {
       if (token === undefined) throw new Error('the page did not carry the token');
       const origin = `http://${address.host}:${address.port}`;
       const stream = await openChangeStream(origin, token);
-      expect((await stream.nextEvent())?.event).toBe('ready');
+      const ready = await stream.nextEvent();
+      expect(ready?.event).toBe('ready');
+      const n = ready?.id === null || ready?.id === undefined ? 0 : Number(ready.id.slice(1));
       const written = await fetch(new URL(`${CORE_API_PREFIX}projects/create`, origin), {
         method: 'POST',
         headers: { 'content-type': 'application/json', [PLATFORM_TOKEN_HEADER]: token },
@@ -177,8 +179,8 @@ describe('Host change stream over real commits', () => {
       });
       const receipt = await written.json() as { status: string; cursor: string };
       expect(receipt).toMatchObject({ status: 'committed' });
-      expect(await stream.nextEvent()).toEqual({ comment: false, event: 'change', id: receipt.cursor,
-        data: { cursor: receipt.cursor, kinds: ['project'], projects: [scope.projectId] } });
+      expect(await stream.nextEvent()).toEqual({ comment: false, event: 'change', id: `h${String(n + 1).padStart(10, '0')}`,
+        data: { projectId: scope.projectId, cursor: receipt.cursor, kinds: ['project'], projects: [scope.projectId] } });
       const started = Date.now();
       await host.close();
       closed = true;

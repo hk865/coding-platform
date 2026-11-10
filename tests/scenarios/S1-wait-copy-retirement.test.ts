@@ -19,6 +19,7 @@ import {
 import { acceptedMessageInputs, consult } from './support/brief.js';
 import { NO_REDRIVE, execution, selectedRun, stepOf, WORK_TARGET } from './support/common.js';
 import { invariantStoreOf, readInvariantWorld } from '../state/invariants.js';
+import { storeDirOf } from '../helpers/KLS1B-host-store.js';
 
 let restoreClock: (() => void) | undefined;
 beforeEach(() => { restoreClock = installS1ScenarioClock(); });
@@ -53,7 +54,7 @@ async function yieldWait(h: HostScenario, label: string, taskId: string, target:
 }
 
 async function sourceExecutions(h: HostScenario, session: SessionRef) {
-  const world = await readInvariantWorld(invariantStoreOf(h.database), AG2B_SCOPE.projectId);
+  const world = await readInvariantWorld(invariantStoreOf(storeDirOf(h.database)), AG2B_SCOPE.projectId);
   return { work: world.outboxes.filter(o => o.claim.sessionRef.sessionId === session.sessionId).map(o => o.claim.runRef),
     query: world.queryRuns.filter(q => q.run.executionState?.sessionRef.sessionId === session.sessionId).map(q => q.ref) };
 }

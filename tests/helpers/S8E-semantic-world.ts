@@ -39,10 +39,10 @@
  *   the read fault also hits `readWorkspaceFiles` path by path.
  * - A secretary round helper that is `holdS6BRequestRound` on this same world.
  * - The `noteLimits` small-quota wrapper (DR-8E L2-04): ONE plain delegating
- *   function around the real `createTargetPlatform` module export, installed
+ *   function around the real `openTargetPlatform` module export, installed
  *   before Host construction and restored by `close()`. It merges the world's
  *   limits into the existing `TargetPlatformOptions.noteLimits` and returns the
- *   real platform. There is no `vi.spyOn` on that export and no new Host
+ *   real `{ platform, records }`. There is no `vi.spyOn` on that export and no new Host
  *   option or port.
  *
  * Rules: no hand-built `ctx` (the Host's `humanContext()` is used), no
@@ -372,17 +372,17 @@ export function s8eLinkDraft(spec: S8ELinkSpec, overrides: Partial<LinkDraftV1> 
 // ---------------------------------------------------------------------------
 
 /** The real platform factory, captured before any wrapper: `restoreMocks` puts a previous test's wrapper back. */
-const realCreateTargetPlatform = platformModule.createTargetPlatform;
+const realOpenTargetPlatform = platformModule.openTargetPlatform;
 
 /**
  * Installs ONE plain delegating function around the real module export: it
  * merges the world's limits into the Host's existing `noteLimits` and returns
- * the real platform. No `vi.spyOn` on this export (the S6A world already has
+ * the real `{ platform, records }`. No `vi.spyOn` on this export (the S6A world already has
  * its own single delegating spy for platform capture), no Host option and no
  * new port. Returns the paired restore.
  */
 function installQuotaWrapper(limits: S4ANoteLimits, noteNewId?: () => string): () => void {
-  const actual = realCreateTargetPlatform;
+  const actual = realOpenTargetPlatform;
   const wrapper: typeof actual = async options => {
     const merged = {
       ...options,
@@ -391,13 +391,13 @@ function installQuotaWrapper(limits: S4ANoteLimits, noteNewId?: () => string): (
     };
     return await actual(merged);
   };
-  Object.defineProperty(platformModule, 'createTargetPlatform',
+  Object.defineProperty(platformModule, 'openTargetPlatform',
     { value: wrapper, configurable: true, writable: true });
   let restored = false;
   return () => {
     if (restored) return;
     restored = true;
-    Object.defineProperty(platformModule, 'createTargetPlatform',
+    Object.defineProperty(platformModule, 'openTargetPlatform',
       { value: actual, configurable: true, writable: true });
   };
 }

@@ -28,6 +28,7 @@ import { openMemoryPlatform } from '../helpers/K3-review-card-fixture.js';
 import { createR3eEvidenceFixture, R3E_GATE_TASK_ID, R3E_HOST,
   type R3eEvidenceFixture } from '../helpers/R3e-evidence-fixture.js';
 import { EXPECTED_ROUTE_ROWS } from '../helpers/S6B3-route-suffixes.js';
+import { linkHostStore } from '../helpers/KLS1B-host-store.js';
 
 const ROUND_ROUTE = 'verification/round' as CoreRouteSuffix;
 const KINDS = ['memory', 'sqlite'] as const;
@@ -148,6 +149,7 @@ const plainBody = (scope: { projectId: string; workspaceId: string }, input: unk
 
 async function openRoundReadHost(fixture: R3eEvidenceFixture): Promise<{ host: LocalWorkbenchHost; base: string; token: string }> {
   await fixture.b2.base.closeBackend();
+  await linkHostStore(fixture.scope.projectId, fixture.workspaceRoot, fixture.b2.base.directory);
   const publicDir = await publicDirectory();
   const host = await createLocalWorkbenchHost({
     storage: { kind: 'sqlite', directory: fixture.b2.base.directory }, actor: R3E_HOST, publicDir, now: () => B2_AT,

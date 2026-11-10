@@ -62,6 +62,7 @@ import type { RequestSubmitPort } from '../../../src/business/workflow/request-i
 import { createSecretaryProfiles } from '../../../src/app/secretary-profiles.js';
 import { createSessionDutyResolver } from '../../../src/composition/session-duty.js';
 import { platformRoleProfile } from '../../../src/core/agent-runtime/role-profiles.js';
+import { storeDirOf } from '../../helpers/KLS1B-host-store.js';
 
 /** The platform's own secretary template: the one role the S5 requests run on. */
 const S5_SECRETARY_ROLE = platformRoleProfile('secretary').template;
@@ -176,7 +177,7 @@ export function s5AnnotatedObject(objects: readonly DecisionObjectV1[]): Decisio
  */
 export function s5CommitReceipt(database: string, cursor: CommitCursor):
   { identityKey: string; fingerprint: string; cursor: CommitCursor } {
-  const row = readSqlite(join(database, 'ledger.sqlite'), ledger => ledger
+  const row = readSqlite(join(storeDirOf(database), 'ledger.sqlite'), ledger => ledger
     .prepare('SELECT identity_key, fingerprint FROM idempotency WHERE commit_cursor = ?')
     .get(cursor) as { identity_key: string; fingerprint: string } | undefined, undefined);
   if (row === undefined) throw new Error(`no formal commit receipt is stored at cursor ${cursor}`);
@@ -197,7 +198,7 @@ export function s5StoreSnapshot(ledgerPath: string) {
 
 /** Decode the actual formal events, so Q1/setup accepts cannot count as Q2's change. */
 export function s5PlanAcceptances(database: string) {
-  return readSqlite(join(database, 'ledger.sqlite'), ledger => ledger
+  return readSqlite(join(storeDirOf(database), 'ledger.sqlite'), ledger => ledger
     .prepare("SELECT event_json FROM events WHERE json_extract(event_json, '$.eventType') = 'PlanRevisionAccepted' ORDER BY id")
     .all().map(row => {
       if (typeof row.event_json !== 'string') throw new Error('invalid stored plan event');
@@ -564,8 +565,8 @@ export async function s5AgentRequeue(h: HostScenario, afterRunRef: RunRef) {
     meta: { requestId: 's5-aux-claim', expected: [pins.goal, pins.workspace,
       { ref: plainSessionRefToAggregate(sessionRef), revision: created.value.revision }] },
   }));
-  const backend = createSqliteRecordBackend({ path: join(h.database, 'ledger.sqlite'), schemas: platformRecordSchemas() });
-  const bodies = createSqliteRawArtifactStore(join(h.database, 'artifacts.sqlite'));
+  const backend = createSqliteRecordBackend({ path: join(storeDirOf(h.database), 'ledger.sqlite'), schemas: platformRecordSchemas() });
+  const bodies = createSqliteRawArtifactStore(join(storeDirOf(h.database), 'artifacts.sqlite'));
   const now = () => '2026-10-08T00:00:00.000Z';
   const permissions: TaskEnvelopeV1['permissions'] = {
     policyRevision: 'legacy-template', tools: ['read', 'request_rework'], writeScope: [], createMember: false,

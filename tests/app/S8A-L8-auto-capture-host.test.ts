@@ -9,7 +9,8 @@
  * and the waiting policy have one copy.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { rename, rm } from 'node:fs/promises';
+import { chmod } from 'node:fs/promises';
+import { join } from 'node:path';
 import {
   adoptInitial, cleanupTemporary, completed, corePost, graphWrite, makeWorkspace,
   observationState, routeRegistered, scopeOf, settingsPost, setupPublicDir, startHost, temporaryDirectory,
@@ -98,14 +99,15 @@ describe('L8 automatic capture through the Host (A-04)', () => {
       const scope = scopeOf(`l8-fail-trigger-${backend}`, `l8-fail-trigger-ws-${backend}`);
       const root = await makeWorkspace();
       const started = await startHost({ backend, workspaces: [workspaceConfig(scope, root)] });
-      const away = `${root}-away`;
+      // X3: the source directory becomes unreadable; the root (and the project store in it) stays where it is.
+      const source = join(root, 'src');
       try {
         const project = await corePost(started.base, 'projects/create', started.token,
           graphWrite(scope, { projectId: scope.projectId }, `l8-project:${scope.projectId}`,
             [{ ref: { aggregateType: 'Project' as const, projectId: scope.projectId }, revision: 0 }]));
         expect(await project.json()).toMatchObject({ status: 'committed' });
-        // A REAL failure: the sandbox cannot resolve the moved workspace root.
-        await rename(root, away);
+        // A REAL failure: the capture cannot read the source directory.
+        await chmod(source, 0o000);
         const registered = await corePost(started.base, 'workspaces/register', started.token,
           graphWrite(scope, { workspace: scope }, `l8-workspace:${scope.workspaceId}`,
             [{ ref: { aggregateType: 'Project' as const, projectId: scope.projectId }, revision: 1 },
@@ -117,14 +119,14 @@ describe('L8 automatic capture through the Host (A-04)', () => {
         expect(failed.autoCapture?.failure).not.toBeNull();
         expect(failed.autoCapture?.failure?.code).toBe('unavailable');
         expect(failed.current).toBeNull();
-        await rename(away, root);
+        await chmod(source, 0o755);
         // The next trigger (a real adoption) requests a new capture and retries.
         expect(await adoptInitial(started, scope, `l8-fail-baseline-${backend}`)).toMatchObject({ status: 'committed' });
         const retried = await waitState(started.base, started.token, scope, completed);
         expect(retried.autoCapture).toMatchObject({ requestSeq: 2, trigger: 'catalog_adopted', status: 'requested', pending: false });
         expect(retried.current).not.toBeNull();
       } finally {
-        await rm(away, { recursive: true, force: true });
+        await chmod(source, 0o755).catch(() => undefined);
         await started.host.close();
       }
     }, 90_000);
@@ -134,14 +136,15 @@ describe('L8 automatic capture through the Host (A-04)', () => {
     const scope = scopeOf('l8-fail-start-project', 'l8-fail-start-workspace');
     const root = await makeWorkspace();
     const first = await startHost({ backend: 'sqlite', workspaces: [workspaceConfig(scope, root)] });
-    const away = `${root}-away`;
+    // X3: the source directory becomes unreadable; the root (and the project store in it) stays where it is.
+    const source = join(root, 'src');
     let database: string;
     try {
       const project = await corePost(first.base, 'projects/create', first.token,
         graphWrite(scope, { projectId: scope.projectId }, `l8-project:${scope.projectId}`,
           [{ ref: { aggregateType: 'Project' as const, projectId: scope.projectId }, revision: 0 }]));
       expect(await project.json()).toMatchObject({ status: 'committed' });
-      await rename(root, away);
+      await chmod(source, 0o000);
       const registered = await corePost(first.base, 'workspaces/register', first.token,
         graphWrite(scope, { workspace: scope }, `l8-workspace:${scope.workspaceId}`,
           [{ ref: { aggregateType: 'Project' as const, projectId: scope.projectId }, revision: 1 },
@@ -150,7 +153,7 @@ describe('L8 automatic capture through the Host (A-04)', () => {
       const failed = await waitState(first.base, first.token, scope, state => state.autoCapture?.status === 'failed');
       expect(failed.autoCapture).toMatchObject({ requestSeq: 1, status: 'failed', pending: true });
       expect(failed.current).toBeNull();
-      await rename(away, root);
+      await chmod(source, 0o755);
       database = first.database;
     } finally { await first.host.close(); }
     const second = await startHost({ backend: 'sqlite', workspaces: [workspaceConfig(scope, root)], database });
@@ -159,7 +162,7 @@ describe('L8 automatic capture through the Host (A-04)', () => {
       expect(retried.autoCapture).toMatchObject({ requestSeq: 2, trigger: 'startup_retry', status: 'requested', pending: false });
       expect(retried.current).not.toBeNull();
     } finally {
-      await rm(away, { recursive: true, force: true });
+      await chmod(source, 0o755).catch(() => undefined);
       await second.host.close();
     }
   }, 90_000);

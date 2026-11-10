@@ -29,8 +29,8 @@
  *   notice's project is woken, because passes re-read anyway; a notice of
  *   another type wakes no queue that did not subscribe to it.
  * - No pass starts, and a running pass schedules nothing more, unless the
- *   caller's lease check says the Host is driving. Losing the lease is a
- *   close.
+ *   caller's lease check says the Host is driving the pair's workspace (the
+ *   lease of that workspace's project). Losing the lease is a close.
  * - An unarmed workspace ignores commit notices, settled advances and
  *   registrations until a request command arms it. Without that, nothing runs
  *   after a restart until the person sends a request command.
@@ -107,8 +107,8 @@ export interface WakeLoop {
 }
 
 export type WakeLoopDependencies = {
-  /** True while this Host holds its instance lease; no pass starts otherwise. */
-  driving: () => boolean;
+  /** True while this Host holds the lease of the workspace's project; no pass of that workspace starts otherwise. */
+  driving: (scope: WorkspaceScope) => boolean;
   /** The wait a failing queue uses; a test with fake timers may inject one. */
   delay?: (ms: number, signal: AbortSignal) => Promise<void>;
   /** The clock the back-off deadline is measured against. */
@@ -260,6 +260,10 @@ export function createWakeLoop(deps: WakeLoopDependencies): WakeLoop {
   function queueScope(entry: QueueState): WorkspaceScope | null {
     return workspaces.get(entry.workspaceKey)?.scope ?? null;
   }
+  function driving(entry: QueueState): boolean {
+    const scope = queueScope(entry);
+    return scope !== null && deps.driving(scope);
+  }
 
   /** Keep the pair dirty and set the next back-off; the chain waits it out. */
   function recordFailure(entry: QueueState): void {
@@ -275,11 +279,11 @@ export function createWakeLoop(deps: WakeLoopDependencies): WakeLoop {
    */
   function schedule(entry: QueueState): void {
     entry.dirty = true;
-    if (closed || entry.chain !== null || !deps.driving()) return;
+    if (closed || entry.chain !== null || !driving(entry)) return;
     const chain: Promise<void> = runChain(entry).finally(() => {
       chains.delete(chain);
       entry.chain = null;
-      if (entry.dirty && !closed && deps.driving()) schedule(entry);
+      if (entry.dirty && !closed && driving(entry)) schedule(entry);
     });
     entry.chain = chain;
     chains.add(chain);
@@ -289,12 +293,12 @@ export function createWakeLoop(deps: WakeLoopDependencies): WakeLoop {
     try {
       // Leave the call that woke the loop (a commit path) before any work.
       await yieldToEventLoop();
-      while (!closed && deps.driving() && entry.dirty) {
+      while (!closed && driving(entry) && entry.dirty) {
         if (entry.retryAt > 0) {
           const waitMs = entry.retryAt - now();
           entry.retryAt = 0;
           if (waitMs > 0) await delay(waitMs, controller.signal);
-          if (closed || !deps.driving()) return;
+          if (closed || !driving(entry)) return;
         }
         entry.dirty = false;
         const scope = queueScope(entry);

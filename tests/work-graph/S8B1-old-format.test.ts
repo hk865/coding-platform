@@ -17,6 +17,7 @@ import { S6A_SCOPE, openS6ARequestWorld, type S6ARequestWorld } from '../helpers
 import { openS8B1CountWorld, readS8B1FilePages, readS8B1Neighborhood,
   type S8B1CountWorld } from '../helpers/S8B1-count-world.js';
 import { plain } from '../helpers/AG2b-collaboration-fixture.js';
+import { storeDirOf } from '../helpers/KLS1B-host-store.js';
 
 const FIXTURE = fileURLToPath(new URL('../fixtures/s8b1-observation-v2', import.meta.url));
 
@@ -40,10 +41,12 @@ describe('S8B1 old and current observation formats', () => {
     opened.push(world);
     // The fixture's ledger replaces this world's ledger between the reopen's close and its start;
     // the Host factory is the fixture's public restart seam (the same delegating spy `openS6ATwoWorkspaceWorld` uses).
+    // KLS-1b (121-75): the project store follows its workspace; `database` is the Host's old storage directory.
+    const store = storeDirOf(world.database);
     const real = hostModule.createLocalWorkbenchHost;
     const spy = vi.spyOn(hostModule, 'createLocalWorkbenchHost').mockImplementation(async options => {
       for (const file of await readdir(FIXTURE)) {
-        if (file.endsWith('.sqlite')) await cp(join(FIXTURE, file), join(world.database, file), { force: true });
+        if (file.endsWith('.sqlite')) await cp(join(FIXTURE, file), join(store, file), { force: true });
       }
       return real(options);
     });

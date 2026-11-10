@@ -28,6 +28,7 @@ import { createTargetPlatform, type TargetPlatformOptions } from '../../../src/c
 import * as architectureServiceModule from '../../../src/core/work-graph/architecture/architecture-service.js';
 import * as inMemoryRecordStore from '../../../src/core/record-store/in-memory-record-store.js';
 import type { InMemoryRecordBackend } from '../../../src/core/record-store/in-memory-record-store.js';
+import { hostProjectStoreDirectory, rememberHostStore, storeDirOf } from '../../helpers/KLS1B-host-store.js';
 
 export type Backend = 'memory' | 'sqlite';
 type Started = { host: LocalWorkbenchHost; base: string; token: string };
@@ -131,6 +132,10 @@ export async function startHost(input: {
     throw new Error('a shared memory backend belongs to the memory backend');
   const database = input.database ?? await temporaryDirectory('s8a-l8-db-');
   if (publicDirectoryPath === '') throw new Error('setupPublicDir() must run before startHost()');
+  // KLS-1b: the old readers of `database` follow the Host's project store (its main workspace's).
+  if (input.backend === 'sqlite' && input.workspaces[0] !== undefined) {
+    await rememberHostStore(database, input.workspaces[0].scope.projectId, input.workspaces[0].root);
+  }
   const restore = input.sharedMemoryBackend?.install();
   let host: LocalWorkbenchHost;
   try {
@@ -242,7 +247,8 @@ export async function observationPoint(storage: ObservationStorage,
   try {
     platform = await createTargetPlatform({
       storage: storage.backend === 'sqlite'
-        ? { kind: 'sqlite', directory: storage.database }
+        ? { kind: 'sqlite', directory: workspaces[0] === undefined ? storeDirOf(storage.database)
+          : await hostProjectStoreDirectory(workspaces[0].scope.projectId, workspaces[0].root) }
         : { kind: 'memory' },
       workspace: host,
       architectureSource: { provider: 'typescript', configPath: 'tsconfig.json' },

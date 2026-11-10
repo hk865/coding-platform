@@ -63,6 +63,7 @@ import {
 } from './support/common.js';
 import { waitExpiryDeliveryText } from '../helpers/S7B-delivery-samples.js';
 import { crashMidTurn, expectQuietHarnessRestart, expectQuietRestart, kernelTurnOf } from './support/restart.js';
+import { hostReconcile, storeDirOf } from '../helpers/KLS1B-host-store.js';
 
 afterEach(cleanupScenarios);
 
@@ -274,7 +275,7 @@ it('A8-3j (W-18, D-17, W-13, RUN-20(i)): the wait message was saved and the Host
   const turn = kernelTurnOf(h.database, binding.kernel.runId);
   expect(turn?.eventTypes.at(-1)).toBe('tool.started');
   expect(turn?.eventTypes).not.toContain('run.yielded');
-  const messageRefs = readSqlite(join(h.database, 'ledger.sqlite'), ledger => (ledger.prepare(
+  const messageRefs = readSqlite(join(storeDirOf(h.database), 'ledger.sqlite'), ledger => (ledger.prepare(
     "SELECT ref_key FROM snapshots WHERE json_extract(ref_key, '$.aggregateType') = 'SessionMessage'").all() as { ref_key: string }[])
     .map(row => JSON.parse(row.ref_key) as SessionMessageRef), [] as SessionMessageRef[]);
   expect(messageRefs, 'one saved wait message').toHaveLength(1);
@@ -462,7 +463,7 @@ it('§12.1 step 6b (LA-6, W-01): a claimed Run left by a stopped Host is re-driv
       { kind: 'text', text: 'A2 re-drive: the same claim completed the Task' }] });
     try {
       // Step 6b selects the active Goal with the not-entered Run either way (W-01); the switch decides whether a driver starts.
-      expect(second.host.reconcile, String(resumeOnStartup)).toMatchObject({ lease: 'owned', report: { runs: [],
+      expect(hostReconcile(second.host, AG2B_SCOPE.projectId), String(resumeOnStartup)).toMatchObject({ lease: 'owned', report: { runs: [],
         redriveGoals: [{ goalRef: { goalId: 'ag2b-goal' }, taskIds: ['ag2b-work'] }], problems: [] } });
       if (resumeOnStartup) {
         let row = await workRow(second);
@@ -515,8 +516,8 @@ it('W-11 and CTL-08(b), K KA1: a Run interrupted mid-Turn ends crashed at the re
     if (steerRef === undefined) throw new Error('the steer must be submitted');
     // The Kernel accepted the steer at the second model boundary (the blocked request carries it).
     expect(JSON.stringify(crashed.first.scripted.requests[1])).toContain('A2: also read the tests');
-    const hostInstanceId = second.host.reconcile.hostInstanceId;
-    expect(second.host.reconcile).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: {
+    const hostInstanceId = hostReconcile(second.host, AG2B_SCOPE.projectId).hostInstanceId;
+    expect(hostReconcile(second.host, AG2B_SCOPE.projectId)).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: {
       runs: [{ ref: JSON.stringify(runRef), row: 'W-11', status: 'reconciled', reason: 'interrupted_clean' }], problems: [],
       // §12.1 step 6b (a) (5.8): the interrupted Task's verdict is requeue, so the Goal is selected either way.
       redriveGoals: [{ goalRef: { goalId: 'ag2b-goal' }, taskIds: ['ag2b-work'] }] } });
@@ -558,8 +559,8 @@ it('W-12 (LA-7): a cancel queued while the Turn runs stops the Run at the restar
   const second = await startAG2bHost(publicDir, { root, database });
   try {
     if (cancelRef === undefined) throw new Error('the cancel must be submitted');
-    const hostInstanceId = second.host.reconcile.hostInstanceId;
-    expect(second.host.reconcile).toMatchObject({ report: {
+    const hostInstanceId = hostReconcile(second.host, AG2B_SCOPE.projectId).hostInstanceId;
+    expect(hostReconcile(second.host, AG2B_SCOPE.projectId)).toMatchObject({ report: {
       runs: [{ ref: JSON.stringify(crashed.runRef), row: 'W-12', status: 'reconciled', reason: 'paused_stop' }], problems: [] } });
     // RUN-23 (restart, Kernel not paused): cancelled `cancelled_at_reconcile`; the Session retired (LA-1); K (KA1, L5): the
     // start-up maintenance then closes the clean Turn and SES-13 returns the Session available, not archived.
@@ -622,8 +623,8 @@ it('§12.1 step 5, W-17 (CI-09): a yielded wait keeps a queued control as its co
   const second = await startAG2bHost(publicDir, { root, database });
   try {
     // Step 5 reads the queued intent's Run and leaves the fence as it is (CTL-08 "不处理").
-    expect(second.host.reconcile).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: { problems: [] } });
-    expect(second.host.reconcile.report?.controls).toEqual([
+    expect(hostReconcile(second.host, AG2B_SCOPE.projectId)).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: { problems: [] } });
+    expect(hostReconcile(second.host, AG2B_SCOPE.projectId).report?.controls).toEqual([
       expect.objectContaining({ ref: JSON.stringify(runRef), row: 'W-17', status: 'left' })]);
     expect(await readControl(second, pauseRef)).toMatchObject({ status: 'queued' });
     expect((await readExecution(second, runRef)).run).toMatchObject({ status: 'ended', outcome: 'yielded',
@@ -649,8 +650,8 @@ it('W-14 and RUN-22: with the Kernel store gone at the restart the Run ends outc
 
   const second = await startAG2bHost(publicDir, { root, database });
   try {
-    const hostInstanceId = second.host.reconcile.hostInstanceId;
-    expect(second.host.reconcile).toMatchObject({ lease: 'owned', leaseRow: 'HL-03',
+    const hostInstanceId = hostReconcile(second.host, AG2B_SCOPE.projectId).hostInstanceId;
+    expect(hostReconcile(second.host, AG2B_SCOPE.projectId)).toMatchObject({ lease: 'owned', leaseRow: 'HL-03',
       report: { sessions: [{ row: 'H-02', status: 'reconciled' }],
         runs: [{ ref: JSON.stringify(runRef), row: 'W-14', status: 'reconciled', reason: 'unknown' }], problems: [] } });
     // RUN-20 (W-14): outcome_unknown with the unreadable Kernel; the unknown holder keeps the Session (I-2, D-4).
@@ -710,7 +711,7 @@ it('W-14 then W-07, W-15 and RUN-22 on a readable Kernel: a probe that proves no
   const second = await startAG2bHost(publicDir, { root, database });
   let unknown: TaskExecutionRecord;
   try {
-    expect(second.host.reconcile).toMatchObject({ report: { runs: [{ ref: JSON.stringify(runRef), row: 'W-14', status: 'reconciled' }] } });
+    expect(hostReconcile(second.host, AG2B_SCOPE.projectId)).toMatchObject({ report: { runs: [{ ref: JSON.stringify(runRef), row: 'W-14', status: 'reconciled' }] } });
     unknown = await readExecution(second, runRef);
     expect(unknown.run).toMatchObject({ status: 'ended', outcome: 'outcome_unknown' });
     await assertInvariantsAt(inv, 'W-14 reconciled');   // A.2 step 6
@@ -723,7 +724,7 @@ it('W-14 then W-07, W-15 and RUN-22 on a readable Kernel: a probe that proves no
   // the Session and the Run are left (H-03, W-07) and the attestation is refused `unavailable` without a write.
   const third = await startAG2bHost(publicDir, { root, database, noKernelStores: true });
   try {
-    expect(third.host.reconcile).toMatchObject({ lease: 'owned', report: {
+    expect(hostReconcile(third.host, AG2B_SCOPE.projectId)).toMatchObject({ lease: 'owned', report: {
       sessions: [{ ref: sessionKey(oldSession), row: 'H-03', status: 'left' }],
       runs: [{ ref: JSON.stringify(runRef), row: 'W-07', status: 'left' }], problems: [] } });
     const refused = await answer(third, 'executions/resolve-unknown', graphWrite(AG2B_SCOPE,
@@ -741,7 +742,7 @@ it('W-14 then W-07, W-15 and RUN-22 on a readable Kernel: a probe that proves no
   const fourth = await startAG2bHost(publicDir, { root, database });
   let ended: TaskExecutionRecord;
   try {
-    expect(fourth.host.reconcile).toMatchObject({ lease: 'owned', report: {
+    expect(hostReconcile(fourth.host, AG2B_SCOPE.projectId)).toMatchObject({ lease: 'owned', report: {
       sessions: [{ ref: sessionKey(oldSession), row: 'H-01', status: 'reconciled' }],
       runs: [{ ref: JSON.stringify(runRef), row: 'W-15', status: 'left' }], problems: [] } });
     const before = await readExecution(fourth, runRef);
@@ -772,7 +773,7 @@ it('W-14 then W-07, W-15 and RUN-22 on a readable Kernel: a probe that proves no
   const fifth = await startAG2bHost(publicDir, { root, database });
   try {
     // Step 1 runs before the maintenance: the probe is ready and the Kernel head still names the paused Turn (H-01 left).
-    expect(fifth.host.reconcile).toMatchObject({ lease: 'owned', report: {
+    expect(hostReconcile(fifth.host, AG2B_SCOPE.projectId)).toMatchObject({ lease: 'owned', report: {
       sessions: [{ ref: sessionKey(oldSession), row: 'H-01', status: 'left' }], runs: [], problems: [] } });
     const closed = await readExecution(fifth, runRef);
     expect(closed.run, 'the closure never rewrites the platform Run (L1)').toEqual(ended.run);
@@ -799,7 +800,7 @@ it('§12.1 step 6b (a), W-11, RUN-19, §13.4 #17, LA-1, K KA1: an interrupted Ru
     const second = await startAG2bHost(publicDir, { root, database, replies: editThenText('a2-redrive') });
     try {
       // W-11 at the restart; step 6b selects the Goal by condition (a) (verdict requeue, class interrupted) either way.
-      expect(second.host.reconcile, String(resumeOnStartup)).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: {
+      expect(hostReconcile(second.host, AG2B_SCOPE.projectId), String(resumeOnStartup)).toMatchObject({ lease: 'owned', leaseRow: 'HL-03', report: {
         runs: [{ ref: JSON.stringify(crashed.runRef), row: 'W-11', status: 'reconciled', reason: 'interrupted_clean' }],
         redriveGoals: [{ goalRef: { goalId: AG2B_GOAL_REF.goalId }, taskIds: [AG2B_WORK_TASK_ID] }], problems: [] } });
       if (resumeOnStartup) {
