@@ -75,11 +75,18 @@ export type NavLine = {
   recent: string;
   short: string;
   task: string | null;
+  /** `LineNameV1.goalRef`'s Goal: the line serves this Goal; empty when it has none.
+   * Chain uses it to pick the Goal's own line (DC3) and to say the Goal has no line. */
+  goalId: string;
   chainSessions: unknown[];
   pinned: boolean;
   archived: boolean;
   /** The rail's first row is the main conversation, not a `lines/list` row. */
   synth: boolean;
+  /** §2.5: the line's hover card's two read-only fields, filled from the same
+   * `lines/list` row; no board but Chain reads them. */
+  responsibleNow: string[];
+  lastActivityAt: string;
 };
 
 export type NavInbox = {
@@ -183,10 +190,14 @@ function navLineOf(entry: unknown, archived: boolean): NavLine {
     recent: '',
     short: task,
     task: task === '' ? null : task,
+    goalId: asText(asRecord(nameRow.goalRef).goalId),
     chainSessions: Array.isArray(row.chainSessions) ? row.chainSessions : [],
     pinned: row.pinned === true,
     archived,
     synth: false,
+    responsibleNow: (Array.isArray(row.responsibleNow) ? row.responsibleNow : [])
+      .map((entry) => asText(asRecord(entry).title)).filter((title) => title !== ''),
+    lastActivityAt: asText(row.lastActivityAt),
   };
 }
 
@@ -205,7 +216,7 @@ function synthLine(): NavLine {
   return {
     id: 'main', key: { projectId: '', sessionId: '' }, name: '秘书（主对话）', duty: 'secretary',
     status: '', st: 'idle', word: '', dot: 'dot s-idle', why: '', recent: '', short: '', task: null,
-    chainSessions: [], pinned: false, archived: false, synth: true,
+    goalId: '', chainSessions: [], pinned: false, archived: false, synth: true, responsibleNow: [], lastActivityAt: '',
   };
 }
 

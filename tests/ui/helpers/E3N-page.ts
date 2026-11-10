@@ -113,7 +113,7 @@ export function forwardPage(world: S6ARequestWorld, log: PageLog, mode: ChangeMo
   };
 }
 
-export async function bootE3N(world: S6ARequestWorld, name: 'Main' | 'TaskMap' | 'Goals' | 'ArchOverview' | 'Decide' | 'Member', options: {
+export async function bootE3N(world: S6ARequestWorld, name: 'Main' | 'TaskMap' | 'Goals' | 'ArchOverview' | 'Decide' | 'Member' | 'Chain', options: {
   search?: string; mode?: ChangeMode; token?: string | (() => string | null); source?: string;
   gate?: boolean;
 } = {}): Promise<{ page: BootedPage; log: PageLog }> {

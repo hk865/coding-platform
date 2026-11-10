@@ -163,7 +163,7 @@ export function isFinishedGoalDisplayPhase(phase: GoalDisplayPhaseCode): boolean
  * from `phaseCause.code` (that code is a phase projection: check_failed here). */
 const DECIDE_STOPS = new Set(['gate_needs_fix', 'auto_rework_cap_reached', 'no_new_basis',
   'verification_uncovered', 'unknown_outcome']);
-function automationStopOf(row: Record<string, unknown>): string {
+export function automationStopOf(row: Record<string, unknown>): string {
   const verdict = asRecord(asRecord(asRecord(row.failure).automation).verdict);
   return asText(verdict.kind) === 'stopped' ? asText(verdict.reason) : '';
 }
@@ -401,7 +401,7 @@ export function localShortAt(iso: string): string {
 const ACTOR_WORD: Record<string, string> = { human: '人工', system: '系统自动', agent: 'Agent' };
 
 /** The five failure classes (DESIGN `:607`). */
-const FAILURE_CLASS_WORD: Record<string, string> = {
+export const FAILURE_CLASS_WORD: Record<string, string> = {
   run_failed: '执行失败', check_failed: '检查未通过', check_incomplete: '检查不完整',
   interrupted: '平台中断', cancelled: '已取消',
 };
@@ -1383,11 +1383,11 @@ export function adaptTaskMapCalendar(
   };
 }
 
-const RUN_RESULT_WORD: Record<string, string> = {
+export const RUN_RESULT_WORD: Record<string, string> = {
   running: '执行中', completed: '已结束', failed: '失败', budget_exhausted: '预算耗尽',
   cancelled: '已取消', paused: '已暂停', interrupted: '中断', outcome_unknown: '结果未知', yielded: '已让出',
 };
-const CHECK_RESULT_WORD: Record<string, string> = {
+export const CHECK_RESULT_WORD: Record<string, string> = {
   open: '检查中', PASS: '通过', FAIL: '未通过', INCONCLUSIVE: '检查不完整',
 };
 const QUERY_RESULT_WORD: Record<string, string> = {

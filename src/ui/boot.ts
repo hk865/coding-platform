@@ -11,6 +11,7 @@ import { adaptNav, completionRevisionOf, goalHref, type LineKey, type NavData, t
 import {
   adaptMember, messageBodyKey, type MemberData, type MemberSource, type MemberWriteBasis,
 } from './adapters/member.js';
+import { adaptChain, type ChainData, type ChainSource } from './adapters/chain.js';
 import { readLine, requeueVisible, submitRunControl, type LineReadValue } from './adapters/line-shared.js';
 import { adaptGoals, conflictSelectionOf, goalOrderOf, type GoalsData } from './adapters/goals.js';
 import {
@@ -153,6 +154,10 @@ export type BoardActions = {
   controlLine: (kind: 'pause' | 'resume' | 'cancel') => Promise<void>;
   /** E3 Member §2.12: one `tasks/requeue` from the facts of the last successful read. */
   requeueLine: () => Promise<void>;
+  /** E3 Chain §2.7: one published control of the line whose chain is shown. */
+  controlChain: (kind: 'pause' | 'resume' | 'cancel') => Promise<void>;
+  /** E3 Chain §2.7: one `tasks/requeue` from the shown Run's public failure facts. */
+  requeueChain: () => Promise<void>;
   /** E3 Member §2.8: one `queries/ask` for the line in the centre. */
   askLine: (question: string) => Promise<void>;
   /** E3 Member §2.8: one `messages/send` to the line in the centre. */
@@ -186,7 +191,7 @@ export async function bootBoardPage(): Promise<void> {
   /* A1/A24: the frozen template keeps `Main.dc.html`; the ArchOverview copy
      carries the Goal through the one `goalHref` encoding. */
   const source = await fetchPageText(location.href);
-  const board = parseBoard(document.title, boardName === 'ArchOverview' || boardName === 'Decide' || boardName === 'Member'
+  const board = parseBoard(document.title, boardName === 'ArchOverview' || boardName === 'Chain' || boardName === 'Decide' || boardName === 'Member'
     ? source.split('href="Main.dc.html"').join('href="' + goalHref('Main.dc.html', goalId) + '"')
     : source);
   if (board.helmetHtml.length > 0) hoistHelmet(board.helmetHtml);
@@ -221,7 +226,8 @@ export async function bootBoardPage(): Promise<void> {
   /* Ruling 3 "默认页": opening the board reads the DAG's today track and today
    * hour calendar, not only the six base reads. */
   const demand: BoardReadDemand = { track: true, win: 'today' };
-  if (boardName === 'Member' && lineProject !== null && lineProject !== '' && lineSession !== null && lineSession !== '') {
+  if ((boardName === 'Member' || boardName === 'Chain')
+    && lineProject !== null && lineProject !== '' && lineSession !== null && lineSession !== '') {
     demand.lineKey = { projectId: lineProject, sessionId: lineSession };
     demand.ownKey = demand.lineKey;
   }
@@ -239,6 +245,8 @@ export async function bootBoardPage(): Promise<void> {
   /** §2.12: the Member data of the last successful read; a failed reread is never
    * the source of the next write's pins. */
   let latestMember: MemberData | null = null;
+  /** Chain's last successful read; the write seams live beside the reader. */
+  let latestChain: ChainData | null = null;
   let controlSeq = 0;
   let reorderSeq = 0;
   let answerSeq = 0;
@@ -758,6 +766,49 @@ export async function bootBoardPage(): Promise<void> {
       if (outcome.kind !== 'requeued') throw new Error(writeTextOf(new Error('tasks/requeue returned no outcome')));
       await refresh.reread();
     },
+    async controlChain(kind: 'pause' | 'resume' | 'cancel'): Promise<void> {
+      const data = latestChain;
+      const line = data?.line ?? null;
+      if (data === null || line === null || latestChainScope === null) {
+        throw new Error(writeTextOf(new Error('no Chain line')));
+      }
+      const control = line.controls.find((entry) => entry.kind === kind && entry.availability === 'available') ?? null;
+      if (control === null) throw new Error(writeTextOf(new Error('this control is not available')));
+      try {
+        await submitRunControl(client, latestChainScope, control, kind);
+      } catch (error) {
+        throw new Error(writeTextOf(error));
+      }
+      await refresh.reread();
+    },
+    async requeueChain(): Promise<void> {
+      const write = latestChainWrite;
+      if (write === null || latestChainScope === null) {
+        throw new Error(writeTextOf(new Error('no requeue facts')));
+      }
+      let value: unknown;
+      try {
+        const reply = await client.write('tasks/requeue', latestChainScope, {
+          input: { taskRef: write.taskRef, afterRunRef: write.afterRunRef, reason: '人工重新入队' },
+          meta: {
+            requestId: crypto.randomUUID(),
+            expected: [
+              { ref: write.goalRef, revision: write.goalRevision },
+              { ref: write.afterRunRef, revision: write.runRevision },
+            ],
+          },
+        });
+        value = committedRouteValue(reply, 'tasks/requeue');
+      } catch (error) {
+        throw new Error(writeTextOf(error));
+      }
+      /* §2.7: the outer `committed` only says the write was recorded; the
+         inner `refused` is a business result and is shown as its reason. */
+      const outcome = asRecord(value);
+      if (outcome.kind === 'refused') throw new Error(writeTextOf(new Error(asText(outcome.refusal))));
+      if (outcome.kind !== 'requeued') throw new Error(writeTextOf(new Error('tasks/requeue returned no outcome')));
+      await refresh.reread();
+    },
     async askLine(question: string): Promise<void> {
       const data = latestMember;
       const line = data?.line ?? null;
@@ -816,6 +867,7 @@ export async function bootBoardPage(): Promise<void> {
           latestDecideScope = latestDecide?.scope ?? null;
         }
         if (boardName === 'Member') latestMember = snapshot.data as MemberData | null;
+        if (boardName === 'Chain') latestChain = snapshot.data as ChainData | null;
       }
       view.updateProps(pageProps(board.defaults, snapshot, restart, actions));
     },
@@ -842,6 +894,7 @@ const BOARD_READERS: Record<string, BoardReader<unknown>> = {
   ArchOverview: readArchOverview as BoardReader<unknown>,
   Decide: readDecide as BoardReader<unknown>,
   Member: readMember as BoardReader<unknown>,
+  Chain: readChain as BoardReader<unknown>,
 };
 
 /** The board name a served page is for: `/workbench/TaskMap.dc.html` -> `TaskMap`. */
@@ -1339,6 +1392,221 @@ export async function readMember(
     history, files, filesPartial, hover, write,
   };
   return { data: adaptMember(source, key), cursor };
+}
+
+/** The two write seams of the Chain reader: the scope of the last successful
+ * read and the Task/Run/Goal pins of its newest Run (§2.7). One page reads at
+ * a time, as the module's other board-specific write facts do. */
+let latestChainScope: CoreScope | null = null;
+let latestChainWrite: {
+  taskRef: ChainSource['runs'][number]['run']['task'];
+  afterRunRef: ChainSource['runs'][number]['run']['ref'];
+  runRevision: number;
+  goalRef: { aggregateType: 'Goal'; projectId: string; goalId: string };
+  goalRevision: number;
+} | null = null;
+
+/**
+ * E3 Chain §2.4: one read for the chain page. The chrome and the selected
+ * line's `lines/read` are `readNav`'s; this reader adds the Goal's waiting
+ * count, the line's executions paged to the newest ten, and each of those
+ * Runs' execution/history/brief/round reads. The line may be missing: the
+ * rail stays and the page says so.
+ */
+export async function readChain(
+  client: ReturnType<typeof createHostClient>, goalId: string | null,
+  demand: BoardReadDemand = {},
+): Promise<RefreshRead<ChainData>> {
+  const requested = demand.lineKey ?? null;
+  let nav: NavData | null;
+  let cursor: string | null;
+  let missing = false;
+  try {
+    /* §2.2: the archive expansion is Chain's own first page; `readNav` must
+       not follow every archived page. */
+    const read = await readNav(client, goalId, { ...demand, lineKey: requested, archive: false }, undefined, true);
+    nav = read.data;
+    cursor = read.cursor;
+  } catch (error) {
+    if (!(error instanceof RouteReadError) || error.code !== 'not_found' || requested === null) throw error;
+    missing = true;
+    const read = await readNav(client, goalId, { ...demand, lineKey: null, archive: false }, undefined, true);
+    nav = read.data;
+    cursor = read.cursor;
+  }
+  if (nav === null || nav.scope === null) return { data: null, cursor };
+  const scope = nav.scope;
+  const chainGoalRefOf = (id: string) => ({ aggregateType: 'Goal' as const, projectId: scope.projectId, goalId: id });
+  /* DC3: the URL's line, else the selected Goal's first executor line, else
+     its first non-secretary line; never the synthetic main-conversation row
+     and never another Goal's line (a Goal without lines has no centre line). */
+  const goalLines = nav.lines.filter((row) => !row.synth && row.goalId === nav.selectedGoalId);
+  const key = requested ?? goalLines.find((row) => row.duty === 'executor')?.key
+    ?? goalLines.find((row) => row.duty !== 'secretary')?.key ?? null;
+  /* §2.6 L1: the page's own line is fixed at entry; a rail click opens another
+     one through `lineKey`, and going back targets this one. */
+  const ownKey = demand.ownKey ?? requested ?? key;
+  if (ownKey !== null) demand.ownKey = ownKey;
+  let line: ChainSource['line'] = null;
+  if (key !== null && !missing) {
+    if (requested !== null && nav.detail !== null && nav.detail.kind === 'line') line = nav.detail.row;
+    else {
+      try {
+        const read = await readLine(client, scope, key);
+        line = read.kind === 'line' ? read.row : null;
+      } catch (error) {
+        if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
+        line = null;
+      }
+    }
+  }
+
+  let goalWaiting: number | null = null;
+  if (nav.selectedGoalId !== null) {
+    try {
+      const queue = readyRouteValue<{ counts?: { waitingAnswer?: unknown } }>(
+        await client.post('decisions/queue', scope, {
+          workspace: scope, sections: ['waiting_answer', 'notices'], page: { limit: 1 },
+          goalRef: chainGoalRefOf(nav.selectedGoalId),
+        }), 'decisions/queue');
+      if (typeof queue.counts?.waitingAnswer === 'number') goalWaiting = queue.counts.waitingAnswer;
+    } catch (error) {
+      /* The rail's own waiting count already read; a per-Goal count that
+         cannot be read stays `null`, not a made-up 0. */
+      if (!(error instanceof RouteReadError)) throw error;
+      goalWaiting = null;
+    }
+  }
+
+  /* §2.4: follow the owner's page order to its end, then keep the newest ten
+     execution items; queries are not this board's rows. */
+  let segments: Array<Extract<WorkLineSectionPageV1, { section: 'executions' }>['segments'][number]> = [];
+  let sourceCursor: Extract<WorkLineSectionPageV1, { section: 'executions' }>['sourceCursor'] | null = null;
+  const executions: Array<Extract<LineExecutionItemV1, { kind: 'execution' }>> = [];
+  if (key !== null && line !== null) {
+    let after: string | null = null;
+    for (let guard = 0; guard < 1000; guard += 1) {
+      const page: WorkLineSectionPageV1 = readyRouteValue<WorkLineSectionPageV1>(await client.post('lines/page', scope, {
+        workspace: scope, key, section: 'executions',
+        page: { limit: 100, ...(after === null ? {} : { cursor: after }) },
+      }), 'lines/page');
+      if (page.section !== 'executions') break;
+      segments = page.segments;
+      sourceCursor = page.sourceCursor;
+      for (const item of page.items) if (item.kind === 'execution') executions.push(item);
+      after = page.nextCursor;
+      if (after === null) break;
+    }
+  }
+  const tail = executions.slice(-10);
+  const runs: ChainSource['runs'] = [];
+  const histories: ChainSource['histories'] = {};
+  const briefs: ChainSource['briefs'] = {};
+  const rounds: ChainSource['rounds'] = {};
+  for (const item of tail) {
+    const record = readyRouteValue<TaskExecutionRecord>(
+      await client.post('executions/read', scope, item.runRef), 'executions/read');
+    runs.push(record);
+    const runId = item.runRef.runId;
+    histories[runId] = readyRouteValue<ChainSource['histories'][string]>(
+      await client.post('executions/history', scope, { runRef: item.runRef, afterCursor: null, limit: 200 }),
+      'executions/history');
+    if (record.run.requeueRef !== undefined) {
+      briefs[runId] = readyRouteValue<ChainSource['briefs'][string]>(
+        await client.post('executions/brief', scope, { runRef: item.runRef }), 'executions/brief');
+    }
+    let main: ChainSource['rounds'][string][number] | null = null;
+    try {
+      main = readyRouteValue<ChainSource['rounds'][string][number]>(
+        await client.post('verification/round', scope, { subjectRunRef: item.runRef }), 'verification/round');
+    } catch (error) {
+      /* §2.12: a Run with no verification round is an empty row, not a page error. */
+      if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
+      main = null;
+    }
+    const reads: ChainSource['rounds'][string] = [];
+    if (main !== null) {
+      /* §2.8: every round of the chain is read by its roundRef, in the chain's
+         order, with no four-round cap; one round's failed check read only
+         leaves its checks empty. */
+      for (const entry of main.chain.rounds) {
+        try {
+          reads.push(readyRouteValue<ChainSource['rounds'][string][number]>(
+            await client.post('verification/round', scope, { roundRef: entry.roundRef }), 'verification/round'));
+        } catch (error) {
+          if (!(error instanceof RouteReadError)) throw error;
+          reads.push({
+            ...entry, displayStatus: entry.status === 'open' ? 'incomplete' : 'completed',
+            checks: [], chain: main.chain,
+          } as unknown as ChainSource['rounds'][string][number]);
+        }
+      }
+    }
+    rounds[runId] = reads;
+  }
+
+  /* §2.4: the shown stop marker's or Run's control state, each intent once. */
+  const controls: ChainSource['controls'] = {};
+  const intentKeys = new Set<string>();
+  const readChainControl = async (ref: { projectId: string; workspaceId: string; intentId: string } | undefined): Promise<void> => {
+    if (ref === undefined) return;
+    const keyOf = ref.projectId + '/' + ref.workspaceId + '/' + ref.intentId;
+    if (intentKeys.has(keyOf)) return;
+    intentKeys.add(keyOf);
+    controls[keyOf] = readyRouteValue<ControlIntentSnapshotV1>(
+      await client.post('controls/read', scope, ref), 'controls/read');
+  };
+  for (const marker of line?.status.markers ?? []) {
+    if (marker.kind === 'stop_pending') await readChainControl(marker.intentRef);
+  }
+  for (const run of runs) await readChainControl(run.run.controlState?.intentRef);
+
+  let archive: ChainSource['archive'] = null;
+  if (demand.archive === true) {
+    /* R8: the first page only; a non-empty cursor is a reported truncation,
+       not a reason to page. */
+    archive = readyRouteValue<ChainSource['archive']>(await client.post('lines/archived', scope, {
+      workspace: scope, page: { limit: 100 },
+    }), 'lines/archived');
+  }
+
+  /* §8.3 A: the selected Goal's graph is `readNav`'s; a selected line may
+     serve another Goal, whose graph is read once here. */
+  const lastRun = runs.at(-1) ?? null;
+  const lineTask = line?.responsibleNow[0]?.task ?? line?.name.tasks[0] ?? line?.groups.task ?? null;
+  let tasks: unknown = nav.tasks;
+  if (lineTask !== null && lineTask.goalId !== (nav.selectedGoalId ?? '')) {
+    try {
+      tasks = readyRouteValue<TaskGraph>(
+        await client.post('tasks/query', scope, { goalRef: chainGoalRefOf(lineTask.goalId) }), 'tasks/query');
+    } catch (error) {
+      /* §2.12: `tasks/query` not_found is "no adopted Plan", not a read error. */
+      if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
+      tasks = null;
+    }
+  }
+  const graph = tasks === null || tasks === undefined ? null : tasks as TaskGraph;
+  const taskRef = lastRun?.run.task ?? null;
+  const taskRow = taskRef === null ? null : graph?.tasks.find((row) => row.ref.projectId === taskRef.projectId
+    && row.ref.goalId === taskRef.goalId && row.ref.taskId === taskRef.taskId) ?? null;
+  const goalRow = taskRow === null ? null : nav.goals.find((goal) => goal.goalId === taskRow.ref.goalId) ?? null;
+  latestChainScope = scope;
+  latestChainWrite = lastRun !== null && taskRow !== null && goalRow !== null && requeueVisible(taskRow)
+    ? {
+      taskRef: lastRun.run.task, afterRunRef: lastRun.run.ref, runRevision: lastRun.run.revision,
+      goalRef: chainGoalRefOf(goalRow.goalId), goalRevision: goalRow.revision,
+    }
+    : null;
+
+  const source: ChainSource = {
+    nav, line, archive,
+    executions: key === null ? null : {
+      section: 'executions', segments, scope: 'indexed', items: tail, nextCursor: null,
+      sourceCursor: sourceCursor ?? ('' as never),
+    },
+    runs, histories, briefs, rounds, tasks, goalWaiting, controls,
+  };
+  return { data: adaptChain(source, { selected: key, ownKey, dens: '标准', theme: 'dark' }), cursor };
 }
 
 /** The `BOARD_READERS` entry for Main: this package wires the chrome (rail,
