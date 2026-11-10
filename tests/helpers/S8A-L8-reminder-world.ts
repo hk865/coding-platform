@@ -500,7 +500,6 @@ export async function createReminderWorld(kind: ReminderBackend,
   // revisions reach it as genuine causes.
   const driver = createAutoCaptureDriver({
     architecture: platform.architecture,
-    catalog: platform.architecture,
     boundWorkspaces: () => [scope],
     actor: AUTO_CAPTURE_ACTOR,
   });

@@ -66,7 +66,7 @@ const GIT_ENV = {
 /** The file-level observation shape the public graph entries assert against. */
 export type GraphShape = {
   nodes: FileGraphPageNodeV1[];
-  edges: { from: string; to: string }[];
+  edges: { from: string; to: string; count: number }[];
   unresolved: { from: string; specifier: string; reason: string | null }[];
   languages: LanguageCoverageV1[];
   complete: boolean;

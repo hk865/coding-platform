@@ -18,7 +18,7 @@ describe.each(BACKENDS)('S8D platform fixture [%s]', backend => {
         { path: 'e.py', nonBlankLines: 1, language: 'python' },
         { path: 'g.py', nonBlankLines: 1, language: 'python' },
       ]);
-      expect(graph.edges).toEqual([{ from: 'e.py', to: 'g.py' }]);
+      expect(graph.edges).toEqual([{ from: 'e.py', to: 'g.py', count: 1 }]);
       expect(graph.unresolved).toEqual([]);
       expect(graph.complete).toBe(true);
       expect(graph.languages).toEqual([{
@@ -29,7 +29,7 @@ describe.each(BACKENDS)('S8D platform fixture [%s]', backend => {
       await fx.write('h.py', 'import g\n\ny = g.x + 1\n');
       const afterWrite = await fx.graph();
       expect(afterWrite.nodes.map(node => node.path)).toContain('h.py');
-      expect(afterWrite.edges).toContainEqual({ from: 'h.py', to: 'g.py' });
+      expect(afterWrite.edges).toContainEqual({ from: 'h.py', to: 'g.py', count: 1 });
       expect(afterWrite.languages.find(entry => entry.language === 'python')?.files).toBe(3);
     } finally {
       await fx.close();

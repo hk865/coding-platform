@@ -37,7 +37,7 @@ it('S8D-PROV-01 fails one language without affecting another and keeps both cove
   expect(coverageOf(graph, 'python')).toEqual({
     language: 'python', files: 2, parsed: 2, edges: 'supported', reason: null, notes: [], issues: [], issueCount: 0, complete: true,
   });
-  expect(graph.edges).toEqual([{ from: 'e.py', to: 'g.py' }]);
+  expect(graph.edges).toEqual([{ from: 'e.py', to: 'g.py', count: 1 }]);
 }, 60000);
 
 it('S8D-PROV-02 uses the workspace-root compilation database when several exist', async () => {
@@ -53,7 +53,7 @@ it('S8D-PROV-02 uses the workspace-root compilation database when several exist'
     language: 'cpp', files: 2, parsed: 2, edges: 'supported', reason: null,
     notes: ['近似：不读系统头文件和观测以外的头文件'], issues: [], issueCount: 0, complete: true,
   });
-  expect(graph.edges).toEqual([{ from: 'native/c.cpp', to: 'native/d.h' }]);
+  expect(graph.edges).toEqual([{ from: 'native/c.cpp', to: 'native/d.h', count: 1 }]);
 }, 60000);
 
 it('S8D-PROV-02 uses the colcon aggregate alone when its siblings are per-subdirectory databases', async () => {
@@ -69,7 +69,7 @@ it('S8D-PROV-02 uses the colcon aggregate alone when its siblings are per-subdir
     language: 'cpp', files: 2, parsed: 2, edges: 'supported', reason: null,
     notes: ['近似：不读系统头文件和观测以外的头文件'], issues: [], issueCount: 0, complete: true,
   });
-  expect(graph.edges).toEqual([{ from: 'native/c.cpp', to: 'native/d.h' }]);
+  expect(graph.edges).toEqual([{ from: 'native/c.cpp', to: 'native/d.h', count: 1 }]);
 }, 60000);
 
 it('S8D-PROV-02 merges sibling databases under one non-root directory and takes the merge note from the script', async () => {
@@ -86,7 +86,7 @@ it('S8D-PROV-02 merges sibling databases under one non-root directory and takes 
     notes: ['合并了 2 个编译数据库', '近似：不读系统头文件和观测以外的头文件'],
     issues: [], issueCount: 0, complete: true,
   });
-  expect(graph.edges).toEqual([{ from: 'native/c.cpp', to: 'native/d.h' }]);
+  expect(graph.edges).toEqual([{ from: 'native/c.cpp', to: 'native/d.h', count: 1 }]);
 }, 60000);
 
 it('S8D-PROV-02 merges nested databases under one non-root directory', async () => {
@@ -103,7 +103,7 @@ it('S8D-PROV-02 merges nested databases under one non-root directory', async () 
     notes: ['合并了 2 个编译数据库', '近似：不读系统头文件和观测以外的头文件'],
     issues: [], issueCount: 0, complete: true,
   });
-  expect(graph.edges).toEqual([{ from: 'native/c.cpp', to: 'native/d.h' }]);
+  expect(graph.edges).toEqual([{ from: 'native/c.cpp', to: 'native/d.h', count: 1 }]);
 }, 60000);
 
 it('S8D-PROV-02 leaves the merge note to the script instead of emitting it twice', async () => {
@@ -128,7 +128,7 @@ it('S8D-PROV-02 leaves the merge note to the script instead of emitting it twice
     notes: ['合并了 2 个编译数据库', '近似：不读系统头文件和观测以外的头文件'],
     issues: [],
   });
-  expect(result.edges).toEqual([{ from: 'native/c.cpp', to: 'native/d.h' }]);
+  expect(result.edges).toEqual([{ from: 'native/c.cpp', to: 'native/d.h', count: 1 }]);
 }, 60000);
 
 it('S8D-PROV-02 fails C/C++ when several nested compilation databases exist without a root one', async () => {
@@ -160,7 +160,7 @@ it('S8D-PROV-03 reports a missing Python interpreter as a whole-language failure
   expect(coverageOf(graph, 'typescript')).toEqual({
     language: 'typescript', files: 2, parsed: 2, edges: 'supported', reason: null, notes: [], issues: [], issueCount: 0, complete: true,
   });
-  expect(graph.edges).toEqual([{ from: 'src/a.ts', to: 'src/b.ts' }]);
+  expect(graph.edges).toEqual([{ from: 'src/a.ts', to: 'src/b.ts', count: 1 }]);
 }, 60000);
 
 it('S8D-PROV-04 reports a missing C/C++ library as a whole-language failure and leaves Python intact', async () => {
@@ -179,7 +179,7 @@ it('S8D-PROV-04 reports a missing C/C++ library as a whole-language failure and 
   expect(coverageOf(graph, 'python')).toEqual({
     language: 'python', files: 2, parsed: 2, edges: 'supported', reason: null, notes: [], issues: [], issueCount: 0, complete: true,
   });
-  expect(graph.edges).toEqual([{ from: 'e.py', to: 'g.py' }]);
+  expect(graph.edges).toEqual([{ from: 'e.py', to: 'g.py', count: 1 }]);
 }, 60000);
 
 it('S8D-PROV-05 parses a unit with an outside-workspace lookup directory and records the note', async () => {

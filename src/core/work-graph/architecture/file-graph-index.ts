@@ -20,7 +20,7 @@ import { encodeCursor } from './graph-index.js';
 /** One page of the file graph (the service adds the capture ref and inventory). */
 export type FileGraphPageData = {
   nodes: FileGraphPageNodeV1[];
-  edges: { from: string; to: string }[];
+  edges: { from: string; to: string; count: number }[];
   nextCursor: string | null;
   complete: boolean;
 };
@@ -28,7 +28,7 @@ export type FileGraphPageData = {
 /** The explicit page projection; the full node table never reaches a page. */
 export type FileGraphData = {
   nodes: FileGraphPageNodeV1[];
-  edges: { from: string; to: string }[];
+  edges: { from: string; to: string; count: number }[];
 };
 
 export const FILE_GRAPH_PAGE_SIZE = 200;
@@ -68,15 +68,21 @@ export function orderedNodes(graph: FileGraphData): FileGraphPageNodeV1[] {
   for (const node of graph.nodes) if (!byPath.has(node.path)) byPath.set(node.path, node);
   return [...byPath.values()].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
 }
-/** Edges de-duplicated by `(from,to)` and sorted by `(from,to)`. */
-function orderedEdges(graph: FileGraphData): { from: string; to: string }[] {
-  const seen = new Set<string>();
-  const edges: { from: string; to: string }[] = [];
+/** Edges de-duplicated by `(from,to)`, a repeated pair adding its `count`, and
+ * sorted by `(from,to)`. */
+function orderedEdges(graph: FileGraphData): { from: string; to: string; count: number }[] {
+  const byPair = new Map<string, { from: string; to: string; count: number }>();
+  const edges: { from: string; to: string; count: number }[] = [];
   for (const edge of graph.edges) {
     const key = edge.from + '\u0000' + edge.to;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    edges.push({ from: edge.from, to: edge.to });
+    const seen = byPair.get(key);
+    if (seen !== undefined) {
+      seen.count += edge.count;
+      continue;
+    }
+    const copy = { from: edge.from, to: edge.to, count: edge.count };
+    byPair.set(key, copy);
+    edges.push(copy);
   }
   return edges.sort((a, b) => a.from < b.from ? -1 : a.from > b.from ? 1 : a.to < b.to ? -1 : a.to > b.to ? 1 : 0);
 }

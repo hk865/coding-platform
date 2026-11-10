@@ -95,8 +95,8 @@ describe.each(BACKENDS)('A-23 C/C++ configuration and arguments [%s]', backend =
       issues: [], issueCount: 0, complete: true,
     });
     expect(graph.edges).toEqual([
-      { from: 'p1/a.cpp', to: 'p1/a.h' },
-      { from: 'p2/b.cpp', to: 'p2/b.h' },
+      { from: 'p1/a.cpp', to: 'p1/a.h', count: 1 },
+      { from: 'p2/b.cpp', to: 'p2/b.h', count: 1 },
     ]);
     expect(graph.unresolved).toEqual([]);
   }, 60000);
@@ -118,8 +118,8 @@ describe.each(BACKENDS)('A-23 C/C++ configuration and arguments [%s]', backend =
       issues: [], issueCount: 0, complete: true,
     });
     expect(graph.edges).toEqual([
-      { from: 'out/build/a/a.cpp', to: 'out/build/a/a.h' },
-      { from: 'out/build/b/b.cpp', to: 'out/build/b/b.h' },
+      { from: 'out/build/a/a.cpp', to: 'out/build/a/a.h', count: 1 },
+      { from: 'out/build/b/b.cpp', to: 'out/build/b/b.h', count: 1 },
     ]);
     expect(graph.unresolved).toEqual([]);
   }, 60000);
@@ -163,8 +163,8 @@ describe.each(BACKENDS)('A-23 C/C++ configuration and arguments [%s]', backend =
       issues: [], issueCount: 0, complete: true,
     });
     expect(graph.edges).toEqual([
-      { from: 'p1/a.cpp', to: 'p1/a.h' },
-      { from: 'p2/b.cpp', to: 'p2/b.h' },
+      { from: 'p1/a.cpp', to: 'p1/a.h', count: 1 },
+      { from: 'p2/b.cpp', to: 'p2/b.h', count: 1 },
     ]);
     expect(graph.unresolved).toEqual([]);
   }, 60000);
@@ -376,7 +376,7 @@ describe.each(BACKENDS)('A-23 C/C++ configuration and arguments [%s]', backend =
       notes: ['近似：不读系统头文件和观测以外的头文件'],
       issues: [], issueCount: 0, complete: true,
     });
-    expect(graph.edges).toEqual([{ from: 'main.cpp', to: 'x.h' }]);
+    expect(graph.edges).toEqual([{ from: 'main.cpp', to: 'x.h', count: 1 }]);
     expect(graph.unresolved).toEqual([]);
   }, 60000);
 });

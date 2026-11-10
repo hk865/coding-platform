@@ -523,13 +523,15 @@ export type S7D2SecondWorkspace = {
  * `workspaces/open` settings route under the world's project (the Host binds the root and registers the workspace),
  * then one goal through `goals/create` there. Role lines stay in the main workspace.
  */
-export async function addS7D2SecondWorkspace(world: S6AHostWorld, label = 's7d2-second'): Promise<S7D2SecondWorkspace> {
+export async function addS7D2SecondWorkspace(world: S6AHostWorld, label = 's7d2-second',
+  openOptions: { writeAllowed?: boolean; commandsAllowed?: boolean } = {}): Promise<S7D2SecondWorkspace> {
   const root = await mkdtemp(join(tmpdir(), 's7d2-second-ws-'));
   const remove = (): Promise<void> => rm(root, { recursive: true, force: true });
   try {
     await writeAG2bWorkspace(root);
     const opened = await world.settings('workspaces/open', { path: root, name: 'S7D2 second workspace',
-      projectId: S6A_SCOPE.projectId, writeAllowed: false, commandsAllowed: false });
+      projectId: S6A_SCOPE.projectId, writeAllowed: openOptions.writeAllowed ?? false,
+      commandsAllowed: openOptions.commandsAllowed ?? false });
     if (opened.status !== 'ready') throw new Error(`S7D2: the second workspace did not open: ${JSON.stringify(opened)}`);
     const scope: WorkspaceScope = { projectId: opened.value.scope.projectId, workspaceId: opened.value.scope.workspaceId };
     await world.settleDetached();

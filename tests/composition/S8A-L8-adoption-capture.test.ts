@@ -108,7 +108,6 @@ async function fixture(backend: Backend, projectId: string, files: Record<string
   expect(registered).toMatchObject({ status: 'committed' });
   const driver = createAutoCaptureDriver({
     architecture: platform.architecture,
-    catalog: platform.architecture,
     boundWorkspaces: () => [scope],
     actor: systemActor,
   });

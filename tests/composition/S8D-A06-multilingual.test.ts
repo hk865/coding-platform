@@ -65,9 +65,9 @@ const SITUATION1_NODES = [
 ];
 
 const SITUATION1_EDGES = [
-  { from: 'e.py', to: 'g.py' },
-  { from: 'many.py', to: 'g.py' },
-  { from: 'src/a.ts', to: 'src/b.ts' },
+  { from: 'e.py', to: 'g.py', count: 1 },
+  { from: 'many.py', to: 'g.py', count: 1 },
+  { from: 'src/a.ts', to: 'src/b.ts', count: 1 },
 ];
 
 const TYPESCRIPT_COVERAGE = {
@@ -158,10 +158,10 @@ describe.each(BACKENDS)('A-06 multilingual observation [%s]', backend => {
         ...SITUATION1_NODES,
       ]);
       expect(page.edges).toEqual([
-        { from: 'e.py', to: 'g.py' },
-        { from: 'many.py', to: 'g.py' },
-        { from: 'native/c.cpp', to: 'native/d.h' },
-        { from: 'src/a.ts', to: 'src/b.ts' },
+        { from: 'e.py', to: 'g.py', count: 1 },
+        { from: 'many.py', to: 'g.py', count: 1 },
+        { from: 'native/c.cpp', to: 'native/d.h', count: 1 },
+        { from: 'src/a.ts', to: 'src/b.ts', count: 1 },
       ]);
 
       expect(coverageOf(page.languages, 'cpp')).toEqual({
@@ -196,7 +196,7 @@ describe.each(BACKENDS)('A-06 multilingual observation [%s]', backend => {
       const page = await f.listFiles(captureRef);
       expect(page.nodes).toEqual(SITUATION1_NODES);
       // No Python edges at all; the TS edge is the only one left.
-      expect(page.edges).toEqual([{ from: 'src/a.ts', to: 'src/b.ts' }]);
+      expect(page.edges).toEqual([{ from: 'src/a.ts', to: 'src/b.ts', count: 1 }]);
 
       expect(coverageOf(page.languages, 'python')).toEqual({
         language: 'python', files: 4, parsed: 0, edges: 'failed', reason: '分析器不可用', notes: [],
@@ -229,7 +229,7 @@ describe.each(BACKENDS)('A-06 multilingual observation [%s]', backend => {
         { path: 'e.py', nonBlankLines: 3, language: 'python' },
         { path: 'g.py', nonBlankLines: 1, language: 'python' },
       ]);
-      expect(page.edges).toEqual([{ from: 'e.py', to: 'g.py' }]);
+      expect(page.edges).toEqual([{ from: 'e.py', to: 'g.py', count: 1 }]);
       expect(page.nextCursor).toBeNull();
       expect(page.languages).toEqual([{
         language: 'python', files: 2, parsed: 2, edges: 'supported', reason: null, notes: [],

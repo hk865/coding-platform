@@ -13,12 +13,21 @@ export type CodeGraphNode = {
     /** Digest of the node's normalized content (change detection). */
     contentDigest: string;
 };
+/**
+ * Endpoint identities: a module is `module:<moduleId>`, an interface is
+ * `interface:` + `canonicalJson([moduleId, interfaceId])` (an interface id is
+ * unique only inside its module). `structuralKey` is
+ * `canonicalJson([fromNode, toNode])` and `edgeId` its SHA-256; `count` is a
+ * value of the edge, never part of its identity.
+ */
 export type CodeGraphEdge = {
     edgeId: string;
     fromNode: string;
     toNode: string;
     kind: "module_dependency" | "interface_uses" | "type_references" | "calls";
     structuralKey: string;
+    /** References between the two endpoints in the frozen material; >= 1. */
+    count: number;
 };
 
 // ------------------------------------------------------------------------ //
@@ -84,7 +93,8 @@ export type FileGraphPageNodeV1 = {
 export type FileGraphPageV1 = {
   captureRef: ObservedCaptureRef;
   nodes: FileGraphPageNodeV1[];
-  edges: { from: string; to: string }[];
+  /** `count` is the stored reference count of the pair, as `CodeGraphEdge.count`. */
+  edges: { from: string; to: string; count: number }[];
   nextCursor: string | null;
   complete: boolean;
   /** Per-language coverage of the whole capture (8A item 7). */

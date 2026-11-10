@@ -49,8 +49,8 @@ it('A-01 builds one node per readable file and only resolved import edges over t
   });
   expect(graph.nodes.some(node => node.path === 'src/denied.ts')).toBe(false);
   expect(graph.edges).toEqual([
-    { from: 'src/a.ts', to: 'src/b.ts' },
-    { from: 'src/c.ts', to: 'src/d.ts' },
+    { from: 'src/a.ts', to: 'src/b.ts', count: 1 },
+    { from: 'src/c.ts', to: 'src/d.ts', count: 1 },
   ]);
   expect(graph.unresolved).toEqual([]);
   expect(graph.languages).toEqual([
@@ -109,7 +109,7 @@ it('S8A-03 captures a project with no TS files: nodes survive and other language
   expect(graph.languages).toEqual([
     { language: 'python', files: 2, parsed: 2, edges: 'supported', reason: null, notes: [], issues: [], issueCount: 0, complete: true },
   ]);
-  expect(graph.edges).toEqual([{ from: 'e.py', to: 'g.py' }]);
+  expect(graph.edges).toEqual([{ from: 'e.py', to: 'g.py', count: 1 }]);
   expect(graph.unresolved).toEqual([]);
 });
 
@@ -191,7 +191,7 @@ it('S8A-11 resolves the capture config alias in the file layer and counts only T
   const capture = ready(await f.capture('tsconfig.app.json'));
   const graph = ready(await f.graphOf(capture.ref));
 
-  expect(graph.edges).toEqual([{ from: 'src/a.ts', to: 'src/lib/b.ts' }]);
+  expect(graph.edges).toEqual([{ from: 'src/a.ts', to: 'src/lib/b.ts', count: 1 }]);
   expect(graph.languages.find(language => language.language === 'typescript'))
     .toMatchObject({ files: 2, parsed: 2, edges: 'supported', reason: null, complete: true });
 });

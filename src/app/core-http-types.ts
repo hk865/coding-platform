@@ -55,6 +55,7 @@ import type { ArchitectureCatalogPort } from '../core/work-graph/architecture/ca
 import type { ArchitectureProposalService } from '../core/work-graph/architecture/proposal-service.js';
 import type { ObservedArchitecturePort } from '../core/work-graph/architecture/contracts.js';
 import type { ArchitectureWorkScopePort } from '../core/work-graph/views/architecture-work-scope-reader.js';
+import type { ArchitectureChangeScopePort } from '../core/work-graph/views/architecture-change-scope-reader.js';
 import type {
   CompletionPolicyConfigurationPort,
   ProjectRegistrationPort,
@@ -348,6 +349,8 @@ export type CoreRouteSuffix =
   // UI1 A3/A25/A5: the file/module search and the live-Run work set.
   | 'architecture/find'
   | 'architecture/work-scope'
+  // The current Goal's actually changed files, summed by module.
+  | 'architecture/change-scope'
   // The four person-only request commands.
   | 'requests/submit'
   | 'requests/route'
@@ -445,6 +448,7 @@ export type ArchitectureCoreRouteDto = {
   'architecture/semantic-links/check': { body: ArchitectureSemanticLinksCheckBody; response: ArchitectureSemanticLinksCheckResponse };
   'architecture/find': { body: ArchitectureFindBody; response: ArchitectureFindResponse };
   'architecture/work-scope': { body: ArchitectureWorkScopeBody; response: ArchitectureWorkScopeResponse };
+  'architecture/change-scope': { body: ArchitectureChangeScopeBody; response: ArchitectureChangeScopeResponse };
 };
 /** L8 (P16): the public manual capture body. The driver's trusted start
  * watermark (`requestSeq`) is not a public input, so the DTO omits it; the port
@@ -463,6 +467,8 @@ export type ArchitectureFindBody = PlainBody<ObservedArchitecturePort['findArchi
 export type ArchitectureFindResponse = RouteResponse<ObservedArchitecturePort['findArchitecture']>;
 export type ArchitectureWorkScopeBody = PlainBody<ArchitectureWorkScopePort['readArchitectureWorkScope']>;
 export type ArchitectureWorkScopeResponse = RouteResponse<ArchitectureWorkScopePort['readArchitectureWorkScope']>;
+export type ArchitectureChangeScopeBody = PlainBody<ArchitectureChangeScopePort['readArchitectureChangeScope']>;
+export type ArchitectureChangeScopeResponse = RouteResponse<ArchitectureChangeScopePort['readArchitectureChangeScope']>;
 export type PlansProposeBody = GraphWriteBody<PlanTaskPort['proposePlan']>;
 export type PlansProposeResponse = RouteResponse<PlanTaskPort['proposePlan']>;
 export type PlansApplyBody = GraphWriteBody<PlanTaskPort['applyPlanChange']>;

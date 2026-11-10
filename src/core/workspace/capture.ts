@@ -429,15 +429,18 @@ export class CaptureRegistry {
       // The walked TS/JS/JSON paths: module-layer sources and the file-layer `indexed` flag.
       const walked = new Map<string, boolean>();
       for (const file of scan?.files ?? []) if (file.indexed) walked.set(file.path, true);
-      const edges: { from: string; to: string }[] = [];
-      const edgeKeys = new Set<string>();
-      // Self-edges are dropped for every language, then (from,to) is deduped across providers.
-      const addEdge = (from: string, to: string): void => {
+      const edges: { from: string; to: string; count: number }[] = [];
+      const edgeByKey = new Map<string, { from: string; to: string; count: number }>();
+      // Self-edges are dropped for every language; one row per (from,to) across providers,
+      // whose `count` adds every reference given for the pair.
+      const addEdge = (from: string, to: string, count = 1): void => {
         if (from === to) return;
         const key = from + '\0' + to;
-        if (edgeKeys.has(key)) return;
-        edgeKeys.add(key);
-        edges.push({ from, to });
+        const edge = edgeByKey.get(key);
+        if (edge !== undefined) { edge.count += count; return; }
+        const created = { from, to, count };
+        edgeByKey.set(key, created);
+        edges.push(created);
       };
       // §10 item 6: duplicates keep the first non-null reason by string order (null last).
       const unresolvedGroups = new Map<string, { from: string; specifier: string; reasons: Set<string | null> }>();
@@ -464,6 +467,7 @@ export class CaptureRegistry {
           notes = [];
           if (scan !== undefined) {
             issues.push(...scan.coverage.issues);
+            // The scan gives one edge per resolved reference, so each one is one reference.
             for (const edge of scan.edges) addEdge(edge.from, edge.to);
             for (const item of scan.unresolved) addUnresolved(item.from, item.specifier, item.reason);
           }
@@ -488,7 +492,7 @@ export class CaptureRegistry {
               // Normalize before storing (spec §11.5; the codec only validates).
               notes = normalizeCoverageNotes(result.coverage.notes);
               issues.push(...result.coverage.issues);
-              for (const edge of result.edges) addEdge(edge.from, edge.to);
+              for (const edge of result.edges) addEdge(edge.from, edge.to, edge.count);
               for (const item of result.unresolved) addUnresolved(item.from, item.specifier, item.reason);
             } catch (error) {
               if (signal.aborted) return rejected('cancelled', 'file graph cancelled');

@@ -54,7 +54,7 @@ describe.each(BACKENDS)('A-22 C/C++ includes [%s]', backend => {
       language: 'cpp', files: 2, parsed: 2, edges: 'supported', reason: null,
       notes: ['近似：不读系统头文件和观测以外的头文件'], issues: [], issueCount: 0, complete: true,
     });
-    expect(graph.edges).toEqual([{ from: 'main.cpp', to: 'x.h' }]);
+    expect(graph.edges).toEqual([{ from: 'main.cpp', to: 'x.h', count: 1 }]);
     expect(graph.unresolved).toEqual([{ from: 'main.cpp', specifier: '<vector>', reason: null }]);
     expect(await unresolvedDetails(f)).toEqual(['<vector>']);
   }, 60000);
@@ -74,7 +74,7 @@ describe.each(BACKENDS)('A-22 C/C++ includes [%s]', backend => {
       issues: [{ path: 'h.h', kind: 'failed', reason: '预处理出错：unterminated conditional directive' }],
       issueCount: 1, complete: false,
     });
-    expect(graph.edges).toEqual([{ from: 'main.cpp', to: 'h.h' }]);
+    expect(graph.edges).toEqual([{ from: 'main.cpp', to: 'h.h', count: 1 }]);
     expect(graph.unresolved).toEqual([]);
   }, 60000);
 
@@ -90,7 +90,7 @@ describe.each(BACKENDS)('A-22 C/C++ includes [%s]', backend => {
       language: 'cpp', files: 2, parsed: 2, edges: 'supported', reason: null,
       notes: ['近似：不读系统头文件和观测以外的头文件'], issues: [], issueCount: 0, complete: true,
     });
-    expect(graph.edges).toEqual([{ from: 'main.cpp', to: 'x.h' }]);
+    expect(graph.edges).toEqual([{ from: 'main.cpp', to: 'x.h', count: 1 }]);
     expect(graph.unresolved).toEqual([]);
   }, 60000);
 
@@ -108,7 +108,7 @@ describe.each(BACKENDS)('A-22 C/C++ includes [%s]', backend => {
       language: 'cpp', files: 2, parsed: 2, edges: 'supported', reason: null,
       notes: ['近似：不读系统头文件和观测以外的头文件'], issues: [], issueCount: 0, complete: true,
     });
-    expect(graph.edges).toEqual([{ from: 'main.cpp', to: 'x.h' }]);
+    expect(graph.edges).toEqual([{ from: 'main.cpp', to: 'x.h', count: 1 }]);
     expect(graph.unresolved).toEqual([{ from: 'main.cpp', specifier: 'NOPE', reason: 'include 后面跟宏' }]);
     expect(await unresolvedDetails(f)).toEqual(['NOPE（include 后面跟宏）']);
   }, 60000);
@@ -149,7 +149,7 @@ describe.each(BACKENDS)('A-22 C/C++ includes [%s]', backend => {
       language: 'cpp', files: 2, parsed: 2, edges: 'supported', reason: null,
       notes: ['近似：不读系统头文件和观测以外的头文件'], issues: [], issueCount: 0, complete: true,
     });
-    expect(graph.edges).toEqual([{ from: 'main.cpp', to: 'f.h' }]);
+    expect(graph.edges).toEqual([{ from: 'main.cpp', to: 'f.h', count: 1 }]);
     expect(graph.unresolved).toEqual([]);
   }, 60000);
 
@@ -235,9 +235,9 @@ sys.exit(proc.returncode)
       notes: ['近似：不读系统头文件和观测以外的头文件'], issues: [], issueCount: 0, complete: true,
     });
     expect(graph.edges).toEqual([
-      { from: 'a.cpp', to: 'h.h' },
-      { from: 'b.cpp', to: 'h.h' },
-      { from: 'h.h', to: 'k.h' },
+      { from: 'a.cpp', to: 'h.h', count: 1 },
+      { from: 'b.cpp', to: 'h.h', count: 1 },
+      { from: 'h.h', to: 'k.h', count: 1 },
     ]);
     expect(graph.unresolved).toEqual([]);
     // The duplicate b.cpp entry is deduplicated, so exactly two units start.
@@ -260,7 +260,7 @@ sys.exit(proc.returncode)
       notes: ['1 个编译单元的主文件不在观测的文件里', '近似：不读系统头文件和观测以外的头文件'],
       issues: [], issueCount: 0, complete: true,
     });
-    expect(graph.edges).toEqual([{ from: 'main.cpp', to: 'x.h' }]);
+    expect(graph.edges).toEqual([{ from: 'main.cpp', to: 'x.h', count: 1 }]);
     expect(graph.unresolved).toEqual([]);
   }, 60000);
 
@@ -289,7 +289,7 @@ sys.exit(proc.returncode)
       ],
       issueCount: 2, complete: false,
     });
-    expect(graph.edges).toEqual([{ from: 'src/main.cpp', to: 'include/used.hpp' }]);
+    expect(graph.edges).toEqual([{ from: 'src/main.cpp', to: 'include/used.hpp', count: 1 }]);
     expect(graph.unresolved).toEqual([]);
   }, 60000);
 
@@ -308,7 +308,7 @@ sys.exit(proc.returncode)
       language: 'cpp', files: 2, parsed: 2, edges: 'supported', reason: null,
       notes: ['近似：不读系统头文件和观测以外的头文件'], issues: [], issueCount: 0, complete: true,
     });
-    expect(graph.edges).toEqual([{ from: 'src/main.cpp', to: 'include/bad.hpp' }]);
+    expect(graph.edges).toEqual([{ from: 'src/main.cpp', to: 'include/bad.hpp', count: 1 }]);
     expect(graph.unresolved).toEqual([]);
   }, 60000);
 
@@ -324,7 +324,7 @@ sys.exit(proc.returncode)
       language: 'cpp', files: 2, parsed: 2, edges: 'supported', reason: null,
       notes: ['近似：不读系统头文件和观测以外的头文件'], issues: [], issueCount: 0, complete: true,
     });
-    expect(graph.edges).toEqual([{ from: 'main.cpp', to: 'uv/errno.h' }]);
+    expect(graph.edges).toEqual([{ from: 'main.cpp', to: 'uv/errno.h', count: 1 }]);
     expect(graph.unresolved).toEqual([{ from: 'uv/errno.h', specifier: '<errno.h>', reason: null }]);
     expect(await unresolvedDetails(f)).toEqual(['<errno.h>']);
   }, 60000);
@@ -348,7 +348,7 @@ sys.exit(proc.returncode)
       ],
       issueCount: 2, complete: false,
     });
-    expect(graph.edges).toEqual([{ from: 'main.cpp', to: 'x.h' }]);
+    expect(graph.edges).toEqual([{ from: 'main.cpp', to: 'x.h', count: 1 }]);
     expect(graph.unresolved).toEqual([]);
   }, 60000);
 
@@ -382,7 +382,7 @@ sys.exit(proc.returncode)
     ]);
     const graph = await f.graph();
 
-    expect(graph.edges).toEqual([{ from: 'main.cpp', to: 'x.h' }]);
+    expect(graph.edges).toEqual([{ from: 'main.cpp', to: 'x.h', count: 1 }]);
     expect(graph.unresolved).toEqual([{ from: 'main.cpp', specifier: 'NOPE', reason: 'include 后面跟宏' }]);
   }, 60000);
 
@@ -408,7 +408,7 @@ sys.exit(proc.returncode)
     ]);
     const graph = await f.graph();
 
-    expect(graph.edges).toEqual([{ from: 'main.cpp', to: 'x.h' }]);
+    expect(graph.edges).toEqual([{ from: 'main.cpp', to: 'x.h', count: 1 }]);
     expect(graph.unresolved).toEqual([]);
   }, 60000);
 });

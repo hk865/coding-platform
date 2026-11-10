@@ -94,7 +94,7 @@ describe.each(BACKENDS)('A-19 TS configuration [%s]', backend => {
     fixtures.push(f);
     const graph = await f.graph();
 
-    expect(graph.edges).toEqual([{ from: 'a.ts', to: 'src/x.ts' }]);
+    expect(graph.edges).toEqual([{ from: 'a.ts', to: 'src/x.ts', count: 1 }]);
     expect(typescript(graph)).toEqual({
       language: 'typescript', files: 2, parsed: 2, edges: 'supported', reason: null,
       notes: [], issues: [], issueCount: 0, complete: true,
@@ -110,7 +110,7 @@ describe.each(BACKENDS)('A-19 TS configuration [%s]', backend => {
     fixtures.push(f);
     const graph = await f.graph();
 
-    expect(graph.edges).toEqual([{ from: 'a.ts', to: 'src/x.ts' }]);
+    expect(graph.edges).toEqual([{ from: 'a.ts', to: 'src/x.ts', count: 1 }]);
     expect(graph.unresolved).toEqual([]);
   });
 
@@ -144,7 +144,7 @@ describe.each(BACKENDS)('A-19 TS configuration [%s]', backend => {
     fixtures.push(f);
     const graph = await f.graph();
 
-    expect(graph.edges).toEqual([{ from: 'a.ts', to: 'c.json' }]);
+    expect(graph.edges).toEqual([{ from: 'a.ts', to: 'c.json', count: 1 }]);
     expect(graph.unresolved).toEqual([]);
     expect(typescript(graph)).toEqual({
       language: 'typescript', files: 1, parsed: 1, edges: 'supported', reason: null,

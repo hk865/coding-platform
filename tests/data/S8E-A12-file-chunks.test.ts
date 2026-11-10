@@ -48,10 +48,10 @@ const NODES = [
   node('e.ts', 1), node('f.ts', 1), node('g.ts', 2),
 ];
 const EDGES = [
-  { from: 'a.ts', to: 'f.ts' }, { from: 'a.ts', to: 'g.ts' },
-  { from: 'b.ts', to: 'a.ts' }, { from: 'c.ts', to: 'a.ts' }, { from: 'c.ts', to: 'b.ts' },
-  { from: 'd.ts', to: 'c.ts' }, { from: 'e.ts', to: 'd.ts' },
-  { from: 'f.ts', to: 'e.ts' }, { from: 'g.ts', to: 'f.ts' },
+  { from: 'a.ts', to: 'f.ts', count: 1 }, { from: 'a.ts', to: 'g.ts', count: 1 },
+  { from: 'b.ts', to: 'a.ts', count: 1 }, { from: 'c.ts', to: 'a.ts', count: 1 }, { from: 'c.ts', to: 'b.ts', count: 1 },
+  { from: 'd.ts', to: 'c.ts', count: 1 }, { from: 'e.ts', to: 'd.ts', count: 1 },
+  { from: 'f.ts', to: 'e.ts', count: 1 }, { from: 'g.ts', to: 'f.ts', count: 1 },
 ];
 
 for (const backend of BACKENDS) {
@@ -74,7 +74,7 @@ for (const backend of BACKENDS) {
     expect(neighbors.status).toBe('ready');
     if (neighbors.status === 'ready') {
       expect(neighbors.value.nodes).toEqual([node('a.ts', 3), node('b.ts', 1)]);
-      expect(neighbors.value.edges).toEqual([{ from: 'b.ts', to: 'a.ts' }]);
+      expect(neighbors.value.edges).toEqual([{ from: 'b.ts', to: 'a.ts', count: 1 }]);
       expect(neighbors.value.inventory).toEqual({ source: 'skip_list', reason: '不是 git 仓库' });
     }
 
@@ -86,7 +86,7 @@ for (const backend of BACKENDS) {
         node('b.ts', 1), node('c.ts', 2), node('d.ts', 1), node('e.ts', 1),
       ]);
       expect(impact.value.edges).toEqual([
-        { from: 'c.ts', to: 'b.ts' }, { from: 'd.ts', to: 'c.ts' }, { from: 'e.ts', to: 'd.ts' },
+        { from: 'c.ts', to: 'b.ts', count: 1 }, { from: 'd.ts', to: 'c.ts', count: 1 }, { from: 'e.ts', to: 'd.ts', count: 1 },
       ]);
       expect(impact.value.inventory).toEqual({ source: 'skip_list', reason: '不是 git 仓库' });
     }

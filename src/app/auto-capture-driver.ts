@@ -16,22 +16,21 @@
  * state ONCE. That snapshot's `requestSeq` is the capture identity
  * (`auto-capture:<projectId>:<workspaceId>:<requestSeq>`) and the observation
  * watermark; its `revision` guards the failure write, and the state's current
- * observation is passed as `previous`. A failed capture, a failed
- * observation-state read, or a catalog read that is rejected/throws (not a
- * cancellation), writes `failAutoCapture` with that start revision; a cancelled
+ * observation is passed as `previous`. The capture omits `mappings`, so the
+ * service resolves them on its one default path (the current catalog projected
+ * onto the workspace, `mappingsOf`), the same as a manual capture. A failed
+ * capture (its catalog read included) or a failed observation-state read (not a
+ * cancellation) writes `failAutoCapture` with that start revision; a cancelled
  * or aborted one writes nothing. The start snapshot read itself is the
  * documented exception: without a revision it leaves the request pending.
- * `not_found` is the legal empty catalog (`[]` mappings), never an invented one.
  */
 import { randomUUID } from 'node:crypto';
 import type { ArchitectureAutoCaptureFailureV1, ArchitectureAutoCaptureRecordV1,
   AutoCaptureTriggerV1 } from '../contracts/architecture-observation.js';
 import type { WorkspaceScope } from '../contracts/core/identity.js';
 import type { PersistedSourceCaptureRef } from '../contracts/core/source.js';
-import { moduleMappingsOf, type AdoptedArchitecture } from '../contracts/architecture-catalog.js';
 import { messageOf } from '../contracts/error-message.js';
 import { canonicalJson } from '../contracts/fingerprint.js';
-import type { ArchitectureCatalogPort } from '../core/work-graph/architecture/catalog-contracts.js';
 import type { ObservedArchitecturePort } from '../core/work-graph/architecture/contracts.js';
 import { createHostCoreCallContext, type HostActor } from './core-call-context.js';
 
@@ -45,7 +44,6 @@ export type AutoCaptureDriverDependencies = {
     // `observationState` is the only read that exposes the computed `pending`
     // flag; the interface's four-operation Pick cannot decide a startup retry.
     & Pick<ObservedArchitecturePort, 'observationState'>;
-  catalog: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'>;
   boundWorkspaces: () => readonly WorkspaceScope[];
   /** Production always passes the Host's fixed automatic-capture system actor. */
   actor: { kind: 'system'; id: string };
@@ -198,36 +196,12 @@ export function createAutoCaptureDriver(deps: AutoCaptureDriverDependencies): Au
     }
     if (controller.signal.aborted) return;
 
-    // 3. The active catalog. `not_found` (no adoption yet) is the legal empty
-    // module layer. Any other rejected or thrown read is a capture failure, on
-    // the SAME failure exit as a failed capture, with its code and reason;
-    // a cancellation still writes nothing. Skipped when step 2 already failed.
-    let adopted: AdoptedArchitecture | null = null;
-    if (failure === null) {
-      try {
-        const catalog = await deps.catalog.readArchitectureRevision(context(scope, controller.signal), {
-          selection: { kind: 'current' },
-        });
-        if (catalog.status === 'ready') adopted = catalog.value.catalog.catalog;
-        else if (catalog.status !== 'not_found') {
-          if (catalog.status === 'not_ready') return;
-          if (catalog.code === 'cancelled') return;
-          failure = { code: catalog.code, reason: catalog.reason };
-        }
-      } catch (error) {
-        if (controller.signal.aborted) return;
-        failure = { code: 'unavailable', reason: messageOf(error) };
-      }
-      if (controller.signal.aborted) return;
-    }
-
-    // 4. The capture, on the driver's own controller. Its identity is the start
+    // 3. The capture, on the driver's own controller. Its identity is the start
     // snapshot's requestSeq, so one requestSeq starts at most one capture.
     if (failure === null) {
-      const mappings = adopted === null ? [] : moduleMappingsOf(adopted);
       try {
         const captured = await deps.architecture.captureSourceChanges(context(scope, controller.signal), {
-          input: { workspace: copyScope(scope), mappings, previous, requestSeq: snapshot.requestSeq },
+          input: { workspace: copyScope(scope), previous, requestSeq: snapshot.requestSeq },
           meta: { requestId: `auto-capture:${scope.projectId}:${scope.workspaceId}:${snapshot.requestSeq}`, expected: [] },
         });
         if (captured.status === 'committed') return;
@@ -242,7 +216,7 @@ export function createAutoCaptureDriver(deps: AutoCaptureDriverDependencies): Au
     if (controller.signal.aborted) return;
     if (failure === null) return;
 
-    // 5. The failure keeps the requestSeq, guarded by the start revision, and
+    // 4. The failure keeps the requestSeq, guarded by the start revision, and
     // runs on THIS round's own signal (book ruling 4): a Host close cancels it,
     // and the failure owner checks the signal before its commit starts.
     try {

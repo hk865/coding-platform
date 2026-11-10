@@ -901,7 +901,6 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   // tracked work, so `platform.close()` waits for exactly the same set.
   const autoCapture = createAutoCaptureDriver({
     architecture: platform.architecture,
-    catalog: platform.architecture,
     boundWorkspaces: () => workspaces.map(workspace => ({
       projectId: workspace.scope.projectId, workspaceId: workspace.scope.workspaceId,
     })),

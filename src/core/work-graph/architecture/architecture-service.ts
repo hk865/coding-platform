@@ -15,7 +15,7 @@
  * exist or keep their content.
  */
 import { randomUUID } from 'node:crypto';
-import { moduleMappingsOf, type AdoptedArchitecture, type ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
+import { mappingsOf, type AdoptedArchitecture, type ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
 import { catalogForWorkspace } from '../../../contracts/workspace-catalog.js';
 import { displayProjectPath, isSafeWorkspaceRelativePath, normalizeRequestProjectPath,
   qualifyProjectPath, splitWorkspacePath } from '../../../contracts/workspace-path.js';
@@ -56,9 +56,9 @@ import {
   decodeObservationCurrent, decodeObservedArchitectureRecord, encodeArchitectureAutoCapture,
   encodeArchitectureAutoCaptureEvent, encodeArchitectureSourceObservedEvent,
   encodeObservationCurrent, encodeObservedArchitecture, mergeObservedFileGraphChunks, readPersistedSourceCaptureRef,
-  validateObservedFileGraphChunkV2,
+  validateObservedFileGraphChunkV3,
   type ArchitectureAutoCaptureEventV1, type ArchitectureSourceObservedEventV1, type ObservedArchitectureBody,
-  type ObservedArchitectureBodyV2, type ObservedFileGraphChunk,
+  type ObservedArchitectureBodyV3, type ObservedFileGraphChunk,
 } from './architecture-record-codecs.js';
 import { readRevisionByRef } from './catalog-service.js';
 import type { ArchitectureCatalogPort, ModuleContainment, ModuleDefinition } from './catalog-contracts.js';
@@ -68,7 +68,7 @@ import { FileGraphCursorError, FILE_GRAPH_MAX_IMPACT_DEPTH, FILE_GRAPH_PAGE_SIZE
 import { ArchitectureFindCursorError, pageArchitectureFind } from './architecture-search-index.js';
 import type { ObservedArchitectureComparison, ObservedArchitectureImpact, ObservedArchitectureNeighborhood,
   ObservedArchitecturePort, ObservedArchitectureRecord, ObservedArchitectureRef, ObservedArchitectureSelection,
-  ObservedFileGraphChunkScope, ObservedFileGraphManifestV2, ObservedGraphAnchor, ObservedGraphPageRequest,
+  ObservedFileGraphChunkScope, ObservedFileGraphManifestV3, ObservedGraphAnchor, ObservedGraphPageRequest,
   ObservedSummaryV2, WorkspaceArchitectureObservationCurrentRecord,
   WorkspaceArchitectureObservationCurrentRef } from './contracts.js';
 import { ObservedGraphCursorError, buildObservedImpact, buildObservedNeighborhood } from './graph-index.js';
@@ -91,7 +91,7 @@ export type ObservedArchitectureDependencies = {
    * `ARTIFACT_MAX_SIZE_BYTES`. */
   fileGraph?: { chunkBytes?: number };
   /** One mapping rule: when a capture omits `mappings`, the
-   * service resolves them from the ACTIVE catalog with `moduleMappingsOf`.
+   * service resolves them from the ACTIVE catalog with `mappingsOf`.
    * Production passes the real catalog service. Optional so the many tests that
    * build this service directly keep compiling; an absent `mappings` with no
    * catalog is `unsupported`, never a silent `[]`. */
@@ -265,7 +265,8 @@ function readCatalogPin(value: unknown): ArchitectureCatalogPinV1 | null {
 }
 
 /** The empty module-level snapshot for a project with no TS/JS sources.
- * `configPath` mirrors the capture's resolved configuration so the strict body reader accepts it. */
+ * `configPath` mirrors the capture's resolved configuration so the strict body reader accepts it.
+ * It stores the full mapping list, as `mapArchitectureSource` does. */
 function emptyArchitectureSnapshot(input: { scope: WorkspaceScope; capture: SourceCaptureRef;
   mappings: ArchitectureSourceMapping[]; configPath: string | null; commitHash: string | null }): ArchitectureSourceSnapshotV1 {
   return {
@@ -324,43 +325,43 @@ function packFileGraphChunks<T>(prefix: string, suffix: string, serialized: read
   return { chunks, overflow };
 }
 
-/** The pure input of the v2 chunk writer; the capture's `ProjectFileGraphV1` is
+/** The pure input of the v3 chunk writer; the capture's `ProjectFileGraphV1` is
  * structurally compatible once it carries the full §10 nodes. */
 export type FileGraphChunkInput = {
   nodes: readonly FileGraphNodeV1[];
-  edges: readonly { from: string; to: string }[];
+  edges: readonly { from: string; to: string; count: number }[];
   unresolved: readonly { from: string; specifier: string; reason: string | null }[];
 };
 export type NormalizedFileGraph = {
   nodes: FileGraphNodeV1[];
-  edges: [number, number][];
+  edges: [number, number, number][];
   unresolved: { from: string; specifier: string; reason: string | null }[];
 };
 
 /** §10 item 6 store step: build the ONE global path-sorted node table and map
- * each edge to `[i, j]` over that table. This is NOT a second normalizer: the
- * capture already deduped/sorted edges and grouped/picked/sorted unresolved
- * references, so the store keeps both lists in the order it is given.
+ * each edge to `[i, j, count]` over that table. This is NOT a second normalizer:
+ * the capture already deduped/counted/sorted edges and grouped/picked/sorted
+ * unresolved references, so the store keeps both lists in the order it is given.
  * An edge whose endpoint is not a node cannot be encoded and is dropped. */
 export function normalizeFileGraph(graph: FileGraphChunkInput): NormalizedFileGraph {
   const byPath = new Map<string, FileGraphNodeV1>();
   for (const node of graph.nodes) if (!byPath.has(node.path)) byPath.set(node.path, node);
   const nodes = [...byPath.values()].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
   const indexByPath = new Map(nodes.map((node, index) => [node.path, index]));
-  const edges: [number, number][] = [];
+  const edges: [number, number, number][] = [];
   for (const edge of graph.edges) {
     const from = indexByPath.get(edge.from), to = indexByPath.get(edge.to);
     if (from === undefined || to === undefined) continue;
-    edges.push([from, to]);
+    edges.push([from, to, edge.count]);
   }
   return { nodes, edges, unresolved: [...graph.unresolved] };
 }
 
-/** Packs already-normalized v2 items into chunk bodies. Nodes come first (each
- * chunk is a contiguous run of the global table), then edge pairs, then
+/** Packs already-normalized v3 items into chunk bodies. Nodes come first (each
+ * chunk is a contiguous run of the global table), then `[i, j, count]` edges, then
  * unresolved entries; every chunk body is at most `cap` bytes and all three
  * kinds count toward the 64-chunk budget. The empty graph still writes one
- * empty v2 chunk, and its envelope counts toward the cap too.
+ * empty v3 chunk, and its envelope counts toward the cap too.
  *
  * The envelope is assembled from the ESCAPED scope values and a fixed structure;
  * it is never located by searching the JSON for `"nodes"`/`[]`, because a legal
@@ -368,7 +369,7 @@ export function normalizeFileGraph(graph: FileGraphChunkInput): NormalizedFileGr
  * chunk carries the same required scope. */
 export function serializeFileGraphChunks(graph: NormalizedFileGraph,
   scope: ObservedFileGraphChunkScope, cap: number): string[] {
-  const head = '{"schemaVersion":2,"projectId":' + JSON.stringify(scope.projectId)
+  const head = '{"schemaVersion":3,"projectId":' + JSON.stringify(scope.projectId)
     + ',"workspaceId":' + JSON.stringify(scope.workspaceId);
   const nodePrefix = head + ',"nodes":[';
   const nodeSuffix = '],"edges":[],"unresolved":[]}';
@@ -572,8 +573,8 @@ type LoadedObservation = {
   /** The stored observation record's persisted ref (record `source`), read in
    * the same load so callers never need a second record read for it. */
   persistedRef: PersistedSourceCaptureRef;
-  /** The capture's exported project inputs for change counting: v1 `body.files`,
-   * v2 `isProjectInputPath(node.path)` over the chunk nodes (lead answer 10). */
+  /** The capture's exported project inputs for change counting:
+   * `isProjectInputPath(node.path)` over the chunk nodes (lead answer 10). */
   exportedFiles: ExportedFile[];
   /** The one chunked file graph this load already assembled, so the L8 reminder
    * read shares it between `latest`/`previous` and the formal comparison. */
@@ -627,9 +628,9 @@ async function loadObservation(deps: {
     if (artifactBodyDigest(stored.body) !== capture.material.digest || artifactBodySize(stored.body) !== capture.material.sizeBytes) {
       return unavailable('the stored body digest does not match the persisted material ref');
     }
-    // Decision 79: only the current v2 body is readable. Its membership recheck
+    // Decision 79: only the current v3 body is readable. Its membership recheck
     // needs the chunk node table, and the change counts always come from those
-    // v2 nodes (the capture's TS/JS/JSON export set, lead answer 10).
+    // chunk nodes (the capture's TS/JS/JSON export set, lead answer 10).
     // The record and access above are the ones this operation already read and
     // opened; the chunk helper must NOT read or open them a second time.
     const graph = await readFileGraphChunks(deps, access, decodedRecord.value, captureRefOf(capture.capture));
@@ -664,7 +665,7 @@ function captureRefOf(capture: SourceCaptureRef): ObservedCaptureRef {
 
 type LoadedFileGraph = {
   nodes: FileGraphNodeV1[];
-  edges: { from: string; to: string }[];
+  edges: { from: string; to: string; count: number }[];
   unresolved: { from: string; specifier: string; reason: string | null }[];
   languages: LanguageCoverageV1[];
   complete: boolean;
@@ -680,7 +681,7 @@ type LoadedFileGraph = {
  * exact counts, authorizes every frozen node/issue path, and returns the
  * concatenated graph. It never opens the workspace, re-reads the record or
  * releases the access: the page entry and `loadObservation` each do exactly one
- * of each and hand them here. The record decoder guarantees a current v2
+ * of each and hand them here. The record decoder guarantees a current v3
  * manifest, so this never returns an absent graph (decision 79). */
 async function readFileGraphChunks(deps: { bodies: RawArtifactStorePort }, access: WorkspaceReadAccess,
   record: ObservedArchitectureRecord, captureRef: ObservedCaptureRef): Promise<{ status: 'ready'; value: LoadedFileGraph } | Rejection> {
@@ -1041,7 +1042,7 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
         // catalog onto that workspace and hand the provider bare relative paths.
         const main = await mainWorkspaceIdOf(scope.projectId, scope.workspaceId);
         if (main.status !== 'ready') return main;
-        mappings = moduleMappingsOf(catalogForWorkspace(revision.value.catalog.catalog, scope.workspaceId, main.value));
+        mappings = mappingsOf(catalogForWorkspace(revision.value.catalog.catalog, scope.workspaceId, main.value));
       } else if (revision.status === 'rejected') return revision;
       else return unavailable('the active architecture catalog revision is not readable');
     }
@@ -1139,7 +1140,7 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
         added: [...exportedInputs.map(file => file.path)].sort((a, b) => a.localeCompare(b)), modified: [], deleted: [],
       };
       if (priorFiles !== null) changes = changeSet(priorFiles, exportedInputs);
-      // §10 item 2: the v2 body carries only counts; per-file data lives in the
+      // §10 item 2: the body carries only counts; per-file data lives in the
       // file layer and the module snapshot drops `indexedSources` and truncates
       // its unresolved lines.
       const summary: ObservedSummaryV2 = {
@@ -1150,8 +1151,8 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
         changes: { added: changes.added.length, modified: changes.modified.length, deleted: changes.deleted.length },
       };
       const observedAt = new Date().toISOString();
-      const observedBody: ObservedArchitectureBodyV2 = {
-        schemaVersion: 2, capture: captureRef, observedAt, summary,
+      const observedBody: ObservedArchitectureBodyV3 = {
+        schemaVersion: 3, capture: captureRef, observedAt, summary,
         // §10 item 1: the observation mapper compacts before validation, so the
         // service stores exactly its result; there is no second compaction here.
         architecture: mapped.value,
@@ -1159,7 +1160,7 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
       const bodyJson = JSON.stringify(observedBody);
       const normalizedFileGraph = normalizeFileGraph(fileGraph);
       // Publish only a body the strict reader would accept: a mapping/config that the frozen files
-      // do not cover must fail here, not become an unreadable observation. The v2 member check reads
+      // do not cover must fail here, not become an unreadable observation. The member check reads
       // the same node table the chunks will carry.
       const bodyCheck = decodeObservedArchitectureBody(bodyJson, normalizedFileGraph.nodes);
       if (bodyCheck.status !== 'decoded') return invalid('the assembled observation body is not self-consistent: ' + bodyCheck.reason);
@@ -1177,7 +1178,7 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
       }
       if (chunkBodies.length > 64) return rejected('capacity', 'the file graph needs ' + chunkBodies.length + ' chunks; the limit is 64');
       for (const chunkBody of chunkBodies) {
-        const chunkCheck = validateObservedFileGraphChunkV2(JSON.parse(chunkBody), scope, normalizedFileGraph.nodes.length);
+        const chunkCheck = validateObservedFileGraphChunkV3(JSON.parse(chunkBody), scope, normalizedFileGraph.nodes.length);
         if (chunkCheck.status !== 'decoded') {
           return invalid('the assembled file graph chunk is not self-consistent: ' + chunkCheck.reason);
         }
@@ -1192,7 +1193,7 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
       // File layer: one artifact per chunk, same sourceRefs/origin/requestedAt as
       // the module body. All chunks are published before the second verification so
       // a moved source leaves only unreachable bodies, never a published pointer.
-      const chunkRefs: ObservedFileGraphManifestV2['chunks'] = [];
+      const chunkRefs: ObservedFileGraphManifestV3['chunks'] = [];
       for (const chunkBody of chunkBodies) {
         const chunkPut = await bodies.put({ body: chunkBody, contentType: FILE_GRAPH_CHUNK_CONTENT_TYPE,
           sourceRefs: [sourceRef], origin: { kind: 'platform_operation', projectId: scope.projectId, workspaceId: scope.workspaceId, requestId, actor: bound.actor }, requestedAt: observedAt });
@@ -1200,8 +1201,8 @@ export function createObservedArchitecture(deps: ObservedArchitectureDependencie
         if (chunkPut.status !== 'ready') return mapBodyPutFailure(chunkPut);
         chunkRefs.push(chunkPut.value.ref);
       }
-      const fileGraphManifest: ObservedFileGraphManifestV2 = {
-        schemaVersion: 2, chunks: chunkRefs, nodeCount: normalizedFileGraph.nodes.length,
+      const fileGraphManifest: ObservedFileGraphManifestV3 = {
+        schemaVersion: 3, chunks: chunkRefs, nodeCount: normalizedFileGraph.nodes.length,
         edgeCount: normalizedFileGraph.edges.length, unresolvedCount: normalizedFileGraph.unresolved.length,
       };
 

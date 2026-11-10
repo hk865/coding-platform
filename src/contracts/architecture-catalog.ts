@@ -14,7 +14,9 @@
  */
 import type { ArchitectureSourceMapping } from './architecture-source.js';
 import type { ModuleRef } from './core/identity.js';
+import { canonicalJson } from './fingerprint.js';
 import type { ArchitectureBaselinePin, ArchitectureBaselineRevisionRef } from './governance.js';
+import { pathOwnershipOf } from './path-ownership.js';
 
 /** One formal module with its responsibility, path mapping and interfaces. */
 export type ModuleDefinition = {
@@ -76,17 +78,88 @@ export type ArchitectureCatalogPinV1 = {
   baseline: ArchitectureBaselinePin;
 };
 
-/**
- * L8 (book ruling 6): the ONE module-mapping rule shared by the settings page's
- * manual capture and the automatic capture driver. An adopted catalog maps each
- * formal module to its declared paths; interfaces are not source owners here.
- */
+/** The module half of `mappingsOf`: each formal module to its declared paths. */
 export function moduleMappingsOf(catalog: AdoptedArchitecture): ArchitectureSourceMapping[] {
   return catalog.modules.map(module => ({
     id: module.ref.moduleId,
     kind: 'module' as const,
     paths: module.paths,
   }));
+}
+
+/**
+ * L8 (book ruling 6): the ONE mapping list shared by the settings page's manual
+ * capture and the automatic capture driver. Each formal module maps to its
+ * declared paths, and each of its interfaces to the interface's own paths under
+ * the identity `canonicalJson([moduleId, interfaceId])`: an interface id is
+ * unique only inside its module, so two modules may both declare `model`. An
+ * interface that declares no path can own no file, so it is not listed.
+ */
+export function mappingsOf(catalog: AdoptedArchitecture): ArchitectureSourceMapping[] {
+  return [
+    ...moduleMappingsOf(catalog),
+    ...catalog.modules.flatMap(module => module.interfaces
+      .filter(entry => entry.paths.length > 0)
+      .map(entry => ({ id: canonicalJson([module.ref.moduleId, entry.id]), kind: 'interface' as const, paths: entry.paths }))),
+  ];
+}
+
+/** One file's layered ownership; `interfaceId` is the bare id inside its module. */
+export type OwnershipV1 = { moduleId: string | null; interfaceId: string | null };
+
+/**
+ * The ONE layered ownership decision, shared by the capture writer, the
+ * stored-body membership recheck, the file anchors and the change-scope read,
+ * each over the full mapping list. A file belongs to
+ * the module with the longest legal declared path (`pathOwnershipOf`; none or a
+ * tie is no module), and then to the interface with the longest legal path among
+ * THAT module's interfaces only (none or a tie is no interface). A file in an
+ * interface still belongs to its module. An interface mapping is one only under
+ * its exact identity `canonicalJson([moduleId, interfaceId])`.
+ *
+ * The mapping list is prepared once here; a caller that classifies many files
+ * over one list keeps the returned function.
+ */
+export function ownershipRuleOf(mappings: readonly ArchitectureSourceMapping[]): (path: string) => OwnershipV1 {
+  const modules = mappings.filter(mapping => mapping.kind === 'module')
+    .map(mapping => ({ value: mapping.id, paths: mapping.paths }));
+  const interfacesByModule = new Map<string, { value: string; paths: readonly string[] }[]>();
+  for (const mapping of mappings) {
+    if (mapping.kind !== 'interface') continue;
+    const identity = interfaceIdentityOf(mapping.id);
+    if (identity === null) continue;
+    const interfaces = interfacesByModule.get(identity.moduleId);
+    const candidate = { value: identity.interfaceId, paths: mapping.paths };
+    if (interfaces === undefined) interfacesByModule.set(identity.moduleId, [candidate]);
+    else interfaces.push(candidate);
+  }
+  return path => {
+    const module = pathOwnershipOf(path, modules);
+    if (module.status !== 'owner') return { moduleId: null, interfaceId: null };
+    const owned = pathOwnershipOf(path, interfacesByModule.get(module.owner) ?? []);
+    return { moduleId: module.owner, interfaceId: owned.status === 'owner' ? owned.owner : null };
+  };
+}
+
+/**
+ * The observed nodes one ownership result belongs to: its module's node
+ * `module:<moduleId>` and, inside one of that module's interfaces, also
+ * `interface:` + `canonicalJson([moduleId, interfaceId])`. A file with no module
+ * belongs to no node. The capture writer and the stored-body recheck share it, so
+ * node members and edge endpoints always use the same identities.
+ */
+export function ownerNodesOf(owner: OwnershipV1): string[] {
+  if (owner.moduleId === null) return [];
+  const module = 'module:' + owner.moduleId;
+  return owner.interfaceId === null ? [module] : [module, 'interface:' + canonicalJson([owner.moduleId, owner.interfaceId])];
+}
+
+/** The two ids of an exact `canonicalJson([moduleId, interfaceId])`; any other text names no interface. */
+function interfaceIdentityOf(identity: string): { moduleId: string; interfaceId: string } | null {
+  let parsed: unknown;
+  try { parsed = JSON.parse(identity); } catch { return null; }
+  if (!Array.isArray(parsed) || parsed.length !== 2 || typeof parsed[0] !== 'string' || typeof parsed[1] !== 'string') return null;
+  return canonicalJson(parsed as string[]) === identity ? { moduleId: parsed[0], interfaceId: parsed[1] } : null;
 }
 
 /**

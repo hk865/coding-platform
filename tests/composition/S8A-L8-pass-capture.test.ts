@@ -275,7 +275,6 @@ async function openEnvironment(backend: Backend, projectId: string): Promise<Fix
 
   const driver = createAutoCaptureDriver({
     architecture: platform.architecture,
-    catalog: platform.architecture,
     boundWorkspaces: () => [scope],
     actor: AUTO_CAPTURE_ACTOR,
   });

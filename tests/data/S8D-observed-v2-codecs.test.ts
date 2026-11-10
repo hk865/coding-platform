@@ -14,16 +14,16 @@ import { describe, expect, it } from 'vitest';
 import type { FileGraphNodeV1 } from '../../src/contracts/architecture-inspection.js';
 import {
   decodeObservedArchitectureBody, decodeObservedArchitectureRecord, decodeObservedFileGraphChunk,
-  mergeObservedFileGraphChunks, validateObservedFileGraphChunkV2,
+  mergeObservedFileGraphChunks, validateObservedFileGraphChunkV3,
 } from '../../src/core/work-graph/architecture/architecture-record-codecs.js';
 import {
   normalizeFileGraph, serializeFileGraphChunks,
 } from '../../src/core/work-graph/architecture/architecture-service.js';
-import type { ObservedFileGraphManifestV2 } from '../../src/core/work-graph/architecture/contracts.js';
+import type { ObservedFileGraphManifestV3 } from '../../src/core/work-graph/architecture/contracts.js';
 
 type ChunkGraph = {
   nodes: FileGraphNodeV1[];
-  edges: { from: string; to: string }[];
+  edges: { from: string; to: string; count: number }[];
   unresolved: { from: string; specifier: string; reason: string | null }[];
 };
 
@@ -37,7 +37,7 @@ const node = (path: string, char: string, overrides: Partial<FileGraphNodeV1> = 
 const SCOPE = { projectId: 'p1', workspaceId: 'w1' };
 
 /** Cap selected by hand. The empty scoped envelope is 93 bytes
- * (`{"schemaVersion":2,"projectId":"p1","workspaceId":"w1","nodes":[],` +
+ * (`{"schemaVersion":3,"projectId":"p1","workspaceId":"w1","nodes":[],` +
  * `"edges":[],"unresolved":[]}`) and one full v2 node is 161 bytes, so one node
  * fits exactly (93 + 161 = 254) and two do not (93 + 161 + 1 + 161 = 416);
  * edge pairs share a chunk. */
@@ -48,7 +48,7 @@ const graph: ChunkGraph = {
   nodes: [node('b.ts', 'b'), node('c.ts', 'c'), node('a.ts', 'a')],
   // c->a crosses the first/last node chunk; the expected global indices are
   // a.ts=0, b.ts=1, c.ts=2, so c->a is [2,0], never a local [2,0] coincidence.
-  edges: [{ from: 'c.ts', to: 'a.ts' }, { from: 'a.ts', to: 'b.ts' }],
+  edges: [{ from: 'c.ts', to: 'a.ts', count: 2 }, { from: 'a.ts', to: 'b.ts', count: 1 }],
   unresolved: [],
 };
 
@@ -62,7 +62,7 @@ describe('S8D observed v2 chunks', () => {
     for (const chunk of chunks) {
       expect(chunk.status).toBe('decoded');
       if (chunk.status !== 'decoded') return;
-      expect(chunk.value.schemaVersion).toBe(2);
+      expect(chunk.value.schemaVersion).toBe(3);
     }
     const decoded = chunks.flatMap(chunk => chunk.status === 'decoded' ? [chunk.value] : []);
     const nodes = decoded.flatMap(chunk => chunk.nodes);
@@ -75,8 +75,8 @@ describe('S8D observed v2 chunks', () => {
       ]);
     // The store maps edges to indices in the CAPTURE's order (it does not sort
     // or dedupe them): c->a is first, then a->b.
-    const pairs = decoded.flatMap(chunk => chunk.schemaVersion === 2 ? chunk.edges : []);
-    expect(pairs).toEqual([[2, 0], [0, 1]]);
+    const pairs = decoded.flatMap(chunk => chunk.schemaVersion === 3 ? chunk.edges : []);
+    expect(pairs).toEqual([[2, 0, 2], [0, 1, 1]]);
     const paths = nodes.map(entry => entry.path);
     expect(pairs.map(([from, to]) => [paths[from], paths[to]])).toEqual([['c.ts', 'a.ts'], ['a.ts', 'b.ts']]);
   });
@@ -87,8 +87,8 @@ describe('S8D observed v2 chunks', () => {
     const decoded = decodeObservedFileGraphChunk(bodies[0]!, SCOPE, 0);
     expect(decoded.status).toBe('decoded');
     if (decoded.status !== 'decoded') return;
-    expect(decoded.value).toEqual({ schemaVersion: 2, ...SCOPE, nodes: [], edges: [], unresolved: [] });
-    expect(bodies[0]).toContain('"schemaVersion":2');
+    expect(decoded.value).toEqual({ schemaVersion: 3, ...SCOPE, nodes: [], edges: [], unresolved: [] });
+    expect(bodies[0]).toContain('"schemaVersion":3');
   });
 
   it('refuses an item that starts a later chunk but cannot fit its envelope alone', () => {
@@ -106,20 +106,23 @@ describe('S8D observed v2 chunk validation', () => {
     path, digest: digest(char), byteSize: 1, language: 'typescript', nonBlankLines: 1, indexed: true,
   });
   const chunkJson = (nodes: unknown[], edges: unknown[]): string =>
-    JSON.stringify({ schemaVersion: 2, ...SCOPE, nodes, edges, unresolved: [] });
+    JSON.stringify({ schemaVersion: 3, ...SCOPE, nodes, edges, unresolved: [] });
 
   it('rejects an out-of-range edge index, a malformed pair and a bad node digest', () => {
     const nodes = [literalNode('a.ts')];
     // The manifest node count is 1, so [0,1] points outside the global table.
-    expect(decodeObservedFileGraphChunk(chunkJson(nodes, [[0, 1]]), SCOPE, 1).status).toBe('invalid');
+    expect(decodeObservedFileGraphChunk(chunkJson(nodes, [[0, 1, 1]]), SCOPE, 1).status).toBe('invalid');
     expect(decodeObservedFileGraphChunk(chunkJson(nodes, [[0]]), SCOPE, 1).status).toBe('invalid');
-    expect(decodeObservedFileGraphChunk(chunkJson(nodes, [[0, 1.5]]), SCOPE, 2).status).toBe('invalid');
-    expect(decodeObservedFileGraphChunk(chunkJson(nodes, [[-1, 0]]), SCOPE, 1).status).toBe('invalid');
+    expect(decodeObservedFileGraphChunk(chunkJson(nodes, [[0, 1.5, 1]]), SCOPE, 2).status).toBe('invalid');
+    expect(decodeObservedFileGraphChunk(chunkJson(nodes, [[-1, 0, 1]]), SCOPE, 1).status).toBe('invalid');
+    // A pair without its reference count (the earlier v2 edge) and a count of 0.
+    expect(decodeObservedFileGraphChunk(chunkJson(nodes, [[0, 0]]), SCOPE, 1).status).toBe('invalid');
+    expect(decodeObservedFileGraphChunk(chunkJson(nodes, [[0, 0, 0]]), SCOPE, 1).status).toBe('invalid');
     // Without the manifest count the same pair is structurally legal; the
     // loader-level merge rejects it against the node table.
-    expect(decodeObservedFileGraphChunk(chunkJson(nodes, [[0, 1]]), SCOPE).status).toBe('decoded');
+    expect(decodeObservedFileGraphChunk(chunkJson(nodes, [[0, 1, 1]]), SCOPE).status).toBe('decoded');
     const badDigest = JSON.stringify({
-      schemaVersion: 2, ...SCOPE, edges: [], unresolved: [],
+      schemaVersion: 3, ...SCOPE, edges: [], unresolved: [],
       nodes: [{ ...literalNode('a.ts'), digest: 'not-a-digest' }],
     });
     expect(decodeObservedFileGraphChunk(badDigest, SCOPE, 1).status).toBe('invalid');
@@ -127,13 +130,13 @@ describe('S8D observed v2 chunk validation', () => {
 
   it('accepts the real empty specifier and enforces the one 4096-character limit', () => {
     const parsedWith = (specifier: string) => ({
-      schemaVersion: 2, ...SCOPE, nodes: [], edges: [], unresolved: [{ from: 'a.ts', specifier, reason: null }],
+      schemaVersion: 3, ...SCOPE, nodes: [], edges: [], unresolved: [{ from: 'a.ts', specifier, reason: null }],
     });
     // `import "";` is real syntax, so the empty specifier is legal on both sides.
-    expect(validateObservedFileGraphChunkV2(parsedWith(''), SCOPE).status).toBe('decoded');
+    expect(validateObservedFileGraphChunkV3(parsedWith(''), SCOPE).status).toBe('decoded');
     // The writer and the decoder share this validator, so there is ONE limit.
-    expect(validateObservedFileGraphChunkV2(parsedWith('x'.repeat(4096)), SCOPE).status).toBe('decoded');
-    expect(validateObservedFileGraphChunkV2(parsedWith('x'.repeat(4097)), SCOPE).status).toBe('invalid');
+    expect(validateObservedFileGraphChunkV3(parsedWith('x'.repeat(4096)), SCOPE).status).toBe('decoded');
+    expect(validateObservedFileGraphChunkV3(parsedWith('x'.repeat(4097)), SCOPE).status).toBe('invalid');
     expect(decodeObservedFileGraphChunk(JSON.stringify(parsedWith('x'.repeat(4096))), SCOPE).status).toBe('decoded');
     expect(decodeObservedFileGraphChunk(JSON.stringify(parsedWith('x'.repeat(4097))), SCOPE).status).toBe('invalid');
   });
@@ -146,8 +149,8 @@ describe('S8D observed v2 chunk validation', () => {
     expect(first.status).toBe('decoded');
     expect(second.status).toBe('decoded');
     if (first.status !== 'decoded' || second.status !== 'decoded') return;
-    const manifest: ObservedFileGraphManifestV2 = {
-      schemaVersion: 2, chunks: [], nodeCount: 2, edgeCount: 0, unresolvedCount: 0,
+    const manifest: ObservedFileGraphManifestV3 = {
+      schemaVersion: 3, chunks: [], nodeCount: 2, edgeCount: 0, unresolvedCount: 0,
     };
     const merged = mergeObservedFileGraphChunks(manifest, [first.value, second.value]);
     expect(merged.status).toBe('invalid');
@@ -159,22 +162,22 @@ describe('S8D observed v2 chunk validation', () => {
     const decoded = decodeObservedFileGraphChunk(chunkJson([literalNode('a.ts')], []), SCOPE, 2);
     expect(decoded.status).toBe('decoded');
     if (decoded.status !== 'decoded') return;
-    const manifest: ObservedFileGraphManifestV2 = {
-      schemaVersion: 2, chunks: [], nodeCount: 2, edgeCount: 0, unresolvedCount: 0,
+    const manifest: ObservedFileGraphManifestV3 = {
+      schemaVersion: 3, chunks: [], nodeCount: 2, edgeCount: 0, unresolvedCount: 0,
     };
     expect(mergeObservedFileGraphChunks(manifest, [decoded.value]).status).toBe('invalid');
-    const correct: ObservedFileGraphManifestV2 = { ...manifest, nodeCount: 1 };
+    const correct: ObservedFileGraphManifestV3 = { ...manifest, nodeCount: 1 };
     const merged = mergeObservedFileGraphChunks(correct, [decoded.value]);
     expect(merged.status).toBe('decoded');
     if (merged.status !== 'decoded') return;
     expect(merged.value.nodes.map(entry => entry.path)).toEqual(['a.ts']);
     // An index pair that decodes without a manifest count is rejected by the merge.
-    const edges = decodeObservedFileGraphChunk(chunkJson([literalNode('a.ts')], [[0, 1]]), SCOPE);
+    const edges = decodeObservedFileGraphChunk(chunkJson([literalNode('a.ts')], [[0, 1, 1]]), SCOPE);
     expect(edges.status).toBe('decoded');
     if (edges.status !== 'decoded') return;
     expect(mergeObservedFileGraphChunks(correct, [edges.value]).status).toBe('invalid');
     // The unresolved count is part of the exact manifest check too.
-    const unresolvedManifest: ObservedFileGraphManifestV2 = { ...correct, unresolvedCount: 1 };
+    const unresolvedManifest: ObservedFileGraphManifestV3 = { ...correct, unresolvedCount: 1 };
     expect(mergeObservedFileGraphChunks(unresolvedManifest, [decoded.value]).status).toBe('invalid');
   });
 });
@@ -203,7 +206,7 @@ describe('S8D observed v2 chunk scope (pure codec, A5)', () => {
     const projectId = 'p"ø';
     const workspaceId = 'w\\y';
     const scope = { projectId, workspaceId };
-    const expected = '{"schemaVersion":2,"projectId":"p\\"ø","workspaceId":"w\\\\y","nodes":[],"edges":[],"unresolved":[]}';
+    const expected = '{"schemaVersion":3,"projectId":"p\\"ø","workspaceId":"w\\\\y","nodes":[],"edges":[],"unresolved":[]}';
     const bodies = serializeFileGraphChunks(normalizeFileGraph(emptyGraph), scope, 98);
     expect(bodies).toEqual([expected]);
     expect(Buffer.byteLength(expected, 'utf8')).toBe(98);
@@ -215,7 +218,7 @@ describe('S8D observed v2 chunk scope (pure codec, A5)', () => {
     const decoded = decodeObservedFileGraphChunk(bodies[0]!, scope, 0);
     expect(decoded.status).toBe('decoded');
     if (decoded.status !== 'decoded') return;
-    expect(decoded.value).toEqual({ schemaVersion: 2, ...scope, nodes: [], edges: [], unresolved: [] });
+    expect(decoded.value).toEqual({ schemaVersion: 3, ...scope, nodes: [], edges: [], unresolved: [] });
   });
 
   it('counts the empty chunk envelope itself toward the byte cap', () => {
@@ -241,7 +244,7 @@ describe('S8D observed v2 unresolved pass-through', () => {
       unresolved,
     }), SCOPE, CAP);
     const decoded = bodies.map(body => decodeObservedFileGraphChunk(body, SCOPE, 2))
-      .flatMap(chunk => chunk.status === 'decoded' && chunk.value.schemaVersion === 2 ? chunk.value.unresolved : []);
+      .flatMap(chunk => chunk.status === 'decoded' && chunk.value.schemaVersion === 3 ? chunk.value.unresolved : []);
     expect(decoded).toEqual(unresolved);
   });
 });
@@ -289,7 +292,7 @@ describe('S8D v2 observation body', () => {
     changes: { added: 2, modified: 0, deleted: 0 },
   };
   const v2Body = JSON.stringify({
-    schemaVersion: 2, capture: CAPTURE, observedAt: '2026-10-17T00:00:00.000Z',
+    schemaVersion: 3, capture: CAPTURE, observedAt: '2026-10-17T00:00:00.000Z',
     summary: v2Summary, architecture: v2Architecture,
   });
 
@@ -297,7 +300,7 @@ describe('S8D v2 observation body', () => {
     const decoded = decodeObservedArchitectureBody(v2Body, nodes);
     expect(decoded.status).toBe('decoded');
     if (decoded.status !== 'decoded') return;
-    expect(decoded.value.schemaVersion).toBe(2);
+    expect(decoded.value.schemaVersion).toBe(3);
     expect(decoded.value.summary).toEqual(v2Summary);
     expect('indexedSources' in decoded.value.architecture).toBe(false);
     // Without the node table a v2 body cannot recheck its members.
@@ -323,7 +326,7 @@ describe('S8D v2 observation body', () => {
     const recordV2 = {
       ...base,
       fileGraph: {
-        schemaVersion: 2, chunks: [artifact('1', FILE_GRAPH_CHUNK_CONTENT_TYPE)],
+        schemaVersion: 3, chunks: [artifact('1', FILE_GRAPH_CHUNK_CONTENT_TYPE)],
         nodeCount: 1, edgeCount: 0, unresolvedCount: 0,
       },
       languages: [],
@@ -338,7 +341,7 @@ describe('S8D v2 observation body', () => {
     if (decoded.status !== 'decoded') return;
     expect(decoded.value.inventory).toEqual({ source: 'skip_list', reason: '不是 git 仓库' });
     const manifest = decoded.value.fileGraph;
-    expect(manifest.schemaVersion).toBe(2);
+    expect(manifest.schemaVersion).toBe(3);
     expect(manifest.unresolvedCount).toBe(0);
     // An unknown inventory source is rejected.
     const bad = JSON.parse(encoded.json) as Record<string, unknown>;

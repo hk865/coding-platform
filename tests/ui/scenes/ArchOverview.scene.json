@@ -1031,203 +1031,232 @@
             "fromNode": "module:src/app",
             "toNode": "module:src/business/workflow",
             "kind": "type_references",
-            "structuralKey": "module:src/app->module:src/business/workflow"
+            "structuralKey": "module:src/app->module:src/business/workflow",
+            "count": 6
           },
           {
             "edgeId": "1",
             "fromNode": "module:src/app",
             "toNode": "module:src/composition",
             "kind": "module_dependency",
-            "structuralKey": "module:src/app->module:src/composition"
+            "structuralKey": "module:src/app->module:src/composition",
+            "count": 3
           },
           {
             "edgeId": "2",
             "fromNode": "module:src/app",
             "toNode": "module:src/contracts",
             "kind": "module_dependency",
-            "structuralKey": "module:src/app->module:src/contracts"
+            "structuralKey": "module:src/app->module:src/contracts",
+            "count": 68
           },
           {
             "edgeId": "3",
             "fromNode": "module:src/app",
             "toNode": "module:src/core/agent-runtime",
             "kind": "type_references",
-            "structuralKey": "module:src/app->module:src/core/agent-runtime"
+            "structuralKey": "module:src/app->module:src/core/agent-runtime",
+            "count": 9
           },
           {
             "edgeId": "4",
             "fromNode": "module:src/app",
             "toNode": "module:src/core/work-graph",
             "kind": "module_dependency",
-            "structuralKey": "module:src/app->module:src/core/work-graph"
+            "structuralKey": "module:src/app->module:src/core/work-graph",
+            "count": 44
           },
           {
             "edgeId": "5",
             "fromNode": "module:src/app",
             "toNode": "module:src/core/workspace",
             "kind": "module_dependency",
-            "structuralKey": "module:src/app->module:src/core/workspace"
+            "structuralKey": "module:src/app->module:src/core/workspace",
+            "count": 9
           },
           {
             "edgeId": "6",
             "fromNode": "module:src/app",
             "toNode": "module:vendor/coding-agent",
             "kind": "module_dependency",
-            "structuralKey": "module:src/app->module:vendor/coding-agent"
+            "structuralKey": "module:src/app->module:vendor/coding-agent",
+            "count": 3
           },
           {
             "edgeId": "7",
             "fromNode": "module:src/business/workflow",
             "toNode": "module:src/contracts",
             "kind": "module_dependency",
-            "structuralKey": "module:src/business/workflow->module:src/contracts"
+            "structuralKey": "module:src/business/workflow->module:src/contracts",
+            "count": 36
           },
           {
             "edgeId": "8",
             "fromNode": "module:src/business/workflow",
             "toNode": "module:src/core/agent-runtime",
             "kind": "type_references",
-            "structuralKey": "module:src/business/workflow->module:src/core/agent-runtime"
+            "structuralKey": "module:src/business/workflow->module:src/core/agent-runtime",
+            "count": 7
           },
           {
             "edgeId": "9",
             "fromNode": "module:src/business/workflow",
             "toNode": "module:src/core/work-graph",
             "kind": "module_dependency",
-            "structuralKey": "module:src/business/workflow->module:src/core/work-graph"
+            "structuralKey": "module:src/business/workflow->module:src/core/work-graph",
+            "count": 26
           },
           {
             "edgeId": "10",
             "fromNode": "module:src/composition",
             "toNode": "module:src/business/workflow",
             "kind": "module_dependency",
-            "structuralKey": "module:src/composition->module:src/business/workflow"
+            "structuralKey": "module:src/composition->module:src/business/workflow",
+            "count": 2
           },
           {
             "edgeId": "11",
             "fromNode": "module:src/composition",
             "toNode": "module:src/contracts",
             "kind": "module_dependency",
-            "structuralKey": "module:src/composition->module:src/contracts"
+            "structuralKey": "module:src/composition->module:src/contracts",
+            "count": 7
           },
           {
             "edgeId": "12",
             "fromNode": "module:src/composition",
             "toNode": "module:src/core/agent-runtime",
             "kind": "module_dependency",
-            "structuralKey": "module:src/composition->module:src/core/agent-runtime"
+            "structuralKey": "module:src/composition->module:src/core/agent-runtime",
+            "count": 9
           },
           {
             "edgeId": "13",
             "fromNode": "module:src/composition",
             "toNode": "module:src/core/record-store",
             "kind": "module_dependency",
-            "structuralKey": "module:src/composition->module:src/core/record-store"
+            "structuralKey": "module:src/composition->module:src/core/record-store",
+            "count": 6
           },
           {
             "edgeId": "14",
             "fromNode": "module:src/composition",
             "toNode": "module:src/core/work-graph",
             "kind": "module_dependency",
-            "structuralKey": "module:src/composition->module:src/core/work-graph"
+            "structuralKey": "module:src/composition->module:src/core/work-graph",
+            "count": 60
           },
           {
             "edgeId": "15",
             "fromNode": "module:src/composition",
             "toNode": "module:src/core/workspace",
             "kind": "module_dependency",
-            "structuralKey": "module:src/composition->module:src/core/workspace"
+            "structuralKey": "module:src/composition->module:src/core/workspace",
+            "count": 4
           },
           {
             "edgeId": "16",
             "fromNode": "module:src/composition",
             "toNode": "module:vendor/coding-agent",
             "kind": "module_dependency",
-            "structuralKey": "module:src/composition->module:vendor/coding-agent"
+            "structuralKey": "module:src/composition->module:vendor/coding-agent",
+            "count": 1
           },
           {
             "edgeId": "17",
             "fromNode": "module:src/core/agent-runtime",
             "toNode": "module:src/contracts",
             "kind": "module_dependency",
-            "structuralKey": "module:src/core/agent-runtime->module:src/contracts"
+            "structuralKey": "module:src/core/agent-runtime->module:src/contracts",
+            "count": 154
           },
           {
             "edgeId": "18",
             "fromNode": "module:src/core/agent-runtime",
             "toNode": "module:src/core/record-store",
             "kind": "type_references",
-            "structuralKey": "module:src/core/agent-runtime->module:src/core/record-store"
+            "structuralKey": "module:src/core/agent-runtime->module:src/core/record-store",
+            "count": 3
           },
           {
             "edgeId": "19",
             "fromNode": "module:src/core/agent-runtime",
             "toNode": "module:src/core/work-graph",
             "kind": "module_dependency",
-            "structuralKey": "module:src/core/agent-runtime->module:src/core/work-graph"
+            "structuralKey": "module:src/core/agent-runtime->module:src/core/work-graph",
+            "count": 46
           },
           {
             "edgeId": "20",
             "fromNode": "module:src/core/agent-runtime",
             "toNode": "module:src/core/workspace",
             "kind": "module_dependency",
-            "structuralKey": "module:src/core/agent-runtime->module:src/core/workspace"
+            "structuralKey": "module:src/core/agent-runtime->module:src/core/workspace",
+            "count": 17
           },
           {
             "edgeId": "21",
             "fromNode": "module:src/core/agent-runtime",
             "toNode": "module:vendor/coding-agent",
             "kind": "module_dependency",
-            "structuralKey": "module:src/core/agent-runtime->module:vendor/coding-agent"
+            "structuralKey": "module:src/core/agent-runtime->module:vendor/coding-agent",
+            "count": 26
           },
           {
             "edgeId": "22",
             "fromNode": "module:src/core/record-store",
             "toNode": "module:src/contracts",
             "kind": "module_dependency",
-            "structuralKey": "module:src/core/record-store->module:src/contracts"
+            "structuralKey": "module:src/core/record-store->module:src/contracts",
+            "count": 23
           },
           {
             "edgeId": "23",
             "fromNode": "module:src/core/work-graph",
             "toNode": "module:src/contracts",
             "kind": "module_dependency",
-            "structuralKey": "module:src/core/work-graph->module:src/contracts"
+            "structuralKey": "module:src/core/work-graph->module:src/contracts",
+            "count": 704
           },
           {
             "edgeId": "24",
             "fromNode": "module:src/core/work-graph",
             "toNode": "module:src/core/record-store",
             "kind": "module_dependency",
-            "structuralKey": "module:src/core/work-graph->module:src/core/record-store"
+            "structuralKey": "module:src/core/work-graph->module:src/core/record-store",
+            "count": 114
           },
           {
             "edgeId": "25",
             "fromNode": "module:src/core/work-graph",
             "toNode": "module:src/core/workspace",
             "kind": "module_dependency",
-            "structuralKey": "module:src/core/work-graph->module:src/core/workspace"
+            "structuralKey": "module:src/core/work-graph->module:src/core/workspace",
+            "count": 6
           },
           {
             "edgeId": "26",
             "fromNode": "module:src/core/workspace",
             "toNode": "module:src/contracts",
             "kind": "module_dependency",
-            "structuralKey": "module:src/core/workspace->module:src/contracts"
+            "structuralKey": "module:src/core/workspace->module:src/contracts",
+            "count": 44
           },
           {
             "edgeId": "27",
             "fromNode": "module:src/core/workspace",
             "toNode": "module:vendor/coding-agent",
             "kind": "module_dependency",
-            "structuralKey": "module:src/core/workspace->module:vendor/coding-agent"
+            "structuralKey": "module:src/core/workspace->module:vendor/coding-agent",
+            "count": 5
           },
           {
             "edgeId": "28",
             "fromNode": "module:src/ui",
             "toNode": "module:src/app",
             "kind": "type_references",
-            "structuralKey": "module:src/ui->module:src/app"
+            "structuralKey": "module:src/ui->module:src/app",
+            "count": 59
           }
         ],
         "unresolved": [],

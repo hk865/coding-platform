@@ -221,7 +221,6 @@ async function openPlatform(backend: Backend,
   });
   const driver = createAutoCaptureDriver({
     architecture: platform.architecture,
-    catalog: platform.architecture,
     boundWorkspaces: () => input.bound ?? [A, B],
     actor: systemActor,
   });

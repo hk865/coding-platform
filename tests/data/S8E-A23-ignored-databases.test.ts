@@ -34,7 +34,7 @@ function baseEntries(extra: Entry[] = []): Entry[] {
   ];
 }
 
-const cppEdges = [{ from: 'p1/a.cpp', to: 'p1/a.h' }, { from: 'p2/b.cpp', to: 'p2/b.h' }];
+const cppEdges = [{ from: 'p1/a.cpp', to: 'p1/a.h', count: 1 }, { from: 'p2/b.cpp', to: 'p2/b.h', count: 1 }];
 
 for (const backend of BACKENDS) {
   it(`A-23 merges ignored per-package databases and recaptures on their change [${backend}]`, async () => {

@@ -7,6 +7,7 @@
  * one already-decoded `ArchitectureSourceSnapshotV1` plus its persisted
  * selection, and returns a bounded, deterministically ordered page.
  */
+import { ownerNodesOf, ownershipRuleOf } from '../../../contracts/architecture-catalog.js';
 import type { ArchitectureSourceSnapshotV1 } from '../../../contracts/architecture-source.js';
 import { pathOwnershipOf } from '../../../contracts/architecture-source.js';
 import type { CodeGraphEdge, CodeGraphNode } from '../../../contracts/architecture-inspection.js';
@@ -94,22 +95,21 @@ function mappingPathsByStructuralKey(graph: ArchitectureSourceSnapshotV1): Map<s
 function resolveAnchorNodes(graph: ArchitectureSourceSnapshotV1, anchor: ObservedGraphAnchor | undefined): string[] | null {
   if (anchor === undefined) return null;
   if (anchor.kind === 'node') return graph.nodes.some(node => node.nodeId === anchor.nodeId) ? [anchor.nodeId] : [];
-  // File anchors use the SAME `pathOwnershipOf` longest-prefix decision: a `.`
-  // mapping is the root (match length 0), a concrete prefix wins, and an
-  // equal-longest tie behaves like the graph-context reader — every tied module
-  // node is returned (a tie is not silently collapsed to one owner). Ownership
-  // is decided over ALL mappings, exactly as at write time
-  // (`workspace/architecture-source.ts`); a winner that has no observed node is
-  // dropped only afterwards, so it cannot hand the file to a shorter owner.
+  // File anchors use the SAME layered ownership as the writer
+  // (`workspace/architecture-source.ts`): over the stored mappings the file
+  // belongs to its module (a `.` mapping is the root at match length 0, a
+  // concrete prefix wins) and, inside one of that module's interfaces, to that
+  // interface too, so both nodes are seeds. An equal-longest module tie behaves
+  // like the graph-context reader: every tied module node is returned (a tie is
+  // not silently collapsed to one owner). Ownership is decided over ALL
+  // mappings first; a winner that has no observed node is dropped only
+  // afterwards, so it cannot hand the file to a shorter owner.
   const nodeIds = new Set(graph.nodes.map(node => node.nodeId));
-  const candidates = graph.mappings
-    .map(mapping => ({ value: mapping.kind + ':' + mapping.id, paths: mapping.paths }));
-  const ownership = pathOwnershipOf(anchor.path, candidates);
-  if (ownership.status === 'none') return [];
-  if (ownership.status === 'tie') {
-    return [...new Set(ownership.owners)].filter(nodeId => nodeIds.has(nodeId)).sort();
-  }
-  return nodeIds.has(ownership.owner) ? [ownership.owner] : [];
+  const owner = ownershipRuleOf(graph.mappings)(anchor.path);
+  if (owner.moduleId !== null) return ownerNodesOf(owner).filter(nodeId => nodeIds.has(nodeId));
+  const tie = pathOwnershipOf(anchor.path, graph.mappings.filter(mapping => mapping.kind === 'module')
+    .map(mapping => ({ value: mapping.kind + ':' + mapping.id, paths: mapping.paths })));
+  return tie.status === 'tie' ? [...new Set(tie.owners)].filter(nodeId => nodeIds.has(nodeId)).sort() : [];
 }
 
 /** Undirected bounded walk over the requested edge kinds; visited stops real cycles. */
@@ -141,7 +141,9 @@ function neighborhoodNodes(graph: ArchitectureSourceSnapshotV1, seeds: readonly 
   return visited;
 }
 
-/** Attribute each unresolved line to the first node whose frozen paths it names. */
+/** Attribute each unresolved line to the first module node whose frozen paths it
+ * names. An interface node lies inside its module, so the line stays with the
+ * module (interface identities sort before module ones and would take it). */
 function unresolvedByPage(graph: ArchitectureSourceSnapshotV1, ordered: readonly CodeGraphNode[]): { byNode: Map<string, string[]>; global: string[] } {
   const pathsByKey = mappingPathsByStructuralKey(graph);
   const byNode = new Map<string, string[]>();
@@ -149,6 +151,7 @@ function unresolvedByPage(graph: ArchitectureSourceSnapshotV1, ordered: readonly
   for (const entry of graph.unresolved) {
     let owner: string | null = null;
     for (const node of ordered) {
+      if (node.kind !== 'module') continue;
       const paths = pathsByKey.get(node.structuralKey) ?? [node.path];
       if (paths.some(path => entry.includes(path + ':'))) { owner = node.nodeId; break; }
     }

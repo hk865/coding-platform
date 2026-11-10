@@ -1,7 +1,8 @@
 import { canonicalJson, sha256Hex } from '../../contracts/fingerprint.js';
+import { ownerNodesOf, ownershipRuleOf, type OwnershipV1 } from '../../contracts/architecture-catalog.js';
 import type { ArchitectureSourceSnapshotV1, ArchitectureSourceMapping } from '../../contracts/architecture-source.js';
-import { architectureSourceIssues, compactUnresolvedLines, pathOwnershipOf } from '../../contracts/architecture-source.js';
-import type { CodeGraphEdge } from '../../contracts/architecture-inspection.js';
+import { architectureSourceIssues, compactUnresolvedLines } from '../../contracts/architecture-source.js';
+import type { CodeGraphEdge, CodeGraphNode } from '../../contracts/architecture-inspection.js';
 
 /** Frozen material needed to collapse explicit baseline mappings into a source graph. */
 export type ArchitectureSourceMaterial = {
@@ -21,11 +22,22 @@ export type ArchitectureSourceMaterial = {
  * The one pure mapping behind the capture registry's architecture port: semantic TS/JS
  * imports collapsed only through explicit baseline mappings.
  *
- * File-to-mapping ownership is the ONE longest-prefix decision (`pathOwnershipOf`):
- * a `.` mapping is the root, owns every relative path at match length 0 and is
- * beaten by any concrete prefix; two mappings on the longest prefix tie and the
- * file belongs to NEITHER (a tie is not an owner). Nodes, edges and `unresolved`
- * all use the same per-file result.
+ * File ownership is the ONE layered decision `ownershipRuleOf`: a file belongs to the
+ * module with the longest legal path (a `.` mapping is the root, owns every relative path
+ * at match length 0 and is beaten by any concrete prefix; an equal-longest tie owns
+ * nothing), then to the interface with the longest legal path among that module's
+ * interfaces. A module node's members are all of its files, the ones in its interfaces
+ * included; an interface node's members are that interface's files. Ownership is always
+ * decided over the FULL mapping list, which is the list the snapshot stores and the body
+ * recheck and the file anchors read; an interface that owns no frozen source gets no
+ * node, but its mapping stays, so a tie it takes part in stays a tie. Nodes, edges and
+ * `unresolved` all use the same per-file result.
+ *
+ * `count` is the number of references between the two endpoints, one per import target:
+ * a reference across two modules adds to `module→module`; one inside a module adds to
+ * `interface→interface` when its two files are in different interfaces of that module,
+ * and to no edge otherwise. The count is a value of the edge, never part of its identity
+ * (`structuralKey = canonicalJson([fromNode, toNode])`, `edgeId` its SHA-256).
  *
  * `mode` is the explicit §10 item 1 switch. Observation compacts before
  * validation (no `indexedSources`, unresolved cut to the §11.2 caps); strict
@@ -36,42 +48,59 @@ export function mapArchitectureSource(material: ArchitectureSourceMaterial,
   scope: {projectId:string;workspaceId:string;workspaceRevision:number}, mappings: ArchitectureSourceMapping[],
   mode: 'strict' | 'observation'): ArchitectureSourceSnapshotV1 {
   if (!material.sources.length) throw Error('no project sources; this graph provider does not claim Python/C++ coverage');
-  const candidates = mappings.map((mapping, index) => ({ value: index, paths: mapping.paths }));
-  // One ownership decision per frozen file; `null` (no owner or an equal-longest tie) is not mapped.
-  const ownerByPath = new Map<string, number | null>();
-  for (const source of material.sources) {
-    const ownership = pathOwnershipOf(source.path, candidates);
-    ownerByPath.set(source.path, ownership.status === 'owner' ? ownership.owner : null);
-  }
-  const ownerOf = (p: string): number | null => {
-    if (ownerByPath.has(p)) return ownerByPath.get(p)!;
-    const ownership = pathOwnershipOf(p, candidates);
-    return ownership.status === 'owner' ? ownership.owner : null;
+  // One ownership decision per path over the full list; a `null` module is not mapped.
+  const ownership = ownershipRuleOf(mappings);
+  const ownerByPath = new Map<string, OwnershipV1>();
+  const ownerOf = (path: string): OwnershipV1 => {
+    let owner = ownerByPath.get(path);
+    if (owner === undefined) {
+      owner = ownership(path);
+      ownerByPath.set(path, owner);
+    }
+    return owner;
   };
-  const nodes = mappings.map((mapping, index) => ({ mapping, index }))
-    .filter(({ index }) => material.sources.some(f => ownerOf(f.path) === index))
-    .map(({ mapping: m, index }) => {
-      const files = material.sources.filter(f => ownerOf(f.path) === index);
-      return {nodeId:m.kind+':'+m.id,structuralKey:m.kind+':'+m.id,kind:m.kind,name:m.id,path:m.paths[0]!,contentDigest:sha256Hex(canonicalJson(files))};
-    }).sort((a,b)=>a.structuralKey.localeCompare(b.structuralKey));
-  const unresolved = material.sources.filter(f => ownerOf(f.path) === null).map(f => 'unmapped source: '+f.path);
-  mappings.forEach((m, index) => {
-    if (!material.sources.some(f => ownerOf(f.path) === index)) unresolved.push('mapping has no indexed TS/JS source: '+m.kind+':'+m.id);
-  });
-  const edges = new Map<string,CodeGraphEdge>();
+  const members = new Map<string, { path: string; digest: string }[]>();
+  const addMember = (nodeId: string, source: { path: string; digest: string }): void => {
+    const files = members.get(nodeId);
+    if (files === undefined) members.set(nodeId, [source]);
+    else files.push(source);
+  };
+  const unresolved: string[] = [];
+  for (const source of material.sources) {
+    const nodeIds = ownerNodesOf(ownerOf(source.path));
+    if (nodeIds.length === 0) unresolved.push('unmapped source: ' + source.path);
+    for (const nodeId of nodeIds) addMember(nodeId, source);
+  }
+  const nodes: CodeGraphNode[] = [];
+  for (const mapping of mappings) {
+    const nodeId = mapping.kind + ':' + mapping.id;
+    const files = members.get(nodeId);
+    // No member, no node; only a module without one is reported.
+    if (files === undefined) {
+      if (mapping.kind === 'module') unresolved.push('mapping has no indexed TS/JS source: ' + nodeId);
+      continue;
+    }
+    nodes.push({ nodeId, structuralKey: nodeId, kind: mapping.kind, name: mapping.id, path: mapping.paths[0]!,
+      contentDigest: sha256Hex(canonicalJson(files)) });
+  }
+  nodes.sort((a, b) => a.structuralKey.localeCompare(b.structuralKey));
+  const edges = new Map<string, CodeGraphEdge>();
+  const addReference = (fromNode: string, toNode: string, kind: CodeGraphEdge['kind']): void => {
+    const structuralKey = canonicalJson([fromNode, toNode]);
+    const edge = edges.get(structuralKey);
+    if (edge !== undefined) edge.count += 1;
+    else edges.set(structuralKey, { edgeId: sha256Hex(structuralKey), structuralKey, fromNode, toNode, kind, count: 1 });
+  };
   for (const relation of material.imports) {
-    const from = relation.path, targets = relation.targets;
-    if (relation.resolution !== 'resolved') unresolved.push('unresolved import: '+from+':'+relation.line+' -> '+relation.module);
-    const fromIndex = ownerOf(from);
-    if (fromIndex === null || mappings[fromIndex]!.kind !== 'module') continue;
-    const a = mappings[fromIndex]!;
-    for (const target of targets) {
-      const targetIndex = ownerOf(target.path);
-      if (targetIndex === null) continue;
-      const b = mappings[targetIndex]!;
-      if (a.kind === b.kind && a.id === b.id) continue;
-      const key=a.kind+':'+a.id+'->'+b.kind+':'+b.id;
-      edges.set(key,{edgeId:sha256Hex(key),structuralKey:key,fromNode:a.kind+':'+a.id,toNode:b.kind+':'+b.id,kind:b.kind==='module'?'module_dependency':'interface_uses'});
+    if (relation.resolution !== 'resolved') unresolved.push('unresolved import: '+relation.path+':'+relation.line+' -> '+relation.module);
+    const [fromModule, fromInterface] = ownerNodesOf(ownerOf(relation.path));
+    if (fromModule === undefined) continue;
+    for (const target of relation.targets) {
+      const [toModule, toInterface] = ownerNodesOf(ownerOf(target.path));
+      if (toModule === undefined) continue;
+      if (fromModule !== toModule) addReference(fromModule, toModule, 'module_dependency');
+      else if (fromInterface !== undefined && toInterface !== undefined && fromInterface !== toInterface)
+        addReference(fromInterface, toInterface, 'interface_uses');
     }
   }
   // §10 item 2 / §11.2: ONLY the observation path compacts, and it compacts

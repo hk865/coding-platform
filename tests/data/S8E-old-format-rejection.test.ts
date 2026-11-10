@@ -25,7 +25,7 @@ const architecture = {
   mappings: [], nodes: [], edges: [], unresolved: [],
 };
 const body = {
-  schemaVersion: 2, capture: CAPTURE, observedAt: '2026-10-17T00:00:00.000Z',
+  schemaVersion: 3, capture: CAPTURE, observedAt: '2026-10-17T00:00:00.000Z',
   summary: { files: 0, languages: [], changes: { added: 0, modified: 0, deleted: 0 } },
   architecture,
 };
@@ -41,7 +41,7 @@ const recordBase = {
   revision: 1, schemaVersion: 1,
   source: { capture: CAPTURE, material: artifact('d') },
   observedAt: '2026-10-17T00:00:00.000Z',
-  fileGraph: { schemaVersion: 2, chunks: [], nodeCount: 0, edgeCount: 0, unresolvedCount: 0 },
+  fileGraph: { schemaVersion: 3, chunks: [], nodeCount: 0, edgeCount: 0, unresolvedCount: 0 },
   languages: [], inventory: { source: 'skip_list', reason: '不是 git 仓库' },
 };
 const decodeRecord = (record: Record<string, unknown>) => decodeObservedArchitectureRecord({
@@ -53,7 +53,7 @@ it('rejects an earlier body, chunk and record shape instead of migrating it', ()
   // The current shapes decode, so each rejection below is about the old shape.
   expect(decodeObservedArchitectureBody(JSON.stringify(body), [])).toMatchObject({ status: 'decoded' });
   expect(decodeObservedFileGraphChunk(JSON.stringify({
-    schemaVersion: 2, ...SCOPE, nodes: [], edges: [], unresolved: [],
+    schemaVersion: 3, ...SCOPE, nodes: [], edges: [], unresolved: [],
   }), SCOPE)).toMatchObject({ status: 'decoded' });
   // The v2 chunk without the two scope fields is the earlier shape: rejected,
   // never filled in from the record.
@@ -64,12 +64,19 @@ it('rejects an earlier body, chunk and record shape instead of migrating it', ()
   // The 8A v1 body (`files` + a full capture summary + indexedSources) is invalid.
   expect(decodeObservedArchitectureBody(JSON.stringify({ ...body, schemaVersion: 1 }), []).status).toBe('invalid');
   expect(decodeObservedArchitectureBody(JSON.stringify({ ...body, files: [] }), []).status).toBe('invalid');
+  // The v2 body, chunk and manifest (edges without a reference count) are earlier
+  // shapes now: rejected, never given a default count.
+  expect(decodeObservedArchitectureBody(JSON.stringify({ ...body, schemaVersion: 2 }), []).status).toBe('invalid');
+  expect(decodeObservedFileGraphChunk(JSON.stringify({
+    schemaVersion: 2, ...SCOPE, nodes: [], edges: [], unresolved: [],
+  }), SCOPE).status).toBe('invalid');
+  expect(decodeRecord({ ...recordBase, fileGraph: { ...recordBase.fileGraph, schemaVersion: 2 } }).status).toBe('invalid');
 
-  // The 8A v1 chunk (node/edge object shape, no unresolved list) and a v2 chunk
-  // carrying a path-shaped edge instead of global index pairs are invalid.
+  // The 8A v1 chunk (node/edge object shape, no unresolved list) and a current chunk
+  // carrying a path-shaped edge instead of global index edges are invalid.
   expect(decodeObservedFileGraphChunk(JSON.stringify({ schemaVersion: 1, nodes: [], edges: [] }), SCOPE).status).toBe('invalid');
   expect(decodeObservedFileGraphChunk(JSON.stringify({
-    schemaVersion: 2, ...SCOPE, nodes: [node], edges: [['a.ts', 'b.ts']], unresolved: [],
+    schemaVersion: 3, ...SCOPE, nodes: [node], edges: [['a.ts', 'b.ts', 1]], unresolved: [],
   }), SCOPE).status).toBe('invalid');
 
   // A record missing any current required field is unreadable (not a migration

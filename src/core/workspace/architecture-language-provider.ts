@@ -34,8 +34,8 @@ export interface ArchitectureLanguageProviderV1 {
     configOnly: ReadonlyMap<string, { content: string; digest: string }>;
     signal: AbortSignal;
   }): Promise<{
-    /** Workspace-relative `(from, to)` edges. */
-    edges: { from: string; to: string }[];
+    /** Workspace-relative `(from, to)` edges; `count` is the pair's reference count (>= 1). */
+    edges: { from: string; to: string; count: number }[];
     /** Unresolved specifiers with the provider's reason (`null` when unknown). */
     unresolved: { from: string; specifier: string; reason: string | null }[];
     /** Full (untruncated) per-language coverage; the capture owner caps stored issues. */
@@ -71,7 +71,8 @@ export type ProjectFileGraphNodeV1 = {
  */
 export type ProjectFileGraphV1 = {
   nodes: ProjectFileGraphNodeV1[];
-  edges: { from: string; to: string }[];
+  /** One row per `(from, to)`; `count` is the number of references between them. */
+  edges: { from: string; to: string; count: number }[];
   unresolved: { from: string; specifier: string; reason: string | null }[];
   languages: LanguageCoverageV1[];
   complete: boolean;

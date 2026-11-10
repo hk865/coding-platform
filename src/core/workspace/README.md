@@ -13,7 +13,7 @@
 - `path-validation.ts` — `isSafeSourceRelativePath`：唯一的词法源相对路径规则（非空、≤4096 UTF-16、无 `\`/`:`/NUL、每段非空且不是 `.`/`..`）；`isLiteralSourceFilePath`（只认一个确切文件：词法规则再加不含 `*`、`?`；计划文件用）。
 - `ports.ts` — 本层请求/结果/端口 DTO，`deepFreeze` 与 `validateSourceQuery`；第二档引用核对的六个类型（`ReferencePriority`、`ReferenceQuestionV1`、`ReferenceAnswerV1`、`ReferenceCheckRequestV1`、`ReferenceCheckResultV1`、`ReferenceAnalyzerPort`，slice-8E2-SPEC §2.0）。
 - `workspace-tools.ts` — 装配唯一公开工具面 `WorkspaceToolsPort`、Host 限额校验与 continuation 读取；句柄另有 `readWorkspaceFiles`（一次访问读多个工作树文件）和 `listWorkspaceInputs`（列当前项目输入路径），都不在 `WorkspaceToolsPort` 上。
-- `capture.ts` — `CaptureRegistry`：捕获/观测、查询、导出、核验、释放、架构源、文件图、读/比较、一次访问读多个文件（`readFiles`）、列项目输入（`listInputs`）、关闭。
+- `capture.ts` — `CaptureRegistry`：捕获/观测、查询、导出、核验、释放、架构源、文件图、读/比较、一次访问读多个文件（`readFiles`）、列项目输入（`listInputs`）、关闭。文件图的边一对 `(from,to)` 一行，`count` 是这一对的引用处数：TS/JS 的每条 `scan.edges`（一条已解析引用）算 1，C/C++、Python 加 provider 给的 `count`；自环丢掉。
 - `denied-prefixes.ts` — `WORKSPACE_DENIED_PREFIXES`：拒绝前缀的唯一来源。
 - `git-read.ts` — 固定 argv/环境、只读的 Git 文件/树读取与 commit↔commit、git↔工作树比较。
 - `workspace-read.ts` — 当前或冻结文件的精确读取与同范围内容比较；`readWorkingTreeFiles` 是多个工作树文件的同一套前置检查和错误码。
@@ -30,9 +30,9 @@
 - `source-index.ts` — 显式文件集的只读 TS 语义查询（symbol/definition/reference）与 excerpt。
 - `python-source-index.ts` — 经分析器 NDJSON 协议解析 Python 来源的索引。
 - `cpp-source-index.ts` — 经 libclang 解析 C/C++ 来源的索引，不执行项目自带编译器。
-- `analysis-runner.ts` — Python/C++ 共用的有界 NDJSON 子进程执行器（超时、重启、输出上限）；`createResidentAnalyzer` 是它的常驻模式（一个进程、请求一次一个、崩了或超时下次重起）。
-- `architecture-language-provider.ts` — 语言 provider seam，以及 Python/C++ provider 与路径语言判定。
-- `architecture-source.ts` — 只按显式 mapping 把冻结 imports 折叠成架构源图（纯函数）。
+- `analysis-runner.ts` — Python/C++ 共用的有界 NDJSON 子进程执行器（超时、重启、输出上限）；`createResidentAnalyzer` 是它的常驻模式（一个进程、请求一次一个、崩了或超时下次重起）。合并结果时一条引用是一个 `(from,to,specifier)` 三元组，跨所有已完成单元（含分析器重启前后）去重，每个第一次出现的三元组给 `(from,to)` 的 `count` 加 1；脚本自己的进程内去重只少送重复，重启后不保证。
+- `architecture-language-provider.ts` — 语言 provider seam，以及 Python/C++ provider 与路径语言判定；`ProjectFileGraphV1.edges` 和 provider 的 `edges` 都带 `count`。
+- `architecture-source.ts` — 只按显式 mapping 把冻结 imports 折叠成架构源图（纯函数）：文件按 `ownershipRuleOf`（完整映射）先归模块、再归模块内接口；跨模块的引用累加 `module→module` 边，同模块不同接口组之间累加 `interface→interface` 边，同模块里任一端不在接口组的不建边；每条边的 `count` 是引用条数（一条引用的每个 target 各 1），不进边身份；没有冻结源文件的接口不生成节点，但映射照存进快照（它参与的平手仍是平手）。
 - `text-source-snapshot.ts` — 严格文本捕获：每个选中文件必须是可读 UTF-8、无 NUL。
 - `continuation-diff-reads.ts` — continuation 单文件 diff 两侧的 1 MiB 有界只读字节。
 - `workspace-baseline-artifact.ts` — 从 prepared manifest bundle / capture Artifact 读 baseline 与完整变更。
@@ -80,7 +80,7 @@
 | `createReferenceAnalyzer` | `src/core/workspace/reference-analyzer.ts:55` | 建第二档的 `ReferenceAnalyzerPort`：`verify` 一次建一个程序，按 `priority` 排队；`close` 停分析线程 | 组合根建一个、接进注记的工作区；依赖传句柄的 `readWorkspaceFiles`、`listWorkspaceInputs` |
 | `createNativeSingleFile` | `src/core/workspace/native-single-file.ts:105` | 建 `NativeSingleFilePort`：`lookup` 查一个 Python/C++ 文件的函数、类；`read` 只用留着的翻译单元、没有就退回单文件解析并后台预热，`write` 照真实编译参数解析；`close` 停两个常驻进程 | 第一档读 Python/C++ 定位、一般注记写 Python/C++ 符号；一个 Host 只建一个 |
 | `changedPythonSyntaxProblems` | `src/core/workspace/python-syntax.ts:17` | 一批路径里只留 Python 的、去重排序，一次批量读，再逐文件 `lookup`；只收 `syntax_error`，按 `(path, line)` 排序 | 安全点检查这次 Run 改过的 Python 文件；不要另写解析或读取 |
-| `createResidentAnalyzer` | `src/core/workspace/analysis-runner.ts:572` | 分析脚本的常驻模式：同一套起进程、行读取、输出上限、超时、杀进程；`exchange` 一次一个，`close` 先关输入、等它退出，超时再杀 | 要长住的分析进程时；不另写进程管理 |
+| `createResidentAnalyzer` | `src/core/workspace/analysis-runner.ts:583` | 分析脚本的常驻模式：同一套起进程、行读取、输出上限、超时、杀进程；`exchange` 一次一个，`close` 先关输入、等它退出，超时再杀 | 要长住的分析进程时；不另写进程管理 |
 | `CppSourceIndex` | `src/core/workspace/cpp-source-index.ts:16` | 权限过滤后的 C/C++ 来源查询 | 探索工具要 C/C++ 符号/import 时 |
 | `PythonSourceIndex` | `src/core/workspace/python-source-index.ts:17` | 权限过滤后的 Python 来源查询 | 探索工具要 Python 符号/import 时 |
 | `readSourceIdentity` | `src/core/workspace/source-identity.ts:4` | 读 workspace 的固定 HEAD 身份 | 需要来源 pin、又不想引入完整 Git 读取时 |

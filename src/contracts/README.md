@@ -75,12 +75,12 @@
 做架构目录/观察/源码快照、artifact、材料授权与路径归属的去这组。
 - `workspace-path.ts` — 项目路径的唯一语法与两条读规则：`WORKSPACE_PROJECT_PATH_PREFIX`（`/@ws:`）、`isSafeWorkspaceRelativePath`、`isSafeProjectPath`、`splitWorkspacePath`、`qualifyProjectPath`、`normalizeProjectPath`、`normalizeRequestProjectPath`、`resolveStoredProjectPath`、`displayProjectPath`；主工作区路径不带前缀，第二工作区用 `encodeURIComponent(workspaceId)` 的规范前缀，别名先解码再编码，主工作区前缀在请求侧拒绝、已存侧视为坏记录。
 - `workspace-catalog.ts` — 正式架构按工作区的读时投影 `catalogForWorkspace`：保留该工作区的模块路径并去掉前缀，依赖和 containment 只留两端都保留的项；正式 catalog 仍是一份。
-- `architecture-catalog.ts` — 架构目录 DTO：`ModuleDefinition`、`AdoptedArchitecture`、`ArchitectureCatalogPinV1`、`moduleMappingsOf` 与 `isUndividedModule`（目录里只有这一个模块，且路径正好是 `.`）；R1 字段表形状 `architectureBaselineRevisionRefShape`、`architectureCatalogRefShape`、`architectureCatalogPinShape`（pin 的 `catalogRef` 必须与 `baseline.ref` 同 project/baseline/revision）。
-- `architecture-inspection.ts` — 代码图/观察清单：`CodeGraphNode`、`FormalObservedFindingV1`、`FileGraphPageV1`、`LanguageCoverageV1`、`COVERAGE_ISSUES_MAX`。
+- `architecture-catalog.ts` — 架构目录 DTO：`ModuleDefinition`、`AdoptedArchitecture`、`ArchitectureCatalogPinV1`、`isUndividedModule`（目录里只有这一个模块，且路径正好是 `.`）；捕获用的一份映射 `mappingsOf`（模块，加每个模块的接口，接口身份是 `canonicalJson([moduleId, interfaceId])`，没有路径的接口不列；`moduleMappingsOf` 是它的模块一半）和分两层的归属 `ownershipRuleOf`（一律在完整映射上判；文件先按最长合法路径归模块，再在这个模块的接口里取最长前缀；平手/无主都是 `null`；接口里的文件仍属于它的模块）、`ownerNodesOf`（归属对应的观测节点：`module:<id>`，在接口里再加 `interface:` + 身份串）；R1 字段表形状 `architectureBaselineRevisionRefShape`、`architectureCatalogRefShape`、`architectureCatalogPinShape`（pin 的 `catalogRef` 必须与 `baseline.ref` 同 project/baseline/revision）。
+- `architecture-inspection.ts` — 代码图/观察清单：`CodeGraphNode`、`CodeGraphEdge`（必填 `count`：冻结材料里同一对端点之间的引用条数，`>= 1`，不进 `structuralKey`/`edgeId`；`structuralKey = canonicalJson([fromNode, toNode])`）、`FormalObservedFindingV1`、`FileGraphPageV1`（`edges[].count` 同义）、`LanguageCoverageV1`、`COVERAGE_ISSUES_MAX`。
 - `architecture-observation.ts` — 自动捕获：`AUTO_CAPTURE_TRIGGERS`、`isAutoCaptureTrigger`、`ArchitectureAutoCaptureRecordV1`、`ArchitectureObservationStateV1`。
 - `architecture-proposal.ts` — 结构提案契约：提案/批的 ref 与记录 `ArchitectureProposalV1`/`ArchitectureProposalBatchV1`、输入 `ProposeArchitectureRevisionInputV1`、结果 `ProposalResult`/`ApplyBatchResult` 与读 `ProposalRead`；提案记录带可信来源 `operationRef` 和可空的 `queryRunRef`（具体探索轮，M6）；纯数据，不建 store、时钟、id 或路由。
-- `architecture-search.ts` — 架构搜索与当前工作集合的纯 DTO：`ArchitectureNodeRefV1`、`ArchitectureGroupV1`、文件/模块命中、`ArchitectureFindRequestV1`/`ArchitectureFindResultV1` 与 `ArchitectureWorkScopeV1`；不读记录。
-- `architecture-source.ts` — 架构源快照：`ArchitectureSourceSnapshotV1`、`compactUnresolvedLines`、`architectureSourceIssues`，并转出 `pathOwnershipOf`。
+- `architecture-search.ts` — 架构搜索与当前工作集合的纯 DTO：`ArchitectureNodeRefV1`、`ArchitectureGroupV1`、文件/模块命中、`ArchitectureFindRequestV1`/`ArchitectureFindResultV1`、`ArchitectureWorkScopeV1` 与 `ArchitectureChangeScopeV1`（`architecture/change-scope`：当前目标实际改过的文件按唯一归属模块汇总，`files[].interfaceId`、模块自己的 `changed`/`possible`、`complete`）；不读记录。
+- `architecture-source.ts` — 架构源快照：`ArchitectureSourceSnapshotV1`、`compactUnresolvedLines`、`architectureSourceIssues`（另核每条边的 `count` 是 `>= 1` 的安全整数），并转出 `pathOwnershipOf`。
 - `artifact.ts` — 内容寻址正文：`ArtifactRef`、`ArtifactRecord`、`ARTIFACT_MAX_SIZE_BYTES`、`artifactBodyDigest`、`artifactBodySize`。
 - `material-access.ts` — 材料来源集/pin、grant 引用与 `sameArtifactRef`/`sameArtifactOwnerRunRef`。
 - `path-ownership.ts` — 唯一的最长前缀归属 `pathOwnershipOf` 与目录前缀打分工具。
@@ -216,15 +216,18 @@
 | `DEFAULT_PLAN_LOOP_LIMITS`、`GROWTH_UNIT_TOKENS`、`growthUnitsOf` | `src/contracts/plan-loop-limits.ts:31`、`src/contracts/plan-loop-limits.ts:28`、`src/contracts/plan-loop-limits.ts:31` | 规划环的纯默认上限（按任务档位的提醒/两倍 token、行倍数、两个阶段预算）与增长单位换算（token ÷ 64，不取整）。 | 计划环读阶段预算、显示增长单位；生效值由 Host 设置层发布，不要另写默认值。 |
 | `planReviewAnswerText`、`parsePlanReviewAnswer` | `src/contracts/plan-review.ts:58`、`src/contracts/plan-review.ts:58` | 审阅回答的唯一正文构造（一个 JSON 对象，`findings` 总是写出）与唯一严格解析（无多余成员，`fix` 至少一条意见）。 | `submit_plan_review` 写正文、候选环读回审阅结论；不要另写解析。 |
 | `SYSTEM_ROUND_ACTOR`、`systemRoundContext`、`systemRoundRequestId`、`hostMessageId`、`systemRoundMessageRef`、`systemRoundOfText`、`planResumeOriginalQueryOfText`、`planningReplyTextOf` | `src/contracts/plan-round.ts:213`、`src/contracts/plan-round.ts:213`、`src/contracts/plan-round.ts:213`、`src/contracts/plan-round.ts:213`、`src/contracts/plan-round.ts:213`、`src/contracts/plan-round.ts:213`、`src/contracts/plan-round.ts:213`、`src/contracts/plan-round.ts:213` | 系统轮的固定发送方、Host 上下文、每种的 request id 与消息身份、正文首行读回，以及按冻结回答形状取短回复。 | Workflow、Host、AgentRuntime、WorkGraph 共用；发送、细化选择与 Query 创建留在各自的包。 |
-| `moduleMappingsOf` | `src/contracts/architecture-catalog.ts:81` | 从架构目录取模块到路径映射。 | 检查/比较架构归属。 |
-| `architectureBaselineRevisionRefShape`、`architectureCatalogRefShape`、`architectureCatalogPinShape` | `src/contracts/architecture-catalog.ts:127`、`src/contracts/architecture-catalog.ts:127`、`src/contracts/architecture-catalog.ts:124` | 架构 baseline/catalog 引用与完整 `ArchitectureCatalogPinV1` 的 R1 字段表形状；pin 形状要求 `catalogRef` 的 project/baseline/revision 与 `baseline.ref` 一致。 | 字段表里校验已存的架构 pin；不要另写形状或同源检查。 |
+| `mappingsOf` | `src/contracts/architecture-catalog.ts:98` | 从架构目录取捕获用的一份映射：模块，加每个模块的接口（身份 `canonicalJson([moduleId, interfaceId])`）。 | 手动捕获、自动捕获、`architecture/change-scope` 的接口归属；不要另拼接口映射。 |
+| `moduleMappingsOf` | `src/contracts/architecture-catalog.ts:82` | `mappingsOf` 的模块一半：模块到路径映射。 | 只要模块层时。 |
+| `ownershipRuleOf` | `src/contracts/architecture-catalog.ts:123` | 分两层的唯一归属：文件→模块（最长合法路径）→该模块的接口（最长前缀）；平手/无主是 `null`；把映射列表准备一次、返回逐文件的判定。 | 捕获写模块/接口节点和边、正文成员复核、文件锚点、改动读的 `interfaceId`，都传完整映射、准备一次；不要另写前缀匹配。 |
+| `ownerNodesOf` | `src/contracts/architecture-catalog.ts:151` | 一个归属对应的观测节点身份（模块节点，在接口里再加接口节点）。 | 写入方和正文复核共用节点成员与边端点。 |
+| `architectureBaselineRevisionRefShape`、`architectureCatalogRefShape`、`architectureCatalogPinShape` | `src/contracts/architecture-catalog.ts:185`、`src/contracts/architecture-catalog.ts:190`、`src/contracts/architecture-catalog.ts:204` | 架构 baseline/catalog 引用与完整 `ArchitectureCatalogPinV1` 的 R1 字段表形状；pin 形状要求 `catalogRef` 的 project/baseline/revision 与 `baseline.ref` 一致。 | 字段表里校验已存的架构 pin；不要另写形状或同源检查。 |
 | `isAutoCaptureTrigger` | `src/contracts/architecture-observation.ts:23` | 校验自动捕获触发名。 | 读记录或请求时。 |
 | `compactUnresolvedLines` | `src/contracts/architecture-source.ts:40` | 去重排序后压缩未解析行，遵守行数/字节上限。 | 保存架构源快照前。 |
 | `architectureSourceIssues` | `src/contracts/architecture-source.ts:55` | 架构源绑定的结构、重复项与容量校验。 | 接受/读回架构源时。 |
 | `artifactBodyDigest` | `src/contracts/artifact.ts:29` | 正文的 SHA-256 内容地址，与 `sha256Hex` 同一算法；只用于 artifact 正文。 | 写入/校验 artifact。 |
 | `artifactBodySize` | `src/contracts/artifact.ts:32` | 正文的 UTF-8 字节数，与 `src/contracts/utf8.ts:13` 的 `utf8ByteLength` 同一计数口径。 | artifact 大小上限校验。 |
 | `truncateUtf8` | `src/contracts/utf8.ts:22` | 按 UTF-8 字节截断且不劈开码点。 | 生成展示或声明文本时。 |
-| `COVERAGE_ISSUES_MAX` | `src/contracts/architecture-inspection.ts:112` | 覆盖率问题列表上限。 | 生成 coverage 报告时截断。 |
+| `COVERAGE_ISSUES_MAX` | `src/contracts/architecture-inspection.ts:122` | 覆盖率问题列表上限。 | 生成 coverage 报告时截断。 |
 | `AUTO_CAPTURE_TRIGGERS`、`AUTO_CAPTURE_FAILURE_REASON_MAX_CHARS` | `src/contracts/architecture-observation.ts:29`、`src/contracts/architecture-observation.ts:29` | 自动捕获触发闭集与失败原因上限。 | 记录/校验自动捕获。 |
 | `SNAPSHOT_UNRESOLVED_MAX_LINES`、`SNAPSHOT_UNRESOLVED_MAX_BYTES` | `src/contracts/architecture-source.ts:32`、`src/contracts/architecture-source.ts:33` | 未解析行的行数/字节上限。 | 保存快照前截断。 |
 | `ARTIFACT_MAX_SIZE_BYTES` | `src/contracts/artifact.ts:6` | Artifact 正文最大字节数。 | artifact 写入校验。 |

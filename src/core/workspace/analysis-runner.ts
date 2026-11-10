@@ -32,7 +32,8 @@ export type AnalysisRunInput = {
 export type AnalysisRunOutcome =
   | { status: 'done'; engine: string; engineVersion: string; units: string[]; notes: string[];
       files: Map<string, AnalysisFileResult>;
-      edges: { from: string; to: string }[];
+      /** `count`: distinct `(from, to, specifier)` triples of the pair over every done unit. */
+      edges: { from: string; to: string; count: number }[];
       unresolved: { from: string; specifier: string; reason: string | null }[] }
   | { status: 'failed'; reason: string }
   | { status: 'cancelled' };
@@ -280,8 +281,13 @@ function mergeOutcome(input: AnalysisRunInput, ready: Ready, records: ReadonlyMa
     else files.set(path, { path, status: 'skipped', reason: '没有编译单元包含它' });
   }
 
-  const edges: { from: string; to: string }[] = [];
-  const edgeKeys = new Set<string>();
+  // A reference is one `(from, to, specifier)` triple, de-duplicated across
+  // every done unit. The script's own set is per process and starts empty after a
+  // restart, so a shared header read by units on both sides of a restart is sent
+  // again; only the first sighting of a triple adds 1 to its `(from, to)` count.
+  const edges: { from: string; to: string; count: number }[] = [];
+  const edgeByKey = new Map<string, { from: string; to: string; count: number }>();
+  const triples = new Set<string>();
   const edgePairs = new Set<string>();
   const droppedSelfPairs = new Set<string>();
   const reasons = new Map<string, { from: string; specifier: string; reason: string | null }>();
@@ -292,10 +298,15 @@ function mergeOutcome(input: AnalysisRunInput, ready: Ready, records: ReadonlyMa
       const pair = from + '\0' + specifier;
       if (from === to) { droppedSelfPairs.add(pair); continue; }
       edgePairs.add(pair);
+      const triple = from + '\0' + to + '\0' + specifier;
+      if (triples.has(triple)) continue;
+      triples.add(triple);
       const key = from + '\0' + to;
-      if (edgeKeys.has(key)) continue;
-      edgeKeys.add(key);
-      edges.push({ from, to });
+      const edge = edgeByKey.get(key);
+      if (edge !== undefined) { edge.count += 1; continue; }
+      const created = { from, to, count: 1 };
+      edgeByKey.set(key, created);
+      edges.push(created);
     }
   }
   const unresolved: { from: string; specifier: string; reason: string | null }[] = [];

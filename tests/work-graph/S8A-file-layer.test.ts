@@ -167,7 +167,7 @@ describe('A-01 file-level observation layer', () => {
       }
       expect(nodes).toHaveLength(205);
       expect(nodes.find(node => node.path === 'src/a.ts')).toEqual({ path: 'src/a.ts', nonBlankLines: 2, language: 'typescript' });
-      expect(edges).toEqual([{ from: 'src/a.ts', to: 'src/b.ts' }, { from: 'src/c.ts', to: 'src/d.ts' }]);
+      expect(edges).toEqual([{ from: 'src/a.ts', to: 'src/b.ts', count: 1 }, { from: 'src/c.ts', to: 'src/d.ts', count: 1 }]);
       expect(languages).toEqual(A_01_LANGUAGES);
     } finally { await fx.close(); }
   });
@@ -188,7 +188,7 @@ describe('A-01 file-level observation layer', () => {
       expect(first.value.languages).toEqual(A_01_LANGUAGES);
       expect(first.value.nextCursor).not.toBeNull();
       expect(first.value.complete).toBe(false);
-      expect(first.value.edges).toEqual([{ from: 'src/a.ts', to: 'src/b.ts' }, { from: 'src/c.ts', to: 'src/d.ts' }]);
+      expect(first.value.edges).toEqual([{ from: 'src/a.ts', to: 'src/b.ts', count: 1 }, { from: 'src/c.ts', to: 'src/d.ts', count: 1 }]);
       const second = await service.listFiles(context, { captureRef, cursor: first.value.nextCursor });
       expect(second.status).toBe('ready');
       if (second.status !== 'ready') return;
@@ -306,7 +306,7 @@ describe('A-01 file-level observation layer', () => {
         cursor = read.value.nextCursor;
       } while (cursor !== null);
       expect(nodes).toHaveLength(205);
-      expect(edges).toEqual([{ from: 'src/a.ts', to: 'src/b.ts' }, { from: 'src/c.ts', to: 'src/d.ts' }]);
+      expect(edges).toEqual([{ from: 'src/a.ts', to: 'src/b.ts', count: 1 }, { from: 'src/c.ts', to: 'src/d.ts', count: 1 }]);
 
       const capped = createObservedArchitecture({ ...fx.deps(), fileGraph: { chunkBytes: 1 } });
       const result = await capped.captureSourceChanges(context, captureRequest('a01-chunks-cap'));

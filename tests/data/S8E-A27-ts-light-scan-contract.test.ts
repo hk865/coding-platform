@@ -44,7 +44,7 @@ describe.each(BACKENDS)('A-27 TS light scan through the public capture [%s]', ba
 
     // a.ts -> b.ts is inside the initial root set; ./c resolves to c.ts in the
     // material but c.ts is not a root, so it is unknown and never enqueued.
-    expect(graph.edges).toEqual([{ from: 'a.ts', to: 'b.ts' }]);
+    expect(graph.edges).toEqual([{ from: 'a.ts', to: 'b.ts', count: 1 }]);
     expect(graph.unresolved).toEqual([{ from: 'a.ts', specifier: './c', reason: null }]);
     expect(graph.languages.find(entry => entry.language === 'typescript')).toEqual({
       language: 'typescript', files: 3, parsed: 2, edges: 'supported', reason: null,
@@ -65,8 +65,8 @@ describe.each(BACKENDS)('A-27 TS light scan through the public capture [%s]', ba
     const graph = await f.graph();
 
     expect(graph.edges).toEqual([
-      { from: 'a.ts', to: 'ref.ts' },
-      { from: 'a.ts', to: 'types/t/index.d.ts' },
+      { from: 'a.ts', to: 'ref.ts', count: 1 },
+      { from: 'a.ts', to: 'types/t/index.d.ts', count: 1 },
     ]);
     expect(graph.unresolved).toEqual([]);
     expect(graph.languages.find(entry => entry.language === 'typescript')?.parsed).toBe(3);

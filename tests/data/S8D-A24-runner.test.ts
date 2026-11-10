@@ -114,7 +114,7 @@ it('A-24 (1) recovers from a unit timeout and a crash by restarting, keeping the
       ],
       issueCount: 3, complete: false,
     });
-    expect(graph.edges).toEqual([{ from: 'a.cpp', to: 'a.h' }, { from: 'd.cpp', to: 'd.h' }]);
+    expect(graph.edges).toEqual([{ from: 'a.cpp', to: 'a.h', count: 1 }, { from: 'd.cpp', to: 'd.h', count: 1 }]);
     expect(await launchCount(counter)).toBe(3);
   } finally {
     await f.close();
@@ -140,7 +140,7 @@ it('A-24 (2) gives every undone unit the language timeout and stops the language
       ],
       issueCount: 5, complete: false,
     });
-    expect(graph.edges).toEqual([{ from: 'a.cpp', to: 'a.h' }]);
+    expect(graph.edges).toEqual([{ from: 'a.cpp', to: 'a.h', count: 1 }]);
     expect(await launchCount(counter)).toBe(1);
   } finally {
     await f.close();
@@ -168,7 +168,7 @@ it('A-24 (3) fails every undone unit when the restarted process exits before its
       ],
       issueCount: 5, complete: false,
     });
-    expect(graph.edges).toEqual([{ from: 'a.cpp', to: 'a.h' }]);
+    expect(graph.edges).toEqual([{ from: 'a.cpp', to: 'a.h', count: 1 }]);
     expect(await launchCount(counter)).toBe(2);
   } finally {
     await f.close();

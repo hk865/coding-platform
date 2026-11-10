@@ -12,8 +12,9 @@ import { COVERAGE_ISSUES_MAX, type FileGraphNodeV1, type LanguageCoverageV1,
   type ObservationInventoryV1 } from '../../../contracts/architecture-inspection.js';
 import { AUTO_CAPTURE_FAILURE_REASON_MAX_CHARS, isAutoCaptureTrigger,
   type ArchitectureAutoCaptureRecordV1 } from '../../../contracts/architecture-observation.js';
+import { ownerNodesOf, ownershipRuleOf } from '../../../contracts/architecture-catalog.js';
 import type { ArchitectureSourceSnapshotV1 } from '../../../contracts/architecture-source.js';
-import { architectureSourceIssues, pathOwnershipOf } from '../../../contracts/architecture-source.js';
+import { architectureSourceIssues } from '../../../contracts/architecture-source.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { PersistedSourceCaptureRef, SourceCaptureRef } from '../../../contracts/core/source.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
@@ -22,7 +23,7 @@ import type { DecodeResult, EncodedDomainEvent, EncodedRecord, EncodedRecordSche
 import { encodeEventEnvelope } from '../persistence/event-envelope.js';
 import { isProjectInputPath } from '../../workspace/project-source-snapshot.js';
 import type { ObservedArchitectureRecord, ObservedArchitectureRef, ObservedFileGraphChunkScope,
-  ObservedFileGraphChunkV2, ObservedFileGraphManifest, ObservedFileGraphManifestV2,
+  ObservedFileGraphChunkV3, ObservedFileGraphManifest, ObservedFileGraphManifestV3,
   ObservedFileGraphUnresolvedV1, ObservedSummaryV2, WorkspaceArchitectureObservationCurrentRecord,
   WorkspaceArchitectureObservationCurrentRef } from './contracts.js';
 
@@ -40,20 +41,22 @@ export const OBSERVED_ARCHITECTURE_BODY_CONTENT_TYPE = 'application/vnd.coding-p
 /** File-level chunk body (spec L12). One artifact per chunk. */
 export const FILE_GRAPH_CHUNK_CONTENT_TYPE = 'application/vnd.coding-platform.observed-file-graph-chunk+json';
 
-/** One stored file-level graph chunk. A chunk is always the current `schemaVersion: 2`
- * shape (decision 79: the earlier 8A node/path-edge chunk is not read). */
-export type ObservedFileGraphChunk = ObservedFileGraphChunkV2;
+/** One stored file-level graph chunk. A chunk is always the current `schemaVersion: 3`
+ * shape (decision 79: the earlier 8A node/path-edge chunk and the v2 chunk whose
+ * edges carry no reference count are not read). */
+export type ObservedFileGraphChunk = ObservedFileGraphChunkV3;
 
-/** §10 item 2 v2 body: no `files`, no `changes` path lists, no `indexedSources`. */
-export type ObservedArchitectureBodyV2 = {
-  schemaVersion: 2;
+/** §10 item 2 body: no `files`, no `changes` path lists, no `indexedSources`. Version 3:
+ * every `architecture.edges[]` entry carries its required reference `count`. */
+export type ObservedArchitectureBodyV3 = {
+  schemaVersion: 3;
   capture: SourceCaptureRef;
   observedAt: string;
   summary: ObservedSummaryV2;
   architecture: ArchitectureSourceSnapshotV1;
 };
 /** Immutable body stored in the RawArtifactStore and referenced by the record. */
-export type ObservedArchitectureBody = ObservedArchitectureBodyV2;
+export type ObservedArchitectureBody = ObservedArchitectureBodyV3;
 
 export type ArchitectureSourceObservedEventV1 = {
   eventId: string;
@@ -203,18 +206,20 @@ function readFileGraphNodeV2(value: unknown): FileGraphNodeV1 | null {
     language: value['language'], nonBlankLines: value['nonBlankLines'], indexed: value['indexed'] };
 }
 
-/** §10 item 6 index pairs `[i, j]`; when the manifest node count is known, both
- * indices must fall inside the one global sorted node table, across chunks. */
-function readFileGraphIndexEdges(value: unknown, nodeCount: number | undefined): [number, number][] | null {
+/** §10 item 6 index edges `[i, j, count]`; when the manifest node count is known,
+ * both indices must fall inside the one global sorted node table, across chunks.
+ * `count` is the pair's reference count, a safe integer of at least 1. */
+function readFileGraphIndexEdges(value: unknown, nodeCount: number | undefined): [number, number, number][] | null {
   if (!Array.isArray(value)) return null;
-  const edges: [number, number][] = [];
+  const edges: [number, number, number][] = [];
   for (const entry of value) {
-    if (!Array.isArray(entry) || entry.length !== 2) return null;
-    const [from, to] = entry as unknown[];
+    if (!Array.isArray(entry) || entry.length !== 3) return null;
+    const [from, to, count] = entry as unknown[];
     if (typeof from !== 'number' || !Number.isSafeInteger(from) || from < 0) return null;
     if (typeof to !== 'number' || !Number.isSafeInteger(to) || to < 0) return null;
+    if (typeof count !== 'number' || !Number.isSafeInteger(count) || count < 1) return null;
     if (nodeCount !== undefined && (from >= nodeCount || to >= nodeCount)) return null;
-    edges.push([from, to]);
+    edges.push([from, to, count]);
   }
   return edges;
 }
@@ -282,12 +287,13 @@ function readFileGraphChunkRefs(value: unknown): ArtifactRef[] | string {
 }
 
 /** Decision 79: the record's file-graph manifest has exactly the current
- * `schemaVersion: 2` shape. A manifest without the key (the earlier 8A shape) or
- * with any other keys is invalid, never migrated. */
+ * `schemaVersion: 3` shape. A manifest without the key (the earlier 8A shape), an
+ * earlier version (v2 chunks carry no reference counts) or any other keys is
+ * invalid, never migrated. */
 function readFileGraphManifest(value: unknown):
-  { status: 'ok'; value: ObservedFileGraphManifestV2 } | { status: 'invalid'; reason: string } {
+  { status: 'ok'; value: ObservedFileGraphManifestV3 } | { status: 'invalid'; reason: string } {
   if (!isRecord(value)) return { status: 'invalid', reason: 'ObservedArchitecture fileGraph manifest must be an object' };
-  if (value['schemaVersion'] !== 2 || !exactKeys(value, ['schemaVersion', 'chunks', 'nodeCount', 'edgeCount', 'unresolvedCount'])) {
+  if (value['schemaVersion'] !== 3 || !exactKeys(value, ['schemaVersion', 'chunks', 'nodeCount', 'edgeCount', 'unresolvedCount'])) {
     return { status: 'invalid', reason: 'ObservedArchitecture fileGraph manifest has unknown or missing keys' };
   }
   const chunks = readFileGraphChunkRefs(value['chunks']);
@@ -295,25 +301,25 @@ function readFileGraphManifest(value: unknown):
   if (!isSafeRevision(value['nodeCount']) || !isSafeRevision(value['edgeCount']) || !isSafeRevision(value['unresolvedCount'])) {
     return { status: 'invalid', reason: 'ObservedArchitecture fileGraph counts must be safe non-negative integers' };
   }
-  return { status: 'ok', value: { schemaVersion: 2, chunks, nodeCount: value['nodeCount'],
+  return { status: 'ok', value: { schemaVersion: 3, chunks, nodeCount: value['nodeCount'],
     edgeCount: value['edgeCount'], unresolvedCount: value['unresolvedCount'] } };
 }
 
-/** One current chunk body: `schemaVersion: 2`, both scope fields, a closed node
- * list, index pairs into the one global node table and the unresolved entries.
- * The earlier 8A node/path-edge chunk (schemaVersion 1) and the unscoped v2
- * chunk are rejected (decision 79); a missing scope is never filled in from the
- * record. `scope` is the canonical capture scope the reader (or the writer's
- * pre-put check) expects the body to carry. `nodeCount` is the manifest's global
- * node count; index pairs must stay inside it.
+/** One current chunk body: `schemaVersion: 3`, both scope fields, a closed node
+ * list, `[i, j, count]` edges into the one global node table and the unresolved
+ * entries. The earlier 8A node/path-edge chunk (schemaVersion 1) and the v2 chunk
+ * (pairs without a count, scoped or not) are rejected (decision 79); a missing
+ * scope or count is never filled in. `scope` is the canonical capture scope the
+ * reader (or the writer's pre-put check) expects the body to carry. `nodeCount`
+ * is the manifest's global node count; edge indices must stay inside it.
  *
  * This is THE one chunk-body validator: the decoder calls
  * it after parsing, and the writer calls it for every chunk body before the
  * first `bodies.put`, so a committed chunk is exactly one the decoder accepts. */
-export function validateObservedFileGraphChunkV2(parsed: unknown, scope: ObservedFileGraphChunkScope,
-  nodeCount?: number): DecodeResult<ObservedFileGraphChunkV2> {
+export function validateObservedFileGraphChunkV3(parsed: unknown, scope: ObservedFileGraphChunkScope,
+  nodeCount?: number): DecodeResult<ObservedFileGraphChunkV3> {
   if (!isRecord(parsed)) return invalid('observed file graph chunk must be an object');
-  if (parsed['schemaVersion'] !== 2) return invalid('observed file graph chunk schemaVersion must be 2');
+  if (parsed['schemaVersion'] !== 3) return invalid('observed file graph chunk schemaVersion must be 3');
   if (!exactKeys(parsed, ['schemaVersion', 'projectId', 'workspaceId', 'nodes', 'edges', 'unresolved'])) {
     return invalid('observed file graph chunk has unknown or missing top-level keys');
   }
@@ -335,7 +341,7 @@ export function validateObservedFileGraphChunkV2(parsed: unknown, scope: Observe
   if (edges === null) return invalid('observed file graph chunk has an invalid index edge list');
   const unresolved = readFileGraphUnresolvedV2(parsed['unresolved']);
   if (unresolved === null) return invalid('observed file graph chunk has an invalid unresolved list');
-  return { status: 'decoded', value: { schemaVersion: 2, projectId: parsed['projectId'],
+  return { status: 'decoded', value: { schemaVersion: 3, projectId: parsed['projectId'],
     workspaceId: parsed['workspaceId'], nodes, edges, unresolved } };
 }
 
@@ -345,7 +351,7 @@ export function decodeObservedFileGraphChunk(json: string, scope: ObservedFileGr
   nodeCount?: number): DecodeResult<ObservedFileGraphChunk> {
   const parsed = parseObject(json, 'Observed file graph chunk');
   if (typeof parsed === 'string') return invalid(parsed);
-  return validateObservedFileGraphChunkV2(parsed, scope, nodeCount);
+  return validateObservedFileGraphChunkV3(parsed, scope, nodeCount);
 }
 
 /** The concatenated graph behind one manifest (the loader calls this after it has
@@ -354,7 +360,7 @@ export function decodeObservedFileGraphChunk(json: string, scope: ObservedFileGr
  * exact counts against the manifest. */
 export type MergedObservedFileGraph = {
   nodes: FileGraphNodeV1[];
-  edges: { from: string; to: string }[];
+  edges: { from: string; to: string; count: number }[];
   unresolved: ObservedFileGraphUnresolvedV1[];
 };
 
@@ -364,14 +370,15 @@ export function mergeObservedFileGraphChunks(manifest: ObservedFileGraphManifest
   if (new Set(nodes.map(node => node.path)).size !== nodes.length) {
     return invalid('observed file graph has a duplicate file node across chunks');
   }
-  const edges: { from: string; to: string }[] = [];
+  const edges: { from: string; to: string; count: number }[] = [];
   for (const chunk of chunks) {
-    for (const [from, to] of chunk.edges) {
+    for (const [from, to, count] of chunk.edges) {
       if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to)
         || from < 0 || to < 0 || from >= nodes.length || to >= nodes.length) {
         return invalid('observed file graph edge index is outside the node table');
       }
-      edges.push({ from: nodes[from]!.path, to: nodes[to]!.path });
+      if (!Number.isSafeInteger(count) || count < 1) return invalid('observed file graph edge count must be a safe integer of at least 1');
+      edges.push({ from: nodes[from]!.path, to: nodes[to]!.path, count });
     }
   }
   const unresolved = chunks.flatMap(chunk => chunk.unresolved);
@@ -388,7 +395,7 @@ export function mergeObservedFileGraphChunks(manifest: ObservedFileGraphManifest
 // Persisted body
 // --------------------------------------------------------------------------
 
-const BODY_KEYS_V2: readonly string[] = ['schemaVersion', 'capture', 'observedAt', 'summary', 'architecture'];
+const BODY_KEYS_V3: readonly string[] = ['schemaVersion', 'capture', 'observedAt', 'summary', 'architecture'];
 
 /** §10 item 2 v2 summary: counts only, all safe non-negative integers. The
  * writer preserves the capture's language order; the decoder does not sort. */
@@ -414,12 +421,14 @@ function readObservedSummaryV2(value: unknown): ObservedSummaryV2 | null {
 }
 
 /** §10 item 2: membership is re-derived from the chunk nodes (`path`+`digest`,
- * project input AND indexed) with the same longest-prefix ownership rule that
- * wrote the snapshot. The chunk node order is the writer's path order, so the
+ * project input AND indexed) with the same layered `ownershipRuleOf` rule and node
+ * identities (`ownerNodesOf`) that wrote the snapshot: a module node holds every
+ * file of its module, its interfaces' files included; an interface node holds
+ * that interface's files. The chunk node order is the writer's path order, so the
  * recomputed `contentDigest` reproduces the recorded provenance exactly. */
-function decodeObservedArchitectureBodyV2(parsed: UnknownRecord,
-  nodes: readonly FileGraphNodeV1[] | undefined): DecodeResult<ObservedArchitectureBodyV2> {
-  if (!exactKeys(parsed, BODY_KEYS_V2)) return invalid('observed architecture body has unknown or missing top-level keys');
+function decodeObservedArchitectureBodyV3(parsed: UnknownRecord,
+  nodes: readonly FileGraphNodeV1[] | undefined): DecodeResult<ObservedArchitectureBodyV3> {
+  if (!exactKeys(parsed, BODY_KEYS_V3)) return invalid('observed architecture body has unknown or missing top-level keys');
   const capture = readSourceCaptureRef(parsed['capture']);
   if (capture === null) return invalid('observed architecture body has no complete source capture ref');
   if (!nonEmpty(parsed['observedAt'])) return invalid('observed architecture body observedAt must be a non-empty string');
@@ -444,25 +453,25 @@ function decodeObservedArchitectureBodyV2(parsed: UnknownRecord,
     return invalid('observed architecture indexVersion disagrees with the capture');
   }
   if (nodes === undefined) return invalid('observed architecture v2 body needs the chunk node table');
-  const members = nodes.filter(node => node.indexed && isProjectInputPath(node.path));
-  const ownershipCandidates = architecture.mappings.map((mapping, index) => ({ value: index, paths: mapping.paths }));
-  const ownerIndexBySource = new Map<string, number | null>();
-  for (const member of members) {
-    const result = pathOwnershipOf(member.path, ownershipCandidates);
-    ownerIndexBySource.set(member.path, result.status === 'owner' ? result.owner : null);
+  const membersByNode = new Map<string, { path: string; digest: string }[]>();
+  const ownership = ownershipRuleOf(architecture.mappings);
+  for (const member of nodes) {
+    if (!member.indexed || !isProjectInputPath(member.path)) continue;
+    for (const nodeId of ownerNodesOf(ownership(member.path))) {
+      const file = { path: member.path, digest: member.digest };
+      const files = membersByNode.get(nodeId);
+      if (files === undefined) membersByNode.set(nodeId, [file]);
+      else files.push(file);
+    }
   }
   const mappingByStructuralKey = new Map(architecture.mappings.map(mapping => [mapping.kind + ':' + mapping.id, mapping]));
-  const mappingIndexByStructuralKey = new Map(architecture.mappings.map((mapping, index) => [mapping.kind + ':' + mapping.id, index]));
   for (const node of architecture.nodes) {
     const mapping = mappingByStructuralKey.get(node.structuralKey);
     if (mapping === undefined) return invalid('observed architecture node has no explicit mapping ' + node.structuralKey);
     if (node.nodeId !== node.structuralKey || node.kind !== mapping.kind || node.name !== mapping.id || node.path !== mapping.paths[0]) {
       return invalid('observed architecture node identity or representative path disagrees with its mapping');
     }
-    const mappingIndex = mappingIndexByStructuralKey.get(node.structuralKey)!;
-    const nodeMembers = members
-      .filter(member => ownerIndexBySource.get(member.path) === mappingIndex)
-      .map(member => ({ path: member.path, digest: member.digest }));
+    const nodeMembers = membersByNode.get(node.structuralKey) ?? [];
     if (nodeMembers.length === 0) return invalid('observed architecture node has no indexed source member for mapping ' + node.structuralKey);
     if (node.contentDigest !== sha256Hex(canonicalJson(nodeMembers as unknown as JsonValue))) {
       return invalid('observed architecture node contentDigest disagrees with its indexed members');
@@ -472,22 +481,23 @@ function decodeObservedArchitectureBodyV2(parsed: UnknownRecord,
     && !nodes.some(node => node.path === architecture.configPath || node.path.startsWith(architecture.configPath + '/'))) {
     return invalid('observed architecture body has no frozen file for its configuration path');
   }
-  return { status: 'decoded', value: { schemaVersion: 2, capture, observedAt: parsed['observedAt'],
+  return { status: 'decoded', value: { schemaVersion: 3, capture, observedAt: parsed['observedAt'],
     summary, architecture } };
 }
 
 /**
- * Decode one persisted body. Only the current `schemaVersion: 2` compact body is
- * accepted (counts-only summary, no `files`, no `indexedSources`); an earlier v1
- * body is invalid (decision 79). A v2 body needs the chunk node table for its
- * membership recheck.
+ * Decode one persisted body. Only the current `schemaVersion: 3` compact body is
+ * accepted (counts-only summary, no `files`, no `indexedSources`, every edge with
+ * its reference `count`); an earlier v1 or v2 body is invalid (decision 79), never
+ * read as an empty graph or given a default count. The body needs the chunk node
+ * table for its membership recheck.
  */
 export function decodeObservedArchitectureBody(json: string,
   nodes?: readonly FileGraphNodeV1[]): DecodeResult<ObservedArchitectureBody> {
   const parsed = parseObject(json, 'Observed architecture body');
   if (typeof parsed === 'string') return invalid(parsed);
-  if (parsed['schemaVersion'] !== 2) return invalid('observed architecture body schemaVersion must be 2');
-  return decodeObservedArchitectureBodyV2(parsed, nodes);
+  if (parsed['schemaVersion'] !== 3) return invalid('observed architecture body schemaVersion must be 3');
+  return decodeObservedArchitectureBodyV3(parsed, nodes);
 }
 
 // --------------------------------------------------------------------------

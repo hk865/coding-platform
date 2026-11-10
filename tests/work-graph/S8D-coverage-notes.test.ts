@@ -33,7 +33,7 @@ const record = (entry: Record<string, unknown>): ObservedArchitectureRecord => (
       source: { kind: 'workspace', refId: 'p1/main', revision: '1' } },
   },
   observedAt: '2026-10-17T00:00:00.000Z',
-  fileGraph: { schemaVersion: 2, chunks: [], nodeCount: 0, edgeCount: 0, unresolvedCount: 0 },
+  fileGraph: { schemaVersion: 3, chunks: [], nodeCount: 0, edgeCount: 0, unresolvedCount: 0 },
   languages: [entry as unknown as LanguageCoverageV1],
   inventory: { source: 'skip_list', reason: '不是 git 仓库' },
 });

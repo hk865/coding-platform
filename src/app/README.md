@@ -61,9 +61,9 @@
 | `createLocalWorkbenchHost` | `src/app/host.ts:508` | 从受信任选项装出一个完整 Host，并持有实例 token 与关闭 drain | CLI 或测试要起真实 Host 时；不要另写一套装配 |
 | `consumeStatus` | `src/app/host.ts:263` | Host 上一次消费心跳的跳过项（按 Session key 顺序、每次替换、只在内存、无路由）：`no_profile`/`no_goal`；同一批的 `consumeBarrier()` 在排空的 `finally` 里给出完成信号 | 观察 Host 的全 Session 消费批而不读库时 |
 | `createWorkbenchServer` | `src/app/server.ts:205` | 绑 loopback、校验 token/同源、限制 JSON 与体积、结束 SSE，给画板 HTML 注入令牌 meta 并 `no-store`，再交给路由层 | 要暴露 Host HTTP 时；传输规则只在这里 |
-| `createPlatformCoreRouteBindings` | `src/app/core-routes.ts:922` | 把每个 route 名绑到设计指定的那一个公开端口方法 | 与 `dispatchCoreRoute` 配对；不要动态找方法 |
-| `dispatchCoreRoute` | `src/app/core-routes.ts:1616` | 按 suffix 的显式 `switch` 调一个命名端口方法 | 路由已解析、ctx 已由 server 构造后 |
-| `parseCoreRouteRequest` | `src/app/core-routes.ts:819` | 解析 `scope` 加 `{input}`/`{request}` 信封，拒绝 ctx/actor/root | 每个 POST 路由入口先解析，再 dispatch |
+| `createPlatformCoreRouteBindings` | `src/app/core-routes.ts:926` | 把每个 route 名绑到设计指定的那一个公开端口方法 | 与 `dispatchCoreRoute` 配对；不要动态找方法 |
+| `dispatchCoreRoute` | `src/app/core-routes.ts:1623` | 按 suffix 的显式 `switch` 调一个命名端口方法 | 路由已解析、ctx 已由 server 构造后 |
+| `parseCoreRouteRequest` | `src/app/core-routes.ts:823` | 解析 `scope` 加 `{input}`/`{request}` 信封，拒绝 ctx/actor/root | 每个 POST 路由入口先解析，再 dispatch |
 | `createWorkbenchTools` | `src/app/workbench-tools.ts:283` | 适配 Kernel 文件沙箱与进程沙箱：读写、列目录、后台命令 | 工作台的文件/命令路由；不要直接碰 Kernel sandbox |
 | `createWorkbenchRuntimeHostBindings` | `src/app/runtime-configuration.ts:437` | 把受信任运行期配置变成 Kernel `RuntimeHostBindings`，首次解析才读 secret | 构造 Host runtime 时；不要复制 provider 或凭据存储 |
 | `validateWorkbenchRuntimeConfiguration` | `src/app/runtime-configuration.ts:303` | 纯校验 binding/profile/grant/budget，重复或错配直接报错 | 装载或替换运行期配置前 |
@@ -83,7 +83,7 @@
 | `announceDisconnect` / `announceInterruption` | `src/app/host-notices.ts:56` / `:82` | Host 的两条系统通知构建器：断开事实的两侧、中断时打开的等待两侧加秘书/顾问线；确定性 `requestId`，只调用已发布的 `sendMessage` | L 的 Host 钩子调用；不要另写通知文本或第二写入者 |
 | `systemNotifyRequest` | `src/app/host-notices.ts:16` | 唯一的 `notify` 发送请求：接收方、文本、确定性 `requestId`、空 expected | 上面两条构建器构造发送时 |
 | `INTERVENTION_CLOSING_NOTICE_TEXTS` / `interventionClosingNoticeRequest` | `src/app/host-notices.ts:28` / `:42` | 干预收尾的固定通知文本（每个 reason 一句，`questions` 不发）与确定性 `requestId` 的发送请求；系统 Host 先提交通知，再关联回复或撤回 | Host 的 `consumeIdle` 收尾分支；不要另写通知文本 |
-| `createAutoCaptureDriver` | `src/app/auto-capture-driver.ts:81` | 每 Host 一个自动捕获驱动：一次一个 workspace，请求记录先写 | Host 启动自动捕获时；失败写 failAutoCapture，取消不写 |
+| `createAutoCaptureDriver` | `src/app/auto-capture-driver.ts:76` | 每 Host 一个自动捕获驱动：一次一个 workspace，请求记录先写 | Host 启动自动捕获时；失败写 failAutoCapture，取消不写 |
 | `createChangeFeed` | `src/app/change-feed.ts:87` | 汇总 commit 与 Host 句柄变更，保留窗口并回答 SSE 恢复 | `changes` 长连接；notice 只带粗粒度类型与 project |
 | `createCollaborationDriver` | `src/app/collaboration-driver.ts:372` | 持续协作的 Goal 驱动与 Run 看守：每个目标一条决定循环、每个任务一个 `Lane`；`wake` 只置 `recheck` 或重开交回过依据的看守并立即返回，推进由决定循环做；可选 `onStarted` 在每次接受 Goal 范围启动时触发 | Host 的持续通信；不拥有 store，只组合既有 owner |
 | `createGoalFanOutDriver` | `src/app/goal-fan-out-driver.ts:201` | Goal 控制提交后，对每个受影响 Run 提交幂等 fan-out 控制并观察未知结果 | Goal pause/resume/cancel 与启动重驱；不要重复提交 intent |

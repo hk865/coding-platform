@@ -3,12 +3,14 @@
  * caller is the main workspace", and the failure is not remembered.
  *
  * World: XP-02's (`XWS2P-world.ts`, memory) plus the second workspace's module
- * (`second-mod`, path `/@ws:<second>/src`). The read is the public
- * `platform.notes.memoryFind` (the same owner behind the `find_graph` memory
- * tool) with `related: {kind:'module', moduleId:'s6a-core'}`; resolving that
- * scope reaches `note-related-scope.ts`'s `mainWorkspaceOutcomeOf`. The one read
- * fault is the A2 wrapper the 4B/4C fixtures use: the real in-memory backend's
- * `readMany` answers the project's `start_lines` record (the record
+ * (`second-mod`, path `/@ws:<second>/src`). The read is `memoryFind` of the note
+ * read owner (`createNoteReadModel`, the owner behind `platform.notes` and the
+ * `find_graph` memory tool) over the platform's own records, catalog and plans,
+ * with `related: {kind:'module', moduleId:'s6a-core'}`; resolving that scope
+ * reaches `note-related-scope.ts`'s `mainWorkspaceOutcomeOf`. Its
+ * `mainWorkspaceOf` is the uncached `readMainWorkspace` over those records. The
+ * one read fault is the A2 wrapper the 4B/4C fixtures use: the real in-memory
+ * backend's `readMany` answers the project's `start_lines` record (the record
  * `readMainWorkspace` reads) with `{status:'rejected', code:'unavailable'}` once
  * while armed; every other read is the real one.
  *
@@ -26,6 +28,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NoteDraftV1 } from '../../src/contracts/note.js';
 import type { MemoryFindRequest } from '../../src/core/work-graph/model/note-contracts.js';
+import { createNoteReadModel } from '../../src/core/work-graph/notes/note-read-model.js';
+import { readMainWorkspace } from '../../src/core/work-graph/sessions/role-line-operations.js';
 import { operationRefKey } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { roleLineOperationRef } from '../../src/core/work-graph/state/role-line-operation.js';
 import * as memoryBackend from '../../src/core/record-store/in-memory-record-store.js';
@@ -46,15 +50,17 @@ const findS6ACore = (): MemoryFindRequest => ({ v: 1, op: 'find',
 describe('XP-08 the main workspace read failure', () => {
   it('answers unavailable instead of treating the caller as main, and reads again after it recovers', async () => {
     let faultKey: string | null = null;
+    const platformStore: { records?: memoryBackend.InMemoryRecordBackend['records'] } = {};
     const realFactory = memoryBackend.createInMemoryRecordBackend;
     SPIES.push(vi.spyOn(memoryBackend, 'createInMemoryRecordBackend').mockImplementation((options) => {
       const backend = realFactory(options);
       const records = backend.records;
-      return { ...backend, records: { ...records,
+      platformStore.records = { ...records,
         readMany: (refKeys: readonly string[]) => faultKey !== null && refKeys.includes(faultKey)
           ? Promise.resolve({ status: 'rejected' as const, code: 'unavailable' as const,
             reason: 'XP-08 injected readMany failure' })
-          : records.readMany(refKeys) } };
+          : records.readMany(refKeys) };
+      return { ...backend, records: platformStore.records };
     }));
 
     const world = await openXWS2PWorld();
@@ -62,8 +68,14 @@ describe('XP-08 the main workspace read failure', () => {
     expect(await addXWS2PSecondModule(world, {
       moduleId: 'second-mod', name: 'second-mod', summary: 'second workspace module' }))
       .toMatchObject({ status: 'committed' });
-    const notes = world.world.platform.notes;
-    if (notes === undefined) throw new Error('XP-08: the platform publishes no notes owner');
+    const records = platformStore.records;
+    if (records === undefined) throw new Error('XP-08: the platform opened no in-memory records backend');
+    // The platform caches the main workspace id once it has read it, so the
+    // failure branch is reachable only while that cache is empty; this row
+    // proves it with an uncached main-workspace read over the platform's store.
+    const notes = createNoteReadModel({ records, plans: world.world.platform.plans,
+      architecture: world.world.platform.architecture,
+      mainWorkspaceOf: projectId => readMainWorkspace(records, projectId) });
 
     faultKey = operationRefKey(roleLineOperationRef(world.main.scope.projectId, 'start_lines', 'start_lines'));
     const failed = await notes.memoryFind(world.second.ctx, findS6ACore());

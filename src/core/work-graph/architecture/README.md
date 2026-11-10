@@ -10,16 +10,16 @@
 
 ## 文件
 - `architecture-delta.ts` — 纯观测图差异（结构 key 与 digest 的增删改）、SCC 环成员与 `compareObservedGraphs`；不产出 baseline 或规则结论。
-- `architecture-record-codecs.ts` — observed capture 的 body/chunk/记录/事件 codec、schema 注册与 `mergeObservedFileGraphChunks`。
-- `architecture-service.ts` — `ObservedArchitecturePort` 实现：源捕获、历史读、邻域/影响/比较、自动捕获、文件图分页与 chunk 打包、文件/分组搜索（`findArchitecture`）。
+- `architecture-record-codecs.ts` — observed capture 的 body/chunk/记录/事件 codec、schema 注册与 `mergeObservedFileGraphChunks`。当前格式是 v3（决定 79-1，只读 v3）：正文 `schemaVersion: 3`（`architecture.edges[]` 每条带必填 `count`），文件块 `schemaVersion: 3`、边是 `[i, j, count]`，记录里的清单 `schemaVersion: 3`；v1/v2 的正文、块、清单直接拒（`invalid`/`unavailable`），不迁移、不补 `count`。正文的成员复核用和写入同一套分两层的归属（`ownershipRuleOf`/`ownerNodesOf`，快照里的完整映射）：模块节点含它接口里的文件，接口节点只含该接口的文件。
+- `architecture-service.ts` — `ObservedArchitecturePort` 实现：源捕获、历史读、邻域/影响/比较、自动捕获、文件图分页与 chunk 打包、文件/分组搜索（`findArchitecture`）。省略 `mappings` 的捕获（手动捕获和自动捕获都走这条）读当前 catalog、投影到工作区、用 `mappingsOf`（模块和模块内接口）；“处数”在捕获时算一次、存下，读时只读：`architecture/query` 的 `edges[].count` 原样给出（跨模块是 `module_dependency`，同模块不同接口组之间是 `interface_uses`），文件页的 `edges[].count` 来自块里的第三项。
 - `architecture-search-index.ts` — 纯搜索投影：basename/路径/模块名的匹配面、tier 排序、路径去重、正式 containment 祖先与搜索 cursor；不读记录，来源由 service 一次载入。
 - `catalog-contracts.ts` — 正式 catalog 的 adoption/revision 端口、revision 快照与 module facts DTO。
 - `catalog-record-codecs.ts` — catalog 记录/事件 codec、adoption 闭包校验、`architectureBaselineDigest` 与 schema 注册。
 - `catalog-service.ts` — 正式架构的初始接受（`adoptInitialArchitecture`）、catalog 修订（`reviseArchitectureCatalog`）、revision 读取、当前 catalog 的 module facts、revision 的完整 pin（`catalogPinOf`）与 guards。
 - `contracts.ts` — observed architecture 的记录/端口/DTO，以及本文件的 `GraphWrite` 转出（`src/core/work-graph/architecture/contracts.ts:16` 只是转出；正本在 `src/core/work-graph/model/task-contracts.ts:28`）。
-- `file-graph-index.ts` — 纯文件级图分页：listFiles/neighbors/impact 与 cursor 绑定。
+- `file-graph-index.ts` — 纯文件级图分页：listFiles/neighbors/impact 与 cursor 绑定；边按 `(from,to)` 去重时累加 `count`。
 - `formal-comparison.ts` — 正式 catalog 与观测文件图的纯比较（ownership/ambiguous/SCC 等 finding）；给了 `workspaceId`/`mainWorkspaceId` 时先经 `catalogForWorkspace` 投影，旧调用不给时行为不变。
-- `graph-index.ts` — 纯观测图遍历：邻域、反向影响闭包、分页与 `encodeCursor`。
+- `graph-index.ts` — 纯观测图遍历：邻域、反向影响闭包、分页与 `encodeCursor`。文件锚点用和写入同一套分两层的归属（`ownershipRuleOf`/`ownerNodesOf`）：文件的模块节点，在接口里再加接口节点；模块平手时照旧返回所有平手的模块节点；没观测到的节点之后才丢。没解析的行只归给模块节点。
 - `proposal-record-codecs.ts` — `ArchitectureProposal@1`/`ArchitectureProposalBatch@1` 记录与 `ArchitectureProposalChanged@1` 事件 codec、两个按项目 lookup 与 schema 注册；提案内容不可变，只有 `state`/`batchRef` 由状态机改，批冻结后不可变。
 - `proposal-service.ts` — 结构提案 owner：pinned propose、批冻结、答复应用/关闭与读；唯一写提案/批记录并在提案路径调 catalog planner 的地方，试算复用 `planCatalogRevision` 后丢弃其 contribution；试算和职责读用 `platformCheckContext` 换成固定的内部 Host 身份，提案记下的作者仍是 Run。提议者只经 `proposerOf`：Work Run 读 `runFacts`，冷启动的探索 QueryRun 读必填的 `queryRunFacts`（只认 `role_exploration`）；冷启动的批窗口 `proposalBatchWindow` 只在冷启动停在 `proposals`、且提议的 `baseCatalogPin` 等于冷启动的 `baseCatalogPin` 时开着，此时新提案进 `pending_batch`，由冷启动一次冻结；提议提交带读窗口时冷启动记录的 revision guard，冷启动完成在待批读取前取 ledger horizon 并随完成提交。冷启动用的三个读：`readPendingArchitectureProposals`（项目未入批的待批提案）、`readFrozenArchitectureBatches`（同一 pin 上已冻结的批，恢复冻结后没存下的批）和它们共用的 `readProjectBatches`（项目全部批，结构提案卡的读源也用）。
 - 7D2 XA 的批窗口（`createColdStartProposalWindow`）读两条探索操作：`cold_start:projectId`，以及调用方工作区非空时的 `workspace_join:projectId:workspaceId`；窗口只在所属操作处在 `proposals`、其 `baseCatalogPin` 与提议相同且记录未完成时开，返回该记录自己的 `{open, operationRef, revision}`，提交守卫用窗口自己的 `operationRef` 和 `revision`，不比较两条记录的 revision。
@@ -45,22 +45,22 @@
 | `readArchitectureProposal` | `src/core/work-graph/architecture/proposal-service.ts:1096` | 按 `proposalRef` 读提案、批 ref 与卡片 key | 提案读（路由、E3 与卡来源） |
 | `compareObservedGraphs` | `src/core/work-graph/architecture/architecture-delta.ts:89` | 两份观测的节点/边结构差异与环变化 | 观测版本比较 |
 | `stronglyConnectedCycles` | `src/core/work-graph/architecture/architecture-delta.ts:24` | 确定性 SCC（成员数 >1 或自环）检测 | 观测差异与正式比较共用 |
-| `buildObservedNeighborhood` | `src/core/work-graph/architecture/graph-index.ts:161` | 按 anchor/depth/relations 取有界邻域页，带 unresolved 归属 | 图邻域查询 |
-| `buildObservedImpact` | `src/core/work-graph/architecture/graph-index.ts:209` | 沿边反向取影响节点、路径与页 cursor | 影响查询 |
-| `encodeCursor` | `src/core/work-graph/architecture/graph-index.ts:48` | 统一的 base64url JSON cursor 编码 | 读模型需要生成 opaque cursor 时 |
-| `listFilesPage` | `src/core/work-graph/architecture/file-graph-index.ts:96` | 文件图按路径稳定排序分页 | 文件级列表读 |
-| `neighborsPage` | `src/core/work-graph/architecture/file-graph-index.ts:103` | 一跳出/入邻居分页 | 文件邻域读 |
-| `impactPage` | `src/core/work-graph/architecture/file-graph-index.ts:120` | 反向可达影响分页，深度有上限 | 文件影响读 |
+| `buildObservedNeighborhood` | `src/core/work-graph/architecture/graph-index.ts:164` | 按 anchor/depth/relations 取有界邻域页，带 unresolved 归属 | 图邻域查询 |
+| `buildObservedImpact` | `src/core/work-graph/architecture/graph-index.ts:212` | 沿边反向取影响节点、路径与页 cursor | 影响查询 |
+| `encodeCursor` | `src/core/work-graph/architecture/graph-index.ts:49` | 统一的 base64url JSON cursor 编码 | 读模型需要生成 opaque cursor 时 |
+| `listFilesPage` | `src/core/work-graph/architecture/file-graph-index.ts:102` | 文件图按路径稳定排序分页 | 文件级列表读 |
+| `neighborsPage` | `src/core/work-graph/architecture/file-graph-index.ts:109` | 一跳出/入邻居分页 | 文件邻域读 |
+| `impactPage` | `src/core/work-graph/architecture/file-graph-index.ts:126` | 反向可达影响分页，深度有上限 | 文件影响读 |
 | `orderedNodes` | `src/core/work-graph/architecture/file-graph-index.ts:66` | 观测文件节点按工作区相对路径稳定排序并按路径去重 | 文件图分页与架构搜索共用同一排序/去重，不另写一份 |
 | `buildArchitectureGroups` | `src/core/work-graph/architecture/architecture-search-index.ts:63` | 正式 catalog 的模块组：声明路径、单路径 `path` 与 containment 祖先（根→父） | 搜索与当前工作集合都要模块组时 |
 | `pageArchitectureFind` | `src/core/work-graph/architecture/architecture-search-index.ts:189` | 在已载入的文件节点/正式模块上匹配、排序、全量计数并返回一页；cursor 绑定 capture/catalog/查询 | `architecture/find` 的唯一匹配/分页点 |
 | `compareFormalObservedGraphs` | `src/core/work-graph/architecture/formal-comparison.ts:35` | 正式 catalog 与观测文件图的确定性 finding | 架构提醒与检查 |
 | `architectureBaselineDigest` | `src/core/work-graph/architecture/catalog-record-codecs.ts:201` | 正式 baseline 的规范内容 digest，与 `plan-readers.ts` 的治理读取一致 | 校验/读取 baseline 时 |
-| `OBSERVED_ARCHITECTURE_RECORD_SCHEMAS` | `src/core/work-graph/architecture/architecture-record-codecs.ts:746` | observed 记录/事件的 Store schema 注册表 | 组合根注册纪录后端 |
+| `OBSERVED_ARCHITECTURE_RECORD_SCHEMAS` | `src/core/work-graph/architecture/architecture-record-codecs.ts:755` | observed 记录/事件的 Store schema 注册表 | 组合根注册纪录后端 |
 | `ARCHITECTURE_CATALOG_SCHEMAS` | `src/core/work-graph/architecture/catalog-record-codecs.ts:543` | 正式 catalog 记录/事件的 Store schema 注册表 | 组合根注册纪录后端 |
 
 ## 内部用
-- architecture-record-codecs：`OBSERVED_ARCHITECTURE_SCHEMA_ID`、`OBSERVATION_CURRENT_SCHEMA_ID`、`ARCHITECTURE_AUTO_CAPTURE_SCHEMA_ID`、`ARCHITECTURE_AUTO_CAPTURE_REQUESTED_EVENT`、`ARCHITECTURE_AUTO_CAPTURE_FAILED_EVENT`、`ARCHITECTURE_AUTO_CAPTURE_EVENT_VERSION`、`ARCHITECTURE_SOURCE_OBSERVED_EVENT`、`ARCHITECTURE_SOURCE_OBSERVED_EVENT_VERSION`、`OBSERVED_ARCHITECTURE_BODY_CONTENT_TYPE`、`FILE_GRAPH_CHUNK_CONTENT_TYPE`、`readSourceCaptureRef`、`readArtifactRef`、`readPersistedSourceCaptureRef`、`validateObservedFileGraphChunkV2`、`decodeObservedFileGraphChunk`、`mergeObservedFileGraphChunks`、`decodeObservedArchitectureBody`、`encodeObservedArchitecture`、`encodeObservationCurrent`、`encodeArchitectureSourceObservedEvent`、`encodeArchitectureAutoCapture`、`encodeArchitectureAutoCaptureEvent`、`decodeArchitectureAutoCapture`、`decodeArchitectureAutoCaptureEvent`、`decodeObservedArchitectureRecord`、`decodeObservationCurrent`、`decodeArchitectureSourceObservedEvent`。
+- architecture-record-codecs：`OBSERVED_ARCHITECTURE_SCHEMA_ID`、`OBSERVATION_CURRENT_SCHEMA_ID`、`ARCHITECTURE_AUTO_CAPTURE_SCHEMA_ID`、`ARCHITECTURE_AUTO_CAPTURE_REQUESTED_EVENT`、`ARCHITECTURE_AUTO_CAPTURE_FAILED_EVENT`、`ARCHITECTURE_AUTO_CAPTURE_EVENT_VERSION`、`ARCHITECTURE_SOURCE_OBSERVED_EVENT`、`ARCHITECTURE_SOURCE_OBSERVED_EVENT_VERSION`、`OBSERVED_ARCHITECTURE_BODY_CONTENT_TYPE`、`FILE_GRAPH_CHUNK_CONTENT_TYPE`、`readSourceCaptureRef`、`readArtifactRef`、`readPersistedSourceCaptureRef`、`validateObservedFileGraphChunkV3`、`decodeObservedFileGraphChunk`、`mergeObservedFileGraphChunks`、`decodeObservedArchitectureBody`、`encodeObservedArchitecture`、`encodeObservationCurrent`、`encodeArchitectureSourceObservedEvent`、`encodeArchitectureAutoCapture`、`encodeArchitectureAutoCaptureEvent`、`decodeArchitectureAutoCapture`、`decodeArchitectureAutoCaptureEvent`、`decodeObservedArchitectureRecord`、`decodeObservationCurrent`、`decodeArchitectureSourceObservedEvent`。
 - catalog-record-codecs：`ARCHITECTURE_CATALOG_SCHEMA_ID`、`ARCHITECTURE_CATALOG_ADOPTED_EVENT`、`ARCHITECTURE_CATALOG_EVENT_VERSION`、`S4B_CATALOG_REVISION_BY_PROJECT_LOOKUP`、`ARCHITECTURE_CATALOG_REVISED_EVENT`、`readModuleRef`、`readArchitectureBaselineRef`、`readArchitectureCatalogRef`、`readArchitectureBaselinePin`、`readConstraints`、`readArchitectureBaselineSnapshot`、`validateAdoptedArchitecture`、`encodeArchitectureCatalog`、`encodeArchitectureCatalogAdoptedEvent`、`encodeArchitectureCatalogRevisedEvent`、`decodeArchitectureCatalogRecord`、`decodeArchitectureCatalogAdoptedEvent`、`decodeArchitectureCatalogRevisedEvent`。
 - architecture-service：`normalizeFileGraph`、`serializeFileGraphChunks`（文件图存储步骤的纯 helper）、`safeMappingPath`（`src/core/work-graph/architecture/architecture-service.ts:133`，映射路径的收窄检查）。
 - file-graph-index：`FILE_GRAPH_PAGE_SIZE`、`FILE_GRAPH_MAX_IMPACT_DEPTH`、`FileGraphCursorError`、`orderedNodes`（导出后与搜索共用，见上表）。

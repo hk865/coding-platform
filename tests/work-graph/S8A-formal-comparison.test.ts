@@ -83,7 +83,7 @@ describe('S8A-formal-comparison A-02', () => {
         node('src/loose.ts'),
         node('src/dup/one.ts'),
       ],
-      edges: [{ from: 'src/c/one.ts', to: 'src/d/one.ts' }],
+      edges: [{ from: 'src/c/one.ts', to: 'src/d/one.ts', count: 1 }],
       unresolved: [{ from: 'src/a/broken.ts', specifier: 'src/nowhere.ts', reason: null }],
     });
 
@@ -111,8 +111,8 @@ describe('S8A-formal-comparison A-02b', () => {
     const fileGraph = graph({
       nodes: [node('src/a/one.ts'), node('src/b/lib.ts')],
       edges: [
-        { from: 'src/a/one.ts', to: 'src/b/lib.ts' },
-        { from: 'src/b/lib.ts', to: 'src/a/one.ts' },
+        { from: 'src/a/one.ts', to: 'src/b/lib.ts', count: 1 },
+        { from: 'src/b/lib.ts', to: 'src/a/one.ts', count: 1 },
       ],
       languages: [supportedCoverage(2)],
     });
@@ -137,7 +137,7 @@ describe('S8A-formal-comparison root prefix `.`', () => {
     };
     const fileGraph = graph({
       nodes: [node('src/a/one.ts'), node('src/loose.ts')],
-      edges: [{ from: 'src/a/one.ts', to: 'src/loose.ts' }],
+      edges: [{ from: 'src/a/one.ts', to: 'src/loose.ts', count: 1 }],
       languages: [supportedCoverage(2)],
     });
 
@@ -169,7 +169,7 @@ describe('S8A-formal-comparison observed declared dependency', () => {
     };
     const fileGraph = graph({
       nodes: [node('src/a/one.ts'), node('src/b/lib.ts'), node('src/c/one.ts'), node('src/d/one.ts')],
-      edges: [{ from: 'src/a/one.ts', to: 'src/b/lib.ts' }],
+      edges: [{ from: 'src/a/one.ts', to: 'src/b/lib.ts', count: 1 }],
       languages: [supportedCoverage(4)],
     });
 
@@ -192,7 +192,7 @@ describe('S8A-formal-comparison same-module imports', () => {
     };
     const fileGraph = graph({
       nodes: [node('src/a/one.ts'), node('src/a/two.ts')],
-      edges: [{ from: 'src/a/one.ts', to: 'src/a/two.ts' }],
+      edges: [{ from: 'src/a/one.ts', to: 'src/a/two.ts', count: 1 }],
       languages: [supportedCoverage(2)],
     });
     expect(compareFormalObservedGraphs({ architecture, fileGraph })).toEqual([]);
@@ -208,7 +208,7 @@ describe('S8A-formal-comparison unknown reach', () => {
     };
     const fileGraph = graph({
       nodes: [node('src/a/one.ts'), node('src/loose.ts')],
-      edges: [{ from: 'src/a/one.ts', to: 'src/loose.ts' }],
+      edges: [{ from: 'src/a/one.ts', to: 'src/loose.ts', count: 1 }],
       languages: [supportedCoverage(2)],
     });
     expect(compareFormalObservedGraphs({ architecture, fileGraph })).toEqual([
@@ -226,7 +226,7 @@ describe('S8A-formal-comparison unknown reach', () => {
     };
     const fileGraph = graph({
       nodes: [node('src/a/one.ts'), node('src/dup/one.ts')],
-      edges: [{ from: 'src/a/one.ts', to: 'src/dup/one.ts' }],
+      edges: [{ from: 'src/a/one.ts', to: 'src/dup/one.ts', count: 1 }],
       languages: [supportedCoverage(2)],
     });
     expect(compareFormalObservedGraphs({ architecture, fileGraph })).toEqual([
@@ -282,7 +282,7 @@ describe('S8A-formal-comparison unknown reach', () => {
     };
     const fileGraph = graph({
       nodes: [node('src/a/one.ts'), node('src/loose.ts')],
-      edges: [{ from: 'src/loose.ts', to: 'src/a/one.ts' }],
+      edges: [{ from: 'src/loose.ts', to: 'src/a/one.ts', count: 1 }],
       languages: [supportedCoverage(2)],
     });
     expect(compareFormalObservedGraphs({ architecture, fileGraph })).toEqual([

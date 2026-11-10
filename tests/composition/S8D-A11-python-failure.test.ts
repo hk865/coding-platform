@@ -57,7 +57,7 @@ describe.each(BACKENDS)('A-11(2) Python failure [%s]', backend => {
       expect(coverageOf(graph, 'typescript')).toEqual({
         language: 'typescript', files: 2, parsed: 2, edges: 'supported', reason: null, notes: [], issues: [], issueCount: 0, complete: true,
       });
-      expect(graph.edges).toEqual([{ from: 'src/a.ts', to: 'src/b.ts' }]);
+      expect(graph.edges).toEqual([{ from: 'src/a.ts', to: 'src/b.ts', count: 1 }]);
     } finally {
       await f.close();
     }

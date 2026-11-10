@@ -24,17 +24,18 @@ export type WorkspaceArchitectureObservationCurrentRef = {
 };
 /**
  * §10 item 6 manifest: the record keeps only the counts; the unresolved entries
- * themselves live in the chunks. `schemaVersion: 2` is the only current shape
- * (decision 79: a manifest without the key is an earlier format and is rejected).
+ * themselves live in the chunks. `schemaVersion: 3` is the only current shape
+ * (decision 79: a manifest without the key, or of the v2 chunks whose edges carry
+ * no reference count, is an earlier format and is rejected).
  */
-export type ObservedFileGraphManifestV2 = {
-  schemaVersion: 2;
+export type ObservedFileGraphManifestV3 = {
+  schemaVersion: 3;
   chunks: ArtifactRef[];
   nodeCount: number;
   edgeCount: number;
   unresolvedCount: number;
 };
-export type ObservedFileGraphManifest = ObservedFileGraphManifestV2;
+export type ObservedFileGraphManifest = ObservedFileGraphManifestV3;
 /** One unresolved file-layer reference, with its provider reason (spec §11.5). */
 export type ObservedFileGraphUnresolvedV1 = {
   from: string;
@@ -42,19 +43,20 @@ export type ObservedFileGraphUnresolvedV1 = {
   reason: string | null;
 };
 /**
- * §10 item 6 v2 chunk body. Node order is the one global path-sorted table; an
- * edge `[i, j]` indexes that table and may point across chunks. Both scope
- * fields are required and come from the validated capture scope: every node,
- * edge, unresolved and empty chunk carries the same scope, and an unscoped
- * earlier-shape chunk is rejected rather than filled in (decision 79).
+ * §10 item 6 v3 chunk body. Node order is the one global path-sorted table; an
+ * edge `[i, j, count]` indexes that table, may point across chunks and carries
+ * the pair's reference count (>= 1). Both scope fields are required and come
+ * from the validated capture scope: every node, edge, unresolved and empty chunk
+ * carries the same scope, and an unscoped or count-less earlier-shape chunk is
+ * rejected rather than filled in (decision 79).
  */
 export type ObservedFileGraphChunkScope = { projectId: string; workspaceId: string };
-export type ObservedFileGraphChunkV2 = {
-  schemaVersion: 2;
+export type ObservedFileGraphChunkV3 = {
+  schemaVersion: 3;
   projectId: string;
   workspaceId: string;
   nodes: FileGraphNodeV1[];
-  edges: [number, number][];
+  edges: [number, number, number][];
   unresolved: ObservedFileGraphUnresolvedV1[];
 };
 /**

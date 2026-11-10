@@ -176,7 +176,6 @@ function driverFor(platform: Platform,
   const architecture: Platform['architecture'] = { ...platform.architecture, ...overrides };
   return createAutoCaptureDriver({
     architecture,
-    catalog: platform.architecture,
     boundWorkspaces: () => [A],
     actor: systemActor,
   });

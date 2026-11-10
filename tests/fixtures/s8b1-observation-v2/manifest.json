@@ -1,0 +1,33 @@
+{
+  "projectId": "ag2b-collab-project",
+  "workspaceId": "ag2b-collab-workspace",
+  "captureRef": {
+    "aggregateType": "ObservedArchitecture",
+    "projectId": "ag2b-collab-project",
+    "workspaceId": "ag2b-collab-workspace",
+    "captureId": "b69b8d4a-a385-40f1-86e1-748379ad4700"
+  },
+  "persistedRef": {
+    "capture": {
+      "projectId": "ag2b-collab-project",
+      "workspaceId": "ag2b-collab-workspace",
+      "captureId": "b69b8d4a-a385-40f1-86e1-748379ad4700",
+      "workspaceRevision": 1,
+      "sourceDigest": "e257d3bf8d7346b91b5facf30666d63ba2b9f0585d85ef566bbe16dc65e1a2b6",
+      "configDigest": "d12dda86266b50652ff08d41a5e2126c9dd2693809e2a75e502ff836832f33b9",
+      "indexVersion": "typescript-language-service@6.0.3"
+    },
+    "material": {
+      "kind": "artifact",
+      "contentType": "application/vnd.coding-platform.observed-architecture+json",
+      "digest": "783d7026ba1e035ffaa53b67e9472a8fe176bef963c0da2abe253ee2f11ac39b",
+      "sizeBytes": 1824,
+      "source": {
+        "kind": "workspace",
+        "refId": "ag2b-collab-workspace",
+        "revision": "1",
+        "digest": "e257d3bf8d7346b91b5facf30666d63ba2b9f0585d85ef566bbe16dc65e1a2b6"
+      }
+    }
+  }
+}

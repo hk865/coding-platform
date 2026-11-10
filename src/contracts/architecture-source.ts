@@ -80,7 +80,7 @@ export function architectureSourceIssues(value: unknown): string[] {
         errors.push('invalid mapped nodes');
     else if (new Set(v.nodes.map(n => n.nodeId)).size !== v.nodes.length || new Set(v.nodes.map(n => n.structuralKey)).size !== v.nodes.length)
         errors.push('duplicate node');
-    if (!Array.isArray(v.edges) || v.edges.length > 1024 || v.edges.some(e => !e || !e.edgeId || !e.structuralKey || !['module_dependency', 'interface_uses'].includes(e.kind)))
+    if (!Array.isArray(v.edges) || v.edges.length > 1024 || v.edges.some(e => !e || !e.edgeId || !e.structuralKey || !['module_dependency', 'interface_uses'].includes(e.kind) || !Number.isSafeInteger(e.count) || e.count < 1))
         errors.push('invalid edges');
     else if (Array.isArray(v.nodes)) {
         const ids = new Set(v.nodes.map(n => n?.nodeId));

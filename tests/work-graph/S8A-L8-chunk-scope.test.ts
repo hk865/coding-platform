@@ -277,7 +277,7 @@ async function openWorld(backend: Backend): Promise<World> {
   }
 
   const driver = createAutoCaptureDriver({
-    architecture: platform.architecture, catalog: platform.architecture,
+    architecture: platform.architecture,
     boundWorkspaces: () => [A, B], actor: AUTO_CAPTURE_ACTOR,
   });
   sink = event => { driver.projectChanged(event.projectId, event.kind); };

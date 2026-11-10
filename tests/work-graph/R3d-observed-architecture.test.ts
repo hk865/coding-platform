@@ -61,8 +61,8 @@ describe.each(['memory', 'sqlite'] as const)('R3d observed architecture %s', kin
             byteSize: 107, language: 'other', nonBlankLines: 1, indexed: false },
         ]);
         expect(fileGraph.value.edges).toEqual([
-          { from: 'src/alpha.ts', to: 'src/beta.ts' },
-          { from: 'src/beta.ts', to: 'src/alpha.ts' },
+          { from: 'src/alpha.ts', to: 'src/beta.ts', count: 1 },
+          { from: 'src/beta.ts', to: 'src/alpha.ts', count: 1 },
         ]);
       }
       const formal = await fx.readRecord({ aggregateType: 'ProjectArchitectureBaselineActive', projectId });

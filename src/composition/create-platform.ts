@@ -382,6 +382,7 @@ import { createObservedArchitecture } from '../core/work-graph/architecture/arch
 import { OBSERVED_ARCHITECTURE_RECORD_SCHEMAS } from '../core/work-graph/architecture/architecture-record-codecs.js';
 import { createArchitectureCatalogService, readCurrentCatalogWindow } from '../core/work-graph/architecture/catalog-service.js';
 import { createArchitectureWorkScopeReader, type ArchitectureWorkScopePort } from '../core/work-graph/views/architecture-work-scope-reader.js';
+import { createArchitectureChangeScopeReader, type ArchitectureChangeScopePort } from '../core/work-graph/views/architecture-change-scope-reader.js';
 import type { ArchitectureCatalogPort } from '../core/work-graph/architecture/catalog-contracts.js';
 import { ARCHITECTURE_CATALOG_SCHEMAS } from '../core/work-graph/architecture/catalog-record-codecs.js';
 import { observeRecordCommits, type RecordCommitObserver } from './commit-observer.js';
@@ -2671,7 +2672,9 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     };
     const architectureWorkScope = createArchitectureWorkScopeReader({ records: backend.records, catalog,
       mainWorkspaceOf: mainWorkspaceOf });
-    const architecture: typeof observed & ArchitectureCatalogPort & ArchitectureWorkScopePort = {
+    const architectureChangeScope = createArchitectureChangeScopeReader({ executedFiles: goalExecutedFiles, catalog,
+      mainWorkspaceOf: mainWorkspaceOf });
+    const architecture: typeof observed & ArchitectureCatalogPort & ArchitectureWorkScopePort & ArchitectureChangeScopePort = {
       captureSourceChanges: (...args) => trackedCall(() => observed.captureSourceChanges(...args), unavailable),
       // L8 request record and the one public observation state (book rulings 3, 8, 12).
       requestAutoCapture: (...args) => trackedCall(() => observed.requestAutoCapture(...args), unavailable),
@@ -2683,6 +2686,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       findArchitecture: (...args) => trackedCall(() => observed.findArchitecture(...args), unavailable),
       readArchitectureWorkScope: (...args) =>
         trackedCall(() => architectureWorkScope.readArchitectureWorkScope(...args), unavailable),
+      readArchitectureChangeScope: (...args) =>
+        trackedCall(() => architectureChangeScope.readArchitectureChangeScope(...args), unavailable),
       compareArchitecture: (...args) => trackedCall(() => observed.compareArchitecture(...args), unavailable),
       queryImpact: (...args) => trackedCall(() => observed.queryImpact(...args), unavailable),
       listFiles: (...args) => trackedCall(() => observed.listFiles(...args), unavailable),

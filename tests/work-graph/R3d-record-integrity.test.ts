@@ -37,7 +37,7 @@ it('rejects observed records whose persisted source identity disagrees with thei
       refKey: canonicalJson(ref as JsonValue), schemaId: 'ObservedArchitecture@1', revision: 1,
       json: JSON.stringify({ ref, revision: 1, schemaVersion: 1, source: { ...source, capture },
         observedAt: '2026-09-24T00:00:00.000Z',
-        fileGraph: { schemaVersion: 2, chunks: [], nodeCount: 0, edgeCount: 0, unresolvedCount: 0 },
+        fileGraph: { schemaVersion: 3, chunks: [], nodeCount: 0, edgeCount: 0, unresolvedCount: 0 },
         languages: [], inventory: { source: 'skip_list', reason: '不是 git 仓库' } }),
     });
     const codec = OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.records.find(entry => entry.aggregateType === 'ObservedArchitecture');
@@ -82,7 +82,7 @@ it('rejects a v2 frozen body whose scope, engine, config or indexed member manif
         deleted: exported.value.summary.changes.deleted.length,
       },
     };
-    const body = { schemaVersion: 2, capture: captured.value.ref,
+    const body = { schemaVersion: 3, capture: captured.value.ref,
       observedAt: '2026-09-24T00:00:00.000Z', summary,
       architecture: mapped.value };
     const nodes = fileGraph.value.nodes;
@@ -139,7 +139,7 @@ it('requires a real indexed JSON member for a JSON-only mapped node', async () =
         modified: exported.value.summary.changes.modified.length,
         deleted: exported.value.summary.changes.deleted.length },
     };
-    const body = { schemaVersion: 2, capture: captured.value.ref,
+    const body = { schemaVersion: 3, capture: captured.value.ref,
       observedAt: '2026-09-24T00:00:00.000Z', summary,
       architecture: mapped.value };
     const nodes = fileGraph.value.nodes;

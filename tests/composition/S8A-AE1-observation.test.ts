@@ -157,8 +157,8 @@ function a01ExpectedNodes(): { path: string; nonBlankLines: number; language: st
 }
 
 const A01_EDGES = [
-  { from: 'src/a.ts', to: 'src/b.ts' },
-  { from: 'src/c.ts', to: 'src/d.ts' },
+  { from: 'src/a.ts', to: 'src/b.ts', count: 1 },
+  { from: 'src/c.ts', to: 'src/d.ts', count: 1 },
 ];
 
 describe.each(BACKENDS)('AE1 A-01 public observation over 205 real TS files [%s]', backend => {

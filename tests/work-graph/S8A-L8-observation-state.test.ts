@@ -154,14 +154,16 @@ async function fixture(kind: 'memory' | 'sqlite', options: FixtureOptions = {}) 
   if (registered.status !== 'committed') throw Error('Workspace registration failed: ' + JSON.stringify(registered));
 
   const records = backend.records as unknown as GoalRecordTransactionPort & RecordLookupPort;
+  const catalog = createArchitectureCatalogService({ records });
   const deps = (overrides: { workspace?: WorkspaceToolsPort; records?: typeof records;
-    bodies?: RawArtifactStorePort } = {}) => ({
+    bodies?: RawArtifactStorePort; catalog?: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'> } = {}) => ({
     workspace: overrides.workspace ?? handle.tools,
     access, bodies: overrides.bodies ?? bodies, records: overrides.records ?? records,
     source: { provider: 'typescript' as const, configPath: null as string | null },
+    // The automatic capture omits `mappings`; the service reads the catalog (R24).
+    catalog: overrides.catalog ?? catalog,
   });
   const plain = createObservedArchitecture(deps());
-  const catalog = createArchitectureCatalogService({ records });
   // The composition root's real trigger wrapper (create-platform.ts:1194–1211):
   // after a NON-REPLAYED committed adoption/revision it notifies the Host's one
   // driver, and the callback's own failure never changes the commit result.
@@ -233,7 +235,6 @@ function makeDriver(fx: Fixture, architecture: ReturnType<typeof createObservedA
   AutoCaptureDriver {
   return fx.wireDriver(createAutoCaptureDriver({
     architecture,
-    catalog: architectureCatalog,
     boundWorkspaces: () => [workspace],
     actor: AUTO_CAPTURE_ACTOR,
   }));
@@ -602,7 +603,8 @@ describe('L8 automatic capture and observation state through public steps', () =
           return fx.catalog.readArchitectureRevision(...args);
         },
       };
-      driver = makeDriver(fx, fx.plain, catalog);
+      // The faulty catalog is the one the capture's default mapping path reads (R24).
+      driver = makeDriver(fx, createObservedArchitecture(fx.deps({ catalog })), catalog);
       driver.workspaceRegistered(workspace);
       const first = await waitForState(fx, succeeded(1), 'first capture');
 

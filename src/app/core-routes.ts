@@ -27,6 +27,7 @@ import type { ArchitectureCatalogPort } from '../core/work-graph/architecture/ca
 import type { ArchitectureProposalService } from '../core/work-graph/architecture/proposal-service.js';
 import type { ObservedArchitecturePort } from '../core/work-graph/architecture/contracts.js';
 import type { ArchitectureWorkScopePort } from '../core/work-graph/views/architecture-work-scope-reader.js';
+import type { ArchitectureChangeScopePort } from '../core/work-graph/views/architecture-change-scope-reader.js';
 import type {
   MessageForwardingPort, SessionMailboxPort, SessionMessageCommandPort,
 } from '../core/work-graph/model/communication-contracts.js';
@@ -161,6 +162,7 @@ export type CoreRouteBindings = {
   queryArchitecture: ObservedArchitecturePort['queryArchitecture'];
   findArchitecture: ObservedArchitecturePort['findArchitecture'];
   readArchitectureWorkScope: ArchitectureWorkScopePort['readArchitectureWorkScope'];
+  readArchitectureChangeScope: ArchitectureChangeScopePort['readArchitectureChangeScope'];
   // Slice 8A §2: the two observed-domain comparisons and the impact read.
   compareArchitecture: ObservedArchitecturePort['compareArchitecture'];
   compareFormalObserved: ObservedArchitecturePort['compareFormalObserved'];
@@ -429,7 +431,7 @@ export type CoreRoutePlatform = {
   goals: GoalTaskPort & DispatchBasisReadPort & GoalConfirmPort
     & { readGoalCopyDraft: GoalCopyPort['readDraft']; confirmGoalCopy: GoalCopyPort['confirm'] };
   plans: PlanTaskPort;
-  architecture: ArchitectureCatalogPort & ObservedArchitecturePort & ArchitectureWorkScopePort;
+  architecture: ArchitectureCatalogPort & ObservedArchitecturePort & ArchitectureWorkScopePort & ArchitectureChangeScopePort;
   workspace: WorkspaceToolsPort;
   sessions: Pick<SessionDirectoryPort, 'findSessions' | 'readSession' | 'getSessionOperation'>
     & Pick<SessionLifecyclePort, 'archiveSession' | 'reactivateSession' | 'linkSessionWork' | 'releaseSessionArchiveRequest'>;
@@ -621,6 +623,8 @@ export const CORE_ROUTE_SPECS: Record<
   // UI1 A3/A25/A5: the file/module search and the live-Run work set.
   'architecture/find': { kind: 'plain', binding: 'findArchitecture', owner: 'architecture.findArchitecture' },
   'architecture/work-scope': { kind: 'plain', binding: 'readArchitectureWorkScope', owner: 'architecture.readArchitectureWorkScope' },
+  // The current Goal's actually changed files, summed by module ("改动 n").
+  'architecture/change-scope': { kind: 'plain', binding: 'readArchitectureChangeScope', owner: 'architecture.readArchitectureChangeScope' },
   'plans/propose': { kind: 'graph_write', binding: 'proposePlan', owner: 'plans.proposePlan' },
   'plans/apply': { kind: 'graph_write', binding: 'applyPlanChange', owner: 'plans.applyPlanChange' },
   'plans/proposal': { kind: 'plain', binding: 'readPlanProposal', owner: 'plans.readPlanProposal' },
@@ -1073,6 +1077,9 @@ export function createPlatformCoreRouteBindings(
     readArchitectureWorkScope: platform.architecture.readArchitectureWorkScope === undefined
       ? unsupported('the platform does not publish architecture.readArchitectureWorkScope')
       : platform.architecture.readArchitectureWorkScope.bind(platform.architecture),
+    readArchitectureChangeScope: platform.architecture.readArchitectureChangeScope === undefined
+      ? unsupported('the platform does not publish architecture.readArchitectureChangeScope')
+      : platform.architecture.readArchitectureChangeScope.bind(platform.architecture),
     compareArchitecture: platform.architecture.compareArchitecture.bind(platform.architecture),
     compareFormalObserved: platform.architecture.compareFormalObserved.bind(platform.architecture),
     queryImpact: platform.architecture.queryImpact.bind(platform.architecture),
@@ -1665,6 +1672,7 @@ export async function dispatchCoreRoute(
       case 'architecture/observation-state': return bindings.observationState(ctx, plain.input as never);
       case 'architecture/find': return bindings.findArchitecture(ctx, plain.input as never);
       case 'architecture/work-scope': return bindings.readArchitectureWorkScope(ctx, plain.input as never);
+      case 'architecture/change-scope': return bindings.readArchitectureChangeScope(ctx, plain.input as never);
       case 'plans/propose': return bindings.proposePlan(ctx, graphWrite.request as never);
       case 'plans/apply': return bindings.applyPlanChange(ctx, graphWrite.request as never);
       case 'plans/proposal': return bindings.readPlanProposal(ctx, plain.input as never);

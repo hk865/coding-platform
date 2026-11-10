@@ -153,7 +153,7 @@ it('S8D-RUN-01 merges real units: edge dedupe, unresolved reason precedence and 
   expect(outcome.notes).toEqual([APPROXIMATE]);
   // The two a.cpp units and the two b.cpp units each yield the same edge; the
   // HDR pair is first unresolved with a null reason, then with the macro reason.
-  expect(outcome.edges).toEqual([{ from: 'a.cpp', to: 'shared.h' }, { from: 'b.cpp', to: 'shared.h' }]);
+  expect(outcome.edges).toEqual([{ from: 'a.cpp', to: 'shared.h', count: 1 }, { from: 'b.cpp', to: 'shared.h', count: 1 }]);
   expect(outcome.unresolved).toEqual([
     { from: 'a.cpp', specifier: '<system.h>', reason: null },
     { from: 'b.cpp', specifier: 'HDR', reason: 'include 后面跟宏' },
@@ -183,7 +183,7 @@ sys.exit(child.returncode)
   const outcome = await runAnalysis(input);
   expect(outcome.status).toBe('done');
   if (outcome.status !== 'done') return;
-  expect(outcome.edges).toEqual([{ from: 'a.cpp', to: 'a.h' }]);
+  expect(outcome.edges).toEqual([{ from: 'a.cpp', to: 'a.h', count: 1 }]);
   const rows = JSON.parse(await readFile(record, 'utf8')) as Record<string, unknown>[];
   expect(rows[0]).toEqual({ t: 'header', v: 1, paths: input.paths, config: input.config, resumeFrom: 0 });
   expect(rows.slice(1)).toEqual(input.files.map(file => ({ t: 'file', path: file.path, content: file.content })));
@@ -440,8 +440,8 @@ it('S8D-RUN-16 merges a header that fails in every unit by the main-file rule', 
     { path: 'z.cpp', status: 'parsed' },
   ]);
   expect(outcome.edges).toEqual([
-    { from: 'z.cpp', to: 'h.h' },
-    { from: 'a.cpp', to: 'h.h' },
+    { from: 'z.cpp', to: 'h.h', count: 1 },
+    { from: 'a.cpp', to: 'h.h', count: 1 },
   ]);
   expect(outcome.unresolved).toEqual([]);
 }, 60_000);
@@ -463,7 +463,7 @@ it('S8D-RUN-17 lets an edge suppress the same specifier unresolved from another 
   // Unit 0 has no HDR definition, so the script records the macro-unexpanded
   // unresolved row; unit 1 defines HDR and yields the edge. The edge retires
   // that (from, specifier) row across units.
-  expect(outcome.edges).toEqual([{ from: 'main.cpp', to: 'x.h' }]);
+  expect(outcome.edges).toEqual([{ from: 'main.cpp', to: 'x.h', count: 1 }]);
   expect(outcome.unresolved).toEqual([]);
   expect(filesOf(outcome)).toEqual([
     { path: 'main.cpp', status: 'parsed' },

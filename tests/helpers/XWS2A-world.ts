@@ -18,6 +18,7 @@ import type { WorkspaceScope } from '../../src/contracts/core/identity.js';
 import type { OperationRef } from '../../src/contracts/core/operations.js';
 import type { QueryJobRef } from '../../src/contracts/query-job.js';
 import type { RunRef, TaskTriple } from '../../src/contracts/dispatch.js';
+import type { PlanTaskAssignment } from '../../src/contracts/plan.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { NoteAnchorV1 } from '../../src/contracts/note.js';
 import type { WorkflowAdvanceInput, WorkflowAdvanceResult } from '../../src/business/workflow/contracts.js';
@@ -102,7 +103,7 @@ export type XWS2AWorld = {
   close(): Promise<void>;
 };
 
-const ADVISER_TOOLS = ['read', 'send_session_message', 'respond_session_message', 'read_session_inbox',
+export const XWS2A_ADVISER_TOOLS = ['read', 'send_session_message', 'respond_session_message', 'read_session_inbox',
   'read_session_message', 'read_session_message_body', 'ack_session_message', 'withdraw_session_message',
   'create_member', 'look_graph', 'find_graph', 'read_requests', 'record_note',
   'propose_architecture_revision'] as const;
@@ -179,11 +180,12 @@ export async function readRun(world: XWS2AWorld, run: RunRef): Promise<TaskExecu
  */
 export async function adoptSecondPlan(base: Pick<S6ARequestWorld, 'dispatch'>,
   second: S6ACardsWorkspace, goal: GoalRef,
-  label: string, role = PL_ADVISER_ROLE.templateId): Promise<{ taskId: string }> {
+  label: string, role = PL_ADVISER_ROLE.templateId,
+  assignments?: readonly PlanTaskAssignment[]): Promise<{ taskId: string }> {
   const taskId = `xws2a-${label}`;
   const ctx = second.humanContext();
   const draft = { ...ag2bPlanDraft([taskId]), planId: `xws2a-plan-${label}`, goalId: goal.goalId,
-    assignments: [{ taskId, role, instruction: `XWS2A ${label}` }] };
+    assignments: assignments === undefined ? [{ taskId, role, instruction: `XWS2A ${label}` }] : [...assignments] };
   const proposed = valueOf<{ ref: unknown; revision: number }>(await base.dispatch('plans/propose', ctx,
     graphWrite(second.scope, { goalRef: goal, basedOn: null, draft,
       reason: { text: `XWS2A plan ${label}`, sources: [] } }, `xws2a-plan-${label}-propose`)),
@@ -223,9 +225,20 @@ export async function openXWS2AWorld(options: {
   secondFiles?: Readonly<Record<string, string>>;
   /** Adds the join's one `record_note` call to the default coarse reply (XA-14's world). */
   coarseNote?: boolean;
+  /** The second workspace's `workspaces/open` options; defaults keep `false`/`false` (B1-15 passes writeAllowed). */
+  secondOpenOptions?: { writeAllowed?: boolean; commandsAllowed?: boolean };
+  /** Replaces the opening adviser binding's tool grant (`XWS2A_ADVISER_TOOLS` by default); B1-15 adds `edit`. */
+  adviserTools?: readonly string[];
+  /** The opening adviser binding's write scope (default `[]`); B1-15 passes `['.']`. */
+  adviserWriteScope?: readonly string[];
 }): Promise<XWS2AWorld> {
+  const adviser = adviserWorkOf(options.adviserTools ?? [...XWS2A_ADVISER_TOOLS], true);
+  if (options.adviserWriteScope !== undefined) {
+    adviser.binding = { ...adviser.binding,
+      grant: { ...adviser.binding.grant, writeScope: [...options.adviserWriteScope] } };
+  }
   const base = await openS7D2RoleLineWorld({ backend: options.backend,
-    extraBindings: [adviserWorkOf([...ADVISER_TOOLS], true)],
+    extraBindings: [adviser],
     ...(options.extraHostOptions === undefined ? {} : { extraHostOptions: options.extraHostOptions }) });
   let second: S7D2SecondWorkspace | null = null;
   try {
@@ -238,7 +251,7 @@ export async function openXWS2AWorld(options: {
     await base.world.scripted.script(base.lines.adviser, [coarseProposal(await xws2aCurrentPin(base),
       options.coarseNote === true),
       { kind: 'text', text: 'XWS2A: the coarse split is proposed' }]);
-    second = await addS7D2SecondWorkspace(base.world, 'xws2a-second');
+    second = await addS7D2SecondWorkspace(base.world, 'xws2a-second', options.secondOpenOptions);
     const root = await rootOf(base, second.scope);
     for (const [path, text] of Object.entries(options.secondFiles ?? {})) {
       const target = join(root, path);
