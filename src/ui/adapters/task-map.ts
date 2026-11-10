@@ -167,7 +167,7 @@ function automationStopOf(row: Record<string, unknown>): string {
   const verdict = asRecord(asRecord(asRecord(row.failure).automation).verdict);
   return asText(verdict.kind) === 'stopped' ? asText(verdict.reason) : '';
 }
-function taskState(
+export function taskState(
   phase: string, intent: unknown, disposition: unknown, cause: string, stopReason: string,
   /** The row's `eligibility.eligible`: claimable is the platform's verdict
    * (E3I:142), which never waits on dependencies (UIW:96); a ready Task under a
@@ -209,7 +209,7 @@ const countOf = (n: unknown, cap: unknown): string =>
 
 /** A stop reason's word. `not_reworkable` is worded by its cause; the cap
  * counts the requeues, or the round chain for a reverify (E3I:228). */
-function stopWordOf(row: Record<string, unknown>, stop: string): string {
+export function stopWordOf(row: Record<string, unknown>, stop: string): string {
   const failure = asRecord(row.failure);
   const automation = asRecord(failure.automation);
   const detail = asRecord(asRecord(automation.verdict).detail);

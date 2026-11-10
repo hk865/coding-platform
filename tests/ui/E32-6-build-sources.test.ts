@@ -6,9 +6,10 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 /**
- * E32-6 (ruling items 1 and 9, row E32-6): the seven boards without a working
- * copy are still byte-identical to the frozen reference; ArchOverview, Main and
- * TaskMap are built from `src/ui/boards/`, and `kit.css` comes from its working copy.
+ * E32-6 (ruling items 1 and 9, row E32-6): the five boards without a working
+ * copy are still byte-identical to the frozen reference; ArchOverview, Decide,
+ * Goals, Main and TaskMap are built from `src/ui/boards/`, and `kit.css` comes
+ * from its working copy.
  */
 const root = fileURLToPath(new URL('../..', import.meta.url));
 const frozen = `${root}docs/ui-reference/workbench-2026-10`;
@@ -16,9 +17,9 @@ const working = `${root}src/ui/boards`;
 // Its own output directory: another build test never writes into it.
 const built = mkdtempSync(join(tmpdir(), 'e32-6-workbench-'));
 const FROZEN_ONLY = [
-  'Chain', 'Decide', 'Done', 'Member', 'Phone', 'Plan',
+  'Chain', 'Done', 'Member', 'Phone', 'Plan',
 ] as const;
-const WORKING = ['ArchOverview', 'Goals', 'Main', 'TaskMap'] as const;
+const WORKING = ['ArchOverview', 'Decide', 'Goals', 'Main', 'TaskMap'] as const;
 
 beforeAll(() => {
   execFileSync(process.execPath, ['scripts/build-ui.mjs', built], { cwd: root, stdio: 'pipe' });

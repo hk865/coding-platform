@@ -7,14 +7,18 @@ import {
 import { asRecord, asText } from './values.js';
 import { qualifyProjectPath } from '../contracts/workspace-path.js';
 import { createAutoRefresh, type RefreshRead, type RefreshSnapshot, type RefreshSources } from './refresh.js';
-import { adaptNav, goalHref, type NavData, type NavLineDetail } from './adapters/nav.js';
-import { adaptGoals, goalOrderOf, type GoalsData } from './adapters/goals.js';
+import { adaptNav, completionRevisionOf, goalHref, type NavData, type NavLineDetail } from './adapters/nav.js';
+import { adaptGoals, conflictSelectionOf, goalOrderOf, type GoalsData } from './adapters/goals.js';
+import {
+  adaptDecide, budgetTokensOf, draftOf, pinsFor, taskTripleOf, type DecideCard, type DecideData, type DecideRow, type DecideStepKey,
+} from './adapters/decide.js';
 import {
   adaptArchOverview, type ArchCatalogRead, type ArchNoteRead, type ArchObservedRead, type ArchOverviewData,
   type ArchOverviewSource,
 } from './adapters/arch-overview.js';
 import type { ArchitectureObservationStateV1 } from '../contracts/architecture-observation.js';
 import type { NoteAnchorV1 } from '../contracts/note.js';
+import type { DecisionCardV1, DecisionQueueReadV1 } from './adapters/decide.js';
 import { guardNotConnected, notConnectedAttrs } from './not-connected.js';
 import type { RequestReferenceInputV1 } from '../contracts/query-job.js';
 import {
@@ -53,6 +57,12 @@ export type TaskMapReadDemand = {
   executions?: boolean;
   /** A selected multi-Session line reads its chain (`lines/read`). */
   lineKey?: TaskMapSessionRef | null;
+  /** Decide's 已处理 tab: read `history` + `answered_pending_application`. */
+  decideDone?: boolean;
+  /** Decide's goal filter: only this Goal's queue; `null` withdraws it. */
+  decideGoal?: string | null;
+  /** Decide's on-demand answer body: read this card's `materials/open` (one click). */
+  decideAnswer?: string | null;
 };
 /** A complete `SessionRef`: exactly projectId + sessionId (no workspaceId). */
 export type TaskMapSessionRef = { projectId: string; sessionId: string };
@@ -100,6 +110,22 @@ export type BoardActions = {
   askSecretary: (text: string,
     reference: RequestReferenceInputV1 | readonly RequestReferenceInputV1[] | null,
   ) => Promise<{ input: string; answer: string | null } | null>;
+  /** D18/D30: one `decisions/answer` with the card's own source and pins. */
+  answerCard: (cardKey: string, optionId: string) => Promise<void>;
+  /** D22/D24/D34/D35: `tasks/requeue`, afterRun and pins from the card itself. */
+  requeueCard: (cardKey: string, input: { reason: string; budget: string | null }) => Promise<void>;
+  /** D26/D39: `verification/reverify` with the Task's head round and its one pin. */
+  reverifyCard: (cardKey: string, note: string) => Promise<void>;
+  /** D25/D40: `executions/resolve-unknown` with the card's Run. */
+  attestCard: (cardKey: string, reason: string) => Promise<void>;
+  /** D20/D23/D27: `plans/propose` + `plans/apply`, changing one Task's disposition. */
+  changeDisposition: (cardKey: string, disposition: 'active' | 'deferred' | 'cancelled') => Promise<void>;
+  /** D21/D36/D37: `plans/propose` + `plans/apply`, adding a required repair Task. */
+  addRepairTask: (cardKey: string, input: { name: string; checkIds: string[] }) => Promise<void>;
+  /** D28: `decisions/notices/seen` with the row's own page token. */
+  markNoticeSeen: (itemKey: string) => Promise<void>;
+  /** D31/D43/D44: the card's question; returns the user's text and this round's answer. */
+  askCard: (cardKey: string, text: string) => Promise<{ input: string; answer: string | null } | null>;
 };
 
 /**
@@ -124,7 +150,7 @@ export async function bootBoardPage(): Promise<void> {
   /* A1/A24: the frozen template keeps `Main.dc.html`; the ArchOverview copy
      carries the Goal through the one `goalHref` encoding. */
   const source = await fetchPageText(location.href);
-  const board = parseBoard(document.title, boardName === 'ArchOverview'
+  const board = parseBoard(document.title, boardName === 'ArchOverview' || boardName === 'Decide'
     ? source.split('href="Main.dc.html"').join('href="' + goalHref('Main.dc.html', goalId) + '"')
     : source);
   if (board.helmetHtml.length > 0) hoistHelmet(board.helmetHtml);
@@ -166,10 +192,55 @@ export async function bootBoardPage(): Promise<void> {
    * reread must not become the pins of a reorder/answer write. */
   let latestGoals: GoalsData | null = null;
   let latestGoalsScope: CoreScope | null = null;
+  /** The Decide data and scope the page last published; every card action takes
+   * its source/pins/task/run from these, never from a route shape the page sends. */
+  let latestDecide: DecideData | null = null;
+  let latestDecideScope: CoreScope | null = null;
   let controlSeq = 0;
   let reorderSeq = 0;
   let answerSeq = 0;
   let askSeq = 0;
+  const decideRowOf = (key: string): DecideRow | null => {
+    const data = latestDecide;
+    if (data === null) return null;
+    return data.sections.flatMap((section) => section.rows).concat(data.history)
+      .find((row) => row.key === key) ?? null;
+  };
+  const decideCardOf = (key: string): DecisionCardV1 | null => decideRowOf(key)?.card ?? null;
+  /** §2.7 D20/D21: one propose, then one apply only when the proposal is
+   * committed and has no issues; both pin the displayed Goal revision. */
+  async function writePlanChange(
+    scope: CoreScope, goalRef: { aggregateType: 'Goal'; projectId: string; goalId: string },
+    goalRevision: number, plan: unknown,
+    change: {
+      planId: string; taskId?: string; disposition?: 'active' | 'deferred' | 'cancelled';
+      repair?: { taskId: string; name: string; role: string; instruction: string; failureTaskId: string };
+      text: string; reason: { text: string; sources: unknown[]; affectedTaskIds?: string[] };
+    },
+  ): Promise<void> {
+    const expected = [{ ref: goalRef, revision: goalRevision }];
+    try {
+      const propose = await client.write('plans/propose', scope, {
+        input: { goalRef, basedOn: asRecord(asRecord(plan).plan ?? plan).ref ?? null,
+          draft: draftOf(plan, change), reason: change.reason },
+        meta: { requestId: crypto.randomUUID(), expected },
+      });
+      const proposal = committedRouteValue<unknown>(propose, 'plans/propose');
+      const issues = asRecord(proposal).issues;
+      if (Array.isArray(issues) && issues.length > 0) {
+        throw new RouteReadError('plans/propose', 'invalid', JSON.stringify(issues));
+      }
+      const apply = await client.write('plans/apply', scope, {
+        input: { proposalRef: asRecord(proposal).ref,
+          expectedProposalRevision: asRecord(proposal).revision, decisionRefs: [] },
+        meta: { requestId: crypto.randomUUID(), expected },
+      });
+      committedRouteValue(apply, 'plans/apply');
+    } catch (error) {
+      throw new Error(writeTextOf(error));
+    }
+    await refresh.reread();
+  }
   const actions: BoardActions = {
     readMore(next: BoardReadDemand): void {
       /* Explicit fields replace the old demand, including `false`/`null`, so a
@@ -361,6 +432,248 @@ export async function bootBoardPage(): Promise<void> {
       }
       return { input: text, answer };
     },
+    async answerCard(cardKey: string, optionId: string): Promise<void> {
+      const card = decideCardOf(cardKey);
+      const scope = latestDecideScope;
+      if (card === null || scope === null) throw new Error(writeTextOf(new Error('the shown card is gone')));
+      const pins = Array.isArray(card.source.pins) ? card.source.pins : [];
+      let selection: unknown;
+      if (card.source.kind === 'goal_conflict') {
+        const ids = pinsFor(card, 'Goal').map((pin) => asText(asRecord(pin.ref).goalId)).filter((id) => id !== '');
+        const goals = (latestDecide?.nav.goals ?? []).map((goal) => ({
+          ref: { aggregateType: 'Goal' as const, projectId: scope.projectId, goalId: goal.goalId }, order: goal.order,
+        }));
+        ids.sort((a, b) => (goals.find((goal) => goal.ref.goalId === a)?.order ?? 0)
+          - (goals.find((goal) => goal.ref.goalId === b)?.order ?? 0));
+        if (ids.length < 2) throw new Error(writeTextOf(new Error('the conflict Goals are not in the list')));
+        selection = conflictSelectionOf(optionId,
+          { ref: { aggregateType: 'Goal' as const, projectId: scope.projectId, goalId: ids[0]! } },
+          { ref: { aggregateType: 'Goal' as const, projectId: scope.projectId, goalId: ids[1]! } }, goals);
+      } else {
+        selection = { kind: 'option' as const, optionId };
+      }
+      try {
+        const reply = await client.write('decisions/answer', scope, {
+          input: { source: card.source, selection, text: '', annotations: [] },
+          meta: { requestId: crypto.randomUUID(), expected: pins },
+        });
+        const receipt = reply.status === 'ready' ? asRecord(asRecord(reply.value).answer) : null;
+        if (reply.status !== 'committed' && receipt?.status !== 'committed') {
+          throw new RouteReadError('decisions/answer', reply.code || reply.status || 'no status', reply.reason ?? '');
+        }
+      } catch (error) {
+        throw new Error(writeTextOf(error));
+      }
+      await refresh.reread();
+    },
+    async requeueCard(cardKey: string, input: { reason: string; budget: string | null }): Promise<void> {
+      const card = decideCardOf(cardKey);
+      const scope = latestDecideScope;
+      /* D6: the Goal-level interruption card's 继续 starts the Goal's driver
+         (`workflow/driver-start`, decision 97-9), not `tasks/requeue`. */
+      const interrupted = card !== null && card.source.kind === 'goal_cause'
+        && asText(asRecord(card.source).key).includes('interrupted_pending_resume');
+      if (interrupted && card !== null && scope !== null) {
+        const goalId = asText(asRecord(pinsFor(card, 'Goal')[0]?.ref).goalId);
+        if (goalId === '') throw new Error(writeTextOf(new Error('this interruption names no Goal')));
+        try {
+          const reply = await client.post('workflow/driver-start', scope, {
+            advance: { schemaVersion: 1, goalRef: { aggregateType: 'Goal' as const, projectId: scope.projectId, goalId },
+              flowId: 'decide-continue:' + goalId, sessionHint: null, kind: 'select_work' },
+            queryProfileIds: [],
+          });
+          readyRouteValue(reply, 'workflow/driver-start');
+        } catch (error) {
+          throw new Error(writeTextOf(error));
+        }
+        await refresh.reread();
+        return;
+      }
+      const triple = card === null ? null : taskTripleOf(card);
+      if (card === null || scope === null || triple === null || card.runRef === null) {
+        throw new Error(writeTextOf(new Error('this card has no Task and Run to requeue')));
+      }
+      const expected = [...pinsFor(card, 'Goal'), ...pinsFor(card, 'Run')];
+      const budget = input.budget === null ? null : budgetTokensOf(input.budget);
+      if (input.budget !== null && budget === null) {
+        throw new Error(writeTextOf(new RouteReadError('tasks/requeue', 'invalid', 'bad budget')));
+      }
+      try {
+        const reply = await client.write('tasks/requeue', scope, {
+          input: { taskRef: triple, afterRunRef: card.runRef, reason: input.reason,
+            ...(budget === null ? {} : { budget }) },
+          meta: { requestId: crypto.randomUUID(), expected },
+        });
+        if (reply.status === 'needs_decision' || asText(asRecord(reply.value).status) === 'needs_decision') {
+          await refresh.reread();
+          return;
+        }
+        const value = committedRouteValue<unknown>(reply, 'tasks/requeue');
+        if (asText(asRecord(value).kind) === 'refused') {
+          throw new RouteReadError('tasks/requeue', 'refused', asText(asRecord(value).refusal));
+        }
+      } catch (error) {
+        throw new Error(writeTextOf(error));
+      }
+      await refresh.reread();
+    },
+    async reverifyCard(cardKey: string, note: string): Promise<void> {
+      const row = decideRowOf(cardKey);
+      const card = row?.card ?? null;
+      const view = row?.view ?? null;
+      const scope = latestDecideScope;
+      if (card === null || view === null || scope === null || view.roundRef === null) {
+        throw new Error(writeTextOf(new Error('this card has no head round to reverify')));
+      }
+      try {
+        const reply = await client.write('verification/reverify', scope, {
+          input: { predecessorRoundRef: view.roundRef, note },
+          meta: { requestId: crypto.randomUUID(), expected: [{ ref: view.roundRef, revision: view.roundRevision ?? 0 }] },
+        });
+        const value = committedRouteValue<unknown>(reply, 'verification/reverify');
+        if (asText(asRecord(value).kind) === 'refused') {
+          throw new RouteReadError('verification/reverify', 'refused', asText(asRecord(value).refusal));
+        }
+      } catch (error) {
+        throw new Error(writeTextOf(error));
+      }
+      await refresh.reread();
+    },
+    async attestCard(cardKey: string, reason: string): Promise<void> {
+      const card = decideCardOf(cardKey);
+      const scope = latestDecideScope;
+      if (card === null || scope === null || card.runRef === null) {
+        throw new Error(writeTextOf(new Error('this card has no Run to resolve')));
+      }
+      try {
+        const reply = await client.write('executions/resolve-unknown', scope, {
+          input: { runRef: card.runRef, reason },
+          meta: { requestId: crypto.randomUUID(), expected: pinsFor(card, 'Run') },
+        });
+        committedRouteValue(reply, 'executions/resolve-unknown');
+      } catch (error) {
+        throw new Error(writeTextOf(error));
+      }
+      await refresh.reread();
+    },
+    async changeDisposition(cardKey: string, disposition: 'active' | 'deferred' | 'cancelled'): Promise<void> {
+      const card = decideCardOf(cardKey);
+      const scope = latestDecideScope;
+      const triple = card === null ? null : taskTripleOf(card);
+      if (card === null || scope === null || triple === null) {
+        throw new Error(writeTextOf(new Error('this card has no Task to change')));
+      }
+      const goalId = triple.goalId;
+      const plan = latestDecide?.plans[goalId];
+      const goal = latestDecide?.nav.goals.find((entry) => entry.goalId === goalId) ?? null;
+      if (plan === undefined || goal === null) {
+        throw new Error(writeTextOf(new Error('the Goal plan is not read')));
+      }
+      const goalRef = { aggregateType: 'Goal' as const, projectId: scope.projectId, goalId };
+      const text = disposition === 'active' ? '恢复任务' : disposition === 'deferred' ? '延后任务' : '取消任务';
+      await writePlanChange(scope, goalRef, goal.revision, plan, {
+        planId: crypto.randomUUID(), taskId: triple.taskId, disposition, text,
+        reason: { text, sources: [], affectedTaskIds: [triple.taskId] },
+      });
+    },
+    async addRepairTask(cardKey: string, input: { name: string; checkIds: string[] }): Promise<void> {
+      const row = decideRowOf(cardKey);
+      const view = row?.view ?? null;
+      const card = row?.card ?? null;
+      const scope = latestDecideScope;
+      const triple = card === null ? null : taskTripleOf(card);
+      if (card === null || view === null || scope === null || triple === null) {
+        throw new Error(writeTextOf(new Error('this card has no repair task to add')));
+      }
+      const goalId = triple.goalId;
+      const plan = latestDecide?.plans[goalId];
+      const goal = latestDecide?.nav.goals.find((entry) => entry.goalId === goalId) ?? null;
+      if (plan === undefined || goal === null || view.fixRole === null || view.ownerTaskId === '') {
+        throw new Error(writeTextOf(new Error('no public assignment role for the failed task')));
+      }
+      const taskId = 'fix-' + crypto.randomUUID();
+      const instruction = input.name + '：让失败的检查 ' + input.checkIds.join('、') + ' 通过';
+      const sources = input.checkIds
+        .map((checkId) => view.checks.find((check) => check.checkId === checkId)?.reportRef ?? null)
+        .filter((ref) => ref !== null);
+      const goalRef = { aggregateType: 'Goal' as const, projectId: scope.projectId, goalId };
+      await writePlanChange(scope, goalRef, goal.revision, plan, {
+        planId: crypto.randomUUID(),
+        repair: { taskId, name: input.name, role: view.fixRole, instruction, failureTaskId: view.ownerTaskId },
+        text: instruction, reason: { text: instruction, sources },
+      });
+    },
+    async markNoticeSeen(itemKey: string): Promise<void> {
+      const row = decideRowOf(itemKey);
+      const data = latestDecide;
+      const scope = latestDecideScope;
+      if (row === null || row.noticeWindow === null || data === null || scope === null
+        || row.noticeWindow.displayToken === null) {
+        throw new Error(writeTextOf(new Error('this notice has no page token to mark')));
+      }
+      const workspace = { aggregateType: 'Workspace' as const, projectId: scope.projectId, workspaceId: scope.workspaceId };
+      try {
+        const reply = await client.write('decisions/notices/seen', scope, {
+          input: { workspace: scope, displayToken: row.noticeWindow.displayToken,
+            seenThrough: row.noticeWindow.seenThrough },
+          meta: { requestId: crypto.randomUUID(), expected: [{ ref: workspace, revision: data.workspaceRevision }] },
+        });
+        committedRouteValue(reply, 'decisions/notices/seen');
+      } catch (error) {
+        throw new Error(writeTextOf(error));
+      }
+      await refresh.reread();
+    },
+    async askCard(cardKey: string, text: string): Promise<{ input: string; answer: string | null } | null> {
+      const card = decideCardOf(cardKey);
+      const scope = latestDecideScope;
+      if (card === null || scope === null) throw new Error(writeTextOf(new Error('the shown card is gone')));
+      const commandId = crypto.randomUUID();
+      let requestRoot: unknown;
+      let target: unknown;
+      try {
+        if (card.requestRef !== null) {
+          const reply = await client.post('requests/ask', scope, {
+            commandId, round: card.requestRef, cardRefs: card.source.pins, regenerate: false, text,
+          });
+          if (reply.status !== 'queued') {
+            throw new RouteReadError('requests/ask', reply.code || reply.status || 'no status', reply.reason ?? '');
+          }
+          requestRoot = card.requestRef;
+          target = asRecord(reply).followupRound;
+        } else {
+          const goalId = card.subject.kind === 'goal' ? card.subject.goalRef.goalId
+            : latestDecide?.nav.selectedGoalId ?? null;
+          const reply = await client.post('requests/submit', scope, {
+            commandId, goalId, text, continues: null, recipient: null, references: [],
+          });
+          if (reply.status !== 'queued') {
+            throw new RouteReadError('requests/submit', reply.code || reply.status || 'no status', reply.reason ?? '');
+          }
+          requestRoot = asRecord(reply).requestRoot;
+          target = asRecord(reply).round;
+        }
+      } catch (error) {
+        throw new Error(writeTextOf(error));
+      }
+      let answer: string | null = null;
+      try {
+        const read = readyRouteValue<unknown>(
+          await client.post('requests/read', scope, { requestRoot }), 'requests/read',
+        );
+        const rounds = asRecord(read).rounds;
+        const targetId = asText(asRecord(target).queryJobId);
+        if (Array.isArray(rounds) && targetId !== '') {
+          const hit = rounds.map((entry) => asRecord(entry))
+            .find((entry) => asText(asRecord(entry.ref).queryJobId) === targetId);
+          if (hit !== undefined) answer = asText(hit.answer) || null;
+        }
+      } catch {
+        /* The send stands; a failed read only means this round has no answer yet. */
+        answer = null;
+      }
+      return { input: text, answer };
+    },
   };
   const sources: RefreshSources<unknown> = {
     read: async () => await reader(client, goalId, demand),
@@ -373,6 +686,10 @@ export async function bootBoardPage(): Promise<void> {
         if (boardName === 'Goals') {
           latestGoals = snapshot.data as GoalsData | null;
           latestGoalsScope = latestGoals?.scope ?? null;
+        }
+        if (boardName === 'Decide') {
+          latestDecide = snapshot.data as DecideData | null;
+          latestDecideScope = latestDecide?.scope ?? null;
         }
       }
       view.updateProps(pageProps(board.defaults, snapshot, restart, actions));
@@ -398,6 +715,7 @@ const BOARD_READERS: Record<string, BoardReader<unknown>> = {
   Main: readMain,
   Goals: readGoals,
   ArchOverview: readArchOverview as BoardReader<unknown>,
+  Decide: readDecide as BoardReader<unknown>,
 };
 
 /** The board name a served page is for: `/workbench/TaskMap.dc.html` -> `TaskMap`. */
@@ -500,9 +818,9 @@ type QueueCountsRead = { counts?: unknown };
  */
 export async function readNav(
   client: ReturnType<typeof createHostClient>, goalId: string | null,
-  demand: BoardReadDemand = {},
+  demand: BoardReadDemand = {}, preloadedBoot?: BootstrapReply, readPhase = true,
 ): Promise<RefreshRead<NavData>> {
-  const boot = await client.bootstrap();
+  const boot = preloadedBoot ?? await client.bootstrap();
   const cursor = boot.changesHead ?? null;
   const found = await taskMapScope(client, boot.workspaces, goalId);
   if (found === null) return { data: null, cursor };
@@ -570,7 +888,7 @@ export async function readNav(
   /* §2.8: the GoalPhase pin is read with the display. `not_found` is a Goal
    * without an adopted Plan (0); any other failure is a read error, not 0. */
   let phase: unknown;
-  if (selected !== null) {
+  if (selected !== null && readPhase) {
     try {
       phase = readyRouteValue<unknown>(
         await client.post('tasks/query', scope, { goalRef: refOf(selected) }), 'tasks/query',
@@ -582,6 +900,98 @@ export async function readNav(
   }
   return {
     data: adaptNav({ goals, lines, display, queue, archived, detail, phase }, selected, scope),
+    cursor,
+  };
+}
+
+/**
+ * E3-DECIDE §2.2: the Decide read. The navigation segment is `readNav`'s one
+ * read (so the rail keeps the workspace's own counts, Y1); the queue body
+ * follows `decideDone`/`decideGoal`. Every queue page keeps its own notice
+ * token, and `tasks/query` is read only for Goals that actually carry a Task
+ * card. `materials/open` is the one on-demand read (§2.2 step 9).
+ */
+export async function readDecide(
+  client: ReturnType<typeof createHostClient>, goalId: string | null,
+  demand: BoardReadDemand = {},
+): Promise<RefreshRead<DecideData>> {
+  const boot = await client.bootstrap();
+  const cursor = boot.changesHead ?? null;
+  const found = await taskMapScope(client, boot.workspaces, goalId);
+  if (found === null) return { data: null, cursor };
+  const scope = found.scope;
+  /* D8: the Workspace pin is the record's current revision, not the Host
+     configuration number `bootstrap.workspaces[]` was opened with. */
+  const registration = readyRouteValue<{ workspace: { ref: unknown; revision: number } }>(
+    await client.post('workspaces/registration', scope, scope), 'workspaces/registration',
+  );
+  /* §2.2 step 8: the GoalPhase pin is taken only from a card-bearing Goal's
+     own `tasks/query`; the navigation read does not make a second read for an
+     empty rail. */
+  const navRead = await readNav(client, goalId, demand, boot, false);
+  if (navRead.data === null) return { data: null, cursor };
+  const sections: Array<'waiting_answer' | 'notices' | 'answered_pending_application' | 'history'> =
+    demand.decideDone === true ? ['answered_pending_application', 'history'] : ['waiting_answer', 'notices'];
+  const pages: DecisionQueueReadV1[] = [];
+  let after: string | null = null;
+  for (let guard = 0; guard < 1000; guard += 1) {
+    const input: Record<string, unknown> = {
+      workspace: scope, sections,
+      page: { limit: 100, ...(after === null ? {} : { cursor: after }) },
+    };
+    if (demand.decideGoal !== null && demand.decideGoal !== undefined) input.goalRef = { aggregateType: 'Goal', projectId: scope.projectId, goalId: demand.decideGoal };
+    const page = readyRouteValue<DecisionQueueReadV1>(
+      await client.post('decisions/queue', scope, input), 'decisions/queue');
+    pages.push(page);
+    after = page.nextCursor ?? null;
+    if (after === null) break;
+  }
+  const tasks: Record<string, unknown | null> = {};
+  const goalIds = new Set<string>();
+  for (const page of pages) {
+    for (const card of [...(page.waitingAnswer ?? []), ...(page.answeredPendingApplication ?? []), ...(page.history ?? [])]) {
+      const triple = taskTripleOf(card);
+      if (triple !== null) goalIds.add(triple.goalId);
+    }
+  }
+  for (const id of goalIds) {
+    try {
+      tasks[id] = readyRouteValue<unknown>(await client.post('tasks/query', scope,
+        { goalRef: { aggregateType: 'Goal', projectId: scope.projectId, goalId: id } }), 'tasks/query');
+    } catch (error) {
+      if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
+      tasks[id] = null;
+    }
+  }
+  /* §2.2 step 8: a card-bearing selected Goal hands its own `tasks/query`
+     completion revision to the navigation segment; no separate read. */
+  if (goalId !== null && tasks[goalId] !== undefined) {
+    navRead.data.phaseRevision = completionRevisionOf(tasks[goalId]);
+  }
+  let answerBody: string | null = null;
+  let answerFor: string | null = null;
+  if (demand.decideAnswer !== null && demand.decideAnswer !== undefined) {
+    const card = pages.flatMap((page) => [...(page.answeredPendingApplication ?? []), ...(page.history ?? [])])
+      .find((entry) => entry.cardKey === demand.decideAnswer) ?? null;
+    const bodyRef = card?.answer?.bodyRef ?? null;
+    if (bodyRef !== null) {
+      const material = readyRouteValue<{ body?: unknown }>(await client.post('materials/open', scope,
+        { ref: bodyRef, usage: 'historical_explanation' }), 'materials/open');
+      answerBody = asText(material.body);
+      answerFor = demand.decideAnswer;
+    }
+  }
+  return {
+    data: adaptDecide({
+      nav: navRead.data, scope, workspaceRevision: registration.workspace.revision,
+      queue: pages, tasks, selectedGoalId: goalId,
+      answerBody, answerFor,
+    }, {
+      tab: demand.decideDone === true ? 'done' : 'open',
+      goalFilter: demand.decideGoal ?? null,
+      selectedCardKey: demand.decideAnswer ?? null,
+      factsOpen: false, step: null, form: {}, lineKey: demand.lineKey ?? null,
+    }),
     cursor,
   };
 }

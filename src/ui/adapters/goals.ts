@@ -14,7 +14,7 @@
 import { asRecord, asText } from '../values.js';
 import { goalDisplayState, type GoalDisplayPhaseCode } from './task-map.js';
 import { completionRevisionOf } from './nav.js';
-import type { GoalAutonomyV1 } from '../../contracts/goal-decisions.js';
+import type { DecisionSelectionV1, GoalAutonomyV1 } from '../../contracts/goal-decisions.js';
 import type { GoalRef } from '../../contracts/ledger.js';
 
 /** The four expanded-row facts (`Goals.dc.html:128-136`). */
@@ -273,6 +273,28 @@ function labelOfEntry(entry: unknown, aId: string, bId: string): string {
   const first = asText(asRecord(row.goalRef).goalId);
   const second = asText(asRecord(row.otherGoalRef).goalId);
   return first === aId && second === bId || first === bId && second === aId ? asText(row.text) : '';
+}
+
+/** §2.6 D18/D30: the goal-conflict answer's structured selection. `earlier`/
+ * `later` are the card's two Goal pins in `goals/list.order`; `order` moves
+ * `later` in front of `earlier` and keeps every other Goal in place. One
+ * implementation serves the Goals conflict card and the Decide card. */
+export function conflictSelectionOf(
+  optionId: string,
+  earlier: { ref: GoalRef },
+  later: { ref: GoalRef },
+  goals: ReadonlyArray<{ ref: GoalRef }>,
+): DecisionSelectionV1 {
+  if (optionId === 'wait') return { kind: 'conflict_wait', earlier: earlier.ref, later: later.ref };
+  if (optionId === 'parallel') return { kind: 'conflict_parallel', earlier: earlier.ref, later: later.ref };
+  const idOf = (goal: { ref: GoalRef }): string => asText(asRecord(goal.ref).goalId);
+  const earlierId = idOf(earlier);
+  const laterId = idOf(later);
+  const order = goals.map(idOf).filter((id) => id !== laterId);
+  const at = order.indexOf(earlierId);
+  order.splice(at < 0 ? 0 : at, 0, laterId);
+  const byId = new Map(goals.map((goal) => [idOf(goal), goal]));
+  return { kind: 'conflict_order', goalOrder: order.map((id) => byId.get(id)!.ref) };
 }
 
 /** The `goals/list.order` of a Goal id, or +∞ when the Goal is not listed. */

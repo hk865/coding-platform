@@ -20,8 +20,9 @@ describe('E3N-6 the shell for both boards', () => {
     worlds.push(opened.world);
     const { page, log } = await bootE3N(opened.world, name as 'Main' | 'TaskMap', { search: '?goal=ag2b-goal' });
     try {
-      /* 具名改坏: `src/ui/boot.ts:142` 的 `BOARD_READERS` 只注册 `TaskMap`、
-         Main 走样例；N50 的 Main `changes` 和 `pageFetches` 断言红。 */
+      /* 具名改坏: `src/ui/boot.ts:396-401` 的 `BOARD_READERS` 少了 `Main`（现在
+         注册 `TaskMap`、`Main`、`Goals`、`ArchOverview`、`Decide`），Main 走样例；
+         N50 的 Main `changes` 和 `pageFetches` 断言红。 */
       await expect.poll(() => log.changes, { timeout: 10_000, interval: 25 }).toBe(1);
       expect(page.pageFetches()).toBe(1);
       expect(page.root.textContent.length).toBeGreaterThan(0);

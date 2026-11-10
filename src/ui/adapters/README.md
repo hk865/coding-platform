@@ -8,16 +8,33 @@
 | --- | --- |
 | `goals.ts` | Goals 页（E3 Goals §2.1–§2.6）：`adaptGoals` 把 `goals/list`、逐行的 `goals/display`、`lines/list`、`goals/conflicts`、两个冲突目标的 `tasks/query` 和 `architecture/read` 转成 `GoalsData`。目标行按 `order` 升序，`ordinal` 为 null 不补数字，状态词只来自展示相位；冲突卡的 earlier/later 只用 `goals/list.order` 排，重叠文件只取 `cards[].objects`，`openedAt` 为 null 不补；`maps.arch` 只从目录模块和 `paths` 建树，`maps.task` 只画两个冲突目标；`sourceCursor` 原样带回。 |
 | `arch-overview.ts` | 架构页（E3-ARCH）：`adaptArchOverview` 把九条读（`architecture/read`、`observation-state`、`query`、`files/list`、`find`、`work-scope`、`tasks/query`、`lines/list`、`notes/list`）折成 `ArchOverviewData`：`ArchRepoModel` 是模块/接口分组/文件/目录/边的树（文件叶子和目录来自 `files/list`，文件→模块用 `pathOwnershipOf`，平手放两个 owner；任务只按 `plannedFiles` 着色），`architecture/query` 只提供模块之间的 `module_dependency` 边；`taskModel` 复用 `adaptTaskMap` 的同一 phase→状态映射，`rail` 从 `lines/list` 的 `responsibleNow`/`groups` 取负责，`notes` 按 anchor 放当次读到的注记；查找取第一页 6 条、多出用总数，`empty` 只报 `no_catalog`/`no_observation`。布局/几何不进这里。 |
+| `decide.ts` | Decide 页（E3-DECIDE §2.3）：`adaptDecide` 的输入是 `goals/list`、`goals/display`、`lines/list`/`lines/read`/`lines/archived`（共享导航读）、每页 `decisions/queue`、带 Task 卡的 `tasks/query` 和按需的 `materials/open`；输出 `DecideData`（三段、每行自己的 notice token、卡的四项失败事实与动作、冲突卡的三个选择、计划草稿的原始 Plan、答复正文）。`pinsFor` 只取 owner 认的 Goal/Run pin，`taskTripleOf` 认卡上的 Task pin，`draftOf` 裁下一版 Plan 草稿（新 `planId`、`planRevision + 1`、`goalId` 取 Plan 快照的 Goal 引用、去编译器字段），`budgetTokensOf` 解析预算文本。不碰 DOM、网络或 `src/app`。 |
 | `nav.ts` | 导航段（E3-NAV §2.11）：`adaptNav` 把 `goals/list` 的行、`lines/list` 的行、所选目标的 `goals/display`、`decisions/queue` 的计数和按需的 `lines/read`/`lines/archived` 转成 `props.data` 的导航字段（目标行、工作线行、收件箱、展示状态、归档行、选中线详情）。目标名字用 `ordinal` + `objective`，状态词只来自 `goals/display` 的 `phase`（`null` 不猜）；工作线的字只用 `LineRowV1.status` 的 own/attention，`unavailable` 的控制仍留守卫原因。`completionRevisionOf` 是 `tasks/query.completion` 的 `snapshot.revision` 正本（`not_recorded`、缺省、`not_found` 都是 0），导航段和 `goals.ts` 共用这一份。 |
 | `task-map.ts` | `adaptTaskMap` 把 `ReadResult<GoalDetail>`、`ReadResult<GoalDisplayRead>`、`ReadResult<TaskGraph>` 和每次通知的 `lines/list` / `graph/hover` 值转成 `TaskMapData`：Goal 的名字/展示状态/状态词（`goalDisplayState`），阶段按计划顺序，任务的状态词按 `effectivePhase`、`executionIntent` 和 `disposition`；DAG 的节点就是同一批任务行，边是 `plan.executionDag.dependsOn`，门是 `definition.taskKind === 'gate'` 的真实 Task（阶段可只写在 `scope.stageId`），未排定带同时检查无入边、无出边、非门、无验收义务四个条件，关键路径是最长未完成依赖串，没有目标门时不合成节点；`graph/hover` 的 `modules[]` 给 `moduleNames`（“模块”分组按模块 id 分、组标题用名字，页面上不出现 id）；悬停 `owners` 为空或摘要 `responsibility: none`、任务又没完成时，负责写“未分配”（可领取、待执行再接说明），已满足、已取消、已替代仍藏；`why` 留空（路由没有这段正文）。`tasks/query` 的 `not_found` 是 `planMissing` 和 `NO_PLAN_TEXT`。`adaptTaskMapCalendar` 把 `activity/calendar` 的窗口页转成日/小时卡：身份只用返回的 `localDate/localHour/startAt/endAt`，DST 日不补成 24 小时，覆盖不完整时汇总写明范围和“未记全”，不冒充完整 0；`taskMapStatesAt` 按半开时间段取历史状态；`adaptTaskMapTime` 把 `activity/track` 的多页横条、`lines/list` 的行和 `tasks/timeline` 转成轨道：一行一个 `LineRowV1.key`（含接续 Session），Run/检查/Query 按真实 Session、owner 和 `via` 归线，Query 按 `queryRunRef` 去重，检查保留真实 `ordinal`，只从横条自身的 result/pauses 生成标记，Host 重启保留 `approximate`。 |
 
 ## 可复用的能力
 
-- `adaptTaskMap` / `TaskMapData` / `TaskMapDag` / `TaskMapCalendarData` / `adaptTaskMapCalendar` / `TaskMapExtraReads` / `goalDisplayState` / `isFinishedGoalDisplayPhase` / `taskMapStatesAt` / `adaptTaskMapTime` / `TaskMapTimeData` / `localShortAt` / `NO_PLAN_TEXT` / `adaptTaskMapDecisionCards`：任务图（含 DAG 形状）的纯适配、“需要你决定 n 张卡”的计数、展示状态到画板状态词的一处映射、完成/取消的结束判断、历史状态段查找，测试可以直接传构造好的路由值。
+- `adaptTaskMap` / `TaskMapData` / `TaskMapDag` / `TaskMapCalendarData` / `adaptTaskMapCalendar` / `TaskMapExtraReads` / `goalDisplayState` / `isFinishedGoalDisplayPhase` / `taskMapStatesAt` / `adaptTaskMapTime` / `TaskMapTimeData` / `localShortAt` / `NO_PLAN_TEXT` / `adaptTaskMapDecisionCards`：任务图（含 DAG 形状）的纯适配、“需要你决定 n 张卡”的计数、展示状态到画板状态词的一处映射、完成/取消的结束判断、历史状态段查找，测试可以直接传构造好的路由值；`taskState`/`stopWordOf` 也从这里导出给 Decide 复用。
 - `adaptGoals` / `GoalsData` / `GoalsGoal` / `GoalsConflict` / `GoalsMaps` / `goalOrderOf`：Goals 页的纯转换；目标状态词复用 `goalDisplayState`，冲突先后复用 `goals/list` 的 `order`（`goalOrderOf` 是 boot 与适配器共用的那一个查表）。
 - `adaptArchOverview` / `ArchOverviewSource` / `ArchOverviewData` / `ArchRepoModel` / `ArchRepoNode` / `ArchRepoEdge` / `ArchOverviewUi` / `ArchTaskModelRow` / `ArchRail`：架构页的纯转换；复用 `pathOwnershipOf`、`goalHref`、`NOT_CONNECTED_TEXT` 和 `adaptTaskMap` 的任务状态映射，测试可直接传构造好的路由值。`goalHref` 由 `src/ui/boot.ts` 在解析工作副本前给 `Main.dc.html` 链接带上 `?goal=`。
+- `adaptDecide` / `DecideData` / `DecideCard` / `DecideRow` / `DecideAct` / `DecideSource.nav` / `pinsFor` / `taskTripleOf` / `draftOf` / `conflictSelectionOf`：Decide 页的纯转换；`DecideSource.nav` 是共享的 `NavData`（左栏计数取工作区自己的读，队列正文按目标筛选），`DecideAct` 是卡上一个动作的界面形状（`key`/`label`/`step`/`primary`/`cls`/`off`/`tip`）；冲突选择复用 `goals.ts` 的 `conflictSelectionOf`，状态词复用 `task-map.ts` 的 `taskState`/`stopWordOf`，时间复用 `localShortAt`。
 - `adaptNav` / `NavData` / `NavGoal` / `NavLine` / `goalHref` / `completionRevisionOf`：导航段的纯转换和链接形状；目标状态词复用 `goalDisplayState`，结束判断复用 `isFinishedGoalDisplayPhase`，GoalPhase 版本复用 `completionRevisionOf`。
 - 值守卫 `asRecord` / `asText` 在 `src/ui/values.ts`，与 `src/ui/boot.ts` 共用一份。
+
+## 写口
+
+页面只调 `boot.ts` 的动作面；这些动作从最后发布的 `latestDecide` 取卡自己的事实，路由和 `meta.expected` 都在 `boot.ts`，适配器不拼请求。
+
+| 动作 | 路由 |
+| --- | --- |
+| `answerCard` | `decisions/answer` |
+| `requeueCard` | `tasks/requeue`；Goal 级 `interrupted_pending_resume` 卡的“继续”走 `workflow/driver-start`（D6） |
+| `reverifyCard` | `verification/reverify` |
+| `attestCard` | `executions/resolve-unknown` |
+| `changeDisposition` | `plans/propose`，随后 `plans/apply` |
+| `addRepairTask` | `plans/propose`，随后 `plans/apply` |
+| `markNoticeSeen` | `decisions/notices/seen` |
+| `askCard` | `requests/ask`（卡带 `requestRef`）或 `requests/submit`，随后 `requests/read` |
 
 ## 边界
 
