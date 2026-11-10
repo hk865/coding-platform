@@ -25,7 +25,7 @@ import { principalIdentity } from '../../../contracts/core/call-context.js';
 import type { ProjectScope, RoleConfigurationRef, SessionRef, VersionPin } from '../../../contracts/core/identity.js';
 import type { OperationRef } from '../../../contracts/core/operations.js';
 import { rejected } from '../../../contracts/core/rejections.js';
-import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
+import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { RunRef } from '../../../contracts/dispatch.js';
 import type { QueryRunRef } from '../../../contracts/query-job.js';
@@ -84,7 +84,9 @@ export type ProposalBatchWindowReadV1 = {
  * (`book-7d2-frozen.md:792`, `:796`).
  */
 export type ProposalBatchWindowPort = {
-  isOpen(ctx: CoreCallContext, input: { projectRef: ProjectScope; baseCatalogPin: ArchitectureCatalogPinV1 }):
+  isOpen(ctx: CoreCallContext, input: { projectRef: ProjectScope; baseCatalogPin: ArchitectureCatalogPinV1;
+    /** M6: the trusted operation ref the proposer facts resolved, so a follow-up's own window is found exactly. */
+    operationRef?: OperationRef | null }):
     Promise<ReadResult<ProposalBatchWindowReadV1>>;
 };
 
@@ -94,7 +96,8 @@ export type ProposalRunFactResolver = (ctx: CoreCallContext, runRef: RunRef) =>
 
 /** The trusted QueryRun facts the composition resolves for a `query_run` proposer. */
 export type ProposalQueryRunFactResolver = (ctx: CoreCallContext, queryRunRef: QueryRunRef) =>
-  Promise<ReadResult<{ sessionRef: SessionRef; role: RoleConfigurationRef; kind: 'role_exploration' }>>;
+  Promise<ReadResult<{ sessionRef: SessionRef; role: RoleConfigurationRef; kind: 'role_exploration';
+    operationRef: OperationRef | null; queryRunRef: QueryRunRef }>>;
 
 /** The decision-message owner's answer read; the answer's selection and captured pins are the approval's facts. */
 export type ProposalDecisionMessageRead = {
@@ -116,6 +119,9 @@ export type ProposalServiceDeps = CatalogRevisionDependencies & {
   queryRunFacts: ProposalQueryRunFactResolver;
   /** The project's main workspace; absent treats the caller's workspace as main. */
   mainWorkspaceOf?: (projectId: string) => Promise<ReadResult<string | null>>;
+  /** R-16/R-17: the exploration control's repropose entry; the answer path creates the follow-up before closing. */
+  repropose?: (ctx: CoreCallContext, input: { batchRef: ArchitectureProposalBatchRef; reason: string }) =>
+    Promise<WriteResult<{ target: 'coarse_split' | 'followup'; operation: OperationRef }>>;
 };
 
 export type ArchitectureProposalService = {
@@ -442,7 +448,8 @@ async function replayPropose(deps: ProposalServiceDeps, receipt: CommittedReceip
  */
 async function writeProposal(deps: ProposalServiceDeps, ctx: CoreCallContext,
   input: ProposeArchitectureRevisionInputV1 & { commandId: string },
-  proposer: SessionRef, keys: { identityKey: string; fingerprint: string },
+  proposer: { sessionRef: SessionRef; operationRef: OperationRef | null; queryRunRef: QueryRunRef | null },
+  keys: { identityKey: string; fingerprint: string },
   write: Clock, immediate: boolean,
   guard: { operationRef: OperationRef; revision: number } | null): Promise<ProposalResult> {
   const proposalId = sha256Hex(canonicalJson({ projectId: ctx.projectId, commandId: input.commandId } as unknown as JsonValue));
@@ -455,10 +462,12 @@ async function writeProposal(deps: ProposalServiceDeps, ctx: CoreCallContext,
     ops: structuredClone(input.ops),
     responsibilityMoves: structuredClone(input.responsibilityMoves),
     reason: input.reason,
-    proposer: structuredClone(proposer),
-    operationRef: input.operationRef === undefined ? null : structuredClone(input.operationRef),
+    proposer: structuredClone(proposer.sessionRef),
+    // M6: both source fields come from the platform's trusted proposer facts, never from the model's arguments.
+    operationRef: proposer.operationRef === null ? null : structuredClone(proposer.operationRef),
+    queryRunRef: proposer.queryRunRef === null ? null : structuredClone(proposer.queryRunRef),
   });
-  const actor = workActorOf(ctx, proposer) ?? hostActorOf(ctx) ?? TRIAL_ACTOR;
+  const actor = workActorOf(ctx, proposer.sessionRef) ?? hostActorOf(ctx) ?? TRIAL_ACTOR;
   const records: EncodedRecord[] = [];
   const guards: RecordGuard[] = [];
   let record = created;
@@ -688,13 +697,20 @@ async function freezeProposals(deps: ProposalServiceDeps, ctx: CoreCallContext,
 
 /** The one proposer gate: a Work Run, or a trusted role_exploration QueryRun. */
 async function proposerOf(deps: ProposalServiceDeps, ctx: CoreCallContext):
-Promise<ReadResult<{ sessionRef: SessionRef; role: RoleConfigurationRef }> | CoreRejection> {
-  if (ctx.principal.kind === 'work_run') return deps.runFacts(ctx, ctx.principal.runRef);
+Promise<ReadResult<{ sessionRef: SessionRef; role: RoleConfigurationRef;
+  operationRef: OperationRef | null; queryRunRef: QueryRunRef | null }> | CoreRejection> {
+  if (ctx.principal.kind === 'work_run') {
+    const facts = await deps.runFacts(ctx, ctx.principal.runRef);
+    if (facts.status !== 'ready') return facts;
+    return { status: 'ready', value: { ...facts.value, operationRef: null, queryRunRef: null } };
+  }
   if (ctx.principal.kind === 'query_run') {
     const facts = await deps.queryRunFacts(ctx, ctx.principal.queryRunRef);
     if (facts.status !== 'ready') return facts;
     // The resolver's ready value is always a stored `role_exploration` round; it already checked the real Job.
-    return { status: 'ready', value: { sessionRef: { ...facts.value.sessionRef }, role: structuredClone(facts.value.role) } };
+    return { status: 'ready', value: { sessionRef: { ...facts.value.sessionRef }, role: structuredClone(facts.value.role),
+      operationRef: facts.value.operationRef === null ? null : structuredClone(facts.value.operationRef),
+      queryRunRef: structuredClone(facts.value.queryRunRef) } };
   }
   return rejected('forbidden', 'a structural proposal is written by an adviser Work Run or a role_exploration QueryRun');
 }
@@ -780,7 +796,8 @@ export async function proposeArchitectureRevision(deps: ProposalServiceDeps, ctx
   const readBatchWindow = async (): Promise<ProposalBatchWindowReadV1 | CoreRejection> => {
     if (deps.proposalBatchWindow === undefined) return { open: false, operationRef: null, revision: null };
     const read = await deps.proposalBatchWindow.isOpen(ctx,
-      { projectRef: { projectId: ctx.projectId }, baseCatalogPin: input.baseCatalogPin });
+      { projectRef: { projectId: ctx.projectId }, baseCatalogPin: input.baseCatalogPin,
+        operationRef: facts.value.operationRef });
     if (read.status === 'ready') return read.value;
     if (read.status === 'rejected') return read;
     return rejected('unavailable', `proposal batch window is not readable (${read.status})`);
@@ -789,7 +806,7 @@ export async function proposeArchitectureRevision(deps: ProposalServiceDeps, ctx
     // A window without its own record/revision (never a production verdict) carries no guard, like the closed one.
     const guard = verdict.open && verdict.operationRef !== null && verdict.revision !== null
       ? { operationRef: verdict.operationRef, revision: verdict.revision } : null;
-    return writeProposal(deps, ctx, qualifiedInput, facts.value.sessionRef,
+    return writeProposal(deps, ctx, qualifiedInput, facts.value,
       keys, { now: deps.now(), eventId: deps.eventId() }, !verdict.open, guard);
   };
   let window = await readBatchWindow();
@@ -959,6 +976,22 @@ Promise<ApplyBatchResult<ArchitectureRevision>> {
   const answer = await readApprovalAnswer(deps, ctx, batch.value.ref, input.answerMessageRef);
   if (answer.status === 'rejected') return answer;
   if (answer.status !== 'ready') return rejected('unavailable', 'the proposal answer is not readable');
+  // R-16/R-17: “不对，重新提” creates the follow-up (or marks the coarse group) BEFORE the old members close; a
+  // retry reads the existing follow-up/answer again instead of losing the request. The reason is the answer's `text`.
+  if (answer.value.body.selection.kind === 'option' && answer.value.body.selection.optionId === 'repropose') {
+    if (answer.value.body.text.trim() === '') {
+      return rejected('invalid', 'a reason is required to ask for another proposal');
+    }
+    if (deps.repropose === undefined) {
+      return rejected('unsupported', 'the platform has no exploration control for a re-proposal');
+    }
+    const begun = await deps.repropose(ctx, { batchRef: batch.value.ref, reason: answer.value.body.text });
+    if (begun.status !== 'committed') return begun;
+    const closed = await writeClosedMembers(deps, ctx, keys, batch.value, members.value,
+      answer.value.message, 'rejected');
+    if ('status' in closed) return closed;
+    return { status: 'rejected', receipt: closed.receipt };
+  }
   const option = selectionOption(answer.value.body);
   if (option === null) return rejected('invalid', 'a structural proposal answers approve or reject');
 

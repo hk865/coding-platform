@@ -50,7 +50,7 @@ import {
 } from '../sessions/session-record-codecs.js';
 import { sessionRoleFactsCodec } from '../sessions/role-line-record-codecs.js';
 import { coldStartOperationRef, type ColdStartActionV1 } from '../state/cold-start.js';
-import type { ColdStartExplorationQueryRefV1, WorkspaceJoinActionV1 } from '../state/role-line-action.js';
+import type { ColdStartExplorationQueryRefV1, RoleLineActionV1, WorkspaceJoinActionV1 } from '../state/role-line-action.js';
 import { workspaceJoinOperationRef } from '../state/workspace-join.js';
 import {
   hostSystemActionRequest, roleExplorationBindingOf, type RoleExplorationBindingV1,
@@ -264,8 +264,27 @@ type ExplorationOperationOwnerV1 = {
   action: { explorations: ColdStartExplorationQueryRefV1[] };
 };
 
-async function readExplorationOperation(deps: PlanningQueryRunDependencies, projectId: string, workspaceId: string):
+async function readExplorationOperation(deps: PlanningQueryRunDependencies, projectId: string, workspaceId: string,
+  correlationId: string | undefined):
   Promise<{ status: 'ready'; value: ExplorationOperationOwnerV1 } | CoreRejection> {
+  // M4a: the QueryJob's platform-written correlation id names the exact operation; prefer it over guessing by workspace.
+  if (correlationId !== undefined) {
+    const ref: OperationRef = { aggregateType: 'CoreOperation', projectId, operationId: correlationId };
+    const operation = await readOwnerRecord({ store: deps.records, refKey: operationRefKey(ref),
+      decode: decodeSessionOperationRecord,
+      readError: (reason) => rejected('unavailable', `the exploration operation cannot be read: ${reason}`) });
+    if (!operation.ok) {
+      return 'notFound' in operation
+        ? rejected('forbidden', 'the exploration QueryRun names no operation')
+        : rejected('unavailable', 'the exploration operation cannot be read');
+    }
+    const action = operation.value.action;
+    if (action.kind !== 'role_line' || (action.action !== 'cold_start' && action.action !== 'workspace_join'
+      && action.action !== 'exploration_followup')) {
+      return rejected('forbidden', 'the QueryRun is not an exploration round of a role-line operation');
+    }
+    return { status: 'ready', value: { operationRef: ref, action: action as RoleLineActionV1 as ExplorationOperationOwnerV1['action'] } };
+  }
   // 1. The join operation of the Query's own workspace, when one exists.
   const joinRef = workspaceJoinOperationRef(projectId, workspaceId);
   const join = await readOwnerRecord({ store: deps.records,
@@ -313,7 +332,8 @@ async function resolveExplorationQueryRun(
   }
   const facts = await readSessionRoleFacts(deps, read.execution.sessionRef);
   if (facts.status !== 'ready') return facts;
-  const owner = await readExplorationOperation(deps, read.run.ref.projectId, read.run.ref.workspaceId);
+  const owner = await readExplorationOperation(deps, read.run.ref.projectId, read.run.ref.workspaceId,
+    read.job.intent.correlationId);
   if (owner.status !== 'ready') return owner;
   const { action } = owner.value;
   const entry = action.explorations.find(candidate => candidate.queryRunRef.runId === read.run.run.runId);
@@ -401,8 +421,13 @@ async function readProposerFacts(ctx: CoreCallContext, deps: PlanningQueryRunDep
   if (read.job.intent.execution.kind !== 'role_exploration') {
     return rejected('forbidden', 'the QueryRun is not a role-exploration round');
   }
+  const correlationId = read.job.intent.correlationId;
   return { status: 'ready',
-    value: { sessionRef: read.execution.sessionRef, role: read.execution.role, kind: 'role_exploration' } };
+    value: { sessionRef: read.execution.sessionRef, role: read.execution.role, kind: 'role_exploration',
+      // M6: the platform wrote this correlation id with the QueryJob; it is the operation that opened the round.
+      operationRef: correlationId === undefined ? null
+        : { aggregateType: 'CoreOperation', projectId: read.job.intent.projectId, operationId: correlationId },
+      queryRunRef: { ...queryRunRef } } };
 }
 
 export function createPlanningQueryRun(

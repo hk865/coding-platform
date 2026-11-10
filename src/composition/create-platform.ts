@@ -240,6 +240,14 @@ import {
   createColdStartProposalWindow, createColdStartService, type ColdStartServiceDeps, type ColdStartStagePort,
 } from '../core/work-graph/sessions/cold-start-service.js';
 import { createWorkspaceJoinService } from '../core/work-graph/sessions/workspace-join-service.js';
+import {
+  createExplorationControl, type ExplorationCancelPort, type ExplorationControlViewV1,
+} from '../core/work-graph/sessions/exploration-control.js';
+import {
+  createExplorationFollowUpService, reproposeSourcesFromMembers, reproposeSourcesOf,
+  type ExplorationFollowUpResultV1,
+} from '../core/work-graph/sessions/exploration-followup-service.js';
+import { executeWriteCommand } from '../core/work-graph/persistence/command-executor.js';
 import { readColdStartAdoption, readColdStartCandidate } from '../core/work-graph/tasks/cold-start-reads.js';
 import { newWorkspaceJoinOperation } from '../core/work-graph/state/workspace-join.js';
 import {
@@ -1186,10 +1194,16 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     });
     const bootstrap = createProjectBootstrapServices({ records: backend.records, now, eventId: randomUUID,
       // O1b (L26): the start_lines birth, encoded by the sessions codec.
-      startLines: (input) => encodeSessionOperationRecord(startLinesInitialRecord(input)),
+      startLines: (input: { projectId: string; workspaceId: string; now: string;
+        explorationDepth?: 1 | 2 | 3 }) =>
+        encodeSessionOperationRecord(startLinesInitialRecord({ ...input,
+          ...(input.explorationDepth === undefined ? {} : { depth: input.explorationDepth }) })),
       // 7D2 XA: a later workspace's join is born in the same registration commit, encoded the same way.
-      workspaceJoin: (input) => encodeSessionOperationRecord(newWorkspaceJoinOperation({
-        projectId: input.projectId, workspaceId: input.workspaceId, occurredAt: input.now })) });
+      workspaceJoin: (input: { projectId: string; workspaceId: string; now: string;
+        explorationDepth?: 1 | 2 | 3 }) =>
+        encodeSessionOperationRecord(newWorkspaceJoinOperation({ projectId: input.projectId,
+          workspaceId: input.workspaceId, occurredAt: input.now,
+          ...(input.explorationDepth === undefined ? {} : { depth: input.explorationDepth }) })) });
     // Slice 5 §3.2: the configured operator is the Host's real start actor. The
     // production Host injects `operatorActor` from its trusted start snapshot,
     // never from HTTP JSON or a model tool argument. The checks-executor
@@ -1761,6 +1775,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       // frozen digest/ops/moves and member reasons, not a label-only batch.
       structuralProposalObjects: readStructuralProposalObjects,
       repairApprovalObjects: readRepairApprovalObjects,
+      reproposeAdmits: (ctx, batchRef) => reproposeAdmits(ctx, batchRef),
     };
     const decisionSources = createDecisionSourceFacts(decisionSourceDependencies);
     // §4.5: the formal identity/fingerprint of a settings commit are persisted
@@ -1799,7 +1814,11 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       decisionMessages: decisionMessageOwner,
       runFacts: (ctx, runRef) => noteRunFacts(ctx, runRef),
       // C1: the cold start's batch window and the exploration round's trusted proposer read.
+      // The window reads the round's QueryJob `correlationId` and the operation it names (a cold start, a join or a
+      // follow-up); the arrows read the owners built later in this root only when a proposal is written.
       proposalBatchWindow: createColdStartProposalWindow({ records: backend.records }),
+      repropose: (ctx, input) => explorationControl.beginRepropose(ctx,
+        { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '', batchRef: input.batchRef, reason: input.reason }),
       queryRunFacts: (ctx, ref) => noteQueryRun.readProposerFacts(ctx, ref),
     });
     const repairActivation = createRepairActivationService({
@@ -1949,7 +1968,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       createMaintainerAssignmentCardSource({ records: backend.records }),
       createRepairApprovalSource({ records: backend.records, observation: observed,
         mainWorkspaceOf: mainWorkspaceOf }),
-      createStructuralProposalSource({ records: backend.records }),
+      createStructuralProposalSource({ records: backend.records, reproposeAdmits }),
       createRoleCapacityCardSource({ records: backend.records }), createRoleLineChangeCardSource({ records: backend.records })];
     const rawDecisionReads = createDecisionReadModel({
       records: backend.records,
@@ -2022,6 +2041,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       coldStart: { drive: (ctx, input) => coldStart.drive(ctx, input) },
       // 7D2 XA: the later workspace's join driver; same late-binding shape, same one instance as the Host's arm.
       workspaceJoin: { drive: (ctx, input) => workspaceJoin.drive(ctx, input) },
+      explorationFollowUp: { drive: (ctx, input) => explorationFollowUp.drive(ctx, input) },
       adjustments: {
         // Card supplement C3: rules -> match -> the five-layer policy; the guards ride the writer's own first commit.
         async judge(ctx, input) {
@@ -4359,7 +4379,32 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     // D-1 / X-15: the cold start never waits on a round. The Host's stage driver runs it detached, one advance at a
     // time per QueryRun (the drain set waits for it at close); a settled round wakes the lifecycle pass, and a
     // backoff is answered once to the next drive, which the lifecycle loop's own backoff retries.
-    const coldStartRounds = new Map<string, { kind: 'running' } | { kind: 'backoff'; reason: string }>();
+    const coldStartRounds = new Map<string, { kind: 'running'; controller: AbortController }
+      | { kind: 'backoff'; reason: string }>();
+    // M1: the stop side aborts the rounds already registered here, after it has committed the hold and the reopens.
+    const cancelRegisteredRounds: ExplorationCancelPort = (runs) => {
+      for (const run of runs) {
+        const entry = coldStartRounds.get(canonicalKey(run));
+        if (entry?.kind === 'running') entry.controller.abort();
+      }
+    };
+    /** M1's second read: the registration happens first, then the persistent record is read again before the drive. */
+    async function coldStartRoundRunnable(ctx: CoreCallContext,
+      input: { queryJobRef: { projectId: string; workspaceId: string; queryJobId: string } }):
+      Promise<'running' | 'held' | 'backoff'> {
+      const job = await queryJobs.readQueryJob(ctx,
+        { aggregateType: 'QueryJob', projectId: input.queryJobRef.projectId,
+          workspaceId: input.queryJobRef.workspaceId, queryJobId: input.queryJobRef.queryJobId });
+      if (job.status !== 'ready') return 'backoff';
+      const correlationId = job.value.job.job.intent.correlationId;
+      if (correlationId === undefined) return 'running';
+      const operation = await sessionDirectory.getSessionOperation(
+        { ...ctx, workspaceId: input.queryJobRef.workspaceId },
+        { aggregateType: 'CoreOperation', projectId: input.queryJobRef.projectId, operationId: correlationId });
+      if (operation.status !== 'ready') return 'running';
+      return operation.value.action.kind === 'role_line' && operation.value.action.result?.status === 'waiting'
+        ? 'held' : 'running';
+    }
     const coldStartStages: ColdStartStagePort = {
       async advance(ctx, input) {
         const bound = options.coldStartStages;
@@ -4371,12 +4416,24 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
           coldStartRounds.delete(key);
           return { status: 'blocked', retry: 'backoff', reason: entry.reason };
         }
-        coldStartRounds.set(key, { kind: 'running' });
+        const controller = new AbortController();
+        coldStartRounds.set(key, { kind: 'running', controller });
+        const fresh = await coldStartRoundRunnable(ctx, input);
+        if (fresh === 'held') {
+          coldStartRounds.delete(key);
+          return COLD_START_ROUND_DETACHED;
+        }
+        if (fresh === 'backoff') {
+          coldStartRounds.delete(key);
+          return { status: 'blocked', retry: 'backoff', reason: 'the exploration operation cannot be re-read' };
+        }
+        const stageCtx = ctx.signal === undefined ? { ...ctx, signal: controller.signal }
+          : { ...ctx, signal: AbortSignal.any([ctx.signal, controller.signal]) };
         const scope: WorkspaceScope = { projectId: input.queryJobRef.projectId, workspaceId: input.queryJobRef.workspaceId };
         void trackDetached((async () => {
           let outcome: QueryStageOutcome;
           try {
-            outcome = await bound.advance(ctx, input);
+            outcome = await bound.advance(stageCtx, input);
           } catch (error) {
             coldStartRounds.set(key, { kind: 'backoff', reason: messageOf(error) });
             bound.wake(scope);
@@ -4429,6 +4486,25 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
     const coldStart = createColdStartService(coldStartDeps);
     // 7D2 XA: the second workspace's join driver; the same deps and the same shared phases, driven by the same arm.
     const workspaceJoin = createWorkspaceJoinService(coldStartDeps);
+    /** M6: the one source judgement both the card's options and the answer facts read. */
+    async function reproposeAdmits(ctx: CoreCallContext,
+      batchRef: import('../contracts/architecture-proposal.js').ArchitectureProposalBatchRef,
+      members?: readonly import('../contracts/architecture-proposal.js').ArchitectureProposalRef[]): Promise<boolean> {
+      // The card source already read the members; the answer side has only the batch ref.
+      const sources = members === undefined
+        ? await reproposeSourcesOf(ctx, { proposals: architectureProposals, sessions: sessionDirectory,
+          records: backend.records }, batchRef)
+        : await reproposeSourcesFromMembers(ctx, { proposals: architectureProposals, sessions: sessionDirectory },
+          members);
+      return sources.status === 'ready' && sources.value.length > 0;
+    }
+    // 7D2 EXC: the follow-up owner and the exploration control, over the same cold-start deps. The control's stop
+    // aborts the rounds registered in the one `coldStartRounds` table above; its repropose creates the follow-up
+    // through the same birth the deepen route uses.
+    const explorationFollowUp = createExplorationFollowUpService(coldStartDeps);
+    const explorationControl = createExplorationControl({ records: backend.records, queries: queryJobs,
+      proposals: architectureProposals, sessions: sessionDirectory, now, write: executeWriteCommand,
+      cancel: cancelRegisteredRounds });
     // O5b (v4 :6442–:6445): the ONE `role-lines/read` owner over the same line list, effective-scope read (BK-15's
     // instance, :4000) and allocation read the pick and the allocation route use; never a second array.
     const roleLineRead = createRoleLineRead({
@@ -4601,6 +4677,8 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       }, unavailable),
       // O1b: the role_line owner (the Host's third arm), the same instance the routes bind, and its read.
       roleLineOperations: trackedRoleLines,
+      // 7D2 EXC: the exploration control and the follow-up driver; internal like the other owner groups.
+      explorationControl, explorationFollowUp,
       roleLines: trackedRoleLines,
       roleLineOperationsRead: trackedRoleLineOperationsRead,
       roleLineRead: trackedRoleLineRead,
@@ -4708,6 +4786,7 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       'sessionArchive', 'readHandoffFence', 'listUnfinishedOperations', 'readSecretaryHandoffBasis',
       'bindings', 'initializationAdoption', 'confirmInstalledChecks', 'messageRelease', 'messageForwarding', 'disconnect', 'messageExpiry',
       'consumableSessions', 'readCandidateCard', 'roleLineOperations', 'roleLines', 'roleLineOperationsRead',
+      'explorationControl', 'explorationFollowUp',
       'goalAdviserQueue', 'runtimeInFlight', 'roleLineRead'] as const) {
       Object.defineProperty(platform, key, { enumerable: false });
     }

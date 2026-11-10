@@ -18,7 +18,7 @@ import type {
 import { architectureCatalogPinShape } from '../../../contracts/architecture-catalog.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
 import { defineEvent, defineRecord, defineShape, f } from '../../../contracts/data-format.js';
-import { OperationRefShape, SessionRefShape, id } from '../../../contracts/data-format-refs.js';
+import { OperationRefShape, QueryRunRefShape, SessionRefShape, id } from '../../../contracts/data-format-refs.js';
 import type { DecisionChangeProofV1 } from '../../../contracts/goal-decisions.js';
 import { isRecord } from '../../../contracts/validation/common.js';
 import type { DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas } from '../../record-store/ports.js';
@@ -71,6 +71,7 @@ export const ArchitectureProposalFields = {
   reason: f.string(),
   proposer: f.ref(SessionRefShape),
   operationRef: f.nullable(f.ref(OperationRefShape)),
+  queryRunRef: f.optional(f.nullable(f.ref(QueryRunRefShape))),
   state: f.enumOf(ARCHITECTURE_PROPOSAL_STATES),
 };
 

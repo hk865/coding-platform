@@ -10,7 +10,8 @@
  * three records. A changed batch content or base pin is a different batch id and
  * therefore a different key; an old answer cannot point at it.
  */
-import type { ArchitectureProposalBatchRef, ArchitectureProposalBatchV1 } from '../../../contracts/architecture-proposal.js';
+import type { ArchitectureProposalBatchRef, ArchitectureProposalBatchV1,
+  ArchitectureProposalRef } from '../../../contracts/architecture-proposal.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
 import { decisionSourceKey, type DecisionObjectV1, type DecisionOptionV1,
   type DecisionSourceV1 } from '../../../contracts/goal-decisions.js';
@@ -39,6 +40,8 @@ export type StructuralProposalCardFactsV1 = {
   batch: ArchitectureProposalBatchV1;
   members: ArchitectureProposalRecordV1[];
   activeRevision: number;
+  /** M6: every member resolves to its exploration round; only then does the card show “不对，重新提”. */
+  repropose: boolean;
 };
 
 export type StructuralProposalSourceDependencies = {
@@ -46,6 +49,9 @@ export type StructuralProposalSourceDependencies = {
     readMany(refKeys: readonly string[]): ReturnType<import('../../record-store/ports.js').GoalRecordTransactionPort['readMany']>;
     lookup: import('../../record-store/lookup-ports.js').RecordLookupPort['lookup'];
   };
+  /** The same judgement and function the answer facts call; absent keeps the two original options. */
+  reproposeAdmits?: (ctx: CoreCallContext, batchRef: ArchitectureProposalBatchRef,
+    members: readonly ArchitectureProposalRef[]) => Promise<boolean>;
 };
 
 function batchRefOfSource(source: DecisionSourceV1): ArchitectureProposalBatchRef | null {
@@ -155,8 +161,9 @@ export async function readStructuralProposalObjects(
   return { status: 'ready', value: structuralProposalObjects({ batch: batch.value, members: members.value }) };
 }
 
-function optionsOf(): DecisionOptionV1[] {
-  return STRUCTURAL_PROPOSAL_OPTIONS.map(option => ({ ...option }));
+function optionsOf(facts: StructuralProposalCardFactsV1): DecisionOptionV1[] {
+  return STRUCTURAL_PROPOSAL_OPTIONS.filter(option => facts.repropose || option.id !== 'repropose')
+    .map(option => ({ ...option }));
 }
 
 function projectCard(facts: StructuralProposalCardFactsV1, subject: DecisionSourceV1['subject']): DecisionCardV1 {
@@ -175,7 +182,7 @@ function projectCard(facts: StructuralProposalCardFactsV1, subject: DecisionSour
     senderSessionRef: null,
     requestRef: null,
     objects: structuralProposalObjects(facts),
-    options: optionsOf(),
+    options: optionsOf(facts),
     answerMessageRef: null,
     answer: null,
     application: null,
@@ -215,11 +222,14 @@ Promise<ReadResult<ArchitectureProposalBatchV1 | null>> {
   return { status: 'ready', value: batch };
 }
 
-async function readFacts(deps: StructuralProposalSourceDependencies, batch: ArchitectureProposalBatchV1,
-  activeRevision: number): Promise<ReadResult<StructuralProposalCardFactsV1>> {
+async function readFacts(deps: StructuralProposalSourceDependencies, ctx: CoreCallContext,
+  batch: ArchitectureProposalBatchV1, activeRevision: number): Promise<ReadResult<StructuralProposalCardFactsV1>> {
   const members = await readMembers(deps, batch);
   if (members.status !== 'ready') return members;
-  return { status: 'ready', value: { batch, members: members.value, activeRevision } };
+  // A closed batch never needs its sources: the same members decide the gate before any proposal/operation read.
+  const repropose = isOpen({ members: members.value }) && deps.reproposeAdmits !== undefined
+    && await deps.reproposeAdmits(ctx, batch.ref, members.value.map(member => member.ref));
+  return { status: 'ready', value: { batch, members: members.value, activeRevision, repropose } };
 }
 
 export function createStructuralProposalSource(
@@ -228,7 +238,7 @@ export function createStructuralProposalSource(
   return createCollectionCardSource<StructuralProposalCardFactsV1>({
     kind: 'structural_proposal',
     serves: ['project'],
-    async readCollection(_ctx: CoreCallContext, { workspace }) {
+    async readCollection(ctx: CoreCallContext, { workspace }) {
       const projectId = workspace.projectId;
       // §3.7 item 3: a project with no frozen batch has no card, so a missing
       // current catalog must not make the whole queue unreadable.
@@ -239,7 +249,7 @@ export function createStructuralProposalSource(
       if (window.status !== 'ready') return windowRejection(window);
       const items: StructuralProposalCardFactsV1[] = [];
       for (const batch of batches.value) {
-        const facts = await readFacts(deps, batch, window.activeRevision);
+        const facts = await readFacts(deps, ctx, batch, window.activeRevision);
         if (facts.status !== 'ready') return facts;
         if (isOpen(facts.value)) items.push(facts.value);
       }
@@ -247,7 +257,7 @@ export function createStructuralProposalSource(
     },
     keyOf: (facts) => decisionSourceKey({ kind: 'structural_proposal', batch: facts.batch.ref }),
     project: (facts, subject) => projectCard(facts, subject),
-    async readByKey(_ctx, { workspace, source }) {
+    async readByKey(ctx, { workspace, source }) {
       const projectId = workspace.projectId;
       const ref = batchRefOfSource(source);
       if (ref === null || ref.projectId !== projectId) {
@@ -259,7 +269,7 @@ export function createStructuralProposalSource(
       if (batch.value === null) return { status: 'ready', value: null };
       const window = await readCurrentCatalogWindow(deps.records, projectId);
       if (window.status !== 'ready') return windowRejection(window);
-      const facts = await readFacts(deps, batch.value, window.activeRevision);
+      const facts = await readFacts(deps, ctx, batch.value, window.activeRevision);
       if (facts.status !== 'ready') return facts;
       if (!isOpen(facts.value)) return { status: 'ready', value: { closed: 'source_resolved', openedAt: null } };
       return { status: 'ready', value: { item: facts.value } };

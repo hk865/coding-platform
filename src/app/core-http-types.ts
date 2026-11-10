@@ -182,6 +182,9 @@ export type CoreRouteSuffix =
   | 'controls/submit' | 'controls/read' | 'controls/deliver' | 'executions/start'
   | 'projects/create'
   | 'workspaces/register'
+  | 'workspaces/exploration/stop'
+  | 'workspaces/exploration/continue'
+  | 'workspaces/exploration/deepen'
   | 'completion-policies/install'
   | 'completion-policies/activate'
   | 'completion-policies/read'
@@ -389,7 +392,11 @@ export type RouteResponse<M> = MethodResult<M>;
 
 export type ProjectsCreateBody = GraphWriteBody<ProjectRegistrationPort['createProject']>;
 export type ProjectsCreateResponse = RouteResponse<ProjectRegistrationPort['createProject']>;
-export type WorkspacesRegisterBody = GraphWriteBody<ProjectRegistrationPort['registerWorkspace']>;
+/** R-09: the optional start-depth rides the public registration body; the port type itself lives outside this change. */
+export type WorkspacesRegisterBody = { scope: CoreScope;
+  request: Omit<SecondArgument<ProjectRegistrationPort['registerWorkspace']>, 'input'>
+    & { input: SecondArgument<ProjectRegistrationPort['registerWorkspace']>['input']
+      & { explorationDepth?: 1 | 2 | 3 } } };
 export type WorkspacesRegisterResponse = RouteResponse<ProjectRegistrationPort['registerWorkspace']>;
 export type CompletionPoliciesInstallBody = GraphWriteBody<CompletionPolicyConfigurationPort['installCompletionPolicy']>;
 export type CompletionPoliciesInstallResponse = RouteResponse<CompletionPolicyConfigurationPort['installCompletionPolicy']>;
@@ -416,6 +423,20 @@ export type ArchitectureSemanticFlowsResponse = RouteResponse<SemanticLinksReade
 export type ArchitectureSemanticLinksCheckBody = PlainBody<SemanticLinksReader['checkSemanticLinks']>;
 export type ArchitectureSemanticLinksCheckResponse = RouteResponse<SemanticLinksReader['checkSemanticLinks']>;
 /** The architecture routes' body/result pairs; the route table names it so the aliases stay in the production graph. */
+export type WorkspacesExplorationStopBody = GraphWriteBody<CoreRouteBindings['stopExploration']>;
+export type WorkspacesExplorationStopResponse = RouteResponse<CoreRouteBindings['stopExploration']>;
+export type WorkspacesExplorationContinueBody = GraphWriteBody<CoreRouteBindings['resumeExploration']>;
+export type WorkspacesExplorationContinueResponse = RouteResponse<CoreRouteBindings['resumeExploration']>;
+export type WorkspacesExplorationDeepenBody = GraphWriteBody<CoreRouteBindings['deepenExploration']>;
+export type WorkspacesExplorationDeepenResponse = RouteResponse<CoreRouteBindings['deepenExploration']>;
+/** The exploration control routes' body/result pairs. */
+export type ExplorationCoreRouteDto = {
+  'workspaces/exploration/stop': { body: WorkspacesExplorationStopBody; response: WorkspacesExplorationStopResponse };
+  'workspaces/exploration/continue': { body: WorkspacesExplorationContinueBody;
+    response: WorkspacesExplorationContinueResponse };
+  'workspaces/exploration/deepen': { body: WorkspacesExplorationDeepenBody;
+    response: WorkspacesExplorationDeepenResponse };
+};
 export type ArchitectureCoreRouteDto = {
   'architecture/revise': { body: ArchitectureReviseBody; response: ArchitectureReviseResponse };
   'architecture/proposals/read': { body: ArchitectureProposalsReadBody; response: ArchitectureProposalsReadResponse };

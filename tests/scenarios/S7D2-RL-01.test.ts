@@ -60,7 +60,7 @@ async function expectEnd(world: S7D2RoleLineWorld): Promise<void> {
   expect(rows.filter(row => row.operation.operationId === coldStartRef.operationId)).toEqual([{
     operation: coldStartRef, action: 'role_line', phase: 'running', actionPhase: 'candidates', steps: [],
     result: null, lastCompleted: null, candidate: null, pendingRegions: [], explorations: [], batchRefs: [],
-    route: null, baseCatalogPin: null,
+    route: null, baseCatalogPin: null, depth: 2,
   }]);
 
   // The three lines, and only they, are responsible for the project: one open project link each.

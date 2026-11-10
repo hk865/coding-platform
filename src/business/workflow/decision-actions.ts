@@ -922,6 +922,13 @@ export function createDecisionActions(deps: DecisionActionDependencies): Decisio
     const requestId = raw['meta']['requestId'] as string;
     const expected = raw['meta']['expected'] as VersionPin[];
 
+    // M5: a re-proposal needs the person's reason; refuse BEFORE the answer commit, so the card is still answerable.
+    const selection = input.selection;
+    if (selection.kind === 'option' && selection.optionId === 'repropose'
+      && (input.text ?? '').trim() === '') {
+      return { status: 'rejected', code: 'invalid', reason: 'a reason is required to ask for another proposal' };
+    }
+
     // ① The answer is always its own commit. A refusal BEFORE the answer is the
     // overall rejection; nothing here pretends the card was answered.
     const answer = await decisionMessages.answerDecision(ctx, {

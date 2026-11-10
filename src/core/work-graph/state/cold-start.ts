@@ -4,7 +4,8 @@
  * this file only narrows the arm and moves the phase pointer, and the cold-start owner writes the record.
  */
 import { COLD_START_PHASES } from './role-line-action.js';
-import type { ColdStartExplorationQueryRefV1, ColdStartPhaseV1, RoleLineActionV1 } from './role-line-action.js';
+import type { ColdStartExplorationQueryRefV1, ColdStartPhaseV1, ExplorationDepthV1, RoleLineActionV1 } from './role-line-action.js';
+import { DEFAULT_EXPLORATION_DEPTH } from './exploration-control.js';
 import type { QueryJobAnswerRef, QueryRunRef } from '../../../contracts/query-job.js';
 import type { ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
 import type { ArchitectureProposalBatchRef } from '../../../contracts/architecture-proposal.js';
@@ -33,10 +34,15 @@ export function coldStartOperationRef(projectId: string): OperationRef {
   return { aggregateType: 'CoreOperation', projectId, operationId: `cold_start:${projectId}` };
 }
 
-export function newColdStartAction(): ColdStartActionV1 {
+export function newColdStartAction(depth: ExplorationDepthV1 = DEFAULT_EXPLORATION_DEPTH): ColdStartActionV1 {
   return { kind: 'role_line', action: 'cold_start', phase: 'candidates', lastCompleted: null,
     steps: [], result: null, candidate: null, pendingRegions: [], explorations: [], batchRefs: [],
-    route: null, baseCatalogPin: null, goalRef: null };
+    route: null, baseCatalogPin: null, goalRef: null, depth };
+}
+
+/** Depth 1's only migration out of `coarse_split`: one coarse round, no region line, one planned round. */
+export function skipRegions(action: ColdStartActionV1, pin: ArchitectureCatalogPinV1): ColdStartActionV1 {
+  return { ...action, phase: 'proposals', lastCompleted: 'regions', baseCatalogPin: pin, plannedRounds: 1 };
 }
 
 /** The payload's phase pointer is the first unfinished phase, one step past `lastCompleted`. */

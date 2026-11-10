@@ -78,7 +78,7 @@
 - `architecture-catalog.ts` — 架构目录 DTO：`ModuleDefinition`、`AdoptedArchitecture`、`ArchitectureCatalogPinV1`、`moduleMappingsOf` 与 `isUndividedModule`（目录里只有这一个模块，且路径正好是 `.`）；R1 字段表形状 `architectureBaselineRevisionRefShape`、`architectureCatalogRefShape`、`architectureCatalogPinShape`（pin 的 `catalogRef` 必须与 `baseline.ref` 同 project/baseline/revision）。
 - `architecture-inspection.ts` — 代码图/观察清单：`CodeGraphNode`、`FormalObservedFindingV1`、`FileGraphPageV1`、`LanguageCoverageV1`、`COVERAGE_ISSUES_MAX`。
 - `architecture-observation.ts` — 自动捕获：`AUTO_CAPTURE_TRIGGERS`、`isAutoCaptureTrigger`、`ArchitectureAutoCaptureRecordV1`、`ArchitectureObservationStateV1`。
-- `architecture-proposal.ts` — 结构提案契约：提案/批的 ref 与记录 `ArchitectureProposalV1`/`ArchitectureProposalBatchV1`、输入 `ProposeArchitectureRevisionInputV1`、结果 `ProposalResult`/`ApplyBatchResult` 与读 `ProposalRead`；纯数据，不建 store、时钟、id 或路由。
+- `architecture-proposal.ts` — 结构提案契约：提案/批的 ref 与记录 `ArchitectureProposalV1`/`ArchitectureProposalBatchV1`、输入 `ProposeArchitectureRevisionInputV1`、结果 `ProposalResult`/`ApplyBatchResult` 与读 `ProposalRead`；提案记录带可信来源 `operationRef` 和可空的 `queryRunRef`（具体探索轮，M6）；纯数据，不建 store、时钟、id 或路由。
 - `architecture-search.ts` — 架构搜索与当前工作集合的纯 DTO：`ArchitectureNodeRefV1`、`ArchitectureGroupV1`、文件/模块命中、`ArchitectureFindRequestV1`/`ArchitectureFindResultV1` 与 `ArchitectureWorkScopeV1`；不读记录。
 - `architecture-source.ts` — 架构源快照：`ArchitectureSourceSnapshotV1`、`compactUnresolvedLines`、`architectureSourceIssues`，并转出 `pathOwnershipOf`。
 - `artifact.ts` — 内容寻址正文：`ArtifactRef`、`ArtifactRecord`、`ARTIFACT_MAX_SIZE_BYTES`、`artifactBodyDigest`、`artifactBodySize`。

@@ -36,9 +36,16 @@ import { workspaceJoinOperationRef } from '../state/workspace-join.js';
 import {
   roleExplorationExecution, roleExplorationQuestion, type RoleExplorationSegmentV1,
 } from '../state/role-exploration.js';
-import type {
-  ColdStartExplorationQueryRefV1, ColdStartPhaseV1, RoleLineActionV1, WorkspaceJoinActionV1,
+import {
+  appendExploration, explorationGroupsOf, setPlannedRounds,
+  type ColdStartExplorationQueryRefV1, type ColdStartPhaseV1, type ExplorationDepthV1,
+  type RoleLineActionV1, type WorkspaceJoinActionV1,
 } from '../state/role-line-action.js';
+import {
+  DEFAULT_EXPLORATION_DEPTH, explorationDepthOf, plannedExplorationRounds,
+} from '../state/exploration-control.js';
+import { skipRegions } from '../state/cold-start.js';
+import type { ExplorationFollowUpActionV1 } from '../state/exploration-followup.js';
 import { roleLineOperationRef } from '../state/role-line-operation.js';
 import { effectiveRegions, type RegionClaimV1 } from '../state/role-scope.js';
 import { catalogPinOf, readCurrentCatalogWindow } from '../architecture/catalog-service.js';
@@ -94,7 +101,8 @@ export type ColdStartServiceDeps = {
     Promise<ReadResult<{ project: { revision: number }; workspace: { revision: number } }>> };
   profiles: Pick<SecretaryProfilePort, 'forSession'>;
   proposals: Pick<ArchitectureProposalService,
-    'readPendingArchitectureProposals' | 'freezeArchitectureProposalBatch' | 'readFrozenArchitectureBatches'>;
+    'readPendingArchitectureProposals' | 'freezeArchitectureProposalBatch' | 'readFrozenArchitectureBatches'
+    | 'readArchitectureProposal'>;
   messages: Pick<SessionMailboxPort, 'sendMessage'>;
   lines: Pick<RoleLineOperationsPort, 'openRegionLine'>;
   /** L-9: one standby adviser line for a region (the Workflow chooser's `reuseStandby`). */
@@ -116,7 +124,7 @@ type ColdStartReadV1 = { status: 'ready'; value: { record: RoleLineOperationV1; 
   | { status: 'not_found' } | CoreRejection;
 
 /** The one read of a project's cold-start record by its derived ref; any other kind at that ref is damage. */
-async function readColdStartRecord(records: Pick<GoalRecordTransactionPort, 'readMany'>, projectId: string):
+export async function readColdStartRecord(records: Pick<GoalRecordTransactionPort, 'readMany'>, projectId: string):
   Promise<ColdStartReadV1> {
   const read = await readOwnerRecord({ store: records, refKey: operationRefKey(coldStartOperationRef(projectId)),
     decode: decodeSessionOperationRecord,
@@ -159,11 +167,36 @@ export async function readWorkspaceJoinRecord(records: Pick<GoalRecordTransactio
  * verdict; `operationRef`/`revision` are that record's own, so the proposal commit guards the record whose
  * exploration opened it (`book-7d2-frozen.md:796`, `ports.ts:125`).
  */
-export function createColdStartProposalWindow(deps: { records: Pick<GoalRecordTransactionPort, 'readMany'> }):
-  ProposalBatchWindowPort {
+export function createColdStartProposalWindow(deps: {
+  records: Pick<GoalRecordTransactionPort, 'readMany'>;
+}): ProposalBatchWindowPort {
   return {
     async isOpen(ctx, input) {
       const projectId = input.projectRef.projectId;
+      const queryRun = ctx.principal.kind === 'query_run' ? ctx.principal.queryRunRef : null;
+      const owns = (action: { explorations?: readonly ColdStartExplorationQueryRefV1[] }): boolean =>
+        queryRun === null
+        || (action.explorations ?? []).some((entry) => sameJson(entry.queryRunRef, queryRun));
+      // M4a/M9: a round names its opening operation in the QueryJob's `correlationId`; a follow-up's window is open
+      // while that operation is unfinished, in its one phase, on the same pin. Old rounds without it fall back below.
+      if (input.operationRef !== undefined && input.operationRef !== null) {
+        // The QueryRun principal cannot use the Session directory's Host-only read; the record read is the same
+        // one the cold-start/join branches below use, and the operation ref came from the platform's facts.
+        const op = await readOwnerRecord({ store: deps.records, refKey: operationRefKey(input.operationRef),
+          decode: decodeSessionOperationRecord,
+          readError: () => rejected('unavailable', 'the exploration operation cannot be read') });
+        if (!op.ok && !('notFound' in op)) return op.rejection;
+        if (op.ok && op.value.action.kind === 'role_line'
+          && op.value.action.action === 'exploration_followup') {
+          const record = op.value as RoleLineOperationV1;
+          const action = op.value.action as ExplorationFollowUpActionV1;
+          const open = record.phase !== 'completed' && record.phase !== 'failed' && action.phase === 'regions'
+            && action.baseCatalogPin !== null && sameJson(action.baseCatalogPin, input.baseCatalogPin)
+            && owns(action);
+          return { status: 'ready', value: { open,
+            operationRef: open ? { ...record.ref } : null, revision: open ? record.revision : null } };
+        }
+      }
       const cold = await readColdStartRecord(deps.records, projectId);
       if (cold.status !== 'ready' && cold.status !== 'not_found') return cold;
       let join: WorkspaceJoinReadV1 | null = null;
@@ -173,10 +206,6 @@ export function createColdStartProposalWindow(deps: { records: Pick<GoalRecordTr
       }
       // The proposal's Query workspace owns the window: a join record there means the join opened this exploration;
       // otherwise the cold start did. A query run must still be one that operation's `explorations` names.
-      const queryRun = ctx.principal.kind === 'query_run' ? ctx.principal.queryRunRef : null;
-      const owns = (action: { explorations?: readonly ColdStartExplorationQueryRefV1[] }): boolean =>
-        queryRun === null
-        || (action.explorations ?? []).some((entry) => sameJson(entry.queryRunRef, queryRun));
       const selected = join !== null && join.status === 'ready' && owns(join.value.action) ? join : cold;
       if (selected.status === 'not_found') {
         return { status: 'ready', value: { open: false, operationRef: null, revision: null } };
@@ -193,11 +222,11 @@ export function createColdStartProposalWindow(deps: { records: Pick<GoalRecordTr
   };
 }
 
-export function newColdStartOperation(input: { projectId: string; workspaceId: string; occurredAt: string }):
-  SessionOperationRecordOf<ColdStartActionV1> {
+export function newColdStartOperation(input: { projectId: string; workspaceId: string; occurredAt: string;
+  depth?: ExplorationDepthV1 }): SessionOperationRecordOf<ColdStartActionV1> {
   return { ref: coldStartOperationRef(input.projectId), revision: 1, workspaceId: input.workspaceId,
-    action: newColdStartAction(), phase: 'running', requestedAt: input.occurredAt, updatedAt: input.occurredAt,
-    observation: null, failure: null };
+    action: newColdStartAction(input.depth ?? DEFAULT_EXPLORATION_DEPTH), phase: 'running',
+    requestedAt: input.occurredAt, updatedAt: input.occurredAt, observation: null, failure: null };
 }
 
 /** The birth (v4 :7609–:7631): only the `start_lines` parent's secretary step registration carries it. */
@@ -205,7 +234,8 @@ export function coldStartBirthOf(input: { startLines: RoleLineOperationV1; creat
   occurredAt: string }): SessionOperationRecordOf<ColdStartActionV1> | null {
   if (input.startLines.action.action !== 'start_lines' || input.createAction.creation?.duty !== 'secretary') return null;
   return newColdStartOperation({ projectId: input.startLines.ref.projectId,
-    workspaceId: input.startLines.workspaceId, occurredAt: input.occurredAt });
+    workspaceId: input.startLines.workspaceId, occurredAt: input.occurredAt,
+    ...(input.startLines.action.depth === undefined ? {} : { depth: input.startLines.action.depth }) });
 }
 
 type DriveInputV1 = { projectId: string; workspaceId: string };
@@ -234,6 +264,8 @@ export type RoleExplorationCallV1 = {
   modules: readonly ModuleRef[];
   /** The caller's phase advance: the cold start's or the join's own state function. */
   advance: (action: RoleLineActionV1, patch: Partial<RoleLineActionV1>) => RoleLineActionV1;
+  /** Depth 1's own skip: the cold start's or the join's one migration past `regions`. */
+  skipRegions: (action: RoleLineActionV1, pin: ArchitectureCatalogPinV1) => RoleLineActionV1;
   /** The caller's one-phase-one-commit write; the terminal `proposals` commit carries `completed` and the horizon. */
   write: (ctx: CoreCallContext,
     at: { input: DriveInputV1; op: RoleLineOperationV1; action: RoleLineActionV1 },
@@ -265,20 +297,6 @@ function regionModulesOf(claims: readonly RegionClaimV1[], moduleRef: ModuleRef,
     duty: 'adviser', moduleRef };
   const regions = effectiveRegions({ regions: [...claims, unclaimed], catalog });
   return new Set(regions.at(-1)!.modules.map((module) => module.moduleId));
-}
-
-/** The saved exploration rounds by their "please act" message, in save order; the last of a group is its round. */
-function explorationGroupsOf(entries: readonly ColdStartExplorationQueryRefV1[], segment: RoleExplorationSegmentV1):
-  ColdStartExplorationQueryRefV1[][] {
-  const groups = new Map<string, ColdStartExplorationQueryRefV1[]>();
-  for (const entry of entries) {
-    if (entry.segment !== segment) continue;
-    const key = canonicalKey(entry.messageRef);
-    const group = groups.get(key);
-    if (group === undefined) groups.set(key, [entry]);
-    else group.push(entry);
-  }
-  return [...groups.values()];
 }
 
 /** d10: a saved batch is handled only when none of its member proposals is still `pending`. */
@@ -315,20 +333,25 @@ async function savedBatchesHandled(records: Pick<GoalRecordTransactionPort, 'rea
 /** C1-05: one exploration Query on the chosen line; no Goal, the line's own Query profile, the line's origin. The
  *  Query belongs to the driving operation's workspace; the profile belongs to the line's own workspace, which is the
  *  main workspace when a join drives a project-level line from a second one. */
-async function submitExploration(deps: ColdStartServiceDeps, at: RoleExplorationAtV1,
+export async function submitExploration(deps: ColdStartServiceDeps, at: RoleExplorationAtV1,
   round: { queryJobId: string; runId: string; question: string; segment: RoleExplorationSegmentV1;
-    line: SessionRef; card: SessionCard; messageRef: SessionMessageRef }):
+    line: SessionRef; card: SessionCard; messageRef: SessionMessageRef; region?: ModuleRef | null;
+    workspaceId?: string }):
   Promise<ReadResult<ColdStartExplorationQueryRefV1>> {
-  const { projectId, workspaceId } = at.input;
+  const projectId = at.input.projectId;
+  // A follow-up round runs in the source round's workspace (M6), which may differ from the operation's own.
+  const workspaceId = round.workspaceId ?? at.input.workspaceId;
+  const scopedCtx: CoreCallContext = workspaceId === at.ctx.workspaceId ? at.ctx : { ...at.ctx, workspaceId };
   const queryJobRef = queryJobRefFor(projectId, workspaceId, round.queryJobId);
   // The line's stored origin: `start_lines` for the opening adviser, the exploration operation for a line it opened,
   // the line's own earlier origin for a reused standby line.
   const explorationEntryOf = (queryRunRef: QueryRunRef): ColdStartExplorationQueryRefV1 => ({ queryRunRef: { ...queryRunRef },
     sessionRef: { ...round.line }, messageRef: { ...round.messageRef },
-    operationRef: { ...round.card.roleFacts!.originOperation! }, segment: round.segment });
+    operationRef: { ...round.card.roleFacts!.originOperation! }, segment: round.segment,
+    region: round.region === undefined ? null : (round.region === null ? null : { ...round.region }) });
   // A Query committed before a crash is the original result: reuse its run, never re-read the live profile and
   // re-submit the same identity with a new intent fingerprint (`idempotency_conflict`).
-  const existing = await deps.queries.readQueryJob(at.ctx, queryJobRef);
+  const existing = await deps.queries.readQueryJob(scopedCtx, queryJobRef);
   if (existing.status !== 'not_found') {
     if (existing.status !== 'ready') return existing;
     return { status: 'ready', value: explorationEntryOf(existing.value.run.ref) };
@@ -337,14 +360,14 @@ async function submitExploration(deps: ColdStartServiceDeps, at: RoleExploration
   const profile = deps.profiles.forSession({
     workspace: { projectId, workspaceId: round.card.record.workspaceId }, sessionRole: round.card.record.role });
   if (profile === null) return rejected('unavailable', 'the exploration line has no Query profile in its workspace');
-  const registration = await deps.registration.readWorkspaceRegistration(at.ctx, workspace);
+  const registration = await deps.registration.readWorkspaceRegistration(scopedCtx, workspace);
   if (registration.status !== 'ready') return registration;
   const intent: QueryJobIntentV1 = { schemaVersion: 1, intentId: round.queryJobId, projectId, workspaceId,
     goalId: null, question: round.question, focusTaskRefs: [], budget: { ...profile.budget },
     multiTurn: { maxRounds: 1 }, correlationId: at.op.ref.operationId,
     execution: roleExplorationExecution({ roleBinding: profile.roleBinding, runtimeBudget: profile.runtimeBudget }) };
   // A null-Goal Query carries no Goal pin: Project, Workspace and the new pair only.
-  const submitted = await deps.queries.submitQueryJob(at.ctx, {
+  const submitted = await deps.queries.submitQueryJob(scopedCtx, {
     input: { queryJobId: round.queryJobId, runId: round.runId, intent },
     meta: { requestId: `cold-start-submit:${round.runId}`, expected: [
       { ref: { aggregateType: 'Project', projectId }, revision: registration.value.project.revision },
@@ -361,26 +384,56 @@ async function submitExploration(deps: ColdStartServiceDeps, at: RoleExploration
 /** The first round of a segment: the line's card, one Host system "please act" message, then the Query. A
  *  project-level line may live in the main workspace while the operation drives a second one, so the Session read is
  *  project-scoped. */
-async function openExploration(deps: ColdStartServiceDeps, at: RoleExplorationAtV1,
-  input: { line: SessionRef; segment: RoleExplorationSegmentV1; region: ModuleRef | null; key: string }):
+export async function openExploration(deps: ColdStartServiceDeps, at: RoleExplorationAtV1,
+  input: { line: SessionRef; segment: RoleExplorationSegmentV1; region: ModuleRef | null; key: string;
+    question?: string; ids?: { queryJobId: string; runId: string }; workspaceId?: string }):
   Promise<ReadResult<ColdStartExplorationQueryRefV1>> {
   const card = await deps.sessions.readSession(at.ctx, input.line, 'project');
   if (card.status !== 'ready') return card;
-  const question = roleExplorationQuestion(input.segment, input.region);
+  const question = input.question ?? roleExplorationQuestion(input.segment, input.region, 1);
   const sent = await deps.messages.sendMessage(at.ctx, {
     input: { recipient: input.line, text: question, intent: 'action_request' },
     meta: { requestId: `cold-start-message:${at.op.ref.operationId}:${input.key}`, expected: [] },
   });
   if (sent.status !== 'committed') return sent;
   const base = `${at.input.projectId}:${input.segment}:${input.region?.moduleId ?? 'root'}`;
-  return submitExploration(deps, at, { queryJobId: `cold-start-query:${base}`, runId: `cold-start-run:${base}`, question,
-    segment: input.segment, line: input.line, card: card.value, messageRef: sent.value.ref });
+  return submitExploration(deps, at, { queryJobId: input.ids?.queryJobId ?? `cold-start-query:${base}`,
+    runId: input.ids?.runId ?? `cold-start-run:${base}`, question, segment: input.segment, line: input.line,
+    card: card.value, messageRef: sent.value.ref, region: input.region,
+    ...(input.workspaceId === undefined ? {} : { workspaceId: input.workspaceId }) });
 }
 
 /** Rulings 4, 5: the group's last round. `not_entered` (a restart before entry, the handoff fence) did nothing and
  *  opens round n on the same line and message; any other close has ended and is not retried. A pending round is
  *  claimed on its line and handed to the stage driver, which runs it detached. */
-async function endingOf(deps: ColdStartServiceDeps, at: RoleExplorationAtV1,
+/** The region a round explores; old records stored it only in the QueryJob id's `region:` segment. */
+export function regionOfRound(entry: ColdStartExplorationQueryRefV1, projectId: string): ModuleRef | null {
+  if (entry.region !== undefined && entry.region !== null) return { ...entry.region };
+  const prefix = `cold-start-query:${projectId}:region:`;
+  const id = entry.queryRunRef.queryJobId;
+  if (!id.startsWith(prefix)) return null;
+  const moduleId = id.slice(prefix.length).replace(/:deeper$/, '').replace(/:attempt:\d+$/, '').replace(/:\d+$/, '');
+  return moduleId === '' ? null : { projectId, moduleId };
+}
+
+/** The retry's ids: a first-layer stop keeps the existing `first:<n>`; a deeper round retries as `...:deeper:attempt:<n>`. */
+function reopenRoundIds(group: readonly ColdStartExplorationQueryRefV1[]): { queryJobId: string; runId: string } {
+  const last = group.at(-1)!.queryRunRef;
+  const attempt = /^(.*):attempt:(\d+)$/.exec(last.queryJobId);
+  if (attempt !== null) {
+    const next = Number(attempt[2]) + 1;
+    return { queryJobId: `${attempt[1]}:attempt:${next}`,
+      runId: `${last.runId.replace(/:attempt:\d+$/, '')}:attempt:${next}` };
+  }
+  if (last.queryJobId.endsWith(':deeper')) {
+    return { queryJobId: `${last.queryJobId}:attempt:1`, runId: `${last.runId}:attempt:1` };
+  }
+  const first = group[0]!.queryRunRef;
+  const n = group.length + 1;
+  return { queryJobId: `${first.queryJobId}:${n}`, runId: `${first.runId}:${n}` };
+}
+
+export async function endingOf(deps: ColdStartServiceDeps, at: RoleExplorationAtV1,
   group: readonly ColdStartExplorationQueryRefV1[]): Promise<ReadResult<EndingV1>> {
   const entry = group.at(-1)!;
   const runRef = entry.queryRunRef;
@@ -388,20 +441,27 @@ async function endingOf(deps: ColdStartServiceDeps, at: RoleExplorationAtV1,
   const read = await deps.queries.readQueryJob(at.ctx, queryJobRef);
   if (read.status !== 'ready') return read;
   const job = read.value.job.job;
-  if (job.status === 'answered') return { status: 'ready', value: { kind: 'ended' } };
-  if (job.status === 'closed') {
-    if (job.closeReason?.code !== 'not_entered') return { status: 'ready', value: { kind: 'ended' } };
+  // R-04: a stopped round was never to end; a `repropose` mark reopens even an answered round. The order matters:
+  // a plain answered round is done, but an answered round carrying a reason is the person's “try again”.
+  const reproposed = entry.reopen !== undefined && entry.reopen.reason !== null;
+  if (job.status === 'answered' && !reproposed) return { status: 'ready', value: { kind: 'ended' } };
+  if ((job.status === 'answered' || job.status === 'closed')
+    && (reproposed || entry.reopen !== undefined || job.closeReason?.code === 'not_entered')) {
     const card = await deps.sessions.readSession(at.ctx, entry.sessionRef, 'project');
     if (card.status !== 'ready') return card;
-    // Round n's ids are the first round's plus `:n`; a crash before the save recomputes the same n.
-    const first = group[0]!.queryRunRef;
-    const attempt = group.length + 1;
-    const reopened = await submitExploration(deps, at, { queryJobId: `${first.queryJobId}:${attempt}`,
-      runId: `${first.runId}:${attempt}`, question: job.intent.question, segment: entry.segment,
-      line: entry.sessionRef, card: card.value, messageRef: entry.messageRef });
+    // A crash before the save recomputes the same retry ids.
+    const ids = reopenRoundIds(group);
+    const question = entry.reopen?.reason == null ? job.intent.question
+      : `${job.intent.question}\n\nA person rejected the previous proposal and asked for one more exploration round: `
+        + entry.reopen.reason;
+    const reopened = await submitExploration(deps, at, { queryJobId: ids.queryJobId,
+      runId: ids.runId, question, segment: entry.segment,
+      line: entry.sessionRef, card: card.value, messageRef: entry.messageRef,
+      region: entry.region ?? null, ...(runRef.workspaceId === at.input.workspaceId ? {} : { workspaceId: runRef.workspaceId }) });
     if (reopened.status !== 'ready') return reopened;
     return { status: 'ready', value: { kind: 'reopen', entry: reopened.value } };
   }
+  if (job.status === 'closed') return { status: 'ready', value: { kind: 'ended' } };
   const run = read.value.run;
   if (run.run.executionState === undefined) {
     const card = await deps.sessions.readSession(at.ctx, entry.sessionRef, 'project');
@@ -451,7 +511,7 @@ export function createRoleExplorationPhases(deps: ColdStartServiceDeps): {
     call: RoleExplorationCallV1): Promise<DriveResultV1> {
     const action = at.action;
     if (action.route === 'map') return call.write(ctx, at, call.advance(action, {}));
-    const group = explorationGroupsOf(action.explorations, 'coarse_split')[0];
+    const group = explorationGroupsOf(action.explorations).find((candidate) => candidate[0]!.segment === 'coarse_split');
     if (group === undefined) {
       // `start_lines` and its adviser line live in the project's main workspace; the driving ctx may be a second one.
       const main = await readMainWorkspace(deps.records, at.input.projectId);
@@ -469,18 +529,21 @@ export function createRoleExplorationPhases(deps: ColdStartServiceDeps): {
       const entry = await openExploration(deps, at, { line: line.value, segment: 'coarse_split', region: null,
         key: 'coarse_split' });
       if (entry.status !== 'ready') return entry;
-      return call.write(ctx, at, { ...action, explorations: [entry.value] });   // d31: submitting is not the approval
+      // d31: submitting is not the approval; one constructor appends the round.
+      return call.write(ctx, at, appendExploration(action, entry.value) as RoleExplorationActionV1);
     }
     const end = await endingOf(deps, at, group);
     if (end.status !== 'ready') return end;
     if (end.value.kind === 'reopen') {
-      return call.write(ctx, at, { ...action, explorations: [...action.explorations, end.value.entry] });
+      return call.write(ctx, at, appendExploration(action, end.value.entry) as RoleExplorationActionV1);
     }
     if (end.value.kind === 'running') return stopExploration(at);
     // d31: the round ending is not the approval either; 8C's apply moves the adopted pin past the route's pin.
     const window = await readCurrentCatalogWindow(deps.records, at.input.projectId);
     if (window.status !== 'ready') return window;
     if (sameJson(catalogPinOf(window), action.baseCatalogPin)) return stopExploration(at);
+    // R-10: depth 1 stops after the coarse split; the pin just moved with the approval.
+    if (explorationDepthOf(action) === 1) return call.write(ctx, at, call.skipRegions(action, catalogPinOf(window)));
     return call.write(ctx, at, call.advance(action, {}));
   }
 
@@ -491,7 +554,10 @@ export function createRoleExplorationPhases(deps: ColdStartServiceDeps): {
     const window = await readCurrentCatalogWindow(deps.records, projectId);
     if (window.status !== 'ready') return window;
     if (action.route === 'map') {
-      return call.write(ctx, at, call.advance(action, { baseCatalogPin: catalogPinOf(window) }));
+      const mapped = action.plannedRounds === undefined
+        ? setPlannedRounds(action, plannedExplorationRounds({ depth: explorationDepthOf(action), route: 'map',
+          topLevelModuleCount: 0 })) : action;
+      return call.write(ctx, at, call.advance(mapped, { baseCatalogPin: catalogPinOf(window) }));
     }
     const catalog = window.catalog.catalog;
     const lines = await deps.regionLines.readOpenRegionLines(ctx, { projectId });
@@ -532,8 +598,14 @@ export function createRoleExplorationPhases(deps: ColdStartServiceDeps): {
       && pending.every((module, index) => module.projectId === action.pendingRegions[index]!.projectId
         && module.moduleId === action.pendingRegions[index]!.moduleId);
     if (added.length === 0 && pending.length > 0 && samePending) return stopExploration(at);
-    const next: RoleExplorationActionV1 = { ...action, pendingRegions: pending,
-      explorations: [...action.explorations, ...added] };
+    // M7b: the full selected set is known on this pass; write the formula once, never recompute on a later pass.
+    const selected = (action.plannedRounds === undefined
+      ? setPlannedRounds(action, plannedExplorationRounds({ depth: explorationDepthOf(action), route: 'split',
+        topLevelModuleCount: call.modules.length }))
+      : action) as RoleExplorationActionV1;
+    let withRounds = selected;
+    for (const entry of added) withRounds = appendExploration(withRounds, entry) as RoleExplorationActionV1;
+    const next: RoleExplorationActionV1 = { ...withRounds, pendingRegions: pending };
     if (pending.length > 0) return call.write(ctx, at, next);
     // C1-15: the base pin from here on is the one after the coarse split was applied.
     return call.write(ctx, at, call.advance(next, { pendingRegions: [], baseCatalogPin: catalogPinOf(window) }));
@@ -543,13 +615,32 @@ export function createRoleExplorationPhases(deps: ColdStartServiceDeps): {
     call: RoleExplorationCallV1): Promise<DriveResultV1> {
     const action = at.action;
     let unfinished = false;
-    for (const group of explorationGroupsOf(action.explorations, 'region')) {
+    for (const group of explorationGroupsOf(action.explorations).filter((candidate) => candidate[0]!.segment === 'region')) {
       const end = await endingOf(deps, at, group);
       if (end.status !== 'ready') return end;
       if (end.value.kind === 'reopen') {
-        return call.write(ctx, at, { ...action, explorations: [...action.explorations, end.value.entry] });
+        return call.write(ctx, at, appendExploration(action, end.value.entry));
       }
       if (end.value.kind === 'running') unfinished = true;   // every region line still claims and starts this pass
+      if (end.value.kind === 'ended' && explorationDepthOf(action) === 3) {
+        const first = group[0]!;
+        const deeperKey = `${first.queryRunRef.queryJobId}:deeper`;
+        const opened = group.some((entry) => entry.queryRunRef.queryJobId === deeperKey
+          || entry.queryRunRef.queryJobId.startsWith(`${deeperKey}:attempt:`));
+        if (!opened) {
+          const region = regionOfRound(first, at.input.projectId);
+          if (region === null) return rejected('invalid', 'the exploration round names no region block');
+          const card = await deps.sessions.readSession(ctx, first.sessionRef, 'project');
+          if (card.status !== 'ready') return card;
+          // M3: the same group, the same “please act” message; only the round is appended, never a new message.
+          const round = await submitExploration(deps, at, { queryJobId: deeperKey, runId: `${deeperKey}:attempt:1`,
+            question: roleExplorationQuestion('region', region, 2), segment: 'region', region,
+            line: first.sessionRef, card: card.value, messageRef: first.messageRef,
+            workspaceId: first.queryRunRef.workspaceId });
+          if (round.status !== 'ready') return round;
+          return call.write(ctx, at, appendExploration(action, round.value));
+        }
+      }
     }
     if (unfinished) return stopExploration(at);
     const pin = action.baseCatalogPin;
@@ -620,6 +711,8 @@ export function createColdStartService(deps: ColdStartServiceDeps): ColdStartSer
       patch as Omit<Partial<ColdStartActionV1>, 'kind' | 'action' | 'lastCompleted'>);
   const writeCall: RoleExplorationCallV1['write'] = (_ctx, at, next, phase, ledgerHorizon) =>
     write(at as AtV1, next as ColdStartActionV1, phase, ledgerHorizon);
+  const skipCall: RoleExplorationCallV1['skipRegions'] = (action, pin) =>
+    skipRegions(action as ColdStartActionV1, pin);
 
   async function candidatesPhase(at: AtV1): Promise<DriveResultV1> {
     const found = await deps.initial.readCandidate(at.ctx,
@@ -655,7 +748,8 @@ export function createColdStartService(deps: ColdStartServiceDeps): ColdStartSer
   }
 
   async function coarseSplitPhase(at: AtV1): Promise<DriveResultV1> {
-    return phases.coarseSplit(at.ctx, at, { modules: [], advance: advanceCall, write: writeCall });
+    return phases.coarseSplit(at.ctx, at, { modules: [], advance: advanceCall, write: writeCall,
+      skipRegions: skipCall });
   }
 
   async function regionsPhase(at: AtV1): Promise<DriveResultV1> {
@@ -666,11 +760,12 @@ export function createColdStartService(deps: ColdStartServiceDeps): ColdStartSer
       .map((entry) => entry.queryRunRef.queryJobId));
     const modules = topLevelModules(window.catalog.catalog)
       .filter((module) => !explored.has(`cold-start-query:${projectId}:region:${module.moduleId}`));
-    return phases.regions(at.ctx, at, { modules, advance: advanceCall, write: writeCall });
+    return phases.regions(at.ctx, at, { modules, advance: advanceCall, write: writeCall, skipRegions: skipCall });
   }
 
   async function proposalsPhase(at: AtV1): Promise<DriveResultV1> {
-    return phases.proposals(at.ctx, at, { modules: [], advance: advanceCall, write: writeCall });
+    return phases.proposals(at.ctx, at, { modules: [], advance: advanceCall, write: writeCall,
+      skipRegions: skipCall });
   }
 
   async function driveColdStart(ctx: CoreCallContext, input: DriveInputV1): Promise<DriveResultV1> {

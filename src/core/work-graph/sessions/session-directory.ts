@@ -1154,7 +1154,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
         // A workspace join opens its region line in the main workspace; a join has no steps to reserve, and its
         // region line's origin is the join itself (the role-facts writer reads it at project scope).
         if (parent.action.kind === 'role_line' && parent.action.action !== 'cold_start'
-          && parent.action.action !== 'workspace_join') {
+          && parent.action.action !== 'workspace_join' && parent.action.action !== 'exploration_followup') {
           const counted = input.creation === null ? null : roleLineDutyOf(input.creation.duty);
           const index = parent.action.steps.findIndex((step) => step.duty === counted);
           const stepped = roleLineStepTransition(parent.action, index, { state: 'reserved', childOperation: operationRef });

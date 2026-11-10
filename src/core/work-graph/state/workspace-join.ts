@@ -4,18 +4,26 @@
  * only narrows the arm and moves the phase pointer, and the workspace-join owner writes the record.
  */
 import { WORKSPACE_JOIN_PHASES } from './role-line-action.js';
-import type { WorkspaceJoinActionV1, WorkspaceJoinPhaseV1 } from './role-line-action.js';
+import type { ExplorationDepthV1, WorkspaceJoinActionV1, WorkspaceJoinPhaseV1 } from './role-line-action.js';
+import { DEFAULT_EXPLORATION_DEPTH } from './exploration-control.js';
 import type { OperationRef } from '../../../contracts/core/operations.js';
+import type { ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
 
 /** One join operation per (project, workspace): the ref is derived, not scanned. */
 export function workspaceJoinOperationRef(projectId: string, workspaceId: string): OperationRef {
   return { aggregateType: 'CoreOperation', projectId, operationId: `workspace_join:${workspaceId}` };
 }
 
-export function newWorkspaceJoinAction(): WorkspaceJoinActionV1 {
+export function newWorkspaceJoinAction(depth: ExplorationDepthV1 = DEFAULT_EXPLORATION_DEPTH): WorkspaceJoinActionV1 {
   return { kind: 'role_line', action: 'workspace_join', phase: 'coarse_split', lastCompleted: null,
     steps: [], result: null, pendingRegions: [], explorations: [], batchRefs: [],
-    route: 'split', baseCatalogPin: null, goalRef: null };
+    route: 'split', baseCatalogPin: null, goalRef: null, depth };
+}
+
+/** Depth 1's join skips the region phase: one coarse round, one planned round. */
+export function skipJoinRegions(action: WorkspaceJoinActionV1,
+  pin: ArchitectureCatalogPinV1): WorkspaceJoinActionV1 {
+  return { ...action, phase: 'proposals', lastCompleted: 'regions', baseCatalogPin: pin, plannedRounds: 1 };
 }
 
 /** The payload's phase pointer is the first unfinished phase, one step past `lastCompleted`. */
@@ -41,8 +49,9 @@ export function advanceWorkspaceJoinPhase(
 }
 
 /** The record's envelope, born in the later workspace's registration commit; the composition root encodes it. */
-export function newWorkspaceJoinOperation(input: { projectId: string; workspaceId: string; occurredAt: string }) {
+export function newWorkspaceJoinOperation(input: { projectId: string; workspaceId: string; occurredAt: string;
+  depth?: ExplorationDepthV1 }) {
   return { ref: workspaceJoinOperationRef(input.projectId, input.workspaceId), revision: 1,
-    workspaceId: input.workspaceId, action: newWorkspaceJoinAction(), phase: 'running' as const,
+    workspaceId: input.workspaceId, action: newWorkspaceJoinAction(input.depth), phase: 'running' as const,
     requestedAt: input.occurredAt, updatedAt: input.occurredAt, observation: null, failure: null };
 }

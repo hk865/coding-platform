@@ -35,6 +35,9 @@ export type RoleLineOperationReadV1 =
     batchRefs: RoleLineOperationV1['action']['batchRefs'];
     route: RoleLineOperationV1['action']['route'];
     baseCatalogPin: RoleLineOperationV1['action']['baseCatalogPin'];
+    depth: RoleLineOperationV1['action']['depth'];
+    plannedRounds: RoleLineOperationV1['action']['plannedRounds'];
+    followUp: RoleLineOperationV1['action']['followUp'];
   }
   | {
     operation: OperationRef;
@@ -77,7 +80,8 @@ export function createRoleLineOperationsRead(deps: {
             rows.push({ operation: record.ref, action: 'role_line', phase: record.phase, actionPhase: action.phase,
               steps: action.steps, result: action.result, lastCompleted: action.lastCompleted,
               candidate: action.candidate, pendingRegions: action.pendingRegions, explorations: action.explorations,
-              batchRefs: action.batchRefs, route: action.route, baseCatalogPin: action.baseCatalogPin });
+              batchRefs: action.batchRefs, route: action.route, baseCatalogPin: action.baseCatalogPin,
+              depth: action.depth, plannedRounds: action.plannedRounds, followUp: action.followUp });
           } else if (action.kind === 'member_create') {
             rows.push({ operation: record.ref, action: 'member_create', phase: record.phase,
               progress: action.progress });

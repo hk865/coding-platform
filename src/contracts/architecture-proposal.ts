@@ -11,6 +11,7 @@
  */
 import type { ArchitectureCatalogPinV1 } from './architecture-catalog.js';
 import type { OperationRef } from './core/operations.js';
+import type { QueryRunRef } from './query-job.js';
 import type { SessionRef } from './core/identity.js';
 import type { CoreRejection } from './core/results.js';
 import type { DecisionApplicationReceiptV1 } from './core/session-message.js';
@@ -32,6 +33,8 @@ export type ArchitectureProposalV1 = {
   reason: string;
   proposer: SessionRef;
   operationRef: OperationRef | null;
+  /** M6: the exact exploration round that wrote this proposal; absent on old records. */
+  queryRunRef?: QueryRunRef | null;
   state: 'pending' | 'applied' | 'rejected' | 'stale';
 };
 

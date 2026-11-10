@@ -40,9 +40,9 @@
 | `catalogModuleFactsOf` | `src/core/work-graph/architecture/catalog-service.ts:780` | 从已读的 current window 投影某个 module 的事实 | 一次调用有多个模块目标时共享一次读 |
 | `parseRepairOps` / `applyRepairOps` | `src/core/work-graph/architecture/repair-ops.ts:191` / `src/core/work-graph/architecture/repair-ops.ts:405` | 严格解析 1–20 个 repair op，并在 pinned baseline 规则上纯试算 catalog（含最终 `validateAdoptedArchitecture` 与 `(from, to)` 规则检查） | note 写入、修订规划与结构提案共用的唯一 op 引擎 |
 | `planCatalogRevision` | `src/core/work-graph/architecture/revision-planner.ts:131` | 非提交的 catalog 修订：expected pin 对当前窗口、op 试算、删除/职责移动规则、guards/records/claims/events/next pin 一次返回 | 人路由的 `reviseArchitectureCatalog` 与提案应用合并 contribution 时 |
-| `createArchitectureProposalService` | `src/core/work-graph/architecture/proposal-service.ts:1114` | 绑定 records/lookups 等依赖，返回 propose/freeze/apply/read 的提案 owner | 组合根装配结构提案服务 |
+| `createArchitectureProposalService` | `src/core/work-graph/architecture/proposal-service.ts:1147` | 绑定 records/lookups 等依赖，返回 propose/freeze/apply/read 的提案 owner；提案记录除模型给的 `operationRef` 外，平台在写入时补可信来源的 `operationRef` 与可空的 `queryRunRef`（该提案来自哪一条探索轮，M6） | 组合根装配结构提案服务；结构卡的“重新提”沿这两个字段找来源 |
 | `readProjectBatches` | `src/core/work-graph/architecture/proposal-service.ts:582` | 一个项目全部冻结批，按批 id 排；坏批是 `unavailable` | 冷启动按 pin 找回冻结的批、结构提案卡的读源；不要另扫批索引 |
-| `readArchitectureProposal` | `src/core/work-graph/architecture/proposal-service.ts:1063` | 按 `proposalRef` 读提案、批 ref 与卡片 key | 提案读（路由、E3 与卡来源） |
+| `readArchitectureProposal` | `src/core/work-graph/architecture/proposal-service.ts:1096` | 按 `proposalRef` 读提案、批 ref 与卡片 key | 提案读（路由、E3 与卡来源） |
 | `compareObservedGraphs` | `src/core/work-graph/architecture/architecture-delta.ts:89` | 两份观测的节点/边结构差异与环变化 | 观测版本比较 |
 | `stronglyConnectedCycles` | `src/core/work-graph/architecture/architecture-delta.ts:24` | 确定性 SCC（成员数 >1 或自环）检测 | 观测差异与正式比较共用 |
 | `buildObservedNeighborhood` | `src/core/work-graph/architecture/graph-index.ts:161` | 按 anchor/depth/relations 取有界邻域页，带 unresolved 归属 | 图邻域查询 |

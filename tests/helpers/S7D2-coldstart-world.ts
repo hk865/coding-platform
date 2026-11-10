@@ -26,13 +26,14 @@
  * `notes/list`. No record, event or store is read or written.
  */
 import { mkdir, writeFile } from 'node:fs/promises';
+import { vi } from 'vitest';
 import type { WorkbenchQueryProfile, WorkbenchRuntimeBinding } from '../../src/app/runtime-configuration.js';
 import { dirname, join } from 'node:path';
 import type {
   AdoptedArchitecture, ArchitectureCatalogPinV1, ModuleDefinition,
 } from '../../src/contracts/architecture-catalog.js';
 import type { ArchitectureProposalRef, ProposalRead } from '../../src/contracts/architecture-proposal.js';
-import type { ModuleRef, SessionRef } from '../../src/contracts/core/identity.js';
+import type { ModuleRef, SessionRef, WorkspaceScope } from '../../src/contracts/core/identity.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { QueryJobAnswerRef, QueryJobRef } from '../../src/contracts/query-job.js';
@@ -60,7 +61,7 @@ import {
 import { valueOf } from './S6B3-fixture.js';
 import { readS7D1Limits, setS7D1Open } from './S7D1-allocation-world.js';
 import {
-  linkS7D2Scopes, runS7D2Work, S7D2_ADVISER_WORK, S7D2_MODULE_IDS,
+  linkS7D2Scopes, readS7D2Operations, runS7D2Work, S7D2_ADVISER_WORK, S7D2_MODULE_IDS,
 } from './S7D2-role-line-world.js';
 import { S6A_BASELINE_ID, S6A_POLICY_CONTENT, S6A_POLICY_ID } from './S6A-memory-fixture.js';
 
@@ -251,6 +252,12 @@ export type S7D2ColdStartWorldOptions = {
   extraHostOptions?: Record<string, unknown>;
   /** Further bindings (a test adds its own tool to the adviser Work binding). */
   extraBindings?: readonly S6AExtraBinding[];
+  /**
+   * DEXC: the exploration depth the seed's first `workspaces/register` carries as `explorationDepth`. The seed lives
+   * in the request world, so a delegating `fetch` spy, installed only while the world opens, adds this one field to
+   * that one body and changes nothing else. Absent: the body is the seed's own (the default depth).
+   */
+  depth?: 1 | 2 | 3;
 };
 
 export type S7D2ColdStartWorld = {
@@ -333,6 +340,13 @@ export type S7D2ColdStartWorld = {
     Promise<{ final: S7D2ColdStartRow; pin2: ArchitectureCatalogPinV1 }>;
   /** The first answer of one already-saved region line (before `proposals` claims it). */
   scriptRegion(moduleId: string, replies: readonly S6AReply[]): Promise<void>;
+  /**
+   * DEXC: up to `coarse_split` if the row is before it, then two free adviser seats, the coarse card approved if it
+   * waits, the `proposals` commit held while `script` runs on each region line (by module id, with the pin after the
+   * coarse split), then released. Answers the row read at that commit and the region lines.
+   */
+  toProposals(script?: (moduleId: string, line: S6ASession, pin: ArchitectureCatalogPinV1) => Promise<void>):
+    Promise<{ row: DexcRow; lines: Record<string, S6ASession> }>;
   /** Every field a restart must not change, plus the opening-line/message/round counts (9a's equality). */
   snapshot(): Promise<Record<string, unknown>>;
   /**
@@ -378,16 +392,29 @@ export async function openS7D2ColdStartWorld(
   // The Host re-reads this binding through the fixture on every start; a test may change its Query budget before
   // a crash/reopen, and the reopened Host sees the new value while the running one keeps its old snapshot.
   const adviserWork = structuredClone(COLDSTART_ADVISER_WORK);
-  const world = await openS6AHostWorld({
-    backend: options.backend,
-    defaultGoals: false,
-    extraHostOptions: {
-      requestDriver: 'on',
-      checks: ag2bChecksConfiguration({ actor: OPERATOR, command: 'node --test' }),
-      ...(options.extraHostOptions ?? {}),
-    },
-    extraBindings: [adviserWork, ...(options.extraBindings ?? [])],
+  const realFetch = globalThis.fetch;
+  const depth = options.depth;
+  const register = depth === undefined ? null : vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+    if (!String(url).endsWith('/workspaces/register') || typeof init?.body !== 'string') return await realFetch(url, init);
+    const body = JSON.parse(init.body) as { request: { input: Record<string, unknown> } };
+    return await realFetch(url, { ...init, body: JSON.stringify({ ...body,
+      request: { ...body.request, input: { ...body.request.input, explorationDepth: depth } } }) });
   });
+  let world: S6AHostWorld;
+  try {
+    world = await openS6AHostWorld({
+      backend: options.backend,
+      defaultGoals: false,
+      extraHostOptions: {
+        requestDriver: 'on',
+        checks: ag2bChecksConfiguration({ actor: OPERATOR, command: 'node --test' }),
+        ...(options.extraHostOptions ?? {}),
+      },
+      extraBindings: [adviserWork, ...(options.extraBindings ?? [])],
+    });
+  } finally {
+    register?.mockRestore();
+  }
   try {
     await writeColdStartSources(world);
     const lines = await openingLinesOf(world);
@@ -623,6 +650,29 @@ export async function openS7D2ColdStartWorld(
         if (entry === undefined) throw new Error(`C1T: no region exploration for ${moduleId}`);
         await world.scripted.script(await handle.lineOf(entry.sessionRef, `c1t-region-${moduleId}`), replies);
       },
+      async toProposals(script = async () => undefined) {
+        const at = await handle.phase();
+        if (at !== 'coarse_split' && at !== 'regions') await handle.advanceTo('coarse_split');
+        const proposals = holdColdStartPhase('proposals', 'C1T: after the proposals phase commit');
+        try {
+          // Two region lines need two free seats; `holders` may still count only the opening adviser line here.
+          await handle.setAdviserOpen(await handle.adviserHolders() + 2, 'c1t-limits-two');
+          if (await handle.phase() === 'coarse_split') await runSteps('coarse_split', 'regions');
+          await proposals.reached;
+          const row = await handle.coldStart() as DexcRow;
+          const pin = await readCurrentPin(world);
+          const lines: Record<string, S6ASession> = {};
+          for (const entry of (row.explorations ?? []) as readonly S7D2Exploration[]) {
+            if (entry.segment !== 'region') continue;
+            const moduleId = entry.queryRunRef.runId.split(':').at(-1)!;
+            lines[moduleId] = await handle.lineOf(entry.sessionRef, `c1t-region-${moduleId}`);
+            await script(moduleId, lines[moduleId], pin);
+          }
+          return { row, lines };
+        } finally {
+          proposals.release();
+        }
+      },
       setAdviserProfileBudget(budget) {
         if (adviserWork.queryProfile === undefined) throw new Error('C1T: the adviser binding has no Query profile');
         adviserWork.queryProfile.budget = { ...budget };
@@ -688,19 +738,8 @@ export async function openS7D2ColdStartWorld(
         }
         case 'regions': {
           await handle.waitForPhase('regions');
-          const holders = await handle.adviserHolders();
-          const proposals = holdColdStartPhase('proposals', 'C1T: after the proposals phase commit');
-          // Two region lines need two free seats; `holders` may still count only the opening adviser line here.
-          await handle.setAdviserOpen(holders + 2, 'c1t-limits-two');
-          const row = await handle.waitForExplorations(3);
-          await proposals.reached;
-          for (const entry of (row.explorations ?? []) as readonly S7D2Exploration[]) {
-            if (entry.segment !== 'region') continue;
-            const moduleId = entry.queryRunRef.runId.split(':').at(-1)!;
-            await world.scripted.script(await handle.lineOf(entry.sessionRef, `c1t-region-${moduleId}`),
-              options.regionReplies?.(moduleId) ?? [{ kind: 'text', text: `C1T: region ${moduleId} explored` }]);
-          }
-          proposals.release();
+          await handle.toProposals(async (moduleId, line) => await world.scripted.script(line,
+            options.regionReplies?.(moduleId) ?? [{ kind: 'text', text: `C1T: region ${moduleId} explored` }]));
           break;
         }
         case 'proposals':
@@ -788,4 +827,100 @@ async function adoptColdStartGovernance(world: S6AHostWorld): Promise<void> {
     description: 'C1T empty cold-start catalog', constraints: [], catalog: COLDSTART_EMPTY_CATALOG },
   'c1t-architecture-adopt', [projectPin, workspacePin]))).body, 'committed', 'the empty catalog adoption');
   await world.settleDetached();
+}
+
+// ---------------------------------------------------------------------------
+// DEXC: exploration control through its public routes (stop, continue, deepen and the card's third option)
+// ---------------------------------------------------------------------------
+
+/** A `role_line` row of `role-lines/operations` with the three fields exploration control adds to it. */
+export type DexcRow = S7D2ColdStartRow & { depth?: number; plannedRounds?: number | null;
+  followUp?: { kind: string; moduleRefs: ModuleRef[]; reason: string | null; sourceBatchRef: unknown } | null };
+
+/** The `role-lines/operations` rows of one workspace (default the main one) that carry a `followUp`. */
+export async function dexcFollowUps(world: Pick<S6AHostWorld, 'post'>, scope: WorkspaceScope = S6A_SCOPE):
+Promise<DexcRow[]> {
+  return (await readS7D2Operations(world, scope) as DexcRow[]).filter(row => row.action === 'role_line'
+    && row.followUp !== undefined && row.followUp !== null);
+}
+
+/**
+ * One `workspaces/exploration/<verb>` write in `scope`, pinned at the project and workspace revisions
+ * `workspaces/registration` reads; `body` names another target workspace or the `deepen` module. `replay` sends the
+ * same body again.
+ */
+export async function dexcCommand(world: Pick<S6AHostWorld, 'post'>, verb: 'stop' | 'continue' | 'deepen',
+  requestId: string, input: { scope?: WorkspaceScope; workspace?: WorkspaceScope; module?: ModuleRef } = {}):
+Promise<{ result: Record<string, unknown>; replay(): Promise<Record<string, unknown>> }> {
+  const scope = input.scope ?? S6A_SCOPE;
+  const registration = valueOf<{ project: { revision: number }; workspace: { revision: number } }>(
+    (await world.post('workspaces/registration', plain(scope, { ...scope }))).body, 'ready', 'the registration');
+  const body = graphWrite(scope, { workspace: { ...(input.workspace ?? scope) },
+    ...(input.module === undefined ? {} : { module: input.module }) }, requestId, [
+    { ref: { aggregateType: 'Project', projectId: scope.projectId }, revision: registration.project.revision },
+    { ref: { aggregateType: 'Workspace', ...scope }, revision: registration.workspace.revision }]);
+  const send = async (): Promise<Record<string, unknown>> =>
+    (await world.post(`workspaces/exploration/${verb}`, body)).body as Record<string, unknown>;
+  return { result: await send(), replay: send };
+}
+
+/** `decisions/answer` of one option with its text, on the card's own source and pins. */
+export async function dexcAnswer(world: Pick<S6AHostWorld, 'post'>, card: DecisionCardV1, optionId: string,
+  text: string, requestId: string): Promise<Record<string, unknown>> {
+  return (await world.post('decisions/answer', graphWrite(S6A_SCOPE, { source: card.source,
+    selection: { kind: 'option', optionId }, text, annotations: [] }, requestId, card.source.pins))).body as
+    Record<string, unknown>;
+}
+
+/** A line's rounds at the model boundary, one per Kernel run (an exploration round is one run; a provider retry
+ *  stays in it), a held or cancelled one included: each round's first request's last (user) message as JSON. */
+export async function dexcRounds(world: Pick<S6AHostWorld, 'scripted'>, line: S6ASession): Promise<string[]> {
+  const rounds = new Map<string, string>();
+  for (const { request } of await world.scripted.boundary(line)) {
+    if (!rounds.has(request.runId)) rounds.set(request.runId, JSON.stringify(request.messages.at(-1)));
+  }
+  return [...rounds.values()];
+}
+
+/** The signal of the line's last model call at the boundary; the only place a test reads a cancellation. */
+export async function dexcSignal(world: Pick<S6AHostWorld, 'scripted'>, line: S6ASession): Promise<AbortSignal | null> {
+  return (await world.scripted.boundary(line)).at(-1)?.signal ?? null;
+}
+
+/** One exploration round's `propose_architecture_revision` call and its closing answer (the reason as text). */
+export function dexcProposal(callId: string, pin: ArchitectureCatalogPinV1,
+  ops: readonly Record<string, unknown>[], reason: string): S6AReply[] {
+  return [{ kind: 'calls', calls: [{ callId, name: 'propose_architecture_revision',
+    args: { baseCatalogPin: pin, ops: [...ops], responsibilityMoves: [], reason } }] }, { kind: 'text', text: reason }];
+}
+
+/** The completion barrier (F9): detached rounds settled, then one real consume pass. The world configures no consumer,
+ *  so the pass period is the scribe reminder's 60 s on the frozen `Date.now()`; one clock step clears it. */
+export async function dexcBarrier(world: Pick<S6AHostWorld, 'consumeBarrier' | 'clock' | 'settleDetached'>):
+Promise<void> {
+  await world.settleDetached();
+  const settled = world.consumeBarrier();
+  world.clock.advance(60_000);
+  await settled;
+}
+
+/** A hold on the first commit that writes an `exploration_followup` record carrying a round: `before` keeps it from
+ *  committing (`hold`), `after` lets it land and keeps its answer (`holdAfter`). */
+export function holdFollowUpRound(when: 'before' | 'after', label: string): CommitHold {
+  const match: CommitMatch = commit => commit.records.some(record => {
+    let value: unknown;
+    try { value = JSON.parse(record.json) as unknown; } catch { return false; }
+    const action = (value as { action?: { action?: unknown; explorations?: unknown } } | null)?.action;
+    return action?.action === 'exploration_followup' && Array.isArray(action.explorations)
+      && action.explorations.length > 0;
+  });
+  return when === 'before' ? commitBarrier.hold(match, label) : commitBarrier.holdAfter(match, label);
+}
+
+/** Waits (bounded) for a waiting structural card other than `not`, and answers it. */
+export async function dexcNextCard(cold: Pick<S7D2ColdStartWorld, 'waitFor' | 'proposalCards'>,
+  not?: DecisionCardV1): Promise<DecisionCardV1> {
+  await cold.waitFor('a new structural card', async () =>
+    (await cold.proposalCards()).some(card => card.cardKey !== not?.cardKey));
+  return (await cold.proposalCards()).find(card => card.cardKey !== not?.cardKey)!;
 }

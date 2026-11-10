@@ -24,10 +24,13 @@ export function roleExplorationExecution(input: {
     runtimeBudget: structuredClone(input.runtimeBudget) };
 }
 
-export function roleExplorationQuestion(segment: RoleExplorationSegmentV1, region: ModuleRef | null): string {
-  return segment === 'coarse_split'
-    ? 'Please act: read only the top-level directories, entry points and existing docs, then propose the coarse split.'
-    : `Please act: explore only the region ${region?.moduleId ?? ''} and propose that region's revision.`;
+export function roleExplorationQuestion(segment: RoleExplorationSegmentV1, region: ModuleRef | null,
+  layer: 1 | 2 | 3 = 1): string {
+  if (segment === 'coarse_split') {
+    return 'Please act: read only the top-level directories, entry points and existing docs, then propose the coarse split.';
+  }
+  const deeper = layer <= 1 ? '' : layer === 2 ? ' one level deeper' : ' two levels deeper';
+  return `Please act: explore only the region ${region?.moduleId ?? ''}${deeper} and propose that region's revision.`;
 }
 
 /**

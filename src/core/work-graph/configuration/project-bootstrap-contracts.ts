@@ -42,7 +42,7 @@ export interface ProjectRegistrationPort {
   ): Promise<WriteResult<ProjectSnapshot>>;
   registerWorkspace(
     ctx: CoreCallContext,
-    request: GraphWrite<{ workspace: WorkspaceScope }>,
+    request: GraphWrite<{ workspace: WorkspaceScope; explorationDepth?: 1 | 2 | 3 }>,
   ): Promise<WriteResult<WorkspaceSnapshot>>;
   /**
    * R6 execution entry: one exact read of the already-registered Project and
@@ -123,10 +123,12 @@ export type ProjectBootstrapDependencies = {
   /** O1b (L26): the project's one start_lines operation record, born in the first workspace's registration commit.
    *  The Host's composition supplies the sessions encoder (configuration may not import sessions); absent writes no
    *  birth (D-2 precedent). */
-  startLines?: (input: { projectId: string; workspaceId: string; now: string }) => EncodedRecord;
+  startLines?: (input: { projectId: string; workspaceId: string; now: string;
+    explorationDepth?: 1 | 2 | 3 }) => EncodedRecord;
   /** The later workspace's `workspace_join` operation, born in that workspace's registration commit only. Configuration
    *  may not import sessions, so the composition root supplies the sessions encoder; absent writes no join (D-2). */
-  workspaceJoin?: (input: { projectId: string; workspaceId: string; now: string }) => EncodedRecord;
+  workspaceJoin?: (input: { projectId: string; workspaceId: string; now: string;
+    explorationDepth?: 1 | 2 | 3 }) => EncodedRecord;
 };
 
 /** The public grouping the composition root publishes as `platform.projects`

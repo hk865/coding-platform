@@ -154,6 +154,9 @@ export type DecisionSourceFactsDependencies = {
    */
   repairApprovalObjects?: (records: S5RecordPort, source: DecisionSourceV1) =>
     Promise<ReadResult<DecisionObjectV1[]>>;
+  /** M6: the ONE “this exploration batch can be re-proposed” read, shared with the card source. */
+  reproposeAdmits?: (ctx: CoreCallContext, batchRef: import('../../../contracts/architecture-proposal.js').ArchitectureProposalBatchRef) =>
+    Promise<boolean>;
 };
 
 
@@ -165,6 +168,7 @@ export type DecisionSourceFactsDependencies = {
 export const STRUCTURAL_PROPOSAL_OPTIONS: readonly DecisionOptionV1[] = Object.freeze([
   Object.freeze({ id: 'approve', label: '批准', effect: 'apply' as const }),
   Object.freeze({ id: 'reject', label: '不采用', effect: 'apply' as const }),
+  Object.freeze({ id: 'repropose', label: '不对，重新提', effect: 'apply' as const }),
 ]);
 
 /** The `repair_approval` card's options, shared by its card source and its answer facts. */
@@ -180,7 +184,7 @@ export const REPAIR_APPROVAL_OPTIONS: readonly DecisionOptionV1[] = Object.freez
  * batch's own pin keeps a forged key/pin pair from authorizing an answer; the
  * common pin verifier proves the rest against the records.
  */
-async function readStructuralProposalSource(deps: DecisionSourceFactsDependencies, source: DecisionSourceV1,
+async function readStructuralProposalSource(deps: DecisionSourceFactsDependencies, ctx: CoreCallContext, source: DecisionSourceV1,
   identity: Extract<DecisionSourceIdentityV1, { kind: 'structural_proposal' }>): Promise<ReadResult<DecisionSourceBranchFacts>> {
   const batchPin = source.pins.find(pin => canonicalOf(pin.ref) === canonicalOf(identity.batch));
   if (batchPin === undefined || batchPin.revision !== 1) {
@@ -188,12 +192,16 @@ async function readStructuralProposalSource(deps: DecisionSourceFactsDependencie
   }
   const objects = await deps.structuralProposalObjects(deps.records, source);
   if (objects.status !== 'ready') return objects;
+  // The same judgement the card source runs; a batch whose members do not resolve to exploration rounds keeps the
+  // two original options, and the answer side refuses `repropose` for it through the same option list.
+  const admits = deps.reproposeAdmits === undefined ? false : await deps.reproposeAdmits(ctx, identity.batch);
   return {
     status: 'ready',
     value: {
       goal: null,
       objects: objects.value,
-      options: STRUCTURAL_PROPOSAL_OPTIONS.map(option => ({ ...option })),
+      options: STRUCTURAL_PROPOSAL_OPTIONS.filter(option => admits || option.id !== 'repropose')
+        .map(option => ({ ...option })),
       pins: clonePins(source.pins),
       goalBases: [],
       closed: false,
@@ -410,7 +418,7 @@ export function createDecisionSourceFacts(
             return readMaintainerAssignmentSource(support, source, identity);
           }
           if (identity.kind === 'structural_proposal') {
-            return readStructuralProposalSource(deps, source, identity);
+            return readStructuralProposalSource(deps, ctx, source, identity);
           }
           if (identity.kind === 'role_capacity') return readRoleCapacitySource(support, ctx, source, identity);
           if (identity.kind === 'role_line_change') {

@@ -13,7 +13,7 @@ import type { TaskClaimPort } from '../core/work-graph/model/claim-contracts.js'
  */
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../contracts/core/results.js';
-import type { SessionRef, WorkspaceScope } from '../contracts/core/identity.js';
+import type { ModuleRef, SessionRef, WorkspaceScope } from '../contracts/core/identity.js';
 import type { RunRef, RunSnapshot, TaskTriple } from '../contracts/dispatch.js';
 import type { ControlIntentSnapshotV1 } from '../contracts/control-intent.js';
 import { canonicalJson, sha256Hex } from '../contracts/fingerprint.js';
@@ -72,6 +72,8 @@ import type { MaterialPort } from '../core/work-graph/model/material-contracts.j
 import type { EvidencePort } from '../core/work-graph/model/evidence-contracts.js';
 import type { QueryExecutionRecord, QueryJobPort } from '../core/work-graph/queries/contracts.js';
 import type { GraphWrite } from '../core/work-graph/model/task-contracts.js';
+import type { ExplorationControlViewV1 } from '../core/work-graph/sessions/exploration-control.js';
+import type { ExplorationFollowUpResultV1 } from '../core/work-graph/sessions/exploration-followup-service.js';
 import type {
   DecisionMessagePort,
   DecisionReadPort,
@@ -113,6 +115,7 @@ import {
   type DecisionsCandidateCardRead,
   type AssignMaintainerRouteEntry,
   type ArchitectureCoreRouteDto,
+  type ExplorationCoreRouteDto,
   type K3CoreRouteDto,
   type MaintainerCoreRouteDto,
   type MessagesCoreRouteDto,
@@ -364,6 +367,16 @@ export type CoreRouteBindings = {
   changeRoleLineScope: (ctx: CoreCallContext, request: GraphWrite<Omit<RoleLineChangeScopeCommandV1, 'commandId'>>)
     => ReturnType<RoleLineOperationsPort['changeScope']>;
   readRoleLineOperations: RoleLineOperationReadPort['readRoleLineOperations'];
+  /** 7D2 EXC: the person's stop/continue of the initialization exploration, and one block's next layer. */
+  stopExploration: (ctx: CoreCallContext,
+    request: GraphWrite<{ workspace: { projectId: string; workspaceId: string } }>)
+    => Promise<WriteResult<ExplorationControlViewV1>>;
+  resumeExploration: (ctx: CoreCallContext,
+    request: GraphWrite<{ workspace: { projectId: string; workspaceId: string } }>)
+    => Promise<WriteResult<ExplorationControlViewV1>>;
+  deepenExploration: (ctx: CoreCallContext,
+    request: GraphWrite<{ workspace: { projectId: string; workspaceId: string }; module: ModuleRef }>)
+    => Promise<WriteResult<ExplorationFollowUpResultV1>>;
   // The autonomy rules: the read and the three writes are person-only; each write unwraps its `GraphWrite` once
   // like the role-line writes.
   readAutonomyRules: AutonomyRulePort['read'];
@@ -517,6 +530,18 @@ export type CoreRoutePlatform = {
   /** O1b: the role-line writes and the operations read; internal like the other owner groups. */
   roleLines?: Pick<RoleLineOperationsPort, 'open' | 'changeScope'>;
   roleLineOperationsRead?: RoleLineOperationReadPort;
+  /** 7D2 EXC: the internal exploration owners, non-enumerable like the other owner groups. */
+  explorationControl?: {
+    stop(ctx: CoreCallContext, request: GraphWrite<{ workspace: { projectId: string; workspaceId: string } }>):
+      Promise<WriteResult<ExplorationControlViewV1>>;
+    resume(ctx: CoreCallContext, request: GraphWrite<{ workspace: { projectId: string; workspaceId: string } }>):
+      Promise<WriteResult<ExplorationControlViewV1>>;
+  };
+  explorationFollowUp?: {
+    beginDeepen(ctx: CoreCallContext, input: {
+      workspace: { projectId: string; workspaceId: string }; module: ModuleRef; requestId: string;
+    }): Promise<WriteResult<ExplorationFollowUpResultV1>>;
+  };
   /** The autonomy-rule owner; internal like the other owner groups, so a narrow platform answers `unsupported`. */
   autonomyRules?: Pick<AutonomyRulePort, 'read' | 'create' | 'revoke' | 'update'>;
   /** The Goal adviser queue owner; internal like the other owner groups, so a narrow platform answers `unsupported`. */
@@ -565,7 +590,7 @@ export const CORE_ROUTE_SPECS: Record<
   | keyof OverlapCoreRouteDto
   | keyof RequestCommandCoreRouteDto | keyof SecretaryLifecycleCoreRouteDto | keyof WaitsCoreRouteDto
   | keyof RoleLineCoreRouteDto | keyof MaintainerCoreRouteDto | keyof WorkspaceFilesCoreRouteDto
-  | keyof VerificationCoreRouteDto,
+  | keyof VerificationCoreRouteDto | keyof ExplorationCoreRouteDto,
   CoreRouteSpec
 > = {
   'controls/submit': { kind: 'graph_write', binding: 'submitControl', owner: 'controls.submitControl' },
@@ -769,6 +794,13 @@ export const CORE_ROUTE_SPECS: Record<
   'role-lines/change-scope': { kind: 'graph_write', binding: 'changeRoleLineScope', owner: 'roleLines.changeScope' },
   'role-lines/operations': { kind: 'plain', binding: 'readRoleLineOperations',
     owner: 'roleLineOperationsRead.readRoleLineOperations' },
+  // 7D2 EXC: the person's exploration control; the body carries the workspace, and deepen one block.
+  'workspaces/exploration/stop': { kind: 'graph_write', binding: 'stopExploration',
+    owner: 'explorationControl.stop' },
+  'workspaces/exploration/continue': { kind: 'graph_write', binding: 'resumeExploration',
+    owner: 'explorationControl.resume' },
+  'workspaces/exploration/deepen': { kind: 'graph_write', binding: 'deepenExploration',
+    owner: 'explorationFollowUp.beginDeepen' },
   'autonomy-rules': { kind: 'plain', binding: 'readAutonomyRules', owner: 'autonomyRules.read' },
   'autonomy-rules/create': { kind: 'graph_write', binding: 'createAutonomyRule', owner: 'autonomyRules.create' },
   'autonomy-rules/revoke': { kind: 'graph_write', binding: 'revokeAutonomyRule', owner: 'autonomyRules.revoke' },
@@ -1423,6 +1455,17 @@ export function createPlatformCoreRouteBindings(
     readRoleLineOperations: platform.roleLineOperationsRead === undefined
       ? unsupported('the platform does not publish roleLineOperationsRead.readRoleLineOperations')
       : personEntry(platform.roleLineOperationsRead.readRoleLineOperations.bind(platform.roleLineOperationsRead)),
+    // 7D2 EXC: the three exploration commands are the person's; the owners re-check their own preconditions.
+    stopExploration: platform.explorationControl === undefined
+      ? unsupported('the platform does not publish the exploration control')
+      : personEntry((ctx, request) => platform.explorationControl!.stop(ctx, request)),
+    resumeExploration: platform.explorationControl === undefined
+      ? unsupported('the platform does not publish the exploration control')
+      : personEntry((ctx, request) => platform.explorationControl!.resume(ctx, request)),
+    deepenExploration: platform.explorationFollowUp === undefined
+      ? unsupported('the platform does not publish the exploration follow-up owner')
+      : personEntry((ctx, request) => platform.explorationFollowUp!.beginDeepen(ctx,
+        { workspace: request.input.workspace, module: request.input.module, requestId: request.meta.requestId })),
     // The autonomy rules: person-only BEFORE the owner runs, the read included; the three write owners check the
     // person again, so the route is not the only guard.
     readAutonomyRules: platform.autonomyRules === undefined
@@ -1763,6 +1806,9 @@ export async function dispatchCoreRoute(
       case 'role-lines/open': return bindings.openRoleLine(ctx, graphWrite.request as never);
       case 'role-lines/change-scope': return bindings.changeRoleLineScope(ctx, graphWrite.request as never);
       case 'role-lines/operations': return bindings.readRoleLineOperations(ctx, plain.input as never);
+      case 'workspaces/exploration/stop': return bindings.stopExploration(ctx, graphWrite.request as never);
+      case 'workspaces/exploration/continue': return bindings.resumeExploration(ctx, graphWrite.request as never);
+      case 'workspaces/exploration/deepen': return bindings.deepenExploration(ctx, graphWrite.request as never);
       case 'autonomy-rules': return bindings.readAutonomyRules(ctx, plain.input as never);
       case 'autonomy-rules/create': return bindings.createAutonomyRule(ctx, graphWrite.request as never);
       case 'autonomy-rules/revoke': return bindings.revokeAutonomyRule(ctx, graphWrite.request as never);

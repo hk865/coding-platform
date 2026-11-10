@@ -169,6 +169,9 @@ export type RoleLineOperationsDeps = {
    *  `blocked`. */
   workspaceJoin?: { drive(ctx: CoreCallContext, input: { projectId: string; workspaceId: string }):
     Promise<ReadResult<{ phase: WorkspaceJoinPhaseV1; revision: number; completed: boolean }>> };
+  /** M4c: the follow-up driver, handed the exact operation ref the Host's index names. */
+  explorationFollowUp?: { drive(ctx: CoreCallContext, input: { operation: OperationRef }):
+    Promise<ReadResult<{ revision: number; completed: boolean; plannedRounds: number }>> };
   now(): string;
 };
 
@@ -197,12 +200,13 @@ async function readRoleLineOperationByRef(records: Pick<GoalRecordTransactionPor
 }
 
 /** `start_lines`' one record, born in the project's first workspace-registration commit (L26; TS-10 item 3). */
-export function startLinesInitialRecord(input: { projectId: string; workspaceId: string; now: string }):
-  SessionOperationRecord {
+export function startLinesInitialRecord(input: { projectId: string; workspaceId: string; now: string;
+  depth?: 1 | 2 | 3 }): SessionOperationRecord {
   return { ref: roleLineOperationRef(input.projectId, 'start_lines', 'start_lines'), revision: 1,
     workspaceId: input.workspaceId, phase: 'accepted', requestedAt: input.now, updatedAt: input.now,
     observation: null, failure: null,
     action: { kind: 'role_line', action: 'start_lines', phase: 'reserve', goalRef: null, result: null,
+      ...(input.depth === undefined ? {} : { depth: input.depth }),
       steps: (['secretary', 'adviser', 'scribe'] as const).map((key) => ({
         key, duty: key, childOperation: null, state: 'pending' as const })) } };
 }
@@ -605,6 +609,14 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
         { projectId: record.ref.projectId, workspaceId: record.workspaceId });
       if (driven.status !== 'ready') return driven;
       // A wait for a person (an exploration answer, a proposal card) is `waiting`; Host does not count it blocked.
+      const state = driven.value.completed ? 'done'
+        : driven.value.revision === record.revision ? 'waiting' : 'blocked';
+      return { status: 'ready', value: { revision: driven.value.revision, state, capacity: null } };
+    }
+    if (record.action.action === 'exploration_followup' && deps.explorationFollowUp !== undefined) {
+      // M4c: drive the exact operation the index names, never “the first follow-up of the project”.
+      const driven = await deps.explorationFollowUp.drive(ctx, { operation: record.ref });
+      if (driven.status !== 'ready') return driven;
       const state = driven.value.completed ? 'done'
         : driven.value.revision === record.revision ? 'waiting' : 'blocked';
       return { status: 'ready', value: { revision: driven.value.revision, state, capacity: null } };

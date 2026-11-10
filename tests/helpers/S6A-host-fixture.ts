@@ -19,6 +19,8 @@
  *   scripted model's (`createBe1ScriptedModel`): text or tool calls, each with an optional usage snapshot (absent
  *   = no usage event, so a null usage can follow a non-null one), or a provider failure. The tools the model calls
  *   are the real ones the Runtime gave the Kernel. A model call of an abandoned Host is refused and recorded.
+ *   `scripted.boundary` lists every request a Session's runs made at this boundary (held or cancelled ones too) with
+ *   the call's own `signal`, so a row reads a cancellation there (the DEXC rows); nothing is changed.
  * - The Session a Kernel run belongs to: a delegating spy on the Kernel's `runCodingAgent` (the Runtime's Kernel
  *   entry, `src/core/agent-runtime/observed-model-run.ts`), installed while a host world is open. It forwards the
  *   real call unchanged inside an async context naming the run's Kernel Session, which the router reads; it is
@@ -332,6 +334,8 @@ export type S6AScriptedModel = {
   requests(session: S6ASession): Promise<ModelRequest[]>;
   /** Model calls an abandoned Host started after its crash (refused, never served). */
   abandonedCalls(): readonly S6AAbandonedCall[];
+  /** Every model request of the Session at the model boundary, held or cancelled ones too, with its call's signal. */
+  boundary(session: S6ASession): Promise<ReadonlyArray<{ request: ModelRequest; signal: AbortSignal }>>;
 };
 
 // ---------------------------------------------------------------------------
@@ -451,6 +455,7 @@ export async function openS6AHostWorld(options: S6AHostWorldOptions): Promise<S6
   const abandonedCalls: S6AAbandonedCall[] = [];
   const scripts = new Map<string, SessionScript>();
   const modelHolds = new Map<string, ModelHold[]>();
+  const boundaryLog = new Map<string, { request: ModelRequest; signal: AbortSignal }[]>();
   const gates: GateEntry[] = [];
   const window = options.secretaryBudget?.contextWindowTokens ?? S6A_SECRETARY_WINDOW_TOKENS;
   const maxTokens = options.secretaryBudget?.maxTokens === undefined ? null : options.secretaryBudget.maxTokens;
@@ -465,6 +470,11 @@ export async function openS6AHostWorld(options: S6AHostWorldOptions): Promise<S6
         throw new Error(`S6A: the abandoned Host ${instance.index} started a model call after its crash`);
       }
       const scope = runScope.getStore();
+      if (scope?.kernelSessionId !== undefined) {
+        const log = boundaryLog.get(scope.kernelSessionId) ?? [];
+        log.push({ request: structuredClone(request) as ModelRequest, signal: streamOptions.signal });
+        boundaryLog.set(scope.kernelSessionId, log);
+      }
       const hold = scope?.kernelSessionId === undefined ? undefined
         : modelHolds.get(scope.kernelSessionId)?.find(candidate => !candidate.matched && candidate.active());
       if (hold !== undefined) {
@@ -635,6 +645,7 @@ export async function openS6AHostWorld(options: S6AHostWorldOptions): Promise<S6
       async pending(session) { return (await scriptOf(session)).pending(); },
       async requests(session) { return structuredClone((await scriptOf(session)).model.requests); },
       abandonedCalls: () => [...abandonedCalls],
+      async boundary(session) { return [...(boundaryLog.get(await kernelSessionOf(session)) ?? [])]; },
     },
 
     gates: {

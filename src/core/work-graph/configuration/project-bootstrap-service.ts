@@ -599,7 +599,7 @@ async function createProject(
 async function registerWorkspace(
   deps: ProjectBootstrapDependencies,
   ctx: CoreCallContext,
-  request: GraphWrite<{ workspace: { projectId: string; workspaceId: string } }>,
+  request: GraphWrite<{ workspace: { projectId: string; workspaceId: string }; explorationDepth?: 1 | 2 | 3 }>,
 ): Promise<WriteResult<WorkspaceSnapshot>> {
   const bound = bindContext(ctx);
   if (bound.status !== 'ok') return bound;
@@ -609,7 +609,15 @@ async function registerWorkspace(
   const rawInput = body.input;
   const rawMeta = body.meta;
   if (!isRecord(rawInput) || !isRecord(rawMeta)) return invalid('registerWorkspace requires an input and meta object');
-  if (!exactKeys(rawInput, ['workspace'])) return invalid('registerWorkspace.input must carry exactly workspace');
+  // R-09: `explorationDepth` is optional; the rest of the input stays exactly `workspace`.
+  if (!exactKeys(rawInput, ['workspace'])
+    && !exactKeys(rawInput, ['workspace', 'explorationDepth'])) {
+    return invalid('registerWorkspace.input must carry workspace and an optional explorationDepth');
+  }
+  const explorationDepth = rawInput['explorationDepth'];
+  if (explorationDepth !== undefined && explorationDepth !== 1 && explorationDepth !== 2 && explorationDepth !== 3) {
+    return invalid('registerWorkspace.explorationDepth must be 1, 2 or 3');
+  }
   const workspace = rawInput['workspace'];
   if (!isRecord(workspace) || !exactKeys(workspace, ['projectId', 'workspaceId'])
     || !nonEmpty(workspace['projectId']) || !nonEmpty(workspace['workspaceId'])) {
@@ -636,7 +644,7 @@ async function registerWorkspace(
 
   const fingerprint = fingerprintOf({
     schemaVersion: 1, commandType: 'RegisterWorkspace', projectId, workspaceId, actor: bound.actor,
-    expected: expectedProjection(expected.pins),
+    expected: expectedProjection(expected.pins), explorationDepth: explorationDepth ?? null,
   });
   if (fingerprint.status !== 'ok') return fingerprint;
   const identityKey = REGISTER_WORKSPACE_PREFIX + commandIdentityKey({ projectId, actor: bound.actor, idempotencyKey: requestId });
@@ -680,7 +688,8 @@ async function registerWorkspace(
   const workspaceKey = canonicalJson(snapshot.ref as unknown as JsonValue);
   // O1b (L26): the first workspace's commit births the project's start_lines operation; a later one skips it.
   // C2 (rework-1): the birth takes the registration event's own time; no second clock read.
-  const birth = deps.startLines?.({ projectId, workspaceId, now: event.occurredAt });
+  const birth = deps.startLines?.({ projectId, workspaceId, now: event.occurredAt,
+    ...(explorationDepth === undefined ? {} : { explorationDepth }) });
   let born: EncodedRecord | null = null;
   if (birth !== undefined) {
     const existing = await deps.records.readMany([birth.refKey]);
@@ -691,7 +700,8 @@ async function registerWorkspace(
   // first workspace from a later one, so it births neither (D-2 precedent). Same registration event, one commit.
   let joined: EncodedRecord | null = null;
   if (deps.startLines !== undefined && born === null) {
-    const join = deps.workspaceJoin?.({ projectId, workspaceId, now: event.occurredAt });
+    const join = deps.workspaceJoin?.({ projectId, workspaceId, now: event.occurredAt,
+      ...(explorationDepth === undefined ? {} : { explorationDepth }) });
     if (join !== undefined) {
       const existing = await deps.records.readMany([join.refKey]);
       if (existing.status !== 'ready') return mapStoreFailure(existing);

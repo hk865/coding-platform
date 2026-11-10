@@ -19,7 +19,7 @@ import { writeRoleLineOperation } from './role-line-operation-write.js';
 import type { RoleLineOperationV1 } from '../model/session-contracts.js';
 import type { WorkspaceJoinPhaseV1, WorkspaceJoinActionV1 } from '../state/role-line-action.js';
 import {
-  advanceWorkspaceJoinPhase, workspaceJoinPhaseProblem,
+  advanceWorkspaceJoinPhase, skipJoinRegions, workspaceJoinPhaseProblem,
 } from '../state/workspace-join.js';
 import { catalogPinOf, readCurrentCatalogWindow } from '../architecture/catalog-service.js';
 
@@ -39,6 +39,8 @@ export function createWorkspaceJoinService(deps: ColdStartServiceDeps): Workspac
   const advanceJoinPhase: RoleExplorationCallV1['advance'] = (action, patch) =>
     advanceWorkspaceJoinPhase(action as WorkspaceJoinActionV1,
       patch as Omit<Partial<WorkspaceJoinActionV1>, 'kind' | 'action' | 'lastCompleted'>);
+  const skipJoin: RoleExplorationCallV1['skipRegions'] = (action, pin) =>
+    skipJoinRegions(action as WorkspaceJoinActionV1, pin);
 
   /** The join's one operation commit. `ledgerHorizon` is the completion's CAS, as on the cold start. */
   const write: RoleExplorationCallV1['write'] = async (ctx, at, action, phase, ledgerHorizon) => {
@@ -102,16 +104,20 @@ export function createWorkspaceJoinService(deps: ColdStartServiceDeps): Workspac
     }
     switch (action.phase) {
       case 'coarse_split':
-        return asJoinResult(await phases.coarseSplit(ctx, at, { modules: [], advance: advanceJoinPhase, write }));
+        return asJoinResult(await phases.coarseSplit(ctx, at, { modules: [], advance: advanceJoinPhase, write,
+          skipRegions: skipJoin }));
       case 'regions': {
         const main = await readMainWorkspace(deps.records, input.projectId);
         if (main.status !== 'ready') return main;
         const modules = await joinRegionModules(ctx, input.projectId, input.workspaceId, main.value);
         if (modules.status !== 'ready') return modules;
-        return asJoinResult(await phases.regions(ctx, at, { modules: modules.value, advance: advanceJoinPhase, write }));
+        // M7b: the shared `regions` phase writes the formula once on the same module set the join selected.
+        return asJoinResult(await phases.regions(ctx, at,
+          { modules: modules.value, advance: advanceJoinPhase, write, skipRegions: skipJoin }));
       }
       case 'proposals':
-        return asJoinResult(await phases.proposals(ctx, at, { modules: [], advance: advanceJoinPhase, write }));
+        return asJoinResult(await phases.proposals(ctx, at, { modules: [], advance: advanceJoinPhase, write,
+          skipRegions: skipJoin }));
     }
   }
 

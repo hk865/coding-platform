@@ -3,6 +3,7 @@ import type { OperationRef } from '../../../contracts/core/operations.js';
 import type { ModuleRef, SessionRef } from '../../../contracts/core/identity.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
+import { canonicalKey } from '../../../contracts/fingerprint.js';
 import type { QueryJobAnswerRef, QueryRunRef } from '../../../contracts/query-job.js';
 import type { ArchitectureProposalBatchRef } from '../../../contracts/architecture-proposal.js';
 import { architectureCatalogPinShape, type ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
@@ -14,7 +15,7 @@ import {
 } from '../../../contracts/data-format-refs.js';
 
 export const ROLE_LINE_ACTIONS = ['start_lines', 'open', 'role_line_add', 'role_line_split', 'role_line_reuse',
-  'goal_queue_assign', 'cold_start', 'workspace_join'] as const;
+  'goal_queue_assign', 'cold_start', 'workspace_join', 'exploration_followup'] as const;
 export const ROLE_LINE_STEP_KEYS = ['secretary', 'adviser', 'scribe'] as const;
 export const ROLE_LINE_STEP_STATES = ['pending', 'reserved', 'created', 'registered', 'linked', 'done', 'failed'] as const;
 export type RoleLineStepKeyV1 = string; // the three start_lines keys are ROLE_LINE_STEP_KEYS; open/reviewer use their own key
@@ -24,14 +25,24 @@ export type ColdStartPhaseV1 = (typeof COLD_START_PHASES)[number];
 /** The second workspace's join always explores; its three phases are a subset of `COLD_START_PHASES`. */
 export const WORKSPACE_JOIN_PHASES = ['coarse_split', 'regions', 'proposals'] as const;
 export type WorkspaceJoinPhaseV1 = (typeof WORKSPACE_JOIN_PHASES)[number];
+/** The exploration depth chosen when the operation starts; absent on old records means 2. */
+export type ExplorationDepthV1 = 1 | 2 | 3;
+/** A stopped round's “reopen once” mark; `reason` is null for a stop and non-null for “不对，重新提”. */
+export type ExplorationReopenV1 = { reason: string | null };
 export type ColdStartExplorationQueryRefV1 = {
   queryRunRef: QueryRunRef; sessionRef: SessionRef; messageRef: SessionMessageRef;
   operationRef: OperationRef; segment: 'coarse_split' | 'region';
+  /** The block this round explores; null for the coarse split. Depth 3's second round and followups read it. */
+  region?: ModuleRef | null;
+  /** Set by a stop or a repropose; the next drive reopens the group once and inherits `region`. */
+  reopen?: ExplorationReopenV1;
 };
 export const ColdStartExplorationQueryRefShape = defineShape({ name: 'ColdStartExplorationQueryRef', fields: {
   queryRunRef: f.ref(QueryRunRefShape), sessionRef: f.ref(SessionRefShape),
   messageRef: f.ref(SessionMessageRefShape), operationRef: f.ref(OperationRefShape),
-  segment: f.enumOf(['coarse_split', 'region'] as const) } });
+  segment: f.enumOf(['coarse_split', 'region'] as const),
+  region: f.optional(f.nullable(f.ref(ModuleRefShape))),
+  reopen: f.optional(f.object({ reason: f.nullable(id) })) } });
 export type RoleLineActionV1 = {
   kind: 'role_line'; action: (typeof ROLE_LINE_ACTIONS)[number]; phase: string;
   /** b14: the single affected goal; `null` for a project/region request or several goals. */
@@ -51,7 +62,41 @@ export type RoleLineActionV1 = {
   baseCatalogPin?: ArchitectureCatalogPinV1 | null;
   /** SPLITUND: an adviser tool split's admitted understanding versions, saved by its first write; absent otherwise. */
   understanding?: { noteId: string; version: number }[];
+  /** The depth chosen at the start; absent on old records means 2. */
+  depth?: ExplorationDepthV1;
+  /** Written once when the full selected set is known; never recomputed. */
+  plannedRounds?: number;
+  /** Only `exploration_followup`: what the person asked to explore again, and why. */
+  followUp?: {
+    kind: 'repropose' | 'deepen';
+    moduleRefs: ModuleRef[];
+    reason: string | null;
+    sourceBatchRef: ArchitectureProposalBatchRef | null;
+  };
 };
+
+/** One group per “please act” message, in save order; the last of a group is its round. */
+export function explorationGroupsOf(entries: readonly ColdStartExplorationQueryRefV1[]):
+ColdStartExplorationQueryRefV1[][] {
+  const groups = new Map<string, ColdStartExplorationQueryRefV1[]>();
+  for (const entry of entries) {
+    const key = canonicalKey(entry.messageRef);
+    const group = groups.get(key);
+    if (group === undefined) groups.set(key, [entry]);
+    else group.push(entry);
+  }
+  return [...groups.values()];
+}
+
+/** The one append of an exploration round; sessions never hand-write `explorations`. */
+export function appendExploration(action: RoleLineActionV1,
+  entry: ColdStartExplorationQueryRefV1): RoleLineActionV1 {
+  return { ...action, explorations: [...(action.explorations ?? []), entry] };
+}
+
+export function setPlannedRounds(action: RoleLineActionV1, plannedRounds: number): RoleLineActionV1 {
+  return { ...action, plannedRounds };
+}
 /** §3.1: the second workspace's join operation; always the split route, three phases over the cold-start vocabulary. */
 export type WorkspaceJoinActionV1 = RoleLineActionV1 & {
   action: 'workspace_join';
@@ -82,4 +127,12 @@ export const RoleLineActionShape = defineShape({ name: 'RoleLineAction', fields:
     projectId: id, batchId: id }))),
   route: f.optional(f.nullable(f.enumOf(['map', 'split'] as const))),
   baseCatalogPin: f.optional(f.nullable(f.ref(architectureCatalogPinShape))),
-  understanding: f.optional(f.array(NoteVersionField)) } });
+  understanding: f.optional(f.array(NoteVersionField)),
+  depth: f.optional(f.integer({ min: 1, max: 3 })),
+  plannedRounds: f.optional(f.integer({ min: 1 })),
+  followUp: f.optional(f.object({
+    kind: f.enumOf(['repropose', 'deepen'] as const),
+    moduleRefs: f.array(f.ref(ModuleRefShape)),
+    reason: f.nullable(id),
+    sourceBatchRef: f.nullable(f.object({ aggregateType: f.literal('ArchitectureProposalBatch'),
+      projectId: id, batchId: id })) })) } });
