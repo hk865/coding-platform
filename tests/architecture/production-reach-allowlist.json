@@ -1,5 +1,5 @@
 {
-  "description": "Unreached src/ nodes allowed by tests/architecture/production-reach.test.ts. reason: step5/step6 (wired by A.2 step 5 or 6; substep names the substep, wiredBy the STEP5-FLIPS.md section or spec §15.2/§15.3 item; none may remain once its substep is closed, nor after step 6), pre-batch (already unreached at 790d970; the user decides later), wire-format (persisted or wire contract that must stay; the note names its reader), kept-for (kept on purpose, not wired yet, for a named later user, decision 34; the note names it: slice N of the orchestration design, or an MVP-BEHAVIOR.md item). First filled 2026-10-05; port members and the review fixes added the same day.",
+  "description": "Unreached src/ nodes allowed by tests/architecture/production-reach.test.ts. reason: step5/step6 (wired by A.2 step 5 or 6; substep names the substep, wiredBy the STEP5-FLIPS.md section or spec §15.2/§15.3 item; none may remain once its substep is closed, nor after step 6), pre-batch (already unreached at 790d970; the user decides later), wire-format (persisted or wire contract that must stay; the note names its reader), kept-for (kept on purpose, not wired yet, for a named later user, decision 34; the note names it: slice N of the orchestration design, an MVP-BEHAVIOR.md item, or a specific decision such as decision 1NN-NN). First filled 2026-10-05; port members and the review fixes added the same day.",
   "entries": [
     {
       "file": "src/app/core-http-types.ts",
@@ -1362,6 +1362,174 @@
       "name": "ROLE_LINE_STEP_KEYS",
       "reason": "kept-for",
       "note": "kept for slice 7 of the orchestration design: O1b's `startLinesInitialRecord` (TS-10 item 3, moved verbatim) spells the three keys literally and only tests read this list; the first package that reads the keys in production deletes this entry"
+    },
+    {
+      "file": "src/composition/project-runtime.ts",
+      "name": "ProjectPlatform",
+      "reason": "kept-for",
+      "note": "kept for KLS-1b (decision 121-75)"
+    },
+    {
+      "file": "src/composition/project-runtime.ts",
+      "name": "ProjectRuntimeWorkspace",
+      "reason": "kept-for",
+      "note": "kept for KLS-1b (decision 121-75)"
+    },
+    {
+      "file": "src/composition/project-runtime.ts",
+      "name": "ProjectStoreLease",
+      "reason": "kept-for",
+      "note": "kept for KLS-1b (decision 121-75)"
+    },
+    {
+      "file": "src/composition/project-runtime.ts",
+      "name": "ProjectRuntime",
+      "reason": "kept-for",
+      "note": "kept for KLS-1b (decision 121-75)"
+    },
+    {
+      "file": "src/composition/project-runtime.ts",
+      "name": "ProjectPlatformInput",
+      "reason": "kept-for",
+      "note": "kept for KLS-1b (decision 121-75)"
+    },
+    {
+      "file": "src/composition/project-runtime.ts",
+      "name": "ProjectRuntimeRegistryOptions",
+      "reason": "kept-for",
+      "note": "kept for KLS-1b (decision 121-75)"
+    },
+    {
+      "file": "src/composition/project-runtime.ts",
+      "name": "ProjectRuntimeRegistry",
+      "reason": "kept-for",
+      "note": "kept for KLS-1b (decision 121-75)"
+    },
+    {
+      "file": "src/composition/project-runtime.ts",
+      "name": "OLD_LAYOUT",
+      "reason": "kept-for",
+      "note": "kept for KLS-1b (decision 121-75)"
+    },
+    {
+      "file": "src/composition/project-runtime.ts",
+      "name": "createProjectRuntimeRegistry",
+      "reason": "kept-for",
+      "note": "kept for KLS-1b (decision 121-75)"
+    },
+    {
+      "file": "src/composition/project-runtime.ts",
+      "name": "ensureLocalIgnore",
+      "reason": "kept-for",
+      "note": "kept for KLS-1b (decision 121-75)"
+    },
+    {
+      "file": "src/composition/project-store-location.ts",
+      "name": "execute",
+      "reason": "kept-for",
+      "note": "kept for KLS-1b (decision 121-75)"
+    },
+    {
+      "file": "src/composition/project-store-location.ts",
+      "name": "ProjectStorePlace",
+      "reason": "kept-for",
+      "note": "kept for KLS-1b (decision 121-75)"
+    },
+    {
+      "file": "src/composition/project-store-location.ts",
+      "name": "ProjectStoreLocation",
+      "reason": "kept-for",
+      "note": "kept for KLS-1b (decision 121-75)"
+    },
+    {
+      "file": "src/composition/project-store-location.ts",
+      "name": "MountReliability",
+      "reason": "kept-for",
+      "note": "kept for KLS-1b (decision 121-75)"
+    },
+    {
+      "file": "src/composition/project-store-location.ts",
+      "name": "ProjectStoreLocationDeps",
+      "reason": "kept-for",
+      "note": "kept for KLS-1b (decision 121-75)"
+    },
+    {
+      "file": "src/composition/project-store-location.ts",
+      "name": "UNRELIABLE_FILESYSTEMS",
+      "reason": "kept-for",
+      "note": "kept for KLS-1b (decision 121-75)"
+    },
+    {
+      "file": "src/composition/project-store-location.ts",
+      "name": "USER_DATA_FOLDER",
+      "reason": "kept-for",
+      "note": "kept for KLS-1b (decision 121-75)"
+    },
+    {
+      "file": "src/composition/project-store-location.ts",
+      "name": "projectStoreLocation",
+      "reason": "kept-for",
+      "note": "kept for KLS-1b (decision 121-75)"
+    },
+    {
+      "file": "src/composition/project-store-location.ts",
+      "name": "defaultUserDataRoot",
+      "reason": "kept-for",
+      "note": "kept for KLS-1b (decision 121-75)"
+    },
+    {
+      "file": "src/composition/project-store-location.ts",
+      "name": "reliabilityFromMounts",
+      "reason": "kept-for",
+      "note": "kept for KLS-1b (decision 121-75)"
+    },
+    {
+      "file": "src/composition/project-store-location.ts",
+      "name": "reliabilityFromDriveType",
+      "reason": "kept-for",
+      "note": "kept for KLS-1b (decision 121-75)"
+    },
+    {
+      "file": "src/composition/project-store-location.ts",
+      "name": "decodeMountPoint",
+      "reason": "kept-for",
+      "note": "kept for KLS-1b (decision 121-75)"
+    },
+    {
+      "file": "src/composition/project-store-location.ts",
+      "name": "isWithinMountPoint",
+      "reason": "kept-for",
+      "note": "kept for KLS-1b (decision 121-75)"
+    },
+    {
+      "file": "src/composition/project-store-location.ts",
+      "name": "nearestExistingRealPath",
+      "reason": "kept-for",
+      "note": "kept for KLS-1b (decision 121-75)"
+    },
+    {
+      "file": "src/composition/project-store-location.ts",
+      "name": "defaultMountReliability",
+      "reason": "kept-for",
+      "note": "kept for KLS-1b (decision 121-75)"
+    },
+    {
+      "file": "src/composition/project-store-paths.ts",
+      "name": "kernelStoreDirectory",
+      "reason": "kept-for",
+      "note": "kept for KLS-1b (decision 121-75)"
+    },
+    {
+      "file": "src/composition/project-store-paths.ts",
+      "name": "kernelStoreEntry",
+      "reason": "kept-for",
+      "note": "kept for KLS-1b (decision 121-75)"
+    },
+    {
+      "file": "src/core/workspace/workspace-change-capture.ts",
+      "name": "gitCommonDir",
+      "reason": "kept-for",
+      "note": "kept for KLS-1b (decision 121-75)"
     }
   ]
 }

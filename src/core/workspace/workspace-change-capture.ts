@@ -18,7 +18,7 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { lstat, readdir, readFile, readlink, realpath } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { ARTIFACT_MAX_SIZE_BYTES } from '../../contracts/artifact.js';
 import type {
@@ -93,6 +93,19 @@ export async function gitTopLevel(root: string): Promise<string | null> {
     const top = (await git(root, ['rev-parse', '--show-toplevel'])).trim();
     if (top === '') return null;
     return (await realpath(top)) === (await realpath(root)) ? top : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The repository's common git directory (shared by all its work trees), absolute and real; null when the root is
+ * in no work tree, git is missing or the command fails. Git may answer relative to the root. */
+export async function gitCommonDir(root: string): Promise<string | null> {
+  try {
+    const value = (await git(root, ['rev-parse', '--git-common-dir'])).trim();
+    if (value === '') return null;
+    const absolute = resolve(root, value);
+    return await realpath(absolute).catch(() => absolute);
   } catch {
     return null;
   }

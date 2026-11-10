@@ -13,8 +13,8 @@
  *   its reader);
  * - `kept-for`: kept on purpose, not wired yet, for a named later user
  *   (decision 34). The note names that user: a slice of the orchestration
- *   design (`slice N of the orchestration design`) or an MVP item
- *   (`MVP-BEHAVIOR.md`).
+ *   design (`slice N of the orchestration design`), an MVP item
+ *   (`MVP-BEHAVIOR.md`) or a specific decision (`decision 1NN-NN`).
  *
  * Code that exists only for tests belongs under `tests/`, so there is no
  * reason for it. The test fails when an unreached node is not listed, or when a
@@ -36,8 +36,8 @@ const REASONS = ['step5', 'step6', 'pre-batch', 'wire-format', 'kept-for'] as co
 const CLOSED_SUBSTEPS: readonly string[] = ['5.1', '5.2', '5.3', '5.4', '5.4b', '5.5', '5.6', '5.7', '5.8', '5.9', '5.10'];
 /** A wiredBy names the STEP5-FLIPS.md section or the spec §15.2/§15.3 item. */
 const WIRING_SOURCE = /STEP5-FLIPS\.md §\d+|§15\.[23]/;
-/** A kept-for note names the later user: a design slice or an MVP item. */
-const LATER_USER = /\bslice \d+ of the orchestration design\b|MVP-BEHAVIOR\.md/;
+/** A kept-for note names the later user: a design slice, an MVP item or a specific decision. */
+const LATER_USER = /\bslice \d+ of the orchestration design\b|MVP-BEHAVIOR\.md|\bdecision 1\d\d(-\d+)?\b/;
 
 type AllowlistEntry = {
   file: string;
@@ -81,7 +81,7 @@ function readAllowlist(): { entries: AllowlistEntry[]; problems: string[] } {
     if (wiring !== null) problems.push(`${key}: ${wiring}`);
     if (typeof entry.note !== 'string' || entry.note.length === 0) problems.push(`${key}: note must be a non-empty string`);
     else if (entry.reason === 'kept-for' && !LATER_USER.test(entry.note)) {
-      problems.push(`${key}: a kept-for note names its later user (slice N of the orchestration design, or MVP-BEHAVIOR.md)`);
+      problems.push(`${key}: a kept-for note names its later user (slice N of the orchestration design, MVP-BEHAVIOR.md, or a specific decision 1NN-NN)`);
     }
     if (seen.has(key)) problems.push(`${key}: listed twice`);
     seen.add(key);

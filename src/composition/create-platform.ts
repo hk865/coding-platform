@@ -1,5 +1,5 @@
 import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { projectStorePaths } from './project-store-paths.js';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { totalmem } from 'node:os';
 import * as kernel from '../../vendor/coding-agent/dist/public-api.js';
@@ -43,7 +43,7 @@ import {
   createGoalAdviserQueueService, type GoalAdviserQueuePort,
 } from '../core/work-graph/tasks/goal-adviser-queue-service.js';
 import { createAllocationRead, openLimitOf } from '../core/work-graph/sessions/allocation-read.js';
-import type { RecordGuard } from '../core/record-store/ports.js';
+import type { GoalRecordTransactionPort, RecordGuard } from '../core/record-store/ports.js';
 import { readGoalSettings as readEffectiveGoalSettings, decodeGoalSnapshot } from '../core/work-graph/persistence/record-codecs.js';
 import { createGoalExecutedFilesReader } from '../core/work-graph/tasks/goal-executed-files-reader.js';
 import { createDeviationFactsReader } from '../core/work-graph/tasks/goal-deviation-facts.js';
@@ -1112,9 +1112,9 @@ export function platformRecordSchemas() {
   };
 }
 
-/** Trusted local composition root. Old Ledger/Index/Vault instances cannot be
- * supplied. No business bootstrap/claim API is invented by the storage factory. */
-export async function createTargetPlatform(options: TargetPlatformOptions) {
+/** Trusted local composition root; it also hands back the ONE records object the platform writes through. Old
+ * Ledger/Index/Vault instances cannot be supplied. No business bootstrap/claim API is invented by the storage factory. */
+export async function openTargetPlatform(options: TargetPlatformOptions) {
   const now = options.now ?? (() => new Date().toISOString());
   // Slice 1 (spec §2.8): the validated archive policy this Host runs with.
   const archivePolicy = sessionArchivePolicyOf(options.sessionArchivePolicy);
@@ -1143,17 +1143,17 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
       throw new Error(`the Slice 1 lookup index ${index.name} is not registered in the record-store schema set`);
     }
   }
-  if (options.storage.kind === 'sqlite') mkdirSync(options.storage.directory, { recursive: true });
-  const rawBackend = options.storage.kind === 'memory'
-    ? createInMemoryRecordBackend({ schemas })
-    : createSqliteRecordBackend({ schemas, path: join(options.storage.directory, 'ledger.sqlite') });
+  const files = options.storage.kind === 'sqlite' ? projectStorePaths(options.storage.directory) : null;
+  if (files !== null) mkdirSync(files.directory, { recursive: true });
+  const rawBackend = files === null ? createInMemoryRecordBackend({ schemas })
+    : createSqliteRecordBackend({ schemas, path: files.ledger });
   let closeBodies: (() => Promise<void>) | undefined;
   try {
     // Task E: the optional Host observer sees every commit of the ONE records
     // object below; without it this is the original backend unchanged.
     const backend = await observeRecordCommits(rawBackend, options.commitObserver);
-    const bodies = options.storage.kind === 'memory' ? new RawArtifactBodyStore()
-      : createSqliteRawArtifactStore(join(options.storage.directory, 'artifacts.sqlite'));
+    const bodies = files === null ? new RawArtifactBodyStore()
+      : createSqliteRawArtifactStore(files.artifacts);
     if ('close' in bodies) closeBodies = () => bodies.close();
     // §6.4.3: the Host's rooted probe; a missing one is an explicit
     // `unavailable`, never "no settings directory".
@@ -4802,11 +4802,18 @@ export async function createTargetPlatform(options: TargetPlatformOptions) {
         trackedCall(() => verificationRoundRead.readVerificationRound(ctx, input), unavailable),
     };
     Object.defineProperty(platform, 'verification', { value: trackedVerificationRoundRead, writable: true, configurable: true });
-    return platform;
+    // The commit-observed records every owner above writes through; never a second backend, never on `platform`.
+    const records: GoalRecordTransactionPort = backend.records;
+    return { platform, records };
   } catch (error) {
     // Close every owned resource while preserving the initialization error.
     try { await closeBodies?.(); } catch { /* keep original error */ }
     try { await rawBackend.close(); } catch { /* keep original error */ }
     throw error;
   }
+}
+
+/** The platform alone (`openTargetPlatform` without the records handle); its signature and result do not change. */
+export async function createTargetPlatform(options: TargetPlatformOptions) {
+  return (await openTargetPlatform(options)).platform;
 }

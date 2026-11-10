@@ -46,6 +46,7 @@ E3-7 的新文件：`tests/contracts/E37-line-edit-counts-pure.test.ts`（`gitLi
 - `K-legacy-reader-support.ts` — 同一 ledger 上只注册当前 workspace 的 Kernel store、不注册前任 adapter，给出「前任历史读被拒」的前置；`tests/scenarios/K-W-workflow-close.test.ts` 在用。
 - `K-readonly-host-support.ts` — 生产 `createLocalWorkbenchHost` + 只读命令开关 + 显式 runtime binding，经公共 HTTP 路由种 AG2b 图，再由 `workflow/driver-start` 驱动只读 Work；`tests/runtime/K-readonly-command.test.ts` 在用。
 - `K-t1-support.ts` — 公共流程搭平台状态，开带 `hostInstance: { lease: 'owned' }` 的真实组合根；`buildRun24KernelOpen` 造人暂停后关 Host 的 RUN-24；`tests/composition/K-R-close-open-turn.test.ts` 在用。
+- `KLS1A-project-store-fixture.ts` — 真实临时根、真实 `acquireHostInstanceLease` 和 `openTargetPlatform` 工厂，按位置函数注入挂载表；给 `tests/composition/KLS1A-project-store-location.test.ts`、`KLS1A-open-target-platform.test.ts`、`KLS1A-project-runtime.test.ts` 三个文件共用。
 - `PC-platform-fixture.ts` — 冻结，只能在末尾追加导出；经公共步骤给 Work/Query/K3 review 世界，带可注入 prompt-pack 源、自定义 Skill 目录、失败 body store 和命令捕获；`tests/state/PC2-G-query-bind-order.test.ts` 在用。
 - `PC2-host-fixture.ts` — 冻结，只能在末尾追加导出；真实 Host 和 HTTP handler，只换 socket 绑定，请求流交给真实 listener；`tests/app/PC2-H-tool-routes.test.ts` 在用。
 - `PC2-pack-fixture.ts` — 冻结，只能在末尾追加导出；PC-2 pack 的输入与观察值（prompt 包/文本），期望留给测试行；`tests/app/PC2-H-tool-routes.test.ts` 在用。
