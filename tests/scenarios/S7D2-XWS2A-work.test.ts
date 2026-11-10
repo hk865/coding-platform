@@ -439,4 +439,35 @@ describe('XWS2A: the join survives a restart and a person still cannot cross wor
     if (last === undefined) throw new Error('XA-21: the Run served no request after the inquiry');
     expect(JSON.stringify(last)).toContain('XA-21 reply');
   }, 240_000);
+
+  it('XA-22 a ws1 project line busy in ws2 refuses the withdraw; the letter stays', async () => {
+    const world = await opened();
+    await world.waitCoarseAnswered();
+    const adviser = world.base.lines.adviser;
+    // Hold the Run at its model request: it is claimed in ws2 while its Session stays in ws1.
+    const gate = await world.base.world.gates.modelRequest(adviser);
+    const running = world.workRun({ label: 'xa22', replies: [{ kind: 'text', text: 'XA-22 held' }] });
+    const occupied = await waitFor(async () => await world.base.world.readSession(adviser),
+      card => card.record.occupancy !== null, 'the XA-22 occupied adviser line');
+    expect(occupied.record.occupancy).not.toBeNull();
+    try {
+      // A sender in the line's own workspace sends to the busy line and withdraws its own letter.
+      const sent = await world.base.world.post('messages/send', graphWrite(S6A_SCOPE, {
+        recipient: adviser.ref, text: 'XA-22 letter to the busy line', intent: 'notify',
+      }, 'xa22-send', []));
+      const letter = valueOf<SessionMessage>(sent.body, 'committed', 'the XA-22 letter');
+      const withdrawn = await world.base.world.post('messages/withdraw',
+        graphWrite(S6A_SCOPE, { messageRef: letter.ref }, 'xa22-withdraw', []));
+      expect(withdrawn.body).toMatchObject({ status: 'rejected', code: 'unavailable',
+        reason: 'the recipient has an open execution that could have been offered this message' });
+      const still = valueOf<SessionMessage>(await world.base.main.route('messages/read', letter.ref), 'ready',
+        'the XA-22 letter after the refused withdraw');
+      expect(still.withdrawnAt).toBeNull();
+      expect((await world.inbox(adviser)).some(message => message.ref.messageId === letter.ref.messageId
+        && message.withdrawnAt === null)).toBe(true);
+    } finally {
+      gate.release();
+      await running;
+    }
+  });
 });

@@ -54,23 +54,23 @@ async function read(h: C1Harness, ref: SessionMessageRef) {
 function withdrawPin(ref: SessionMessageRef, revision: number) {
   return { ref, revision };
 }
-type RecipientFault = 'missing-execution' | 'work-page' | 'query-page';
+type RecipientFault = 'missing-execution' | 'run-read' | 'query-page';
 /** The same real Session-facts and execution readers the world uses, with one named fault. */
 function faultReader(h: C1Harness, fault: RecipientFault) {
   const sessions = createSessionFactsService({ records: h.backend.records });
   const executions = createRunStateReader({ records: h.backend.records, bodies: h.rawBodies() });
   return createRecipientExecutions({
-    sessions: fault === 'work-page'
-      ? { ...sessions, async listSessionExecutions() { throw new Error('the Work page read failed'); } }
-      : fault === 'query-page'
-        ? { ...sessions, async listSessionQueries() { throw new Error('the Query page read failed'); } }
-        : sessions,
+    sessions: fault === 'query-page'
+      ? { ...sessions, async listSessionQueries() { throw new Error('the Query page read failed'); } }
+      : sessions,
     executions: fault === 'missing-execution'
       ? { ...executions, async readExecution(...args: Parameters<typeof executions.readExecution>) {
         const [ctx, ref, options] = args;
         return executions.readExecution(ctx, { ...ref, runId: `${ref.runId}-absent` }, options);
       } }
-      : executions,
+      : fault === 'run-read'
+        ? { ...executions, async readExecution() { throw new Error('the Run read failed'); } }
+        : executions,
     records: h.backend.records,
   });
 }
@@ -114,7 +114,7 @@ describe('X-withdraw: who and the open offer', () => {
 
   it.each([
     { fault: 'missing-execution' as const },
-    { fault: 'work-page' as const, reason: 'the Work page read failed' },
+    { fault: 'run-read' as const, reason: 'the Run read failed' },
     { fault: 'query-page' as const, reason: 'the Query page read failed' },
   ])('an injected $fault in the real readers is unavailable and writes nothing', async ({ fault, reason }) => {
     const h = await openC1World();

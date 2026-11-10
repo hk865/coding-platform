@@ -85,7 +85,7 @@
 | `readGoalRecord` | `src/core/work-graph/sessions/session-targets.ts:77` | `sessions` 内唯一的 Goal 记录读取：规范 key + 一次 `readMany` + `decodeGoalSnapshot`；缺记录 `not_found`、解码失败 `unavailable`、读失败走共享映射 | 目标校验与 reanchor 事实读取共用；不要再 import `tasks` |
 | `validateTaskTarget` | `src/core/work-graph/sessions/session-targets.ts:114` | 校验 Task 目标属于 Goal 当前已采纳 Plan，并返回 guards | 创建或链接 Task 目标时 |
 | `validateWorkLinkTarget` | `src/core/work-graph/sessions/session-targets.ts:162` | 按目标种类校验（Goal 读同一项目的 Goal 及其 revision guard；Project 只比 projectId、无 guard；Task/Module 各按原规则；WorkContext 明确 unsupported） | 链接目标写前校验 |
-| `createRecipientExecutions` | `src/core/work-graph/sessions/recipient-executions.ts:66` | 读收件 Session 的未结束执行与账本 horizon，供撤回的开放执行窗口判定；读失败、窗口移动或不完整都原样报失败，不返回空集 | 撤回 owner 判定能否撤回时；不要另读执行或自己拼 horizon |
+| `createRecipientExecutions` | `src/core/work-graph/sessions/recipient-executions.ts:70` | 读收件 Session 的未结束执行与账本 horizon，供撤回的开放执行窗口判定；Work 只读 Session occupancy 指向的那一个 Run（项目级读，可跨工作区），QueryRun 仍按收件线枚举；读失败、窗口移动或不完整都原样报失败，不返回空集 | 撤回 owner 判定能否撤回时；不要另读执行或自己拼 horizon |
 | `sessionActivityCodec`、`SESSION_ACTIVITY_SCHEMAS` | `src/core/work-graph/sessions/session-activity.ts:38`、`src/core/work-graph/sessions/session-activity.ts:39` | `SessionActivity@1` 的记录 codec 与 schema 注册组 | 组合根注册 schema、提交前编码恰好一条活动记录 |
 | `sessionActivityRefOf` | `src/core/work-graph/sessions/session-activity.ts:42` | 由 SessionRef 构造活动的完整带标记 ref（`aggregateType: 'SessionActivity'`） | 读、guard 或比较活动记录时；不要内联拼 key |
 | `planSessionActivityAdvance` | `src/core/work-graph/sessions/session-activity.ts:51` | 一次 `readMany` 读 Session 的创建时刻与当前活动记录，返回下一条编码记录**和**它的 revision guard；不写任何东西 | 会推进活动的事实提交；调用方把 guard 并进自己的提交 |

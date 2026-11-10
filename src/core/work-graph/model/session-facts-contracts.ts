@@ -132,7 +132,7 @@ export interface SessionResponsibilityBasisPort {
 // The withdraw's open-execution port                                        //
 // ------------------------------------------------------------------------ //
 
-/** One execution the recipient line still has open, with the run facts read beside the enumeration. */
+/** One execution the recipient line still has open: the Work Run its occupancy names, or a QueryRun from the enumeration. */
 export type RecipientOpenExecutionV1 =
   | { kind: 'work'; ref: RunRef; stage: RunStatus; startedAt: string | null }
   | { kind: 'query'; ref: QueryRunRef; stage: QueryExecutionStateV1['phase']; startedAt: string | null };
@@ -144,7 +144,7 @@ export const OPEN_QUERY_PHASES = ['claimed', 'prepared', 'entering', 'entered', 
 
 export type RecipientOpenExecutionsV1 = {
   executions: readonly RecipientOpenExecutionV1[];
-  /** The ledger horizon taken BEFORE the first enumeration; every page and execution read is checked at it. */
+  /** The ledger horizon taken BEFORE the first execution read; every enumeration page and execution read is checked at it. */
   readCursor: CommitCursor;
 };
 export interface RecipientExecutionsPort {

@@ -2,20 +2,24 @@
  * The withdraw's one live-offer read (R7A1-12; SR3 item 6b).
  *
  * One horizon is taken from the recipient Session's record BEFORE the first
- * enumeration. The two Session-facts enumerations are then walked to
- * exhaustion; every Work claim's real execution facts are read through
- * `ExecutionReadPort.readExecution` (stage and start instant), and a Query's
- * stage is its `executionState.phase`. The Session record is read again after
- * the last enumeration: only a complete page set at the same horizon is a
- * fact. A moved window is `revision_conflict`; an incomplete set, a damaged
- * record, a null watermark or any failed read is the failure, never an empty
- * list. The reader is read-only.
+ * execution read. The line's open Work executions are the Run its occupancy
+ * names: the Work claim, the starting Run and the Session occupancy are one
+ * commit, and an occupied Session cannot be claimed again, so one line holds
+ * at most that Run. Its real execution facts are read through
+ * `ExecutionReadPort.readExecution` at project scope (a project-level line can
+ * run in another workspace of the project). The QueryRun enumeration is then
+ * walked to exhaustion; a Query's stage is its `executionState.phase`. The
+ * Session record is read again after the last read: only a complete result at
+ * the same horizon is a fact. A moved window is `revision_conflict`; an
+ * incomplete set, a damaged record, a null watermark or any failed read is
+ * the failure, never an empty list. The reader is read-only.
  */
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
+import type { SessionOccupancy } from '../../../contracts/core/session.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import { canonicalOf } from '../../../contracts/fingerprint.js';
 import { seqOfCommitCursor } from '../../../contracts/ledger.js';
@@ -71,10 +75,11 @@ export function createRecipientExecutions(deps: {
   const sessionKeyOf = (sessionRef: SessionRef): string =>
     sessionAggregateRefKey(plainSessionRefToAggregate(sessionRef));
 
-  /** One horizon read of the recipient Session; its `readThrough` is the window. */
+  /** One horizon read of the recipient Session; its `readThrough` is the window and its occupancy the holder. */
   async function readHorizon(
     ctx: CoreCallContext, sessionKey: string,
-  ): Promise<{ ok: true; readThrough: CommitCursor } | { ok: false; rejection: CoreRejection }> {
+  ): Promise<{ ok: true; readThrough: CommitCursor; occupancy: SessionOccupancy | null }
+    | { ok: false; rejection: CoreRejection }> {
     let read;
     try {
       read = await deps.records.readMany([sessionKey]);
@@ -95,7 +100,7 @@ export function createRecipientExecutions(deps: {
     if (read.value.readThrough === null) {
       return { ok: false, rejection: unavailable('the recipient Session window has no readable watermark') };
     }
-    return { ok: true, readThrough: read.value.readThrough };
+    return { ok: true, readThrough: read.value.readThrough, occupancy: decoded.value.occupancy };
   }
 
   async function readRecipientOpenExecutions(
@@ -107,62 +112,35 @@ export function createRecipientExecutions(deps: {
     if (!horizon.ok) return horizon.rejection;
 
     const executions: RecipientOpenExecutionV1[] = [];
-    const workRefs = new Set<string>();
     const queryRefs = new Set<string>();
 
-    // Every Work claim of the recipient line, every page, to `nextCursor === null`.
-    let executionCursor: string | undefined;
-    for (;;) {
-      let page: Awaited<ReturnType<typeof deps.sessions.listSessionExecutions>>;
+    // The Session's occupancy names the line's one open Work Run: `claimTask` writes the claim, the
+    // starting Run and the occupancy in one commit, and an occupied Session cannot be claimed again,
+    // so a line holds at most the Run its occupancy names (claim-service.ts:4; session-availability.ts:754,
+    // :787, :808). A QueryRun occupancy is covered by the Query enumeration below.
+    const occupancy = horizon.occupancy;
+    if (occupancy !== null && occupancy.kind === 'execution' && occupancy.executionRef.aggregateType === 'Run') {
+      const runRef = occupancy.executionRef;
+      let execution;
       try {
-        page = await deps.sessions.listSessionExecutions(ctx, {
-          sessionRef: input.sessionRef,
-          page: { limit: PAGE_LIMIT, ...(executionCursor === undefined ? {} : { cursor: executionCursor }) },
-        });
+        // The Run may live in another workspace of the project (a project-level line); the project
+        // read keeps the project and trusted-Host checks.
+        execution = await deps.executions.readExecution(ctx, runRef,
+          { atLeastCursor: horizon.readThrough, scope: 'project' });
       } catch (error) {
-        return unavailable(`the recipient Work enumeration could not be read: ${String(error)}`);
+        return unavailable(`the recipient Work execution could not be read: ${String(error)}`);
       }
-      if (page.status !== 'ready') return recipientRejectionOf(page);
-      const moved = readPastHorizon(page.value.sourceCursor, horizon.readThrough);
-      if (moved !== null) return moved;
-      for (const claim of page.value.items) {
-        const refKey = canonicalOf(claim.runRef);
-        if (refKey === null) return unavailable('a recipient Work claim has no canonical Run ref');
-        if (workRefs.has(refKey)) {
-          return unavailable('the recipient Work enumeration returned the same Run twice');
-        }
-        workRefs.add(refKey);
-        let execution;
-        try {
-          // A recipient line may be executing a Run in another workspace of the project; the
-          // project read keeps the project and trusted-Host checks (the same read the
-          // consumable page takes for a line's busy Run).
-          execution = await deps.executions.readExecution(ctx, claim.runRef,
-            { atLeastCursor: horizon.readThrough, scope: 'project' });
-        } catch (error) {
-          return unavailable(`the Work execution could not be read: ${String(error)}`);
-        }
-        // The enumeration proved the Session: a missing execution is an execution-read failure.
-        if (execution.status !== 'ready') {
-          return unavailable(execution.status === 'rejected'
-            ? execution.reason : 'the recipient Work execution is not readable');
-        }
-        const record = execution.value;
-        if (canonicalOf(record.run.ref) !== refKey) {
-          return unavailable('the Work execution read returned another Run');
-        }
-        const past = readPastHorizon(record.readThrough, horizon.readThrough);
-        if (past !== null) return past;
-        if ((OPEN_WORK_STAGES as readonly string[]).includes(record.run.status)) {
-          executions.push({ kind: 'work', ref: structuredClone(claim.runRef),
-            stage: record.run.status, startedAt: record.run.startedAt });
-        }
+      if (execution.status !== 'ready') {
+        return unavailable(execution.status === 'rejected'
+          ? execution.reason : 'the recipient Work execution is not readable');
       }
-      if (page.value.nextCursor === null) break;
-      if (page.value.nextCursor === executionCursor) {
-        return unavailable('the recipient Work enumeration did not advance');
+      const record = execution.value;
+      const past = readPastHorizon(record.readThrough, horizon.readThrough);
+      if (past !== null) return past;
+      if ((OPEN_WORK_STAGES as readonly string[]).includes(record.run.status)) {
+        executions.push({ kind: 'work', ref: structuredClone(runRef),
+          stage: record.run.status, startedAt: record.run.startedAt });
       }
-      executionCursor = page.value.nextCursor;
     }
 
     // Every QueryRun of the recipient line, every page, to `nextCursor === null`.
