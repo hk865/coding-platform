@@ -91,10 +91,12 @@ const QUERY_USE = 'state/query-run-recovery.ts newPendingQueryRecords, advanceQu
 const PROJECTION_USE = 'state/task-machine.ts projectTaskPhase';
 
 /**
- * The §14.1 table. `state/` declares structural copies of three work-graph
- * records because it may import only `src/contracts` (`DispatchOutboxRecord`,
- * `SessionMessageRecord`, the `PlanProposal` variants); services use them too,
- * so they are protected like the declarations they copy.
+ * The §14.1 table. `DispatchOutboxRecord`, `SessionMessageRecord` and `TaskRow`
+ * are declared once in `src/contracts` (`execution-read.ts`, `mailbox.ts`,
+ * `task-graph.ts`) and re-exported by WorkGraph; `state/plan-machine.ts`
+ * declares `CandidatePlanProposal`. The model's names for the same records
+ * (`TaskClaimOutbox`, `SessionMessage`, `PlanProposal`) are used by services
+ * too, so they have rows of their own.
  */
 const PROTECTED_TYPES: readonly ProtectedType[] = [
   { file: 'src/contracts/dispatch.ts', name: 'RunSnapshot', kind: 'record', fields: RUN_FIELDS,
@@ -105,7 +107,7 @@ const PROTECTED_TYPES: readonly ProtectedType[] = [
     fields: ['holderRunId', 'attemptId', 'release'], use: 'state/attempt-machine.ts newTaskLeaseRecord or transitionTaskLease' },
   { file: 'src/core/work-graph/model/claim-contracts.ts', name: 'TaskClaimOutbox', kind: 'record',
     fields: ['status', 'dispatchState'], use: OUTBOX_USE },
-  { file: 'src/core/work-graph/state/attempt-machine.ts', name: 'DispatchOutboxRecord', kind: 'record',
+  { file: 'src/contracts/execution-read.ts', name: 'DispatchOutboxRecord', kind: 'record',
     fields: ['status', 'dispatchState'], use: OUTBOX_USE },
   { file: 'src/contracts/reduction.ts', name: 'TaskReductionSnapshot', kind: 'record',
     fields: ['phase'], use: 'state/task-machine.ts newTaskReductionRecord' },
@@ -136,7 +138,7 @@ const PROTECTED_TYPES: readonly ProtectedType[] = [
     fields: ['revision', 'evidenceIds'], use: 'state/verification-machine.ts nextTaskEvidenceIndex' },
   { file: 'src/core/work-graph/model/communication-contracts.ts', name: 'SessionMessage', kind: 'record',
     fields: MESSAGE_FIELDS, use: MESSAGE_USE },
-  { file: 'src/core/work-graph/state/message-machine.ts', name: 'SessionMessageRecord', kind: 'record',
+  { file: 'src/contracts/mailbox.ts', name: 'SessionMessageRecord', kind: 'record',
     fields: MESSAGE_FIELDS, use: MESSAGE_USE },
   { file: 'src/contracts/ledger.ts', name: 'GoalSnapshot', kind: 'record',
     fields: ['desiredState', 'desiredStateRevision', 'activePlanRevision', 'desiredStateRequestedBy', 'settings',
@@ -164,7 +166,7 @@ const PROTECTED_TYPES: readonly ProtectedType[] = [
   // (`CanonicalTaskState.phaseCause` declared in A.2 step 5.3).
   { file: 'src/core/work-graph/tasks/plan-readers.ts', name: 'CanonicalTaskState', kind: 'projection',
     fields: ['effectivePhase', 'phaseCause'], use: PROJECTION_USE },
-  { file: 'src/core/work-graph/model/plan-contracts.ts', name: 'TaskRow', kind: 'projection',
+  { file: 'src/contracts/task-graph.ts', name: 'TaskRow', kind: 'projection',
     fields: ['effectivePhase', 'phaseCause'], use: PROJECTION_USE },
   { file: 'src/contracts/task-failure.ts', name: 'TaskFailureFactsV1', kind: 'read_model',
     fields: ['failureClass', 'automation', 'requeueActors', 'reverifyActors', 'notReworkableCause'],
@@ -1286,7 +1288,7 @@ describe('state-writes checker: R-message-fields (one mutation per field)', () =
 
   beforeAll(async () => {
     dir = await fixtureProject(fixture.files, MESSAGE_FIELD_COPIES);
-    result = scanStateWrites(dir, PROTECTED_TYPES.filter(entry => entry.file === 'src/core/work-graph/state/message-machine.ts'));
+    result = scanStateWrites(dir, PROTECTED_TYPES.filter(entry => entry.file === 'src/contracts/mailbox.ts'));
   }, 120_000);
   afterAll(async () => { if (dir) await rm(dir, { recursive: true, force: true }); });
 

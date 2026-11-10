@@ -11,8 +11,10 @@
  * a line detail and `branched` only has heads.
  */
 
+import type { TaskGraph } from '../../contracts/task-graph.js';
 import { asRecord, asText } from '../values.js';
 import { goalDisplayState, type GoalDisplayPhaseCode } from './task-map.js';
+import type { LineReadValue } from './line-shared.js';
 
 /** The eleven line own states (`LineOwnStateV1`) in the boards' words. One
  * table, the copy `task-map.ts`'s track already uses; it is private there, so
@@ -52,9 +54,12 @@ export type NavGoal = {
   n: number;
   hasN: boolean;
   tip: string;
+  /** `waitForGoalRef` is set: the prototype draws this Goal's row hollow (s-future). */
+  future: boolean;
 };
 
-export type NavLineKey = { projectId: string; sessionId: string };
+export type LineKey = { projectId: string; sessionId: string };
+export type NavLineKey = LineKey;
 
 /** One rail line (`LineRowV1`'s chrome fields, §2.4). */
 export type NavLine = {
@@ -87,9 +92,9 @@ export type NavInbox = {
 
 export type NavDisplay = { phase: string; st: string; word: string; why: string; runStops: number };
 
-/** `WorkLineDetailV1`, kept at the JSON boundary; only `row` and `kind` are
- * read by the chrome. */
-export type NavLineDetail = { kind?: unknown; row?: unknown; chain?: unknown[]; omitted?: unknown };
+/** §10: the selected line read's value, shared with Chain; the chrome reads
+ * `row` and `kind`, Member reads the whole line. */
+export type NavLineDetail = LineReadValue;
 
 export type NavData = {
   goals: NavGoal[];
@@ -105,6 +110,8 @@ export type NavData = {
   inbox: NavInbox;
   /** The selected line's `lines/read`, read only while a line is open. */
   detail: NavLineDetail | null;
+  /** The selected Goal's `tasks/query`, or `null` for no adopted Plan / no Goal. */
+  tasks: TaskGraph | null;
   hasGoal: boolean;
   /** The selected Goal's GoalPhase revision (`tasks/query` completion), or
    * `null` when no Goal is selected. */
@@ -120,6 +127,7 @@ export type NavReads = {
   archived?: unknown;
   detail?: unknown;
   phase?: unknown;
+  tasks?: unknown;
 };
 
 function countValue(count: unknown): number {
@@ -132,7 +140,7 @@ function countValue(count: unknown): number {
 /** §2.4: the word is the line's own state, or the most urgent attention when
  * there is one; `unavailable` controls stay with their guard reason and are
  * not drawn as `not_yet`. */
-function lineView(status: unknown): { st: string; word: string; dot: string } {
+export function lineStatusView(status: unknown): { st: string; word: string; dot: string } {
   const row = asRecord(status);
   const attention = asText(asRecord(row.attention).code);
   if (attention !== '' && ATTENTION_WORD[attention] !== undefined) {
@@ -145,13 +153,19 @@ function lineView(status: unknown): { st: string; word: string; dot: string } {
   return { st, word: OWN_WORD[own] ?? '待命', dot: 'dot s-' + (st === 'doing' ? 'running' : st === 'waiting' ? 'waiting' : 'idle') };
 }
 
+/** The five duties' Chinese words (`PlatformDutyV1`); `unknown`/unknown is the
+ * board's 未分组, never the raw code. */
+export function dutyWordOf(duty: unknown): string {
+  return DUTY_WORD[asText(duty)] ?? '未分组';
+}
+
 function navLineOf(entry: unknown, archived: boolean): NavLine {
   const row = asRecord(entry);
   const key = asRecord(row.key);
   const projectId = asText(key.projectId);
   const sessionId = asText(key.sessionId);
   const status = asRecord(row.status);
-  const view = lineView(status);
+  const view = lineStatusView(status);
   const task = asText(asRecord((Array.isArray(row.responsibleNow) ? row.responsibleNow : [])[0]).task);
   const nameRow = asRecord(row.name);
   const primary = asText(nameRow.primary);
@@ -251,6 +265,7 @@ export function adaptNav(
       n: 0,
       hasN: false,
       tip: state === null ? objective : state.word + (objective === '' ? '' : ' · ' + objective),
+      future: waitFor,
     };
   });
   const lineList = asRecord(reads.lines);
@@ -261,7 +276,7 @@ export function adaptNav(
   const working = countValue(counts.working);
   const standby = countValue(counts.standby);
   const archivedCount = countValue(counts.archived);
-  const detail = reads.detail === undefined || reads.detail === null ? null : asRecord(reads.detail) as NavLineDetail;
+  const detail = reads.detail === undefined || reads.detail === null ? null : asRecord(reads.detail) as unknown as NavLineDetail;
   return {
     goals,
     selectedGoalId,
@@ -281,6 +296,7 @@ export function adaptNav(
       decideN, noticeN, hasDecide: decideN > 0, hasNotice: noticeN > 0, none: decideN + noticeN === 0,
     },
     detail,
+    tasks: reads.tasks === undefined || reads.tasks === null ? null : reads.tasks as TaskGraph,
     hasGoal: selectedGoalId !== null,
     phaseRevision: reads.phase === undefined ? null : completionRevisionOf(reads.phase),
     scope,
@@ -291,4 +307,16 @@ export function adaptNav(
  * and never invents a target from an empty id. */
 export function goalHref(file: string, goalId: string | null): string {
   return goalId === null || goalId === '' ? file : file + '?goal=' + encodeURIComponent(goalId);
+}
+
+/** §2.2/§10: a whole-line link carries the Goal (when there is one) and the
+ * line's two identity values, each encoded once; an empty key falls back to
+ * the one-parameter `goalHref`. */
+export function lineHref(file: string, goalId: string | null, key: LineKey): string {
+  if (key.projectId === '' || key.sessionId === '') return goalHref(file, goalId);
+  const query = new URLSearchParams();
+  if (goalId !== null && goalId !== '') query.set('goal', goalId);
+  query.set('lineProject', key.projectId);
+  query.set('lineSession', key.sessionId);
+  return file + '?' + query.toString();
 }

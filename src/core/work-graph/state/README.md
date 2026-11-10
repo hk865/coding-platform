@@ -51,7 +51,7 @@
 做 Run、Attempt/Lease/Outbox、Query 生命周期、活动替换与无进展判定的去这组。
 
 - `run-machine.ts` — Run 机器：status/outcome、V2 入口相位、控制指针；每次写入整条 Run。
-- `attempt-machine.ts` — TaskAttempt / TaskLease / DispatchOutboxEntry 三部机器与 Run 事件映射；与 Run 事件同一提交。
+- `attempt-machine.ts` — TaskAttempt / TaskLease / DispatchOutboxEntry 三部机器与 Run 事件映射；与 Run 事件同一提交。outbox 记录 `DispatchOutboxRecord` 和 `DispatchStateV1` 的正本在 `contracts/execution-read.ts`，这里转出。
 - `query-run-recovery.ts` — QueryRun/QueryJob 生命周期构造与恢复：claimed/prepared/entering/entered/unknown/settled。
 - `running-admission.ts` — 运行中并发的纯规则：`runningGroupOf` 是五职责到四组的唯一映射（reviewer → executor，没有职责依据的 `unknown` 也按 executor 计）；`countsRunningAdmission`/`emptyRunningCounts`/`countRunningAdmission` 只算 entering/entered/unknown 且每个占用 Session 一次；`admitModelCall` 是唯一判定；不读存储、不保存计数。
 - `transition.ts` — 所有机器共用的 `Transition` 形状与 accept/reject 构造。
@@ -85,7 +85,7 @@
 
 - `note-machine.ts` — 注记状态机：写入准入、授权、处置目标、版本与现行指针；纯 `secretaryNoteScope`（普通注记取本轮冻结的有效 Goal，目标或 stage 理解停在有效 Goal 内，只有授权的 Goal 理解可用该 Goal 作主锚点，项目理解与修复拒绝）。
 - `secretary-note.ts` — 纯的 Query 注记准入（`secretaryNoteAdmission`，`src/core/work-graph/state/secretary-note.ts:41`）：只有请求轮（有冻结的请求根）是秘书轮，给六个通用写入种类加 `understanding`、`link`、`flow`、`withdraw: true` 和被授权的 Goal id；普通 Query 与副本得到 `none`。`QueryNoteAdmissionV1` 唯一的声明在本文件，消费方经 `model/secretary-note-contracts.ts` 的再导出引用。
-- `message-machine.ts` — SessionMessage 机器：pending<read<responded、等待满足与记录构造；7A-1 的投递与证据值、秘书轮发送方记录、拒绝回复、四个生命周期变更与事件类型（M-1 已激活）；7B-1：等待事实 `waitFactsOfRecord` 与完整的接续判定 `messageSatisfiesWait`、唯一的到期决定 `decideExpiry`（含 `ExpirySkipReason`）、到期状态字段 `expiredAt`、事件 `MessageExpiredEventV1`/`SessionMessageEventType` 的 `SessionMessageExpired`、变更 `MessageExpiredChangeV1` 与迁移 `onExpired`；等待状态和投递资格（纯规则）。
+- `message-machine.ts` — SessionMessage 机器：pending<read<responded、等待满足与记录构造；7A-1 的投递与证据值、秘书轮发送方记录、拒绝回复、四个生命周期变更与事件类型（M-1 已激活）；7B-1：等待事实 `waitFactsOfRecord` 与完整的接续判定 `messageSatisfiesWait`、唯一的到期决定 `decideExpiry`（含 `ExpirySkipReason`）、到期状态字段 `expiredAt`、事件 `MessageExpiredEventV1`/`SessionMessageEventType` 的 `SessionMessageExpired`、变更 `MessageExpiredChangeV1` 与迁移 `onExpired`；等待状态和投递资格（纯规则）。持久消息记录 `SessionMessageRecord` 和它的发送方、回复、投递值、已接受输入、派生等小类型的正本在 `contracts/mailbox.ts`，这里转出。
 - `copy-intervention.ts` — 复制取消的纯候选规则：`copyInterventionCandidateOf` 按书的表序（先两项排除，再投递/未投递）判一条消息是不是候选、可选/可撤回及原因；事实形状 `CopyInterventionFactsV1`，不读存储、不写、无游标。
 - `goal-interruption.ts` — 目标中断记录的地址 `interruptionRefOf`（每个目标一条）和两个纯迁移：`pendingGoalInterruption`（缺失/`resumed` → revision+1 的 `pending`，已 `pending` → null 保留）与 `resumedGoalInterruption`（`pending` → `resumed`，缺失/已 `resumed` → null）；返回记录与 `expectedRevision`，不构造 guard。
 - `dispatch-counter.ts` — 派工计数器的纯构造：`firstDispatch` 从缺失生成 sequence/revision 1，`nextDispatch` 递增两者；返回记录与 `expectedRevision`，不构造 RecordStore guard。
@@ -117,13 +117,13 @@
 | `roleLineOperationRef`、`roleLineChildCommandId`、`roleLineStepTransition`、`START_LINES_PHASES`、`ROLE_LINE_CHANGE_SCOPE_PHASE` | `src/core/work-graph/state/role-line-operation.ts:12`、`:22`、`:27`、`:11`、`:12` | `role_line` 操作的身份、子创建命令号、唯一的步骤迁移表和两组阶段名 | `sessions/role-line-operations.ts` 写步骤、`sessions/session-directory.ts` 的准入写 `reserved`；不要另写步骤表 |
 | `newArchitectureCaptureRequestRecord` | `src/core/work-graph/state/architecture-capture.ts:37` | 建 status=requested 的捕获请求记录（revision/requestSeq 递增） | 接受一次自动捕获触发时 |
 | `architectureAutoCaptureState` | `src/core/work-graph/state/architecture-capture.ts:56` | 自动捕获的公开投影，pending 由 satisfiedRequestSeq 算出 | 判断是否该触发捕获 |
-| `attemptEventFromRunEvent` | `src/core/work-graph/state/attempt-machine.ts:231` | Run 事件映射为 Attempt 事件；null 表示三记录都不写 | Run 事件提交里同步 Attempt/Lease/Outbox |
-| `newTaskAttemptRecord` | `src/core/work-graph/state/attempt-machine.ts:270` | ATT-01 的 claimed@1，可带 requeueRef | claim 提交 |
-| `newTaskLeaseRecord` | `src/core/work-graph/state/attempt-machine.ts:277` | ATT-14 的 held@1，不靠 expiresAt 释放 | claim 提交 |
-| `newDispatchOutboxRecord` | `src/core/work-graph/state/attempt-machine.ts:285` | ATT-24 的 pending@1，保留不可变 claim | claim 提交 |
-| `transitionAttempt` | `src/core/work-graph/state/attempt-machine.ts:527` | TaskAttempt 的 ATT-01..13 迁移 | Run 事件同一提交 |
-| `transitionTaskLease` | `src/core/work-graph/state/attempt-machine.ts:711` | TaskLease 的持有/释放迁移 | release_lease、Attempt 结束时 |
-| `transitionDispatchOutbox` | `src/core/work-graph/state/attempt-machine.ts:812` | DispatchOutboxEntry 迁移 | Run 事件同一提交 |
+| `attemptEventFromRunEvent` | `src/core/work-graph/state/attempt-machine.ts:211` | Run 事件映射为 Attempt 事件；null 表示三记录都不写 | Run 事件提交里同步 Attempt/Lease/Outbox |
+| `newTaskAttemptRecord` | `src/core/work-graph/state/attempt-machine.ts:250` | ATT-01 的 claimed@1，可带 requeueRef | claim 提交 |
+| `newTaskLeaseRecord` | `src/core/work-graph/state/attempt-machine.ts:257` | ATT-14 的 held@1，不靠 expiresAt 释放 | claim 提交 |
+| `newDispatchOutboxRecord` | `src/core/work-graph/state/attempt-machine.ts:265` | ATT-24 的 pending@1，保留不可变 claim | claim 提交 |
+| `transitionAttempt` | `src/core/work-graph/state/attempt-machine.ts:507` | TaskAttempt 的 ATT-01..13 迁移 | Run 事件同一提交 |
+| `transitionTaskLease` | `src/core/work-graph/state/attempt-machine.ts:691` | TaskLease 的持有/释放迁移 | release_lease、Attempt 结束时 |
+| `transitionDispatchOutbox` | `src/core/work-graph/state/attempt-machine.ts:792` | DispatchOutboxEntry 迁移 | Run 事件同一提交 |
 | `commandSha256` | `src/core/work-graph/state/command-normalization.ts:34` | 命令摘要，走 contracts 的 sha256 | 记录/比较命令指纹 |
 | `parseShellActionsDetailed` | `src/core/work-graph/state/command-normalization.ts:522` | 解析一条命令里的 shell 动作，保留词边界 | 命令分类、重跑与审查 |
 | `newCommandRerunRequest` | `src/core/work-graph/state/command-rerun-request.ts:78` | 建 CommandRerunRequest 记录 | 收到一次重跑请求 |
@@ -161,20 +161,20 @@
 | `lineRunningCapOf` | `src/core/work-graph/state/line-status.ts:413` | 由持有者的 Query 标记或 Run 的持久 `starting`+`authorized` 形状派生运行名额等待（`running_cap` 或 null） | 画线的名额等待；不要另写判定 |
 | `deriveLineControls` | `src/core/work-graph/state/line-status.ts:496` | 由事实与状态派生可用控制项 | 画工作线操作 |
 | `deriveAttentionAll` | `src/core/work-graph/state/line-status.ts:744` | 一条线上所有注意项及来源 | 需要完整注意清单时 |
-| `transitionMessage` | `src/core/work-graph/state/message-machine.ts:1607` | SessionMessage 主迁移 | 消息读/回/派生 |
-| `createSessionMessageRecord` | `src/core/work-graph/state/message-machine.ts:1773` | 建新消息记录 | 收到用户或系统消息 |
-| `nextSessionMessageRecord` | `src/core/work-graph/state/message-machine.ts:1854` | 按变更生成下一条消息记录 | 读、回、绑定答复 |
-| `messageConsumptionProblem` | `src/core/work-graph/state/message-machine.ts:1060` | 消息能否被消费的唯一规则：撤回 → `invalid`；`release` 为 awaiting/approved/denied → `busy`；null/released 可消费 | 读正文、读回复、咨询、提交咨询、接续等待之前 |
-| `messageFactsOfRecord` | `src/core/work-graph/state/message-machine.ts:1068` | 从消息记录取消费规则的三项事实 | 拿着记录的消费方 |
-| `messageFactsOfState` | `src/core/work-graph/state/message-machine.ts:1074` | 从机器状态取同样的三项事实；absent 为 null | `messageSatisfiesWait` 和其它按状态判断的消费方 |
-| `messageSatisfiesWait` | `src/core/work-graph/state/message-machine.ts:1099` | 接续等待的唯一判定：先过 `messageConsumptionProblem`；`intervention` 直接满足（该臂不消费）；已消费的等待答 `busy`；`expiry` 要求记录存在、没有回复（`reply_present`）且已过期；`wait_reply` 保持正式答复的 `responseRef` 与工作区检查 | K 的 claim 续作判定；`MessageGuardContext.consumedWait` 只走这一份 |
-| `WAIT_INTENTS`、`isWaitMessage` | `src/core/work-graph/state/message-machine.ts:1092`、`src/core/work-graph/state/message-machine.ts:1095` | 可等待意图的闭集（`inquiry`/`action_request`）与一条消息是否成等待（`waitAfterSend` 且意图在这个闭集里） | 等待处置、到期与转发判定共用这一份；不要另写意图列表 |
-| `waitFactsOfRecord` | `src/core/work-graph/state/message-machine.ts:1222` | 从消息记录已存的 accepted-input 投影读 `WaitFactsV1`（等待是否已被消费）；不读 holder claim | 到期判定、等待读取与接续等待之前；不要另扫 `acceptedInputs` |
-| `waitStateOf` | `src/core/work-graph/state/message-machine.ts:1153` | 等待的状态：已消费、撤回、取消等待、已回复、已到期、仍开着，先中先算 | 等待读取、到期投递与接续判断之前 |
-| `decideExpiry`、`ExpirySkipReason`、`MessageExpiredChangeV1` | `src/core/work-graph/state/message-machine.ts:1328`、`:1329`、`:1330` | 到期投递的唯一决定：未释放、不是 `waitAfterSend` 的询问、未到 deadline、等待不 open 各给一个跳过原因，否则给带 `at` 的 `expired` 变更 | 到期投递在提交前据此判；不要另写条件或跳过原因 |
-| `MessageExpiredEventV1`、`SessionMessageEventType` 的 `SessionMessageExpired`、`MessageMachineState` 的 `expiredAt`、`onExpired` | `src/core/work-graph/state/message-machine.ts:1597`、`:485`、`:309`、`:1494` | 到期的事件体与事件类型、机器状态的到期时刻，以及 `message_expired` 迁移：`onExpired` 只产出 `expired` 变更与事件，记录构造写 `expiredAt`；已到期再迁移是 `illegal/invalid`，答复过的等待不能到期 | 到期事件编码与迁移；只在 `transitionMessage` 的 `message_expired` 臂里用 `onExpired`，不要另造事件名或字段 |
-| `deliveryEligibility` | `src/core/work-graph/state/message-machine.ts:1190` | 投递资格的唯一规则：先调 `messageConsumptionProblem`，再看 Goal、任务阻塞、对方结果未知、本部分事实 | 邮件箱投递、回复与到期投递之前 |
-| `forwardMessageProblem`、`disposeWaitProblem`、`destinationProblem`、`FORWARD_DESTINATION_GONE` | `src/core/work-graph/state/message-machine.ts:1245`、`:1313`、`:1247`、`:1245` | 转发与等待处置的纯拒绝表（固定顺序的 code/reason）；`destinationProblem` 是同工作区、资格、职责共用的目的地规则；`FORWARD_DESTINATION_GONE` 是服务端归档/退休/归档申请预检的拒绝 detail | 转发/等待处置 owner 提交前判；P 用该 detail 判“待指定收件线”，不要另写表或目的地规则 |
+| `transitionMessage` | `src/core/work-graph/state/message-machine.ts:1432` | SessionMessage 主迁移 | 消息读/回/派生 |
+| `createSessionMessageRecord` | `src/core/work-graph/state/message-machine.ts:1598` | 建新消息记录 | 收到用户或系统消息 |
+| `nextSessionMessageRecord` | `src/core/work-graph/state/message-machine.ts:1679` | 按变更生成下一条消息记录 | 读、回、绑定答复 |
+| `messageConsumptionProblem` | `src/core/work-graph/state/message-machine.ts:885` | 消息能否被消费的唯一规则：撤回 → `invalid`；`release` 为 awaiting/approved/denied → `busy`；null/released 可消费 | 读正文、读回复、咨询、提交咨询、接续等待之前 |
+| `messageFactsOfRecord` | `src/core/work-graph/state/message-machine.ts:893` | 从消息记录取消费规则的三项事实 | 拿着记录的消费方 |
+| `messageFactsOfState` | `src/core/work-graph/state/message-machine.ts:899` | 从机器状态取同样的三项事实；absent 为 null | `messageSatisfiesWait` 和其它按状态判断的消费方 |
+| `messageSatisfiesWait` | `src/core/work-graph/state/message-machine.ts:924` | 接续等待的唯一判定：先过 `messageConsumptionProblem`；`intervention` 直接满足（该臂不消费）；已消费的等待答 `busy`；`expiry` 要求记录存在、没有回复（`reply_present`）且已过期；`wait_reply` 保持正式答复的 `responseRef` 与工作区检查 | K 的 claim 续作判定；`MessageGuardContext.consumedWait` 只走这一份 |
+| `WAIT_INTENTS`、`isWaitMessage` | `src/core/work-graph/state/message-machine.ts:917`、`src/core/work-graph/state/message-machine.ts:920` | 可等待意图的闭集（`inquiry`/`action_request`）与一条消息是否成等待（`waitAfterSend` 且意图在这个闭集里） | 等待处置、到期与转发判定共用这一份；不要另写意图列表 |
+| `waitFactsOfRecord` | `src/core/work-graph/state/message-machine.ts:1047` | 从消息记录已存的 accepted-input 投影读 `WaitFactsV1`（等待是否已被消费）；不读 holder claim | 到期判定、等待读取与接续等待之前；不要另扫 `acceptedInputs` |
+| `waitStateOf` | `src/core/work-graph/state/message-machine.ts:978` | 等待的状态：已消费、撤回、取消等待、已回复、已到期、仍开着，先中先算 | 等待读取、到期投递与接续判断之前 |
+| `decideExpiry`、`ExpirySkipReason`、`MessageExpiredChangeV1` | `src/core/work-graph/state/message-machine.ts:1153`、`:1154`、`:1155` | 到期投递的唯一决定：未释放、不是 `waitAfterSend` 的询问、未到 deadline、等待不 open 各给一个跳过原因，否则给带 `at` 的 `expired` 变更 | 到期投递在提交前据此判；不要另写条件或跳过原因 |
+| `MessageExpiredEventV1`、`SessionMessageEventType` 的 `SessionMessageExpired`、`MessageMachineState` 的 `expiredAt`、`onExpired` | `src/core/work-graph/state/message-machine.ts:1422`、`:310`、`:134`、`:1319` | 到期的事件体与事件类型、机器状态的到期时刻，以及 `message_expired` 迁移：`onExpired` 只产出 `expired` 变更与事件，记录构造写 `expiredAt`；已到期再迁移是 `illegal/invalid`，答复过的等待不能到期 | 到期事件编码与迁移；只在 `transitionMessage` 的 `message_expired` 臂里用 `onExpired`，不要另造事件名或字段 |
+| `deliveryEligibility` | `src/core/work-graph/state/message-machine.ts:1015` | 投递资格的唯一规则：先调 `messageConsumptionProblem`，再看 Goal、任务阻塞、对方结果未知、本部分事实 | 邮件箱投递、回复与到期投递之前 |
+| `forwardMessageProblem`、`disposeWaitProblem`、`destinationProblem`、`FORWARD_DESTINATION_GONE` | `src/core/work-graph/state/message-machine.ts:1070`、`:1138`、`:1072`、`:1070` | 转发与等待处置的纯拒绝表（固定顺序的 code/reason）；`destinationProblem` 是同工作区、资格、职责共用的目的地规则；`FORWARD_DESTINATION_GONE` 是服务端归档/退休/归档申请预检的拒绝 detail | 转发/等待处置 owner 提交前判；P 用该 detail 判“待指定收件线”，不要另写表或目的地规则 |
 | `noProgressKey` | `src/core/work-graph/state/no-progress.ts:175` | requeue 的无进展键，存进 TaskRequeue.basis | 重排队守卫与比较 |
 | `reverifyBasis` | `src/core/work-graph/state/no-progress.ts:206` | successor 轮的重验证键 | VR-14 比较链上 basisDigests |
 | `roundFailureFacts` | `src/core/work-graph/state/no-progress.ts:96` | 一轮的非 PASS 检查与 gap codes | 两套键、失败事实读模型 |
@@ -225,7 +225,7 @@
 | `withBoundStart` | `src/core/work-graph/state/run-machine.ts:877` | 首次 entry 成功后把提交游标绑到返回的 Run；已有的值不替换 | entered/result 返回 Run 时 |
 | `transitionRun` | `src/core/work-graph/state/run-machine.ts:1395` | Run 主迁移，返回整条下一条 Run | 任何 Run 生命周期写入 |
 | `runStateOf` | `src/core/work-graph/state/run-machine.ts:148` | Run 快照的机器状态 | Run 迁移前 |
-| `messageMachineStateOf` | `src/core/work-graph/state/message-machine.ts:544` | 消息记录的机器状态；缺失为 absent | 消息迁移前 |
+| `messageMachineStateOf` | `src/core/work-graph/state/message-machine.ts:369` | 消息记录的机器状态；缺失为 absent | 消息迁移前 |
 | `isPausedInterrupted` | `src/core/work-graph/state/run-machine.ts:208` | 是否 paused/interrupted 的结束 | 重排队与展示 |
 | `runUnresolvedBlocker` | `src/core/work-graph/state/run-machine.ts:222` | 未解决工具调用的阻塞原因 | 未知调用审查 |
 | `claimHoldGuard` | `src/core/work-graph/state/run-machine.ts:1128` | claim 时 Session/Lease 的持有检查 | claim 提交 |

@@ -7,7 +7,11 @@ import {
 import { asRecord, asText } from './values.js';
 import { qualifyProjectPath } from '../contracts/workspace-path.js';
 import { createAutoRefresh, type RefreshRead, type RefreshSnapshot, type RefreshSources } from './refresh.js';
-import { adaptNav, completionRevisionOf, goalHref, type NavData, type NavLineDetail } from './adapters/nav.js';
+import { adaptNav, completionRevisionOf, goalHref, type LineKey, type NavData, type NavLineDetail } from './adapters/nav.js';
+import {
+  adaptMember, messageBodyKey, type MemberData, type MemberSource, type MemberWriteBasis,
+} from './adapters/member.js';
+import { readLine, requeueVisible, submitRunControl, type LineReadValue } from './adapters/line-shared.js';
 import { adaptGoals, conflictSelectionOf, goalOrderOf, type GoalsData } from './adapters/goals.js';
 import {
   adaptDecide, budgetTokensOf, draftOf, pinsFor, taskTripleOf, type DecideCard, type DecideData, type DecideRow, type DecideStepKey,
@@ -17,6 +21,18 @@ import {
   type ArchOverviewSource,
 } from './adapters/arch-overview.js';
 import type { ArchitectureObservationStateV1 } from '../contracts/architecture-observation.js';
+import type { ControlIntentSnapshotV1 } from '../contracts/control-intent.js';
+import type { ContinuationBriefV1 } from '../contracts/continuation-brief.js';
+import type { GraphHoverReadV1, LineExecutionItemV1, LineMessageStateV1, WorkLineSectionPageV1 } from '../contracts/work-line.js';
+import type { SessionMessageRef } from '../contracts/core/session-message.js';
+import type { QueryJobAnswerSnapshot } from '../contracts/query-job.js';
+import type { QueryExecutionRecord } from '../contracts/query-job.js';
+import type { MessageBody, SessionMessageReadV1 } from '../contracts/mailbox.js';
+import type { TaskExecutionRecord } from '../contracts/execution-read.js';
+import type { TaskGraph } from '../contracts/task-graph.js';
+import type { SessionHistoryEntry } from '../contracts/session-activity.js';
+import type { UncommittedFilesV1 } from '../contracts/workspace-files.js';
+import type { MemberCopySource } from './adapters/member.js';
 import type { NoteAnchorV1 } from '../contracts/note.js';
 import type { DecisionCardV1, DecisionQueueReadV1 } from './adapters/decide.js';
 import { guardNotConnected, notConnectedAttrs } from './not-connected.js';
@@ -63,9 +79,15 @@ export type TaskMapReadDemand = {
   decideGoal?: string | null;
   /** Decide's on-demand answer body: read this card's `materials/open` (one click). */
   decideAnswer?: string | null;
+  /** Member only: this page's own line, fixed at entry; a click opens another line as `lineKey`. */
+  ownKey?: LineKey | null;
+  /** Member only: the 轨迹 tab is open, so `sessions/history` joins the read. */
+  traceOpen?: boolean;
+  /** Member only: the 改动 tab is open, so `files/*` join the read. */
+  changesOpen?: boolean;
 };
 /** A complete `SessionRef`: exactly projectId + sessionId (no workspaceId). */
-export type TaskMapSessionRef = { projectId: string; sessionId: string };
+export type TaskMapSessionRef = LineKey;
 export type TaskMapActions = {
   readMore(demand: TaskMapReadDemand): void;
   pinLine(key: TaskMapSessionRef, pinned: boolean): Promise<void>;
@@ -126,6 +148,14 @@ export type BoardActions = {
   markNoticeSeen: (itemKey: string) => Promise<void>;
   /** D31/D43/D44: the card's question; returns the user's text and this round's answer. */
   askCard: (cardKey: string, text: string) => Promise<{ input: string; answer: string | null } | null>;
+  /** E3 Member §2.12: one published control of the line in the centre. */
+  controlLine: (kind: 'pause' | 'resume' | 'cancel') => Promise<void>;
+  /** E3 Member §2.12: one `tasks/requeue` from the facts of the last successful read. */
+  requeueLine: () => Promise<void>;
+  /** E3 Member §2.8: one `queries/ask` for the line in the centre. */
+  askLine: (question: string) => Promise<void>;
+  /** E3 Member §2.8: one `messages/send` to the line in the centre. */
+  interveneLine: (text: string) => Promise<void>;
 };
 
 /**
@@ -144,13 +174,18 @@ export type BoardActions = {
 export async function bootBoardPage(): Promise<void> {
   const root = document.querySelector('x-dc');
   if (!root) return;
-  const goalParam = new URLSearchParams(location.search).get('goal');
+  const search = new URLSearchParams(location.search);
+  const goalParam = search.get('goal');
   let goalId = goalParam === null || goalParam === '' ? null : goalParam;
+  /* §2.2: Member's whole-line identity. Both values are needed together; one
+     alone is ambiguous across projects. Other boards parse them but ignore. */
+  const lineProject = search.get('lineProject');
+  const lineSession = search.get('lineSession');
   const boardName = boardNameOf(location.href);
   /* A1/A24: the frozen template keeps `Main.dc.html`; the ArchOverview copy
      carries the Goal through the one `goalHref` encoding. */
   const source = await fetchPageText(location.href);
-  const board = parseBoard(document.title, boardName === 'ArchOverview' || boardName === 'Decide'
+  const board = parseBoard(document.title, boardName === 'ArchOverview' || boardName === 'Decide' || boardName === 'Member'
     ? source.split('href="Main.dc.html"').join('href="' + goalHref('Main.dc.html', goalId) + '"')
     : source);
   if (board.helmetHtml.length > 0) hoistHelmet(board.helmetHtml);
@@ -185,6 +220,10 @@ export async function bootBoardPage(): Promise<void> {
   /* Ruling 3 "默认页": opening the board reads the DAG's today track and today
    * hour calendar, not only the six base reads. */
   const demand: BoardReadDemand = { track: true, win: 'today' };
+  if (boardName === 'Member' && lineProject !== null && lineProject !== '' && lineSession !== null && lineSession !== '') {
+    demand.lineKey = { projectId: lineProject, sessionId: lineSession };
+    demand.ownKey = demand.lineKey;
+  }
   /** The navigation data the page last published; a control write pins those
    * exact revisions (§2.8), never a second read after the click. */
   let latest: NavData | null = null;
@@ -196,6 +235,9 @@ export async function bootBoardPage(): Promise<void> {
    * its source/pins/task/run from these, never from a route shape the page sends. */
   let latestDecide: DecideData | null = null;
   let latestDecideScope: CoreScope | null = null;
+  /** §2.12: the Member data of the last successful read; a failed reread is never
+   * the source of the next write's pins. */
+  let latestMember: MemberData | null = null;
   let controlSeq = 0;
   let reorderSeq = 0;
   let answerSeq = 0;
@@ -674,6 +716,87 @@ export async function bootBoardPage(): Promise<void> {
       }
       return { input: text, answer };
     },
+    async controlLine(kind: 'pause' | 'resume' | 'cancel'): Promise<void> {
+      const data = latestMember;
+      const line = data?.line ?? null;
+      if (data === null || line === null) throw new Error(writeTextOf(new Error('no Member line')));
+      const control = line.controls.find((entry) => entry.kind === kind && entry.availability === 'available') ?? null;
+      if (control === null) throw new Error(writeTextOf(new Error('this control is not available')));
+      try {
+        await submitRunControl(client, data.scope, control, kind);
+      } catch (error) {
+        throw new Error(writeTextOf(error));
+      }
+      await refresh.reread();
+    },
+    async requeueLine(): Promise<void> {
+      const data = latestMember;
+      const write = data?.write ?? null;
+      if (data === null || write === null) throw new Error(writeTextOf(new Error('no requeue facts')));
+      let value: unknown;
+      try {
+        const reply = await client.write('tasks/requeue', data.scope, {
+          input: {
+            taskRef: write.taskRef, afterRunRef: write.afterRunRef,
+            reason: '在工作线页面重新入队',
+          },
+          meta: {
+            requestId: crypto.randomUUID(),
+            expected: [
+              { ref: write.goalRef, revision: write.goalRevision },
+              { ref: write.afterRunRef, revision: write.runRevision },
+            ],
+          },
+        });
+        value = committedRouteValue(reply, 'tasks/requeue');
+      } catch (error) {
+        throw new Error(writeTextOf(error));
+      }
+      const outcome = asRecord(value);
+      if (outcome.kind === 'refused') throw new Error(writeTextOf(new Error(asText(outcome.refusal))));
+      if (outcome.kind !== 'requeued') throw new Error(writeTextOf(new Error('tasks/requeue returned no outcome')));
+      await refresh.reread();
+    },
+    async askLine(question: string): Promise<void> {
+      const data = latestMember;
+      const line = data?.line ?? null;
+      if (data === null || line === null) throw new Error(writeTextOf(new Error('no Member line')));
+      let reply: RouteReply;
+      try {
+        reply = await client.post('queries/ask', data.scope, {
+          sessionRef: line.key, question, commandId: crypto.randomUUID(),
+        });
+      } catch (error) {
+        throw new Error(writeTextOf(error));
+      }
+      if (reply.status !== 'queued') {
+        throw new Error(writeTextOf(new RouteReadError('queries/ask',
+          reply.code || reply.status || 'no status', reply.reason ?? '')));
+      }
+      await refresh.reread();
+    },
+    async interveneLine(text: string): Promise<void> {
+      const data = latestMember;
+      const line = data?.line ?? null;
+      if (data === null || line === null) throw new Error(writeTextOf(new Error('no Member line')));
+      let reply: RouteReply;
+      try {
+        reply = await client.write('messages/send', data.scope, {
+          input: { recipient: line.key, text, intent: 'action_request', needsReply: true },
+          meta: { requestId: crypto.randomUUID(), expected: [] },
+        });
+        /* the committed write is the reply's `value`; `sendStatus` is its
+           sibling on the envelope (SendMessageResultV1), not a field inside. */
+        committedRouteValue(reply, 'messages/send');
+      } catch (error) {
+        throw new Error(writeTextOf(error));
+      }
+      const result = asRecord(reply);
+      if (result.sendStatus !== 'sent' && result.sendStatus !== 'awaiting_release') {
+        throw new Error(writeTextOf(new Error('messages/send did not send')));
+      }
+      await refresh.reread();
+    },
   };
   const sources: RefreshSources<unknown> = {
     read: async () => await reader(client, goalId, demand),
@@ -691,6 +814,7 @@ export async function bootBoardPage(): Promise<void> {
           latestDecide = snapshot.data as DecideData | null;
           latestDecideScope = latestDecide?.scope ?? null;
         }
+        if (boardName === 'Member') latestMember = snapshot.data as MemberData | null;
       }
       view.updateProps(pageProps(board.defaults, snapshot, restart, actions));
     },
@@ -716,6 +840,7 @@ const BOARD_READERS: Record<string, BoardReader<unknown>> = {
   Goals: readGoals,
   ArchOverview: readArchOverview as BoardReader<unknown>,
   Decide: readDecide as BoardReader<unknown>,
+  Member: readMember as BoardReader<unknown>,
 };
 
 /** The board name a served page is for: `/workbench/TaskMap.dc.html` -> `TaskMap`. */
@@ -867,9 +992,8 @@ export async function readNav(
   }
   let detail: NavLineDetail | null = null;
   if (demand.lineKey !== null && demand.lineKey !== undefined) {
-    detail = readyRouteValue<NavLineDetail>(
-      await client.post('lines/read', scope, { workspace: scope, key: demand.lineKey }), 'lines/read',
-    );
+    /* §2.4: both pages read a selected line through the one shared `readLine`. */
+    detail = await readLine(client, scope, demand.lineKey) as unknown as NavLineDetail;
   }
   let archived: unknown = null;
   if (demand.archive === true) {
@@ -899,7 +1023,7 @@ export async function readNav(
     }
   }
   return {
-    data: adaptNav({ goals, lines, display, queue, archived, detail, phase }, selected, scope),
+    data: adaptNav({ goals, lines, display, queue, archived, detail, phase, tasks: phase }, selected, scope),
     cursor,
   };
 }
@@ -994,6 +1118,226 @@ export async function readDecide(
     }),
     cursor,
   };
+}
+
+/**
+ * The browser copy of `consultationQueryRefs` (`contracts/query-job.ts:138`).
+ * That module imports `node:crypto` for its sha256, which the browser bundle
+ * cannot load; this function hashes the same canonical message reference with
+ * WebCrypto and yields the same id. It is the one place the UI builds that
+ * identity; a Host-only helper is not usable here.
+ */
+export async function consultationQueryRefsForUi(messageRef: SessionMessageRef): Promise<{
+  queryJobRef: { aggregateType: 'QueryJob'; projectId: string; workspaceId: string; queryJobId: string };
+}> {
+  const canonical = (value: unknown): string => {
+    if (value === null) return 'null';
+    if (typeof value === 'number') {
+      if (!Number.isFinite(value)) throw new Error('canonical JSON: non-finite number');
+      return JSON.stringify(value);
+    }
+    if (typeof value === 'boolean' || typeof value === 'string') return JSON.stringify(value);
+    if (Array.isArray(value)) return '[' + value.map(canonical).join(',') + ']';
+    const row = asRecord(value);
+    return '{' + Object.keys(row).sort().map((key) => JSON.stringify(key) + ':' + canonical(row[key])).join(',') + '}';
+  };
+  const bytes = new TextEncoder().encode(canonical(messageRef));
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
+  const hash = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  return { queryJobRef: {
+    aggregateType: 'QueryJob', projectId: messageRef.projectId,
+    workspaceId: messageRef.workspaceId, queryJobId: 'consultation-' + hash,
+  } };
+}
+
+/**
+ * E3 Member §2.4: one read for the member page. The chrome is `readNav`'s
+ * (the selected line's `lines/read` included); this reader adds the line's
+ * four first pages, the shown messages' view/body, the current Run's
+ * execution/control/brief, the shown copies' Query/answer, and the two
+ * on-demand tabs. The line may be missing: the rail stays and the page says so.
+ */
+export async function readMember(
+  client: ReturnType<typeof createHostClient>, goalId: string | null,
+  demand: BoardReadDemand = {},
+): Promise<RefreshRead<MemberData>> {
+  const requested = demand.lineKey ?? null;
+  let nav: NavData | null;
+  let cursor: string | null;
+  let missing = false;
+  try {
+    const read = await readNav(client, goalId, { ...demand, lineKey: requested });
+    nav = read.data;
+    cursor = read.cursor;
+  } catch (error) {
+    if (!(error instanceof RouteReadError) || error.code !== 'not_found' || requested === null) throw error;
+    /* §2.13: a line named by the URL is gone. Keep the rail, drop only the line. */
+    missing = true;
+    const read = await readNav(client, goalId, { ...demand, lineKey: null });
+    nav = read.data;
+    cursor = read.cursor;
+  }
+  if (nav === null || nav.scope === null) return { data: null, cursor };
+  const scope = nav.scope;
+  const goalRefOf = (id: string) => ({ aggregateType: 'Goal' as const, projectId: scope.projectId, goalId: id });
+  let key = requested;
+  if (key === null) {
+    key = nav.lines.find((row) => !row.synth && !row.archived)?.key ?? null;
+    if (key !== null) {
+      demand.lineKey = key;
+      demand.ownKey = key;
+    }
+  }
+  let line: LineReadValue | null = requested !== null && !missing
+    ? nav.detail as unknown as LineReadValue : null;
+  if (key !== null && line === null && !missing) {
+    try {
+      line = await readLine(client, scope, key);
+    } catch (error) {
+      if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
+      line = null;
+    }
+  }
+  let executions: LineExecutionItemV1[] = [];
+  let messages: LineMessageStateV1[] = [];
+  const messageViews: SessionMessageReadV1[] = [];
+  const messageBodies: Record<string, MessageBody> = {};
+  const copies: MemberCopySource[] = [];
+  let execution: TaskExecutionRecord | null = null;
+  let controls: ControlIntentSnapshotV1 | null = null;
+  let brief: { brief: ContinuationBriefV1; digest: string } | null = null;
+  let taskGraph: TaskGraph | null = nav.tasks;
+  if (line !== null && line.kind === 'line' && key !== null) {
+    const pageOf = async (section: WorkLineSectionPageV1['section']): Promise<WorkLineSectionPageV1> =>
+      readyRouteValue<WorkLineSectionPageV1>(await client.post('lines/page', scope, {
+        workspace: scope, key, section, page: { limit: 100 },
+      }), 'lines/page');
+    const executionPage = await pageOf('executions');
+    executions = executionPage.section === 'executions' ? executionPage.items : [];
+    const messagePage = await pageOf('messages');
+    messages = messagePage.section === 'messages' ? messagePage.items : [];
+    const copyPage = await pageOf('copies');
+    const copyItems = copyPage.section === 'copies' ? copyPage.items : [];
+    await pageOf('participation');
+    for (const item of messages) {
+      const view = readyRouteValue<SessionMessageReadV1>(
+        await client.post('messages/view', scope, item.messageRef), 'messages/view');
+      messageViews.push(view);
+      for (const part of ['message', 'response'] as const) {
+        if (part === 'response' && view.message.response === null) continue;
+        try {
+          messageBodies[messageBodyKey(item.messageRef, part)] = readyRouteValue<MessageBody>(
+            await client.post('messages/body', scope, { messageRef: item.messageRef, part }), 'messages/body');
+        } catch (error) {
+          if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
+        }
+      }
+    }
+    for (const item of copyItems) {
+      const refs = await consultationQueryRefsForUi(item.messageRef);
+      let query: QueryExecutionRecord | null = null;
+      let answer: QueryJobAnswerSnapshot | null = null;
+      try {
+        query = readyRouteValue<QueryExecutionRecord>(
+          await client.post('queries/read', scope, refs.queryJobRef), 'queries/read');
+      } catch (error) {
+        if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
+      }
+      const answerRef = query?.job.job.answerRefs.at(-1) ?? null;
+      if (answerRef !== null) {
+        try {
+          answer = readyRouteValue<QueryJobAnswerSnapshot>(
+            await client.post('queries/answer', scope, answerRef), 'queries/answer');
+        } catch (error) {
+          if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
+        }
+      }
+      copies.push({ item, query, answer });
+    }
+    const executionItems = executions.filter((entry) => entry.kind === 'execution');
+    const live = executionItems.filter((entry) => entry.status === 'running' || entry.status === 'starting');
+    const ended = executionItems.filter((entry) => entry.status === 'ended');
+    const current = live.at(-1) ?? ended.at(-1) ?? null;
+    if (current !== null) {
+      execution = readyRouteValue<TaskExecutionRecord>(
+        await client.post('executions/read', scope, current.runRef), 'executions/read');
+    }
+    const intentRef = execution?.run.controlState?.intentRef ?? null;
+    if (intentRef !== null) {
+      controls = readyRouteValue<ControlIntentSnapshotV1>(
+        await client.post('controls/read', scope, intentRef), 'controls/read');
+    }
+    if (execution !== null && execution.run.requeueRef !== undefined) {
+      brief = readyRouteValue<{ brief: ContinuationBriefV1; digest: string } | null>(
+        await client.post('executions/brief', scope, { runRef: execution.run.ref }), 'executions/brief');
+    }
+    /* §2.4 step 6: a line may own a task of another Goal; its own graph is read
+       once, never the selected Goal's graph. */
+    const lineTask = line.row.responsibleNow[0]?.task ?? line.row.name.tasks[0] ?? line.row.groups.task ?? null;
+    if (lineTask !== null && lineTask.goalId !== (nav.selectedGoalId ?? '')) {
+      try {
+        taskGraph = readyRouteValue<TaskGraph>(
+          await client.post('tasks/query', scope, { goalRef: goalRefOf(lineTask.goalId) }), 'tasks/query');
+      } catch (error) {
+        if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
+        taskGraph = null;
+      }
+    }
+  }
+  let history: SessionHistoryEntry[] | null = null;
+  if (demand.traceOpen === true && key !== null) {
+    const page = readyRouteValue<{ items: SessionHistoryEntry[] }>(await client.post('sessions/history', scope, {
+      sessionRef: key, afterCursor: null, throughCursor: null, limit: 100,
+    }), 'sessions/history');
+    history = page.items;
+  }
+  let files: UncommittedFilesV1 | null = null;
+  let filesPartial = false;
+  if (demand.changesOpen === true) {
+    const list = readyRouteValue<{ paths: string[]; partial: boolean }>(
+      await client.post('files/list', scope, {}), 'files/list');
+    filesPartial = list.partial === true;
+    const paths = list.paths.slice(0, 100);
+    /* §2.4 step 12: this route wants a WorkspaceRef, not the caller's CoreScope. */
+    files = readyRouteValue<UncommittedFilesV1>(
+      await client.post('files/uncommitted', scope, {
+        workspace: { aggregateType: 'Workspace', projectId: scope.projectId, workspaceId: scope.workspaceId },
+        paths,
+      }), 'files/uncommitted');
+  }
+  let hover: GraphHoverReadV1 | null = null;
+  if (nav.selectedGoalId !== null) {
+    try {
+      hover = readyRouteValue<GraphHoverReadV1>(
+        await client.post('graph/hover', scope, { goalRef: goalRefOf(nav.selectedGoalId) }), 'graph/hover');
+    } catch (error) {
+      /* A Goal without an adopted Plan has no graph to hover; `readTaskMap`
+         already reads the same `unavailable` as empty (boot.ts:1226-1228). */
+      if (!(error instanceof RouteReadError) || error.code !== 'unavailable') throw error;
+      hover = null;
+    }
+  }
+  let write: MemberWriteBasis | null = null;
+  if (execution !== null && key !== null) {
+    const lineTask = line !== null && line.kind === 'line'
+      ? line.row.responsibleNow[0]?.task ?? line.row.name.tasks[0] ?? line.row.groups.task ?? null : null;
+    const taskRow = lineTask === null ? null
+      : taskGraph?.tasks.find((row) => row.ref.projectId === lineTask.projectId
+        && row.ref.goalId === lineTask.goalId && row.ref.taskId === lineTask.taskId) ?? null;
+    const goalRow = taskRow === null ? null : nav.goals.find((goal) => goal.goalId === taskRow.ref.goalId) ?? null;
+    if (taskRow !== null && goalRow !== null && requeueVisible(taskRow)) {
+      write = {
+        taskRef: taskRow.ref, afterRunRef: execution.run.ref, runRevision: execution.run.revision,
+        goalRef: goalRefOf(goalRow.goalId), goalRevision: goalRow.revision,
+      };
+    }
+  }
+  const source: MemberSource = {
+    scope, nav: { ...nav, tasks: taskGraph }, line, ownKey: demand.ownKey ?? key,
+    executions, messages, messageViews, messageBodies, copies, controls, brief,
+    history, files, filesPartial, hover, write,
+  };
+  return { data: adaptMember(source, key), cursor };
 }
 
 /** The `BOARD_READERS` entry for Main: this package wires the chrome (rail,

@@ -11,6 +11,7 @@ import {
 } from '../../contracts/core/results.js';
 import type { SessionProvenanceV1, SessionRecord } from '../../contracts/core/session.js';
 import { canonicalJson, type JsonValue } from '../../contracts/fingerprint.js';
+import type { SessionHistoryEntry } from '../../contracts/session-activity.js';
 import type {
   ConsultationCreateV1, SessionCard, SessionCreateOperationRecord, SessionCreationIntentV1, SessionCreationResult,
   SessionDirectoryPort, SessionOperationRecord,
@@ -64,13 +65,8 @@ export type SessionHistoryRequest = {
   limit: number;
   range?: SessionHistoryRange;
 };
-export type SessionHistoryEntry = {
-  recordId: string; cursor: string; recordedAt: string;
-  /** `context_compacted` is a compaction record (slice-K2-SPEC L14); its body is the record as written. */
-  kind: 'session_created' | 'turn_started' | 'agent_event' | 'context_compacted';
-  source: { adapterId: string; kernelSessionId: string; position: number };
-  body: ArtifactRef | { encoding: 'kernel_session_record_json'; text: string };
-};
+/** One raw Session-history page entry; declared once in `contracts/session-activity.ts`. */
+export type { SessionHistoryEntry };
 export interface SessionOperationsPort {
   createSession(ctx: CoreCallContext, request: CreateSessionRequest): Promise<OperationReceipt<SessionRecord>>;
   readSessionHistory(ctx: CoreCallContext, request: SessionHistoryRequest): Promise<ReadResult<Page<SessionHistoryEntry>>>;

@@ -98,7 +98,7 @@
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
 | `createWorkLineReader` | `src/core/work-graph/views/work-line-reader.ts:3057` | 工作线列表、归档分页、线详情、分区页、会话源的读端口 | 要工作线或线详情时；不要另写一套组装 |
-| `deriveMessageDelivery` | `src/core/work-graph/model/communication-contracts.ts:136` | 消息投递与读 `disposition` 的唯一推导：accepted input → `delivered`（`accepted`）；read/responded → `delivered`（`legacy_unknown`）；否则收件线 archived/retired → `undelivered` 与原因；剩下 `queued`；withdrawn/未放行优先决定 `disposition`。只读记录的 `status`/`release`/`withdrawnAt`/`acceptedInputs`，不读存的 `delivery` | 工作线消息分节及任何要判投递/读 `disposition` 的消息读；不要另写投递判断 |
+| `deriveMessageDelivery` | `src/core/work-graph/model/communication-contracts.ts:137` | 消息投递与读 `disposition` 的唯一推导：accepted input → `delivered`（`accepted`）；read/responded → `delivered`（`legacy_unknown`）；否则收件线 archived/retired → `undelivered` 与原因；剩下 `queued`；withdrawn/未放行优先决定 `disposition`。只读记录的 `status`/`release`/`withdrawnAt`/`acceptedInputs`，不读存的 `delivery` | 工作线消息分节及任何要判投递/读 `disposition` 的消息读；不要另写投递判断 |
 | `createConsumableSessions` | `src/core/work-graph/views/consumable-sessions.ts:71` | 所有 Session 的可消费视图：一次有界的目录走查，按候选给出可用性、busy 原因与可提供的输入种类；`after`/`next` 是 Session 键。自己的 `intervention_planning` Query 在 `claimed`/`prepared` 时 busy 仍为 `query`，但按 `sourceMessageRef` 经 `offerOf` 提供一条 `nextMessage`（仅当收件人是本线；不排 `offersOf`）；`entering`/`entered` 不提供 | Host 心跳挑要打开的 Session；不要另写 busy/offer 规则 |
 | `assembleLineBriefs` | `src/core/work-graph/views/work-line-reader.ts:244` | 把线头批量投影成 `LineBriefV1`，与 `lines/list` 同一路径 | 其他读要线摘要、且必须与列表逐字节一致时 |
 | `resolveContinuationLine` | `src/core/work-graph/views/work-line-reader.ts:1442` | 沿 continuation 后继找线头；分支返回全部头，环返回成员，最多 32 步 | 从线中任一 Session 找头时；不要另写遍历 |

@@ -237,6 +237,7 @@ import { validateRuntimeBudget, type RuntimeBudget } from './runtime-budget.js';
 import type { RoleConfigurationRef, SessionRef } from './core/identity.js';
 import type { OperationRef } from './core/operations.js';
 import type { SessionMessageRef } from './core/session-message.js';
+import type { SessionRecord } from './core/session.js';
 import type { RoleSpecResolutionV1 } from './role-spec-materials.js';
 import type { RunExecutionHistoryV1 } from './core/execution-history.js';
 import type { QueryRequestPromptFactsV1 } from './prompts/prompt-set.js';
@@ -718,4 +719,16 @@ export type InitialPlanAnswerFacts = {
     manifest: PreparedQueryManifestV1;
     answerText: string;
     resolution: InitialPlanSourceResolutionV1;
+};
+
+/**
+ * The internal execution record read by the Runtime thin path and by the Query
+ * owner. Before claim there is no `session`; pending reads keep using
+ * `readQueryJob`. WorkGraph's `queries/contracts.ts` re-exports it.
+ */
+export type QueryExecutionRecord = {
+  job: QueryJobSnapshot;
+  run: QueryRunSnapshot;
+  session: SessionRecord;
+  answer: QueryJobAnswerSnapshot | null;
 };

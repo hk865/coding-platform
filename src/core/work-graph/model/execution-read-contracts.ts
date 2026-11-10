@@ -5,11 +5,10 @@ import type { ControlIntentSnapshotV1 } from '../../../contracts/control-intent.
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
-import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { SessionAnomalyAnchorV1 } from '../../../contracts/session-anomaly.js';
-import type { RunRef, RunSnapshot, TaskAttemptSnapshot, TaskLeaseSnapshot } from '../../../contracts/dispatch.js';
+import type { RunRef, RunSnapshot } from '../../../contracts/dispatch.js';
+import type { TaskExecutionRecord } from '../../../contracts/execution-read.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
-import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type { TaskRequeueSnapshotV1 } from '../../../contracts/task-requeue.js';
 import type { UnknownCallReviewV1 } from '../../../contracts/unknown-call-review.js';
 import type { RoundSnapshot } from '../../../contracts/verification.js';
@@ -17,20 +16,9 @@ import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { RawArtifactStorePort } from '../../record-store/body-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { SessionMessage } from './communication-contracts.js';
-import type { TaskClaimOutbox } from './claim-contracts.js';
 
-/** One final atomic readMany window. Mutable Session/Lease describe the current
- * facts and may no longer belong to this historical claim; no authorization is
- * inferred. Missing required claim-linked records is incomplete, not absence. */
-export type TaskExecutionRecord = {
-  run: RunSnapshot;
-  attempt: TaskAttemptSnapshot;
-  outbox: TaskClaimOutbox;
-  plan: PlanRevisionSnapshot;
-  session: SessionRecord;
-  lease: TaskLeaseSnapshot | null;
-  readThrough: CommitCursor | null;
-};
+/** The execution read window is declared once in `contracts/execution-read.ts`; WorkGraph callers keep this import site. */
+export type { TaskExecutionRecord };
 
 /**
  * MVP UI connection: a bounded, scope-bound page of real executions for one

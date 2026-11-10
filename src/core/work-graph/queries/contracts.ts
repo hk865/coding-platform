@@ -19,10 +19,10 @@ import type { RunExecutionHistoryV1 } from '../../../contracts/core/execution-hi
 import type { RoleConfigurationRef, SessionRef } from '../../../contracts/core/identity.js';
 import type { PreparedQueryExecution, PreparedQueryManifestV1 } from '../../../contracts/core/prepared-execution.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
-import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { GoalSnapshot, WorkspaceSnapshot } from '../../../contracts/ledger.js';
 import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type {
+  QueryExecutionRecord,
   QueryExecutionStateV1,
   QueryJobAnswerRef,
   QueryJobAnswerSnapshot,
@@ -61,17 +61,8 @@ export type QueryJobRecord = {
   run: QueryRunSnapshot;
 };
 
-/**
- * The internal execution record read by the Runtime thin path and by the Query
- * owner. Before claim there is no `session`; pending reads keep using
- * `readQueryJob`.
- */
-export type QueryExecutionRecord = {
-  job: QueryJobSnapshot;
-  run: QueryRunSnapshot;
-  session: SessionRecord;
-  answer: QueryJobAnswerSnapshot | null;
-};
+/** The internal Query execution record is declared once in `contracts/query-job.ts`; callers keep this import site. */
+export type { QueryExecutionRecord };
 
 /** The stable identity a fresh Query entry binds once, before any model request. */
 export type QueryEntryIdentity = {

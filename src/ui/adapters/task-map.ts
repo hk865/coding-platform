@@ -224,7 +224,7 @@ export function stopWordOf(row: Record<string, unknown>, stop: string): string {
 /** `st` is the state the board shows. A reason never repeats the state word
  * (DESIGN `:622`): a waiting Task already reads 已暂停，可继续, so its paused stop
  * gives way to the phase cause. */
-function taskWhyOf(row: Record<string, unknown>, st: string): string {
+export function taskWhyOf(row: Record<string, unknown>, st: string): string {
   /* The automation stop explains a person's decision; it lives in the failure
      verdict, while `phaseCause.code` is only the phase projection. */
   const stop = automationStopOf(row);
@@ -676,7 +676,7 @@ export type TaskMapNodeDetailData = {
   disposition: { word: string; text: string } | null;
 };
 
-const PHASE_WORD: Record<string, string> = {
+export const PHASE_WORD: Record<string, string> = {
   ready: '可领取', claimable: '可领取', pending: '待执行', future: '未来意图', running: '执行中',
   awaiting_check: '待检查', verifying: '验证中', check_failed: '检查未通过', check_incomplete: '检查不完整',
   run_failed: '执行失败', run_cancelled: '执行已取消', interrupted: '中断，待核对',

@@ -28,16 +28,17 @@
  *   or resume writes none of the three records (§5.2), so it is not an event
  *   of this section (`attemptEventFromRunEvent` maps it to `null`).
  *
- * `TaskClaimOutbox` and its V1 dispatch state are declared in
- * `model/claim-contracts.ts`, which `state/` may not import (§14.4); the
- * structurally identical `DispatchOutboxRecord` below is the same record.
+ * The DispatchOutboxEntry record `DispatchOutboxRecord` and its V1 dispatch
+ * state are declared once in `contracts/execution-read.ts` and re-exported
+ * here; `model/claim-contracts.ts` names the same record `TaskClaimOutbox`.
  */
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { TaskClaim } from '../../../contracts/core/task-claim.js';
 import type {
-  ConsumedWaitV1, DispatchOutboxRef, RunOutcome, RunRef, RunSnapshot, TaskAttemptSnapshot, TaskDispatchStateV2,
+  ConsumedWaitV1, RunOutcome, RunRef, RunSnapshot, TaskAttemptSnapshot,
   TaskLeaseRef, TaskLeaseSnapshot,
 } from '../../../contracts/dispatch.js';
+import type { DispatchOutboxRecord } from '../../../contracts/execution-read.js';
 import type { TaskRequeueRef } from '../../../contracts/task-requeue.js';
 import type { UnknownCallReviewRef } from '../../../contracts/unknown-call-review.js';
 import { leaseReleasedForContinuation } from './review-lease.js';
@@ -47,28 +48,7 @@ import { accept, reject, unreachable, type Rejected, type Transition } from './t
 // Records and nodes (§5.1)                                                    //
 // -------------------------------------------------------------------------- //
 
-/**
- * V1 entered/settled dispatch phase. `entered`/`settled` must agree with the
- * outer `TaskClaimOutbox.status`.
- */
-export type DispatchStateV1 = {
-  schemaVersion: 1;
-  phase: 'entered' | 'settled';
-  consumerId: string;
-  entryGeneration: number;
-  sessionGeneration: number;
-  eventId: string;
-};
-
-/** The DispatchOutboxEntry record; same shape as `TaskClaimOutbox` (`claim-contracts.ts`). */
-export type DispatchOutboxRecord = {
-  ref: DispatchOutboxRef;
-  revision: number;
-  schemaVersion: 1;
-  status: 'pending' | 'entered' | 'settled';
-  dispatchState?: DispatchStateV1 | TaskDispatchStateV2;
-  claim: TaskClaim;
-};
+export type { DispatchOutboxRecord, DispatchStateV1 } from '../../../contracts/execution-read.js';
 
 /**
  * Attempt machine node. "open" is `claimed` or `started`; `ended_unknown` is

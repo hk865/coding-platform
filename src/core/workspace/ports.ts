@@ -2,6 +2,7 @@ import type { WorkspaceRef } from '../../contracts/ledger.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { SourceCaptureRef } from '../../contracts/core/source.js';
 import type { ArchitectureSourceMapping, ArchitectureSourceSnapshotV1 } from '../../contracts/architecture-source.js';
+import type { UncommittedFilesV1 } from '../../contracts/workspace-files.js';
 import type { ProjectFileGraphV1 } from './architecture-language-provider.js';
 import { isSafeSourceRelativePath as safeRelative } from './path-validation.js';
 import type { LineRange } from './single-file-syntax.js';
@@ -181,20 +182,8 @@ export type WorkspaceComparison = CapturedWorkspaceComparison | GitWorkspaceComp
 export const UNCOMMITTED_FILES_MAX_PATHS = 100;
 /** E3-7: some workspace paths, each answered against the workspace's current HEAD. */
 export type UncommittedFilesRequest = { workspace: WorkspaceRef; paths: string[] };
-/**
- * One path now against HEAD, what `git diff HEAD` would say of it: `clean` (no difference, or
- * absent on both sides), `uncommitted` with the added/deleted line counts (`null` when they
- * cannot be given: binary, over a byte bound or past the line-diff bound), or `unknown` (not
- * readable here, not a regular file, or too large to compare).
- */
-export type UncommittedFileV1 =
-  | { path: string; state: 'clean' }
-  | { path: string; state: 'uncommitted'; lines: { added: number; deleted: number } | null }
-  | { path: string; state: 'unknown' };
-/** `not_git`: the root is not a git work-tree top level, or the repository has no HEAD commit. */
-export type UncommittedFilesV1 =
-  | { repository: 'git'; files: UncommittedFileV1[] }
-  | { repository: 'not_git' };
+/** One path's state against HEAD and the page of them: declared once in `contracts/workspace-files.ts`. */
+export type { UncommittedFileV1, UncommittedFilesV1 } from '../../contracts/workspace-files.js';
 
 export type DuplicateLocationV1 = { path: string; line: number };
 export type DuplicateCandidateV1 =

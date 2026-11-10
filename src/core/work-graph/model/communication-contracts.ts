@@ -24,7 +24,8 @@ import type { MessageDeliveryStateV1, MessageReadDispositionV1, MessageReleaseV1
   SessionMessageIntentFields, SessionMessageIntentV1, SessionMessageRef,
   DecisionHostSenderV1 } from '../../../contracts/core/session-message.js';
 import type { ArchiveStepRefV1 } from '../../../contracts/core/session-archive.js';
-import type { RunRef, SourceRefV1, TaskTriple } from '../../../contracts/dispatch.js';
+import type { RunRef, TaskTriple } from '../../../contracts/dispatch.js';
+import type { MessageBody, SessionMessageReadPageV1, SessionMessageReadV1 } from '../../../contracts/mailbox.js';
 import type { QueryJobAnswerRef, QueryJobRef, QueryRunRef } from '../../../contracts/query-job.js';
 import type { DispatchBasisV1, GoalRef } from '../../../contracts/ledger.js';
 import type {
@@ -51,7 +52,7 @@ import { effectiveReplyHandler, isWaitMessage, messageFactsOfRecord, waitFactsOf
 import { sameRef } from '../state/ref-equality.js';
 import type {
   MessageAcceptedInput, MessageQueryAnswerSenderRecord, MessageSecretaryRoundSenderRecord, MessageWorkRunSenderRecord,
-  SessionMessageRecord, SessionMessageStatus as SessionMessageStatusRecord,
+  SessionMessageRecord, SessionMessageStatus,
 } from '../state/message-machine.js';
 
 export type {
@@ -110,7 +111,7 @@ export function waitConsumedClaimKey(messageRef: SessionMessageRef): string {
 
 export type MessageQueryAnswerSender = MessageQueryAnswerSenderRecord;
 
-export type SessionMessageStatus = SessionMessageStatusRecord;
+export type { SessionMessageStatus };
 
 export type SessionMessage = SessionMessageRecord;
 
@@ -284,36 +285,8 @@ export type SessionMessageRespondInputV1 = GraphWrite<
   { messageRef: SessionMessageRef } & ({ text: string } | { reject: true; reason: string })
 >;
 
-/**
- * The full mailbox read: the record, the derived delivery triple and the
- * disposition as three separate fields; the stored `delivery` on the record is never overloaded.
- */
-export type SessionMessageReadV1 = {
-  message: SessionMessage;
-  delivery: MessageDeliveryStateV1;
-  disposition: MessageReadDispositionV1;
-  /** §3.8 item 4: `null` unless this message is an approved, not withdrawn, not released message. */
-  releaseBlock: MessageReleaseBlockV1 | null;
-};
-/** The view read's page: the same keyset shape as `SessionMessagePage`, items carrying the derived fields. */
-export type SessionMessageReadPageV1 = {
-  items: SessionMessageReadV1[];
-  nextCursor: string | null;
-  sourceCursor: CommitCursor;
-};
-
-/**
- * Decoded bounded message text. `usage:'message'` records that this is a
- * received statement, NOT a current-source/applicability/evidence grant. It
- * also does not pass on any permission to the artifacts the text mentions.
- */
-export type MessageBody = {
-  messageRef: SessionMessageRef;
-  part: 'message' | 'response';
-  text: string;
-  sourceRef: SourceRefV1;
-  usage: 'message';
-};
+/** The mailbox reads (`SessionMessageReadV1`, its page and `MessageBody`) are declared once in `contracts/mailbox.ts`. */
+export type { MessageBody, SessionMessageReadPageV1, SessionMessageReadV1 };
 
 /** The Host send's own `requestId`, scope and exact arguments; never a Run origin. */
 export type HostSendCommitLookupInput = {

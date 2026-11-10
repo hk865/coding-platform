@@ -8,6 +8,7 @@
  * command and with no event of its own. `source` is that fact's ref: input lands through a QueryJob round or a
  * released SessionMessage, and a round ends through its QueryRun.
  */
+import type { ArtifactRef } from './artifact.js';
 import { defineRecord, defineShape, f, type InferRecord, type InferShape } from './data-format.js';
 import { id, QueryJobRefShape, QueryRunRefShape, SessionMessageRefShape, SessionRefShape } from './data-format-refs.js';
 
@@ -62,3 +63,12 @@ export type SessionActivityV1 = InferRecord<(typeof SessionActivityFormat)['fiel
 export type SessionActivityKindV1 = SessionActivityV1['kind'];
 /** `QueryJobRef | QueryRunRef | SessionMessageRef`. */
 export type SessionActivitySourceV1 = SessionActivityV1['source'];
+
+/** One raw Session-history page entry; the Kernel read's own shape. AgentRuntime's `session-operations.ts` re-exports it. */
+export type SessionHistoryEntry = {
+  recordId: string; cursor: string; recordedAt: string;
+  /** `context_compacted` is a compaction record (slice-K2-SPEC L14); its body is the record as written. */
+  kind: 'session_created' | 'turn_started' | 'agent_event' | 'context_compacted';
+  source: { adapterId: string; kernelSessionId: string; position: number };
+  body: ArtifactRef | { encoding: 'kernel_session_record_json'; text: string };
+};
