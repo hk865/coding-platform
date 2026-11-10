@@ -35,3 +35,7 @@ R4c.2b 在本目录保存 `SqliteStores.read` 的[补丁源码](patches/storage/
 ## 2026-11-04 8E-2 一次读多个文件
 
 受管的[工作区沙箱补丁源码](patches/sandbox/workspace/workspace-sandbox.ts)给 `WorkspaceSandbox` 加 `readMany`：一次读多个文件，每项同逐个 `read` 的结果或错（码、消息），只开一次根；按工作区根的 `statfs`，本地盘用同步系统调用，其余用异步读，批末复核开过的目录。源仍十九个、76 份产物。来源与四份产物哈希、命令见[补丁维护说明](patches/README.md)。
+
+## 2026-11-10 跨轮重复的工具调用号
+
+[会话历史补丁源码](patches/core/ports/session_store/session-history.ts)从已落盘记录和恢复前缀收集调用号，并把 `assertTranscriptExchangeIntegrity` 的完整性拒绝翻成 `category: 'context'`、`code: 'history_rejected'`、`retryable: false` 的 `RunFailure`；`message` 带字面量 `history_rejected` 和 Kernel 的原始拒绝原因。[运行循环补丁源码](patches/core/runtime/loop/runtime-runner.ts)让同一 Session 里再次出现的调用号在记录时改成 `<id>@<turnId>`（第一次出现的原样），并在进入模型循环前把这个确定性失败写成真实的 `run.failed`。[组合根](patches/app/composition/composition-root.ts)和[恢复组合根](patches/app/composition/resume-composition.ts)读目标 Session 的已落盘调用号，把确定性历史拒绝转成 `historyFailure`。四个源的 16 份产物由构建脚本生成，不手改 `dist`。撞号只改后一个，整条历史的唯一性检查不变；旧数据不迁移，由 `history_rejected` 路径结束。

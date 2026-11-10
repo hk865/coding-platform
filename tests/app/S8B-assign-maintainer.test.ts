@@ -419,10 +419,14 @@ async function addAssignModules(target: S7C1World, extra: readonly ModuleDefinit
   if (revised.status !== 'committed') throw new Error(`the module catalog revision was refused: ${JSON.stringify(revised)}`);
 }
 
-/** One real Work Run on the adviser line that selects the assign tool task; the result is read from the model request. */
+/**
+ * One real Work Run on the adviser line that selects the assign tool task; the result is read from the model request.
+ * `repeatCallId` makes the model answer the same call id again in its next round: since K1 that is a second call
+ * (the Kernel records it as `<id>@<turnId>`), not a replay of the first.
+ */
 async function startAssignToolRun(target: S7C1World, input: {
   label: string; moduleId: string; line: S6ASession; callId: string;
-  reason: string; replay?: boolean;
+  reason: string; repeatCallId?: boolean;
 }): Promise<{ runRef: RunRef; execution: Awaited<ReturnType<typeof readExecution>>; call: { callId: string; name: string; args: Record<string, unknown> } }> {
   const caller = target.lines.adviser;
   if (caller === null) throw new Error('S8B tool row: the world has no adviser line');
@@ -451,7 +455,7 @@ async function startAssignToolRun(target: S7C1World, input: {
     reason: input.reason,
   } };
   const replies: S6AReply[] = [{ kind: 'calls', calls: [call] }];
-  if (input.replay === true) replies.push({ kind: 'calls', calls: [call] });
+  if (input.repeatCallId === true) replies.push({ kind: 'calls', calls: [call] });
   replies.push({ kind: 'text', text: `S8B assign ${input.label} answer` });
   await target.world.scripted.script(caller, replies);
   const gate = await target.world.gates.toolCall(caller, 'assign_module_maintainer');
@@ -655,7 +659,7 @@ describe('R2-01 notice summary limit', () => {
 });
 
 describe('B02-tool-auto (W0, adviser A1, auto)', () => {
-  it('B02-tool-auto: the auto call writes one notice for its operation; the same real call replayed keeps it one', async () => {
+  it('B02-tool-auto: the auto call writes one notice for its operation; the same call id in two rounds is two calls, two notices', async () => {
     const target = await createS7C1ToolWorld((configuration) => {
       const adviser = configuration.bindings.find((binding) => binding.id === 's7c-adviser-binding');
       if (adviser === undefined) throw new Error('S8B tool row: no adviser binding');
@@ -664,22 +668,24 @@ describe('B02-tool-auto (W0, adviser A1, auto)', () => {
     try {
       const before = await target.main.readNotices({ categories: ['project_notice'] });
       const seen = new Set(before.notices.map(notice => notice.itemKey));
+      const newNotices = async () => (await target.main.readNotices({ categories: ['project_notice'] })).notices
+        .filter(notice => !seen.has(notice.itemKey));
       await addAssignModules(target);
       const L1 = await sessionOf(target.world, await createS6BLine(target.main,
         { label: 's8b-auto-L1', role: EXECUTOR_ROLE }));
+      const moduleM: ModuleRef = { projectId: target.goal.projectId, moduleId: 'M' };
       // The default Goal autonomy is after_plan_confirmation (automatic).
       await startAssignToolRun(target, { label: 'auto', moduleId: 'M', line: L1,
-        callId: 's8b-auto-call', reason: 'the automatic maintainer reason', replay: true });
+        callId: 's8b-auto-call', reason: 'the automatic maintainer reason' });
       const results = toolResults(await target.world.scripted.requests(target.lines.adviser!), 's8b-auto-call');
       expect(results.length).toBeGreaterThanOrEqual(1);
       for (const result of results) {
         expect(result).toMatchObject({ status: 'assigned', line: L1.ref });
       }
-      // The replay is the same request identity: exactly one notice remains.
-      const notices = await target.main.readNotices({ categories: ['project_notice'] });
-      notices.notices = notices.notices.filter(notice => !seen.has(notice.itemKey));
-      expect(notices.notices).toHaveLength(1);
-      const notice = notices.notices[0]!;
+      // One operation, one notice.
+      const notices = await newNotices();
+      expect(notices).toHaveLength(1);
+      const notice = notices[0]!;
       expect(notice.category).toBe('project_notice');
       expect(notice.summary).toContain('M');
       expect(notice.summary).toContain(L1.ref.sessionId);
@@ -687,8 +693,16 @@ describe('B02-tool-auto (W0, adviser A1, auto)', () => {
       // No maintainer card exists for the automatic operation.
       const cards = await target.main.readCards();
       expect(cards.filter((card) => card.source.kind === 'module_maintainer_assignment')).toEqual([]);
-      const link = await readLinkOf(target, L1.ref, { projectId: target.goal.projectId, moduleId: 'M' });
+      const link = await readLinkOf(target, L1.ref, moduleM);
       expect(link).toMatchObject({ revision: 1, until: null });
+
+      // K1 (docs/refactor/tradeoffs/007-cross-turn-tool-call-ids.md), intended: a model that answers the same call
+      // id again in its next round makes a second call. The Kernel records it as `<id>@<turnId>`, so it is its own
+      // command and its own operation with its own notice: two rounds, two notices. It is not a replay.
+      const seenBeforeTwice = new Set((await newNotices()).map(item => item.itemKey));
+      await startAssignToolRun(target, { label: 'auto-twice', moduleId: 'M', line: L1,
+        callId: 's8b-auto-twice', reason: 'the repeated maintainer reason', repeatCallId: true });
+      expect((await newNotices()).filter(item => !seenBeforeTwice.has(item.itemKey))).toHaveLength(2);
     } finally {
       await target.close();
     }

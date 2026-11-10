@@ -94,6 +94,56 @@ export function assertTranscriptExchangeIntegrity(transcript, label) {
         fail(`缺少工具结果（callId=${missing}）`);
     }
 }
+/** 收集一段 transcript 中 assistant 声明过的全部工具调用号（纯函数）。 */
+export function transcriptCallIds(transcript) {
+    const callIds = new Set();
+    for (const entry of transcript) {
+        if (entry.kind !== "assistant_message")
+            continue;
+        for (const call of entry.toolCalls)
+            callIds.add(call.callId);
+    }
+    return callIds;
+}
+/**
+ * 目标 Session 已落盘记录里的全部工具调用号。逐 Turn 复用 replaySessionRecords
+ * 的投影，不另解析 agent.event；用原始 state.transcript，保留 abandoned 声明
+ * 占用的 id。重放失败按原 StoreError 上抛，不静默漏掉身份。
+ */
+export function sessionRecordCallIds(records) {
+    const callIds = new Set();
+    for (let index = 0; index < records.length; index += 1) {
+        const record = records[index];
+        if (record.recordType !== "turn.started")
+            continue;
+        const end = nextTurnStart(records, index) ?? records.length;
+        const state = replaySessionRecords(records.slice(index, end));
+        if (state === null)
+            continue;
+        for (const callId of transcriptCallIds(state.transcript))
+            callIds.add(callId);
+    }
+    return callIds;
+}
+/**
+ * 把“历史前缀的工具交换完整性拒绝”翻成 Kernel 的终态失败。只认
+ * assertTranscriptExchangeIntegrity 的两个 label；其余返回 null。
+ * message 同时带稳定码和原始原因：Work 的终态只保存 message（K8）。
+ */
+export function historyRejectionFailure(error) {
+    if (!(error instanceof StoreError) || error.code !== "corrupt")
+        return null;
+    const message = error.message;
+    if (!message.startsWith("Session 历史前缀：") && !message.includes(" transcript："))
+        return null;
+    return {
+        category: "context",
+        code: "history_rejected",
+        message: `history_rejected: ${message}`,
+        retryable: false,
+        operationId: null,
+    };
+}
 /**
  * R4.3b：把一个真实已终止 Turn 的原始 transcript 投影为「可供后继模型消费」的纯副本。
  *

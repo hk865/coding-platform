@@ -6,7 +6,7 @@
  * 关键流程：先校验边界位置属于该 Session 且落在已终止轮次的稳定边界上，再逐 Turn
  * 用既有 replaySessionRecords 还原 RunState，拼接 transcript 并复核工具调用配对。
  */
-import type { RunState, TranscriptEntry } from "../../runtime/state/run-state.js";
+import type { RunFailure, RunState, TranscriptEntry } from "../../runtime/state/run-state.js";
 import type { ContextBasis, SessionRecord, SessionStorePort } from "./session-store-port.js";
 /** 本读取器实现的会话历史绑定版本；其它版本显式 version_unsupported。 */
 export declare const KERNEL_SESSION_HISTORY_VERSION = 1;
@@ -54,6 +54,20 @@ export declare function readAllSessionRecords(store: SessionStorePort, sessionId
  * 每个 ToolResult 必须命中尚未结算的调用。缺失/孤儿结果都视为记录缺口，显式拒绝。
  */
 export declare function assertTranscriptExchangeIntegrity(transcript: readonly TranscriptEntry[], label: string): void;
+/** 收集一段 transcript 中 assistant 声明过的全部工具调用号（纯函数）。 */
+export declare function transcriptCallIds(transcript: readonly TranscriptEntry[]): Set<string>;
+/**
+ * 目标 Session 已落盘记录里的全部工具调用号。逐 Turn 复用 replaySessionRecords
+ * 的投影，不另解析 agent.event；用原始 state.transcript，保留 abandoned 声明
+ * 占用的 id。重放失败按原 StoreError 上抛，不静默漏掉身份。
+ */
+export declare function sessionRecordCallIds(records: readonly SessionRecord[]): Set<string>;
+/**
+ * 把“历史前缀的工具交换完整性拒绝”翻成 Kernel 的终态失败。只认
+ * assertTranscriptExchangeIntegrity 的两个 label；其余返回 null。
+ * message 同时带稳定码和原始原因：Work 的终态只保存 message（K8）。
+ */
+export declare function historyRejectionFailure(error: unknown): RunFailure | null;
 /**
  * R4.3b：把一个真实已终止 Turn 的原始 transcript 投影为「可供后继模型消费」的纯副本。
  *

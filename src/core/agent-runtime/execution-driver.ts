@@ -870,82 +870,108 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
       let enteredDone = resumeEntered;
       const shouldPause = (reason: string): { point: 'before_model'; kind: 'pause'; reason: string } => ({ point: 'before_model', kind: 'pause', reason });
 
+      let enteredWriteAttempted = false;
+      type EnteredAttempt =
+        | { readonly kind: 'entered' }
+        | { readonly kind: 'pause'; readonly reason: string; readonly failure: CoreRejection }
+        | { readonly kind: 'not_entered'; readonly reason: string };
+      const recordRunEntered = async (afterKernel: boolean): Promise<EnteredAttempt> => {
+        if (enteredDone) return { kind: 'entered' };
+        let tail;
+        try {
+          // An already-occurred fact read uses the internal signal: a caller
+          // or control cancel must not erase the real entered evidence.
+          tail = await readTurnTail(record.session.kernel.adapterId, record.session.kernel.kernelSessionId, kernelBinding, boundary.cursor === null ? 0 : boundary.position, internalSignal);
+        } catch (error) {
+          return { kind: 'not_entered', reason: `the Kernel Turn tail could not be read: ${messageOf(error)}` };
+        }
+        // K6 is the deterministic history rejection (K3 `history_rejected`) only. Another
+        // Kernel terminal that never reached before_model (a budget refusal) stays on the
+        // pre-existing start-up reconcile path, which binds the first entry itself.
+        if (afterKernel && !tail.historyRejected) {
+          return { kind: 'not_entered', reason: 'the Kernel Turn did not end with a deterministic history rejection' };
+        }
+        const history: ObservedExecutionHistory = {
+          kernel: { ...kernelBinding }, startPosition: tail.startPosition,
+          observedThroughPosition: tail.position, endPosition: null,
+        };
+        const kernelSource: KernelObservationSource = { ...kernelBinding, position: tail.position };
+        // The entered fact is fixed once per Turn: the SAME request content
+        // (requestId/enteredAt/source/history) is reused across recovery and
+        // pin retries, so a lost response is reconciled, never duplicated.
+        const enteredAt = deps.now();
+        const callEntered = async (expectedRevision: number): Promise<WriteResult<RunSnapshot>> => {
+          const enteredRequest = {
+            input: { permit: refreshedPermit, enteredAt, kernelSource, history },
+            meta: { requestId: `b2-entered:${requestId}`, expected: [{ ref: runRef, revision: expectedRevision }] },
+          };
+          try {
+            return await deps.entry.recordExecutionEntered(finishing, enteredRequest);
+          } catch (error) {
+            // A thrown/lost response is an UNKNOWN result: re-query the exact
+            // same request once so the receipt-first replay restores a commit
+            // whose acknowledgement was lost, instead of fabricating "did not
+            // commit". An explicit returned rejection is a real outcome and is
+            // never retried here.
+            try { return await deps.entry.recordExecutionEntered(finishing, enteredRequest); }
+            catch (retryError) {
+              return rejected('unavailable', `recording the runtime entry failed: ${messageOf(retryError)}`);
+            }
+          }
+        };
+        enteredWriteAttempted = true;
+        let entered = await callEntered(currentRevision);
+        if (entered.status === 'rejected' && entered.code === 'revision_conflict') {
+          // A control write advanced the Run after begin. Re-read the SAME
+          // entering binding and retry the original fact with the new pin;
+          // never guess a new authorization revision or consumer/generation.
+          let reread;
+          try { reread = await deps.executions.readExecution(finishing, runRef); }
+          catch (error) {
+            const failure = rejected('unavailable', `the entered retry could not re-read the Run: ${messageOf(error)}`);
+            enteredFailure = failure;
+            return { kind: 'pause', reason: 'entered retry failed', failure };
+          }
+          if (reread.status !== 'ready') {
+            const failure = mapRead(reread);
+            enteredFailure = failure;
+            return { kind: 'pause', reason: 'entered retry failed', failure };
+          }
+          const currentRun = reread.value.run;
+          const retryAuth = currentRun.executionAuthorization;
+          const sameEntering = retryAuth !== undefined && retryAuth.phase === 'entering'
+            && retryAuth.consumerId === refreshedPermit.consumerId
+            && retryAuth.generation === refreshedPermit.entryGeneration
+            && retryAuth.inputDigest === refreshedPermit.inputDigest;
+          if (!sameEntering || currentRun.revision === currentRevision) {
+            const failure = rejected('revision_conflict', 'the entering binding moved while retrying the entered fact');
+            enteredFailure = failure;
+            return { kind: 'pause', reason: 'entered retry rejected', failure };
+          }
+          entered = await callEntered(currentRun.revision);
+        }
+        if (entered.status !== 'committed') {
+          const failure = mapWrite(entered);
+          enteredFailure = failure;
+          return { kind: 'pause', reason: 'entered rejected', failure };
+        }
+        enteredDone = true;
+        currentRevision = entered.value.revision;
+        // The entered fact always writes the V2 authorization (run-machine).
+        refreshedPermit.authorizationRevision = entered.value.executionAuthorization!.revision;
+        return { kind: 'entered' };
+      };
+
       const enteredHook: HookPort = {
         hookId: 'b2-runtime-entered', point: 'before_model', priority: 1_000_000,
         async execute(): Promise<{ point: 'before_model'; kind: 'continue' } | { point: 'before_model'; kind: 'pause'; reason: string }> {
           if (!enteredDone) {
-            let tail;
-            try {
-              // An already-occurred fact read uses the internal signal: a caller
-              // or control cancel must not erase the real entered evidence.
-              tail = await readTurnTail(record.session.kernel.adapterId, record.session.kernel.kernelSessionId, kernelBinding, boundary.cursor === null ? 0 : boundary.position, internalSignal);
-            } catch (error) {
-              enteredFailure = rejected('unavailable', `the Kernel Turn tail could not be read: ${messageOf(error)}`);
+            const step = await recordRunEntered(false);
+            if (step.kind === 'not_entered') {
+              enteredFailure = rejected('unavailable', step.reason);
               return shouldPause('entered source unavailable');
             }
-            const history: ObservedExecutionHistory = {
-              kernel: { ...kernelBinding }, startPosition: tail.startPosition,
-              observedThroughPosition: tail.position, endPosition: null,
-            };
-            const kernelSource: KernelObservationSource = { ...kernelBinding, position: tail.position };
-            // The entered fact is fixed once per Turn: the SAME request content
-            // (requestId/enteredAt/source/history) is reused across recovery and
-            // pin retries, so a lost response is reconciled, never duplicated.
-            const enteredAt = deps.now();
-            const callEntered = async (expectedRevision: number): Promise<WriteResult<RunSnapshot>> => {
-              const enteredRequest = {
-                input: { permit: refreshedPermit, enteredAt, kernelSource, history },
-                meta: { requestId: `b2-entered:${requestId}`, expected: [{ ref: runRef, revision: expectedRevision }] },
-              };
-              try {
-                return await deps.entry.recordExecutionEntered(finishing, enteredRequest);
-              } catch (error) {
-                // A thrown/lost response is an UNKNOWN result: re-query the exact
-                // same request once so the receipt-first replay restores a commit
-                // whose acknowledgement was lost, instead of fabricating "did not
-                // commit". An explicit returned rejection is a real outcome and is
-                // never retried here.
-                try { return await deps.entry.recordExecutionEntered(finishing, enteredRequest); }
-                catch (retryError) {
-                  return rejected('unavailable', `recording the runtime entry failed: ${messageOf(retryError)}`);
-                }
-              }
-            };
-            let entered = await callEntered(currentRevision);
-            if (entered.status === 'rejected' && entered.code === 'revision_conflict') {
-              // A control write advanced the Run after begin. Re-read the SAME
-              // entering binding and retry the original fact with the new pin;
-              // never guess a new authorization revision or consumer/generation.
-              let reread;
-              try { reread = await deps.executions.readExecution(finishing, runRef); }
-              catch (error) {
-                enteredFailure = rejected('unavailable', `the entered retry could not re-read the Run: ${messageOf(error)}`);
-                return shouldPause('entered retry failed');
-              }
-              if (reread.status !== 'ready') {
-                enteredFailure = mapRead(reread);
-                return shouldPause('entered retry failed');
-              }
-              const currentRun = reread.value.run;
-              const retryAuth = currentRun.executionAuthorization;
-              const sameEntering = retryAuth !== undefined && retryAuth.phase === 'entering'
-                && retryAuth.consumerId === refreshedPermit.consumerId
-                && retryAuth.generation === refreshedPermit.entryGeneration
-                && retryAuth.inputDigest === refreshedPermit.inputDigest;
-              if (!sameEntering || currentRun.revision === currentRevision) {
-                enteredFailure = rejected('revision_conflict', 'the entering binding moved while retrying the entered fact');
-                return shouldPause('entered retry rejected');
-              }
-              entered = await callEntered(currentRun.revision);
-            }
-            if (entered.status !== 'committed') {
-              enteredFailure = mapWrite(entered);
-              return shouldPause('entered rejected');
-            }
-            enteredDone = true;
-            currentRevision = entered.value.revision;
-            // The entered fact always writes the V2 authorization (run-machine).
-            refreshedPermit.authorizationRevision = entered.value.executionAuthorization!.revision;
+            if (step.kind === 'pause') return shouldPause(step.reason);
           }
           // The awaited entered commit may itself have crossed the deadline.
           if (record.run.budget.deadline !== null) {
@@ -1263,6 +1289,17 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         // The reconcile uses a platform-internal cleanup signal, never the
         // already-aborted caller signal, and never a best-effort hook.
         const reconcileSignal = new AbortController().signal;
+        // K6：Kernel 可以在任何模型请求之前自己写 run.failed；这里只补那一种确定性的
+        // 历史拒绝（K3 `history_rejected`）。此时 before_model hook 没跑，平台还没记
+        // entered，原 observer 会拒绝读已结束的 Turn。真实的 turn.started 和这条
+        // run.failed 就是 hook 用的同一份证据：先证明固定 Turn 已进入且以
+        // `history_rejected` 结束，用原 permit、原身份和原 entered 写入补齐登记，再走原
+        // observer。没有新终态，没有 Workflow 分支。别的 Kernel 终态（如预算拒绝）不补
+        // 登记、不写失败，留给原 observer 和 RUN-16/启动对账。
+        if (!enteredDone && !enteredWriteAttempted && enteredFailure === undefined) {
+          const step = await recordRunEntered(true);
+          if (step.kind === 'pause') enteredFailure = step.failure;
+        }
         const reconciled = await deps.observation.observe({ ...owned, signal: reconcileSignal }, { runRef });
         // RUN-16, in process (A.2 step 5.6, §12.2 "进程内的同类收尾"): the Kernel call exited with every
         // owned resource closed before the fixed Turn started; the readable Kernel holds no Turn of the
@@ -1329,7 +1366,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
    * Kernel persisted the Turn; the driver never invents a position. */
   async function readTurnTail(
     adapterId: string, kernelSessionId: string, kernel: KernelExecutionBinding, afterPosition: number, signal: AbortSignal,
-  ): Promise<{ startPosition: number; position: number }> {
+  ): Promise<{ startPosition: number; position: number; historyRejected: boolean }> {
     const use = async (reader: KernelSessionReader) => {
       const head = await reader.read(kernelSessionId, 0, 1, { signal });
       if (head.records.length === 0) throw new Error('the Kernel Session has no position-1 history');
@@ -1341,7 +1378,16 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         && candidate.payload['run']['runId'] === kernel.runId
         && isRecord(candidate.payload['run']['turn']) && candidate.payload['run']['turn']['turnId'] === kernel.turnId);
       if (turnStart === undefined) throw new Error('the fixed turn.started record was not persisted');
-      return { startPosition: turnStart.position, position: page.lastPosition };
+      const historyRejected = page.records.some(candidate => candidate.recordType === 'agent.event'
+        && isRecord(candidate.payload) && isRecord(candidate.payload['event'])
+        && candidate.payload['event']['type'] === 'run.failed'
+        && isRecord(candidate.payload['event']['meta'])
+        && candidate.payload['event']['meta']['runId'] === kernel.runId
+        && candidate.payload['event']['meta']['turnId'] === kernel.turnId
+        && isRecord(candidate.payload['event']['payload'])
+        && isRecord(candidate.payload['event']['payload']['failure'])
+        && candidate.payload['event']['payload']['failure']['code'] === 'history_rejected');
+      return { startPosition: turnStart.position, position: page.lastPosition, historyRejected };
     };
     return deps.kernelStores.withStore(adapterId, use);
   }

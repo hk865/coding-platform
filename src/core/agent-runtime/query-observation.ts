@@ -601,7 +601,9 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
               // bound on its close message is `boundedCloseMessage` at settle.
               : outcome === 'failed' && runState.outcome !== null && runState.outcome !== undefined
                   && runState.outcome.kind === 'failed'
-                ? `${runState.outcome.failure.code}: ${runState.outcome.failure.message}`
+                ? runState.outcome.failure.message.startsWith(`${runState.outcome.failure.code}:`)
+                  ? runState.outcome.failure.message
+                  : `${runState.outcome.failure.code}: ${runState.outcome.failure.message}`
                 : answerCheck === null ? null : answerCheck.reason,
             answerCheck,
             activity,

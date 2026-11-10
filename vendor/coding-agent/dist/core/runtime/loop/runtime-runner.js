@@ -10,7 +10,7 @@ import { CharacterTokenEstimator, ContextSelectionError, estimateTokens, selectC
 import { HookExecutionError, HookExecutor } from "../../hooks/executor/hook-executor.js";
 import { assertToolResultMatchesCall, toolResultSchema, } from "../../ports/tool_executor/tool-executor-port.js";
 import { SerialToolBatchPolicy } from "../../ports/tool_batch_policy/tool-batch-policy-port.js";
-import { assertTranscriptExchangeIntegrity } from "../../ports/session_store/session-history.js";
+import { assertTranscriptExchangeIntegrity, transcriptCallIds } from "../../ports/session_store/session-history.js";
 import { CancellationController } from "../cancellation/cancellation-controller.js";
 import { agentEventSchema } from "../events/agent-events.js";
 import { LimitGuard, UNLIMITED_RUN_LIMITS } from "../limits/limit-guard.js";
@@ -83,6 +83,29 @@ function withPresentations(transcript, presentations) {
             return entry;
         const output = presentations.get(entry.callId);
         return output ? { ...entry, result: { ...entry.result, output } } : entry;
+    });
+}
+function uniqueToolCallIds(toolCalls, used, turnId) {
+    const count = new Map();
+    for (const call of toolCalls)
+        count.set(call.callId, (count.get(call.callId) ?? 0) + 1);
+    const taken = new Set(used);
+    return toolCalls.map((call) => {
+        // 同一 assistant 消息内部的重复原样留下，交给 agent-events.ts:344 的 duplicate_id。
+        if ((count.get(call.callId) ?? 0) > 1)
+            return call;
+        if (!taken.has(call.callId)) {
+            taken.add(call.callId);
+            return call;
+        }
+        let candidate = `${call.callId}@${turnId}`;
+        let attempt = 2;
+        while (taken.has(candidate)) {
+            candidate = `${call.callId}@${turnId}#${String(attempt)}`;
+            attempt += 1;
+        }
+        taken.add(candidate);
+        return { ...call, callId: candidate };
     });
 }
 function validatePlan(calls, groups) {
@@ -376,6 +399,9 @@ export class RuntimeRunner {
         }
         if (isTerminalRunStatus(state.status))
             return state;
+        if (context.input.historyFailure !== undefined) {
+            return this.#commit(state, context, "run.failed", { failure: context.input.historyFailure });
+        }
         let retryCount = 0;
         let retryOfRequestId = null;
         try {
@@ -519,6 +545,12 @@ export class RuntimeRunner {
                     }
                 }
                 if (stream.kind === "completed") {
+                    const usedCallIds = new Set(context.input.usedCallIds ?? []);
+                    for (const callId of transcriptCallIds(context.input.historyTranscript ?? [])) {
+                        usedCallIds.add(callId);
+                    }
+                    for (const callId of transcriptCallIds(state.transcript))
+                        usedCallIds.add(callId);
                     state = await this.#commit(state, context, "assistant.message_completed", {
                         requestId,
                         message: {
@@ -528,7 +560,7 @@ export class RuntimeRunner {
                             content: stream.text,
                             ...(stream.reasoning ? { reasoningContent: stream.reasoning } : {}),
                         },
-                        toolCalls: stream.toolCalls,
+                        toolCalls: uniqueToolCallIds(stream.toolCalls, usedCallIds, state.turn.turnId),
                     });
                     retryCount = 0;
                     retryOfRequestId = null;

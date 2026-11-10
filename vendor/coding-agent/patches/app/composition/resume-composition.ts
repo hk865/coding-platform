@@ -15,15 +15,17 @@ import {
   type RunConfigSnapshot,
 } from "../../core/ports/session_store/session-store-port.js";
 import {
+  historyRejectionFailure,
   parseContextBasis,
   readAllSessionRecords,
   restoreSessionHistory,
+  sessionRecordCallIds,
 } from "../../core/ports/session_store/session-history.js";
 import { RecoveryCoordinator } from "../../core/runtime/recovery/recovery-coordinator.js";
 import type { RecoveryAction } from "../../core/runtime/recovery/recovery-coordinator.js";
 import { CheckpointingEventSink } from "../../core/runtime/checkpointing/checkpointing-event-sink.js";
 import { RuntimeRunner, type ToolGroupBarrier } from "../../core/runtime/loop/runtime-runner.js";
-import type { RunState, TranscriptEntry } from "../../core/runtime/state/run-state.js";
+import type { RunFailure, RunState, TranscriptEntry } from "../../core/runtime/state/run-state.js";
 import type { SkillContext } from "../../core/context/types/context-types.js";
 import { EmptyMemoryProvider } from "../../memory/providers/empty/empty-memory-provider.js";
 import { createBuiltinProviderRegistry } from "../../model/providers/registry/builtin-provider-registry.js";
@@ -227,8 +229,11 @@ export async function resumeCodingAgentInternal(
     const sourceRecords = sourceSessionId === input.sessionId
       ? records
       : await readAllSessionRecords(store, sourceSessionId, signal);
-    const historyTranscript: readonly TranscriptEntry[] = contextBasis
-      ? restoreSessionHistory(sourceRecords, {
+    let historyTranscript: readonly TranscriptEntry[] = [];
+    let historyFailure: RunFailure | undefined;
+    if (contextBasis) {
+      try {
+        historyTranscript = restoreSessionHistory(sourceRecords, {
           sessionId: sourceSessionId,
           throughPosition: contextBasis.throughPosition,
           ...(contextBasis.viewPosition === undefined ? {} : { viewPosition: contextBasis.viewPosition }),
@@ -237,8 +242,15 @@ export async function resumeCodingAgentInternal(
             turnId: turnRecord.payload.run.turn.turnId,
             userMessageId: turnRecord.payload.run.turn.userMessage.messageId,
           },
-        }).transcript
-      : [];
+        }).transcript;
+      } catch (error) {
+        const failure = historyRejectionFailure(error);
+        if (failure === null) throw error;
+        historyFailure = failure;
+      }
+    }
+    // K7：目标 Session 的全部记录（records，不是 selectRecoveryTurn 的切片）。
+    const persistedCallIds = sessionRecordCallIds(records);
     // 本次调用的实际生效约束：直接读构造后的沙箱实例值（getter 已解析默认、规范化并过滤），
     // 不在组合层复制沙箱默认常量，也不只保存调用者的可选覆盖。
     const suppliedConstraints: EffectiveRecoveryConstraints = {
@@ -427,6 +439,8 @@ export async function resumeCodingAgentInternal(
       tokenBudget: input.config.runtime.tokenBudget,
       maxOutputTokens: input.config.model.maxOutputTokens,
       ...(historyTranscript.length > 0 ? { historyTranscript } : {}),
+      ...(persistedCallIds.size > 0 ? { usedCallIds: [...persistedCallIds] } : {}),
+      ...(historyFailure === undefined ? {} : { historyFailure }),
       ...(input.reasoningReplay === undefined ? {} : { reasoningReplay: input.reasoningReplay }),
       ...(input.previewRequest === undefined ? {} : { previewRequest: input.previewRequest }),
       ...(input.onContextSelected === undefined ? {} : { onContextSelected: input.onContextSelected }),

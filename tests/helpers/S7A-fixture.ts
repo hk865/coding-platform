@@ -628,3 +628,27 @@ export async function cancelS7AGoal(world: S6AHostWorld, goal: GoalRef) {
   return { goal: value.goal };
 }
 export { bindingOf, checkConfiguration };
+
+/**
+ * The setup half of `openS7AWorkWorld` (7D2 DKTID, ktid-tests.frozen.md §3.4): the same world, governance, Goal,
+ * two-Task Plan and Work line, returned before the first Run, with the first Task's `select_work` input. A test that
+ * must act on the line before its first Run (DKTID R3) drives that Run itself.
+ */
+export async function openS7AWorkSetup(options: S6AWorldOptions) {
+  const world = await openS6AHostWorld(requestWorldOptions(options));
+  try {
+    const main = s6aCardsWorkspace(world, S6A_SCOPE);
+    await world.setResumeOnStartup(false);
+    await ensureGovernance(world, main);
+    const goal = (await main.createGoal('s7a-goal', 'S7A work goal')).ref;
+    const { plan, tasks } = await adoptS6BPlan(main, goal, { label: 's7a-work',
+      taskIds: ['s7a-run-1', 's7a-run-2'], role: S6A_WORK_ROLE.templateId });
+    const line = await sessionOf(world, await createS6BLine(main, { label: 's7a-line', role: S6A_WORK_ROLE, tasks }));
+    const select = { schemaVersion: 1 as const, goalRef: goal, flowId: 's7a-first',
+      sessionHint: line.ref, kind: 'select_work' as const, taskId: tasks[0]!.taskId };
+    return { world, goal, plan, line, tasks, select };
+  } catch (error) {
+    await world.close().catch(() => undefined);
+    throw error;
+  }
+}

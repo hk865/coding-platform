@@ -16,15 +16,17 @@ import {
   type SessionRecord,
 } from "../../core/ports/session_store/session-store-port.js";
 import {
+  historyRejectionFailure,
   parseContextBasis,
   readAllSessionRecords,
   restoreSessionHistory,
+  sessionRecordCallIds,
 } from "../../core/ports/session_store/session-history.js";
 import { StoreError } from "../../core/ports/session_store/session-store-port.js";
 import { RuntimeRunner, type ToolGroupBarrier } from "../../core/runtime/loop/runtime-runner.js";
 import { CheckpointingEventSink } from "../../core/runtime/checkpointing/checkpointing-event-sink.js";
 import { createInitialRunState } from "../../core/runtime/state/run-state.js";
-import type { RunState, TranscriptEntry } from "../../core/runtime/state/run-state.js";
+import type { RunFailure, RunState, TranscriptEntry } from "../../core/runtime/state/run-state.js";
 import type { SkillContext } from "../../core/context/types/context-types.js";
 import type { ProviderRegistry } from "../../model/providers/registry/provider-registry.js";
 import { EmptyMemoryProvider } from "../../memory/providers/empty/empty-memory-provider.js";
@@ -298,6 +300,9 @@ export async function runCodingAgent(input: Readonly<RunAppInput>): Promise<RunA
           revision = created.revision;
         } else throw error;
       }
+      // current_turn 也要读一次目标 Session 的已落盘记录；session_history 在
+      // :282 已读过同一 Session，不能重复读。
+      targetRecords = await readAllSessionRecords(store, sessionId, signal);
     }
     const contextBasis: ContextBasis | undefined =
       sessionContext.mode === "session_history"
@@ -311,19 +316,28 @@ export async function runCodingAgent(input: Readonly<RunAppInput>): Promise<RunA
         : undefined;
     // 已完成轮次重建出的前缀：只与当前 Turn 合并做一次预算选择，且绝不含当前 Turn。
     let historyTranscript: readonly TranscriptEntry[] = [];
+    let historyFailure: RunFailure | undefined;
     if (sessionContext.mode === "session_history" && contextBasis) {
-      const restored = restoreSessionHistory(sourceRecords ?? [], {
-        sessionId: sourceSessionId,
-        throughPosition: contextBasis.throughPosition,
-        ...(contextBasis.viewPosition === undefined ? {} : { viewPosition: contextBasis.viewPosition }),
-        currentTurn: {
-          runId,
-          turnId: run.turn.turnId,
-          userMessageId: run.turn.userMessage.messageId,
-        },
-      });
-      historyTranscript = restored.transcript;
+      try {
+        const restored = restoreSessionHistory(sourceRecords ?? [], {
+          sessionId: sourceSessionId,
+          throughPosition: contextBasis.throughPosition,
+          ...(contextBasis.viewPosition === undefined ? {} : { viewPosition: contextBasis.viewPosition }),
+          currentTurn: {
+            runId,
+            turnId: run.turn.turnId,
+            userMessageId: run.turn.userMessage.messageId,
+          },
+        });
+        historyTranscript = restored.transcript;
+      } catch (error) {
+        const failure = historyRejectionFailure(error);
+        if (failure === null) throw error;
+        historyFailure = failure;
+      }
     }
+    // K7 的第一项；恢复前缀与当前 Turn 由 Runner 在提交时并入。
+    const persistedCallIds = sessionRecordCallIds(targetRecords ?? []);
     // 稳定执行身份重试：先按原身份查记录。同一 Turn 已存在时进入恢复/回放，
     // 绝不追加第二个 turn.started；身份相同但内容不同则显式拒绝。
     if (executionIdentity) {
@@ -521,6 +535,8 @@ export async function runCodingAgent(input: Readonly<RunAppInput>): Promise<RunA
         tokenBudget: input.config.runtime.tokenBudget,
         maxOutputTokens: input.config.model.maxOutputTokens,
         ...(historyTranscript.length > 0 ? { historyTranscript } : {}),
+        ...(persistedCallIds.size > 0 ? { usedCallIds: [...persistedCallIds] } : {}),
+        ...(historyFailure === undefined ? {} : { historyFailure }),
         ...(input.reasoningReplay === undefined ? {} : { reasoningReplay: input.reasoningReplay }),
         ...(input.previewRequest === undefined ? {} : { previewRequest: input.previewRequest }),
         ...(input.onContextSelected === undefined ? {} : { onContextSelected: input.onContextSelected }),

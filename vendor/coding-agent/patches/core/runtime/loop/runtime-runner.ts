@@ -51,7 +51,7 @@ import type {
   ToolResult,
 } from "../../ports/tool_executor/tool-executor-port.js";
 import type { EventSinkPort } from "../../ports/event_sink/event-sink-port.js";
-import { assertTranscriptExchangeIntegrity } from "../../ports/session_store/session-history.js";
+import { assertTranscriptExchangeIntegrity, transcriptCallIds } from "../../ports/session_store/session-history.js";
 import { CancellationController } from "../cancellation/cancellation-controller.js";
 import type { CancellationReason } from "../cancellation/cancellation-controller.js";
 import { agentEventSchema } from "../events/agent-events.js";
@@ -114,6 +114,13 @@ export interface RunnerContextInput {
    * 缺省为空数组，旧 CLI 的 `current_turn` 语义不变。
    */
   readonly historyTranscript?: readonly TranscriptEntry[];
+  /**
+   * 已落盘目标 Session 的调用号；Runner 提交 assistant.message_completed 时
+   * 再并入恢复前缀与当前 Turn 已提交的调用号。
+   */
+  readonly usedCallIds?: readonly string[];
+  /** 进循环前的确定性历史拒绝；写完 run.started/run.resumed 后直接落 run.failed。 */
+  readonly historyFailure?: RunFailure;
   /** 最终请求的输入/输出预留测量；缺席时用配置的估算器对 window 做默认测量。 */
   readonly previewRequest?: ContextPreview;
   /** 每个真正发出的模型请求一次，在 hook 复核之后、provider 之前。 */
@@ -290,6 +297,32 @@ function withPresentations(
     if (entry.kind !== "tool_result") return entry;
     const output = presentations.get(entry.callId);
     return output ? { ...entry, result: { ...entry.result, output } as ToolResult } : entry;
+  });
+}
+
+function uniqueToolCallIds(
+  toolCalls: readonly ToolCall[],
+  used: ReadonlySet<string>,
+  turnId: string,
+): ToolCall[] {
+  const count = new Map<string, number>();
+  for (const call of toolCalls) count.set(call.callId, (count.get(call.callId) ?? 0) + 1);
+  const taken = new Set(used);
+  return toolCalls.map((call) => {
+    // 同一 assistant 消息内部的重复原样留下，交给 agent-events.ts:344 的 duplicate_id。
+    if ((count.get(call.callId) ?? 0) > 1) return call;
+    if (!taken.has(call.callId)) {
+      taken.add(call.callId);
+      return call;
+    }
+    let candidate = `${call.callId}@${turnId}`;
+    let attempt = 2;
+    while (taken.has(candidate)) {
+      candidate = `${call.callId}@${turnId}#${String(attempt)}`;
+      attempt += 1;
+    }
+    taken.add(candidate);
+    return { ...call, callId: candidate };
   });
 }
 
@@ -670,6 +703,9 @@ export class RuntimeRunner {
       state = await this.#commit(state, context, "run.started", {});
     }
     if (isTerminalRunStatus(state.status)) return state;
+    if (context.input.historyFailure !== undefined) {
+      return this.#commit(state, context, "run.failed", { failure: context.input.historyFailure });
+    }
 
     let retryCount = 0;
     let retryOfRequestId: string | null = null;
@@ -826,6 +862,11 @@ export class RuntimeRunner {
         }
 
         if (stream.kind === "completed") {
+          const usedCallIds = new Set<string>(context.input.usedCallIds ?? []);
+          for (const callId of transcriptCallIds(context.input.historyTranscript ?? [])) {
+            usedCallIds.add(callId);
+          }
+          for (const callId of transcriptCallIds(state.transcript)) usedCallIds.add(callId);
           state = await this.#commit(state, context, "assistant.message_completed", {
             requestId,
             message: {
@@ -835,7 +876,7 @@ export class RuntimeRunner {
               content: stream.text,
               ...(stream.reasoning ? { reasoningContent: stream.reasoning } : {}),
             },
-            toolCalls: stream.toolCalls,
+            toolCalls: uniqueToolCallIds(stream.toolCalls, usedCallIds, state.turn.turnId),
           });
           retryCount = 0;
           retryOfRequestId = null;

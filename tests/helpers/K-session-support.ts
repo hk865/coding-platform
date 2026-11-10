@@ -124,6 +124,12 @@ export class KernelSessionFixture {
     return new KernelSessionFixture(store, sessionId, header.revision);
   }
 
+  /** 打开已存在的 Session 继续追加；只读 header revision，不写。 */
+  static async open(store: SqliteStores, sessionId: string): Promise<KernelSessionFixture> {
+    const header = await store.get(sessionId, { signal: K_SIGNAL });
+    return new KernelSessionFixture(store, sessionId, header.revision);
+  }
+
   get revision(): number {
     return this.#revision;
   }

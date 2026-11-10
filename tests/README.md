@@ -6,7 +6,7 @@
 
 ## tests/ 下的直接子文件夹
 
-- `tests/app/` — Host/HTTP 路由、Host 装配与运行入口（129 个 `*.test.ts`），例如 `S5-decision-routes.test.ts`、`PC2-H-tool-routes.test.ts`、`RC-work-run-budget.test.ts`。
+- `tests/app/` — Host/HTTP 路由、Host 装配与运行入口（136 个 `*.test.ts`），例如 `S5-decision-routes.test.ts`、`PC2-H-tool-routes.test.ts`、`RC-work-run-budget.test.ts`。
 - `tests/architecture/` — 依赖方向、生产代码可达性和状态写入边界（4 个），入口 `boundaries.test.ts`；`production-reach.ts` 是它自己的扫描器。
 - `tests/business/` — 业务流程：Workflow、决定/审批、归档、交接（90 个），例如 `R5c-workflow.test.ts`、`WP1-continuation-handover.test.ts`。
 - `tests/composition/` — `createTargetPlatform` 组合根和真实 Host 接线（45 个），例如 `AG1-session-discovery.test.ts`。
@@ -15,7 +15,7 @@
 - `tests/core/` — 只有 `work-graph/MVP-execution-list.test.ts`，核对与 `src/core` 对齐的清单。
 - `tests/data/` — 记录存储、材料、工作区文件、git 操作和编码边界（56 个），例如 `R2e-git-operations.test.ts`。
 - `tests/helpers/` — 共享测试夹具，共 203 个文件；本清单主体在下一节。
-- `tests/kernel/` — 冻结 Kernel 公共入口的集成（27 个 `*.test.ts`），另有 `README.md` 记录 R4a 迁移。
+- `tests/kernel/` — 冻结 Kernel 公共入口的集成（28 个 `*.test.ts`），另有 `README.md` 记录 R4a 迁移。
 - `tests/record-store/` — RecordStore 后端、查找、索引迁移和全文检索（15 个），例如 `SP-lookup-index-migration.test.ts`。
 - `tests/runtime/` — 真实 Runtime/Kernel 执行链（177 个），是行为面最大的文件夹；`D89-skill-render.test.ts` 按授权组合渲染决定 89 的 Skill 段落，并在 memory 上用真实的 Work 和 Query 调用核对最终工具和渲染出的段落。
 - `tests/scenarios/` — 跨片端到端场景：Host 重启、崩溃恢复、审批、白板（167 个，其中 S6A-secretary-flow-*、S6A-secretary-context-*、S6A-activity-*、S6A-main-read-joint 与 S6A-request-drop-settle 是秘书轮、查询活动和主读的整轮场景；S6B3-goal-cards、S6B3-copy、S6B3-adoption 是 6B-3 的验收场景 G-01、G-02、R-14，在 memory 上用 `S6B3-fixture.ts` 的步骤把目标卡确认、复制和初始化采用串成人看到的流程；S7B-V-intervention、S7B-V-restart、S7B-V-wait-kept 是 7B-3 V 的干预、重启与等待保持场景；PS-adopt-stop 用 `PlanBoard` 的真实工具提议和真实 HTTP `plans/apply` 串 PS-01/PS-02 的“先停后采用”两阶段，再用 `openHostScenario` 的 HTTP/`corePost`、`holdReply`、`commitGate` 和公开读串 PS-03…07、09 的幂等与失败出口）。
@@ -30,6 +30,8 @@ E3-6B 的新文件：`tests/work-graph/E36B-attempt-ordinal.test.ts`（真实 re
 E3-7 的新文件：`tests/contracts/E37-line-edit-counts-pure.test.ts`（`gitLines` 照 git 切行、`lineEditCounts` 和 Myers 的上限、`lineDelta` 不变，纯表）、`tests/app/E37-files-uncommitted.test.ts`（真实 Host 的 `files/uncommitted` 在真实 git 仓库上逐路径判、`not_git` 和三种拒绝，memory）、`tests/ui/E37-1-detail-lines.test.ts`（适配的“+2 −1（未提交）”标签、一个文件一行、`filesNote` 三种情形，以及页面按实际文件发 `files/uncommitted`）。
 
 6C 的新文件：`tests/scenarios/S6C-request-candidate.test.ts`（S1：选思路后的计划轮经真实 Host 生命周期变成请求候选、重放、第二版与 `previous`、真实 `submit_plan_round`、来源跌出 `earlier`；S7-1 经公开 `plans/request-candidate` 读影响标记，不直接 import `plan-impact`）、`tests/scenarios/S6C-c7-adoption.test.ts`（S3：人采用替代有执行记录的任务、新义务/新要求、PS 先停后采用、旧证据不完成新验收、采用人 `adoptedBy`）、`tests/work-graph/S6C-goal-objective.test.ts`（S4：目标说明随候选、人采用写入、平台自动拒绝、空值拒绝）、`tests/work-graph/S6C-source-resolved.test.ts`（S5：两个 `missing_initial_*` 指针生效后读成 `source_resolved`，读失败不折成已解决）。
+
+7D2 DKTID 的新文件：`tests/kernel/S7D2-DKTID-call-ids.test.ts`（R1：跨轮、同一 Turn 的两次回复、同一 Session 的两个 `current_turn` 都用 `call_0`，第一次原样、重复的记成 `call_0@<turnId>`，下一次请求带同一个新 id；真实 SQLite Kernel）、`tests/app/S7D2-DKTID-history-rejection.test.ts`（R2/R3：历史被确定性拒绝的线，下一个 Query 轮以 `history_rejected` 关闭、下一个 Work Run 以 `crashed` 结束，都释放线；两个坏 Turn 经 `K-session-support.ts` 的 `KernelSessionFixture.open` 预置，是裁定 K4/K9 点名的 F3 例外，别的测试不要照搬；Work 线用 `S7A-fixture.ts` 末尾的 `openS7AWorkSetup` 建，memory）。
 
 ## tests/helpers/ 的夹具
 
