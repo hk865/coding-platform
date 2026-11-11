@@ -11,7 +11,6 @@
  * with the paths, never an empty catalog or no notes.
  */
 import { randomBytes } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
 import { mkdir, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { rejected } from '../contracts/core/rejections.js';
@@ -283,7 +282,5 @@ export function createKnowledgeLines(source: KnowledgeWorkspaceSource, deps: Lin
   };
 }
 
-/** Makes `<root>/.workbench/`; the `.gitignore` a workspace-local project store keeps there is left as it is. */
-export function ensureKnowledgeDirectory(root: string): void {
-  mkdirSync(join(root, KNOWLEDGE_DIRECTORY), { recursive: true });
-}
+/** The one maker of `<root>/.workbench/` lives with the workspace layer, so a Work Run's start can call it too. */
+export { ensureKnowledgeDirectory } from '../core/workspace/knowledge-exclude.js';

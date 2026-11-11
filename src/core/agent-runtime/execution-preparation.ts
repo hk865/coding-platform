@@ -10,6 +10,7 @@
  */
 import type { ArtifactRef } from '../../contracts/artifact.js';
 import { messageOf } from '../../contracts/error-message.js';
+import { KNOWLEDGE_DIRECTORY } from '../../contracts/knowledge.js';
 import { rejected } from '../../contracts/core/rejections.js';
 import { isRecord, nonEmpty } from '../../contracts/validation/common.js';
 import { ARTIFACT_MAX_SIZE_BYTES } from '../../contracts/artifact.js';
@@ -830,10 +831,11 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
 /** Freeze the mutable data fields of a trusted Host configuration into a
  * per-call snapshot. Capability fields (model client, input counter) stay by
  * reference: they are handles, not data a later caller mutation can retarget,
- * and structuredClone would break them. */
+ * and structuredClone would break them. Every Work Run passes here, so its
+ * command sandbox always mounts the knowledge directory read-only, once (KLS-2: commands read it, never write it). */
 export function snapshotRuntimeConfiguration(config: ResolvedRuntimeConfiguration): ResolvedRuntimeConfiguration {
-  const processSandboxOptions: { readOnlyPaths?: string[]; executablePath?: string } = {};
-  if (config.processSandboxOptions.readOnlyPaths !== undefined) processSandboxOptions.readOnlyPaths = [...config.processSandboxOptions.readOnlyPaths];
+  const processSandboxOptions: { readOnlyPaths?: string[]; executablePath?: string } = {
+    readOnlyPaths: [...new Set([...(config.processSandboxOptions.readOnlyPaths ?? []), KNOWLEDGE_DIRECTORY])] };
   if (config.processSandboxOptions.executablePath !== undefined) processSandboxOptions.executablePath = config.processSandboxOptions.executablePath;
   const model: ResolvedRuntimeConfiguration['model'] = {
     configuration: { ...config.model.configuration },

@@ -1370,12 +1370,6 @@
       "note": "kept for second-workspace B (xws2b), decision 121-75"
     },
     {
-      "file": "src/composition/line-knowledge.ts",
-      "name": "resolveKnowledgeLine",
-      "reason": "kept-for",
-      "note": "kept for KLS-2b and KLS-2c-1, decision 121-75: the one uncached (project, workspace) to line resolution the Host and the later packages call; the composition root's KnowledgeLines runs the same steps with its cached checkout probe"
-    },
-    {
       "file": "src/contracts/workspace-module-id.ts",
       "name": "projectModuleRef",
       "reason": "kept-for",

@@ -83,6 +83,8 @@ export interface WorkspaceConsistencyReport {
 
 export interface WorkspaceSandboxOptions {
   readonly deniedPrefixes?: readonly string[];
+  /** 只拒写的前缀：`replace`/`createFile` 在规范化之后拒绝落在其内的路径（比较不分大小写）；读、列举和快照不查。 */
+  readonly writeDeniedPrefixes?: readonly string[];
   /** 不参与恢复 revision 的可再生/体积型目录。 */
   readonly snapshotIgnoredPrefixes?: readonly string[];
   readonly consistencyMode?: WorkspaceConsistencyMode;
@@ -120,6 +122,11 @@ function workspaceSnapshot(
 
 function isWithin(candidate: string, prefix: string): boolean {
   return candidate === prefix || candidate.startsWith(`${prefix}/`);
+}
+
+/** 拒绝前缀的比较不分大小写：只在比较时转小写，路径本身不变；不区分大小写的文件系统上换个大小写也绕不过去。 */
+function isWithinIgnoringCase(candidate: string, prefix: string): boolean {
+  return isWithin(candidate.toLowerCase(), prefix.toLowerCase());
 }
 
 function identity(value: { dev: number | bigint; ino: number | bigint }): string {
@@ -254,6 +261,7 @@ export class WorkspaceSandbox {
   readonly #root: string;
   readonly #rootIdentity: string;
   readonly #deniedPrefixes: readonly string[];
+  readonly #writeDeniedPrefixes: readonly string[];
   readonly #snapshotIgnoredPrefixes: readonly string[];
   readonly #consistencyMode: WorkspaceConsistencyMode;
   readonly #maxFileBytes: number;
@@ -269,6 +277,7 @@ export class WorkspaceSandbox {
     root: string,
     rootIdentity: string,
     deniedPrefixes: readonly string[],
+    writeDeniedPrefixes: readonly string[],
     snapshotIgnoredPrefixes: readonly string[],
     consistencyMode: WorkspaceConsistencyMode,
     maxFileBytes: number,
@@ -276,6 +285,7 @@ export class WorkspaceSandbox {
     this.#root = root;
     this.#rootIdentity = rootIdentity;
     this.#deniedPrefixes = deniedPrefixes;
+    this.#writeDeniedPrefixes = writeDeniedPrefixes;
     this.#snapshotIgnoredPrefixes = snapshotIgnoredPrefixes;
     this.#consistencyMode = consistencyMode;
     this.#maxFileBytes = maxFileBytes;
@@ -304,6 +314,7 @@ export class WorkspaceSandbox {
       resolved,
       identity(rootStat),
       denied,
+      (options.writeDeniedPrefixes ?? []).map((value) => normalizeWorkspacePath(value)).sort(),
       snapshotIgnored,
       options.consistencyMode ?? "session",
       maxFileBytes,
@@ -510,7 +521,7 @@ export class WorkspaceSandbox {
     newText: string,
     expectedRevision: string,
   ): Promise<WorkspaceWriteResult> {
-    const normalized = this.#normalize(relativePath);
+    const normalized = this.#normalizeForWrite(relativePath);
     const capability = await this.#openParent(normalized);
     try {
       const current = await this.#readAt(
@@ -550,7 +561,7 @@ export class WorkspaceSandbox {
   }
 
   async createFile(relativePath: string, content: string): Promise<WorkspaceWriteResult> {
-    const normalized = this.#normalize(relativePath);
+    const normalized = this.#normalizeForWrite(relativePath);
     const capability = await this.#openParent(normalized);
     const temporaryName = `.codex-edit-${randomUUID()}.tmp`;
     const temporary = handlePath(capability.parent, temporaryName);
@@ -937,8 +948,17 @@ export class WorkspaceSandbox {
     } catch {
       throw new WorkspaceSandboxError("invalid_path", "路径不在允许的 workspace 范围内");
     }
-    if (this.#deniedPrefixes.some((prefix) => isWithin(normalized, prefix))) {
+    if (this.#deniedPrefixes.some((prefix) => isWithinIgnoringCase(normalized, prefix))) {
       throw new WorkspaceSandboxError("permission_denied", "路径不允许访问");
+    }
+    return normalized;
+  }
+
+  /** 写入路径：先按读写都拒的规则规范化，再拒绝落在只拒写前缀内的路径（两次比较都不分大小写）。 */
+  #normalizeForWrite(value: string): string {
+    const normalized = this.#normalize(value);
+    if (this.#writeDeniedPrefixes.some((prefix) => isWithinIgnoringCase(normalized, prefix))) {
+      throw new WorkspaceSandboxError("permission_denied", "路径只读，不允许写入");
     }
     return normalized;
   }

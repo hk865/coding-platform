@@ -25,6 +25,8 @@ import type { CoreError, ReadResult } from '../contracts/core/results.js';
 import type {
   ChecksConfirmationPort, StoredChecksStateV1,
 } from '../core/work-graph/model/initialization-adoption-contracts.js';
+import type { RepoKey } from '../core/work-graph/model/line-knowledge.js';
+import { applyKnowledgeExclude } from '../core/workspace/knowledge-exclude.js';
 import {
   DEFAULT_TASK_AUTOMATION_POLICY, MAX_AUTO_REWORK_LIMIT, RESUME_ON_STARTUP_MODES,
   type ResumeOnStartupMode, type TaskAutomationPolicyV1,
@@ -90,7 +92,7 @@ import { DEFAULT_WORK_RUN_TOKEN_BUDGET, MAX_WORK_RUN_TOKEN_BUDGET } from './host
 export const SETTINGS_ROUTE_SUFFIXES = [
   'snapshot', 'directories', 'models/save', 'models/select', 'workspaces/open', 'checks/approve', 'automation/save',
   'resource-caps/save', 'run-budget/save', 'plan-loop-limits/save', 'prompts/packs/list', 'prompts/packs/create', 'prompts/templates/read',
-  'prompts/templates/save', 'prompts/tools/read', 'prompts/tools/save',
+  'prompts/templates/save', 'prompts/tools/read', 'prompts/tools/save', 'knowledge-local',
 ] as const satisfies readonly SettingsRoute[];
 
 export function isSettingsRoute(value: string): value is SettingsRoute {
@@ -193,6 +195,9 @@ export type HostSettingsPrivateSnapshot = {
    * the budget it started with. Every settings push carries them, and so does
    * the pre-settings seed snapshot (`host.ts`'s initial bindings). */
   planLoopLimits: PlanLoopLimitsV1;
+  /** KLS-2: the checkouts, by repository key, whose architecture and notes stay local and out of
+   *  git. The Host keeps the last copy pushed to it; the knowledge status and commit read it there. */
+  knowledgeLocalOnly: Readonly<Record<RepoKey, true>>;
 };
 
 /** Trusted facts about one Host-registered workspace, read from the Host. */
@@ -206,6 +211,8 @@ export type HostSettingsWorkspaceFacts = {
   commandsAllowed: boolean;
   /** Where the workspace's project store lives (U8); null for a memory store or a project that is not open. */
   storeLocation: SettingsStoreLocation | null;
+  /** KLS-2: the repository key of the workspace's checkout; null (or absent) for a folder in no git work tree. */
+  knowledgeRepoKey?: RepoKey | null;
 };
 
 /** Host-owned result of opening (or finding) one directory. */
@@ -224,6 +231,9 @@ export interface HostSettingsAssembly {
   readCheckProposal?(scope: CoreScope, answerRef: QueryJobAnswerRef): Promise<SettingsResponse<{
     answerRef: QueryJobAnswerRef; answerDigest: string; checks: RegisteredCommandCheck[];
   }>>;
+  /** KLS-2: the checkout behind one registered workspace, through the Host's one line resolution: its repository key
+   *  (the real common git directory) or `notGit`. Absence means the setting is unsupported. */
+  knowledgeCheckout?(scope: CoreScope): Promise<SettingsResponse<{ repoKey: RepoKey } | { notGit: true }>>;
   openWorkspace(request: OpenSettingsWorkspace & { workspaceId?: string }): Promise<SettingsResponse<HostSettingsOpenedHost>>;
   bootstrap(): BootstrapResponse;
   /** Boolean-only probe: whether the trusted Host can resolve the named secret.
@@ -417,6 +427,9 @@ type PersistedSettingsV1 = {
    * another setting and reads as `DEFAULT_PLAN_LOOP_LIMITS`. A present but
    * invalid table refuses Host startup instead of reading the defaults. */
   planLoopLimits?: PlanLoopLimitsV1;
+  /** KLS-2: the checkouts whose knowledge stays local, by repository key (not per project and not in a workspace
+   *  entry). Absent in old files and while no checkout has it; absent reads as the empty table. */
+  knowledgeLocalOnly?: Record<RepoKey, true>;
 };
 
 const scopeKey = (scope: CoreScope): string => `${scope.projectId}\u0000${scope.workspaceId}`;
@@ -566,6 +579,13 @@ function parseStoredPlanLoopLimits(value: unknown): PlanLoopLimitsV1 {
   return limits;
 }
 
+/** KLS-2: a present table maps each repository key to `true`; anything else fails Host start-up. */
+function parseStoredKnowledgeLocalOnly(value: unknown): Record<RepoKey, true> {
+  if (!isRecord(value) || !Object.entries(value).every(([key, entry]) => key.length > 0 && entry === true))
+    throw new Error('the private host settings file is invalid');
+  return { ...value } as Record<RepoKey, true>;
+}
+
 /** The published/saved tables never share a mutable object with the defaults. */
 const copyPlanLoopLimits = (limits: Readonly<PlanLoopLimitsV1>): PlanLoopLimitsV1 => ({
   ...limits,
@@ -637,7 +657,9 @@ function parsePersisted(text: string): PersistedSettingsV1 {
     ...(raw['workRunTokenBudget'] === undefined
       ? {} : { workRunTokenBudget: parseStoredWorkRunTokenBudget(raw['workRunTokenBudget']) }),
     ...(raw['planLoopLimits'] === undefined
-      ? {} : { planLoopLimits: parseStoredPlanLoopLimits(raw['planLoopLimits']) }) };
+      ? {} : { planLoopLimits: parseStoredPlanLoopLimits(raw['planLoopLimits']) }),
+    ...(raw['knowledgeLocalOnly'] === undefined
+      ? {} : { knowledgeLocalOnly: parseStoredKnowledgeLocalOnly(raw['knowledgeLocalOnly']) }) };
 }
 
 /** The settings file of one directory: null when it does not exist. A present but unreadable or corrupt file is an
@@ -702,6 +724,8 @@ export async function createHostSettings(
   /** PL/§10.3: the plan-loop limits as stored (absent is the defaults) until
    * `plan-loop-limits/save` writes them; `null` on that route clears them. */
   let planLoopLimitSetting: PlanLoopLimitsV1 | undefined = persisted.planLoopLimits;
+  /** KLS-2: the checkouts whose knowledge stays local, by repository key; `knowledge-local` changes it. */
+  const knowledgeLocalOnly: Record<RepoKey, true> = { ...persisted.knowledgeLocalOnly };
   const effectiveWorkRunTokenBudget = (): number => workRunTokenBudget ?? DEFAULT_WORK_RUN_TOKEN_BUDGET;
   const effectivePlanLoopLimits = (): Readonly<PlanLoopLimitsV1> =>
     planLoopLimitSetting ?? DEFAULT_PLAN_LOOP_LIMITS;
@@ -742,6 +766,7 @@ export async function createHostSettings(
     },
     workRunTokenBudget: effectiveWorkRunTokenBudget(),
     planLoopLimits: copyPlanLoopLimits(effectivePlanLoopLimits()),
+    knowledgeLocalOnly: { ...knowledgeLocalOnly },
   });
 
   const persist = async (): Promise<void> => {
@@ -749,7 +774,8 @@ export async function createHostSettings(
       ...(automation === undefined ? {} : { automation }),
       ...(resourceCapSetting === undefined ? {} : { resourceCaps: resourceCapSetting }),
       ...(workRunTokenBudget === undefined ? {} : { workRunTokenBudget }),
-      ...(planLoopLimitSetting === undefined ? {} : { planLoopLimits: planLoopLimitSetting }) };
+      ...(planLoopLimitSetting === undefined ? {} : { planLoopLimits: planLoopLimitSetting }),
+      ...(Object.keys(knowledgeLocalOnly).length === 0 ? {} : { knowledgeLocalOnly }) };
     await mkdir(settingsDirectory, { recursive: true, mode: 0o700 });
     const temporaryPath = join(settingsDirectory, `.host-settings.${randomUUID()}.tmp`);
     await writeFile(temporaryPath, JSON.stringify(payload), { mode: 0o600 });
@@ -851,6 +877,7 @@ export async function createHostSettings(
         ...(persistedFacts?.checks === undefined ? {} : { checks: structuredClone(persistedFacts.checks) }),
         ...(facts.storeLocation === null
           ? {} : { storeLocation: { place: facts.storeLocation.place, reason: facts.storeLocation.reason } }),
+        knowledgeLocalOnly: facts.knowledgeRepoKey != null && knowledgeLocalOnly[facts.knowledgeRepoKey] === true,
       };
     }),
     // C8 (A.2 step 5.8): the stored policy, the defaults when none was saved (after an
@@ -1430,6 +1457,50 @@ export async function createHostSettings(
     return { status: 'ready', value: snapshotOf() };
   }
 
+  /**
+   * KLS-2: "architecture and notes stay local, not in git" for the checkout behind one workspace.
+   * The Host finds the checkout through its one line resolution, never from the body; a folder in no git work tree
+   * has no such choice. Git's local exclude file is changed first, and only then the per-checkout setting is saved,
+   * persisted and pushed to the Host like `automation/save`. When the settings file cannot be written, the exclude
+   * file goes back to the state it had before this call, so the two never disagree; a retry starts from there.
+   */
+  async function knowledgeLocalRoute(input: unknown): Promise<SettingsResponse<HostSettingsSnapshot>> {
+    if (!isRecord(input) || !nonEmpty(input['projectId']) || !nonEmpty(input['workspaceId']))
+      return invalid('knowledge-local requires a projectId and a workspaceId');
+    const localOnly = input['localOnly'];
+    if (typeof localOnly !== 'boolean') return invalid('localOnly must be a boolean');
+    if (assembly.knowledgeCheckout === undefined)
+      return { status: 'rejected', code: 'unsupported', reason: 'the Host does not publish the checkout reader' };
+    const scope = { projectId: input['projectId'], workspaceId: input['workspaceId'] };
+    let checkout;
+    try { checkout = await assembly.knowledgeCheckout(scope); }
+    catch { return unavailable('the checkout of the workspace could not be read'); }
+    if (checkout.status !== 'ready') return checkout;
+    if ('notGit' in checkout.value)
+      return { status: 'rejected', code: 'unsupported', reason: 'the checkout is not a git repository' };
+    // The repository key is the real common git directory, which holds the local exclude file.
+    const repoKey = checkout.value.repoKey;
+    const excluded = await applyKnowledgeExclude(repoKey, localOnly);
+    if (excluded.status !== 'ready') return unavailable(excluded.reason);
+    const previous = knowledgeLocalOnly[repoKey];
+    if (localOnly) knowledgeLocalOnly[repoKey] = true; else delete knowledgeLocalOnly[repoKey];
+    try { await persist(); }
+    catch {
+      if (previous === undefined) delete knowledgeLocalOnly[repoKey]; else knowledgeLocalOnly[repoKey] = previous;
+      // Only a call that changed the exclude file has something to undo; the file's state before it was the opposite.
+      const restored = excluded.value.changed ? await applyKnowledgeExclude(repoKey, !localOnly) : excluded;
+      if (restored.status !== 'ready') {
+        return unavailable(`the settings file could not be written, and the exclude file could not be restored: ${restored.reason}`);
+      }
+      return unavailable('the settings file could not be written');
+    }
+    try { await notify(); }
+    catch {
+      return unavailable('the setting was saved but the Host configuration was not confirmed; retry the same save');
+    }
+    return { status: 'ready', value: snapshotOf() };
+  }
+
   // -------------------------------------------------------------------------
   // Prompt-pack editing routes. They read the disk tree at
   // `<settings directory>/prompts`, validate the whole resulting chain before
@@ -1706,6 +1777,7 @@ export async function createHostSettings(
       case 'resource-caps/save': return await saveResourceCapsRoute(input);
       case 'run-budget/save': return await saveRunBudgetRoute(input);
       case 'plan-loop-limits/save': return await savePlanLoopLimitsRoute(input);
+      case 'knowledge-local': return await knowledgeLocalRoute(input);
       case 'prompts/packs/list': return await packsListRoute();
       case 'prompts/packs/create': return await packsCreateRoute(input);
       case 'prompts/templates/read': return await templateReadRoute(input);

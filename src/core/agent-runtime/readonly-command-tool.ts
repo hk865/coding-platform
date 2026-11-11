@@ -17,6 +17,7 @@ import { ProcessSandbox, ProcessSandboxError, normalizeWorkspacePath, toolSchema
 import type {
   ResourceCapSource, ResourceCapsReport, ToolDefinition, ToolResult, WorkspaceSandbox,
 } from '../../../vendor/coding-agent/dist/public-api.js';
+import { KNOWLEDGE_DIRECTORY } from '../../contracts/knowledge.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
 import type { ToolTextV1 } from '../../contracts/prompts/prompt-pack.js';
 
@@ -100,6 +101,8 @@ export type ReadonlyCommandToolInput = {
  * the mount/executable/resource options `run_readonly_command` would run with,
  * instead of an optimistic default. A `resourceCaps` entry is ignored by
  * `ProcessSandbox.probe` (its signature has no such key) exactly as before.
+ * The whole workspace is mounted read-only here, so the knowledge directory needs no mount of its own (KLS-2): it is
+ * left out, and a `.workbench/` deleted while the Host runs cannot fail the probe or the tool.
  */
 export type ReadonlyCommandSandboxOptions = {
   workspaceMode: 'read_only';
@@ -115,7 +118,8 @@ export function readonlyCommandSandboxOptions(input: {
 }): ReadonlyCommandSandboxOptions {
   return {
     workspaceMode: 'read_only' as const,
-    ...(input.readOnlyPaths === undefined ? {} : { readOnlyPaths: [...input.readOnlyPaths] }),
+    ...(input.readOnlyPaths === undefined ? {}
+      : { readOnlyPaths: input.readOnlyPaths.filter(path => path !== KNOWLEDGE_DIRECTORY) }),
     ...(input.executablePath === undefined ? {} : { executablePath: input.executablePath }),
     ...(input.resourceCaps === undefined ? {} : { resourceCaps: input.resourceCaps }),
   };

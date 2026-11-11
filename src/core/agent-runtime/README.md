@@ -19,11 +19,11 @@
 - `execution-history-contracts.ts` — 原历史分页与图执行历史的请求/端口类型。
 - `execution-control.ts` — 内部安全点控制协调器：pause/cancel 的 live handle 与退出证明。
 - `model-admission.ts` — 运行中并发的唯一准入口 `createModelAdmission`：每组一把内存锁，读项目额度与每个占用 Session 的持久相位，收集 `{duty, phase}` 后调用 `running-admission.ts` 的唯一纯计数；通过时返回 `admitted` 和 `release()`（调用方在 begin 提交后释放），不保存计数器，重启按持久相位重建。
-- `execution-driver.ts` — Work fresh 执行驱动与 shell blocked/allowance hook。 工具组的 owner 事实带上 `memberCreation`、`claims`（`request_rework` 的 requeue 入口）和 `evidence`（`request_recheck` 的复核入口），并把 Work Run 的 `runRef` 交给成员工具作可信身份；缺 owner 时对应工具名显式 `unsupported`，不静默丢弃；`owners.roleSplit` 和工厂参数 `roleSplit` 都跟随 `deps.roleSplit`。L31（A1b）：fresh begin 之前先经 `admission.admitModelCall`（`{projectId,duty,ref,kind:'run'}`，duty 由 `admission.dutyOfRole` 对 Session 的角色求出，就是计数用的同一个 Session 职责解析器；没有职责依据（`unknown`）的按执行者计）；未准入原样返回，Run 停在 `starting/authorized`；begin 无论提交或抛错都在 `finally` 释放 grant。没有注入 `admission` 就不设闸门。普通 Work Run 每个 `before_model` 安全点的平台输入是控制输入之后接 `linkBreakInputsFor`（`src/core/agent-runtime/execution-driver.ts:1120`，两者合成 `controlAndLinkBreakInputsFor` 交给 `createMailboxInputSupply` 的 `controlInputs`；审查轮不接）：经 `readRunActivityFacts` 取这次 Run 改过的文件（`definite ∪ possible`，去掉 `'.'`），按文件锚点翻页读上面 `accepted`/`reviewed` 的联系，用 Run 自己的上下文和 `heldByRun` 做第一档核对；确定断了的每条交一个 `link-breaks-input` 输入（`inputId`、文字只由编号、版本和下标定，已接受的不再交）；`refs_pending` 的头版本不在 `linksInFlight`（键 `noteId@version`）里的，最多 `NOTE_LINK_VERIFY_MAX` 条，用内部 signal 在后台交第二档（`priority: 'run_end'`，不等），结论之后的安全点从核对的内存读到再交；任何失败都不交、不抛，不让 Run 失败。121-34：同一个安全点还先查这次 Run 改过的 Python 文件的语法——用 `platformCheckContext` 换成内部 Host 身份（`python-syntax-check`），只解析、不运行，每个文件一条 `python-syntax-input`（`inputId` 只由 `path`/`digest`/`line` 定，已接受的不再交）；没有注入 `deps.pythonSyntax` 就不查。规则 W：Host 配置与 profile 按 Session（线）的工作区解析，Run 的根、授权和输出仍按 `run.workspaceSnapshot`。K6：Kernel 在模型请求前自己写确定性的历史拒绝 `run.failed`（`history_rejected`）时 `before_model` hook 不跑；Kernel 返回后若固定 Turn 的真实记录证明这次拒绝已进入，就用原 permit、原身份和同一个 entered 写入补齐登记，再走原 observer；别的 Kernel 终态和读不到固定 Turn 的不写失败，留给 RUN-16/启动对账。模型循环的选项先建成和摘要调用共用的 `SummaryCallOptions`，进 try 之后、建 `sessionContext` 之前做 `compactionAtStart`（线的上下文；窗口取 `hostConfig.budget`，比例取 `hostConfig.compaction ?? COMPACTION_DEFAULTS`）：写成或复用的记录位置就是这一轮的 `throughPosition`；`unavailable` 记进 `enteredFailure`、不调模型，Run 留在 entering，和读完成边界失败一样由启动对账收尾。Query 驱动同一处同一做法（窗口取冻结的 `manifest.runtimeBudget`），`unavailable` 直接返回。
+- `execution-driver.ts` — Work fresh 执行驱动与 shell blocked/allowance hook。启动时解析完根、进 Kernel 之前调 `ensureKnowledgeDirectory`，把 Host 运行中被删的 `.workbench/` 建回来（命令把它只读挂载，没有就起不来；KLS-2）。 工具组的 owner 事实带上 `memberCreation`、`claims`（`request_rework` 的 requeue 入口）和 `evidence`（`request_recheck` 的复核入口），并把 Work Run 的 `runRef` 交给成员工具作可信身份；缺 owner 时对应工具名显式 `unsupported`，不静默丢弃；`owners.roleSplit` 和工厂参数 `roleSplit` 都跟随 `deps.roleSplit`。L31（A1b）：fresh begin 之前先经 `admission.admitModelCall`（`{projectId,duty,ref,kind:'run'}`，duty 由 `admission.dutyOfRole` 对 Session 的角色求出，就是计数用的同一个 Session 职责解析器；没有职责依据（`unknown`）的按执行者计）；未准入原样返回，Run 停在 `starting/authorized`；begin 无论提交或抛错都在 `finally` 释放 grant。没有注入 `admission` 就不设闸门。普通 Work Run 每个 `before_model` 安全点的平台输入是控制输入之后接 `linkBreakInputsFor`（`src/core/agent-runtime/execution-driver.ts:1125`，两者合成 `controlAndLinkBreakInputsFor` 交给 `createMailboxInputSupply` 的 `controlInputs`；审查轮不接）：经 `readRunActivityFacts` 取这次 Run 改过的文件（`definite ∪ possible`，去掉 `'.'`），按文件锚点翻页读上面 `accepted`/`reviewed` 的联系，用 Run 自己的上下文和 `heldByRun` 做第一档核对；确定断了的每条交一个 `link-breaks-input` 输入（`inputId`、文字只由编号、版本和下标定，已接受的不再交）；`refs_pending` 的头版本不在 `linksInFlight`（键 `noteId@version`）里的，最多 `NOTE_LINK_VERIFY_MAX` 条，用内部 signal 在后台交第二档（`priority: 'run_end'`，不等），结论之后的安全点从核对的内存读到再交；任何失败都不交、不抛，不让 Run 失败。121-34：同一个安全点还先查这次 Run 改过的 Python 文件的语法——用 `platformCheckContext` 换成内部 Host 身份（`python-syntax-check`），只解析、不运行，每个文件一条 `python-syntax-input`（`inputId` 只由 `path`/`digest`/`line` 定，已接受的不再交）；没有注入 `deps.pythonSyntax` 就不查。规则 W：Host 配置与 profile 按 Session（线）的工作区解析，Run 的根、授权和输出仍按 `run.workspaceSnapshot`。K6：Kernel 在模型请求前自己写确定性的历史拒绝 `run.failed`（`history_rejected`）时 `before_model` hook 不跑；Kernel 返回后若固定 Turn 的真实记录证明这次拒绝已进入，就用原 permit、原身份和同一个 entered 写入补齐登记，再走原 observer；别的 Kernel 终态和读不到固定 Turn 的不写失败，留给 RUN-16/启动对账。模型循环的选项先建成和摘要调用共用的 `SummaryCallOptions`，进 try 之后、建 `sessionContext` 之前做 `compactionAtStart`（线的上下文；窗口取 `hostConfig.budget`，比例取 `hostConfig.compaction ?? COMPACTION_DEFAULTS`）：写成或复用的记录位置就是这一轮的 `throughPosition`；`unavailable` 记进 `enteredFailure`、不调模型，Run 留在 entering，和读完成边界失败一样由启动对账收尾。Query 驱动同一处同一做法（窗口取冻结的 `manifest.runtimeBudget`），`unavailable` 直接返回。
 
 ### 执行准备与输入
 做 Work 准备、输入通道、模型预算、注册检查和 Role profile 的去这组。
-- `execution-preparation.ts` — Work 准备：读已受理事实与 Role/Host 配置，存有界 manifest、冻结提示词和工作区基线；`createMember` 取 Host 授权，Session 有 `delegationCeiling` 时工具取交集、写范围越界答 `forbidden`、委托取合取，`secretaryCreated` 一律钉 false；准备只冻结能力位（`owners` 含 `roleSplit: true`），真实 owner 在启动时再查。规则 W：Run 的事实、Task 审阅、只读授权、baseline、manifest 与 envelope 按 Run 的工作区，Role/Host 配置按线的工作区；交接 brief 仍按线（记录键是拆线操作的工作区）。
+- `execution-preparation.ts` — Work 准备：读已受理事实与 Role/Host 配置，存有界 manifest、冻结提示词和工作区基线；`createMember` 取 Host 授权，Session 有 `delegationCeiling` 时工具取交集、写范围越界答 `forbidden`、委托取合取，`secretaryCreated` 一律钉 false；准备只冻结能力位（`owners` 含 `roleSplit: true`），真实 owner 在启动时再查。规则 W：Run 的事实、Task 审阅、只读授权、baseline、manifest 与 envelope 按 Run 的工作区，Role/Host 配置按线的工作区；交接 brief 仍按线（记录键是拆线操作的工作区）。每个 Work Run 都经 `snapshotRuntimeConfiguration`，它把知识目录 `.workbench` 并进命令沙箱的只读挂载（去重，KLS-2）：命令能读、写报只读文件系统。
 - `execution-inputs.ts` — 统一输入通道：邮件、答复、到期（expiry）、steer 和 attention 的候选与 accepted 排除。`only: 'notify'` 是秘书请求轮的供给：跳过 person 列表、续接与答复邮件，只把 `intent` 缺省或 `notify` 的收件箱邮件经 `readMessagePart` 供出（`notify-delivery`）。
 - `check-execution.ts` — 可信 Host 注册检查执行器。
 - `model-budget.ts` — 模型预算、token 计量与超限错误。Host 的每个绑定带一个观察计数器（`createObservedInputCounter`）：用模型服务上次报的输入 token ÷ 那次请求的字节数换算、留 10% 余量，不超过按字节的预留；只在内存里，重启或保存设置后先按字节计。
@@ -33,7 +33,7 @@
 
 ### Kernel 适配与模型调用
 做 Kernel 模型/工具循环、Turn 解码、Session 存储映射和原历史分页的去这组。
-- `observed-model-run.ts` — 唯一的 Kernel 模型/工具循环。
+- `observed-model-run.ts` — 唯一的 Kernel 模型/工具循环。Kernel 工作区选项只在这一跳加两样：项目库 `.workbench/local` 进拒绝前缀，知识目录 `.workbench` 和 `.git` 进只拒写的 `writeDeniedPrefixes`（KLS-2：文件工具能读，写和改回 `permission_denied`；Kernel 两种前缀都不分大小写地比较，`.WORKBENCH/x`、`.WORKBENCH/local/x`、`.GIT/hooks/x` 也被拒。`.git` 原来只由 Kernel 权限策略按原样大小写拒写，加进来是为了不区分大小写的根）。
 - `kernel-turn-facts.ts` — Kernel SessionRecord 解码与单个 Turn 归约。
 - `kernel-store-locator.ts` — Session 到 Kernel store 的固定映射注册表。
 - `session-operations.ts` — Session 创建、原历史分页、cursor owner 与 Kernel DB 状态；`readConsultationHistory` 用同一个 `readPositionWindow` 有界读完冻结前缀，并在 `mapHistoryFailure` 展平之前保留 missing/corrupt/transient/cancelled 分类。历史条目多一类 `context_compacted`（压缩记录，正文是记录原样）；原记录照旧逐条读出，不套压缩（`observation-recovery.ts` 的 `kernelKind` 同一档）。压缩读这条线自己的 Kernel 记录也只在这里（决定 121-51）：`readRecordAfterCursor` 读游标后第一条（压缩记录带它基于的位置），`scanCompactionHistory` 经 `readPositionWindow` 按 `(lo, end]`、每块 200 往回读到最新摘要的位置或头，按 `turn.started` 分轮，给每轮的记录字符数、成功结果的字符数、最后报的输入和起点依据，以及压缩视图和失败记录的位置（最新一轮的输入没到给定值就不再往前读）。原历史一页的条目 `SessionHistoryEntry` 的正本在 `contracts/session-activity.ts`，这里转出。
@@ -78,7 +78,7 @@
 - `session-discovery-tools.ts` — Session 发现工具（已弃用，保留旧 Run 行为）。
 - `unknown-call-review-tools.ts` — review 轮的记录与更安全方案工具。
 - `command-rerun-tools.ts` — `request_command_rerun` 工具；本文件导出三个结果构造正本 `noneEffects`、`success`、`failed`，其他工具适配器直接复用。
-- `readonly-command-tool.ts` — `run_readonly_command` 沙箱工具、注册与选项。
+- `readonly-command-tool.ts` — `run_readonly_command` 沙箱工具、注册与选项。真工具和审阅能力探测共用的 `readonlyCommandSandboxOptions` 整个工作区只读，所以从只读路径里去掉知识目录 `.workbench`（KLS-2）：它被删了也不会让探测或命令起不来。
 - `rework-tools.ts` — `request_rework`/`request_recheck` 的 Work 工具：`REQUEST_REWORK_TOOL_NAME`、`REQUEST_RECHECK_TOOL_NAME` 与 `REWORK_TOOL_NAMES` 是固定名单，`createReworkTools` 按 `claims.requeueTask`/`evidence.reverifyRound` 建两个薄适配器，命令身份由工厂按调用绑定，不读第二个记录。
 
 ### 观察与恢复
@@ -111,9 +111,9 @@
 | `createContextAssembler` | `src/core/agent-runtime/context-assembler.ts:27` | 按调用种类装配一次上下文 | prepare 需要正式上下文时，别自己拼 |
 | `assembleSecretaryContext` | `src/core/agent-runtime/context-secretary-recipe.ts:193` | 按冻结的秘书准备事实渲染 `secretary-round` 并生成合法绑定；可选的 `handoff` 材料渲染后加在 task 段开头 | 秘书请求轮装配；经 `assembleQuery` 自动进入 |
 | `SecretaryHandoffPromptFactsV1` | `src/core/agent-runtime/context-secretary-recipe.ts:150` | 秘书轮要 prepend 的交接材料：旧秘书 understanding 轮的目标清单，或继任者首轮的一份交接 brief | 调用方已从冻结 manifest 或交接 brief 端口读到材料时，交给 `handoff`；准备阶段已经这么做（见 `query-preparation.ts`） |
-| `createExecutionPreparation` | `src/core/agent-runtime/execution-preparation.ts:368` | Work 有界准备与 manifest/提示词冻结 | 启动 Work Run 之前 |
-| `createWorkHandoffBriefRead` | `src/core/agent-runtime/execution-preparation.ts:94` | 记录 5 的只读就绪读：按 successor Session 查最新记录，再核对交接操作的传输已完成；拆线的记录 5 写在拆线做完的那次提交里，读到就绪；成功空页是旧路径 `null`，读失败（页面或操作）一律 `unavailable` | 准备 Work Run 和 Query 时决定是否交出交接 brief（Query 用同一实例） |
-| `createExecutionDriver` | `src/core/agent-runtime/execution-driver.ts:333` | Work fresh 启动、进入与模型循环 | 正式 Work Run 启动 |
+| `createExecutionPreparation` | `src/core/agent-runtime/execution-preparation.ts:369` | Work 有界准备与 manifest/提示词冻结 | 启动 Work Run 之前 |
+| `createWorkHandoffBriefRead` | `src/core/agent-runtime/execution-preparation.ts:83` | 记录 5 的只读就绪读：按 successor Session 查最新记录，再核对交接操作的传输已完成；拆线的记录 5 写在拆线做完的那次提交里，读到就绪；成功空页是旧路径 `null`，读失败（页面或操作）一律 `unavailable` | 准备 Work Run 和 Query 时决定是否交出交接 brief（Query 用同一实例） |
+| `createExecutionDriver` | `src/core/agent-runtime/execution-driver.ts:334` | Work fresh 启动、进入与模型循环 | 正式 Work Run 启动 |
 | `createExecutionObservation` | `src/core/agent-runtime/execution-observation.ts:247` | 沿 locator 归约原历史并提交终态 | observe/reconcile Work Run |
 | `createQueryPreparation` | `src/core/agent-runtime/query-preparation.ts:248` | Query 有界输入准备；非请求轮经继承的 `handoffBriefs` 读一次记录 5 | Query claim 之后 |
 | `createQueryExecutionDriver` | `src/core/agent-runtime/query-execution.ts:226` | 一次 fresh QueryRun 驱动；秘书轮按准入多建注记、邮箱、成员和请求读组，`check_links` 只按授权名单建 | 正式 Query 启动 |
@@ -130,7 +130,7 @@
 | `answerBoundBytes`、`PLANNING_MAX_ANSWER_BYTES` | `src/core/agent-runtime/answer-tools.ts:90`、`src/core/agent-runtime/query-observation.ts:50` | 回答的唯一字节上限：只有 `submit_plan_round`（或没有名字的 `plan_round` 形状）是 256 KiB，其余 16 KiB | 提交工具检查回答大小、观察侧重建正文时；不要另写上限 |
 | `createRuntimeControlCoordinator` | `src/core/agent-runtime/execution-control.ts:122` | 安全点 pause/cancel 协调与退出证明；关闭中的 Host 在每个在跑 Run 的下一个安全点暂停（无 intent、不 abort 控制器） | 投递控制意图；Host 关闭时由关闭信号驱动 |
 | `createRuntimeModelCallAccess` | `src/core/agent-runtime/model-call-access.ts:41` | 一次性 durable 模型调用许可 | 每次 provider 调用前 |
-| `runObservedModel` | `src/core/agent-runtime/observed-model-run.ts:207` | 唯一的 Kernel 模型/工具循环 | 需要跑模型时；不要写第二个循环 |
+| `runObservedModel` | `src/core/agent-runtime/observed-model-run.ts:211` | 唯一的 Kernel 模型/工具循环 | 需要跑模型时；不要写第二个循环 |
 | `compactionAtStart`、`runSummaryCall`、`SummaryCallOptions` | `src/core/agent-runtime/compaction.ts:162`、`:279`、`:262` | 轮开始时的压缩（复用、判断、写桩或摘要）与一次摘要调用；驱动先把本轮模型循环的共用选项建成 `SummaryCallOptions`（不含九个每轮字段），摘要和正式调用都从它展开 | Work/Query 驱动建 `sessionContext` 之前；不要另写压缩或第二个摘要循环 |
 | `compactionBasis`、`wouldCompactNext`、`COMPACTION_DEFAULTS` | `src/core/agent-runtime/compaction.ts:84`、`:242`、`:34` | 压缩的纯判断、它的只读版（“太长”的读点用）和三个比例的默认值 | 判断下一轮会不会压时；启动配置补默认值时 |
 | `workKernelRunIdOf` | `src/core/agent-runtime/compaction.ts:74` | Work Run 固定的 Kernel run id（`krun-` + RunRef 的 canonical 哈希） | Work 驱动固定身份、按 Kernel run id 找 RunRef 时 |
@@ -148,7 +148,7 @@
 | `unresolvedToolCallIds` | `src/core/agent-runtime/kernel-turn-facts.ts:81` | 列未闭合工具调用 | 判断 Turn 能否完成 |
 | `readRunActivityFacts` | `src/core/agent-runtime/run-activity-reader.ts:58` | 显式窗口内的有界活动事实 | 结束 Run 的活动计数 |
 | `tallyTurnActivity` | `src/core/agent-runtime/run-activity-tally.ts:147` | 纯 Turn 活动计数 | 已有解码 Turn 时 |
-| `countQueryActivity` | `src/core/agent-runtime/runtime.ts:945` | 已结束 QueryRun 的只读活动计数；从未进入 Kernel（没有执行状态、没有固定入口或 `not_entered`）答 `not_entered`，上界与 Run 计数同一选择，不写记录 | Query 活动 backfill 的读侧 |
+| `countQueryActivity` | `src/core/agent-runtime/runtime.ts:946` | 已结束 QueryRun 的只读活动计数；从未进入 Kernel（没有执行状态、没有固定入口或 `not_entered`）答 `not_entered`，上界与 Run 计数同一选择，不写记录 | Query 活动 backfill 的读侧 |
 | `readPreviousTurn` | `src/core/agent-runtime/continuation-brief-assembly.ts:537` | 读上一 Turn 的真实证据 | requeue brief |
 | `assembleContinuationBrief` | `src/core/agent-runtime/continuation-brief-assembly.ts:798` | 纯函数装配 continuation brief | requeue Run 准备 |
 | `assembleHandoffBrief` | `src/core/agent-runtime/handoff-brief-assembly.ts:544` | 读完整交接材料（executor/adviser 两臂）并返回 `HandoffBriefMaterialV1`；adviser 臂把生产者给的 handedScope 原样冻结进材料（整个项目或拆出的一块）；不创建记录 5、不提交，失败整份拒绝 | 交接 successor 的 create/select 步；组合根注入 `HandoffBriefAssemblyDeps` |
@@ -182,13 +182,13 @@
 | `createArchitectureTools` | `src/core/agent-runtime/architecture-tools.ts:91` | `propose_architecture_revision` 的 Work 工具组：严格 schema 收 base pin/ops/moves/reason，身份与命令 id 由可信上下文绑定，结果原样交回 owner | Work 工具组注册结构提案工具 |
 | `platformRoleProfile` | `src/core/agent-runtime/role-profiles.ts:70` | 平台 Role duty profile | 选择/配置 duty |
 | `PLATFORM_SKILL_RESOURCE_ROOT` | `src/core/agent-runtime/platform-skill-root.ts:12` | 仓库 `resources/skills` 根 | 配置 Skill 根 |
-| `READONLY_COMMAND_TOOL_NAME` | `src/core/agent-runtime/readonly-command-tool.ts:26` | 只读命令工具名 | Host 授权与配置过滤 |
+| `READONLY_COMMAND_TOOL_NAME` | `src/core/agent-runtime/readonly-command-tool.ts:27` | 只读命令工具名 | Host 授权与配置过滤 |
 | `projectQueryConfiguration` | `src/core/agent-runtime/query-preparation.ts:196` | 解析并校验 Query 的 Host 配置；`secretaryRound` 放出秘书的六个名字，`explorationRound`（缺省读作假）只放出 `read_requests` | 组合根构造 Query 配置 |
 | `readKernelCommandFacts` | `src/core/agent-runtime/context-history-facts.ts:221` | 读原 Run 的完整 command/cwd 事实 | review/blocked command |
 | `rejected` | `src/contracts/core/rejections.ts:5` | **正本**：带 code/reason 的拒绝结果形状 | 拒绝输入或读失败时；本层只调本正本 |
 
 ### 同名能力
-- `messageOf` 正本在 `src/contracts/error-message.ts`；本层 `runtime.ts:68`、`:69` 的 `messageOf`/`rejected` 只是这两个正本的本地常量别名（签名不变，因为生产可达性白名单记着这两个节点），新代码直接 import 正本。`isRecord`/`nonEmpty`/`utf8Bytes` 用 `src/contracts/validation/common.ts`，`rejected` 用 `src/contracts/core/rejections.ts`。
+- `messageOf` 正本在 `src/contracts/error-message.ts`；本层 `runtime.ts:69`、`:70` 的 `messageOf`/`rejected` 只是这两个正本的本地常量别名（签名不变，因为生产可达性白名单记着这两个节点），新代码直接 import 正本。`isRecord`/`nonEmpty`/`utf8Bytes` 用 `src/contracts/validation/common.ts`，`rejected` 用 `src/contracts/core/rejections.ts`。
 - 通用文本限制：`queryTextProblem`（`src/core/work-graph/queries/query-job-service.ts:96`）是 Query 文本的正本；本层的字节/条数上限是各协议固定值，不要另造通用校验器。
 
 ## 内部用

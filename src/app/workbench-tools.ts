@@ -28,6 +28,9 @@ import { canonicalJson, type JsonValue } from '../contracts/fingerprint.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { MaterialSourceScope } from '../contracts/material-access.js';
 import { WORKSPACE_DENIED_PREFIXES } from '../core/workspace/denied-prefixes.js';
+import { ensureKnowledgeDirectory } from '../core/workspace/knowledge-exclude.js';
+import { KNOWLEDGE_DIRECTORY } from '../contracts/knowledge.js';
+import { messageOf } from '../contracts/error-message.js';
 import type { WorkspaceError, WorkspaceResult } from '../core/workspace/ports.js';
 
 /** One trusted workspace this helper may write/execute in. `root`,
@@ -341,24 +344,27 @@ export function createWorkbenchTools(options: WorkbenchToolsOptions): WorkbenchT
     'status' in value && value.status === 'rejected';
 
   /** The SAME Kernel workspace sandbox the reads use, protected by the platform
-   * denied prefixes. Created once per workspace on first use. */
+   * denied prefixes; a save never writes the knowledge directory (KLS-2).
+   * Created once per workspace on first use. */
   function workspaceSandbox(runtime: WorkspaceRuntime): Promise<WorkspaceSandbox> {
     runtime.sandbox ??= WorkspaceSandbox.create(runtime.config.root, {
       deniedPrefixes: [...WORKSPACE_DENIED_PREFIXES],
+      writeDeniedPrefixes: [KNOWLEDGE_DIRECTORY],
       ...(options.maxFileBytes === undefined ? {} : { maxFileBytes: options.maxFileBytes }),
     });
     return runtime.sandbox;
   }
 
   /** The real bubblewrap command sandbox, or null when the Kernel profile is not
-   * available. It never falls back to the host shell. */
+   * available. It never falls back to the host shell. Commands read the knowledge
+   * directory but never write it (a read-only mount, KLS-2). */
   function processSandbox(runtime: WorkspaceRuntime): Promise<ProcessSandbox | null> {
     runtime.process ??= (async () => {
       const sandbox = await workspaceSandbox(runtime);
       const profile = await ProcessSandbox.probe(runtime.config.root, sandbox);
       if (!profile.available) return null;
-      return new ProcessSandbox(profile, runtime.config.root, sandbox,
-        options.resourceCaps === undefined ? undefined : { resourceCaps: options.resourceCaps });
+      return new ProcessSandbox(profile, runtime.config.root, sandbox, { readOnlyPaths: [KNOWLEDGE_DIRECTORY],
+        ...(options.resourceCaps === undefined ? {} : { resourceCaps: options.resourceCaps }) });
     })();
     return runtime.process;
   }
@@ -465,6 +471,10 @@ export function createWorkbenchTools(options: WorkbenchToolsOptions): WorkbenchT
         }
         return { status: 'ready', value: commandSnapshotOf(existing) };
       }
+      // KLS-2: the command mounts the knowledge directory read-only; one deleted (or removed by a branch switch)
+      // while the Host runs is made again first.
+      try { ensureKnowledgeDirectory(bound.config.root); }
+      catch (error) { return rejected('unavailable', `making the knowledge directory failed: ${messageOf(error)}`); }
       const process = await processSandbox(bound);
       // Probe acquisition yields: another identical start or close may have
       // completed while awaiting it. Reserve the handle without another await.

@@ -19,6 +19,7 @@ import { createExplorationTools, type ExplorationToolsHandle, type SourceToolOpt
 import type { ToolTextV1 } from '../../contracts/prompts/prompt-pack.js';
 import { readSourceIdentity } from '../../core/workspace/source-identity.js';
 import { PROJECT_STORE_PREFIX } from '../../core/workspace/denied-prefixes.js';
+import { KNOWLEDGE_DIRECTORY } from '../../contracts/knowledge.js';
 import type { RuntimeSourceCaptureAccess, RuntimeSourceCaptureFactory } from './source-tool-ports.js';
 import { assembleObservedExtensions, kernelEnabledToolNames } from './tool-group-assembly.js';
 
@@ -463,7 +464,11 @@ export async function runObservedModel(o: ObservedModelRunOptions) {
         // X1: the project store kept in a workspace (`.workbench/local`) is not workspace content. As a denied
         // prefix the Kernel leaves it out of its workspace snapshot (and its tools), so the store's own writes never
         // move the revision a paused or recovered Turn is checked against. Added at this last hop only.
-        workspaceOptions: { deniedPrefixes: [...new Set([...o.deniedPrefixes, PROJECT_STORE_PREFIX])] },
+        // KLS-2: the Agent reads the knowledge directory, but its write and edit tools never write it. `.git` joins
+        // it: the Kernel's permission policy refuses `.git` writes by exact case only, and on a case-insensitive root
+        // `.GIT/hooks/...` is the same directory; the sandbox compares without case.
+        workspaceOptions: { deniedPrefixes: [...new Set([...o.deniedPrefixes, PROJECT_STORE_PREFIX])],
+          writeDeniedPrefixes: [KNOWLEDGE_DIRECTORY, '.git'] },
         // L13: the resource-cap source is merged in at this last hop only; the
         // Kernel reads `current()` once per command, so a settings change reached
         // the holder is used by the next command of this same Run.

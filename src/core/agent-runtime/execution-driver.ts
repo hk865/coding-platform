@@ -44,6 +44,7 @@ import {
   type SummaryCallOptions,
 } from './compaction.js';
 import { loadPreparedManifest, snapshotRuntimeConfiguration } from './execution-preparation.js';
+import { ensureKnowledgeDirectory } from '../workspace/knowledge-exclude.js';
 import { createRuntimeSourceCaptureFactory } from './source-capture-access.js';
 import { registerReadonlyCommandTool, READONLY_COMMAND_TOOL_NAME } from './readonly-command-tool.js';
 import {
@@ -521,6 +522,10 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
       if (rootResolved.value.workspaceRevision !== record.run.workspaceSnapshot.revision) {
         return rejected('source_stale', 'the workspace revision moved since the Run was prepared');
       }
+      // KLS-2: the Run's commands mount the knowledge directory read-only, so one deleted (or removed by a branch
+      // switch) while the Host runs is made again before they start.
+      try { ensureKnowledgeDirectory(rootResolved.value.root); }
+      catch (error) { return rejected('unavailable', `making the knowledge directory failed: ${messageOf(error)}`); }
       const location = deps.kernelStores.byAdapterId(record.session.kernel.adapterId);
       if (!location) return rejected('unsupported', 'the prepared Session is not mapped to a current Kernel store');
       if (!nonEmpty(location.databasePath)) return rejected('unsupported', 'the mapped Kernel store has no database path');

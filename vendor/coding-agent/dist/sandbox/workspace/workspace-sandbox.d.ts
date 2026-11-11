@@ -39,6 +39,8 @@ export interface WorkspaceConsistencyReport {
 }
 export interface WorkspaceSandboxOptions {
     readonly deniedPrefixes?: readonly string[];
+    /** 只拒写的前缀：`replace`/`createFile` 在规范化之后拒绝落在其内的路径（比较不分大小写）；读、列举和快照不查。 */
+    readonly writeDeniedPrefixes?: readonly string[];
     /** 不参与恢复 revision 的可再生/体积型目录。 */
     readonly snapshotIgnoredPrefixes?: readonly string[];
     readonly consistencyMode?: WorkspaceConsistencyMode;

@@ -74,3 +74,13 @@ node scripts/build-kernel-patch.mjs --write
 改前源 SHA-256 `6ef2637d1b8e69a46c116596f84262f0bd82447c6d2efce62a97d663f814dd42`，改后 `0125e688752e530d68cfa4421ff881db954d31d89b8bd1ec8166ffb79390445a`；四份产物为 `fcebefc3c3637199a65794e8617a0b587d657f1631638e7c091b0ebe6fb02887`（js）、`cd7aacd3d6856a343388df26e6e0dee5505aa32a90cf08e505b2a91f30f39573`（js.map）、`4b78ab8ee570bd2ba03d5fa20f89cb4cab605cbff1b5de16100a165996ac824f`（d.ts）、`f36e00a626769b30cdf76546b7fd676299fcf835e8dae3188d3fe6dc62345d44`（d.ts.map）。
 
 命令不变：`node scripts/build-kernel-patch.mjs --check`（0，十九个源、76 份产物）与 `--write`；`--write` 只改 `dist/sandbox/workspace/workspace-sandbox.*` 这四份，其余产物不变。
+
+## 2026-11-11 KLS-2a-2 只拒写的前缀
+
+受管源 `sandbox/workspace/workspace-sandbox.ts` 的 `WorkspaceSandboxOptions` 加可选的 `writeDeniedPrefixes`：`create` 把它规范化、排序后存进实例，缺省是空表、行为不变。`replace` 和 `createFile` 先照旧规范化（读写都拒的 `deniedPrefixes` 照旧先查），再拒绝落在这些前缀内（等于前缀或以“前缀/”开头）的路径；这次比较不分大小写（路径和前缀只在比较时转小写，路径本身不变），不区分大小写的文件系统上 `.WORKBENCH/x` 也绕不过去，区分大小写的文件系统上它同样被拒。抛 `WorkspaceSandboxError("permission_denied", "路径只读，不允许写入")`，edit 工具照现有映射回工具错误码 `permission_denied`；`read`、`readMany`、`listFiles`、快照和一致性检查都不看这份清单。没有新错误码，没有新导出的类型。平台由 `observed-model-run.ts` 的工作区选项传 `['.workbench', '.git']`（`.git` 补 Kernel 权限策略只按原样大小写拒写的那一处），工作台保存传 `['.workbench']`（它的 `.git` 在读写都拒的一组里）。
+
+代码审查之后，读写都拒的 `deniedPrefixes` 在 `#normalize` 里的那次比较也不分大小写（和只拒写共用 `isWithinIgnoringCase`，只在比较时转小写，路径本身不变）：不区分大小写的文件系统上 `.WORKBENCH/local/x`、`.GIT/...` 这类换了大小写的路径照旧回 `permission_denied`（“路径不允许访问”）。`listFiles` 和快照遍历跳过拒绝前缀时照旧区分大小写：比的是磁盘上读回的名字，但 `listFiles` 带 `prefix` 时开头几段是调用方给的大小写，所以不区分大小写的根上带 `prefix: ".WORKBENCH"` 列举会列出 `.WORKBENCH/local` 下的文件名（内容仍读不到，读在 `#normalize` 被拒）。
+
+改前源 SHA-256 `44f2825a2375244bdc82f7af3e239cae4228d7371129ddc5cc675cda10ea156f`，改后（含代码审查之后的两处不分大小写）`ba2cdb5de2902cbbd795dc71812e7e79a0afece1418c24357be6352f8e5a149d`；四份产物为 `b3c795c00ad9965637e5c3a86d94062c37d9ca0fcefb97539d24639d6c1342ef`（js）、`3241f40acfefe556338fc02d104b3554507a0a1589e35beeb0974587624409a1`（js.map）、`fda42ff92ca6140a09a0fe99c99a9a792a34f7b95348185aa23e5f155e52f7e2`（d.ts）、`bfdcb5c67be22852e90ec7ced3b25639ba27629ff70617262b77e2e64071ec94`（d.ts.map）。
+
+命令不变：`node scripts/build-kernel-patch.mjs --check`（0，十九个源、76 份产物）与 `--write`；`--write` 只改 `dist/sandbox/workspace/workspace-sandbox.*` 这四份，其余产物不变。

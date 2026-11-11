@@ -38,6 +38,9 @@ export type SettingsWorkspace = {
   checks?: RegisteredCommandCheck[];
   /** U8: where the workspace's project store lives; absent for a memory store or a project that is not open. */
   storeLocation?: SettingsStoreLocation;
+  /** KLS-2: whether the architecture and notes of this workspace's current checkout stay local and out of git. It is
+   *  kept per checkout, so every project mounting the same checkout sees it; a folder in no git work tree is false. */
+  knowledgeLocalOnly: boolean;
 };
 /** A project store's place and, only for the local data directory, the one sentence saying why. */
 export type SettingsStoreLocation = { place: 'git-common' | 'workspace-local' | 'user-data'; reason: string | null };
@@ -109,6 +112,9 @@ export type SaveWorkRunTokenBudgetSettings = { workRunTokenBudget: number | null
  * without a restart.
  */
 export type SaveAutomationSettings = { autoReworkLimit: number; resumeOnStartup: ResumeOnStartupMode };
+/** KLS-2 (route `knowledge-local`): keep the knowledge of the workspace's current checkout local, or stop. The Host
+ *  finds the checkout itself; the body names no path. */
+export type SaveKnowledgeLocalSettings = { projectId: string; workspaceId: string; localOnly: boolean };
 export type DirectoryListing = {
   path: string; parent: string | null;
   directories: { name: string; path: string }[]; truncated: boolean;
@@ -192,6 +198,7 @@ export type SettingsRoutes = {
   'resource-caps/save': { input: SaveResourceCapSettings; value: HostSettingsSnapshot };
   'run-budget/save': { input: SaveWorkRunTokenBudgetSettings; value: HostSettingsSnapshot };
   'plan-loop-limits/save': { input: SavePlanLoopLimitsSettings; value: HostSettingsSnapshot };
+  'knowledge-local': { input: SaveKnowledgeLocalSettings; value: HostSettingsSnapshot };
   'prompts/packs/list': { input: Record<string, never>; value: PromptPackListV1 };
   'prompts/packs/create': { input: { packId: string }; value: PromptPackCreateV1 };
   'prompts/templates/read': { input: { packId: string; templateId: string }; value: PromptTemplateReadV1 };

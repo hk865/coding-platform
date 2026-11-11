@@ -51,7 +51,8 @@ import {
   type ProjectStoreLease,
 } from '../composition/project-runtime.js';
 import { kernelStoreDirectory, kernelStoreEntry } from '../composition/project-store-paths.js';
-import { ensureKnowledgeDirectory } from '../composition/line-knowledge.js';
+import { ensureKnowledgeDirectory, resolveKnowledgeLine } from '../composition/line-knowledge.js';
+import { identifyCheckout } from '../core/workspace/workspace-change-capture.js';
 import type { WorkspaceHostBindings } from '../core/workspace/access.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { SessionRef, WorkspaceScope } from '../contracts/core/identity.js';
@@ -571,10 +572,16 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   if (promptsRoot !== undefined) {
     for (const workspace of workspaces) await assertRootOutsidePrompts(workspace.root, promptsRoot);
   }
+  /** KLS-2: each registered workspace's checkout key (its real common git directory), or null for a folder in no git
+   *  work tree or a root that cannot be read; the settings snapshot reads "kept local" by it, and the route refreshes it. */
+  const knowledgeRepoKeys = new Map<string, string | null>();
+  const checkoutKeyOf = (root: string): Promise<string | null> =>
+    identifyCheckout(root).then(probe => probe.kind === 'git' ? probe.repoKey : null, () => null);
   // KLS-2: every start-up workspace whose root is a directory gets its knowledge directory once; a workspace opened
   // later gets it in `addWorkspaceState`.
   for (const workspace of workspaces) {
     if (await stat(workspace.root).then(info => info.isDirectory(), () => false)) ensureKnowledgeDirectory(workspace.root);
+    knowledgeRepoKeys.set(scopeKey(workspace.scope), await checkoutKeyOf(workspace.root));
   }
   const architectureSource = options.architectureSource === undefined
     ? undefined
@@ -721,7 +728,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       ? undefined : createWorkbenchRuntimeHostBindings(seedConfiguration,
         versionProvider(versionSecretSource(seedConfiguration, { models: [], selection: {}, checks: [],
           automation: { ...DEFAULT_TASK_AUTOMATION_POLICY }, resourceCaps: resourceCaps.current(),
-          workRunTokenBudget, planLoopLimits: structuredClone(planLoopLimits) })), runtimeNarrowing));
+          workRunTokenBudget, planLoopLimits: structuredClone(planLoopLimits), knowledgeLocalOnly: {} })), runtimeNarrowing));
   const resolverRegistry = initialBindings === undefined ? undefined : createHostRuntimeResolverRegistry(initialBindings);
   const runtime: TargetPlatformOptions['runtime'] = resolverRegistry ?? options.runtime;
   // Settings may rebuild the runtime only from the serializable configuration;
@@ -852,6 +859,13 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     };
   }
   const explicitKernelEntries = options.kernelStores?.entries ?? [];
+  /** Each opened project's main workspace (its first at open): the head of its knowledge workspace list, which its
+   *  platform and the `knowledge-local` route read alike. */
+  const mainWorkspaces = new Map<string, string>();
+  const knowledgeListOf = (projectId: string, mainWorkspaceId: string): ((projectId: string) => readonly string[]) => {
+    mainWorkspaces.set(projectId, mainWorkspaceId);
+    return id => knowledgeWorkspacesOf(id, mainWorkspaceId);
+  };
   // KLS-1b: one runtime per project (S1, T3): its own store directory, lease, Kernel store directory and platform. The
   // memory store takes the same path with one in-memory store per project (V3). A project opens at start (the list
   // and the start-up workspaces, §4.2) or when a directory opens a new one (U4); nothing else makes a runtime.
@@ -861,7 +875,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     createPlatform: input => openTargetPlatform({
       storage: input.storage,
       workspace: projectBindings(input.projectId),
-      knowledgeWorkspaces: projectId => knowledgeWorkspacesOf(projectId, input.workspaces[0]!.workspaceId),
+      knowledgeWorkspaces: knowledgeListOf(input.projectId, input.workspaces[0]!.workspaceId),
       commitObserver: commitObserverFor(input.projectId),
       hostInstance: { hostInstanceId: input.lease.hostInstanceId, lease: input.lease.lease, takeover: input.lease.takeover },
       hostClosing: hostClosing.signal,
@@ -1947,6 +1961,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     workspaces.push(config);
     byScope.set(key, config);
     ensureKnowledgeDirectory(config.root);
+    knowledgeRepoKeys.set(key, await checkoutKeyOf(config.root));
     workbenchTools.addWorkspace({
       scope: config.scope, root: config.root, readPrefixes: config.readPrefixes,
       ...(config.writePrefixes === undefined ? {} : { writePrefixes: config.writePrefixes }),
@@ -2149,7 +2164,22 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       commandsAllowed: workspace.allowCommands === true,
       // U8: where the workspace's project store lives (no directory); a memory store or a project not open has none.
       storeLocation: storeLocationOf(workspace.scope.projectId),
+      knowledgeRepoKey: knowledgeRepoKeys.get(scopeKey(workspace.scope)) ?? null,
     })),
+    // KLS-2: the checkout through the one line resolution (the workspace must be the project's); the key the snapshot
+    // reads is refreshed with it, so a folder made a git repository after it opened reads right from here on.
+    knowledgeCheckout: async scope => {
+      const main = mainWorkspaces.get(scope.projectId);
+      const resolved = await resolveKnowledgeLine({ resolveRoot: projectBindings(scope.projectId).resolveRoot,
+        workspacesOf: projectId => main === undefined ? [] : knowledgeWorkspacesOf(projectId, main) }, scope, scope.workspaceId);
+      // The one line resolution answers only `unavailable`.
+      if (resolved.status !== 'ready') return { status: 'rejected', code: 'unavailable', reason: resolved.reason };
+      // A folder gone since the resolution throws here; the route answers that as `unavailable`.
+      const probe = await identifyCheckout(resolved.value.line.folder);
+      const repoKey = probe.kind === 'git' ? probe.repoKey : null;
+      knowledgeRepoKeys.set(scopeKey(scope), repoKey);
+      return { status: 'ready', value: repoKey === null ? { notGit: true } : { repoKey } };
+    },
     readCheckProposal: async (scope, answerRef) => {
       if (answerRef.projectId !== scope.projectId || answerRef.workspaceId !== scope.workspaceId) {
         return { status: 'rejected', code: 'not_found', reason: 'the saved Answer is outside this workspace scope' };
