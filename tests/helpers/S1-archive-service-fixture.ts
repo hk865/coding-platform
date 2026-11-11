@@ -49,6 +49,7 @@ import { B2_HOST, createB2ExecutionFixture, type B2Records } from './B2-executio
 import type { ClaimFixtureKind, ClaimConnection } from './task-claim-fixture.js';
 import { ProviderRegistry, SqliteStores, runCodingAgent, type SessionRecord as KernelRecord } from '../../vendor/coding-agent/dist/public-api.js';
 import { createScriptedModel } from './B2-runtime-fixture.js';
+import { knowledgeLinesOver } from './KLS2-knowledge-lines.js';
 
 export const t0 = '2026-10-08T00:00:00.000Z';
 export const t1 = '2026-10-09T00:00:00.000Z';
@@ -135,15 +136,17 @@ export async function createArchiveServiceFixture(kind: ClaimFixtureKind) {
   const entry = createExecutionEntryService({ records, reads, roles, bodies: b2.bodies,
     authorizeConfiguration, now, eventId: id, newId: id });
   const sessionFacts = createSessionFactsService({ records });
-  const lifecycleOn = (port = records) => createSessionLifecycleService({ records: port, lookups: port, sessionFacts, duty: unknownSessionDuty });
+  const lifecycleOn = (port = records) => createSessionLifecycleService({ records: port,
+    knowledge: knowledgeLinesOver(port), lookups: port, sessionFacts, duty: unknownSessionDuty });
   const lifecycle = lifecycleOn();
   const responsibilities = createSessionResponsibilityService({ records, lookups: records,
-    basis: createSessionResponsibilityBasisReader(records), now, duty: unknownSessionDuty });
+    basis: createSessionResponsibilityBasisReader(records, knowledgeLinesOver(records)), now, duty: unknownSessionDuty });
   const anomalies = createSessionAnomalyService({ records, lookups: records, sessionFacts, now });
   const controlsOn = (port = records) => createRunControlService({ records: port,
     authority: createMaterialRecordReaders(port).authority, reads: createRunStateReader({ records: port }), now, eventId: id });
   const controls = controlsOn();
-  const sessions = createSessionDirectory({ records, lookups: records, duty: unknownSessionDuty });
+  const sessions = createSessionDirectory({ records,
+    knowledge: knowledgeLinesOver(records), lookups: records, duty: unknownSessionDuty });
   const healthOn = (port = records) => createSessionHealthService({ records: port,
     hostInstance: { hostInstanceId: 'fx1-host', lease: 'owned' }, now, eventId: id });
   function mailboxOn() {

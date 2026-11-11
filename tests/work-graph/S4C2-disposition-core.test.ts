@@ -15,14 +15,15 @@
  * The owner-level test is the RED (before the fix the reject commits); the
  * coordinator test asserts the required `source_stale` /
  * `application_not_recorded` contract.
+ * KLS-2b [2B-06]: the application's reads and commit now run in the project's
+ * in-process write queue, so the pointer move lands before the call (inside the
+ * read it would wait on the queue the application holds); the reject still
+ * carries the card's older pointer pin.
  */
 import { expect, it, vi } from 'vitest';
 import type { NoteDraftV1 } from '../../src/contracts/note.js';
 import type { DecisionCardV1 } from '../../src/core/work-graph/model/decision-contracts.js';
 import type { NoteDecisionApplyPort, NoteWritePort } from '../../src/core/work-graph/model/note-contracts.js';
-import type { GoalRecordTransactionPort } from '../../src/core/record-store/ports.js';
-import * as memoryBackend from '../../src/core/record-store/in-memory-record-store.js';
-import * as sqliteBackend from '../../src/core/record-store/sqlite-record-store.js';
 import * as noteServiceModule from '../../src/core/work-graph/notes/note-service.js';
 import { createS4ANoteFixture, type S4ANoteFixture, type S4ANoteFixtureKind } from '../helpers/S4A-note-fixture.js';
 
@@ -32,7 +33,6 @@ const PROJECT = 's4a-project';
 const WORKSPACE = 's4a-workspace';
 const ANSWER = { aggregateType: 'SessionMessage' as const, projectId: PROJECT, workspaceId: WORKSPACE,
   messageId: 's4c2-item3-answer' };
-const POINTER = '"aggregateType":"CurrentPointer"';
 
 function understanding(overrides: Partial<NoteDraftV1> = {}): NoteDraftV1 {
   const sections = { status: 's', decided: 'd', open: 'o', next: 'n', risks: 'r' };
@@ -45,44 +45,13 @@ function understanding(overrides: Partial<NoteDraftV1> = {}): NoteDraftV1 {
 
 const idOf = (result: { status: string }): string => (result as unknown as { noteId: string }).noteId;
 
-type Seam = {
-  /** Fire `action` once, after the `fireOn`-th armed read of a CurrentPointer record. */
-  arm(fireOn: number, action: () => Promise<void>): void;
-};
-
 type RaceFixture = {
   f: S4ANoteFixture;
   service: NoteWritePort & NoteDecisionApplyPort;
-  seam: Seam;
 };
 
-/** The real fixture over a readMany-wrapped backend; the wrapper is inert until armed. */
+/** The real fixture and the note service it composed (the owner-level row calls it directly). */
 async function buildRaceFixture(kind: S4ANoteFixtureKind): Promise<RaceFixture> {
-  const state = { armed: false, fired: false, reads: 0, fireOn: 1,
-    action: null as (() => Promise<void>) | null };
-  const observe = <T,>(backend: T): T => {
-    const records = (backend as unknown as { records: GoalRecordTransactionPort }).records;
-    const rawReadMany = records.readMany.bind(records);
-    return { ...(backend as object), records: { ...records,
-      async readMany(refKeys: readonly string[]): Promise<unknown> {
-        const result = await rawReadMany(refKeys as string[]);
-        if (state.armed && !state.fired && refKeys.some(key => key.includes(POINTER))) {
-          state.reads += 1;
-          if (state.reads === state.fireOn) {
-            state.fired = true;
-            const run = state.action;
-            if (run !== null) await run();
-          }
-        }
-        return result;
-      } } } as unknown as T;
-  };
-  const originalMemory = memoryBackend.createInMemoryRecordBackend;
-  const originalSqlite = sqliteBackend.createSqliteRecordBackend;
-  const memorySpy = vi.spyOn(memoryBackend, 'createInMemoryRecordBackend')
-    .mockImplementation(options => observe(originalMemory(options)) as never);
-  const sqliteSpy = vi.spyOn(sqliteBackend, 'createSqliteRecordBackend')
-    .mockImplementation(options => observe(originalSqlite(options)) as never);
   let service: (NoteWritePort & NoteDecisionApplyPort) | null = null;
   const originalNoteService = noteServiceModule.createNoteService;
   const noteSpy = vi.spyOn(noteServiceModule, 'createNoteService').mockImplementation(deps => {
@@ -94,14 +63,10 @@ async function buildRaceFixture(kind: S4ANoteFixtureKind): Promise<RaceFixture> 
   try {
     f = await createS4ANoteFixture(kind, { operatorActor: { kind: 'human', id: 's4a-operator' } });
   } finally {
-    memorySpy.mockRestore();
-    sqliteSpy.mockRestore();
     noteSpy.mockRestore();
   }
   if (service === null) throw new Error('the note service was not composed');
-  return { f, service,
-    seam: { arm(fireOn, action) { state.fireOn = fireOn; state.action = action; state.reads = 0;
-      state.fired = false; state.armed = true; } } };
+  return { f, service };
 }
 
 /** u0 current, u1 pending (contradiction, can supersede u0), u2 pending structural (no targets). */
@@ -156,7 +121,7 @@ async function itemOf(f: S4ANoteFixture, noteId: string):
 Promise<{ version: number; storedState: string }> {
   const read = await f.platform.notes.readNote(f.ctx(), { noteId });
   if (read.status !== 'ready') throw new Error(`note ${noteId} is not readable: ${JSON.stringify(read)}`);
-  return read.value;
+  return { ...read.value, version: read.value.version!, storedState: read.value.storedState! };
 }
 
 async function pointerOf(f: S4ANoteFixture): Promise<{ noteId: string | null; revision: number | null } | null> {
@@ -166,7 +131,7 @@ async function pointerOf(f: S4ANoteFixture): Promise<{ noteId: string | null; re
 }
 
 it.each(KINDS)('S4C2-item3 %s: a reject card guards the CurrentPointer it read', async kind => {
-  const { f, service, seam } = await buildRaceFixture(kind);
+  const { f, service } = await buildRaceFixture(kind);
   try {
     const { u1, u2 } = await seedThreeUnderstandings(f);
     const cards = await noteCards(f);
@@ -176,8 +141,9 @@ it.each(KINDS)('S4C2-item3 %s: a reject card guards the CurrentPointer it read',
     expect(u2Card.source.pins).toHaveLength(2);
     expect(pointerPinOf(u2Card)).toBe(1);
 
-    // u2's OWN pointer read is the first CurrentPointer read of this owner call.
-    seam.arm(1, () => acceptThroughCoordinator(f, u1Card, `s4c2-item3-accept-${kind}`));
+    // KLS-2b [2B-06]: the reject's pointer read and its commit run in the project's write queue, so the pointer
+    // move can no longer land between them; it lands first and the reject carries the card's older pin.
+    await acceptThroughCoordinator(f, u1Card, `s4c2-item3-accept-${kind}`);
     const result = await service.applyNoteDecision(f.ctx(), {
       commandId: `s4c2-item3-reject-${kind}`, cardId: u2Card.source.key, optionId: 'reject',
       pin: noteHeadPinOf(u2Card), expectedPointerRevision: pointerPinOf(u2Card),
@@ -191,7 +157,7 @@ it.each(KINDS)('S4C2-item3 %s: a reject card guards the CurrentPointer it read',
 });
 
 it.each(KINDS)('S4C2-item3 %s: a stale reject is source_stale through the coordinator', async kind => {
-  const { f, seam } = await buildRaceFixture(kind);
+  const { f } = await buildRaceFixture(kind);
   try {
     const { u1, u2 } = await seedThreeUnderstandings(f);
     const cards = await noteCards(f);
@@ -209,7 +175,8 @@ it.each(KINDS)('S4C2-item3 %s: a stale reject is source_stale through the coordi
       meta: { requestId: `${requestId}:answer`, expected: u2Card.source.pins } });
     expect(answered.status).toBe('committed');
 
-    seam.arm(1, () => acceptThroughCoordinator(f, u1Card, `s4c2-item3-accept-e2e-${kind}`));
+    // KLS-2b [2B-06]: the pointer move lands before the application (see the owner-level row).
+    await acceptThroughCoordinator(f, u1Card, `s4c2-item3-accept-e2e-${kind}`);
     const result = await resolve(f.ctx(), {
       input: { source: u2Card.source, selection, text: '', annotations: [] },
       meta: { requestId, expected: u2Card.source.pins } });

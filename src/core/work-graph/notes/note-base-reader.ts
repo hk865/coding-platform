@@ -7,6 +7,9 @@ import type { NoteHeadSnapshot } from '../../../contracts/note.js';
 import type { EncodedRecord } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import { decodeNoteHeadSnapshot, S4_NOTE_BY_ANCHOR_LOOKUPS } from '../persistence/note-record-codecs.js';
+import type { KnowledgeRead } from '../architecture/catalog-service.js';
+import { isKnowledgeAnchor } from './note-file.js';
+import { indexedNotes, isKnowledgeAnchorKey, type HeadlessNote } from './note-knowledge.js';
 import { asOutcome } from './store-failures.js';
 
 /** The note-port failure codes a store/record read can produce (all in NoteErrorCode). */
@@ -47,20 +50,38 @@ export async function readAllHeads(records: RecordLookupPort, index: string,
 }
 
 /**
- * Every head that carries `anchorKey` in one of the five anchor slots, deduped
+ * Every note that carries `anchorKey` in one of the five anchor slots, deduped
  * by noteId. The whole index is read through `readAllHeads`, so a failed or
- * damaged page is returned, never skipped into a partial set.
+ * damaged page is returned, never skipped into a partial set. KLS-2b: a note
+ * whose primary anchor is a module, interface or file is found through the
+ * knowledge index of every line and read from its file (the record keeps its
+ * runtime state); the record lookup answers only the other notes, and the
+ * filed heads it listed are not read again. A filed note with no record head
+ * is `headless` ([2B-16]).
  */
-export async function headsByAnchorKey(records: RecordLookupPort, projectId: string,
-  anchorKey: string): Promise<ReadOutcome<NoteHeadSnapshot[]>> {
+export async function notesByAnchorKey(records: RecordLookupPort, knowledge: KnowledgeRead,
+  anchorKey: string): Promise<ReadOutcome<{ heads: NoteHeadSnapshot[]; headless: HeadlessNote[] }>> {
   const seen = new Map<string, NoteHeadSnapshot>();
+  const filedHeads = new Map<string, NoteHeadSnapshot>();
   for (const index of S4_NOTE_BY_ANCHOR_LOOKUPS) {
-    const page = await readAllHeads(records, index, [projectId, anchorKey]);
+    const page = await readAllHeads(records, index, [knowledge.caller.projectId, anchorKey]);
     if (!page.ok) return page;
     for (const head of page.heads) {
+      if (isKnowledgeAnchor(head.anchor)) { filedHeads.set(head.noteId, head); continue; }
       if (head.anchorKey0 === anchorKey || head.anchorKey1 === anchorKey || head.anchorKey2 === anchorKey
         || head.anchorKey3 === anchorKey || head.anchorKey4 === anchorKey) seen.set(head.noteId, head);
     }
   }
-  return { ok: true, value: [...seen.values()] };
+  if (!isKnowledgeAnchorKey(anchorKey)) return { ok: true, value: { heads: [...seen.values()], headless: [] } };
+  const filed = await indexedNotes(knowledge, (index, lineRef) => index.noteIdsByAnchor(lineRef, anchorKey), filedHeads);
+  if (filed.status !== 'ready') return asOutcome(filed);
+  for (const head of filed.value.heads) seen.set(head.noteId, head);
+  return { ok: true, value: { heads: [...seen.values()], headless: filed.value.headless } };
+}
+
+/** `notesByAnchorKey` for the callers that need the state: the heads only. */
+export async function headsByAnchorKey(records: RecordLookupPort, knowledge: KnowledgeRead,
+  anchorKey: string): Promise<ReadOutcome<NoteHeadSnapshot[]>> {
+  const notes = await notesByAnchorKey(records, knowledge, anchorKey);
+  return notes.ok ? { ok: true, value: notes.value.heads } : notes;
 }

@@ -38,6 +38,8 @@ import {
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { readAllHeads, readAllRecords, type ReadFailureCode } from './note-base-reader.js';
 import { mapStoreFailure } from './store-failures.js';
+import { overlayFileKnowledge } from './note-knowledge.js';
+import type { KnowledgeLines } from '../model/line-knowledge.js';
 import { pathOwnershipOf } from './note-path-ownership.js';
 import { deepestContainingRegion, regionContains } from '../state/role-scope.js';
 import { GOAL_BY_WORKSPACE_INDEX } from '../tasks/plan-readers.js';
@@ -49,6 +51,8 @@ export type ScribeScopeDependencies = {
   duties: NoteDutyResolver;
   /** The project's main workspace; absent treats the caller's workspace as main. */
   mainWorkspaceOf?: (projectId: string) => Promise<ReadResult<string | null>>;
+  /** KLS-2b [2B-19]: the relation targets' and the counted notes' anchors come from their files. */
+  knowledge: KnowledgeLines;
 };
 
 export type ScribeScopeRefusal = { code: 'forbidden' | 'unavailable'; reason: string };
@@ -334,10 +338,13 @@ export function createScribeScope(deps: ScribeScopeDependencies): ScribeScope {
         }
       }
     }
-    return { ok: true, heads: [...seen.values()] };
+    // KLS-2b [2B-19]: a filed note counts where its file's anchors put it.
+    const overlaid = await overlayFileKnowledge([...seen.values()], { lines: deps.knowledge, caller: ctx });
+    if (overlaid.status !== 'ready') return { ok: false, code: mapStoreFailure(overlaid).code, reason: overlaid.reason };
+    return { ok: true, heads: overlaid.value };
   }
 
-  async function relationAnchorsOf(head: NoteHeadSnapshot):
+  async function relationAnchorsOf(ctx: CoreCallContext, head: NoteHeadSnapshot):
   Promise<{ ok: true; anchors: NoteAnchorV1[] } | { ok: false; code: ReadFailureCode; reason: string }> {
     const relations = [...new Set([...head.replaces, ...head.contradicts])];
     if (relations.length === 0) return { ok: true, anchors: [] };
@@ -350,22 +357,25 @@ export function createScribeScope(deps: ScribeScopeDependencies): ScribeScope {
       return { ok: false, code: mapped.code, reason: mapped.reason };
     }
     const byKey = new Map(read.value.records.map(record => [record.refKey, record]));
-    const anchors: NoteAnchorV1[] = [];
+    const targets: NoteHeadSnapshot[] = [];
     for (const refKey of refKeys) {
       const record = byKey.get(refKey);
       if (record === undefined) return { ok: false, code: 'unavailable', reason: 'a relation head is missing' };
       const decoded = decodeNoteHeadSnapshot(record);
       if (decoded.status !== 'decoded') return { ok: false, code: 'unavailable', reason: 'a relation head is damaged' };
-      anchors.push(decoded.value.anchor, ...decoded.value.extraAnchors);
+      targets.push(decoded.value);
     }
-    return { ok: true, anchors };
+    // KLS-2b [2B-19]: a filed target's anchors come from its file.
+    const overlaid = await overlayFileKnowledge(targets, { lines: deps.knowledge, caller: ctx });
+    if (overlaid.status !== 'ready') return { ok: false, code: mapStoreFailure(overlaid).code, reason: overlaid.reason };
+    return { ok: true, anchors: overlaid.value.flatMap(target => [target.anchor, ...target.extraAnchors]) };
   }
 
   async function managingScopeOf(call: ScribeScopeCall, ctx: CoreCallContext,
     head: NoteHeadSnapshot): Promise<ReadResult<NoteScopeV1>> {
     const factsRead = await factsFor(call, ctx);
     if (!factsRead.ok) return { status: 'rejected', code: factsRead.code, reason: factsRead.reason };
-    const relationRead = await relationAnchorsOf(head);
+    const relationRead = await relationAnchorsOf(ctx, head);
     if (!relationRead.ok) return { status: 'rejected', code: relationRead.code, reason: relationRead.reason };
     const anchors = [head.anchor, ...head.extraAnchors, ...relationRead.anchors];
     return managingScopeOfAnchors(factsRead.facts, anchors, () => mainWorkspaceForAnchors(call, ctx));
@@ -386,7 +396,7 @@ export function createScribeScope(deps: ScribeScopeDependencies): ScribeScope {
       if (!headsRead.ok) return { status: 'rejected', code: headsRead.code, reason: headsRead.reason };
       let current = 0;
       for (const head of headsRead.heads) {
-        const relationRead = await relationAnchorsOf(head);
+        const relationRead = await relationAnchorsOf(ctx, head);
         if (!relationRead.ok) return { status: 'rejected', code: relationRead.code, reason: relationRead.reason };
         const anchors = [head.anchor, ...head.extraAnchors, ...relationRead.anchors];
         const managing = await managingScopeOfAnchors(factsRead.facts, anchors, () => mainWorkspaceForAnchors(call, ctx));

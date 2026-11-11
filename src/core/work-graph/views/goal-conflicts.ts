@@ -20,7 +20,7 @@ import { decisionSourceKey,
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import type { ArchitectureCatalogPort } from '../architecture/catalog-contracts.js';
-import { activeRefKey } from '../architecture/catalog-service.js';
+import { readCatalogPointerRevision } from '../architecture/catalog-service.js';
 import type {
   ConflictArchitectureRead,
   DecisionCardV1,
@@ -120,23 +120,6 @@ function unavailableReason(error: unknown): string {
     return (error as { reason: string }).reason;
   }
   return error instanceof Error ? error.message : 'the read failed';
-}
-
-/** R-window: the current catalog pointer record's revision, `null` when no catalog is adopted. */
-export async function readCatalogPointerRevision(
-  records: DecisionReadRecordsPort,
-  projectId: string,
-): Promise<ReadResult<number | null>> {
-  const refKey = activeRefKey(projectId);
-  let read: Awaited<ReturnType<DecisionReadRecordsPort['readMany']>>;
-  try {
-    read = await records.readMany([refKey]);
-  } catch (error) {
-    return storeFailureToRejection(error as { code: string; reason: string });
-  }
-  if (read.status !== 'ready') return storeFailureToRejection(read);
-  const record = read.value.records.find((candidate) => candidate.refKey === refKey);
-  return { status: 'ready', value: record === undefined ? null : record.revision };
 }
 
 /** The store's read watermark; a failure is returned, never turned into `null`. */

@@ -63,6 +63,7 @@ import type { AutoCleanupCandidateV1 } from '../../src/core/work-graph/tasks/run
 import { createSessionHealthService } from '../../src/core/work-graph/sessions/session-health.js';
 import type { TurnClosureDependencies } from '../../src/core/agent-runtime/execution-contracts.js';
 import { KernelTurnRecords } from '../helpers/S2B-kernel-records-fixture.js';
+import { knowledgeLinesFor, knowledgeLinesOver } from '../helpers/KLS2-knowledge-lines.js';
 
 const T0 = '2026-10-08T00:00:00.000Z';
 const T1 = '2026-10-09T00:00:00.000Z';
@@ -216,11 +217,12 @@ async function open(kind: 'memory' | 'sqlite'): Promise<Opened> {
   const sessionFacts = createSessionFactsService({ records });
   // ':83–91' correction: the trusted basis is the real reader, never a fake.
   const responsibilities = createSessionResponsibilityService({
-    records, lookups: records, basis: createSessionResponsibilityBasisReader(records), now,duty: unknownSessionDuty,
+    records, lookups: records, basis: createSessionResponsibilityBasisReader(records, knowledgeLinesOver(records)), now,duty: unknownSessionDuty,
   
   });
   const sessionAnomalies = createSessionAnomalyService({ records, lookups: records, sessionFacts, now });
-  const sessionLifecycle = createSessionLifecycleService({ records, lookups: records, sessionFacts, duty: unknownSessionDuty });
+  const sessionLifecycle = createSessionLifecycleService({ records,
+    knowledge: knowledgeLinesOver(records), lookups: records, sessionFacts, duty: unknownSessionDuty });
   const materialReads = createMaterialRecordReaders(records);
   const mailbox = createSessionMailbox({
     defaultInquiryDeadlineMs: 86_400_000,
@@ -293,6 +295,7 @@ async function open(kind: 'memory' | 'sqlite'): Promise<Opened> {
     clock = at;
     vi.setSystemTime(new Date(at));
     const plans = createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+      knowledge: knowledgeLinesFor({ root: base.directory, ...base.scope, records }),
       now: () => at, eventId: () => `s1-maintenance-plan-${++planSeq}` });
     const draft = edit(draftOf(currentPlan));
     const affectedTaskIds = draft.tasks.filter(task =>

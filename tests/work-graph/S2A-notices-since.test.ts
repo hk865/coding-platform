@@ -73,7 +73,8 @@ describe.each(['memory', 'sqlite'] as const)('S2A archive wait disposal keeps si
     await yieldRunForUser(f, f.claimRA, waiting.message.ref);
 
     const sessionFacts = createSessionFactsService({ records: f.records });
-    const lifecycle = createSessionLifecycleService({ records: f.records, lookups: f.records, sessionFacts, duty: unknownSessionDuty });
+    const lifecycle = createSessionLifecycleService({ records: f.records,
+      knowledge: f.knowledge, lookups: f.records, sessionFacts, duty: unknownSessionDuty });
     const sessionRef = f.claimRA.sessionRef;
     const registered = committed(await lifecycle.requestSessionArchive(f.ctx, { input: { sessionRef,
       reason: 'Archive the waiting line', tasks: [], wait: { kind: 'cancel', runRef: f.claimRA.runRef,

@@ -21,6 +21,7 @@ import { B2_AT } from '../helpers/B2-execution-fixture.js';
 import {
   createR3eEvidenceFixture, R3E_GATE_TASK_ID, R3E_HOST, R3E_WORK_TASK_ID, type R3eEvidenceFixture,
 } from '../helpers/R3e-evidence-fixture.js';
+import { knowledgeLinesOver } from '../helpers/KLS2-knowledge-lines.js';
 
 const fixtures: R3eEvidenceFixture[] = [];
 afterEach(async () => { for (const fixture of fixtures.splice(0)) await fixture.close(); });
@@ -276,7 +277,7 @@ it('freezes an open round configuration and resolves a fresh round from the curr
   const fixture = await openFixture();
   const current: { configuration: TrustedCheckConfiguration } = { configuration: { ...fixture.configuration } };
   let sequence = 0;
-  const scoped = createEvidenceService({
+  const scoped = createEvidenceService({ knowledge: knowledgeLinesOver(fixture.records, fixture.workspaceHost),
     records: fixture.records,
     materials: fixture.materials,
     executions: createRunStateReader({ records: fixture.records }),

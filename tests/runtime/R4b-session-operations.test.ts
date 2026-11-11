@@ -18,6 +18,7 @@ import { createSessionDirectory } from '../../src/core/work-graph/sessions/sessi
 import { unknownSessionDuty } from '../helpers/session-duty-double.js';
 import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
 import { createSessionOperations } from '../../src/core/agent-runtime/session-operations.js';
+import { knowledgeLinesOver } from '../helpers/KLS2-knowledge-lines.js';
 
 const at = '2026-09-24T00:00:00.000Z';
 const projectId = 'session-project';
@@ -70,7 +71,8 @@ async function open(kind: 'memory' | 'sqlite') {
   if (registered.status !== 'committed') {
     throw new Error(`workspace registration failed: ${JSON.stringify(registered)}`);
   }
-  const sessions = createSessionDirectory({ records: backend.records, lookups: backend.records, duty: unknownSessionDuty });
+  const sessions = createSessionDirectory({ records: backend.records,
+    knowledge: knowledgeLinesOver(backend.records), lookups: backend.records, duty: unknownSessionDuty });
   const kernelStores = await createKernelStoreRegistry({ entries: [{
     adapterId: 'workspace-kernel', storeKey: 'workspace-key', workspace,
     databasePath: path.join(directory, 'kernel.sqlite'),

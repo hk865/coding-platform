@@ -75,6 +75,7 @@ import type { PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot, RuntimeT
 import type { RunRef, RunSnapshot } from '../../src/contracts/dispatch.js';
 import type { TrustedCheckConfiguration } from '../../src/contracts/verification.js';
 import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
+import { knowledgeLinesOver } from '../helpers/KLS2-knowledge-lines.js';
 
 const AT = '2026-10-06T00:00:00.000Z';
 // The accepted claim fixture's fixed scope; `setup` verifies it before use.
@@ -312,7 +313,7 @@ async function setup(kind: ClaimFixtureKind): Promise<Fixture> {
     };
     const materials = createMaterialService({ bodies: b2.bodies,
       authority: createMaterialRecordReaders(records).authority, now });
-    const evidence = createEvidenceService({ records, materials, executions, workspaceHost,
+    const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(records, workspaceHost), records, materials, executions, workspaceHost,
       source: new VerificationWorkspaceReader(), configuration, now, newId });
     const runner = createRegisteredCheckRunner({ evidence, workspaceHost, kernel, now });
 
@@ -397,7 +398,8 @@ async function setup(kind: ClaimFixtureKind): Promise<Fixture> {
       if (paused.status !== 'committed' || paused.value.desiredState !== 'paused') throw new Error(`C7 pause failed: ${JSON.stringify(paused)}`);
     }
     const planServiceOver = (target: Records): PlanTaskPort =>
-      createPlanService({ records: target, bindings: createInitializationBindingReader({ records: target }), now, eventId });
+      createPlanService({ records: target, bindings: createInitializationBindingReader({ records: target }),
+        knowledge: knowledgeLinesOver(target), now, eventId });
 
     let closed = false;
     const close = async (): Promise<void> => {

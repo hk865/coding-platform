@@ -16,6 +16,7 @@ import { createProjectBootstrapServices } from '../../src/core/work-graph/config
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { VersionPin } from '../../src/contracts/core/identity.js';
+import { knowledgeLinesOver } from '../helpers/KLS2-knowledge-lines.js';
 
 const at = '2026-09-24T00:00:00.000Z';
 const projectId = 'independent-project';
@@ -77,6 +78,7 @@ it.each(['memory', 'sqlite'] as const)('%s: Goal creation uses only the new Stor
     expect(await goal.tasks.createGoal({ ...ctx, workspaceId: 'other-workspace' }, request(pins, 'forged-scope')))
       .toMatchObject({ status: 'rejected', code: 'forbidden' });
     const plans = createPlanService({ records: backend.records, bindings: createInitializationBindingReader({ records: backend.records }),
+      knowledge: knowledgeLinesOver(backend.records),
       now: () => at, eventId: () => 'goal-event-' + ++sequence });
     expect(await plans.queryGoal(ctx, { aggregateType: 'Goal', projectId, goalId: 'new-goal' }))
       .toMatchObject({ status: 'ready', value: { goal: { ref: { aggregateType: 'Goal', projectId, goalId: 'new-goal' }, revision: 1 } } });

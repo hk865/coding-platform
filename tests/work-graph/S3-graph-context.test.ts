@@ -23,7 +23,7 @@
  * public creation results) so the Query session bridge has a canonical
  * QueryJobSubmitted event and a persisted Session binding.
  */
-import { knowledgeLinesFor } from '../helpers/KLS2-knowledge-lines.js';
+import { knowledgeLinesFor, knowledgeLinesOver } from '../helpers/KLS2-knowledge-lines.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { withBackendOrderedLookup } from '../helpers/ordered-lookup-forward.js';
 import { join } from 'node:path';
@@ -454,6 +454,8 @@ async function createFixture(kind: 'memory' | 'sqlite', options: FixtureOptions 
   if (options.moduleThreePaths !== undefined) modules.push({ ...moduleM3, paths: options.moduleThreePaths });
   const chosenCatalog: AdoptedArchitecture = { modules, dependencies: [], requireDag: true };
   const knowledge = knowledgeLinesFor({ root: directory, ...scope, records: rawRecords });
+  // The base plan owner reads this world's architecture files.
+  base.knowledgeRoots.set(JSON.stringify([scope.projectId, scope.workspaceId]), directory);
   const adopted = await createArchitectureCatalogService({ records: rawRecords, knowledge }).adoptInitialArchitecture(ctx, {
     input: { baselineId: 's3-baseline', catalog: chosenCatalog, description: 'S3 graph fixture architecture', constraints: [] },
     meta: { requestId: 'gr-adopt-architecture', expected: [
@@ -650,7 +652,7 @@ async function createFixture(kind: 'memory' | 'sqlite', options: FixtureOptions 
   });
   const evidenceIds = ['ra', 'ra-event', variant.roundBId, `${variant.roundBId}-event`];
   let evidenceSeq = 0;
-  const evidence = createEvidenceService({
+  const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(rawRecords, workspaceHost),
     records: rawRecords, materials: evidenceMaterials, executions: createRunStateReader({ records: rawRecords }),
     workspaceHost, source: new VerificationWorkspaceReader(), configuration, now,
     newId: () => evidenceIds.shift() ?? `gr-evidence-${++evidenceSeq}`,
@@ -739,8 +741,10 @@ async function createFixture(kind: 'memory' | 'sqlite', options: FixtureOptions 
   const architecture: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'> =
     createArchitectureCatalogService({ records: readerRecords, knowledge });
   const readerPlans = createPlanService({ records: readerRecords, bindings: createInitializationBindingReader({ records: readerRecords }),
+    knowledge,
     now, eventId });
-  const sessionDirectory = createSessionDirectory({ records: readerRecords, lookups: readerRecords, duty: unknownSessionDuty });
+  const sessionDirectory = createSessionDirectory({ records: readerRecords,
+    knowledge: knowledgeLinesOver(readerRecords), lookups: readerRecords, duty: unknownSessionDuty });
   const sessionSpy: SessionSpy = { findSessionsCalls: 0, readSessionCalls: 0, contexts: [] };
   const sessions = {
     async findSessions(callCtx: CoreCallContext, input: Parameters<typeof sessionDirectory.findSessions>[1]) {

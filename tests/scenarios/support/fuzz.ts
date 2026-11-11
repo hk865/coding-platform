@@ -85,6 +85,7 @@ import {
 import { hostCtx, openHostScenario, stepOfReceipt, workRunCtx, type HostScenario, type Platform } from '../harness.js';
 import { authorizeWithoutBegin, openWorkRoot, ownerStep } from './common.js';
 import { storeDirOf } from '../../helpers/KLS1B-host-store.js';
+import { knowledgeLinesOfRoots, knowledgeLinesOver } from '../../helpers/KLS2-knowledge-lines.js';
 
 // ---------------------------------------------------------------------------
 // Seeded randomness
@@ -2179,10 +2180,11 @@ export class AgentFuzz {
     this.controls = createRunControlService({ records, authority: materialReads.authority, reads, now, eventId });
     this.delegatedWrites = { reads, roles, bodies: b2.bodies, authorizeConfiguration };
     this.plans = createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+      knowledge: knowledgeLinesOfRoots(b2.base.knowledgeRoots, records),
       now, eventId, delegatedWrites: this.delegatedWrites });
     // The 5.9 evidence owner (as tests/work-graph/R3e-reverify.test.ts builds it): the R3e checks configuration for
     // this scope, the fuzz's automation policy and the Agent admission.
-    this.evidence = createEvidenceService({ records, materials: r3e.materials, executions: reads,
+    this.evidence = createEvidenceService({ knowledge: knowledgeLinesOver(records, r3e.workspaceHost), records, materials: r3e.materials, executions: reads,
       workspaceHost: r3e.workspaceHost, source: new VerificationWorkspaceReader(),
       configurationFor: (scope) => scope.projectId === r3e.scope.projectId && scope.workspaceId === r3e.scope.workspaceId ? r3e.configuration : undefined,
       automationPolicy: () => this.policy, now, newId: () => `fuzz-agent-${options.seed}-evidence-${++this.sequence}`,
@@ -2932,6 +2934,7 @@ export class AgentFuzz {
     const base = this.b2.base;
     const barrier = commitBarrier(base.records, this.rng.chance(0.5));
     const racedPlans = createPlanService({ records: barrier.records, bindings: createInitializationBindingReader({ records: barrier.records }),
+      knowledge: knowledgeLinesOfRoots(this.b2.base.knowledgeRoots, barrier.records),
       now: () => B2_AT,
       eventId: () => `fuzz-agent-${this.options.seed}-race-${++this.sequence}`, delegatedWrites: this.delegatedWrites });
     const proposal = prepared.proposal;
@@ -3022,6 +3025,7 @@ export class AgentFuzz {
     const now = (): string => B2_AT;
     const eventId = (): string => `fuzz-agent-${this.options.seed}-race9-${++this.sequence}`;
     const racedPlans = createPlanService({ records: barrier.records, bindings: createInitializationBindingReader({ records: barrier.records }),
+      knowledge: knowledgeLinesOfRoots(this.b2.base.knowledgeRoots, barrier.records),
       now, eventId, delegatedWrites: this.delegatedWrites });
     const racedControls = createRunControlService({ records: barrier.records, authority: createMaterialRecordReaders(barrier.records).authority,
       reads: createRunStateReader({ records: barrier.records }), now, eventId });
@@ -3076,6 +3080,7 @@ export class AgentFuzz {
     const now = (): string => B2_AT;
     const eventId = (): string => `fuzz-agent-${this.options.seed}-racew16c-${++this.sequence}`;
     const racedPlans = createPlanService({ records: barrier.records, bindings: createInitializationBindingReader({ records: barrier.records }),
+      knowledge: knowledgeLinesOfRoots(this.b2.base.knowledgeRoots, barrier.records),
       now, eventId, delegatedWrites: this.delegatedWrites });
     const racedControls = createRunControlService({ records: barrier.records, authority: createMaterialRecordReaders(barrier.records).authority,
       reads: createRunStateReader({ records: barrier.records }), now, eventId });

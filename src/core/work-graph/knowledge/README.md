@@ -7,14 +7,15 @@
 - 依赖只有 `model`（`docs/refactor/module-target.json`）；`architecture`、`notes` 依赖本层。放进这里的文件不得 import `architecture/`、`notes/`，否则成环。
 
 ## 文件
-- `knowledge-write.ts` — 一次知识写的顺序 `writeKnowledge`、写点交回的提交 `knowledgeCommit`、文件没写成时的原因 `knowledgeFilesNotWritten`，以及 `KnowledgePrepared`/`KnowledgeWriteOutcome`/`KnowledgeWritePlan` 等形状。
+- `knowledge-write.ts` — 一次知识写的顺序 `writeKnowledge`、写点交回的提交 `knowledgeCommit`、文件没写成时的原因 `knowledgeFilesNotWritten`，以及 `KnowledgePrepared`/`KnowledgeWriteOutcome`/`KnowledgeWritePlan` 等形状。 KLS-2b：读线之后整个 `prepare`、提交、落盘和索引都在 `write.queue.run(projectId, 排好序的 folder)` 里；全部落盘后一个索引事务交 `write.indexFile`，注记文件再记 `setNoteState`，这一步出错吞掉、不改写入结果。
+- `write-queue.ts` — KLS-2b 的进程内写队列 `createKnowledgeWriteQueue`：先项目键、再排好序的 folder 键，调用时同步登记全部键，先来先走、不会死锁；不替代 CAS。Host 只建一个，经 `knowledgeWriteQueue` 交给每个项目的平台。
 
 ## 可以复用的能力
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
-| `writeKnowledge` | `src/core/work-graph/knowledge/knowledge-write.ts:72` | 取项目全部线 → `prepare`（返回 `exit` 就原样交回，什么都没提交）→ 提交 → 不是 `committed` 回 `rejected` → `replayed` 不碰文件 → 逐条线、逐个改动 `applyChange`，第一处失败就停 | 新的架构或注记写点；不要自己先提交再写文件，也不要在别处另写这个顺序 |
-| `knowledgeCommit` | `src/core/work-graph/knowledge/knowledge-write.ts:55` | 写点的 `ready.commit`：把最终顺序的事件交给 `extrasOf`、并进同一次提交；提交抛错记进 `thrown`，回 `unavailable` | 每个写点组好 `PreparedCommit` 后交回它；服务按 `thrown` 走自己原来的“按身份重查” |
-| `knowledgeFilesNotWritten` | `src/core/work-graph/knowledge/knowledge-write.ts:68` | 记录已提交、文件没写成时给人的原因（带路径） | `files` 回 `rejected` 时；不要另写这句 |
+| `writeKnowledge` | `src/core/work-graph/knowledge/knowledge-write.ts:75` | 取项目全部线 → `prepare`（返回 `exit` 就原样交回，什么都没提交）→ 提交 → 不是 `committed` 回 `rejected` → `replayed` 不碰文件 → 逐条线、逐个改动 `applyChange`，第一处失败就停 | 新的架构或注记写点；不要自己先提交再写文件，也不要在别处另写这个顺序 |
+| `knowledgeCommit` | `src/core/work-graph/knowledge/knowledge-write.ts:58` | 写点的 `ready.commit`：把最终顺序的事件交给 `extrasOf`、并进同一次提交；提交抛错记进 `thrown`，回 `unavailable` | 每个写点组好 `PreparedCommit` 后交回它；服务按 `thrown` 走自己原来的“按身份重查” |
+| `knowledgeFilesNotWritten` | `src/core/work-graph/knowledge/knowledge-write.ts:71` | 记录已提交、文件没写成时给人的原因（带路径） | `files` 回 `rejected` 时；不要另写这句 |
 
 ## 内部用
 `KnowledgeWritePlan`、`KnowledgeCommitExtras`、`KnowledgeExtrasOf`、`KnowledgePrepared`、`KnowledgeWriteOutcome`、`KnowledgeCommitThrow` 是本层的形状。

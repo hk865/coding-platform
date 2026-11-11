@@ -69,7 +69,8 @@ export async function w2ClaimStack(f: S5DecisionFixture): Promise<ManyTaskWorldC
     hostTemplate: { templateId: 'builder', revision: '1', digest: artifactBodyDigest('s5 trusted builder template') },
   };
   const roles = createRoleConfigurationService({ records: f.records, now: f.now, eventId: f.newId });
-  const sessionsPort = createSessionDirectory({ records: f.records, lookups: f.records, duty: unknownSessionDuty });
+  const sessionsPort = createSessionDirectory({ records: f.records,
+    knowledge: f.knowledge, lookups: f.records, duty: unknownSessionDuty });
   const claimService = createTaskClaimService({ records: f.records, roles, now: f.now, newId: f.newId });
   const reads = createRunStateReader({ records: f.records });
   const kernelStores = await createKernelStoreRegistry({ entries: [{ adapterId: 's5-kernel', storeKey: 's5-kernel-store',

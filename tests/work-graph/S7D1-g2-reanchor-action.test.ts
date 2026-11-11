@@ -29,6 +29,7 @@ import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
 import { createS6BLine, governS6B } from '../helpers/S6B1-fixture.js';
 import { s6b2Backend, s6b2Duty, type S6B2Captured } from '../helpers/S6B2-handoff-scene.js';
 import { openMaintainerWorld0, type MaintainerWorld } from '../helpers/S8B-maintainer-world.js';
+import { knowledgeLinesFor } from '../helpers/KLS2-knowledge-lines.js';
 
 const ADVISER_ROLE = platformRoleProfile('adviser').template;
 const CORE = 's6a-core';
@@ -95,7 +96,8 @@ describe('G2-reanchor-action', () => {
       const owner = createSessionResponsibilityService({
         records: s6b2Backend(captured).records,
         lookups: s6b2Backend(captured).records,
-        basis: createSessionResponsibilityBasisReader(s6b2Backend(captured).records),
+        basis: createSessionResponsibilityBasisReader(s6b2Backend(captured).records,
+          knowledgeLinesFor({ root: world.root, ...S6A_SCOPE, records: s6b2Backend(captured).records })),
         duty: s6b2Duty,
         now: () => world.clock.now(),
       });

@@ -35,8 +35,9 @@ import { decisionSourceKey, decisionSubjectGoalRef } from '../../../contracts/go
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { NoteDecisionApplicationInputV1, NoteDecisionApplyPort } from '../model/note-contracts.js';
-import type {
-  DecisionSourceAttempt, NoteDecisionCardFactsV1, NoteDecisionClosedReasonV1, NoteDecisionSourcePort,
+import {
+  DECISION_WINDOW_MOVED_REASON, type DecisionSourceAttempt, type NoteDecisionCardFactsV1, type NoteDecisionClosedReasonV1,
+  type NoteDecisionSourcePort,
 } from '../model/decision-contracts.js';
 import {
   actualDispositionTargets, pendingUnderstandingOverridden, userReasonsOf,
@@ -47,6 +48,8 @@ import { readAllHeads } from './note-base-reader.js';
 import { readHeadBatch, readPointerAndHeadBatch } from './note-batch-reader.js';
 import { readGoalPlanWindow } from '../tasks/plan-readers.js';
 import type { NotePlanWindowFactsV1 } from './note-service.js';
+import { overlayFileKnowledge, prepareNoteFiles, preparedHeads } from './note-knowledge.js';
+import type { KnowledgeLines } from '../model/line-knowledge.js';
 
 /** The one pointer shape the batch read and `pendingUnderstandingOverridden` share. */
 type PointerFacts = { noteId: string | null; revision: number | null };
@@ -61,8 +64,13 @@ export type NoteDecisionSourceDeps = {
   userReasonFacts(ctx: CoreCallContext, heads: readonly NoteHeadSnapshot[],
     planWindows: readonly NotePlanWindowFactsV1[],
     attempt?: DecisionSourceAttempt): Promise<ReadResult<Map<string, NoteUserReasonTargetV1>>>;
+  /** R-窗 (ruling 9): the note service's catalog read for these targets' facts, before the queue fixes its window. */
+  prepareReasonFacts(ctx: CoreCallContext, heads: readonly NoteHeadSnapshot[], attempt: DecisionSourceAttempt):
+    Promise<ReadResult<void>>;
   /** The note service's card-mode entry (`createNoteService(...).applyNoteDecision`). */
   apply: NoteDecisionApplyPort['applyNoteDecision'];
+  /** KLS-2b [2B-19]: a card shows its notes' file knowledge. */
+  knowledge: KnowledgeLines;
 };
 
 const OPTION_LABELS: Readonly<Record<'accept' | 'reject' | 'supersede' | 'coexist', string>> = {
@@ -115,13 +123,38 @@ function cardFactsOf(projectId: string, head: NoteHeadSnapshot, pointer: Pointer
   };
 }
 
+/** R-窗 (ruling 9): where a queue attempt keeps the note cards' heads overlaid before the window. */
+const REVIEW_FILES = 'notes.reviewFiles';
+
 export function createNoteDecisionSource(deps: NoteDecisionSourceDeps): NoteDecisionSourcePort {
+  /**
+   * [2B-19]: the heads with each filed note's file knowledge over them; inside a queue window, the knowledge
+   * prepared before it (a head that moved since is the window's move, never a file read).
+   */
+  async function overlaid(ctx: CoreCallContext, heads: readonly NoteHeadSnapshot[], attempt?: DecisionSourceAttempt):
+  Promise<{ ok: true; heads: NoteHeadSnapshot[] } | { ok: false; code: 'unavailable' | 'source_stale'; reason: string }> {
+    const prepared = preparedHeads(attempt, REVIEW_FILES, heads);
+    if (prepared === 'moved') return { ok: false, code: 'source_stale', reason: DECISION_WINDOW_MOVED_REASON };
+    if (prepared !== undefined) return { ok: true, heads: prepared };
+    const read = await overlayFileKnowledge(heads, { lines: deps.knowledge, caller: ctx });
+    return read.status === 'ready' ? { ok: true, heads: read.value } : { ok: false, code: 'unavailable', reason: read.reason };
+  }
+  /** [2B-19]: the batched target heads, overlaid, by noteId. */
+  async function overlaidTargets(ctx: CoreCallContext, targets: ReadonlyMap<string, NoteHeadSnapshot>,
+    attempt?: DecisionSourceAttempt):
+  Promise<{ ok: true; value: Map<string, NoteHeadSnapshot> } | { ok: false; code: 'unavailable' | 'source_stale'; reason: string }> {
+    const read = await overlaid(ctx, [...targets.values()], attempt);
+    return read.ok ? { ok: true, value: new Map(read.heads.map(head => [head.noteId, head])) } : read;
+  }
+
   /** The open-card facts of one pending head, or the shared closed verdict. */
   async function cardFor(ctx: CoreCallContext, head: NoteHeadSnapshot, planWindow: NotePlanWindowFactsV1 | null):
   Promise<{ ok: true; card: NoteDecisionCardFactsV1 | null; closedReason: NoteDecisionClosedReasonV1 | null }
   | { ok: false; reason: string }> {
-    const targetRead = await readHeadBatch(deps.records, ctx.projectId, actualDispositionTargets(head),
+    const targetBatch = await readHeadBatch(deps.records, ctx.projectId, actualDispositionTargets(head),
       { requireAll: true });
+    if (!targetBatch.ok) return { ok: false, reason: targetBatch.reason };
+    const targetRead = await overlaidTargets(ctx, targetBatch.value);
     if (!targetRead.ok) return { ok: false, reason: targetRead.reason };
     // A project card has no Goal, so no plan window is seeded either.
     const facts = await deps.userReasonFacts(ctx, [...targetRead.value.values()],
@@ -147,20 +180,25 @@ export function createNoteDecisionSource(deps: NoteDecisionSourceDeps): NoteDeci
   async function cardsOfBucket(ctx: CoreCallContext, bucketGoalId: string | null,
     planWindows: readonly NotePlanWindowFactsV1[], attempt?: DecisionSourceAttempt):
   Promise<ReadResult<NoteDecisionCardFactsV1[]>> {
-    const page = await readAllHeads(deps.records, S4_NOTE_BY_REVIEW_STATUS_LOOKUP,
+    const listed = await readAllHeads(deps.records, S4_NOTE_BY_REVIEW_STATUS_LOOKUP,
       [ctx.projectId, bucketGoalId, 'pending_review']);
-    if (!page.ok) return rejected('unavailable', page.reason);
+    if (!listed.ok) return rejected('unavailable', listed.reason);
+    const page = await overlaid(ctx, listed.heads, attempt);
+    if (!page.ok) return rejected(page.code, page.reason);
     if (page.heads.length === 0) return ready([]);
 
     // ONE batched read of every pending note's relation targets, shared by
     // every card of the bucket (RW-12a / §11.7).
     const targetIds = new Set<string>();
     for (const head of page.heads) for (const noteId of actualDispositionTargets(head)) targetIds.add(noteId);
-    const targetRead = await readHeadBatch(deps.records, ctx.projectId, [...targetIds], { requireAll: true });
-    if (!targetRead.ok) return rejected('unavailable', targetRead.reason);
+    const targetBatch = await readHeadBatch(deps.records, ctx.projectId, [...targetIds], { requireAll: true });
+    if (!targetBatch.ok) return rejected('unavailable', targetBatch.reason);
+    const targetRead = await overlaidTargets(ctx, targetBatch.value, attempt);
+    if (!targetRead.ok) return rejected(targetRead.code, targetRead.reason);
     const facts = await deps.userReasonFacts(ctx, [...targetRead.value.values()], planWindows, attempt);
     if (facts.status !== 'ready') {
-      return rejected('unavailable', facts.status === 'rejected' ? facts.reason : 'the user-reason facts are not readable');
+      return facts.status === 'rejected' && facts.reason === DECISION_WINDOW_MOVED_REASON ? facts
+        : rejected('unavailable', facts.status === 'rejected' ? facts.reason : 'the user-reason facts are not readable');
     }
 
     // ONE batched pointer + pointed-head read across every pending anchor.
@@ -181,6 +219,27 @@ export function createNoteDecisionSource(deps: NoteDecisionSourceDeps): NoteDeci
   }
 
   return {
+    async prepareNoteDecisions(ctx, input): Promise<ReadResult<void>> {
+      const heads: NoteHeadSnapshot[] = [];
+      // The buckets the window reads: a cancelled Goal answers no card there, so its files are not read.
+      const goalIds = input.goals.filter(goal => goal.desiredState !== 'cancelled').map(goal => goal.ref.goalId);
+      for (const goalId of [...(input.project ? [null] : []), ...goalIds]) {
+        const listed = await readAllHeads(deps.records, S4_NOTE_BY_REVIEW_STATUS_LOOKUP, [ctx.projectId, goalId, 'pending_review']);
+        if (!listed.ok) return rejected('unavailable', listed.reason);
+        heads.push(...listed.heads);
+      }
+      // The targets are the ones the subjects' files name (a person may have edited them), as the window reads them.
+      const read = { lines: deps.knowledge, caller: ctx };
+      const subjects = await prepareNoteFiles(input.attempt, REVIEW_FILES, heads, read);
+      if (subjects.status !== 'ready') return rejected('unavailable', subjects.reason);
+      const targetIds = [...new Set(subjects.value.flatMap(head => actualDispositionTargets(head)))];
+      const targets = await readHeadBatch(deps.records, ctx.projectId, targetIds, { requireAll: false });
+      if (!targets.ok) return rejected('unavailable', targets.reason);
+      const prepared = await prepareNoteFiles(input.attempt, REVIEW_FILES, [...targets.value.values()], read);
+      if (prepared.status !== 'ready') return rejected('unavailable', prepared.reason);
+      return deps.prepareReasonFacts(ctx, prepared.value, input.attempt);
+    },
+
     async readNoteDecisions(ctx, input): Promise<ReadResult<NoteDecisionCardFactsV1[]>> {
       const goalRef = decisionSubjectGoalRef(input);
       if (goalRef !== null) {
@@ -200,7 +259,10 @@ export function createNoteDecisionSource(deps: NoteDecisionSourceDeps): NoteDeci
       openedAt: string | null }>> {
       const headRead = await readHeadBatch(deps.records, ctx.projectId, [input.pin.noteId]);
       if (!headRead.ok) return rejected('unavailable', headRead.reason);
-      const head = headRead.value.get(input.pin.noteId) ?? null;
+      const recorded = headRead.value.get(input.pin.noteId) ?? null;
+      const shown = recorded === null ? null : await overlaid(ctx, [recorded]);
+      if (shown !== null && !shown.ok) return rejected('unavailable', shown.reason);
+      const head = shown === null ? null : shown.heads[0]!;
       // A missing head, a moved version or a non-pending head is the
       // `source_stale` signal (null card, null closed reason, null subject).
       if (head === null || head.version !== input.pin.version || head.state !== 'pending_review') {

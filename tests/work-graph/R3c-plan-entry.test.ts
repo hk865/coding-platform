@@ -16,6 +16,7 @@ import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/conf
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { ProjectSnapshot, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
+import { knowledgeLinesOver } from '../helpers/KLS2-knowledge-lines.js';
 
 const at = '2026-09-24T00:00:00.000Z';
 const projectId = 'r3c-project';
@@ -57,6 +58,7 @@ it.each(['memory', 'sqlite'] as const)('%s: plan reads the Goal created by the r
     const goals = createGoalService({ records: backend.records, now: () => at,
       eventId: () => `r3c-goal-${++sequence}` }).tasks;
     const plans = createPlanService({ records: backend.records, bindings: createInitializationBindingReader({ records: backend.records }),
+      knowledge: knowledgeLinesOver(backend.records),
       now: () => at,
       eventId: () => `r3c-plan-${++sequence}` });
     const created = await goals.createGoal(ctx, { meta: { requestId: 'r3c-create-goal',

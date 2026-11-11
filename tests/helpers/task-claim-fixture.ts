@@ -62,6 +62,8 @@ import type { GoalTaskPort, GraphWrite } from '../../src/core/work-graph/model/t
 import type { PlanTaskPort } from '../../src/core/work-graph/model/plan-contracts.js';
 import type { SessionDirectoryPort } from '../../src/core/work-graph/model/session-contracts.js';
 import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
+import { knowledgeLinesOfRoots } from './KLS2-knowledge-lines.js';
+import type { KnowledgeLines } from '../../src/core/work-graph/model/line-knowledge.js';
 
 const AT = '2026-09-24T00:00:00.000Z';
 export const CLAIM_FIXTURE_AT = AT;
@@ -145,6 +147,14 @@ export type TaskClaimFixture = {
   /** Close the primary backend WITHOUT deleting the ledger directory. */
   closeBackend(): Promise<void>;
   close(): Promise<void>;
+  /**
+   * KLS-2b: the knowledge root of each (project, workspace) the plan owner reads architecture files of, keyed
+   * `JSON.stringify([projectId, workspaceId])`; this fixture's own is in it. A world that adopts another project's
+   * architecture on these records registers that root.
+   */
+  knowledgeRoots: Map<string, string>;
+  /** KLS-2b: the knowledge lines over `knowledgeRoots` this fixture's plan and Session owners take. */
+  knowledge: KnowledgeLines;
 };
 
 function emptySpy(): RecordSpy {
@@ -346,10 +356,13 @@ export async function createTaskClaimFixture<A = unknown>(kind: ClaimFixtureKind
   // The Plan owner is the production constructor over the composition root's
   // store. The published `plans` wrapper adds the adoption stop; the claim
   // fixture's rows read the raw TASK-19 refusal, so this base keeps the raw one.
+  const knowledgeRoots = new Map([[JSON.stringify([projectId, workspaceId]), directory]]);
+  const knowledge = knowledgeLinesOfRoots(knowledgeRoots, backendRecords);
   const plans = createPlanService({ records: backendRecords,
     bindings: createInitializationBindingReader({ records: backendRecords }),
+    knowledge,
     materials: materialsPort, now, eventId });
-  const sessionsPort = createSessionDirectory({ records: backendRecords, lookups: backendRecords, duty: unknownSessionDuty });
+  const sessionsPort = createSessionDirectory({ records: backendRecords, knowledge, lookups: backendRecords, duty: unknownSessionDuty });
   // The raw RoleConfigurationService: the claim owner needs its facts read, and
   // the fixture's callers install/activate specs through it (the published
   // `roles` wrapper exposes only four of its methods).
@@ -467,7 +480,7 @@ export async function createTaskClaimFixture<A = unknown>(kind: ClaimFixtureKind
     kind, directory, ledgerPath, records: backendRecords, spy, materialsSpy, service, ctx, scope,
     projectRef, workspaceRef, goalRef, planRef, plan, tasks,
     sessions: { first: firstSession, second: secondSession }, roleBinding, budget,
-    goals: goalsService, plans, sessionsPort, roleService, makeService,
+    goals: goalsService, plans, sessionsPort, roleService, makeService, knowledgeRoots, knowledge,
     async buildRequest(overrides = {}) {
       const sessionRef = overrides.input?.sessionRef ?? firstSession;
       const requestedGoalRef = overrides.input?.goalRef ?? goalRef;

@@ -68,7 +68,7 @@ import { createGoalService } from '../../src/core/work-graph/tasks/task-service.
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
 import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
-import { knowledgeLinesFor } from './KLS2-knowledge-lines.js';
+import { knowledgeLinesFor, knowledgeLinesOver } from './KLS2-knowledge-lines.js';
 import { unknownSessionDuty } from './session-duty-double.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
 import { createSessionResponsibilityService } from '../../src/core/work-graph/sessions/session-responsibility-service.js';
@@ -285,11 +285,14 @@ export async function openNodeFixture(kind: ClaimFixtureKind, options: NodeFixtu
   const materialsPort = { async openArtifact() { return { status: 'rejected' as const, code: 'unsupported' as const, reason: 'S2C-D does not read material' }; } };
   const goals = createGoalService({ records: backend.records, now, eventId }).tasks;
   const plans = createPlanService({ records: backend.records, bindings: createInitializationBindingReader({ records: backend.records }),
+    knowledge: knowledgeLinesFor({ root: directory, ...scope, records: backend.records }),
     materials: materialsPort, now, eventId });
   const catalog = createArchitectureCatalogService({ records: backend.records,
     knowledge: knowledgeLinesFor({ root: directory, ...scope, records: backend.records }) });
-  const sessions = createSessionDirectory({ records: backend.records, lookups: backend.records, duty: unknownSessionDuty });
-  const lifecycle = createSessionLifecycleService({ records: backend.records, lookups: backend.records,
+  const sessions = createSessionDirectory({ records: backend.records,
+    knowledge: knowledgeLinesOver(backend.records), lookups: backend.records, duty: unknownSessionDuty });
+  const lifecycle = createSessionLifecycleService({ records: backend.records,
+    knowledge: knowledgeLinesOver(backend.records), lookups: backend.records,
     sessionFacts: createSessionFactsService({ records: backend.records }), duty: unknownSessionDuty });
   const anomalies = createSessionAnomalyService({ records: backend.records, lookups: backend.records,
     sessionFacts: createSessionFactsService({ records: backend.records }), now });
@@ -618,7 +621,7 @@ export async function openNodeFixture(kind: ClaimFixtureKind, options: NodeFixtu
     const archive = createSessionArchiveService({
       sessionLifecycle: lifecycle, sessionFacts: createSessionFactsService({ records: backend.records }),
       responsibilities: createSessionResponsibilityService({ records: backend.records, lookups: backend.records,
-        basis: createSessionResponsibilityBasisReader(backend.records), now, duty: unknownSessionDuty }),
+        basis: createSessionResponsibilityBasisReader(backend.records, knowledgeLinesOver(backend.records)), now, duty: unknownSessionDuty }),
       sessionAnomalies: anomalies, controls: steps.controls, plans, executions, sessions, messages: mailbox,
       claims: { ...claims, requeueTask: requeues.requeueTask, readTaskRequeue: requeues.readTaskRequeue },
       runtime: { ...steps.runtime.port,

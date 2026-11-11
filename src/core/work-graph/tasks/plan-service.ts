@@ -79,7 +79,10 @@ import type {
   StoreFailure,
   UniqueClaimChange,
 } from '../../record-store/ports.js';
-import { catalogPinOf, readCurrentCatalogWindow, readRevisionByRef } from '../architecture/catalog-service.js';
+import {
+  catalogPinOf, readCatalogPointerRevision, readCurrentCatalogWindow, readRevisionByRef, type CurrentCatalogWindow,
+} from '../architecture/catalog-service.js';
+import type { KnowledgeLines } from '../model/line-knowledge.js';
 import { cloneActorRef, decodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { sessionMessageRefFromValue } from '../persistence/plan-record-codecs.js';
 import { decodeQueryJobSnapshot } from '../queries/query-record-codecs.js';
@@ -177,6 +180,7 @@ import { asWriteRejection, mapStoreReadFailure, type Owned, type Rejection } fro
 import {
   deriveFuturePlanDelta,
   planPhaseGuardReasons,
+  qualifyPlanDraft,
   removedTaskProblem,
   type FuturePlanDelta,
   unchangedTerminalTaskIds,
@@ -225,6 +229,8 @@ export type PlanServiceDependencies = { records: GoalRecordTransactionPort & Rec
   initialPlanning?: { bodies: Pick<RawArtifactStorePort, 'read'> };
   /** The initialization binding read port the composition root wires. */
   bindings: InitializationBindingReadPort;
+  /** KLS-2b ([2B-26], [2B-29] #8, #9): the project's knowledge lines; a draft's module scopes and the current catalog are read in the project view. */
+  knowledge: KnowledgeLines;
   /** W2: optional delegated Agent admission. Absent keeps the original Host-only behavior. */
   delegatedWrites?: PlanDelegatedWriteDependencies;
   /**
@@ -1117,15 +1123,28 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
 
     const receiptExpected = { identityKey: input.identityKey, projectId: goalRef.projectId, workspaceId,
       proposalId: input.proposalId, idempotencyKey: input.requestId, actor: input.actor };
-    const early = await records.lookupCommit({ identityKey: input.identityKey, fingerprint: input.fingerprint });
-    if (early.status === 'ready') {
-      const restored = await restoreProposal(records, early.value, receiptExpected);
-      if (restored.status !== 'restored') return rejected(restored.code, restored.reason);
-      return { status: 'committed', value: restored.proposal, replayed: true, cursor: early.value.cursor,
-        ...proofReceiptOf(input, early.value) };
-    }
-    if (early.code === 'idempotency_conflict') return rejected('idempotency_conflict', early.reason);
-    if (early.code !== 'not_found') return rejected('unavailable', `${early.code}: ${early.reason}`);
+    // The original receipt answers a replay; `null` is a first write.
+    const replayOf = async (): Promise<EffectWriteResultV1<PlanProposal> | null> => {
+      const found = await records.lookupCommit({ identityKey: input.identityKey, fingerprint: input.fingerprint });
+      if (found.status === 'ready') {
+        const restored = await restoreProposal(records, found.value, receiptExpected);
+        if (restored.status !== 'restored') return rejected(restored.code, restored.reason);
+        return { status: 'committed', value: restored.proposal, replayed: true, cursor: found.value.cursor,
+          ...proofReceiptOf(input, found.value) };
+      }
+      if (found.code === 'idempotency_conflict') return rejected('idempotency_conflict', found.reason);
+      if (found.code !== 'not_found') return rejected('unavailable', `${found.code}: ${found.reason}`);
+      return null;
+    };
+    // A replay is answered before the catalog files are read. R-窗 (ruling 9): a first write reads them before the
+    // proposal window and looks the receipt up once more after them, so the last lookup stays as close to the commit
+    // as without files; inside the window only the pointer is checked.
+    const early = await replayOf();
+    if (early !== null) return early;
+    const catalogWindow = await readCurrentCatalogWindow(records, goalRef.projectId,
+      { lines: deps.knowledge, caller: ctx });
+    const again = await replayOf();
+    if (again !== null) return again;
 
     const scoped = await readPlanScope(records, goalRef, workspaceId, pins.pins);
     if (scoped.status !== 'ready') return scoped;
@@ -1200,7 +1219,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       // S5-PLAN-02: the replacement transition over the real old head. The old
       // head's complete next record and the slot move are separate effects.
       // L10: the machine judges the head before the module fact read here.
-      const catalog = await proposeCatalogFacts(records, goalRef.projectId, input.draft, source);
+      const catalog = await proposeCatalogFacts(records, goalRef.projectId, input.draft, source, catalogWindow);
       const event = { type: 'proposal_replaced' as const, writer: input.writer, ref: input.ref, goalRef,
         basedOn: input.basedOn, draft: input.draft, reason: input.reason as unknown as PlanChangeReason,
         issues, catalogPin: catalog.catalogPin, submittedBy: null, sourceMessageRef: input.sourceMessageRef,
@@ -1224,12 +1243,12 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
         basedOn: input.basedOn, draft: input.draft, reason: input.reason as unknown as PlanChangeReason, submittedBy: null,
         sourceMessageRef: input.sourceMessageRef,
         ...(requestRef === null ? {} : { requestRef }) };
-      // L10: the early ask has no module fact yet, so it stops before it; the catalog is read only after it holds.
+      // L10: the early ask has no module fact yet, so it stops before it; the catalog fact is judged only after it holds.
       const readFacts = { ...scoped.facts, agentAdmission: null, source: null, initial: null,
         future: null, requestCandidate: requestFacts };
       const refused = planProposalProblem(null, recorded, readFacts);
       if (refused?.ok === false) return refusalOf(refused, pinsCurrent(refused, scoped.comparison));
-      const catalog = await proposeCatalogFacts(records, goalRef.projectId, input.draft, source);
+      const catalog = await proposeCatalogFacts(records, goalRef.projectId, input.draft, source, catalogWindow);
       const guardCtx: PlanProposalGuardContext = { ...readFacts, modules: catalog.modules };
       const decided = transitionPlanProposal(null, { ...recorded, issues, catalogPin: catalog.catalogPin }, guardCtx);
       if (!decided.ok) return refusalOf(decided);
@@ -1397,10 +1416,12 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     const ref: PlanProposalRef = { aggregateType: 'PlanProposal', projectId: goalRef.projectId, workspaceId, proposalId };
     const fingerprint = proposeFingerprint({ projectId: goalRef.projectId, workspaceId, goalRef, basedOn, draft, reason: reasonRaw,
       requestRef, replaces, ...(acknowledgement === undefined ? {} : { acknowledgement }), ...sourceMessageRefArg });
+    const qualified = await planDraftInProjectView(deps.knowledge, ctx, draft, workspaceId);
+    if (qualified.status !== 'ready') return qualified;
 
     return commitHostPlanProposal({
       ctx, writer: 'host', goalRef, workspaceId, actor: bound.actor, identityKey, fingerprint, proposalId, ref,
-      basedOn, draft, reason: reasonRaw, requestId, expected: rawMeta['expected'], extraGuards: [],
+      basedOn, draft: qualified.value, reason: reasonRaw, requestId, expected: rawMeta['expected'], extraGuards: [],
       requestRef, replaces, ...(acknowledgement === undefined ? {} : { acknowledgement }),
       sourceMessageRef,
     });
@@ -1473,8 +1494,11 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       return rejected('invalid', 'the initial-plan answer asks for a decision and carries no plan to propose');
     }
     const goalRef = facts.resolution.goal;
+    const qualified = await planDraftInProjectView(deps.knowledge, ctx, normalized.draft, workspaceId);
+    if (qualified.status !== 'ready') return qualified;
+    const draft = qualified.value;
     return commitHostPlanProposal({ ctx, writer: 'host', goalRef, workspaceId, actor: bound.actor, identityKey,
-      fingerprint, proposalId, ref, basedOn: null, draft: normalized.draft, reason: rawReason, requestId,
+      fingerprint, proposalId, ref, basedOn: null, draft, reason: rawReason, requestId,
       expected: rawMeta['expected'], extraGuards: sourceFactsGuards(facts), expectedGoalRevision: facts.resolution.goalRevision,
       requestRef: null, replaces: null, sourceMessageRef: null });
   }
@@ -1562,6 +1586,9 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     const evaluate = async (): Promise<WriteResult<PlanRevisionSnapshot>> => {
       const adoption: AcceptedPlanEvent = { type: 'proposal_accepted', adopter: 'host', proposalRef,
         expectedProposalRevision, decisionRefs: decisionRefs as readonly VersionPin[] };
+      // R-窗 (ruling 9): the catalog files a future adoption checks are read before its window (the adoption read).
+      const catalogWindow = await readCurrentCatalogWindow(records, proposalRef.projectId,
+        { lines: deps.knowledge, caller: ctx });
       // PLAN-04/05: the proposal kind, status and revision, then the scope and decisionRefs and the pointer
       // (initial) or the draft schema and decisionRefs (future), before the next read.
       const read = await readAdoption(records, adoption, rawMeta['expected']);
@@ -1589,7 +1616,8 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
         if ('status' in sourceProof) return sourceProof;
         return applyFutureRevision({ records, read, adoption, receipt: receiptExpected,
           operatorActor: deps.operatorActor,
-          extraGuards: sourceProof.guards, eventId: deps.eventId, now: deps.now, decisionProof });
+          extraGuards: sourceProof.guards, eventId: deps.eventId, now: deps.now, decisionProof,
+          catalogWindow });
       }
 
       // S5-PLAN-03: a request-associated initial candidate releases its slot in
@@ -1626,7 +1654,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       if (candidate.draft.origin !== undefined) {
         // The scope's Goal revision is the one this adoption reads; an explicit source frozen elsewhere is a conflict (its re-read guards join the commit).
         const verified = await initialPlanAnswerReader.verifyModelCoordinationDraft(capturedContext, candidate,
-          scope.goal.revision);
+          scope.goal.revision, draft => planDraftInProjectView(deps.knowledge, ctx, draft, candidate.ref.workspaceId));
         if ('rejection' in verified) origin = verified.rejection;
         else originGuards = verified.guards;
       }
@@ -1833,8 +1861,10 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     }
     // The read resolved the source once; the Goal/version come from it, never from the saved Job intent.
     const goalRef = facts.resolution.goal;
+    const qualified = await planDraftInProjectView(deps.knowledge, ctx, normalized.draft, workspaceId);
+    if (qualified.status !== 'ready') return qualified;
     return commitHostPlanProposal({ ctx, writer: 'initial_answer', goalRef, workspaceId, actor: bound.actor, identityKey, fingerprint,
-      proposalId, ref, basedOn: null, draft: normalized.draft, reason: rawReason, requestId,
+      proposalId, ref, basedOn: null, draft: qualified.value, reason: rawReason, requestId,
       expected, extraGuards: sourceFactsGuards(facts), requestRef: null, replaces: null, sourceMessageRef: null,
       // Only the explicit source froze a Goal revision; the ordinary plain entry keeps today's behavior.
       ...(facts.resolution.kind === 'plain' ? {} : { expectedGoalRevision: facts.resolution.goalRevision }) });
@@ -2695,16 +2725,42 @@ async function moduleFactOf(records: TaskFactRecordPort, draft: PlanRevisionDraf
 }
 
 /**
- * L10: the one catalog read of a propose, after every other refusal point. An active catalog gives the candidate's
- * pin and the module fact; none defers the check to adoption (`null` pin); a refused read is the fact itself and pins
- * nothing, never read as "no catalog".
+ * [2B-26]: a draft's module scopes in the project view, once where a propose entry reads it (the Goal's workspace is
+ * the caller frame), and for an adoption's source proof the re-normalized draft in the frame the candidate was
+ * stored from; a reference that is not a module id is `invalid`.
+ */
+async function planDraftInProjectView(knowledge: KnowledgeLines, ctx: CoreCallContext, draft: PlanRevisionDraft,
+  workspaceId: string): Promise<{ status: 'ready'; value: PlanRevisionDraft } | ReturnType<typeof rejected>> {
+  const workspaces = await knowledge.workspaces(ctx);
+  if (workspaces.status !== 'ready') return rejected('unavailable', workspaces.reason);
+  try {
+    return { status: 'ready', value: qualifyPlanDraft(draft, workspaceId, workspaces.value[0]!) };
+  } catch (error) {
+    return rejected('invalid', messageOf(error));
+  }
+}
+
+/** R-窗: the answer when the catalog pointer moved between the read before the window and the window. */
+const CATALOG_MOVED = 'the architecture catalog moved since it was read before this window';
+
+/**
+ * L10: the one catalog fact of a propose, judged after every other refusal point. An active catalog gives the
+ * candidate's pin and the module fact; none defers the check to adoption (`null` pin); a refused read is the fact
+ * itself and pins nothing, never read as "no catalog". R-窗: `window` (the files) was read before the proposal window;
+ * here the pointer is checked once, and a pointer that moved since is a revision conflict.
  */
 async function proposeCatalogFacts(records: TaskFactRecordPort, projectId: string, draft: PlanRevisionDraft,
-  source: PlanRevisionSnapshot | null):
+  source: PlanRevisionSnapshot | null, window: CurrentCatalogWindow):
   Promise<{ catalogPin: ArchitectureCatalogPinV1 | null; modules: 'ok' | CoreRejection }> {
-  const window = await readCurrentCatalogWindow(records, projectId);
+  if (window.status !== 'ready' && window.status !== 'not_found') {
+    return { catalogPin: null, modules: rejected(window.code, window.reason) };
+  }
+  const pointer = await readCatalogPointerRevision(records, projectId);
+  if (pointer.status !== 'ready') return { catalogPin: null, modules: rejected(pointer.code, pointer.reason) };
+  if (pointer.value !== (window.status === 'ready' ? window.activeRevision : null)) {
+    return { catalogPin: null, modules: rejected('revision_conflict', CATALOG_MOVED) };
+  }
   if (window.status === 'not_found') return { catalogPin: null, modules: 'ok' };
-  if (window.status !== 'ready') return { catalogPin: null, modules: rejected(window.code, window.reason) };
   return { catalogPin: catalogPinOf(window), modules: await moduleFactOf(records, draft, window.catalog.catalog, source) };
 }
 
@@ -3078,6 +3134,8 @@ async function applyFutureRevision(input: {
   extraGuards: readonly RecordGuard[];
   eventId: () => string;
   now: () => string;
+  /** [2B-29] #9: the current catalog in the project view, read before the adoption window (R-窗). */
+  catalogWindow: CurrentCatalogWindow;
   /** Slice 5 §2.8 D8: the accepted event's acknowledgement attribution/proof, or null. */
   decisionProof?: PlanAcceptanceDecisionProofV1 | null;
 }): Promise<WriteResult<PlanRevisionSnapshot>> {
@@ -3157,13 +3215,19 @@ async function applyFutureRevision(input: {
   let modules: 'ok' | CoreRejection = 'ok';
   let catalogGuards: readonly RecordGuard[] | undefined;
   if (draftHasModuleTask(proposal.draft)) {
-    const window = await readCurrentCatalogWindow(records, proposal.goalRef.projectId);
-    if (window.status === 'ready') {
-      modules = await moduleFactOf(records, proposal.draft, window.catalog.catalog, source);
-      catalogGuards = window.guards;
-    } else if (window.status === 'not_found') {
-      modules = rejected('incomplete', 'the project has no active architecture catalog');
-    } else modules = rejected(window.code, window.reason);
+    // R-窗: read before the window; the pointer is checked once here, and the ready window's guards join the commit.
+    const window = input.catalogWindow;
+    if (window.status !== 'ready' && window.status !== 'not_found') modules = rejected(window.code, window.reason);
+    else {
+      const pointer = await readCatalogPointerRevision(records, proposal.goalRef.projectId);
+      if (pointer.status !== 'ready') modules = rejected(pointer.code, pointer.reason);
+      else if (pointer.value !== (window.status === 'ready' ? window.activeRevision : null)) {
+        modules = rejected('revision_conflict', CATALOG_MOVED);
+      } else if (window.status === 'ready') {
+        modules = await moduleFactOf(records, proposal.draft, window.catalog.catalog, source);
+        catalogGuards = window.guards;
+      } else modules = rejected('incomplete', 'the project has no active architecture catalog');
+    }
   }
   refused = ask({ modules });
   if (refused !== null) return refusalOf(refused);
@@ -3443,13 +3507,16 @@ async function proposePlanAsAgent(
   }
   if (early.code === 'idempotency_conflict') return rejected('idempotency_conflict', early.reason);
   if (early.code !== 'not_found') return rejected('unavailable', `${early.code}: ${early.reason}`);
+  const qualified = await planDraftInProjectView(deps.knowledge, ctx, input.draft, input.workspaceId);
+  if (qualified.status !== 'ready') return qualified;
+  const draft = qualified.value;
 
   const authorized = await authorizePlanWrite(delegated, ctx, { writer, operation: 'propose_future_plan' });
   const freshAdmission = authorized.status === 'ready' ? authorized.value : null;
   // The recorded-shaped event judges exactly the writer facts a replacement
   // shares with a first record; the replacement transition re-checks them.
   const admissionRecorded = { type: 'proposal_recorded' as const, writer: 'agent' as const, ref, goalRef: input.goalRef,
-    basedOn: input.basedOn, draft: input.draft, reason: input.reason as unknown as PlanChangeReason,
+    basedOn: input.basedOn, draft, reason: input.reason as unknown as PlanChangeReason,
     submittedBy: freshAdmission === null ? null : freshAdmission.provenance,
     sourceMessageRef: input.sourceMessageRef ?? null };
   // PLAN-02: the fresh admission first; a refused write re-reads the same-identity receipt.
@@ -3464,6 +3531,9 @@ async function proposePlanAsAgent(
   const admission = freshAdmission!;
 
   const evaluate = async (): Promise<WriteResult<PlanProposal>> => {
+    // R-窗 (ruling 9): the catalog files are read before the proposal window; inside it only the pointer is checked.
+    const catalogWindow = await readCurrentCatalogWindow(records, input.goalRef.projectId,
+      { lines: deps.knowledge, caller: ctx });
     const scoped = await readPlanScope(records, input.goalRef, input.workspaceId, pins.pins);
     if (scoped.status !== 'ready') return scoped;
     // Slice 5 §2.4/§2.6: the request seam and the current per-request head run
@@ -3517,7 +3587,7 @@ async function proposePlanAsAgent(
     // issues; the full execution rules stay in apply. PLAN-02 judges the scope,
     // the draft schema and basedOn before the source read, then the source.
     const recorded = { type: 'proposal_recorded' as const, writer: 'agent' as const, ref, goalRef: input.goalRef,
-      basedOn: input.basedOn, draft: input.draft, reason: input.reason as unknown as PlanChangeReason,
+      basedOn: input.basedOn, draft, reason: input.reason as unknown as PlanChangeReason,
       submittedBy: admission.provenance, sourceMessageRef: input.sourceMessageRef ?? null };
     // N4 (lead): a replacement is an Agent future revision too; the scoped
     // check (scope, schema, basedOn) runs before the source read for both.
@@ -3539,22 +3609,22 @@ async function proposePlanAsAgent(
       }
     }
     const policyRead = await tryPolicyContent(records, input.goalRef.projectId);
-    const issues = validatePlanDraft(input.draft, policyRead.policy);
-    // L10: the catalog is read once every other refusal point has passed; a replacement's head is judged first.
-    const catalog = await proposeCatalogFacts(records, input.goalRef.projectId, input.draft, source);
+    const issues = validatePlanDraft(draft, policyRead.policy);
+    // L10: the catalog fact is judged once every other refusal point has passed; a replacement's head is judged first.
+    const catalog = await proposeCatalogFacts(records, input.goalRef.projectId, draft, source, catalogWindow);
     const ctxFacts: PlanProposalGuardContext = { ...readFacts, modules: catalog.modules };
     const decided = oldHead === null
       ? transitionPlanProposal(null, { ...recorded, issues, catalogPin: catalog.catalogPin,
         ...(input.requestRef === null ? {} : { requestRef: input.requestRef }) }, ctxFacts)
       : transitionPlanProposal(oldHead, { type: 'proposal_replaced' as const, writer: 'agent' as const, ref,
-        goalRef: input.goalRef, basedOn: input.basedOn, draft: input.draft,
+        goalRef: input.goalRef, basedOn: input.basedOn, draft,
         reason: input.reason as unknown as PlanChangeReason, issues, catalogPin: catalog.catalogPin,
         submittedBy: admission.provenance, sourceMessageRef: input.sourceMessageRef ?? null,
         expectedHeadRevision: input.replaces!.revision, requestedBy: writer.actor, at: deps.now(),
         head: { proposalRef: input.replaces!.proposalRef, revision: input.replaces!.revision },
         replaces: input.replaces!, requestRef: input.requestRef! }, ctxFacts);
     if (!decided.ok) return refusalOf(decided);
-    const removed = removedTaskRefusal(source, input.draft);
+    const removed = removedTaskRefusal(source, draft);
     if (removed !== null) return removed;
     const commit = planCommitOf(decided, { scope: scoped.scope, actor: writer.actor, agentAdmission: admission.guards });
     if (commit.status !== 'ready') return commit;

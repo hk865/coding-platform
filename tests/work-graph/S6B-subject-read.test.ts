@@ -59,7 +59,7 @@ async function pendingProjectNote(opened: ProjectWorld, label: string) {
   expect(written.note.storedState).toBe('pending_review');
   expect(written.note.goalId).toBeNull();
   return { note: written.note, projectId: opened.goalless.scope.projectId,
-    key: projectCardKey(opened.goalless.scope.projectId, written.note.noteId, written.note.version) };
+    key: projectCardKey(opened.goalless.scope.projectId, written.note.noteId, written.note.version!) };
 }
 
 describe('the project card by read scope', () => {
@@ -222,8 +222,8 @@ describe('the project notice page', () => {
       const projectId = opened.goalless.scope.projectId;
       const firstNote = await rewrittenProjectUnderstanding(opened, 'b1');
       const secondNote = await rewrittenProjectUnderstanding(opened, 'b2');
-      const firstKey = noticeItemKey(projectId, firstNote.noteId, firstNote.version);
-      const secondKey = noticeItemKey(projectId, secondNote.noteId, secondNote.version);
+      const firstKey = noticeItemKey(projectId, firstNote.noteId, firstNote.version!);
+      const secondKey = noticeItemKey(projectId, secondNote.noteId, secondNote.version!);
 
       // The zero-Goal workspace reads both project notices, in commit order, as the project's.
       const all = await opened.goalless.readNotices({ categories: ['note_review'] });
@@ -283,8 +283,8 @@ describe('the project notice page', () => {
       expect(goalNote).toMatchObject({ storedState: 'accepted', goalId });
       // Then the project notice (c2).
       const projectNote = await rewrittenProjectUnderstanding(opened, 'e3');
-      const goalKey = noticeItemKey(projectId, goalNote.noteId, goalNote.version);
-      const projectKey = noticeItemKey(projectId, projectNote.noteId, projectNote.version);
+      const goalKey = noticeItemKey(projectId, goalNote.noteId, goalNote.version!);
+      const projectKey = noticeItemKey(projectId, projectNote.noteId, projectNote.version!);
       expect((await opened.main.readNotices({ categories: ['note_review'] })).notices
         .map((notice) => notice.itemKey)).toEqual([goalKey, projectKey]);
 
@@ -304,7 +304,7 @@ describe('the project card and notice on the main read', () => {
       const projectId = opened.goalless.scope.projectId;
       const { key } = await pendingProjectNote(opened, 'c1');
       const rewritten = await rewrittenProjectUnderstanding(opened, 'c2');
-      const noticeKey = noticeItemKey(projectId, rewritten.noteId, rewritten.version);
+      const noticeKey = noticeItemKey(projectId, rewritten.noteId, rewritten.version!);
       const goal = opened.world.goals.first;
       // A real request of goal 1, so `requests/read` has a goal request to read against the project card.
       const request = await opened.main.submit({ label: 'c3', goalId: goal.goalId });

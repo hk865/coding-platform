@@ -57,6 +57,7 @@ import type {
 } from '../../record-store/ports.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { readCatalogModuleFacts } from '../architecture/catalog-service.js';
+import type { KnowledgeLines } from '../model/line-knowledge.js';
 import { readArchitectureCatalogRef } from '../architecture/catalog-record-codecs.js';
 import { readAllOrdered } from '../persistence/lookup-ordered-all.js';
 import { lookupAll } from '../persistence/lookup-all.js';
@@ -2339,7 +2340,7 @@ function catalogRevisionOf(guards: readonly RecordGuard[]): number {
  * arms never read a Plan and answer `terminal: false, writerStopped: true`.
  */
 export function createSessionResponsibilityBasisReader(
-  records: GoalRecordTransactionPort & RecordLookupPort,
+  records: GoalRecordTransactionPort & RecordLookupPort, knowledge: KnowledgeLines,
 ): SessionResponsibilityBasisPort {
   return {
     readResponsibilityBasis: async (ctx, input) => {
@@ -2384,7 +2385,8 @@ export function createSessionResponsibilityBasisReader(
         } };
       }
       if (target['kind'] === 'module') {
-        const moduleRead = await readCatalogModuleFacts(records, ctx, target['ref'] as ModuleRef);
+        // A.1 #2d: a module target is checked against the knowledge files' current catalog.
+        const moduleRead = await readCatalogModuleFacts(records, ctx, target['ref'] as ModuleRef, { lines: knowledge, caller: ctx });
         if (moduleRead.status !== 'ready') return moduleRead;
         return { status: 'ready', value: {
           basis: { kind: 'module', moduleRef: moduleRead.value.module.ref,

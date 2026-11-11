@@ -29,6 +29,7 @@ import { createSessionOperations } from '../../src/core/agent-runtime/session-op
 import { projectRoleLimitsChangedCodec, projectRoleLimitsCodec,
   sessionRoleFactsCodec } from '../../src/core/work-graph/sessions/role-line-record-codecs.js';
 import { unknownSessionDuty } from '../helpers/session-duty-double.js';
+import type { KnowledgeLines } from '../../src/core/work-graph/model/line-knowledge.js';
 
 const at = '2026-09-24T00:00:00.000Z';
 const projectId = 'session-project';
@@ -105,9 +106,9 @@ async function open(kind: 'memory' | 'sqlite') {
     ] },
   });
   if (activated.status !== 'committed') throw new Error(`policy activation failed: ${JSON.stringify(activated)}`);
-  const adopted = await createArchitectureCatalogService({ records: backend.records,
-    knowledge: knowledgeLinesFor({ root: directory, projectId: ctx.projectId, workspaceId: ctx.workspaceId!,
-      records: backend.records }) }).adoptInitialArchitecture(ctx, {
+  const knowledge = knowledgeLinesFor({ root: directory, projectId: ctx.projectId, workspaceId: ctx.workspaceId!,
+    records: backend.records });
+  const adopted = await createArchitectureCatalogService({ records: backend.records, knowledge }).adoptInitialArchitecture(ctx, {
     input: { baselineId: 'baseline-1', description: 'Task fixture baseline', constraints: [],
       catalog: { requireDag: true, dependencies: [], modules: [] } },
     meta: { requestId: 'r4b-adopt-architecture', expected: [
@@ -116,7 +117,8 @@ async function open(kind: 'memory' | 'sqlite') {
     ] },
   });
   if (adopted.status !== 'committed') throw new Error(`architecture adoption failed: ${JSON.stringify(adopted)}`);
-  const sessions = createSessionDirectory({ records: backend.records, lookups: backend.records,
+  const sessions = createSessionDirectory({ records: backend.records,
+    knowledge, lookups: backend.records,
     duty: unknownSessionDuty });
   const kernelStores = await createKernelStoreRegistry({ entries: [{
     adapterId: 'workspace-kernel', storeKey: 'workspace-key', workspace,
@@ -126,12 +128,13 @@ async function open(kind: 'memory' | 'sqlite') {
   // and registration through the directory. Tests that need a Session as a
   // target use this instead of writing Runtime facts themselves.
   const operations = createSessionOperations({ sessions, kernelStores });
-  return { backend, sessions, kernelStores, operations, ledgerPath };
+  return { backend, sessions, kernelStores, operations, ledgerPath, knowledge };
 }
 
 /** Seed the actual Goal -> accepted immutable Plan relation used for Task links
  * through the public createGoal -> proposePlan -> applyPlanChange adoption path. */
-async function seedAcceptedTask(records: Awaited<ReturnType<typeof open>>['backend']['records']) {
+async function seedAcceptedTask(records: Awaited<ReturnType<typeof open>>['backend']['records'],
+  knowledge: KnowledgeLines) {
   const goalRef = { aggregateType: 'Goal' as const, projectId, goalId: 'goal-with-plan' };
   const planRef = { aggregateType: 'PlanRevision' as const, projectId, planId: 'accepted-plan' };
   let sequence = 0;
@@ -159,6 +162,7 @@ async function seedAcceptedTask(records: Awaited<ReturnType<typeof open>>['backe
     taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] },
   };
   const plans = createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+    knowledge,
     now: () => at, eventId: () => `r4b-plan-${++sequence}` });
   const proposed = await plans.proposePlan(ctx, {
     input: { goalRef, basedOn: null, draft, reason: { text: 'Accepted task plan', sources: [] } },
@@ -256,9 +260,9 @@ describe.each(['memory', 'sqlite'] as const)('R4b real %s RecordStore acceptance
   });
 
   it('binds an initial work link to the actual Session registration commit cursor', async () => {
-    const { backend, sessions, operations } = await open(kind);
+    const { backend, sessions, operations, knowledge } = await open(kind);
     try {
-      const { taskRef } = await seedAcceptedTask(backend.records);
+      const { taskRef } = await seedAcceptedTask(backend.records, knowledge);
       // A real Session through the Runtime entry; the completion receipt's
       // cursor is the registration commit that activates the initial link.
       const created = await operations.createSession(ctx, {
@@ -279,9 +283,9 @@ describe.each(['memory', 'sqlite'] as const)('R4b real %s RecordStore acceptance
 
   describe('rejects: a Task link the active accepted Plan does not hold', () => {
     it('rejects a Task link absent from the active accepted Plan', async () => {
-      const { backend, sessions, kernelStores } = await open(kind);
+      const { backend, sessions, kernelStores, knowledge } = await open(kind);
       try {
-        const { taskRef } = await seedAcceptedTask(backend.records);
+        const { taskRef } = await seedAcceptedTask(backend.records, knowledge);
         const missingTask = { ...taskRef, taskId: 'not-in-plan' };
         // A3: a delegating wrapper around the real directory notes the planned
         // Session ref of the real admission and returns the real result unchanged.

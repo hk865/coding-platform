@@ -49,6 +49,7 @@ import {
   GOAL_B, PLAN_B1, T, WORKSPACE, WORKSPACE_REVISION, WORKSPACE_SCOPE,
   type S5DecisionFixture, type S5StoreSnapshot,
 } from './S5-decision-fixture.js';
+import { knowledgeLinesOver } from './KLS2-knowledge-lines.js';
 
 export async function assembleB(f: S5DecisionFixture) {
   const records = f.records;
@@ -56,9 +57,11 @@ export async function assembleB(f: S5DecisionFixture) {
   const { authority } = createMaterialRecordReaders(records);
   const materials = createMaterialService({ bodies: f.bodies, authority, now: f.now });
   const executions = createRunStateReader({ records });
-  const sessions = createSessionDirectory({ records, lookups: records, duty: unknownSessionDuty });
+  const sessions = createSessionDirectory({ records,
+    knowledge: knowledgeLinesOver(records), lookups: records, duty: unknownSessionDuty });
   const settings = createGoalSettingsService({ records, now: f.now, newId: f.newId, operatorActor: f.operatorActor });
   const plans = createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+    knowledge: f.knowledge,
     materials, initialPlanning: { bodies: f.bodies }, now: f.now, eventId: f.newId });
   const sources = createDecisionSourceFacts({ structuralProposalObjects: readStructuralProposalObjects, records, bindings: createInitializationBindingReader({ records }), plans });
   const mailboxDeps: SessionMailboxDependencies = {

@@ -107,6 +107,7 @@ import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/compl
 import { VerificationWorkspaceReader } from '../../src/core/workspace/verification-workspace-reader.js';
 import { B2_AT } from '../helpers/B2-execution-fixture.js';
 import { createR3eEvidenceFixture, R3E_HOST, type R3eEvidenceFixture } from '../helpers/R3e-evidence-fixture.js';
+import { knowledgeLinesOver } from '../helpers/KLS2-knowledge-lines.js';
 
 // ------------------------------------------------------------------------ //
 // Shared vocabulary                                                         //
@@ -399,7 +400,7 @@ type EvidenceOwner = ReturnType<typeof createEvidenceService>;
 /** The real evidence owner over the fixture ledger, with this Host's owned instance lease (VR-04). */
 function evidenceWithRestart(fixture: R3eEvidenceFixture): EvidenceOwner {
   let sequence = 0;
-  return createEvidenceService({
+  return createEvidenceService({ knowledge: knowledgeLinesOver(fixture.records, fixture.workspaceHost),
     records: fixture.records, materials: fixture.materials,
     executions: createRunStateReader({ records: fixture.records }),
     workspaceHost: fixture.workspaceHost, source: new VerificationWorkspaceReader(),

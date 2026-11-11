@@ -63,6 +63,7 @@ import {
   decodePlanRevisionSnapshot,
 } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
 import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
+import { knowledgeLinesFor } from './KLS2-knowledge-lines.js';
 
 export type W2PlanDraftV2 = Extract<PlanRevisionDraft, { schemaVersion: 2 }>;
 type W2Records = Records;
@@ -159,6 +160,7 @@ export async function createW2WhiteboardFixture(kind: ClaimFixtureKind = 'memory
     reads, roles, bodies: b2.bodies, authorizeConfiguration,
   };
   const plans = createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+    knowledge: knowledgeLinesFor({ root: base.directory, ...base.scope, records }),
     now, eventId, delegatedWrites });
 
   // Both Runs reach `entered` through the real Runtime: production prepare,

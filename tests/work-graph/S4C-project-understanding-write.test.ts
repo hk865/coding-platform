@@ -37,7 +37,7 @@ async function itemOf(f: S4ANoteFixture, noteId: string): Promise<{ storedState:
   anchor: NoteDraftAnchorV1; confirmedByUser: boolean; version: number }> {
   const read = await f.platform.notes.readNote(f.ctx(), { noteId });
   if (read.status !== 'ready') throw new Error(`note ${noteId} is not readable: ${JSON.stringify(read)}`);
-  return read.value;
+  return { ...read.value, version: read.value.version!, storedState: read.value.storedState! };
 }
 // The rendered five-section body, exactly as the writer renders it.
 const rendered = (status: string): string => `现状\n${status}\n\n已定\nb\n\n未决\nc\n\n下一步\nd\n\n风险\ne`;

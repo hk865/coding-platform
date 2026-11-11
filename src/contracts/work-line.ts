@@ -294,7 +294,7 @@ export type NodeNoteUnderstandingV1 = { anchorKey: string;
   updateDue: boolean | null; latestTriggerCursor: string | null };
 /** The L9 fields the notes column shows, plus `label` from `renderNoteHeader`. */
 export type NodeNoteRowV1 = {
-  noteId: string; version: number; storedState: NoteState; kind: NoteKind; label: string;
+  noteId: string; version: number | null; storedState: NoteState | null; kind: NoteKind; label: string;
   topic: string; topicKey: string; conclusion: string; anchor: NoteAnchorV1; extraAnchors: NoteAnchorV1[];
   source: NoteSourceV1; goalId: string | null; confirmedByUser: boolean;
   freshness: 'fresh' | 'stale' | 'unchecked'; changedFiles: { path: string; deleted: boolean }[];

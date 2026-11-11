@@ -29,7 +29,7 @@ import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ModuleRef, VersionPin } from '../../../contracts/core/identity.js';
 import { rejected } from '../../../contracts/core/rejections.js';
-import type { CoreError, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import { messageOf } from '../../../contracts/error-message.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { ArchitectureBaselineRevisionRef } from '../../../contracts/governance.js';
@@ -46,14 +46,15 @@ import {
   type KnowledgeWritePlan,
 } from '../knowledge/knowledge-write.js';
 import type {
-  KnowledgeBaselineV1, KnowledgeCaller, KnowledgeLines, LineKnowledge,
+  KnowledgeArchitecture, KnowledgeBaselineV1, KnowledgeCaller, KnowledgeLineScope, KnowledgeLines, LineKnowledge,
 } from '../model/line-knowledge.js';
 import type {
   AdoptedArchitecture, AdoptInitialArchitectureInput, ArchitectureBaselineContentV1, ArchitectureBaselineRevisionSnapshot,
   ArchitectureCatalogPort, ArchitectureCatalogRecord, ArchitectureCatalogRef, ArchitectureRevision,
   CatalogModuleFacts, ReadArchitectureRevisionInput, ReviseArchitectureCatalogOpsInput,
 } from './catalog-contracts.js';
-import { ARCHITECTURE_FILE_PATH, inModuleIdOrder } from './architecture-file.js';
+import { inModuleIdOrder } from './architecture-file.js';
+import { projectArchitectureOf } from './project-architecture.js';
 import { qualifyOps } from './proposal-service.js';
 import {
   ARCHITECTURE_CATALOG_ADOPTED_EVENT, ARCHITECTURE_CATALOG_REVISED_EVENT, architectureBaselineDigest,
@@ -67,7 +68,7 @@ import type { GraphWrite } from '../model/task-contracts.js';
 import { decodeProjectSnapshot, decodeWorkspaceSnapshot } from '../persistence/record-codecs.js';
 import { projectRefFor, workspaceRefFor } from '../persistence/commit-compiler.js';
 import { mergeGuards } from '../persistence/record-guards.js';
-import { sessionStoreFailureToRejection } from '../persistence/read-result-failures.js';
+import { sessionStoreFailureToRejection, storeFailureToRejection } from '../persistence/read-result-failures.js';
 import type { CatalogRevisionDependencies, CatalogRevisionInputV1 } from './revision-planner.js';
 import {
   catalogRevisionKeys, catalogRevisionMovesProblem, catalogRevisionPinProblem, draftCatalogRevision,
@@ -443,18 +444,42 @@ export async function readCurrentCatalogWindow(records: Pick<GoalRecordTransacti
   if (knowledge === undefined) return { status: 'ready', baseline, catalog, guards, activeRevision: pointer.revision };
   const lines = await knowledge.lines.project(knowledge.caller);
   if (lines.status !== 'ready') return mapStoreFailure(lines);
-  // A project of several workspaces reads the record until the project view merges every line's files.
-  if (lines.value.length !== 1) return { status: 'ready', baseline, catalog, guards, activeRevision: pointer.revision };
-  const file = await lines.value[0]!.readArchitecture();
-  if (file.status !== 'ready') return mapStoreFailure(file);
-  if (file.value.baseline === null) return unavailable(`${ARCHITECTURE_FILE_PATH} of the main workspace carries no baseline`);
+  // A8: every workspace's files, merged into the project view; any line that cannot be read fails the read.
+  const parts: { scope: KnowledgeLineScope; architecture: KnowledgeArchitecture }[] = [];
+  for (const line of lines.value) {
+    const file = await line.readArchitecture();
+    if (file.status !== 'ready') return mapStoreFailure(file);
+    parts.push({ scope: line.scope, architecture: file.value });
+  }
+  const merged = projectArchitectureOf(parts, projectId);
+  if (merged.status !== 'decoded') return unavailable(merged.reason);
   const { sourceBinding } = baseline.content;
   return {
     status: 'ready', guards, activeRevision: pointer.revision,
-    baseline: { ...baseline, content: { schemaVersion: 1, ...file.value.baseline,
+    baseline: { ...baseline, content: { schemaVersion: 1, ...merged.value.baseline,
       ...(sourceBinding === undefined ? {} : { sourceBinding }) } },
-    catalog: { ...catalog, catalog: file.value.catalog },
+    catalog: { ...catalog, catalog: merged.value.catalog },
   };
+}
+
+/**
+ * R-window: the current catalog pointer record's revision, `null` when no catalog is adopted. A ledger window
+ * compares it with the revision the knowledge files were read at (`activeRevision`, or `null` for `not_found`).
+ */
+export async function readCatalogPointerRevision(
+  records: Pick<GoalRecordTransactionPort, 'readMany'>,
+  projectId: string,
+): Promise<{ status: 'ready'; value: number | null } | CoreRejection> {
+  const refKey = activeRefKey(projectId);
+  let read: Awaited<ReturnType<GoalRecordTransactionPort['readMany']>>;
+  try {
+    read = await records.readMany([refKey]);
+  } catch (error) {
+    return storeFailureToRejection(error as { code: string; reason: string });
+  }
+  if (read.status !== 'ready') return storeFailureToRejection(read);
+  const record = read.value.records.find((candidate) => candidate.refKey === refKey);
+  return { status: 'ready', value: record === undefined ? null : record.revision };
 }
 
 /** The baseline fields a knowledge file keeps; the schema version and the source binding stay in the record. */
@@ -497,20 +522,33 @@ function catalogInProjectView(catalog: AdoptedArchitecture, callerWorkspaceId: s
   };
 }
 
-function opsInProjectView(ops: readonly CatalogRepairOpV1[], callerWorkspaceId: string,
-  mainWorkspaceId: string): CatalogRepairOpV1[] {
-  const id = (moduleId: string): string => projectModuleIdOfFile(moduleId, callerWorkspaceId, mainWorkspaceId);
-  const view = (ref: ModuleRef): ModuleRef => moduleRefInProjectView(ref, callerWorkspaceId, mainWorkspaceId);
+/** The ONE walk over every module id and path a repair op names (the caller-frame entries and the note file frame). */
+export function reframeRepairOps(ops: readonly CatalogRepairOpV1[], id: (moduleId: string) => string,
+  path: (path: string) => string): CatalogRepairOpV1[] {
+  const reframedRef = (value: ModuleRef): ModuleRef => ({ ...value, moduleId: id(value.moduleId) });
+  const paths = (values: readonly string[]): string[] => values.map(path);
   return ops.map((op): CatalogRepairOpV1 => {
     switch (op.op) {
-      case 'add_module': return { ...op, module: { ...op.module, ref: view(op.module.ref) } };
+      case 'add_module': return { ...op, module: { ...op.module, ref: reframedRef(op.module.ref), paths: paths(op.module.paths),
+        interfaces: op.module.interfaces.map(entry => ({ ...entry, paths: paths(entry.paths) })) } };
       case 'set_parent': return { ...op, moduleId: id(op.moduleId), parentId: op.parentId === null ? null : id(op.parentId) };
       case 'set_dependency_reason': case 'add_dependency': case 'remove_dependency':
       case 'add_forbid_rule': case 'remove_forbid_rule':
-        return { ...op, from: view(op.from), to: view(op.to) };
+        return { ...op, from: reframedRef(op.from), to: reframedRef(op.to) };
+      case 'add_path': case 'remove_path': return { ...op, moduleId: id(op.moduleId), path: path(op.path) };
+      case 'add_interface': return { ...op, moduleId: id(op.moduleId),
+        interface: { ...op.interface, paths: paths(op.interface.paths) } };
+      case 'set_interface': return { ...op, moduleId: id(op.moduleId),
+        ...(op.paths === undefined ? {} : { paths: paths(op.paths) }) };
       default: return { ...op, moduleId: id(op.moduleId) };
     }
   });
+}
+
+/** KLS-2b: a caller's module ids (its own frame) in the project view; paths are left to the caller's qualification. */
+export function opsInProjectView(ops: readonly CatalogRepairOpV1[], callerWorkspaceId: string,
+  mainWorkspaceId: string): CatalogRepairOpV1[] {
+  return reframeRepairOps(ops, moduleId => projectModuleIdOfFile(moduleId, callerWorkspaceId, mainWorkspaceId), path => path);
 }
 
 function movesInProjectView(moves: readonly ResponsibilityMoveV1[], callerWorkspaceId: string,
@@ -894,16 +932,28 @@ export function createArchitectureCatalogService(stores: ArchitectureCatalogStor
  * module plus the baseline/catalog/active guards it must CAS in the same commit
  * that activates a `SessionWorkLink`. Closing an existing link does not require
  * the target to remain in the current catalog.
+ * KLS-2b A.1: `knowledge` is the project view of the files.
  */
 export async function readCatalogModuleFacts(records: GoalRecordTransactionPort, ctx: CoreCallContext,
-  ref: ModuleRef): Promise<ReadResult<CatalogModuleFacts>> {
-  if (!ctx || typeof ctx !== 'object' || !nonEmpty(ctx.projectId)) return forbidden('a bound project call context is required');
-  const moduleRef = readModuleRef(ref);
-  if (moduleRef === null) return invalid('readCatalogModuleFacts requires a complete ModuleRef');
-  if (moduleRef.projectId !== ctx.projectId) return forbidden('the module is outside the call context project');
-  const current = await readCurrentCatalogWindow(records, moduleRef.projectId);
-  if (current.status !== 'ready') return current;
-  return catalogModuleFactsOf(current, moduleRef.moduleId);
+  ref: ModuleRef, knowledge: KnowledgeRead): Promise<ReadResult<CatalogModuleFacts>> {
+  return catalogModuleFactsOnce(records, ctx, knowledge)(ref);
+}
+
+/**
+ * KLS-2b: `readCatalogModuleFacts` for every module target of one call; the current catalog (its files) is read
+ * once, so a Session created with many module links reads the files once and every link joins the same guards.
+ */
+export function catalogModuleFactsOnce(records: GoalRecordTransactionPort, ctx: CoreCallContext,
+  knowledge: KnowledgeRead): (ref: ModuleRef) => Promise<ReadResult<CatalogModuleFacts>> {
+  let current: Promise<CurrentCatalogWindow> | undefined;
+  return async ref => {
+    if (!ctx || typeof ctx !== 'object' || !nonEmpty(ctx.projectId)) return forbidden('a bound project call context is required');
+    const moduleRef = readModuleRef(ref);
+    if (moduleRef === null) return invalid('readCatalogModuleFacts requires a complete ModuleRef');
+    if (moduleRef.projectId !== ctx.projectId) return forbidden('the module is outside the call context project');
+    current ??= readCurrentCatalogWindow(records, moduleRef.projectId, knowledge);
+    return catalogModuleFactsOf(await current, moduleRef.moduleId);
+  };
 }
 
 /**

@@ -64,7 +64,8 @@ export async function assembleS5R2C(f: S5DecisionFixture) {
   const roles = createRoleConfigurationService({ records: f.records, now: f.now, eventId: f.newId });
   const { authority } = createMaterialRecordReaders(f.records);
   const materials = createMaterialService({ bodies: f.bodies, authority, now: f.now });
-  const sessions = createSessionDirectory({ records: f.records, lookups: f.records, duty: unknownSessionDuty });
+  const sessions = createSessionDirectory({ records: f.records,
+    knowledge: f.knowledge, lookups: f.records, duty: unknownSessionDuty });
   const executions = createRunStateReader({ records: f.records });
   const duties = ({
     async readMessageDutiesFacts(_ctx, input) {

@@ -141,13 +141,16 @@ describe.each(['memory', 'sqlite'] as const)('A1 architecture catalog over real 
 
   it('commits exactly one of two concurrent first adoptions', async () => {
     const fixture = await make(kind);
-    const barrier = commitBarrier(fixture.records);
+    // KLS-2b [2B-06]: both adoptions share the project's write queue, so the second cannot reach the commit while the
+    // first waits there; the barrier only counts (one participant), and the queue runs the two one after the other.
+    const barrier = commitBarrier(fixture.records, 1);
     const service = createArchitectureCatalogService({ records: barrier.records, knowledge: fixture.knowledge });
     const [left, right] = await Promise.all([
       barrier.run(() => service.adoptInitialArchitecture(fixture.ctx, adoption(fixture, 'adopt-concurrent-left'))),
       barrier.run(() => service.adoptInitialArchitecture(fixture.ctx, adoption(fixture, 'adopt-concurrent-right'))),
     ]);
-    expect(barrier.arrivals).toBe(2);
+    // The second, run after the first committed, sees the adopted baseline and never reaches the store.
+    expect(barrier.arrivals).toBe(1);
     expect([left, right].filter(result => result.status === 'committed')).toHaveLength(1);
     expect([left, right].filter(result => result.status === 'rejected')).toHaveLength(1);
   });
@@ -182,7 +185,7 @@ describe.each(['memory', 'sqlite'] as const)('A1 architecture catalog over real 
     const adopted = await fixture.adopt('adopt-module-facts');
     expect(adopted.status).toBe('committed');
     const facts = await readCatalogModuleFacts(fixture.records, fixture.ctx,
-      { projectId: fixture.projectId, moduleId: GRAPH_MODULE_ONE });
+      { projectId: fixture.projectId, moduleId: GRAPH_MODULE_ONE }, { lines: fixture.knowledge, caller: fixture.ctx });
     expect(facts.status).toBe('ready');
     if (facts.status !== 'ready') return;
     expect(facts.value.module.ref.moduleId).toBe(GRAPH_MODULE_ONE);

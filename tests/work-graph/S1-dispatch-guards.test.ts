@@ -11,6 +11,7 @@ import { createB2ExecutionFixture, type B2ExecutionFixture } from '../helpers/B2
 import { commitBarrier } from '../helpers/graph-session-fixture.js';
 import { t0, ready, committed, key, s1Schemas, observeStore, sessionOwners, workHistory,
   createSession, plannedSession, pendingQuery } from '../helpers/S1-session-facts-fixture.js';
+import { knowledgeLinesOver } from '../helpers/KLS2-knowledge-lines.js';
 
 const opened: B2ExecutionFixture[] = [];
 beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(t0); });
@@ -79,7 +80,8 @@ describe.each(['memory', 'sqlite'] as const)('S1 direct dispatch guards (%s)', k
     if (message.response === null) throw new Error('race requires the real response');
     const barrier = commitBarrier(f.base.records, 2);
     const claims = f.base.makeService(barrier.records, () => t0);
-    const lifecycle = createSessionLifecycleService({ records: barrier.records, lookups: barrier.records,
+    const lifecycle = createSessionLifecycleService({ records: barrier.records,
+      knowledge: knowledgeLinesOver(barrier.records), lookups: barrier.records,
       sessionFacts: createSessionFactsService({ records: barrier.records }), duty: unknownSessionDuty });
     const claim = await f.base.buildRequest();
     claim.input.consumedWait = { kind: 'wait_reply', originalRun: f.b2.claim.runRef, messageRef: message.ref, responseRef: message.response.bodyRef };

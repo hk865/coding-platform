@@ -62,6 +62,7 @@ import { mapExecutedFilesToModules } from '../model/architecture-footprint.js';
 import { noteCommandIdentity, noteFileWritesOf } from './note-service.js';
 import { normalizePath } from './note-anchors.js';
 import { readAllHeads } from './note-base-reader.js';
+import { overlayFileKnowledge } from './note-knowledge.js';
 import { mapStoreFailure } from './store-failures.js';
 import type { S5RecordPort } from '../model/decision-contracts.js';
 
@@ -410,9 +411,10 @@ type ActivationPrepared =
   | { kind: 'withdrawn'; keys: { identityKey: string; fingerprint: string } };
 
 /**
- * Everything after the receipt lookup: the note, round, footprint and approval
- * checks, the current catalog read (from the knowledge files), the plan, the
- * records and the file changes, prepared after the knowledge lines are taken.
+ * Everything inside the write queue: the receipt lookup again, then the note,
+ * round, footprint and approval checks, the current catalog read (from the
+ * knowledge files), the plan, the records and the file changes, prepared after
+ * the knowledge lines are taken.
  */
 async function prepareActivation(
   deps: RepairActivationDependencies, ctx: CoreCallContext,
@@ -423,6 +425,10 @@ async function prepareActivation(
 ): Promise<KnowledgePrepared<ActivateRepairResult>> {
   const { identityKey, fingerprint } = keys;
   const exit = (value: ActivateRepairResult): KnowledgePrepared<ActivateRepairResult> => ({ kind: 'exit', value });
+  // KLS-2b [2B-06]: the same command that landed while this one waited in the queue replays before the note is read
+  // (quick check 5: its result comes first, not `not_staged`).
+  const landed = await priorActivation(deps, ctx, keys, input);
+  if (landed !== null) return exit(landed);
   const noteKey = noteHeadRefKey({ aggregateType: 'NoteHead', projectId: ctx.projectId, noteId: input.noteId });
   const headRead = await deps.records.readMany([noteKey]);
   if (headRead.status !== 'ready') return exit(mapStoreFailure(headRead));
@@ -430,7 +436,11 @@ async function prepareActivation(
   if (headRecord === undefined) return exit(rejected('not_found', 'the note does not exist'));
   const decodedHead = decodeNoteHeadSnapshot(headRecord);
   if (decodedHead.status !== 'decoded') return exit(rejected('unavailable', `the note head is damaged: ${decodedHead.reason}`));
-  const head = decodedHead.value;
+  // #47/[2B-21]: the ops come from the note's file (the pin and moves stay the record's); the binding digest below
+  // is taken on this same body, so a person's edit of the ops after the round makes the round stale.
+  const overlaid = await overlayFileKnowledge([decodedHead.value], { lines: deps.knowledge, caller: ctx });
+  if (overlaid.status !== 'ready') return exit(mapStoreFailure(overlaid));
+  const head = overlaid.value[0]!;
   if (head.state === 'withdrawn') return exit(rejected('invalid', 'withdrawn'));
   if (head.state !== 'staged') return exit(rejected('invalid', 'not_staged'));
   if (input.expectedVersion !== head.version) return exit({ status: 'source_stale', reason: 'note_version_changed' });

@@ -31,6 +31,16 @@ import { createTargetPlatform } from '../../src/composition/create-platform.js';
 
 const AT = '2026-10-17T00:00:00.000Z';
 
+/** KLS-2b: each platform's Host workspace list of the fixture project (the main workspace first). */
+const knowledgeWorkspacesOf = new WeakMap<object, string[]>();
+
+/** KLS-2b: a row that registers another workspace of the fixture project lists it for the knowledge lines too. */
+export function addKnowledgeWorkspace(platform: object, workspaceId: string): void {
+  const listed = knowledgeWorkspacesOf.get(platform);
+  if (listed === undefined) throw new Error('S8D: the platform was not built by this fixture');
+  if (!listed.includes(workspaceId)) listed.push(workspaceId);
+}
+
 export const BACKENDS = ['memory', 'sqlite'] as const;
 export type Backend = (typeof BACKENDS)[number];
 export type Entry = [path: string, content: string | Uint8Array];
@@ -147,19 +157,20 @@ export async function fixture(backend: Backend, projectId: string, entries: Entr
     const workspaceId = 'main';
     const scope: WorkspaceScope = { projectId, workspaceId };
     const actor = { kind: 'human' as const, id: `${projectId}-operator` };
-    // KLS-2: another project on this platform gets its own root, so its knowledge files never share this folder.
+    // KLS-2: another project on this platform, or another workspace of this project (KLS-2b: the project view reads
+    // every registered workspace's files), gets its own root, so its knowledge files never share this folder.
     const otherRoots = new Map<string, Promise<string>>();
+    // KLS-2b: the knowledge lines read the Host's workspace list; another project on this platform keeps one workspace.
+    const knowledgeWorkspaces = [workspaceId];
     const host: WorkspaceHostBindings = {
       async resolveRoot(requested) {
-        if (requested.projectId !== projectId) {
+        if (requested.projectId !== projectId || requested.workspaceId !== workspaceId) {
           const key = JSON.stringify([requested.projectId, requested.workspaceId]);
           const other = otherRoots.get(key) ?? mkdtemp(join(directory, 'other-project-'));
           otherRoots.set(key, other);
           return { status: 'ready', value: { root: await other, workspaceRevision: 1 } };
         }
-        return requested.workspaceId === workspaceId
-          ? { status: 'ready', value: { root, workspaceRevision: 1 } }
-          : { status: 'rejected', code: 'forbidden', reason: 'unknown workspace' };
+        return { status: 'ready', value: { root, workspaceRevision: 1 } };
       },
       async authorize(bound, requested) {
         const permitted = bound.projectId === projectId && bound.workspaceId === workspaceId &&
@@ -178,10 +189,12 @@ export async function fixture(backend: Backend, projectId: string, entries: Entr
       storage: backend === 'memory' ? { kind: 'memory' } : { kind: 'sqlite', directory },
       workspace: host, now: () => AT,
       architectureSource: { provider: 'typescript', configPath: null },
+      knowledgeWorkspaces: requested => requested === projectId ? knowledgeWorkspaces : [workspaceId],
       ...(sourceAnalyzers === undefined ? {} : { sourceAnalyzers }),
       ...(options.fileGraph === undefined ? {} : { fileGraph: options.fileGraph }),
       ...(options.lightScan === undefined ? {} : { lightScan: options.lightScan }),
     });
+    knowledgeWorkspacesOf.set(platform, knowledgeWorkspaces);
     const ctx: CoreCallContext = {
       projectId, workspaceId,
       principal: { kind: 'host', actor },

@@ -68,6 +68,7 @@ import {
 } from './S5-decision-fixture.js';
 import { createScriptedModel } from './B2-runtime-fixture.js';
 import { readToolSeam } from './K3-tool-seams.js';
+import { knowledgeLinesOver } from './KLS2-knowledge-lines.js';
 
 /** The five extra work tasks the real Plan adoption adds to Goal B (K3-20). */
 export const K3_REVIEW_TASKS = ['k3-20-a', 'k3-20-b', 'k3-20-c', 'k3-20-d', 'k3-20-e'] as const;
@@ -310,7 +311,8 @@ export async function openK3ReviewCardWorld(
   let decisionSequence = 0;
   const nextDecisionId = (): string => `k3-review-card-decision-${String(++decisionSequence)}`;
   // The ONE real Session directory this world's mailbox and the DRV platform share.
-  const sessions = createSessionDirectory({ records: decisionRecords, lookups: fixture.records, duty: unknownSessionDuty });
+  const sessions = createSessionDirectory({ records: decisionRecords,
+    knowledge: knowledgeLinesOver(decisionRecords), lookups: fixture.records, duty: unknownSessionDuty });
   const mailboxDeps: SessionMailboxDependencies = {
     defaultInquiryDeadlineMs: 86_400_000,
     records: decisionRecords, materials, now: () => T, newId: nextDecisionId,

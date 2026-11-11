@@ -38,6 +38,7 @@ async function harness(kind: S5FixtureKind, duties: readonly PlatformDutyV1[] | 
     return owners.mailbox.sendUserMessage(work, { input, meta: meta(requestId, [{ ref: GOAL_B, revision: GOAL_REVISION }]) });
   };
   const plans = createPlanService({ records: f.records, bindings: createInitializationBindingReader({ records: f.records }),
+    knowledge: f.knowledge,
     now: f.now, eventId: f.newId });
   // A Task's definition is stored in the Plan; its current phase is derived
   // from persisted Run/Attempt/Lease facts, not from the fixture's cached Plan.

@@ -56,6 +56,7 @@ import {
   createR3eEvidenceFixture, R3E_GATE_TASK_ID, R3E_WORK_TASK_ID, type R3eEvidenceFixture,
 } from '../helpers/R3e-evidence-fixture.js';
 import { withBackendOrderedLookup } from '../helpers/ordered-lookup-forward.js';
+import { knowledgeLinesOver } from '../helpers/KLS2-knowledge-lines.js';
 
 const KINDS = ['memory', 'sqlite'] as const;
 const fixtures: R3eEvidenceFixture[] = [];
@@ -124,7 +125,7 @@ function evidenceOver(fixture: R3eEvidenceFixture, tag: string, overrides: {
   records?: R3eEvidenceFixture['records']; source?: VerificationRoundSourcePort; minted?: string[];
 } = {}): EvidencePort {
   let sequence = 0;
-  return createEvidenceService({ records: overrides.records ?? fixture.records, materials: fixture.materials,
+  return createEvidenceService({ knowledge: knowledgeLinesOver(fixture.records, fixture.workspaceHost), records: overrides.records ?? fixture.records, materials: fixture.materials,
     executions: createRunStateReader({ records: fixture.records }),
     workspaceHost: fixture.workspaceHost, source: overrides.source ?? new VerificationWorkspaceReader(),
     configuration: fixture.configuration, now: () => B2_AT,
@@ -300,6 +301,7 @@ it('a round chain the projection cannot read makes the task graph unavailable, n
     ? { status: 'rejected', code: 'unavailable', reason: 'a2: the round index is unavailable' }
     : fixture.records.lookup(request));
   const plans = createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+    knowledge: knowledgeLinesOver(records),
     now: () => B2_AT, eventId: () => 'a2-unused-event' });
   expect(await plans.queryTaskGraph(fixture.ctx, { goalRef: fixture.goalRef }))
     .toMatchObject({ status: 'rejected', code: 'unavailable' });

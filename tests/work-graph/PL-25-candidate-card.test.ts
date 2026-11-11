@@ -14,7 +14,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 import { systemRoundMessageRef, systemRoundRequestId } from '../../src/contracts/plan-round.js';
-import type { PlanProposal } from '../../src/core/work-graph/model/plan-contracts.js';
+import { WORKFLOW_AUTOMATION_ACTOR } from '../../src/contracts/task-requeue.js';
+import type { PlanProposal, PlanProposalWithAdoption } from '../../src/core/work-graph/model/plan-contracts.js';
 import { ag2bChecksConfiguration, graphWrite } from '../helpers/AG2b-collaboration-fixture.js';
 import { startGoalDriver } from '../helpers/DRV-fixture.js';
 import { readPlanningQuery, readProposal } from '../helpers/IV-host-fixture.js';
@@ -230,19 +231,14 @@ describe('PL-25 candidate card review states', () => {
       status: 'decided', verdict: 'pass', findings: [],
     } });
 
-    // The Goal loop may already have adopted; otherwise adopt through the card's
-    // own proposal ref. Either way the accepted record bumps its revision, so
-    // the card's review read is the pre-acceptance version (`revision - 1`).
-    const current = ready<PlanProposal>(await ws.route('plans/proposal', candidate.ref), 'plans/proposal');
-    if (current.status === 'candidate') {
-      committed(await ws.post('plans/apply', graphWrite(ws.scope, {
-        proposalRef: candidate.ref, expectedProposalRevision: candidate.revision, decisionRefs: [],
-      }, 'pl25-review-apply')), 'the review candidate adoption');
-    }
+    // This world's autonomy lets the Goal loop adopt a passed candidate itself, so the row waits for that adoption
+    // (a person's apply here raced the loop). The accepted record bumps its revision, so the card's review read is
+    // the pre-acceptance version (`revision - 1`).
     const accepted = await waitDirect(world, async () =>
-      ready<PlanProposal>(await ws.route('plans/proposal', candidate.ref), 'plans/proposal'),
+      ready<PlanProposalWithAdoption>(await ws.route('plans/proposal', candidate.ref), 'plans/proposal'),
     proposal => proposal.status === 'accepted', 'the accepted review candidate');
     expect(accepted.revision).toBe(candidate.revision + 1);
+    expect(accepted.adoptedBy).toEqual(WORKFLOW_AUTOMATION_ACTOR);
     const after = await world.platform.readCandidateCard(world.humanContext(),
       { goalRef: goal, proposalRef: candidate.ref });
     expect(after.status).toBe('ready');

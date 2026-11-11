@@ -52,6 +52,7 @@ import { readTaskClosure } from '../../src/core/work-graph/tasks/plan-readers.js
 import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
 import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js';
 import { createTaskClaimFixture, type ClaimFixtureKind, type TaskClaimFixture } from './task-claim-fixture.js';
+import { knowledgeLinesOver } from './KLS2-knowledge-lines.js';
 
 export const B2_AT = '2026-09-26T00:00:00.000Z';
 
@@ -246,8 +247,10 @@ export async function createB2RuntimeFixture(options: {
     const roles=createRoleConfigurationService({records,now,eventId});
     const reads=createMaterialRecordReaders(records);
     const materials=createMaterialService({bodies,authority:reads.authority,now});
-    const plans=createPlanService({records,bindings:createInitializationBindingReader({records}),materials,now,eventId});
-    const sessions=createSessionDirectory({records,lookups:records, duty: unknownSessionDuty});
+    const plans=createPlanService({records,bindings:createInitializationBindingReader({records}),
+      knowledge: knowledgeLinesOver(records),materials,now,eventId});
+    const sessions=createSessionDirectory({records,
+      knowledge: knowledgeLinesOver(records),lookups:records, duty: unknownSessionDuty});
     const selectedKernelStores=overrides.kernelStores??kernelStores;
     const sessionOperations=createSessionOperations({sessions,kernelStores:selectedKernelStores});
     const activity=createExecutionHistoryReader({history:sessionOperations});

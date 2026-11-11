@@ -123,7 +123,7 @@ describe('S4B M-14 after-write check', () => {
 
 describe('S4B M-07 same-topic race read through the real holder', () => {
   it.each(['memory', 'sqlite'] as const)(
-    'M-07 %s: two interleaved same-topic writes are both conflicting and not current', async kind => {
+    'M-07 %s: two concurrent same-topic writes: the second is refused and nothing reads conflicting', async kind => {
       const f = await createS4AInterleaveFixture(kind);
       try {
         const anchor = { kind: 'file' as const, path: 'src/a/x.ts' };
@@ -133,17 +133,18 @@ describe('S4B M-07 same-topic race read through the real holder', () => {
           () => f.notes.writeNote(f.workCtxB(), { commandId: 's4b-m07-b',
             note: draft({ topic: 'race topic', anchor }), expectedPointerRevision: null, goalId: null }),
         );
-        expect(first.status).toBe('accepted');
-        expect(second.status).toBe('accepted');
-        if (first.status === 'rejected' || second.status === 'rejected') return;
+        // KLS-2b [2B-06]: the project's write queue runs the two writes one after the other (either may go first); the
+        // second sees the first's topic and is refused.
+        const results = [first, second];
+        expect(results.filter(result => result.status === 'accepted')).toHaveLength(1);
+        expect(results.filter(result => result.status === 'rejected'))
+          .toEqual([expect.objectContaining({ status: 'rejected', code: 'invalid', reason: 'same_topic_unresolved' })]);
         // R16: the real holder's read port, no separately built reader.
         const memory = f.notes as unknown as NoteMemoryReadPort;
         const read = await memory.memoryConflicts(f.hostCtx(), { v: 1, op: 'conflicts', anchor, limit: 20, cursor: null });
         expect(read.status).toBe('ready');
         if (read.status !== 'ready') return;
-        expect(read.value.items.map(item => item.noteId).sort()).toEqual([first.noteId, second.noteId].sort());
-        expect(read.value.items.map(item => item.conflicting)).toEqual([true, true]);
-        expect(read.value.items.map(item => item.currentEligible)).toEqual([false, false]);
+        expect(read.value.items).toEqual([]);
       } finally { await f.close(); }
     });
 });

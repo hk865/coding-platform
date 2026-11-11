@@ -34,6 +34,7 @@ import { withBackendOrderedLookup } from '../helpers/ordered-lookup-forward.js';
 import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
 import type { CreateSessionRequest } from '../../src/core/agent-runtime/session-operations.js';
 import { createTargetPlatform } from '../../src/composition/create-platform.js';
+import { knowledgeLinesOver } from '../helpers/KLS2-knowledge-lines.js';
 
 const AT = '2026-09-25T00:00:00.000Z';
 const projectId = 'w1-composed';
@@ -82,6 +83,7 @@ function changePolishDraft(planId: string, planRevision: number): PlanDraftV2 {
 function planServiceOver(records: Records, tag: string): ReturnType<typeof createPlanService> {
   let n = 0;
   return createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+    knowledge: knowledgeLinesOver(records),
     now: () => AT, eventId: () => `w1-${tag}-${++n}` });
 }
 

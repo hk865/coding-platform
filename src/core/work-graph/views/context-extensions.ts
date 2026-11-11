@@ -363,22 +363,22 @@ export function createContextExtensionsReader(deps: ContextExtensionsDependencie
       let capabilities: DecisionQueueReadV1['capabilities'] = [];
       try {
         // KLS-2 ruling 9 (R-window), stack review 2: the pages must share one
-        // ledger window, so the conflicts' architecture files are read before
-        // the first page and each page makes one attempt; a page whose window
-        // moved starts the pages again from a new architecture read, at most
-        // WINDOW_MAX_ATTEMPTS times (on the last, the queue answers its own
-        // `unavailable`).
+        // ledger window, so the queue is prepared (its knowledge files read,
+        // the Goal resolved once; F-30) before the first page and each page
+        // makes one attempt; a page whose window moved starts the pages again
+        // from a new preparation, at most WINDOW_MAX_ATTEMPTS times (on the
+        // last, the queue answers its own `unavailable`).
+        const queueInput = { workspace: { projectId, workspaceId }, goalRef: request.goalRef,
+          sections: ['waiting_answer' as const] };
         pages: for (let attempt = 1; ; attempt += 1) {
-          const prepared = { read: await deps.decisions.readConflictArchitecture(hostCtx),
+          const prepared = { read: await deps.decisions.prepareDecisionQueue(hostCtx, queueInput),
             last: attempt === WINDOW_MAX_ATTEMPTS };
           cards.length = 0;
           let sourceCursor: DecisionQueueReadV1['sourceCursor'] | null = null;
           let cursor: string | undefined;
           for (;;) {
             const read = await deps.decisions.queryDecisionQueuePrepared(hostCtx, {
-              workspace: { projectId, workspaceId },
-              goalRef: request.goalRef,
-              sections: ['waiting_answer'],
+              ...queueInput,
               page: cursor === undefined
                 ? { limit: decisionPageLimit }
                 : { limit: decisionPageLimit, cursor },

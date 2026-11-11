@@ -1,8 +1,9 @@
 /**
  * The ONE order of a knowledge write: take every line of
- * the project, let the service read the current knowledge, plan, validate and
- * compute the file changes inside `prepare`, commit the records, and only then
- * write the files. The files are the knowledge and the committed event is the
+ * the project, enter the write queue (the project, then its folders), let the
+ * service read the current knowledge, plan, validate and compute the file
+ * changes inside `prepare`, commit the records, write the files, and index the
+ * landed files last. The files are the knowledge and the committed event is the
  * write log, so a replayed receipt touches no file, and a file that could not
  * be written after a committed record is reported as such, never as success.
  */
@@ -11,7 +12,9 @@ import type {
   CommitCursorBinding, EncodedDomainEvent, EncodedRecord, PreparedCommit, RecordGuard, StoreCommitReceipt, StoreFailure,
   StoreResult,
 } from '../../record-store/ports.js';
-import type { KnowledgeCaller, KnowledgeFileChange, KnowledgeLines, LineKnowledge } from '../model/line-knowledge.js';
+import {
+  lineRefKey, type KnowledgeCaller, type KnowledgeFileChange, type KnowledgeLines, type KnowledgeWriteDeps, type LineKnowledge,
+} from '../model/line-knowledge.js';
 
 export type KnowledgeWritePlan = { line: LineKnowledge; changes: readonly KnowledgeFileChange[] };
 /** What joins the same `records.commit`. */
@@ -75,16 +78,50 @@ export async function writeKnowledge<X>(knowledge: KnowledgeLines, caller: Knowl
   // current knowledge was read inside `prepare`.
   const lines = await knowledge.project(caller);
   if (lines.status !== 'ready') return { kind: 'rejected', failure: lines };
-  const prepared = await prepare(lines.value);
-  if (prepared.kind === 'exit') return prepared;
-  const receipt = await prepared.commit(() => NO_EXTRAS);
-  if (receipt.status !== 'committed') return { kind: 'rejected', failure: receipt };
-  if (receipt.replayed) return { kind: 'committed', receipt, files: null };
-  for (const plan of prepared.plans) {
-    for (const change of plan.changes) {
-      const applied = await plan.line.applyChange(change);
-      if (applied.status !== 'ready') return { kind: 'committed', receipt, files: applied };
+  const folders = lines.value.map(line => line.line.folder);
+  // The queue holds the whole read-plan-commit-write-index span; it does not replace the records' CAS.
+  return knowledge.write.queue.run(caller.projectId, folders, async (): Promise<KnowledgeWriteOutcome<X>> => {
+    const prepared = await prepare(lines.value);
+    if (prepared.kind === 'exit') return prepared;
+    const receipt = await prepared.commit(() => NO_EXTRAS);
+    if (receipt.status !== 'committed') return { kind: 'rejected', failure: receipt };
+    if (receipt.replayed) return { kind: 'committed', receipt, files: null };
+    const landed: KnowledgeWritePlan[] = [];
+    let files: StoreResult<void> = { status: 'ready', value: undefined };
+    for (const plan of prepared.plans) {
+      const changes: KnowledgeFileChange[] = [];
+      landed.push({ line: plan.line, changes });
+      for (const change of plan.changes) {
+        const applied = await plan.line.applyChange(change);
+        if (applied.status !== 'ready') { files = applied; break; }
+        changes.push(change);
+      }
+      if (files.status !== 'ready') break;
     }
+    indexLanded(knowledge.write, caller.projectId, landed);
+    return { kind: 'committed', receipt, files };
+  });
+}
+
+/**
+ * The index is a cache and is updated last: every landed file is indexed in one transaction and a note file's
+ * new blob is confirmed (no "needs verification" row). A throw here leaves the write's answer as it is and is not
+ * reported as indexed; the next reconciliation rebuilds the file's rows from the file.
+ */
+function indexLanded(write: KnowledgeWriteDeps, projectId: string, landed: readonly KnowledgeWritePlan[]): void {
+  if (landed.every(plan => plan.changes.length === 0)) return;
+  try {
+    write.indexOf(projectId).transaction(tx => {
+      for (const plan of landed) {
+        for (const change of plan.changes) {
+          const indexed = write.indexFile(tx, plan.line, change.path, change.after);
+          if (indexed.status === 'decoded' && indexed.value.kind === 'note' && indexed.value.blobSha !== null) {
+            tx.setNoteState(lineRefKey(plan.line.scope, plan.line.line), indexed.value.blobSha, null);
+          }
+        }
+      }
+    });
+  } catch {
+    // The index stays as it was; the files and the records are the facts.
   }
-  return { kind: 'committed', receipt, files: { status: 'ready', value: undefined } };
 }

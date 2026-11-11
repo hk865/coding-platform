@@ -30,6 +30,7 @@ import {
   createLineCreation, type LineCreationInput,
 } from '../../src/business/workflow/line-creation.js';
 import { registrationDouble } from '../helpers/S6A-registration-double.js';
+import { knowledgeLinesOver } from '../helpers/KLS2-knowledge-lines.js';
 
 vi.mock('../../src/core/work-graph/sessions/session-directory.js', async (importOriginal) =>
   (await import('../helpers/S6A-registration-double.js')).registrationDoubleModule(importOriginal));
@@ -91,7 +92,8 @@ async function open(kind: 'memory' | 'sqlite') {
     input: { workspace: scope },
   });
   if (registered.status !== 'committed') throw new Error(`workspace registration failed: ${JSON.stringify(registered)}`);
-  const directoryPort = createSessionDirectory({ records: backend.records, lookups: backend.records, duty: unknownSessionDuty });
+  const directoryPort = createSessionDirectory({ records: backend.records,
+    knowledge: knowledgeLinesOver(backend.records), lookups: backend.records, duty: unknownSessionDuty });
   const kernelStores = await createKernelStoreRegistry({ entries: [{
     adapterId: 's6a-line-kernel', storeKey: 's6a-line-key', workspace: scope,
     databasePath: path.join(directory, 'kernel.sqlite'),

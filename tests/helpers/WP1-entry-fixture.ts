@@ -388,7 +388,8 @@ export async function openAnomalyReaderFixture(kind: ClaimFixtureKind): Promise<
     const { base, ctx, claim } = execution;
     const sessionFacts = createSessionFactsService({ records: base.records });
     const anomalies = createSessionAnomalyService({ records: base.records, lookups: base.records, sessionFacts, now });
-    const lifecycle = createSessionLifecycleService({ records: base.records, lookups: base.records, sessionFacts, duty: unknownSessionDuty });
+    const lifecycle = createSessionLifecycleService({ records: base.records,
+      knowledge: base.knowledge, lookups: base.records, sessionFacts, duty: unknownSessionDuty });
     await execution.enter();
     const target = { kind: 'task' as const, ref: claim.task };
     const linkRef: SessionWorkLinkRef = { ...claim.sessionRef, aggregateType: 'SessionWorkLink', target, relation: 'responsible' };

@@ -448,7 +448,8 @@ describe.each(['memory', 'sqlite'] as const)('S8A L8 chunk scope [%s]', backend 
 
     // The public Goal/Plan/Session/claim facts the two preparations need.
     const claimA = await world.prepareClaim(A, 's8a-l8-a-goal-a', 's8a-l8-a-plan-a', 'A');
-    const claimB = await world.prepareClaim(B, 's8a-l8-a-goal-b', 's8a-l8-a-plan-b', 'A');
+    // [2B-26]: the draft is in the Goal's workspace frame; b names a's module A with its prefix.
+    const claimB = await world.prepareClaim(B, 's8a-l8-a-goal-b', 's8a-l8-a-plan-b', '/@ws:a/A');
 
     // A REAL revision triggers each workspace again.
     world.setNow(70);

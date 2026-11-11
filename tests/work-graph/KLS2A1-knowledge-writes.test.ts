@@ -18,7 +18,8 @@ import type { WriteNoteResult } from '../../src/core/work-graph/model/note-contr
 import type { KnowledgeLines, LineKnowledge } from '../../src/core/work-graph/model/line-knowledge.js';
 import { openKLS2AWorld, type KLS2AWorld } from '../helpers/KLS2A-knowledge-world.js';
 import { openProposalWorld } from '../helpers/S8C-proposal-world.js';
-import { openS8CRepairWorld } from '../helpers/S8C-repair-world.js';
+import { openS8CRepairWorld, plain, repairCommits } from '../helpers/S8C-repair-world.js';
+import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
 
 const MODULES = '.workbench/modules';
 const ARCHITECTURE = '.workbench/architecture.json';
@@ -29,10 +30,23 @@ const ARCHITECTURE = '.workbench/architecture.json';
  * module files are read; the step runs first), steps that run one each after the next architecture file reads
  * (`readArchitecture`, before the read returns), and one step that runs when the repair activation next computes
  * its file changes (the module's `architectureWritePlansOf`, which the activation imports; the step runs first).
+ * S15 arms one step that runs when the activation next computes its note file changes (`noteFileWritesOf`, which it
+ * imports from the note service, where the note files are read; the step runs first).
  * The real result comes back unchanged; unarmed, every call is the real one.
  */
 const knowledgeGate = vi.hoisted(() => ({ beforeModuleWrite: null as null | (() => Promise<void>),
-  afterArchitectureRead: [] as (() => Promise<void>)[], beforeWritePlans: null as null | (() => Promise<void>) }));
+  afterArchitectureRead: [] as (() => Promise<void>)[], beforeWritePlans: null as null | (() => Promise<void>),
+  beforeNoteFileWrites: null as null | (() => Promise<void>) }));
+vi.mock('../../src/core/work-graph/notes/note-service.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../src/core/work-graph/notes/note-service.js')>();
+  return { ...actual,
+    noteFileWritesOf: async (...args: Parameters<typeof actual.noteFileWritesOf>) => {
+      const step = knowledgeGate.beforeNoteFileWrites;
+      knowledgeGate.beforeNoteFileWrites = null;
+      if (step !== null) await step();
+      return actual.noteFileWritesOf(...args);
+    } };
+});
 vi.mock('../../src/core/work-graph/architecture/catalog-service.js', async importOriginal => {
   const actual = await importOriginal<typeof import('../../src/core/work-graph/architecture/catalog-service.js')>();
   const gatedLine = (line: LineKnowledge): LineKnowledge => ({ ...line,
@@ -73,6 +87,7 @@ afterEach(async () => {
   knowledgeGate.beforeModuleWrite = null;
   knowledgeGate.afterArchitectureRead.length = 0;
   knowledgeGate.beforeWritePlans = null;
+  knowledgeGate.beforeNoteFileWrites = null;
   for (const close of closers.splice(0).reverse()) await close();
 });
 
@@ -276,19 +291,21 @@ it('S7 one revision from the second workspace writes every line of the project',
   expect([...moduleIdsOf(await currentArchitecture(world))].sort()).toEqual(['/@ws:ws2/svc', 'core']);
 });
 
-it('S8 a card disposition that changes the relations rewrites the note file', async () => {
-  const world = await knowledgeWorld();
+/** A person's note and an agent's note contradicting it, waiting on one review card that `coexist` resolves. */
+async function coexistOnReview(world: KLS2AWorld, prefix: string,
+  beforeResolve: (agentId: string) => void = () => undefined): Promise<{ mineId: string; agentId: string }> {
   await adoptTwoModules(world);
   await world.claimExecutorRun();
-  const mine = await world.platform.notes.writeNote(world.ctx(), { commandId: 'kls2a-s8-user',
+  const mine = await world.platform.notes.writeNote(world.ctx(), { commandId: `${prefix}-user`,
     note: noteDraft({ conclusion: '用户的结论' }), expectedPointerRevision: null, goalId: world.goalRef.goalId });
   expect(mine).toMatchObject({ status: 'accepted' });
   const mineId = noteIdOf(mine);
-  const agent = await world.platform.notes.writeNote(world.ctx('work_run'), { commandId: 'kls2a-s8-agent',
+  const agent = await world.platform.notes.writeNote(world.ctx('work_run'), { commandId: `${prefix}-agent`,
     note: noteDraft({ conclusion: '相反的结论', contradicts: [mineId] }), expectedPointerRevision: null,
     goalId: world.goalRef.goalId });
   expect(agent).toMatchObject({ status: 'pending_review' });
   const agentId = noteIdOf(agent);
+  beforeResolve(agentId);
   const queue = await world.platform.decisions.queryDecisionQueue(world.ctx(), {
     workspace: { projectId: world.projectId, workspaceId: world.workspaceId }, sections: ['waiting_answer'], page: { limit: 100 } });
   if (queue.status !== 'ready') throw new Error(`the decision queue is not ready: ${JSON.stringify(queue)}`);
@@ -298,11 +315,31 @@ it('S8 a card disposition that changes the relations rewrites the note file', as
   const resolve = world.platform.workflow.resolveDecision;
   if (resolve === undefined) throw new Error('the platform publishes no resolveDecision');
   expect(await resolve(world.ctx(), { input: { source: card.source, selection: { kind: 'option', optionId: 'coexist' },
-    text: '', annotations: [] }, meta: { requestId: 'kls2a-s8-coexist', expected: card.source.pins } }))
+    text: '', annotations: [] }, meta: { requestId: `${prefix}-coexist`, expected: card.source.pins } }))
     .toMatchObject({ status: 'ready', value: { state: 'applied' } });
+  return { mineId, agentId };
+}
+
+it('S8 a card disposition that changes the relations rewrites the note file', async () => {
+  const world = await knowledgeWorld();
+  const { mineId, agentId } = await coexistOnReview(world, 'kls2a-s8');
   const header = noteHeaderIn(world.file(`.workbench/notes/ws/${agentId}.md`));
   expect(header['coexistWith']).toEqual([mineId]);
   expect(header['contradicts']).toEqual([]);
+});
+
+it('S8b a disposition keeps a file path a person added to the note file that the record has no digest for', async () => {
+  const world = await knowledgeWorld();
+  const pathOf = (agentId: string): string => `.workbench/notes/ws/${agentId}.md`;
+  const { mineId, agentId } = await coexistOnReview(world, 'kls2b-s8b', agentId => {
+    const text = world.file(pathOf(agentId))!;
+    const lines = text.split('\n');
+    const header = { ...noteHeaderIn(text), facts: [{ kind: 'file', path: 'src/a.ts' }] };
+    world.edit(pathOf(agentId), [lines[0], JSON.stringify(header, null, 2), ...lines.slice(lines.indexOf('---'))].join('\n'));
+  });
+  const header = noteHeaderIn(world.file(pathOf(agentId)));
+  expect(header['facts']).toEqual([{ kind: 'file', path: 'src/a.ts' }]);
+  expect(header['coexistWith']).toEqual([mineId]);
 });
 
 it('S9 a revision plans from the current files and keeps a person\'s edit it did not reconcile', async () => {
@@ -399,22 +436,56 @@ it('S12 (stack review 2) lines/list stays ready with an exact archived count whe
     value: { counts: { archived: { status: 'exact', value: 0 } }, attentionProblem: null } });
 });
 
-it('S14 (quick check 5) a repair activation sent twice at once: the copy held while it computes its file changes '
-  + 'answers the first activation', async () => {
+it('S14 (quick check 5) a repair activation sent twice at once: the copy sent while the first holds the write queue '
+  + 'computing its file changes answers the first activation', async () => {
   const target = await openS8CRepairWorld({ label: 'kls2a-s14' });
   closers.push(() => target.close());
   const staged = await target.writeRepair({ ops: [{ op: 'set_responsibility', moduleId: 's6a-core', text: '新职责' }] });
   await target.pass(staged);
   const input = { commandId: `activate:${staged.noteId}:${staged.version}`, noteId: staged.noteId,
     expectedVersion: staged.version };
-  let first: unknown = null;
-  knowledgeGate.beforeWritePlans = async () => {
-    first = await target.owner.activateRepair(target.world.humanContext(), input);
-    expect(first, JSON.stringify(first)).toMatchObject({ status: 'activated' });
-  };
-  const second = await target.owner.activateRepair(target.world.humanContext(), input);
+  // KLS-2b [2B-06]: an activation's reads, file changes and commit run in the project's write queue, so the second
+  // copy can no longer run inside the first. A holds the queue while it computes its file changes; B is sent then
+  // (A has no receipt yet) and runs after A.
+  let reached!: () => void;
+  const held = new Promise<void>(resolve => { reached = resolve; });
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  knowledgeGate.beforeWritePlans = async () => { reached(); await gate; };
+  const firstCall = target.owner.activateRepair(target.world.humanContext(), input);
+  await held;
+  const secondCall = target.owner.activateRepair(target.world.humanContext(), input);
+  release();
+  const first = await firstCall;
+  expect(first, JSON.stringify(first)).toMatchObject({ status: 'activated' });
   expect(knowledgeGate.beforeWritePlans).toBeNull();
-  expect(second).toEqual(first);
+  expect(await secondCall).toEqual(first);
+});
+
+it('S15 (KLS-2b code review 1) a repair activation that removes a module commits although an unrelated commit lands '
+  + 'while its note file is read', async () => {
+  const target = await openS8CRepairWorld({ label: 'kls2b-s15' });
+  closers.push(() => target.close());
+  // R6b's path: the person approves the delete, the check passes, the Workflow's complete_task closes t1 and then
+  // activates the repair.
+  const staged = await target.writeRepair({ ops: [{ op: 'remove_module', moduleId: 's6a-core' }] });
+  const card = await target.readRepairCard();
+  expect((await target.answerRepairCard(card, 'approve', 'kls2b-s15-answer')).answer.status).toBe('committed');
+  const outcome = await target.pass(staged);
+  if (outcome.next === null || outcome.next.kind !== 'perform' || outcome.next.operation.kind !== 'complete_task') {
+    throw new Error(`S15: the PASS did not stop before complete_task: ${JSON.stringify(outcome.next)}`);
+  }
+  knowledgeGate.beforeNoteFileWrites = async () => {
+    await target.main.createGoal('kls2b-s15-goal', '无关的目标');
+  };
+  repairCommits.reset();
+  await target.world.post('workflow/advance', plain(S6A_SCOPE, outcome.next));
+  expect(knowledgeGate.beforeNoteFileWrites).toBeNull();
+  // The activation that read its note file across the unrelated commit is the one that commits: no refused commit
+  // left to a driver's later attempt.
+  expect(repairCommits.identities().filter(identity => identity.startsWith('s4-note-activate:'))).toHaveLength(1);
+  expect(await target.readModules()).toEqual(['s6a-ui']);
+  expect(await target.readNote(staged.noteId)).toMatchObject({ version: 2, storedState: 'accepted' });
 });
 
 describe('rejects: S13 (stack review 3) an adoption path the read-back would refuse', () => {

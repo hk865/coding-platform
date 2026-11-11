@@ -20,6 +20,7 @@ import { createRoleConfigurationService } from '../../src/core/work-graph/config
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { GOAL_B, GOAL_REVISION, type S5DecisionFixture, type S5Records, type S5StoreSnapshot } from './S5-decision-fixture.js';
+import { knowledgeLinesOver } from './KLS2-knowledge-lines.js';
 
 export function committed<T>(result: WriteResult<T>): Extract<WriteResult<T>, { status: 'committed' }> {
   expect(result.status).toBe('committed');
@@ -51,7 +52,8 @@ export function realOwners(f: S5DecisionFixture, duties: readonly PlatformDutyV1
   const deps: SessionMailboxDependencies = {
     defaultInquiryDeadlineMs: 86_400_000,
     records, materials, now, newId, systemActor: f.operatorActor,
-    sessions: createSessionDirectory({ records, lookups: records, duty: unknownSessionDuty }),
+    sessions: createSessionDirectory({ records,
+      knowledge: knowledgeLinesOver(records), lookups: records, duty: unknownSessionDuty }),
     executions: createRunStateReader({ records }),
     roles: createRoleConfigurationService({ records, now, eventId: newId }),
     ...(duties === null ? {} : { duties: {

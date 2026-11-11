@@ -40,6 +40,7 @@ import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { ArchitectureCatalogPort } from '../architecture/catalog-contracts.js';
 import { readCatalogModuleFacts } from '../architecture/catalog-service.js';
+import type { KnowledgeLines } from '../model/line-knowledge.js';
 import type { GoalSettingsPort } from '../model/decision-contracts.js';
 import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
 import type { SessionDirectoryPort, MaintainerAssignmentOperationV1 } from '../model/session-contracts.js';
@@ -157,6 +158,8 @@ function maintainerStageCommand(ref: OperationRef, revision: number, stage: 'acc
 export type ModuleMaintainerDependenciesV1 = {
   findSessions: SessionDirectoryPort['findSessions'];
   records: GoalRecordTransactionPort & RecordLookupPort;
+  /** A.1 #4: the module an assignment names is checked against the knowledge files' current catalog. */
+  knowledge: KnowledgeLines;
   duty: SessionDutyReadPort;
   catalog: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'>;
   notifyProject: (input: NotifyProjectInputV1) => Promise<WriteResult<ProjectNoticeV1>>;
@@ -250,7 +253,7 @@ export function createModuleMaintainer(deps: ModuleMaintainerDependenciesV1): Mo
 
   async function readAssignFacts(ctx: CoreCallContext, scope: WorkspaceScope, input: AssignMaintainerInputV1,
     targetLine: SessionRecord, targetLink: SessionWorkLink | null): Promise<AssignMaintainerFactsV1 | CoreRejection> {
-    const catalog = await readCatalogModuleFacts(deps.records, ctx, input.module);
+    const catalog = await readCatalogModuleFacts(deps.records, ctx, input.module, { lines: deps.knowledge, caller: ctx });
     if (catalog.status === 'rejected') return catalog;
     if (catalog.status !== 'ready' && catalog.status !== 'not_found') {
       return rejected('unavailable', 'the module catalog is not readable');

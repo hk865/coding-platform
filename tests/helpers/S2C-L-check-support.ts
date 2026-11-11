@@ -38,6 +38,7 @@ import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-
 import { VerificationWorkspaceReader } from '../../src/core/workspace/verification-workspace-reader.js';
 import type { TaskClaimFixture } from './task-claim-fixture.js';
 import type { RunSupport } from './S2C-L-runs-support.js';
+import { knowledgeLinesOver } from './KLS2-knowledge-lines.js';
 
 const AT = '2026-09-24T00:00:00.000Z';
 export const S2C_L_CHECK_ID = 's2c-l-static-check';
@@ -126,7 +127,7 @@ export function createLineCheckSupport(input: {
     },
   };
 
-  const evidence: EvidencePort = createEvidenceService({
+  const evidence: EvidencePort = createEvidenceService({ knowledge: knowledgeLinesOver(records, workspaceHost),
     records, materials, executions, workspaceHost,
     source: new VerificationWorkspaceReader(), configuration, now: () => AT, newId,
   });

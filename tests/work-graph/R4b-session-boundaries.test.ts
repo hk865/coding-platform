@@ -107,9 +107,9 @@ async function open(kind: 'memory' | 'sqlite') {
         responsibility: `Work link target ${moduleId}`, paths: [`src/${moduleId}`], interfaces: [] };
     }),
   ];
-  const catalog = createArchitectureCatalogService({ records: backend.records,
-    knowledge: knowledgeLinesFor({ root: directory, projectId: ctx.projectId, workspaceId: ctx.workspaceId!,
-      records: backend.records }) });
+  const knowledge = knowledgeLinesFor({ root: directory, projectId: ctx.projectId, workspaceId: ctx.workspaceId!,
+      records: backend.records });
+  const catalog = createArchitectureCatalogService({ records: backend.records, knowledge });
   const adopted = await catalog.adoptInitialArchitecture(ctx, {
     input: { baselineId: 'r4b-baseline', description: 'R4b Session boundary modules', constraints: [],
       catalog: { requireDag: true, dependencies: [], modules } },
@@ -118,7 +118,8 @@ async function open(kind: 'memory' | 'sqlite') {
     ] },
   });
   if (adopted.status !== 'committed') throw new Error(`architecture adoption failed: ${JSON.stringify(adopted)}`);
-  const sessions = createSessionDirectory({ records: backend.records, lookups: backend.records, duty: unknownSessionDuty });
+  const sessions = createSessionDirectory({ records: backend.records,
+    knowledge, lookups: backend.records, duty: unknownSessionDuty });
   const kernelStores = await createKernelStoreRegistry({ entries: [{
     adapterId: 'workspace-kernel', storeKey: 'workspace-key', workspace,
     databasePath: path.join(directory, 'kernel.sqlite'),

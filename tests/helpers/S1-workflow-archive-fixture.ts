@@ -95,6 +95,7 @@ import { createSessionLifecycleService } from '../../src/core/work-graph/session
 import { createSessionAnomalyService } from '../../src/core/work-graph/tasks/session-anomaly-service.js';
 import { createWorkflow } from '../../src/business/workflow/workflow.js';
 import { DEFAULT_SESSION_ARCHIVE_POLICY, type WorkflowDependencies, type WorkflowPort } from '../../src/business/workflow/ports.js';
+import { knowledgeLinesOver } from './KLS2-knowledge-lines.js';
 const AT = '2026-10-08T00:00:00.000Z';
 /** Observe the real backend, including bootstrap and writes made by all owners. */
 type FixtureAudit = {
@@ -723,9 +724,10 @@ export async function workflowForFixture(b2: B2ExecutionFixture, options: {
     configuration: { consumerId: prefix, bindings: [{ workspace: base.scope,
       sessionRole: { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' },
       roleBinding: base.roleBinding, budget: base.budget }] },
-    sessionLifecycle: createSessionLifecycleService({ records, lookups: records, sessionFacts, duty: unknownSessionDuty }), sessionFacts,
+    sessionLifecycle: createSessionLifecycleService({ records,
+      knowledge: knowledgeLinesOver(records), lookups: records, sessionFacts, duty: unknownSessionDuty }), sessionFacts,
     responsibilities: createSessionResponsibilityService({ records, lookups: records,
-      basis: createSessionResponsibilityBasisReader(records), now, duty: unknownSessionDuty }),
+      basis: createSessionResponsibilityBasisReader(records, knowledgeLinesOver(records)), now, duty: unknownSessionDuty }),
     sessionAnomalies: createSessionAnomalyService({ records, lookups: records, sessionFacts, now }), controls,
     archivePolicy: options.archivePolicy ?? DEFAULT_SESSION_ARCHIVE_POLICY,
     // S1-AUTO-03 / §4.1 step 7 (lead fix 2026-10-09): the SAME mailbox instance the Runtime uses, as the real

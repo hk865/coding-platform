@@ -36,8 +36,8 @@ import { decodeRefKey } from '../../record-store/record-codec.js';
 import type { PlanTaskPort } from '../model/plan-contracts.js';
 import type { AdoptedArchitecture, ArchitectureCatalogPort, ArchitectureRevision, ModuleDefinition } from '../architecture/catalog-contracts.js';
 import type { RunRef } from '../../../contracts/dispatch.js';
-import type { NoteCheckV1, NoteFileObservationV1, NoteHeadCheckItemV1, NoteHeadCheckPort, NoteHintV1, NoteLinkVerifyV1,
-  NoteSimilarV1, NoteUpdateDueTriggerV1, UnderstandingStatusV1 } from '../model/note-contracts.js';
+import type { NoteAnchorCheckV1, NoteCheckV1, NoteFileObservationV1, NoteHeadCheckItemV1, NoteHeadCheckPort, NoteHintV1,
+  NoteLinkVerifyV1, NoteSimilarV1, NoteUpdateDueTriggerV1, UnderstandingStatusV1 } from '../model/note-contracts.js';
 import { NOTE_ANCHOR_LINK_QUOTA, NOTE_ANCHOR_QUOTA, NOTE_BASIS_FILE_MAX_BYTES, NOTE_CHECK_DEADLINE_MS, NOTE_GOAL_LINK_QUOTA,
   NOTE_GOAL_QUOTA, NOTE_LINK_VERIFY_MAX, NOTE_NATIVE_READ_WAIT_MS, NOTE_PROJECT_FLOW_QUOTA, NOTE_READ_FACTS_MAX,
   NOTE_READ_FILES_MAX, NOTE_READ_PARSE_BYTES_MAX, NOTE_SIMILAR_MAX, NOTE_SIMILAR_MIN,
@@ -58,6 +58,10 @@ import {
   createNoteHeadDerivations, mapStoreFailure, newHeadCache,
   type HeadCache, type NoteHeadDerivations, type NoteHeadLike,
 } from '../notes/note-read-model.js';
+import type { KnowledgeLines } from '../model/line-knowledge.js';
+import type { KnowledgeRead } from '../architecture/catalog-service.js';
+import { indexedHeads, isKnowledgeAnchorKey, overlayFileKnowledge } from '../notes/note-knowledge.js';
+import { isKnowledgeAnchor } from '../notes/note-file.js';
 import {
   S4_NOTE_BY_ANCHOR_LOOKUPS, decodeNoteHeadSnapshot, decodeNoteVersionSnapshot, noteHeadRefKey, noteVersionRefKey,
   currentPointerRefKey, decodeCurrentPointerSnapshot,
@@ -89,6 +93,8 @@ export type NoteCheckLimits = {
 
 export type NoteCheckDependencies = {
   records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort;
+  /** KLS-2b: a filed note's knowledge (the checked head, a similar candidate) comes from its file. */
+  knowledge: KnowledgeLines;
   /** The plan readers (`queryGoal`/`queryTaskGraph`) or a narrower double. */
   plans?: Pick<PlanTaskPort, 'queryGoal' | 'queryTaskGraph'>;
   architecture: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'>;
@@ -124,6 +130,9 @@ type CheckBody = {
   source: NoteHeadSnapshot['source'];
   replaces: readonly string[]; contradicts: readonly string[]; coexistWith: readonly string[];
 };
+
+/** The part of a body the anchor check reads; a filed note with no record head is checked on this alone ([2B-16]). */
+type AnchorBody = Pick<CheckBody, 'anchor' | 'extraAnchors'>;
 
 function bodyOfHead(head: NoteHeadSnapshot): CheckBody {
   return { noteId: head.noteId, version: head.version, state: head.state, kind: head.kind, topic: head.topic,
@@ -229,9 +238,9 @@ type CheckCaches = {
   noteHeads: Map<string, Outcome<NoteHeadSnapshot | null>>;
 };
 
-function newCheckCaches(): CheckCaches {
+function newCheckCaches(read: KnowledgeRead): CheckCaches {
   return { plans: new Map(), triggers: new Map(), understandings: new Map(), understandingSeed: new Map(),
-    architecture: { byRevision: new Map() }, heads: newHeadCache(),
+    architecture: { byRevision: new Map() }, heads: newHeadCache(read),
     derivations: new Map(), runTaskScope: new Map(), planRevisions: new Map(), basisPlans: new Map(),
     stagedRepair: new Map(), noteHeads: new Map() };
 }
@@ -371,6 +380,13 @@ type CheckedItem = { result: NoteCheckV1; head: NoteHeadSnapshot;
  */
 type ItemJudgement = { locators: Map<number, SymbolRecheck | null>;
   link: { verification: LinkVerificationV1; read: LinkRead | null } | null };
+
+/** The anchor result as the item fields: the main anchor's retirement decides `anchorStatus` (L23). */
+function anchorFieldsOf(anchor: { retired: boolean; reasons: StaleReason[]; retiredExtraAnchors: string[];
+  anchorSlots: NoteCheckV1['anchorSlots'] }): NoteAnchorCheckV1 {
+  return { anchorStatus: anchor.retired ? 'retired' : 'live', anchorRetiredReasons: anchor.reasons,
+    anchorSlots: anchor.anchorSlots, retiredExtraAnchors: anchor.retiredExtraAnchors };
+}
 
 /**
  * R3: the locator among the same-name symbols of its changed file: several pick the stored name
@@ -524,9 +540,7 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
       if (fact.kind === 'file' && FILE_DIGEST.test(fact.digest) && isSafeProjectPath(fact.path)
         && splitWorkspacePath(fact.path).path !== '.') add(fact.path, false);
     }
-    for (const anchor of [body.anchor, ...body.extraAnchors]) {
-      if (anchor.kind === 'file' && (anchor.deleted !== true || anchor.symbol !== undefined)) add(anchor.path, anchor.symbol !== undefined);
-    }
+    anchorPaths(body, add);
     if (body.kind !== 'link' || body.link === undefined) return;
     const link = body.link;
     // R5's gate: every evidence file, each definition file it references, the stored configuration,
@@ -543,18 +557,26 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
     if (kept !== undefined && kept !== null) add(kept.path, true);
   }
 
+  /** The file anchors' paths, in slot order; `text` when a slot's symbol locator needs the decoded text. */
+  function anchorPaths(body: AnchorBody, add: (path: string, text: boolean) => void): void {
+    for (const anchor of [body.anchor, ...body.extraAnchors]) {
+      if (anchor.kind === 'file' && (anchor.deleted !== true || anchor.symbol !== undefined)) add(anchor.path, anchor.symbol !== undefined);
+    }
+  }
+
   /**
    * R4: every path the call's items read, listed in item order first (deduplicated; the first
    * `readFilesMax` are read, every later one is past the budget), then read in one access, or in two
    * when a Python/C++ locator is among them: those files first, so their lookups are on their way
    * while the rest is read and the TS files are parsed.
    */
-  async function readPlanned(ctx: CoreCallContext, bodies: readonly CheckBody[], budget: CheckBudget): Promise<Reject | null> {
+  async function readPlanned(ctx: CoreCallContext, bodies: readonly CheckBody[], budget: CheckBudget,
+    anchorsOnly: readonly AnchorBody[]): Promise<Reject | null> {
     const keepText = new Map<string, boolean>();
     const factsLeft = { value: limits.readFactsMax ?? NOTE_READ_FACTS_MAX };
-    for (const body of bodies) {
-      itemPaths(ctx, body, factsLeft, (path, text) => { keepText.set(path, text || keepText.get(path) === true); });
-    }
+    const add = (path: string, text: boolean): void => { keepText.set(path, text || keepText.get(path) === true); };
+    for (const body of bodies) itemPaths(ctx, body, factsLeft, add);
+    for (const body of anchorsOnly) anchorPaths(body, add);
     const ordered = [...keepText.keys()];
     const admitted = ordered.slice(0, limits.readFilesMax ?? NOTE_READ_FILES_MAX);
     for (const path of ordered.slice(admitted.length)) budget.reads.set(path, { status: 'exhausted' });
@@ -1139,7 +1161,7 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
    * file by decoded text; a changed file is parsed on its own (R3) within the
    * call's parse budgets, shared with the link gates (R4).
    */
-  async function anchorStatusOf(ctx: CoreCallContext, body: CheckBody, budget: CheckBudget,
+  async function anchorStatusOf(ctx: CoreCallContext, body: AnchorBody, budget: CheckBudget,
     itemObs: ItemObservations, caches: CheckCaches, judgement: ItemJudgement):
   Promise<Outcome<{ retired: boolean; reasons: StaleReason[]; retiredExtraAnchors: string[]; unchecked: boolean;
     staleReasons: string[]; anchorSlots: NoteCheckV1['anchorSlots'] }>> {
@@ -1563,6 +1585,13 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
     const keys = [body.anchor, ...body.extraAnchors].map(anchorKeyOf);
     const excluded = new Set<string>([body.noteId, ...body.replaces, ...body.contradicts, ...body.coexistWith]);
     const candidates = new Map<string, NoteHeadSnapshot>();
+    const filedHeads = new Map<string, NoteHeadSnapshot>();
+    const keepCandidate = (head: NoteHeadSnapshot, key: string): void => {
+      if (!anchorSlots(head).includes(key) || excluded.has(head.noteId)) return;
+      if (head.state === 'accepted' || head.state === 'reviewed' || head.state === 'pending_review') {
+        candidates.set(head.noteId, head);
+      }
+    };
     for (const key of keys) {
       for (const index of S4_NOTE_BY_ANCHOR_LOOKUPS) {
         // L22: ONE bounded anchor-lookup page per index, never a next-loop.
@@ -1571,13 +1600,17 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
         for (const record of page.value.records) {
           const decoded = decodeNoteHeadSnapshot(record);
           if (decoded.status !== 'decoded') return okFalse('unavailable', 'damaged note head');
-          const head = decoded.value;
-          if (!anchorSlots(head).includes(key)) continue;
-          if (excluded.has(head.noteId)) continue;
-          if (head.state !== 'accepted' && head.state !== 'reviewed' && head.state !== 'pending_review') continue;
-          candidates.set(head.noteId, head);
+          // #41/#42: a filed note is found by its file's anchors, through the index below.
+          if (isKnowledgeAnchor(decoded.value.anchor)) filedHeads.set(decoded.value.noteId, decoded.value);
+          else keepCandidate(decoded.value, key);
         }
       }
+      if (!isKnowledgeAnchorKey(key)) continue;
+      // #41/#42 ([2B-20]): the same bound, on every line's index; the heads come with their file knowledge.
+      const filed = await indexedHeads({ lines: deps.knowledge, caller: ctx },
+        (index, lineRef) => index.noteIdsByAnchor(lineRef, key).slice(0, NOTE_SIMILAR_SCAN), filedHeads);
+      if (filed.status !== 'ready') return okFalse('unavailable', filed.reason);
+      for (const head of filed.value) keepCandidate(head, key);
     }
     const windowsOf = (topic: string, conclusion: string): Set<string> =>
       new Set(bigramWindows(`${normalizeSearchText(topic)}\n${normalizeSearchText(conclusion)}`));
@@ -1768,10 +1801,7 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
       freshness, changedFiles, staleReasons,
       sourceUnavailable, invalid, conflicting: derived.conflicting, overQuota: derived.overQuota, updateDue,
       currentEligible,
-      anchorStatus: anchor.value.retired ? 'retired' : 'live',
-      anchorRetiredReasons: anchor.value.reasons,
-      anchorSlots: anchor.value.anchorSlots,
-      retiredExtraAnchors: anchor.value.retiredExtraAnchors,
+      ...anchorFieldsOf(anchor.value),
       unresolvedFacts, uncheckedFacts, hints,
       // The read-time result: the first tier's, or the kept second-tier conclusion.
       ...(linkVerification === undefined ? {} : { linkVerification }),
@@ -1808,10 +1838,13 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
       heldByRun: heldByRun ?? (held?.version === head.version ? held.heldByRun : null) });
   }
 
-  /** The shared pass of both entries: the bodies, the one gate read, each item, then the Host registers. */
+  /**
+   * The shared pass of both entries: the bodies, the one gate read, each item, the anchors of the filed notes with
+   * no record head (on the same reads and caches), then the Host registers.
+   */
   async function checkAll(ctx: CoreCallContext, items: readonly NoteHeadCheckItemV1[], caches: CheckCaches,
-    withSimilar: boolean, heldByRun: string | undefined):
-  Promise<Outcome<{ items: CheckedItem[]; mainWorkspaceId: string }>> {
+    withSimilar: boolean, heldByRun: string | undefined, anchorsOnly: readonly AnchorBody[] = []):
+  Promise<Outcome<{ items: CheckedItem[]; mainWorkspaceId: string; anchorsOnly: NoteAnchorCheckV1[] }>> {
     const bodies: CheckBody[] = [];
     for (const item of items) {
       const body = await bodyOfItem(ctx, item);
@@ -1820,7 +1853,7 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
     }
     const budget = newCheckBudget(limits);
     try {
-      const notPlanned = await readPlanned(ctx, bodies, budget);
+      const notPlanned = await readPlanned(ctx, bodies, budget, anchorsOnly);
       if (notPlanned !== null) return notPlanned;
       // R3: every item's single-file work first, in item order, while the Python/C++ lookups run; then the one wait.
       const judgements = bodies.map(body => judgeItem(ctx, body, budget));
@@ -1831,8 +1864,15 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
         if (!outcome.ok) return outcome;
         checked.push(outcome.value);
       }
+      const anchors: NoteAnchorCheckV1[] = [];
+      for (const body of anchorsOnly) {
+        // A filed anchor carries no symbol locator, so no judgement is needed.
+        const anchor = await anchorStatusOf(ctx, body, budget, new Map(), caches, { locators: new Map(), link: null });
+        if (!anchor.ok) return anchor;
+        anchors.push(anchorFieldsOf(anchor.value));
+      }
       for (const entry of checked) registerLinkRead(ctx, entry, heldByRun);
-      return { ok: true, value: { items: checked, mainWorkspaceId: budget.mainWorkspaceId } };
+      return { ok: true, value: { items: checked, mainWorkspaceId: budget.mainWorkspaceId, anchorsOnly: anchors } };
     } finally {
       if (budget.natives.timer !== null) clearTimeout(budget.natives.timer);
     }
@@ -1966,7 +2006,7 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
     async checkNotes(ctx, input): Promise<ReadResult<NoteCheckV1[]>> {
       if (!Array.isArray(input.items)) return { status: 'rejected', code: 'invalid', reason: 'items must be an array' };
       // R2: the record caches live for one call; only the Host memory above outlives it.
-      const caches = newCheckCaches();
+      const caches = newCheckCaches({ lines: deps.knowledge, caller: ctx });
       const items: NoteHeadCheckItemV1[] = [];
       for (const item of input.items) {
         if (typeof item?.noteId !== 'string' || item.noteId.length === 0 || !Number.isSafeInteger(item.version)) {
@@ -1977,6 +2017,10 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
         if (headOutcome.value === null) return mapStoreFailure(okFalse('not_found', 'the note does not exist'));
         items.push({ head: headOutcome.value, version: item.version });
       }
+      // #39b: the checked heads carry their files' knowledge.
+      const overlaid = await overlayFileKnowledge(items.map(entry => entry.head), { lines: deps.knowledge, caller: ctx });
+      if (overlaid.status !== 'ready') return mapStoreFailure(overlaid);
+      overlaid.value.forEach((head, index) => { items[index] = { ...items[index]!, head }; });
       const checked = await checkAll(ctx, items, caches, input.withSimilar === true, input.heldByRun);
       if (!checked.ok) return mapStoreFailure(checked);
       if (input.verifyLinks !== undefined) {
@@ -1989,9 +2033,10 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
      * S2.5: the internal entry the read model uses. The heads arrive from
      * records read in the same call; the check never re-reads them.
      */
-    async checkHeads(ctx, input): Promise<ReadResult<{ items: NoteCheckV1[]; understanding: UnderstandingStatusV1[] }>> {
+    async checkHeads(ctx, input): Promise<ReadResult<{ items: NoteCheckV1[]; understanding: UnderstandingStatusV1[];
+      anchorsOnly: NoteAnchorCheckV1[] }>> {
       if (!Array.isArray(input.items)) return { status: 'rejected', code: 'invalid', reason: 'items must be an array' };
-      const caches = newCheckCaches();
+      const caches = newCheckCaches({ lines: deps.knowledge, caller: ctx });
       if (input.anchorSets !== undefined) {
         // S2.3: seed exactly the sets the read model already read, keyed as its
         // own anchor cache keys them (never from a filtered set).
@@ -2015,7 +2060,7 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
           return { status: 'rejected', code: 'invalid', reason: 'each item needs a head and a version' };
         }
       }
-      const checked = await checkAll(ctx, input.items, caches, false, undefined);
+      const checked = await checkAll(ctx, input.items, caches, false, undefined, input.anchorsOnly);
       if (!checked.ok) return mapStoreFailure(checked);
       const results = checked.value.items.map(entry => entry.result);
       // U-3: the same caches answer the requested understanding anchors
@@ -2026,7 +2071,7 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
         if (!status.ok) return mapStoreFailure(status);
         understanding.push(status.value);
       }
-      return { status: 'ready', value: { items: results, understanding } };
+      return { status: 'ready', value: { items: results, understanding, anchorsOnly: checked.value.anchorsOnly } };
     },
     doubtfulLinks(scope, max) {
       return [...doubtful.values()]

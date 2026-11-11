@@ -83,6 +83,8 @@ import {
   type SessionCreatedEvent,
 } from './session-record-codecs.js';
 import { validateWorkLinkTarget } from './session-targets.js';
+import { catalogModuleFactsOnce } from '../architecture/catalog-service.js';
+import type { KnowledgeLines } from '../model/line-knowledge.js';
 import { coldStartBirthOf } from './cold-start-service.js';
 import { allocationNext } from '../state/role-line-allocation.js';
 import { roleLineStepTransition } from '../state/role-line-operation.js';
@@ -114,6 +116,8 @@ export type SessionDirectoryStores = {
   reclaim?: () => RoleLineReclaimPort | undefined;
   /** O2 declares it (the type is imported from `../state/role-line-reclaim.js`); O3 reads it at the platform at-cap refusal. */
   roleCapacity?: RoleCapacityPort;
+  /** KLS-2b A.1 #5: a module link is checked in the files' project view. */
+  knowledge: KnowledgeLines;
 };
 
 // --------------------------------------------------------------------------
@@ -1380,11 +1384,12 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       // provider and fails explicitly instead of writing a fake association.
       const targetGuards = new Map<string, RecordGuard>();
       const pendingLinks: PendingSessionWorkLink[] = [];
+      const modules = catalogModuleFactsOnce(records, ctx, { lines: stores.knowledge, caller: ctx });
       for (const link of createAction.initialLinks) {
         // The one shared formal target check: a Task through Goal + active Plan
         // membership, a Module through the current adopted catalog, WorkContext
         // still unsupported. Creation never writes a fabricated association.
-        const checked = await validateWorkLinkTarget(records, ctx, scope, link.target);
+        const checked = await validateWorkLinkTarget(records, ctx, scope, link.target, modules);
         if (!checked.ok) return checked.rejection;
         for (const guard of checked.guards) targetGuards.set(guard.refKey, guard);
         pendingLinks.push({

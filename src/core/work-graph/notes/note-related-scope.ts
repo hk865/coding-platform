@@ -39,6 +39,10 @@ import { readGoalPlanWindow, readPlan, RUN_BY_TASK_INDEX } from '../tasks/plan-r
 import { runActivityRefOf } from '../tasks/run-activity-service.js';
 import { moduleOfAnchor } from './scribe-scope.js';
 import { asOutcome } from './store-failures.js';
+import type { KnowledgeLines } from '../model/line-knowledge.js';
+import type { KnowledgeRead } from '../architecture/catalog-service.js';
+import { isKnowledgeAnchor } from './note-file.js';
+import { indexedNotes, type HeadlessNote } from './note-knowledge.js';
 
 /** The note-port failure codes a related-scope read can produce. */
 export type RelatedReadCode = 'invalid' | 'not_found' | 'revision_conflict' | 'unavailable';
@@ -71,6 +75,7 @@ export type RelatedScopeOutcome =
 
 export type RelatedScopeDeps = {
   records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort;
+  knowledge: KnowledgeLines;
   architecture?: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'>;
   runTask?: NoteRunTaskResolver;
   /** The project's main workspace; absent treats the caller's workspace as main. */
@@ -166,9 +171,15 @@ export function moduleRelatedKeys(input: {
  */
 export function isRelatedHead(head: { kind: NoteKind; anchorKey0: string; anchorKey1: string | null;
   anchorKey2: string | null; anchorKey3: string | null; anchorKey4: string | null }, keys: ReadonlySet<string>): boolean {
-  for (const slot of [head.anchorKey0, head.anchorKey1, head.anchorKey2, head.anchorKey3, head.anchorKey4]) {
+  return isRelatedSlots(head.kind, [head.anchorKey0, head.anchorKey1, head.anchorKey2, head.anchorKey3, head.anchorKey4],
+    keys);
+}
+
+/** `isRelatedHead` over a note's anchor keys in slot order (F-27: a filed note with no record head). */
+export function isRelatedSlots(kind: NoteKind, slots: readonly (string | null)[], keys: ReadonlySet<string>): boolean {
+  for (const slot of slots) {
     if (slot === null || !keys.has(slot)) continue;
-    if (slot === 'project' && !isGeneral(head.kind)) continue;
+    if (slot === 'project' && !isGeneral(kind)) continue;
     return true;
   }
   return false;
@@ -201,11 +212,14 @@ export type RelatedRecordsPort = GoalRecordTransactionPort & RecordLookupPort & 
  * (UTF-8 byte order). Stop only when the slot leaves the whole `<prefix>*`
  * range; a sibling that shares the prefix without a directory boundary is
  * returned and left to the caller's filter (the read model's file predicate, or
- * `collectModuleFileKeys`'s).
+ * `collectModuleFileKeys`'s). A filed note with no record head is `headless` ([2B-16]).
  */
-export async function headsOnKeyPrefix(records: RelatedRecordsPort, projectId: string, prefix: string):
-Promise<{ ok: true; value: NoteHeadSnapshot[] } | { ok: false; code: RelatedReadCode; reason: string }> {
-  const seen = new Map<string, NoteHeadSnapshot>();
+export async function notesOnKeyPrefix(records: RelatedRecordsPort, knowledge: KnowledgeRead, prefix: string):
+Promise<{ ok: true; value: { heads: NoteHeadSnapshot[]; headless: HeadlessNote[] } }
+  | { ok: false; code: RelatedReadCode; reason: string }> {
+  const projectId = knowledge.caller.projectId;
+  const others = new Map<string, NoteHeadSnapshot>();
+  const filedHeads = new Map<string, NoteHeadSnapshot>();
   for (const [ordinal, index] of S4B_NOTE_BY_PATH_LOOKUPS.entries()) {
     let after: { order: string | number; refKey: string } | undefined;
     for (;;) {
@@ -218,13 +232,24 @@ Promise<{ ok: true; value: NoteHeadSnapshot[] } | { ok: false; code: RelatedRead
         if (decoded.status !== 'decoded') return unavailable(`a note head is damaged: ${decoded.reason}`);
         const slot = (decoded.value as unknown as Record<string, unknown>)[`anchorKey${String(ordinal)}`];
         if (typeof slot !== 'string' || !slot.startsWith(prefix)) { leftRange = true; break; }
-        seen.set(decoded.value.noteId, decoded.value);
+        (isKnowledgeAnchor(decoded.value.anchor) ? filedHeads : others).set(decoded.value.noteId, decoded.value);
       }
       if (leftRange || page.value.next === null) break;
       after = page.value.next;
     }
   }
-  return { ok: true, value: [...seen.values()] };
+  // KLS-2b: a note whose primary anchor is a module, interface or file comes from the index of every line; the filed
+  // heads the lookup listed are not read again.
+  const filed = await indexedNotes(knowledge, (index, lineRef) => index.noteIdsByAnchorPrefix(lineRef, prefix), filedHeads);
+  if (filed.status !== 'ready') return asOutcome(filed);
+  return { ok: true, value: { heads: [...filed.value.heads, ...others.values()], headless: filed.value.headless } };
+}
+
+/** `notesOnKeyPrefix` for the callers that need the state: the heads only. */
+export async function headsOnKeyPrefix(records: RelatedRecordsPort, knowledge: KnowledgeRead, prefix: string):
+Promise<{ ok: true; value: NoteHeadSnapshot[] } | { ok: false; code: RelatedReadCode; reason: string }> {
+  const notes = await notesOnKeyPrefix(records, knowledge, prefix);
+  return notes.ok ? { ok: true, value: notes.value.heads } : notes;
 }
 
 /**
@@ -319,7 +344,7 @@ export function interfaceKeysOf(moduleId: string, module: ModuleDefinition): str
 }
 
 /** The main workspace for a related-scope read; a failed read is `unavailable`, never "the caller is main". */
-async function mainWorkspaceOutcomeOf(deps: RelatedScopeDeps, projectId: string):
+export async function mainWorkspaceOutcomeOf(deps: Pick<RelatedScopeDeps, 'mainWorkspaceOf'>, projectId: string):
 Promise<{ ok: true; value: string | null } | { ok: false; code: 'unavailable'; reason: string }> {
   if (deps.mainWorkspaceOf === undefined) return { ok: true, value: null };
   let read: ReadResult<string | null>;
@@ -350,7 +375,8 @@ Promise<{ ok: true; value: string[] } | { ok: false; code: RelatedReadCode; reas
     const isRoot = stripped === '.';
     // RW-12(c): the one generalised five-slot prefix scan, with the directory
     // boundary filter applied per slot.
-    const scanned = await headsOnKeyPrefix(deps.records, ctx.projectId, isRoot ? 'file:' : `file:${stripped}`);
+    const scanned = await headsOnKeyPrefix(deps.records, { lines: deps.knowledge, caller: ctx },
+      isRoot ? 'file:' : `file:${stripped}`);
     if (!scanned.ok) return scanned;
     for (const head of scanned.value) {
       const slots = anchorSlots(head);

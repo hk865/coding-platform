@@ -73,6 +73,7 @@ import {
 } from '../harness.js';
 import { draftFrom, type PhaseLog } from './common.js';
 import { storeDirOf } from '../../helpers/KLS1B-host-store.js';
+import { knowledgeLinesOver } from '../../helpers/KLS2-knowledge-lines.js';
 
 type Perform = Extract<WorkflowAdvanceInput, { kind: 'perform' }>;
 type DraftV2 = Extract<PlanRevisionDraft, { schemaVersion: 2 }>;
@@ -858,6 +859,7 @@ export function raceWindow(database: string, writer: RaceWriter, inside: () => P
   const policy = (): TaskAutomationPolicyV1 => ({ ...DEFAULT_TASK_AUTOMATION_POLICY });
   return {
     plans: createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+      knowledge: knowledgeLinesOver(records, workspace),
       now: host.now, eventId: id, automationPolicy: policy }),
     claims: createTaskClaimService({ records, roles: createRoleConfigurationService({ records, now: host.now, eventId: id }),
       now: host.now, newId: id }),

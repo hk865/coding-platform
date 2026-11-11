@@ -151,9 +151,12 @@ it.each(['memory', 'sqlite'] as const)('%s: canonical material records use compl
         { ref: { aggregateType: 'ProjectCompletionPolicyActive' as const, projectId: projectB }, revision: 0 }] },
     });
     if (activatedB.status !== 'committed') throw new Error(`other policy activation failed: ${JSON.stringify(activatedB)}`);
+    const rootB = await mkdtemp(join(tmpdir(), 'materials-b-'));
+    // The base plan owner reads project B's architecture files from its root.
+    f.knowledgeRoots.set(JSON.stringify([projectB, workspaceB]), rootB);
     const architectureB = await createArchitectureCatalogService({ records: f.records,
-      knowledge: knowledgeLinesFor({ root: await mkdtemp(join(tmpdir(), 'materials-b-')), projectId: projectB,
-        workspaceId: workspaceB, records: f.records }) }).adoptInitialArchitecture(ctxB, {
+      knowledge: knowledgeLinesFor({ root: rootB, projectId: projectB, workspaceId: workspaceB, records: f.records }) })
+      .adoptInitialArchitecture(ctxB, {
       input: { baselineId: 'other-baseline', description: 'Other project baseline', constraints: [], catalog: {
         requireDag: true, dependencies: [], modules: [
           { ref: { projectId: projectB, moduleId: 'R' }, name: 'R', responsibility: 'root', paths: ['.'], interfaces: [] },

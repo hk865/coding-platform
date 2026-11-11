@@ -71,6 +71,7 @@ async function open(kind: 'memory' | 'sqlite', reopen = false) {
   const f = await openS5DecisionFixture(kind); closers.push(() => f.close());
   if (reopen && kind === 'sqlite') await f.reopen();
   const plans = createPlanService({ records: f.records, bindings: createInitializationBindingReader({ records: f.records }),
+    knowledge: f.knowledge,
     materials: materialsFor(f), initialPlanning: { bodies: f.bodies }, now: f.now, eventId: f.newId });
   const mailboxDeps = mailboxDependencies(f);
   const mailbox = createSessionMailbox(mailboxDeps);
@@ -96,6 +97,7 @@ async function open(kind: 'memory' | 'sqlite', reopen = false) {
   };
   const abandon = async (proposalRef: typeof CANDIDATE_U1 | typeof CANDIDATE_U2) => committed(await
     createRequestCandidateService({ records: f.records, bindings: createInitializationBindingReader({ records: f.records }),
+      knowledge: f.knowledge,
       now: f.now, eventId: f.newId }).abandonPlanProposal(f.ctx,
       { input: { proposalRef }, meta: { requestId: f.newId(), expected: [await pin(f.records, proposalRef), await pin(f.records, GOAL_B)] } }));
   return { f, plans, q, card, answer, control, abandon, mailbox };
@@ -187,7 +189,7 @@ describe.each(['memory', 'sqlite'] as const)('S5 decision queue (%s)', kind => {
       .toMatchObject({ status: 'not_found' });
     const lineageMailbox = createSessionMailbox({
       records: f.records,
-      sessions: createSessionDirectory({ records: f.records, lookups: f.records, duty: unknownSessionDuty }),
+      sessions: createSessionDirectory({ records: f.records, knowledge, lookups: f.records, duty: unknownSessionDuty }),
       executions: createRunStateReader({ records: f.records }),
       roles: createRoleConfigurationService({ records: f.records, now: () => T, eventId: () => 'dq03-lineage' }),
       materials: createMaterialService({ bodies: new RawArtifactBodyStore(),
@@ -212,13 +214,15 @@ describe.each(['memory', 'sqlite'] as const)('S5 decision queue (%s)', kind => {
     const source = f.messages.decision.decision!.source;
     await answer(source);
     await f.settleRunRA();
-    const directory = createSessionDirectory({ records: f.records, lookups: f.records, duty: unknownSessionDuty });
+    const directory = createSessionDirectory({ records: f.records,
+      knowledge: f.knowledge, lookups: f.records, duty: unknownSessionDuty });
     const session = ready(await directory.readSession(f.ctx, f.sessionS)).record;
     expect(session.occupancy).toBeNull();
     // The lifecycle owner uses Date directly, so freeze only its clock.
     vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(T);
     try {
-      committed(await createSessionLifecycleService({ records: f.records, lookups: f.records, duty: unknownSessionDuty }).archiveSession(f.ctx,
+      committed(await createSessionLifecycleService({ records: f.records,
+        knowledge: f.knowledge, lookups: f.records, duty: unknownSessionDuty }).archiveSession(f.ctx,
         { input: { sessionRef: f.sessionS, reason: 'DQ04 sender archived' }, meta: { requestId: f.newId(), expected: [{ ref: session.ref, revision: session.revision }] } }));
     } finally { vi.useRealTimers(); }
     const after = await q();

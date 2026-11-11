@@ -45,6 +45,7 @@ import type { ReadResult } from '../../src/contracts/core/results.js';
 import type { DecisionQueueReadV1 } from '../../src/core/work-graph/model/decision-contracts.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { UnknownCallReviewV1 } from '../../src/contracts/unknown-call-review.js';
+import { knowledgeLinesOver } from '../helpers/KLS2-knowledge-lines.js';
 
 const sandbox = vi.hoisted(() => ({ available: true as boolean }));
 vi.mock('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js', async (importOriginal) => {
@@ -203,7 +204,8 @@ function digestDecisions(world: K3ReviewCardWorld, workspace: Pick<WorkspaceTool
   const mailboxDeps: SessionMailboxDependencies = {
     defaultInquiryDeadlineMs: 86_400_000,
     records: f.records, materials, now: () => FIXTURE_T, newId: nextId, systemActor: f.operatorActor,
-    sessions: createSessionDirectory({ records: f.records, lookups: f.records, duty: unknownSessionDuty }),
+    sessions: createSessionDirectory({ records: f.records,
+      knowledge: knowledgeLinesOver(f.records), lookups: f.records, duty: unknownSessionDuty }),
     executions: createRunStateReader({ records: f.records }),
     roles: createRoleConfigurationService({ records: f.records, now: () => FIXTURE_T, eventId: nextId }),
     duties: { async readMessageDutiesFacts() { return { status: 'ready' as const, value: {

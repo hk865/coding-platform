@@ -72,6 +72,7 @@ import { createS2BRuntimeSteps, type S2BRuntimeSteps } from './S2B-runtime-steps
 import {
   createWorkLineReader, type WorkLineReaderDeps, type WorkLineStore,
 } from '../../src/core/work-graph/views/work-line-reader.js';
+import { knowledgeLinesFor, knowledgeLinesOver } from './KLS2-knowledge-lines.js';
 
 export type LineTaskSpec = {
   taskId: string; title: string; taskKind?: 'work' | 'gate';
@@ -161,6 +162,7 @@ export function decisionReadsOver(base: TaskClaimFixture, records: WorkLineStore
   options: { autoReworkLimit?: number } = {}): DecisionReadPort & DecisionQueuePreparedReader {
   const plans = options.autoReworkLimit === undefined ? base.plans
     : createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+      knowledge: knowledgeLinesOver(records),
       materials: { async openArtifact() {
         return { status: 'rejected' as const, code: 'unsupported' as const, reason: 'S2C-L read-only plan service' };
       } },
@@ -224,12 +226,14 @@ export async function openLineFixture(kind: ClaimFixtureKind): Promise<LineFixtu
     }] } });
   const runs = createRunSupport(base);
   const sessionFacts = createSessionFactsService({ records: base.records });
-  const lifecycle = createSessionLifecycleService({ records: base.records, lookups: base.records,
+  const lifecycle = createSessionLifecycleService({ records: base.records,
+    knowledge: knowledgeLinesFor({ root: base.directory, ...base.scope, records: base.records }), lookups: base.records,
     sessionFacts, duty: sessionDuty });
   const anomalies = createSessionAnomalyService({ records: base.records, lookups: base.records,
     sessionFacts, now: () => new Date().toISOString() });
   const responsibility = createSessionResponsibilityService({ records: base.records, lookups: base.records,
-    basis: createSessionResponsibilityBasisReader(base.records), now: () => new Date().toISOString(), duty: sessionDuty });
+    basis: createSessionResponsibilityBasisReader(base.records,
+      knowledgeLinesFor({ root: base.directory, ...base.scope, records: base.records })), now: () => new Date().toISOString(), duty: sessionDuty });
   const lineSettings = createLineSettingsService({ records: base.records,
     sessionRead: base.sessionsPort.readSession, now: () => new Date().toISOString(),
     ...(base.ctx.principal.kind === 'host' ? { operatorActor: base.ctx.principal.actor } : {}) });

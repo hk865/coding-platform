@@ -7,17 +7,16 @@
  * `structural_proposal` source, the public catalog revision owner and `sessions/link`.
  *
  * G5 composes all of that in `createTargetPlatform`; this fixture no longer supplies a
- * second application row, a card source or a schema-merged store. Three delegating
+ * second application row, a card source or a schema-merged store. Two delegating
  * wrappers (A3/A4) only capture what the rows observe: the composition's one proposal
- * owner (for the service-level freeze/apply rows and `lastApply`), the commit observer
- * (an `ArchitectureProposal` commit count) and the catalog window read (one-shot test
- * hook). Every wrapper returns the real object and the real result; no record, pin or
+ * owner (for the service-level freeze/apply rows and `lastApply`) and the commit
+ * observer (an `ArchitectureProposal` commit count; KLS-2b dropped the one-shot catalog
+ * window hook). Every wrapper returns the real object and the real result; no record, pin or
  * context is hand-made. DR G4-06/07/08: the tool part is `openS7C1World`'s adviser
  * line; the project scope is the scope it actually returned.
  */
 import { vi } from 'vitest';
 import * as commitObserverModule from '../../src/composition/commit-observer.js';
-import * as catalogServiceModule from '../../src/core/work-graph/architecture/catalog-service.js';
 import * as proposalServiceModule from '../../src/core/work-graph/architecture/proposal-service.js';
 import type { ArchitectureProposalBatchRef, ArchitectureProposalBatchV1,
   ArchitectureProposalRef, ApplyBatchResult, ProposalResult, ProposeArchitectureRevisionInputV1 } from '../../src/contracts/architecture-proposal.js';
@@ -58,10 +57,6 @@ type Platform = Awaited<ReturnType<typeof createTargetPlatform>>;
 type ToolCallScript = { callId: string; name: string; args: Record<string, unknown> };
 
 const PROPOSE_TOOL = 'propose_architecture_revision';
-
-/** The one-shot second-window hook; the test owns the callback, the wrapper owns nothing else. */
-const WINDOW_HOOK_KEY = '__dshS8CWindowHook';
-const windowGlobals = globalThis as unknown as Record<string, (() => Promise<void>) | null | undefined>;
 
 
 export type ProposalWorld = {
@@ -264,7 +259,6 @@ export async function openProposalWorld(options: { backend?: 'memory' | 'sqlite'
   const commits = { count: 0 };
   let lastPropose: { ctx: CoreCallContext; input: ProposeArchitectureRevisionInputV1 & { commandId: string } } | null = null;
   let lastApply: ApplyBatchResult<unknown> | null = null;
-  let windowSpy: { mockRestore(): void } | undefined;
   let proposalSpy: { mockRestore(): void } | undefined;
   let observerSpy: { mockRestore(): void } | undefined;
   try {
@@ -302,13 +296,6 @@ export async function openProposalWorld(options: { backend?: 'memory' | 'sqlite'
           }
         },
       });
-    });
-    const realWindowRead = catalogServiceModule.readCurrentCatalogWindow;
-    windowSpy = vi.spyOn(catalogServiceModule, 'readCurrentCatalogWindow').mockImplementation(async (records, projectId, knowledge) => {
-      const result = await realWindowRead(records, projectId, knowledge);
-      const hook = windowGlobals[WINDOW_HOOK_KEY];
-      if (hook != null) { windowGlobals[WINDOW_HOOK_KEY] = null; await hook(); }
-      return result;
     });
     staff = await openS7C1World({
       ...(options.backend === undefined ? {} : { backend: options.backend }),
@@ -473,11 +460,10 @@ export async function openProposalWorld(options: { backend?: 'memory' | 'sqlite'
           baseline: { ref: read.baseline.ref, digest: read.baseline.contentDigest } };
       },
       close: async () => {
-        try { await staff!.close(); } finally { windowSpy?.mockRestore(); }
+        await staff!.close();
       },
     };
   } catch (error) {
-    windowSpy?.mockRestore();
     if (staff !== undefined) await staff.close().catch(() => undefined);
     throw error;
   }

@@ -271,6 +271,10 @@ import { createArchitectureProposalService } from '../core/work-graph/architectu
 import { ARCHITECTURE_PROPOSAL_SCHEMAS } from '../core/work-graph/architecture/proposal-record-codecs.js';
 import type { CatalogRevisionDependencies } from '../core/work-graph/architecture/revision-planner.js';
 import { createKnowledgeLines } from './line-knowledge.js';
+import { createKnowledgeIndex } from '../core/record-store/sqlite-knowledge-index.js';
+import type { KnowledgeIndex } from '../core/record-store/knowledge-index-ports.js';
+import { createKnowledgeWriteQueue, type KnowledgeWriteQueue } from '../core/work-graph/knowledge/write-queue.js';
+import { indexKnowledgeFile, overlayFileKnowledge } from '../core/work-graph/notes/note-knowledge.js';
 import type { CatalogPlanFactsV1 } from '../core/work-graph/model/catalog-revision-ports.js';
 import type { SessionRecord, SessionWorkLink } from '../contracts/core/session.js';
 import { SESSION_ACTIVITY_SCHEMAS, createSessionActivityReader } from '../core/work-graph/sessions/session-activity.js';
@@ -442,6 +446,10 @@ export type TargetPlatformOptions = {
    * always passes it; a platform built without a Host serves a single-workspace project (the caller's workspace).
    */
   knowledgeWorkspaces?: (projectId: string) => readonly string[];
+  /** The Host passes its one queue (every project shares it); a platform built without a Host makes its own. */
+  knowledgeWriteQueue?: KnowledgeWriteQueue;
+  /** Test seam (a fault wrapped around the real index); production leaves it out and uses `createKnowledgeIndex`. */
+  knowledgeIndexFactory?: (projectId: string, path: string | null) => KnowledgeIndex;
   now?: () => string;
   /** Trusted source route; defaults to TypeScript at tsconfig.json. No language inference.
    * `configPath: null` captures with no project configuration. */
@@ -1028,15 +1036,16 @@ const readGoalUnderstandingFrom = (notes: NoteReadPort): GoalUnderstandingReadPo
         pointer: { refKey: pointerRefKey, revision: pointer.revision, noteId: null }, head: null, note: null } };
     }
     const note = await notes.readNote(ctx, { noteId: pointer.noteId });
-    if (note.status !== 'ready') {
-      return note.status === 'not_found'
+    if (note.status !== 'ready' || note.value.version === null) {
+      return note.status === 'not_found' || note.status === 'ready'
         ? { status: 'rejected', code: 'unavailable', reason: 'the pointer names a missing note' } : note;
     }
+    const version = note.value.version;
     return { status: 'ready', value: {
       pointer: { refKey: pointerRefKey, revision: pointer.revision, noteId: pointer.noteId },
       head: { refKey: noteHeadRefKey({ aggregateType: 'NoteHead',
-        projectId: input.goalRef.projectId, noteId: pointer.noteId }), version: note.value.version },
-      note: { noteId: pointer.noteId, version: note.value.version },
+        projectId: input.goalRef.projectId, noteId: pointer.noteId }), version },
+      note: { noteId: pointer.noteId, version },
     } };
   };
 
@@ -1156,6 +1165,12 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
   const rawBackend = files === null ? createInMemoryRecordBackend({ schemas })
     : createSqliteRecordBackend({ schemas, path: files.ledger });
   let closeBodies: (() => Promise<void>) | undefined;
+  // KLS-2b: the knowledge index, one per project in this store (`index.sqlite`; a memory store opens `:memory:`).
+  const knowledgeIndexes = new Map<string, KnowledgeIndex>();
+  const closeKnowledgeIndexes = (): void => {
+    for (const index of knowledgeIndexes.values()) index.close();
+    knowledgeIndexes.clear();
+  };
   try {
     // Task E: the optional Host observer sees every commit of the ONE records
     // object below; without it this is the original backend unchanged.
@@ -1163,6 +1178,24 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     const bodies = files === null ? new RawArtifactBodyStore()
       : createSqliteRawArtifactStore(files.artifacts);
     if ('close' in bodies) closeBodies = () => bodies.close();
+    // KLS-2: the ONE knowledge-lines object; every architecture and note service reads and writes the files through
+    // it. Its writes queue on the Host's one queue (or this platform's own) and index into this store.
+    const openKnowledgeIndex = options.knowledgeIndexFactory ?? createKnowledgeIndex;
+    const knowledgeLines = createKnowledgeLines({
+      resolveRoot: workspaceRef => options.workspace.resolveRoot(workspaceRef),
+      ...(options.knowledgeWorkspaces === undefined ? {} : { workspacesOf: options.knowledgeWorkspaces }),
+    }, { records: backend.records }, {
+      queue: options.knowledgeWriteQueue ?? createKnowledgeWriteQueue(),
+      indexOf: projectId => {
+        let index = knowledgeIndexes.get(projectId);
+        if (index === undefined) {
+          index = openKnowledgeIndex(projectId, files === null ? null : files.index);
+          knowledgeIndexes.set(projectId, index);
+        }
+        return index;
+      },
+      indexFile: indexKnowledgeFile,
+    });
     // §6.4.3: the Host's rooted probe; a missing one is an explicit
     // `unavailable`, never "no settings directory".
     const exportBooksPort: TaskbookExportReadPort['read'] = options.exportBooks
@@ -1225,7 +1258,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     // injected into the Session directory, the lifecycle service, the anomaly
     // owner and the Workflow, and `sessions`/`queries` never import `tasks`.
     const sessionFacts = createSessionFactsService({ records: backend.records });
-    const responsibilityBasis = createSessionResponsibilityBasisReader(backend.records);
+    const responsibilityBasis = createSessionResponsibilityBasisReader(backend.records, knowledgeLines);
     const sessionResponsibility = createSessionResponsibilityService({
       records: backend.records, lookups: backend.records,
       // The trusted Task basis stays in `tasks` and arrives through the narrow port.
@@ -1323,7 +1356,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     });
     const capacityAllocation = createAllocationRead({ records: backend.records });
     const sessionDirectory = createSessionDirectory({ records: backend.records, lookups: backend.records,
-      duty: sessionDutyResolver, reclaim: () => roleLineMaintenance, roleCapacity: roleCapacityService });
+      duty: sessionDutyResolver, reclaim: () => roleLineMaintenance, roleCapacity: roleCapacityService,
+      knowledge: knowledgeLines });
     /** A project-level line may drive a Query whose Run lives in another workspace; its trusted configuration is the
      *  line's own, so the Query resolves the binding where its claimed Session lives, never where the Run runs
      *  (the profile's workspace is the line's, not the Query's). */
@@ -1487,11 +1521,6 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
      * the responsibility arm reads the directory cards and builds the same
      * role-line contribution the reanchor writer uses.
      */
-    // KLS-2: the ONE knowledge-lines object; every architecture and note service reads and writes the files through it.
-    const knowledgeLines = createKnowledgeLines({
-      resolveRoot: workspaceRef => options.workspace.resolveRoot(workspaceRef),
-      ...(options.knowledgeWorkspaces === undefined ? {} : { workspacesOf: options.knowledgeWorkspaces }),
-    }, { records: backend.records }, {});
     const catalogRevision: CatalogRevisionDependencies = {
       records: backend.records,
       now,
@@ -1714,6 +1743,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       initialPlanning: { bodies },
       // The binding source arm of the source-aware initial plan reads the same binding reader.
       bindings: bindingReads,
+      knowledge: knowledgeLines,
       ...(authorizeConfiguration === undefined ? {} : {
         delegatedWrites: { reads: executionReader, roles: roleService, bodies, authorizeConfiguration },
       }) };
@@ -1730,7 +1760,11 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     // later-bound implementation, so the message service needs no second
     // source-facts owner and the file order is unchanged.
     let boundNoteDecisionSource: NoteDecisionSourcePort | null = null;
-    const noteDecisionSourcePort: Pick<NoteDecisionSourcePort, 'readNoteDecisions' | 'readNoteDecision'> = {
+    const noteDecisionSourcePort: Pick<NoteDecisionSourcePort, 'prepareNoteDecisions' | 'readNoteDecisions' | 'readNoteDecision'> = {
+      prepareNoteDecisions: (ctx, input) => boundNoteDecisionSource === null
+        ? Promise.resolve({ status: 'rejected' as const, code: 'unavailable' as const,
+          reason: 'the note-decision source is not bound yet' })
+        : boundNoteDecisionSource.prepareNoteDecisions(ctx, input),
       readNoteDecisions: (ctx, input) => boundNoteDecisionSource === null
         ? Promise.resolve({ status: 'rejected' as const, code: 'unavailable' as const,
           reason: 'the note-decision source is not bound yet' })
@@ -1982,7 +2016,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       commandRerunRequestCards, messageReleaseCards, handoffApprovalCards, adviserCreationCards,
       createMemberCreationCardSource({ records: backend.records }),
       createMaintainerAssignmentCardSource({ records: backend.records }),
-      createRepairApprovalSource({ records: backend.records, observation: observed,
+      createRepairApprovalSource({ records: backend.records, knowledge: knowledgeLines, observation: observed,
         mainWorkspaceOf: mainWorkspaceOf }),
       createStructuralProposalSource({ records: backend.records, reproposeAdmits }),
       createRoleCapacityCardSource({ records: backend.records }), createRoleLineChangeCardSource({ records: backend.records })];
@@ -2038,7 +2072,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     const sessionLifecycle = createSessionLifecycleService({ records: backend.records, lookups: backend.records,
       sessionFacts, duty: sessionDutyResolver, archiveCondition: { check: async (ctx, input) => archiveCondition === null
         ? { status: 'rejected', code: 'unavailable', reason: 'the archive condition is not wired' }
-        : archiveCondition.check(ctx, input) }, reclaim: () => roleLineMaintenance, roleCapacity: roleCapacityService });
+        : archiveCondition.check(ctx, input) }, reclaim: () => roleLineMaintenance, roleCapacity: roleCapacityService,
+      knowledge: knowledgeLines });
     const kernelStores = await createKernelStoreRegistry(options.kernelStores ?? { entries: [] });
     // Internal calls retain the raw directory. The outer Runtime operation is
     // drained once as a whole, so close cannot reject its later registration.
@@ -2182,6 +2217,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     const moduleMaintainerOwner = createModuleMaintainer({
       findSessions: (ctx, input) => sessionDirectory.findSessions(ctx, input),
       records: backend.records,
+      knowledge: knowledgeLines,
       duty: sessionDutyResolver,
       catalog,
       notifyProject: (input) => notifyProject({ records: backend.records, now }, input),
@@ -2217,7 +2253,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       try { options.onArchitectureCaptureTrigger?.({ kind, projectId }); } catch { /* the caller's result is unchanged */ }
     };
     const evidenceOwner = createEvidenceService({
-      records: backend.records, materials: rawMaterials, executions: executionReader,
+      records: backend.records, knowledge: knowledgeLines, materials: rawMaterials, executions: executionReader,
       workspaceHost: options.workspace, source: verificationWorkspaceReader,
       ...(options.checks === undefined ? {} : { configuration: options.checks }),
       configurationFor: currentCheckConfiguration,
@@ -3131,7 +3167,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     // links, the SAME duty resolver the Workflow gets, and the active catalog's
     // containment) and the L7 per-scope current count.
     const scribeScope = createScribeScope({ records: backend.records, sessions: sessionDirectory,
-      architecture: catalog, duties: sessionDutyResolver,
+      architecture: catalog, duties: sessionDutyResolver, knowledge: knowledgeLines,
       mainWorkspaceOf: mainWorkspaceOf });
     // The second tier's reference analyzer and the one Python/C++ single-file
     // lookup read the workspace through the handle's batch read with the ctx they
@@ -3184,7 +3220,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     // Slice 4B L22/P8: `views` owns the one derivation implementation and the
     // composition root injects it into the read model (`notes` never imports
     // `views`). The version lists live in `notes/note-version-lists.ts`.
-    const noteCheck: NoteHeadCheckPort = createNoteCheck({ records: backend.records, plans: planService,
+    const noteCheck: NoteHeadCheckPort = createNoteCheck({ records: backend.records, knowledge: knowledgeLines, plans: planService,
       architecture: catalog, workspace: noteWorkspace, artifacts: bodies,
       mainWorkspaceOf: mainWorkspaceOf,
       ...(options.noteLimits === undefined ? {} : { limits: options.noteLimits }) });
@@ -3193,7 +3229,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     // `userReasonFacts` (ONE per-call fact read shared with the disposition
     // guard) instead of re-running the full `checkNotes`.
     const noteDecisionSource = createNoteDecisionSource({ records: backend.records,
-      userReasonFacts: noteWrite.userReasonFacts, apply: noteWrite.applyNoteDecision });
+      userReasonFacts: noteWrite.userReasonFacts, prepareReasonFacts: noteWrite.prepareReasonFacts,
+      apply: noteWrite.applyNoteDecision, knowledge: knowledgeLines });
     boundNoteDecisionSource = noteDecisionSource;
     /**
      * Slice 4C-2 U6: the `note_review` application adapter. The answer commit is
@@ -3248,7 +3285,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
         return { status: 'ready', value: { action: result, receipt: null } };
       },
     };
-    const noteReads: NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPort = createNoteReadModel({ records: backend.records,
+    const noteReads: NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPort = createNoteReadModel({ records: backend.records, knowledge: knowledgeLines,
       plans: planService, architecture: catalog, workspace: noteWorkspace, check: noteCheck,
       mainWorkspaceOf: mainWorkspaceOf,
       // Slice 4C C2.2: the concrete narrow Run resolver (one readMany) resolves a
@@ -3260,7 +3297,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     // The semantic links read reuses the SAME records, catalog and check the
     // note reads use; it reads the one note layer, not a second owner.
     const semanticLinks: SemanticLinksReader = createSemanticLayerRead({
-      records: backend.records, architecture: catalog, check: noteCheck,
+      records: backend.records, knowledge: knowledgeLines, architecture: catalog, check: noteCheck,
       mainWorkspaceOf: mainWorkspaceOf,
       ...(options.noteLimits?.flowCandidateMax === undefined
         ? {} : { flowCandidateMax: options.noteLimits.flowCandidateMax }) });
@@ -3314,7 +3351,10 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     const headOf = async (ctx: CoreCallContext, noteId: string) => {
       const heads = await readHeadBatch(backend.records, ctx.projectId, [noteId], { requireAll: true });
       if (!heads.ok) return rejected('unavailable', heads.reason);   // BatchFailure.code is a string (note-batch-reader.ts:21)
-      return { status: 'ready' as const, value: heads.value.get(noteId)! };
+      // #48: a filed note's anchors and relations come from its file.
+      const overlaid = await overlayFileKnowledge([heads.value.get(noteId)!], { lines: knowledgeLines, caller: ctx });
+      if (overlaid.status !== 'ready') return rejected('unavailable', overlaid.reason);
+      return { status: 'ready' as const, value: overlaid.value[0]! };
     };
     // b08/c24: the managing scope of one scribe todo. This public read owns its per-call cache, like
     // `countCurrentNotes` (scribe-scope.ts:321–:322). An `updateDue` todo has no head (note-scribe-todos.ts:198–:201);
@@ -4811,8 +4851,11 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
           await Promise.allSettled([referenceAnalyzer.close(), nativeSingleFile.close()]);
           try { await workspace.close(); }
           finally {
-            try { await closeBodies?.(); }
-            finally { await backend.close(); }
+            try { closeKnowledgeIndexes(); }
+            finally {
+              try { await closeBodies?.(); }
+              finally { await backend.close(); }
+            }
           }
         })();
         return closing;
@@ -4859,6 +4902,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     return { platform, records };
   } catch (error) {
     // Close every owned resource while preserving the initialization error.
+    try { closeKnowledgeIndexes(); } catch { /* keep original error */ }
     try { await closeBodies?.(); } catch { /* keep original error */ }
     try { await rawBackend.close(); } catch { /* keep original error */ }
     throw error;

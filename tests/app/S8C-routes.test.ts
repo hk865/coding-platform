@@ -30,6 +30,9 @@ import { openMaintainerWorld4, type MaintainerWorld } from '../helpers/S8B-maint
 import type { S6ACardsWorkspace } from '../helpers/S6A-cards-fixture.js';
 import { openS8CRepairWorld, repairCommits, type S8CRepairWorld } from '../helpers/S8C-repair-world.js';
 import { openProposalWorld, type ProposalWorld } from '../helpers/S8C-proposal-world.js';
+import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
+import { waitFor } from '../scenarios/harness.js';
+import type { ArchitectureObservationStateV1 } from '../../src/contracts/architecture-observation.js';
 
 vi.mock('../../src/core/record-store/in-memory-record-store.js', async importOriginal =>
   (await import('../helpers/S6A-commit-barrier.js')).inMemoryBarrierModule(importOriginal));
@@ -223,7 +226,11 @@ describe('R14 (c): each application row applies its one effect once', () => {
     expect(after).toMatchObject({ state: 'applied' });
     expect(after.application).not.toBeNull();
 
-    // The same request replays the same application receipt and writes nothing.
+    // The same request replays the same application receipt and writes nothing. KLS-2b: the knowledge writes move
+    // the Host's earlier automatic capture later; let it settle so the count sees only this replay.
+    await waitFor(async () => valueOf<ArchitectureObservationStateV1>(await repair.world.platform.architecture
+      .observationState(repair.world.humanContext(), { workspace: S6A_SCOPE }), 'ready', 'the observation state'),
+    state => state.autoCapture?.pending !== true, 'the automatic capture to settle');
     const commits = repairCommits.count();
     const replay = await answerR14Card(repair.main, card, 'reject', 'row2-repair-reject');
     expect(replay.answer.status).toBe('committed');

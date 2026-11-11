@@ -52,6 +52,7 @@ import { createB2ExecutionFixture } from './B2-execution-fixture.js';
 import { OPERATOR, PROJECT, T, WORKSPACE, WORKSPACE_SCOPE,
   type S5DecisionFixture, type S5FixtureKind } from './S5-decision-fixture.js';
 import { preparationHost, prepareQueryForReal, prepareTaskForReal } from './task-claim-fixture.js';
+import { knowledgeLinesOver } from './KLS2-knowledge-lines.js';
 
 export const key = (value: object): string => canonicalJson(value as JsonValue);
 export function ready<V>(result: { status: 'ready'; value: V } | { status: 'not_found' | 'not_ready' | 'rejected' }): V {
@@ -120,7 +121,8 @@ export function mailboxDependencies(f: S5DecisionFixture): SessionMailboxDepende
       ? { status: 'ready', value: { configurationRevision: 's5-host-config-1', permissions, hostTemplate: template } }
       : { status: 'rejected', code: 'forbidden', reason: 'not the shared S5 mailbox grant' };
   };
-  return { records: f.records, sessions: createSessionDirectory({ records: f.records, lookups: f.records, duty: unknownSessionDuty }),
+  return { records: f.records, sessions: createSessionDirectory({ records: f.records,
+    knowledge: f.knowledge, lookups: f.records, duty: unknownSessionDuty }),
     executions: createRunStateReader({ records: f.records }),
     roles: createRoleConfigurationService({ records: f.records, now: f.now, eventId: f.newId }),
     materials: materialsFor(f), runtimeAdmission: { bodies: f.bodies, authorizeConfiguration },
@@ -266,6 +268,7 @@ export async function answeredPlanningQuestion(f: S5DecisionFixture) {
   expect(record.session.occupancy).toBeNull();
   if (record.answer === null) throw new Error('missing formal planning answer');
   const plans = createPlanService({ records: f.records, bindings: createInitializationBindingReader({ records: f.records }),
+    knowledge: f.knowledge,
     materials: materialsFor(f), initialPlanning: { bodies: f.bodies }, now: f.now, eventId: f.newId });
   if (plans.readInitialPlanAnswerFacts === undefined) throw new Error('missing formal answer reader');
   const saved = ready(await plans.readInitialPlanAnswerFacts(f.ctx, record.answer.ref));
@@ -304,6 +307,7 @@ export async function openUninitializedQueue(kind: S5FixtureKind) {
     objective: 'Choose the initial architecture' }, meta: { requestId: 'dq03-create', expected: [
       { ref: PROJECT, revision: 1 }, { ref: WORKSPACE, revision: 1 }] } }));
   return { records, ctx, plans: createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+    knowledge: knowledgeLinesOver(records),
     now: () => T, eventId: () => 'dq03-event' }), close: () => b2.close() };
 }
 
@@ -343,6 +347,7 @@ export async function noticeWork(f: S5DecisionFixture) {
       verificationRequirements: [{ requirementId: 'nr-check', kind: 'static', requirementLevel: 'required', description: 'Registered check' }] }],
     taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] }, taskRelations: [], inputRequirements: [] };
   const plans = createPlanService({ records: f.records, bindings: createInitializationBindingReader({ records: f.records }),
+    knowledge: f.knowledge,
     now: f.now, eventId: f.newId });
   const proposal = committed(await plans.proposePlan(f.ctx, { input: { goalRef, basedOn: null, draft,
     reason: { text: 'Notice preconditions', sources: [] } }, meta: { requestId: 'nr-propose', expected: [{ ref: goalRef, revision: goal.revision }] } }));
@@ -405,7 +410,7 @@ export async function noticeWork(f: S5DecisionFixture) {
     executor: OPERATOR, permissionRevision: 's5-notice-permission', sourceAccess: 'verification_workspace', processAccess: 'all_except_denied',
     deniedPrefixes: [], checks: [{ checkId: 'static', kind: 'static', command: 'fixture-check', cwd: '.', timeoutMs: 1000, taskIds: 'all' }] };
   let roundId = 0;
-  const evidence = createEvidenceService({ records: f.records, executions: reads, materials, workspaceHost, configuration,
+  const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(f.records, workspaceHost), records: f.records, executions: reads, materials, workspaceHost, configuration,
     automationPolicy: () => automationPolicy.current,
     source: { async capture() { return { status: 'ready', sourceDigest: sha256Hex(`nr-source-${source.revision}`),
       sourceProof: { kind: 'current-workspace-only', runBaselineKnown: false },

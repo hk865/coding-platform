@@ -28,6 +28,7 @@ import type { EncodedRecord, PreparedCommit } from '../../src/core/record-store/
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
 import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createTaskClaimFixture, CLAIM_FIXTURE_AT, type Records, type TaskClaimFixture } from '../helpers/task-claim-fixture.js';
+import { knowledgeLinesOver } from '../helpers/KLS2-knowledge-lines.js';
 
 type PlanDraftV2 = Extract<PlanRevisionDraft, { schemaVersion: 2 }>;
 
@@ -82,6 +83,7 @@ function legacyFullDraft(goalId: string, planId: string, planRevision: number): 
 function planServiceOver(records: Records, tag: string): ReturnType<typeof createPlanService> {
   let n = 0;
   return createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+    knowledge: knowledgeLinesOver(records),
     now: () => CLAIM_FIXTURE_AT, eventId: () => `w2-${tag}-${++n}` });
 }
 

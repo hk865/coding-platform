@@ -149,7 +149,7 @@ describe('FA-3: a cold-start form is checked against its own setup, then adopted
         { value: { catalog: { catalog: AdoptedArchitecture } } };
       // The stored catalog's every ref carries the project the answer was submitted in.
       expect(read.value.catalog.catalog.modules.map(module => module.ref))
-        .toEqual([{ projectId: scope.projectId, moduleId: FA_S6B3_MODULE_ID }]);
+        .toEqual([{ projectId: scope.projectId, moduleId: `/@ws:${scope.workspaceId}/${FA_S6B3_MODULE_ID}` }]);
     } finally {
       await world.close();
     }

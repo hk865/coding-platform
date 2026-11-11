@@ -45,6 +45,7 @@ import {
 import { PLATFORM_PROMPT_PACK_V1 } from '../contracts/prompts/platform-pack.generated.js';
 import { renderTemplate } from '../contracts/prompts/render-template.js';
 import { COLD_START_STAGE_NOT_BOUND, openTargetPlatform, type TargetPlatformOptions } from '../composition/create-platform.js';
+import { createKnowledgeWriteQueue } from '../core/work-graph/knowledge/write-queue.js';
 import type { RecordCommitObserver } from '../composition/commit-observer.js';
 import {
   createProjectRuntimeRegistry, type ProjectPlatform, type ProjectRuntime, type ProjectRuntimeWorkspace,
@@ -869,6 +870,9 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   // KLS-1b: one runtime per project (S1, T3): its own store directory, lease, Kernel store directory and platform. The
   // memory store takes the same path with one in-memory store per project (V3). A project opens at start (the list
   // and the start-up workspaces, §4.2) or when a directory opens a new one (U4); nothing else makes a runtime.
+  // KLS-2b: the Host's ONE knowledge write queue; every project's platform takes it, so two projects on one checkout
+  // write one at a time in this process.
+  const knowledgeWriteQueue = createKnowledgeWriteQueue();
   const registry = createProjectRuntimeRegistry({
     storage: storage.kind === 'sqlite' ? { kind: 'sqlite', legacyDirectory: storage.directory } : { kind: 'memory' },
     acquireLease: directory => acquireHostInstanceLease({ directory, now: options.now ?? (() => new Date().toISOString()) }),
@@ -876,6 +880,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       storage: input.storage,
       workspace: projectBindings(input.projectId),
       knowledgeWorkspaces: knowledgeListOf(input.projectId, input.workspaces[0]!.workspaceId),
+      knowledgeWriteQueue,
       commitObserver: commitObserverFor(input.projectId),
       hostInstance: { hostInstanceId: input.lease.hostInstanceId, lease: input.lease.lease, takeover: input.lease.takeover },
       hostClosing: hostClosing.signal,

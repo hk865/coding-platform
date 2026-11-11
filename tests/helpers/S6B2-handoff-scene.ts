@@ -23,6 +23,7 @@ import { readSecretaryHandoffBasis } from '../../src/core/work-graph/tasks/secre
 import type { S6AHostWorldOptions } from './S6A-host-fixture.js';
 import type { S6ASession } from './S6A-request-fixture.js';
 import type { openS6B2World } from './S6B2-fixture.js';
+import { knowledgeLinesOver } from './KLS2-knowledge-lines.js';
 
 export type S6B2Backend = {
   records: SecretaryArchiveAdvanceDependencies['records'] & Parameters<typeof createSecretaryHandoffFacts>[0]['records'];
@@ -213,7 +214,7 @@ export function s6b2Facts(world: S6B2WorldValue, captured: S6B2Captured,
 export function s6b2Transfers(world: S6B2WorldValue, captured: S6B2Captured,
   records: S6B2Backend['records'] = s6b2Backend(captured).records) {
   return createSessionResponsibilityService({ records, lookups: records,
-    basis: createSessionResponsibilityBasisReader(records), now: () => world.clock.now(), duty: unknownSessionDuty });
+    basis: createSessionResponsibilityBasisReader(records, knowledgeLinesOver(records)), now: () => world.clock.now(), duty: unknownSessionDuty });
 }
 
 export function s6b2Basis(records: S6B2Backend['records']) {

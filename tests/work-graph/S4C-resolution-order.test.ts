@@ -31,7 +31,7 @@ const idOf = (result: { status: string }): string => (result as unknown as { not
 async function storedState(f: S4ANoteFixture, noteId: string): Promise<string> {
   const read = await f.platform.notes.readNote(f.ctx(), { noteId });
   if (read.status !== 'ready') throw new Error(`note ${noteId} is not readable: ${JSON.stringify(read)}`);
-  return read.value.storedState;
+  return read.value.storedState!;
 }
 
 type BlockingSeam = { arm(noteId: string): void };

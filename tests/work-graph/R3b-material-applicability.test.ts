@@ -1,3 +1,4 @@
+import { mkdir } from 'node:fs/promises';
 import { expect, it } from 'vitest';
 import { join } from 'node:path';
 import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
@@ -59,6 +60,10 @@ it.each(['memory', 'sqlite'] as const)('%s: a Run or QueryRun reader opens only 
         { ref: projectRef, revision: 1 }, { ref: targetWorkspaceRef, revision: 0 }] },
     });
     if (registration.status !== 'committed') throw new Error(`target Workspace registration failed: ${JSON.stringify(registration)}`);
+    // The plan owner reads the project's files across both workspaces; the target holds none of its own.
+    const targetRoot = join(f.directory, 'workspace-target-root');
+    await mkdir(targetRoot, { recursive: true });
+    f.knowledgeRoots.set(JSON.stringify([projectId, targetWorkspaceId]), targetRoot);
     const targetGoal = await f.goals.createGoal(targetCtx, {
       input: { goalId: targetGoalRef.goalId, workspace: { projectId, workspaceId: targetWorkspaceId },
         objective: 'Preserve material scope' },

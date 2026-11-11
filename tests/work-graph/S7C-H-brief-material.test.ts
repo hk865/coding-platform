@@ -153,7 +153,7 @@ describe('H-brief-material: the adviser brief', () => {
       assignments: [{ target: { kind: 'existing', session: target.lines.existing.ref }, tasks: [target.tasks[0]!] }],
       tool: { caller: { actor: agentActorOf(target.lines.source.ref, target.sourceRun),
         session: target.lines.source.ref, run: target.sourceRun, duty: 'executor' },
-      reason: 'S7C H-brief-material', understanding: [{ noteId: target.note.noteId, version: target.note.version }] },
+      reason: 'S7C H-brief-material', understanding: [{ noteId: target.note.noteId, version: target.note.version! }] },
     });
     expect(accepted).toMatchObject({ status: 'committed', value: { approval: { state: 'pending' } } });
     const cards = await main.readCards();

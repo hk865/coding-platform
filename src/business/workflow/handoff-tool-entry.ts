@@ -189,7 +189,8 @@ async function readUnderstanding(ctx: CoreCallContext, deps: HandoffToolEntryDep
           return page.code === 'cancelled' ? page : { text: understandingText(input, goals) };
         }
         for (const listed of page.value.items) {
-          if (listed.kind !== 'understanding') continue;
+          // A goal or stage understanding always has its record; a note without one has no version to pin.
+          if (listed.kind !== 'understanding' || listed.version === null) continue;
           const read = await deps.notes.readNote(ctx, { noteId: listed.noteId, version: listed.version });
           if (read.status === 'not_found' || read.status === 'not_ready') {
             return { text: understandingText(input, goals) };
@@ -202,7 +203,7 @@ async function readUnderstanding(ctx: CoreCallContext, deps: HandoffToolEntryDep
           const key = `${read.value.noteId}@${String(read.value.version)}`;
           if (seen.has(key)) continue;
           seen.add(key);
-          found.push({ noteId: read.value.noteId, version: read.value.version });
+          found.push({ noteId: read.value.noteId, version: listed.version });
         }
         if (page.value.next === null) break;
         cursor = page.value.next;

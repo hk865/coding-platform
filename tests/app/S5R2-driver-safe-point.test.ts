@@ -53,7 +53,8 @@ function observed(calls: RecordedAdvance[]) {
 }
 async function idleSession(f: S5DecisionFixture) {
   const ref = await f.createS5Session('s5r2-d-idle');
-  const card = ready(await createSessionDirectory({ records: f.records, lookups: f.records, duty: unknownSessionDuty }).readSession(f.ctx, ref));
+  const card = ready(await createSessionDirectory({ records: f.records,
+    knowledge: f.knowledge, lookups: f.records, duty: unknownSessionDuty }).readSession(f.ctx, ref));
   expect(card.record).toMatchObject({ lifecycle: 'active', occupancy: null });
   return ref;
 }

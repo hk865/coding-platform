@@ -28,13 +28,13 @@ import { readArchitectureBaselineContent, validateAdoptedArchitecture } from './
 
 export const ARCHITECTURE_FILE_PATH = `${KNOWLEDGE_DIRECTORY}/architecture.json`;
 
-type ModuleFileV1 = {
+export type ModuleFileV1 = {
   id: string; name: string; responsibility: string; paths: string[];
   interfaces: { id: string; description: string; paths: string[] }[];
   contains?: string[];
   dependsOn: { to: string; reason: string }[];
 };
-type ArchitectureFileV1 = {
+export type ArchitectureFileV1 = {
   modules: string[];
   crossWorkspace: { dependsOn: { from: string; to: string; reason: string }[]; contains: { parent: string; child: string }[] };
   baseline?: KnowledgeBaselineV1;
@@ -90,7 +90,7 @@ function stringList(value: unknown): string[] | null {
   return Array.isArray(value) && value.every(nonEmpty) ? [...value] : null;
 }
 
-function moduleFileOf(path: string, bytes: Uint8Array): ModuleFileV1 | string {
+export function moduleFileOf(path: string, bytes: Uint8Array): ModuleFileV1 | string {
   const value = jsonObjectOf(bytes);
   if (value === null) return `${path}: the module file is not a JSON object`;
   if (!keysAre(value, ['id', 'name', 'responsibility', 'paths', 'interfaces', 'dependsOn'], ['contains'])) {
@@ -131,7 +131,7 @@ export function moduleFileIdOf(path: string, bytes: Uint8Array): DecodeResult<st
   return typeof file === 'string' ? { status: 'invalid', reason: file } : { status: 'decoded', value: file.id };
 }
 
-function architectureFileOf(bytes: Uint8Array, main: boolean): ArchitectureFileV1 | string {
+export function architectureFileOf(bytes: Uint8Array, main: boolean): ArchitectureFileV1 | string {
   const where = ARCHITECTURE_FILE_PATH;
   const value = jsonObjectOf(bytes);
   if (value === null) return `${where}: the architecture file is not a JSON object`;

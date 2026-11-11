@@ -1,4 +1,4 @@
-import { knowledgeLinesFor } from '../helpers/KLS2-knowledge-lines.js';
+import { knowledgeLinesFor, knowledgeLinesOver } from '../helpers/KLS2-knowledge-lines.js';
 import { afterEach, expect, it } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -115,9 +115,9 @@ it.each(['memory', 'sqlite'] as const)('%s: real Goal→candidate→accepted Pla
     // The hand-written prerequisite used an architecture content revision 2.
     // The initial adoption writes revision 1, so one public revision writes the
     // same revision-2 baseline content the original assertion expects.
-    const catalog = createArchitectureCatalogService({ records: backend.records,
-      knowledge: knowledgeLinesFor({ root: await mkdtemp(join(tmpdir(), 'r3c-knowledge-')), projectId, workspaceId,
-        records: backend.records }) });
+    const knowledge = knowledgeLinesFor({ root: await mkdtemp(join(tmpdir(), 'r3c-knowledge-')), projectId, workspaceId,
+      records: backend.records });
+    const catalog = createArchitectureCatalogService({ records: backend.records, knowledge });
     const catalogBody = { modules: [{ ref: { projectId, moduleId: 'r3c-module' }, name: 'R3c module',
       responsibility: 'The R3c module', paths: ['src/r3c'], interfaces: [] }],
     dependencies: [], requireDag: true as const };
@@ -146,6 +146,7 @@ it.each(['memory', 'sqlite'] as const)('%s: real Goal→candidate→accepted Pla
     const goals = createGoalService({ records: backend.records, now: () => at,
       eventId: () => `r3c-goal-${++sequence}` }).tasks;
     const plans = createPlanService({ records: backend.records, bindings: createInitializationBindingReader({ records: backend.records }),
+      knowledge,
       now: () => at,
       eventId: () => `r3c-plan-${++sequence}` });
     const goal = await goals.createGoal(ctx, { meta: { requestId: 'create-goal',
@@ -288,6 +289,7 @@ it.each(['memory', 'sqlite'] as const)('%s: real Goal→candidate→accepted Pla
     // nothing in this world writes the Workflow's TaskReduction.
     let injectEndedRun = true;
     const racingReadyReader = createPlanService({ bindings: createInitializationBindingReader({ records: rf.records }),
+      knowledge: knowledgeLinesOver(rf.records),
       records: {
       ...rf.records,
       async lookup(request) {
@@ -329,6 +331,7 @@ it.each(['memory', 'sqlite'] as const)('%s: real Goal→candidate→accepted Pla
     let implementStart: ReturnType<typeof runtimeWorld.runtime.port.startRun> | undefined;
     let injectImplement = true;
     const racingGraphReader = createPlanService({ bindings: createInitializationBindingReader({ records: rf.records }),
+      knowledge: knowledgeLinesOver(rf.records),
       records: {
       ...rf.records,
       async lookup(request) {
@@ -398,6 +401,7 @@ it.each(['memory', 'sqlite'] as const)('%s: real Goal→candidate→accepted Pla
     pendingDraft.planId = 'pending-race-plan';
     let injectProposal = true;
     const racingProposalReader = createPlanService({ bindings: createInitializationBindingReader({ records: backend.records }),
+      knowledge,
       records: {
       ...backend.records,
       async lookup(request) {
@@ -475,6 +479,7 @@ it.each(['memory', 'sqlite'] as const)('%s: real Goal→candidate→accepted Pla
     let injectAdoption = true;
     let adoptedRacePlanRef: typeof applied.value.ref | null = null;
     const racingGoalReader = createPlanService({ bindings: createInitializationBindingReader({ records: backend.records }),
+      knowledge,
       records: {
       ...backend.records,
       async readMany(keys) {

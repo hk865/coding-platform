@@ -14,7 +14,7 @@
  * `readMainWorkspace` reads) with `{status:'rejected', code:'unavailable'}` once
  * while armed; every other read is the real one.
  *
- * Named mutation (`src/core/work-graph/notes/note-related-scope.ts:331–:334`):
+ * Named mutation (`src/core/work-graph/notes/note-related-scope.ts:356–:359`):
  * a non-ready main-workspace read returns `{ok:true, value:null}` — the caller
  * (the second workspace) is then taken as main, so the first read answers
  * `ready` instead of `rejected`/`unavailable`.
@@ -33,6 +33,8 @@ import { readMainWorkspace } from '../../src/core/work-graph/sessions/role-line-
 import { operationRefKey } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { roleLineOperationRef } from '../../src/core/work-graph/state/role-line-operation.js';
 import * as memoryBackend from '../../src/core/record-store/in-memory-record-store.js';
+import * as lineKnowledge from '../../src/composition/line-knowledge.js';
+import type { KnowledgeLines } from '../../src/core/work-graph/model/line-knowledge.js';
 import {
   addXWS2PSecondModule, openXWS2PWorld, writeXWS2PNote, type XWS2PWorld,
 } from '../helpers/XWS2P-world.js';
@@ -62,6 +64,13 @@ describe('XP-08 the main workspace read failure', () => {
           : records.readMany(refKeys) };
       return { ...backend, records: platformStore.records };
     }));
+    // KLS-2b: the read owner below reads filed notes through the platform's own knowledge lines (index and files).
+    let platformKnowledge: KnowledgeLines | undefined;
+    const realLines = lineKnowledge.createKnowledgeLines;
+    SPIES.push(vi.spyOn(lineKnowledge, 'createKnowledgeLines').mockImplementation((...args) => {
+      platformKnowledge = realLines(...args);
+      return platformKnowledge;
+    }));
 
     const world = await openXWS2PWorld();
     WORLDS.push(world);
@@ -73,7 +82,8 @@ describe('XP-08 the main workspace read failure', () => {
     // The platform caches the main workspace id once it has read it, so the
     // failure branch is reachable only while that cache is empty; this row
     // proves it with an uncached main-workspace read over the platform's store.
-    const notes = createNoteReadModel({ records, plans: world.world.platform.plans,
+    if (platformKnowledge === undefined) throw new Error('XP-08: the platform built no knowledge lines');
+    const notes = createNoteReadModel({ records, knowledge: platformKnowledge, plans: world.world.platform.plans,
       architecture: world.world.platform.architecture,
       mainWorkspaceOf: projectId => readMainWorkspace(records, projectId) });
 

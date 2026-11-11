@@ -46,6 +46,7 @@ import {
 
 import { s1Schemas, observeStore, workHistory, createSession as createScopedSession, type StoreObservation } from '../helpers/S1-session-facts-fixture.js';
 import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
+import { knowledgeLinesOver } from '../helpers/KLS2-knowledge-lines.js';
 
 /** §5.1 fixed clocks; the new owner's injected `now`, never the fixture's `B2_AT`. */
 const t0 = '2026-10-08T00:00:00.000Z';
@@ -136,9 +137,10 @@ async function open(kind: 'memory' | 'sqlite'): Promise<Opened> {
   let clock = t0;
   const now = () => clock;
   const sessionFacts = createSessionFactsService({ records });
-  const basis = createSessionResponsibilityBasisReader(records);
+  const basis = createSessionResponsibilityBasisReader(records, knowledgeLinesOver(records));
   const responsibilities = createSessionResponsibilityService({ records, lookups: records, basis, duty: unknownSessionDuty, now });
-  const lifecycle = createSessionLifecycleService({ records, lookups: records, sessionFacts, duty: unknownSessionDuty });
+  const lifecycle = createSessionLifecycleService({ records,
+    knowledge: knowledgeLinesOver(records), lookups: records, sessionFacts, duty: unknownSessionDuty });
   const S = base.sessions.first;
   const D = base.sessions.second;
   const A = base.tasks.first;
@@ -384,7 +386,7 @@ describe.each(['memory', 'sqlite'] as const)('the Session responsibility owner (
     const barrier = commitBarrier(f.records);
     const service = createSessionResponsibilityService({
       records: barrier.records, lookups: barrier.records,
-      basis: createSessionResponsibilityBasisReader(barrier.records), duty: unknownSessionDuty, now: () => t0,
+      basis: createSessionResponsibilityBasisReader(barrier.records, knowledgeLinesOver(barrier.records)), duty: unknownSessionDuty, now: () => t0,
     });
     const countsBefore = await f.audit.counts();
     const [toD, toE] = await Promise.all([

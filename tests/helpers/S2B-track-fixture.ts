@@ -77,6 +77,7 @@ import {
 } from './B2-execution-fixture.js';
 import { preparationHost, prepareQueryForReal } from './task-claim-fixture.js';
 import { installStaticCompletionPolicyFor } from './S2B-runtime-steps-fixture.js';
+import { knowledgeLinesOver } from './KLS2-knowledge-lines.js';
 
 export type S2BTrackFixtureKind = 'memory' | 'sqlite';
 
@@ -192,7 +193,7 @@ export async function openS2BTrackFixture(kind: S2BTrackFixtureKind = 'memory'):
     checks: [1, 2, 3, 4].map((n) => ({ checkId: `check-${String(n)}`, kind: 'static', command: 'fixture-check',
       cwd: '.', timeoutMs: 1000, taskIds: 'all' })),
   };
-  const evidence = createEvidenceService({
+  const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(baseRecords),
     records: baseRecords,
     executions: runReads,
     materials: createMaterialService({ bodies: b2.bodies, authority: materialAuthority, now }),
@@ -218,7 +219,8 @@ export async function openS2BTrackFixture(kind: S2BTrackFixtureKind = 'memory'):
   });
 
   /** The real Session lifecycle owner (`linkSessionWork`), over the same store. */
-  const lifecycle = createSessionLifecycleService({ records: baseRecords, lookups: baseRecords, duty: unknownSessionDuty });
+  const lifecycle = createSessionLifecycleService({ records: baseRecords,
+    knowledge: knowledgeLinesOver(baseRecords), lookups: baseRecords, duty: unknownSessionDuty });
 
   /**
    * The real requeue owner. Its `messages` seam is only reached for a

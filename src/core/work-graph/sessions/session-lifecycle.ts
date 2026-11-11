@@ -83,6 +83,8 @@ import {
   type SessionArchiveChangedEventV1, type SessionLifecycleChangedEventV1, type SessionWorkLinkChangedEventV1,
 } from './lifecycle-record-codecs.js';
 import { validateWorkLinkTarget } from './session-targets.js';
+import { catalogModuleFactsOnce } from '../architecture/catalog-service.js';
+import type { KnowledgeLines } from '../model/line-knowledge.js';
 import { readSessionWorkLinks } from './session-links.js';
 import { moveProjectScope, proofOfAnswer, scopeClaimChangesOf } from './session-responsibility-service.js';
 import { roleLineCommitContribution } from './role-scope-commit.js';
@@ -273,6 +275,8 @@ export type SessionLifecycleServiceStores = SessionLifecycleStores & {
   reclaim?: () => RoleLineReclaimPort | undefined;
   /** O2 (b11): the one capacity close after a committed archive; absent writes nothing. */
   roleCapacity?: RoleCapacityPort;
+  /** KLS-2b A.1 #5: a module link is checked in the files' project view. */
+  knowledge: KnowledgeLines;
 };
 
 export function createSessionLifecycleService(stores: SessionLifecycleServiceStores): SessionLifecyclePort {
@@ -422,7 +426,8 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
     }
     const targetGuards: RecordGuard[] = [];
     if (input.active) {
-      const checked = await validateWorkLinkTarget(records, ctx, scope, input.target);
+      const checked = await validateWorkLinkTarget(records, ctx, scope, input.target,
+        catalogModuleFactsOnce(records, ctx, { lines: stores.knowledge, caller: ctx }));
       if (!checked.ok) return checked.rejection;
       for (const guard of checked.guards) targetGuards.push(guard);
     }

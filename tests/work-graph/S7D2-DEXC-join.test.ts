@@ -8,7 +8,7 @@ import type { DecisionCardV1 } from '../../src/core/work-graph/model/decision-co
 import { commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
 import { dexcAnswer, dexcCommand, dexcFollowUps, dexcRounds, type DexcRow } from '../helpers/S7D2-coldstart-world.js';
-import { openXWS2AWorld, XWS2A_MODULE_ID, type XWS2AWorld } from '../helpers/XWS2A-world.js';
+import { openXWS2AWorld, xws2aModuleInProject, type XWS2AWorld } from '../helpers/XWS2A-world.js';
 import { waitFor } from '../scenarios/harness.js';
 
 vi.mock('../../src/core/record-store/in-memory-record-store.js', async importOriginal =>
@@ -72,7 +72,8 @@ describe('DEXC: the joined workspace', () => {
     const [follow] = await dexcFollowUps(host, scope);
     expect((follow?.explorations ?? []).map(entry => entry.queryRunRef.workspaceId)).toEqual([scope.workspaceId]);
     expect(follow!.explorations![0]!.sessionRef).toEqual(line.ref);
-    expect(follow!.followUp!.moduleRefs).toEqual([{ projectId: scope.projectId, moduleId: XWS2A_MODULE_ID }]);
+    expect(follow!.followUp!.moduleRefs)
+      .toEqual([{ projectId: scope.projectId, moduleId: xws2aModuleInProject(scope.workspaceId) }]);
     expect(await dexcFollowUps(host)).toEqual([]);
     await waitFor(async () => (await dexcRounds(host, line)).length, count => count === 2, 'the joined round');
   }, 300_000);

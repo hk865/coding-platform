@@ -110,12 +110,28 @@ export type SemanticRelationV1 =
   | 'message'   // from sends and to receives: topic, event, mailbox, HTTP
   | 'spawns';   // from starts to as a process: launch, child process
 
+const SEMANTIC_RELATIONS: ReadonlySet<string> = new Set<SemanticRelationV1>(
+  ['calls', 'injects', 'callback', 'data', 'message', 'spawns']);
+
+/** One of the six relations: the write gate and the note file parser ask the same set. */
+export function isSemanticRelation(value: unknown): value is SemanticRelationV1 {
+  return typeof value === 'string' && SEMANTIC_RELATIONS.has(value);
+}
+
 /** The name both sides share. */
 export type LinkKeyV1 =
   | { kind: 'symbol'; anchor: { kind: 'file'; path: string; symbolRequest: SymbolRequestV1 } }
   | { kind: 'literal'; text: string };   // a name written literally in code: registry name, topic, path, program
 
 export type LinkEvidenceRoleV1 = 'use' | 'wire' | 'register' | 'emit' | 'receive' | 'launch' | 'entry';
+
+const LINK_EVIDENCE_ROLES: ReadonlySet<string> = new Set<LinkEvidenceRoleV1>(
+  ['use', 'wire', 'register', 'emit', 'receive', 'launch', 'entry']);
+
+/** One of the seven evidence roles: the write gate and the note file parser ask the same set. */
+export function isLinkEvidenceRole(value: unknown): value is LinkEvidenceRoleV1 {
+  return typeof value === 'string' && LINK_EVIDENCE_ROLES.has(value);
+}
 export type LinkEvidenceV1 = {
   role: LinkEvidenceRoleV1;
   // at most one of symbolRequest and range; neither means the whole file

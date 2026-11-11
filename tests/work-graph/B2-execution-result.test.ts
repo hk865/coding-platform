@@ -9,6 +9,7 @@ import { unknownSessionDuty } from '../helpers/session-duty-double.js';
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/lifecycle-record-codecs.js';
 import { createS2BRuntimeSteps } from '../helpers/S2B-runtime-steps-fixture.js';
 import { B2_AT, b2Key, createB2ExecutionFixture, type B2ExecutionFixture } from '../helpers/B2-execution-fixture.js';
+import { knowledgeLinesOver } from '../helpers/KLS2-knowledge-lines.js';
 
 const fixtures: B2ExecutionFixture[] = [];
 async function open(kind: 'memory' | 'sqlite' = 'memory') {
@@ -59,7 +60,8 @@ describe('B2 execution result and release', () => {
       // returned link is used as-is (its `since` is the real commit cursor).
       const target = { kind: 'task' as const, ref: f.claim.task };
       const linkRef = { ...f.claim.sessionRef, aggregateType: 'SessionWorkLink' as const, target, relation: 'responsible' as const };
-      const lifecycle = createSessionLifecycleService({ records: f.base.records, lookups: f.base.records, duty: unknownSessionDuty });
+      const lifecycle = createSessionLifecycleService({ records: f.base.records,
+        knowledge: knowledgeLinesOver(f.base.records), lookups: f.base.records, duty: unknownSessionDuty });
       const linked = await lifecycle.linkSessionWork(f.ctx, {
         input: { sessionRef: f.claim.sessionRef, target, relation: 'responsible', active: true },
         meta: { requestId: 'b2-result-link', expected: [

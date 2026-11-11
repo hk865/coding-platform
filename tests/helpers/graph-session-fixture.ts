@@ -380,8 +380,8 @@ export async function createGraphSessionFixture(kind: GraphFixtureKind = 'memory
   // KLS-2: one knowledge root for this world, kept across a reopen.
   const knowledge = knowledgeLinesFor({ root: directory, ...scope, records: wrapped });
   let catalog: ArchitectureCatalogPort = createArchitectureCatalogService({ records: wrapped, knowledge });
-  let lifecycle: SessionLifecyclePort = createSessionLifecycleService({ records: wrapped, lookups: wrapped, duty });
-  let sessionsPort: SessionDirectoryPort = createSessionDirectory({ records: wrapped, lookups: wrapped, duty });
+  let lifecycle: SessionLifecyclePort = createSessionLifecycleService({ records: wrapped, knowledge, lookups: wrapped, duty });
+  let sessionsPort: SessionDirectoryPort = createSessionDirectory({ records: wrapped, knowledge, lookups: wrapped, duty });
   const kernelStores = await createKernelStoreRegistry({ entries: [{
     adapterId: kernelAdapterId, storeKey: kernelStoreKey, workspace: scope,
     databasePath: join(directory, 'kernel.sqlite'),
@@ -451,6 +451,7 @@ export async function createGraphSessionFixture(kind: GraphFixtureKind = 'memory
     });
     if (created.status !== 'committed') throw new Error(`A1 goal creation failed: ${JSON.stringify(created)}`);
     const plans = createPlanService({ records: wrapped, bindings: createInitializationBindingReader({ records: wrapped }),
+      knowledge,
       now: () => GRAPH_FIXTURE_AT, eventId });
     const draft: PlanRevisionDraft = {
       schemaVersion: 2, planId: planRef.planId, planRevision: 1, goalId: goalRef.goalId, stages: [],
@@ -524,8 +525,8 @@ export async function createGraphSessionFixture(kind: GraphFixtureKind = 'memory
         eventId: () => `a1-graph-role-event-${String(++roleEventSeq)}` });
       duty = createSessionDutyResolver({ readRoleSpec: roles.readRoleSpec, configuration: workflowConfiguration });
       catalog = createArchitectureCatalogService({ records: wrapped, knowledge });
-      lifecycle = createSessionLifecycleService({ records: wrapped, lookups: wrapped, duty });
-      sessionsPort = createSessionDirectory({ records: wrapped, lookups: wrapped, duty });
+      lifecycle = createSessionLifecycleService({ records: wrapped, knowledge, lookups: wrapped, duty });
+      sessionsPort = createSessionDirectory({ records: wrapped, knowledge, lookups: wrapped, duty });
       // Keep the top-level fixture accessors pointing at the reopened backend.
       fixture.records = wrapped;
       fixture.catalog = catalog;

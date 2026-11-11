@@ -60,6 +60,7 @@ import type { TaskResultObservation } from '../../src/core/work-graph/model/exec
 import { createB2ExecutionFixture, B2_AT, type B2ExecutionFixture } from './B2-execution-fixture.js';
 import type { ClaimFixtureKind, Records } from './task-claim-fixture.js';
 import * as kernel from '../../vendor/coding-agent/dist/public-api.js';
+import { knowledgeLinesOver } from './KLS2-knowledge-lines.js';
 
 export const R3E_HOST = { kind: 'human' as const, id: 'r3e-check-host' };
 export const R3E_CONFIGURATION_REVISION = 'r3e-checks-config-1';
@@ -329,7 +330,7 @@ export async function createR3eEvidenceFixture(
         const countedSource: VerificationRoundSourcePort = {
             capture(root) { sourceCaptures += 1; return verificationSource.capture(root); },
         };
-        const evidence = createEvidenceService({
+        const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(b2.base.records, workspaceHost),
             records: b2.base.records, materials, executions,
             workspaceHost, source: countedSource, configuration, now, newId,
         });

@@ -80,6 +80,7 @@ async function harness(kind: S5FixtureKind) {
   const reads = owners(f, records).reads;
   const executions = createRunStateReader({ records });
   const plans = createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+    knowledge: f.knowledge,
     now: f.now, eventId: f.newId, operatorActor: f.operatorActor,
     delegatedWrites: {
       reads: executions,

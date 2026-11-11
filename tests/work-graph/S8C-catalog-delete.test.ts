@@ -95,7 +95,9 @@ describe('S8C R6 delete rules', () => {
     const world = await openWorld();
     const second = await world.openWorkspace('second');
     const goal = await second.goal('s8c-goal-second-workspace');
-    const proposal = committed(await second.propose({ goal, draft: planDraftOf(goal.goalId, ['docs'], 1) }));
+    // [2B-26]: the draft is in the second workspace's frame; it names the main workspace's module with its prefix.
+    const proposal = committed(await second.propose({ goal,
+      draft: planDraftOf(goal.goalId, [`/@ws:${world.scope.workspaceId}/docs`], 1) }));
     committed(await second.apply(proposal));
     expect(await world.revise({ ops: [{ op: 'remove_module', moduleId: 'docs' }] }))
       .toEqual({ status: 'rejected', code: 'invalid', reason: 'module_in_use: work-0' });

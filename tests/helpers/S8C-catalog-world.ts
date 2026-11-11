@@ -39,7 +39,7 @@ import { rejected } from '../../src/contracts/core/rejections.js';
 import { encodeSessionResponsibilityChangedEvent } from '../../src/core/work-graph/sessions/lifecycle-record-codecs.js';
 import { eventIdOf } from '../../src/core/work-graph/sessions/trusted-context.js';
 import { committed, ready } from './S1-runtime-scenario-fixture.js';
-import type { Backend } from './S8D-platform-fixture.js';
+import { addKnowledgeWorkspace, type Backend } from './S8D-platform-fixture.js';
 
 export const S8C_AT = '2026-10-17T00:00:00.000Z';
 
@@ -291,6 +291,7 @@ export async function openS8CCatalogWorld(backend: Backend = 'memory', projectId
         ? { ...ctx.materialReader, workspaceId }
         : ctx.materialReader };
     const targetScope: WorkspaceScope = { projectId: scope.projectId, workspaceId };
+    addKnowledgeWorkspace(platform, workspaceId);
     const [project] = await scopePins();
     committed(await platform.projects.registerWorkspace(target, {
       meta: { requestId: id(`register-${workspaceId}`), expected: [

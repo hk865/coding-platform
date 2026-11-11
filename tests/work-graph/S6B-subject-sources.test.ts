@@ -330,7 +330,7 @@ async function noteReviewCard() {
   const written = await scribeUnderstanding(opened.world, scribe, { label: 'row9-goal', structural: true,
     anchor: { kind: 'goal', goalId: goalRef.goalId } });
   expect(written.note.storedState).toBe('pending_review');
-  const key = noteCardKey(main.scope.projectId, written.note.noteId, written.note.version);
+  const key = noteCardKey(main.scope.projectId, written.note.noteId, written.note.version!);
   const waiting = (await main.readCards(goalRef)).filter(
     (card) => card.source.kind === 'note_review' && card.source.key === key);
   expect(waiting).toHaveLength(1);
@@ -350,7 +350,7 @@ async function noteReviewCard() {
     answer: { status: 'committed' },
     state: 'applied',
     action: { status: 'done', noteId: written.note.noteId,
-      version: written.note.version + 1, state: 'accepted' },
+      version: written.note.version! + 1, state: 'accepted' },
   } });
   const answered = (await main.readCards(goalRef)).find(
     (entry) => entry.source.kind === 'note_review' && entry.source.key === key);
@@ -376,7 +376,7 @@ async function projectNoteCard() {
   const note = written.note;
   expect(note.storedState).toBe('pending_review');
   expect(note.goalId).toBeNull();
-  const key = noteCardKey(main.scope.projectId, note.noteId, note.version);
+  const key = noteCardKey(main.scope.projectId, note.noteId, note.version!);
   const { card, resolution } = await resolveS6BProjectNote(main, {
     noteId: note.noteId, optionId: 'accept', label: 'row9-project' });
   expect(card.source.key).toBe(key);
@@ -410,8 +410,8 @@ async function answeredNoteCardTime() {
   const goalNotedAt = opened.world.clock.now();
   const goalNote = await scribeUnderstanding(opened.world, scribe, { label: 'row9-time-goal', structural: true,
     anchor: { kind: 'goal', goalId: goalRef.goalId } });
-  const projectKey = noteCardKey(main.scope.projectId, projectNote.note.noteId, projectNote.note.version);
-  const goalKey = noteCardKey(main.scope.projectId, goalNote.note.noteId, goalNote.note.version);
+  const projectKey = noteCardKey(main.scope.projectId, projectNote.note.noteId, projectNote.note.version!);
+  const goalKey = noteCardKey(main.scope.projectId, goalNote.note.noteId, goalNote.note.version!);
   const projectCard = (await main.readCards()).find(card => card.source.key === projectKey);
   const goalCard = (await main.readCards(goalRef)).find(card => card.source.key === goalKey);
   expect(projectCard?.state).toBe('waiting_answer');

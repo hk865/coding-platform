@@ -13,7 +13,7 @@ import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
 import { S6A_WORK_ROLE } from './S6A-request-fixture.js';
 import { asRecord } from './S6A-memory-fixture.js';
-import { openXWS2AWorld, XWS2A_ADVISER_TOOLS, type XWS2AWorld } from './XWS2A-world.js';
+import { openXWS2AWorld, XWS2A_ADVISER_TOOLS, xws2aModuleInProject, type XWS2AWorld } from './XWS2A-world.js';
 
 export const S8B1_SECOND_MODULE_ID = 'second-mod';
 export const S8B1_SECOND_FILE = 'src/second/a.ts';
@@ -55,7 +55,8 @@ export async function openS8B1SecondWorkspaceWorld(): Promise<S8B1SecondWorkspac
       goal: world.second.goal,
       run,
       filePath: S8B1_SECOND_FILE,
-      moduleId: S8B1_SECOND_MODULE_ID,
+      // KLS-2b: the module the second workspace's Run proposed, in the project view.
+      moduleId: xws2aModuleInProject(world.second.scope.workspaceId),
       close: async () => await world.close(),
     };
   } catch (error) {

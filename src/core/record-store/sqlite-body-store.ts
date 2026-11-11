@@ -65,11 +65,23 @@ export function createSqliteRawArtifactStore(path: string): CloseableRawArtifact
   }
 }
 
-/** WAL mode negotiation can return SQLITE_BUSY without invoking the connection's
- * busy handler when two processes initialize a new database. Retry that startup
- * only, on a fresh connection and within the existing five-second lock budget.
- * Other failures and later writes keep their original error semantics. */
 function openArtifactDatabase(path: string): DatabaseSync {
+  const db = openSqliteFile(path);
+  try {
+    db.exec('CREATE TABLE IF NOT EXISTS artifacts (key TEXT PRIMARY KEY, record TEXT NOT NULL);');
+    return db;
+  } catch (error) {
+    try { db.close(); } catch { /* preserve the initialization error */ }
+    throw error;
+  }
+}
+
+/** One SQLite file of a project store (the artifacts, the knowledge index): WAL, `synchronous = FULL`
+ * and a five-second busy timeout. WAL mode negotiation can return SQLITE_BUSY without invoking the
+ * connection's busy handler when two processes initialize a new database. Retry that startup only, on
+ * a fresh connection and within the five-second lock budget. Other failures and later writes keep
+ * their original error semantics. */
+export function openSqliteFile(path: string): DatabaseSync {
   const deadline = Date.now() + 5000;
   const pause = new Int32Array(new SharedArrayBuffer(4));
   for (;;) {
@@ -77,8 +89,7 @@ function openArtifactDatabase(path: string): DatabaseSync {
     try {
       db.exec(`PRAGMA busy_timeout = ${Math.max(1, deadline - Date.now())};
         PRAGMA journal_mode = WAL;
-        PRAGMA synchronous = FULL;
-        CREATE TABLE IF NOT EXISTS artifacts (key TEXT PRIMARY KEY, record TEXT NOT NULL);`);
+        PRAGMA synchronous = FULL;`);
       db.exec('PRAGMA busy_timeout = 5000;');
       return db;
     } catch (error) {

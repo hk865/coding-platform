@@ -25,6 +25,8 @@ import type { SessionRecord, SessionWorkLink } from '../../../contracts/core/ses
 import type { RunRef, RunSnapshot, TaskTriple } from '../../../contracts/dispatch.js';
 import type { TaskClaim } from '../../../contracts/core/task-claim.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { messageOf } from '../../../contracts/error-message.js';
+import { rejected } from '../../../contracts/core/rejections.js';
 import { roleLineDutyOf } from '../../../contracts/role-lines.js';
 import type { GoalRef, WorkspaceLineSettingsV1, WorkspaceSnapshot } from '../../../contracts/ledger.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
@@ -46,7 +48,7 @@ import type { QueryExecutionStateV1, QueryRunRef } from '../../../contracts/quer
 import type { RoundSnapshot, VerificationRoundRef } from '../../../contracts/verification.js';
 import type { SessionDutyReadPort, WorkLineReadPort } from '../model/work-line-contracts.js';
 import type { DecisionCardV1, DecisionQueuePreparedReader, DecisionQueueWindowMoved, DecisionReadPort,
-  PreparedConflictArchitecture } from '../model/decision-contracts.js';
+  PreparedDecisionQueue } from '../model/decision-contracts.js';
 import { WINDOW_MAX_ATTEMPTS } from './decision-read-model.js';
 import type { SessionWaitV1 } from '../model/session-facts-contracts.js';
 import {
@@ -2158,6 +2160,8 @@ type QueueCard = {
   excluded: boolean;
 };
 type QueueRead = { cards: QueueCard[]; complete: boolean; problem: string | null };
+/** The one section lines/list reads; its preparation (before the list's window) and every page name it. */
+const LINE_QUEUE_SECTIONS: Parameters<DecisionReadPort['queryDecisionQueue']>[1]['sections'] = ['waiting_answer'];
 
 const EXCLUDED_GOAL_CAUSES: ReadonlySet<string> = new Set([
   'required_task_deferred', 'initial_plan_pending', 'change_pending',
@@ -2169,19 +2173,19 @@ const EXCLUDED_GOAL_CAUSES: ReadonlySet<string> = new Set([
  */
 function readDecisionQueue(deps: WorkLineReaderDeps, ctx: CoreCallContext, workspace: WorkspaceScope): Promise<QueueRead>;
 function readDecisionQueue(deps: WorkLineReaderDeps, ctx: CoreCallContext, workspace: WorkspaceScope,
-  queueArchitecture: PreparedConflictArchitecture | undefined): Promise<QueueRead | DecisionQueueWindowMoved>;
+  preparedQueue: PreparedDecisionQueue | undefined): Promise<QueueRead | DecisionQueueWindowMoved>;
 async function readDecisionQueue(deps: WorkLineReaderDeps, ctx: CoreCallContext, workspace: WorkspaceScope,
-  queueArchitecture?: PreparedConflictArchitecture): Promise<QueueRead | DecisionQueueWindowMoved> {
+  preparedQueue?: PreparedDecisionQueue): Promise<QueueRead | DecisionQueueWindowMoved> {
   if (deps.decisions === undefined) return { cards: [], complete: true, problem: null };
   const listPageLimit = deps.listPageLimit ?? 100;
   const cards: DecisionCardV1[] = [];
   try {
     let cursor: string | undefined;
     for (;;) {
-      const queueInput: Parameters<DecisionReadPort['queryDecisionQueue']>[1] = { workspace, sections: ['waiting_answer'],
+      const queueInput: Parameters<DecisionReadPort['queryDecisionQueue']>[1] = { workspace, sections: LINE_QUEUE_SECTIONS,
         page: cursor === undefined ? { limit: listPageLimit } : { limit: listPageLimit, cursor } };
-      const read = queueArchitecture === undefined ? await deps.decisions.queryDecisionQueue(ctx, queueInput)
-        : await deps.decisions.queryDecisionQueuePrepared(ctx, queueInput, queueArchitecture);
+      const read = preparedQueue === undefined ? await deps.decisions.queryDecisionQueue(ctx, queueInput)
+        : await deps.decisions.queryDecisionQueuePrepared(ctx, queueInput, preparedQueue);
       if (read.status === 'moved') return read;
       if (read.status !== 'ready') {
         return { cards: [], complete: false,
@@ -3068,22 +3072,32 @@ async function readCopiesSection(
     sourceCursor: sourceCursor ?? ('c0000000000' as CommitCursor) } };
 }
 
+/** A preparation that throws reads as a thrown queue read does: the list's attention problem. */
+async function prepareQueue(decisions: NonNullable<WorkLineReaderDeps['decisions']>, ctx: CoreCallContext,
+  workspace: WorkspaceScope): Promise<PreparedDecisionQueue['read']> {
+  try {
+    return await decisions.prepareDecisionQueue(ctx, { workspace, sections: LINE_QUEUE_SECTIONS });
+  } catch (error) {
+    return rejected('unavailable', messageOf(error));
+  }
+}
+
 /**
  * KLS-2 ruling 9 (R-window), stack review 2: the active list's window (opened
  * by the active heads' read, closed by the archived count's same instant) and
- * the decision queue it reads first. The queue's conflicts read the
- * architecture files, so those are read before the window and the queue makes
- * one attempt inside it (a failed architecture read is the queue's own
- * failure); a queue window that moved opens the list's window again from a new
- * architecture read, at most WINDOW_MAX_ATTEMPTS times. On the last attempt the
- * queue answers its own `unavailable`, which the list carries as its attention
- * problem as before.
+ * the decision queue it reads first. The queue's conflicts and card sources
+ * read knowledge files, so the queue is prepared before the window (its Goals
+ * listed once, F-30) and makes one attempt inside it (a failed preparation is
+ * the queue's own failure, a thrown one too); a queue window that moved opens the list's window
+ * again from a new preparation, at most WINDOW_MAX_ATTEMPTS times. On the last
+ * attempt the queue answers its own `unavailable`, which the list carries as
+ * its attention problem as before.
  */
 async function openActiveWindow(deps: WorkLineReaderDeps, ctx: CoreCallContext, workspace: WorkspaceScope,
   lookupPageLimit: number): Promise<StoreRead<{ window: ActiveWindow & { heads: SessionRecord[] }; queue: QueueRead }>> {
   for (let attempt = 1; ; attempt += 1) {
     const prepared = deps.decisions === undefined ? undefined
-      : { read: await deps.decisions.readConflictArchitecture(ctx), last: attempt === WINDOW_MAX_ATTEMPTS };
+      : { read: await prepareQueue(deps.decisions, ctx, workspace), last: attempt === WINDOW_MAX_ATTEMPTS };
     const window = await listActiveHeads(deps.records, workspace, lookupPageLimit);
     if (window.status !== 'ready') return window;
     const queue = await readDecisionQueue(deps, ctx, workspace, prepared);

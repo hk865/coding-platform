@@ -26,6 +26,7 @@ import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type { NoteFlowReadV1, SemanticFlowStepV1, SemanticFlowV1 } from '../../../contracts/semantic-layer.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../../contracts/prompts/platform-pack.generated.js';
 import type { GoalRecordTransactionPort, EncodedRecord } from '../../record-store/ports.js';
+import type { KnowledgeTextPage } from '../../record-store/knowledge-index-ports.js';
 import type { RecordLookupPort, RecordOrderedLookupPort, RecordTextSearchPort } from '../../record-store/lookup-ports.js';
 import { decodeTextSearchAfter, normalizeSearchText, searchTextFrom } from '../../record-store/lookup-index.js';
 import { compareRefKeysFast, decodeTextTerms, textMatches } from '../../record-store/text-scan.js';
@@ -62,18 +63,30 @@ import {
 import { GOAL_BY_WORKSPACE_INDEX, readGoalPlanWindow } from '../tasks/plan-readers.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { anchorKeyOf, noteCheckWorkspace, resolveNoteAnchors, topicKeyOf, type NoteAnchorFactsDeps } from './note-anchors.js';
-import { headsByAnchorKey, readAllHeads, readAllRecords, type ReadFailureCode, type ReadOutcome } from './note-base-reader.js';
+import {
+  headsByAnchorKey, notesByAnchorKey, readAllHeads, readAllRecords, type ReadFailureCode, type ReadOutcome,
+} from './note-base-reader.js';
 import { renderUnderstandingBody } from './note-rendering.js';
-import { anchorSlots, headsOnKeyPrefix, isRelatedHead, matchesPathPrefix, resolveRelatedScope, resolveTaskScopeWithPlan,
-  stageIdOf, type RelatedScope, type RelatedScopeDeps } from './note-related-scope.js';
+import { anchorSlots, isRelatedHead, isRelatedSlots, matchesPathPrefix, notesOnKeyPrefix,
+  resolveRelatedScope, resolveTaskScopeWithPlan, stageIdOf, type RelatedScope, type RelatedScopeDeps } from './note-related-scope.js';
 import { readHeadBatch, readPointerAndHeadBatch } from './note-batch-reader.js';
 import { asOutcome, mapStoreFailure } from './store-failures.js';
+import { noteBodyOf } from '../state/note-machine.js';
+import { lineRefKey, type KnowledgeLines, type LineKnowledge, type LineNoteFileV1 } from '../model/line-knowledge.js';
+import type { KnowledgeRead } from '../architecture/catalog-service.js';
+import { isKnowledgeAnchor } from './note-file.js';
+import {
+  headWithFile, indexedHeads, lineNotesOf, noteDerivedRowsOf, noteFileFactsOf, notesAcrossLines, overlayFileKnowledge,
+  type HeadlessNote,
+} from './note-knowledge.js';
 
 export { readAllHeads, readAllRecords, type ReadFailureCode } from './note-base-reader.js';
 export { mapStoreFailure, type MappedStoreFailure } from './store-failures.js';
 
 export type NoteReadDependencies = {
   records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort & RecordTextSearchPort;
+  /** KLS-2b: the knowledge fields of a module, interface or file note come from its file and the index. */
+  knowledge: KnowledgeLines;
   plans: Pick<PlanTaskPort, 'queryGoal' | 'queryTaskGraph'>;
   architecture?: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'>;
   workspace?: NoteAnchorWorkspace;
@@ -198,15 +211,21 @@ type AnchorHeadsPage = {
   heads: NoteHeadSnapshot[];
   all: NoteHeadSnapshot[];
   page: NoteHeadSnapshot[];
+  /** [2B-16] (`withHeadless` only): filed notes with no record head; every one, and this page's. */
+  headlessAll: HeadlessNote[];
+  headless: HeadlessNote[];
   next: string | null;
 };
 
 /**
  * The ONE anchor paging core: limit and cursor validation, the five-index head set, the `createdAt`/`noteId`
  * order, `after`, the page slice and the next cursor. Each public read keeps its own DTO and further checks.
+ * With `withHeadless`, the filed notes with no record head follow every head, by noteId; the cursor still
+ * finds its place by noteId.
  */
-async function pageAnchorHeads(records: RecordLookupPort, ctx: CoreCallContext,
-  input: { anchor: NoteAnchorV1; limit: number; cursor: string | null }): Promise<ReadOutcome<AnchorHeadsPage>> {
+async function pageAnchorHeads(records: RecordLookupPort, knowledge: KnowledgeLines, ctx: CoreCallContext,
+  input: { anchor: NoteAnchorV1; limit: number; cursor: string | null }, withHeadless = false):
+Promise<ReadOutcome<AnchorHeadsPage>> {
   if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > MEMORY_PAGE_MAX) {
     return { ok: false, code: 'invalid', reason: 'limit must be 1–100' };
   }
@@ -224,23 +243,25 @@ async function pageAnchorHeads(records: RecordLookupPort, ctx: CoreCallContext,
       return { ok: false, code: 'invalid', reason: 'cursor_mismatch' };
     }
   }
-  // `headsByAnchorKey` already keeps only the heads whose five slots name this anchor key.
-  const headSet = await headsByAnchorKey(records, ctx.projectId, anchorKey);
-  if (!headSet.ok) return headSet;
-  const all = [...headSet.value].sort((left, right) => left.createdAt === right.createdAt
+  // `notesByAnchorKey` already keeps only the notes whose five slots name this anchor key.
+  const noteSet = await notesByAnchorKey(records, { lines: knowledge, caller: ctx }, anchorKey);
+  if (!noteSet.ok) return noteSet;
+  const all = [...noteSet.value.heads].sort((left, right) => left.createdAt === right.createdAt
     ? left.noteId.localeCompare(right.noteId) : left.createdAt.localeCompare(right.createdAt));
+  const headlessAll = withHeadless
+    ? [...noteSet.value.headless].sort((left, right) => left.note.noteId.localeCompare(right.note.noteId)) : [];
+  const ids = [...all.map(head => head.noteId), ...headlessAll.map(entry => entry.note.noteId)];
   let start = 0;
   if (after !== null) {
-    const index = all.findIndex(head => head.noteId === after);
+    const index = ids.indexOf(after);
     // A cursor naming a note not on this anchor is a mismatch; never silently restart at the first page.
     if (index < 0) return { ok: false, code: 'invalid', reason: 'cursor_mismatch' };
     start = index + 1;
   }
-  const page = all.slice(start, start + input.limit);
-  const next = start + input.limit < all.length
-    ? JSON.stringify({ v: 1, anchorKey, limit: input.limit, after: page[page.length - 1]!.noteId })
-    : null;
-  return { ok: true, value: { heads: headSet.value, all, page, next } };
+  const end = start + input.limit;
+  const next = end < ids.length ? JSON.stringify({ v: 1, anchorKey, limit: input.limit, after: ids[end - 1]! }) : null;
+  return { ok: true, value: { heads: noteSet.value.heads, all, page: all.slice(start, end), headlessAll,
+    headless: headlessAll.slice(Math.max(0, start - all.length), Math.max(0, end - all.length)), next } };
 }
 
 async function currentHeadsForGoal(records: RecordLookupPort, projectId: string, goalId: string):
@@ -262,16 +283,18 @@ Promise<ReadOutcome<NoteHeadSnapshot[]>> {
 export type HeadCache = {
   anchors: Map<string, ReadOutcome<NoteHeadSnapshot[]>>;
   goals: Map<string, ReadOutcome<NoteHeadSnapshot[]>>;
+  /** The call's knowledge lines (the anchor sets of filed notes come from the index and the files). */
+  read: KnowledgeRead;
 };
 
-export function newHeadCache(): HeadCache { return { anchors: new Map(), goals: new Map() }; }
+export function newHeadCache(read: KnowledgeRead): HeadCache { return { anchors: new Map(), goals: new Map(), read }; }
 
 async function cachedHeadsByAnchorKey(cache: HeadCache, records: RecordLookupPort, projectId: string, anchorKey: string):
 Promise<ReadOutcome<NoteHeadSnapshot[]>> {
   const key = `${projectId}\u0000${anchorKey}`;
   const hit = cache.anchors.get(key);
   if (hit !== undefined) return hit;
-  const value = await headsByAnchorKey(records, projectId, anchorKey);
+  const value = await headsByAnchorKey(records, cache.read, anchorKey);
   cache.anchors.set(key, value);
   return value;
 }
@@ -490,7 +513,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     goalLink: deps.goalLinkQuota ?? NOTE_GOAL_LINK_QUOTA,
     projectFlow: deps.projectFlowQuota ?? NOTE_PROJECT_FLOW_QUOTA,
   };
-  const anchorFacts: NoteAnchorFactsDeps = { records: deps.records,
+  const anchorFacts: NoteAnchorFactsDeps = { records: deps.records, knowledge: deps.knowledge,
     ...(deps.architecture === undefined ? {} : { architecture: deps.architecture }),
     ...(deps.workspace === undefined ? {} : { workspace: noteCheckWorkspace(deps.workspace) }),
     ...(deps.mainWorkspaceOf === undefined ? {} : { mainWorkspaceOf: deps.mainWorkspaceOf }) };
@@ -500,7 +523,8 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
   // Slice 4C §11.2: the related-scope read is one narrow port; the pure key-set
   // builder and predicate live in `note-related-scope.ts` for L20 to reuse.
   const relatedFilesMax = deps.relatedFilesMax ?? FIND_RELATED_FILES_MAX;
-  const relatedDeps: RelatedScopeDeps = { records: deps.records,
+  const knowledgeOf = (ctx: CoreCallContext): KnowledgeRead => ({ lines: deps.knowledge, caller: ctx });
+  const relatedDeps: RelatedScopeDeps = { records: deps.records, knowledge: deps.knowledge,
     ...(deps.architecture === undefined ? {} : { architecture: deps.architecture }),
     ...(deps.runTask === undefined ? {} : { runTask: deps.runTask }),
     ...(deps.mainWorkspaceOf === undefined ? {} : { mainWorkspaceOf: deps.mainWorkspaceOf }),
@@ -565,6 +589,8 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
         conflicting = derivedConflicting.value;
         overQuota = derivedOverQuota.value;
       }
+      const verify = verifyOf(projectId, head);
+      if (!verify.ok) return verify;
       return { ok: true, value: {
         noteId: head.noteId, version: head.version, storedState: head.state, kind: head.kind, topic: head.topic,
         topicKey: head.topicKey, conclusion: head.conclusion, anchor: head.anchor, extraAnchors: head.extraAnchors,
@@ -582,8 +608,53 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
         ...(head.sections === undefined ? {} : { sections: head.sections }),
         ...(head.repair === undefined ? {} : { repair: head.repair }),
         ...(head.link === undefined ? {} : { link: head.link }),
+        verify: verify.value,
       } } satisfies ReadOutcome<NoteItemV1>;
     })();
+  }
+
+  /** KLS-2b: this project's mark on the file blob the head was read from (a record-only head has none). */
+  function verifyOf(projectId: string, head: NoteHeadSnapshot): ReadOutcome<NoteItemV1['verify']> {
+    const file = noteFileFactsOf(head);
+    if (file === undefined) return { ok: true, value: null };
+    try {
+      const state = deps.knowledge.write.indexOf(projectId).readNoteState(file.lineRef, file.blobSha);
+      return { ok: true, value: state === null ? null : { state: state.verifyState, reason: state.verifyReason } };
+    } catch (error) {
+      return { ok: false, code: 'unavailable', reason: `the knowledge index cannot be read: ${messageOf(error)}` };
+    }
+  }
+
+  /**
+   * [2B-16]: a note file this project has no record of reads with empty runtime fields: no version or stored
+   * state, unchecked, never current, no pin and no responsibility moves.
+   */
+  function headlessItemOf(projectId: string, line: LineKnowledge, note: LineNoteFileV1): ReadOutcome<NoteItemV1> {
+    const k = note.knowledge;
+    const anchors = [k.anchor, ...k.extraAnchors] as NoteAnchorV1[];
+    let verify: NoteItemV1['verify'] = null;
+    try {
+      const state = deps.knowledge.write.indexOf(projectId).readNoteState(lineRefKey(line.scope, line.line), note.blobSha);
+      verify = state === null ? null : { state: state.verifyState, reason: state.verifyReason };
+    } catch (error) {
+      return { ok: false, code: 'unavailable', reason: `the knowledge index cannot be read: ${messageOf(error)}` };
+    }
+    return { ok: true, value: {
+      noteId: note.noteId, version: null, storedState: null, kind: k.kind, topic: k.topic, topicKey: topicKeyOf(k.topic),
+      conclusion: k.conclusion, anchor: anchors[0]!, extraAnchors: anchors.slice(1), source: k.source, goalId: null,
+      replaces: [...k.replaces], contradicts: [...k.contradicts], coexistWith: [...k.coexistWith], confirmedByUser: false,
+      freshness: 'unchecked', changedFiles: [], observedFiles: [], staleReasons: [], sourceUnavailable: false,
+      invalid: false, conflicting: false, overQuota: false, updateDue: null, currentEligible: false, crossGoal: false,
+      anchorStatus: 'live', anchorRetiredReasons: [], anchorSlots: [], retiredExtraAnchors: [], unresolvedFacts: [],
+      uncheckedFacts: k.facts.map((_, index) => index), hints: [], matchedTerms: [], score: 0,
+      ...(k.sections === undefined ? {} : { sections: k.sections }),
+      ...(k.repair === undefined ? {} : { repair: { ops: k.repair.ops, pin: null, responsibilityMoves: [],
+        structural: k.structural } }),
+      ...(k.link === undefined ? {} : { link: { ...k.link, key: k.link.key, analysisConfig: { path: null, digest: null },
+        evidence: k.link.evidence.map(entry => ({ ...entry, fileDigest: null, digestBasis: 'raw_bytes' as const })),
+        verification: { status: 'unchecked', reason: 'unavailable' } } }),
+      verify,
+    } };
   }
 
   function itemOfVersion(version: NoteVersionSnapshot, confirmedByUser: boolean): NoteItemV1 {
@@ -602,6 +673,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       ...(version.sections === undefined ? {} : { sections: version.sections }),
       ...(version.repair === undefined ? {} : { repair: version.repair }),
       ...(version.link === undefined ? {} : { link: version.link }),
+      verify: null,
     };
   }
 
@@ -634,10 +706,13 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     if (deps.check === undefined) return { ok: true, value: { items, understanding: [] } };
     const wantsUnderstanding = understandingAnchors !== undefined && understandingAnchors.length > 0;
     if (items.length === 0 && !wantsUnderstanding) return { ok: true, value: { items, understanding: [] } };
+    // [2B-16]: an item with no version is a filed note with no record head; only its anchors ride the check.
+    const recorded = items.filter(item => item.version !== null);
+    const headless = items.filter(item => item.version === null);
     // A flow item is expanded from the page's distinct step heads, which ride
     // the SAME check as the items. Without the expander the whole read fails:
     // a flow item never leaves here without its `flow`.
-    const flowItems = items.filter(item => item.kind === 'flow');
+    const flowItems = recorded.filter(item => item.kind === 'flow');
     let flowCatalog: AdoptedArchitecture | null = null;
     let stepItems: NoteHeadCheckItemV1[] = [];
     let expandFlow: NoteReadDependencies['expandFlowForHead'];
@@ -650,7 +725,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       if (!catalogRead.ok) return catalogRead;
       flowCatalog = catalogRead.value.catalog;
       // A step already in this batch reuses the batch's head and check; only the others are read.
-      const already = new Set(items.map(item => item.noteId));
+      const already = new Set(recorded.map(item => item.noteId));
       const stepIds = flowItems.flatMap(item => headSnapshots!.get(item.noteId)!.flow!.steps.map(step => step.link))
         .filter(id => !already.has(id));
       const batch = await readHeadBatch(deps.records, ctx.projectId, stepIds, { requireAll: false });
@@ -658,7 +733,10 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
         const mapped = mapStoreFailure(batch);
         return { ok: false, code: mapped.code, reason: mapped.reason };
       }
-      stepItems = [...batch.value.values()].map(head => ({ head, version: head.version }));
+      // KLS-2b: a step link's knowledge comes from its file.
+      const steps = await overlayFileKnowledge([...batch.value.values()], knowledgeOf(ctx));
+      if (steps.status !== 'ready') return asOutcome(steps);
+      stepItems = steps.value.map(head => ({ head, version: head.version }));
     }
     let checked: NoteCheckV1[];
     let understanding: UnderstandingStatusV1[] = [];
@@ -669,11 +747,12 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       // handed over so the check does not recompute it. U-3: understanding
       // anchors ride the same call/caches. A flow's step heads are appended
       // after the items so one call visits them in flow order, then step order.
-      items: [...items.map(item => {
-        const snapshot = versionSnapshots?.get(item.version);
+      items: [...recorded.map(item => {
+        const version = item.version!;
+        const snapshot = versionSnapshots?.get(version);
         const conflicting = conflictingByNote?.get(item.noteId);
         const checkItem: NoteHeadCheckItemV1 & { conflicting?: boolean } = {
-          head: headSnapshots!.get(item.noteId)!, version: item.version,
+          head: headSnapshots!.get(item.noteId)!, version,
           ...(snapshot === undefined ? {} : { snapshot }),
           ...(conflicting === undefined ? {} : { conflicting }) };
         return checkItem;
@@ -682,16 +761,17 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       ...(planWindows === undefined ? {} : { planWindows }),
       ...(understandingAnchors === undefined ? {} : { understandingAnchors }),
       ...(understandingPointers === undefined ? {} : { understandingPointers }),
+      ...(headless.length === 0 ? {} : { anchorsOnly: headless.map(item => ({ anchor: item.anchor, extraAnchors: item.extraAnchors })) }),
     });
     if (result.status !== 'ready') return checkFailure(result);
     checked = result.value.items;
     understanding = result.value.understanding;
     const checkedById = new Map<string, { head: NoteHeadSnapshot; check: NoteCheckV1 }>();
-    items.forEach((item, index) => {
+    recorded.forEach((item, index) => {
       checkedById.set(item.noteId, { head: headSnapshots!.get(item.noteId)!, check: checked[index]! });
     });
     stepItems.forEach((step, index) => {
-      checkedById.set(step.head.noteId, { head: step.head, check: checked[items.length + index]! });
+      checkedById.set(step.head.noteId, { head: step.head, check: checked[recorded.length + index]! });
     });
     const expandedFlows = new Map<string, NoteFlowReadV1>();
     for (const item of flowItems) {
@@ -702,14 +782,17 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       });
       expandedFlows.set(item.noteId, expandFlow!(ctx, { flow, steps, catalog: flowCatalog }));
     }
-    const out = items.map((item, index) => {
+    const recordedOut = recorded.map((item, index) => {
       const check = checked[index]!;
       const headVersion = headVersions?.get(item.noteId);
       const expanded = expandedFlows.get(item.noteId);
       const combined = expanded === undefined ? undefined : flowCheckOf(check, expanded.steps);
       const currentEligible = headVersion === undefined || headVersion === item.version
         ? (combined === undefined ? check.currentEligible : combined.currentEligible) : false;
-      return { ...item, freshness: combined === undefined ? check.freshness : combined.freshness,
+      // Q4: a file or basis path the file names and the record has no digest for is not checked.
+      const uncheckedPaths = noteFileFactsOf(headSnapshots!.get(item.noteId)!)?.uncheckedPaths === true;
+      return { ...item, freshness: uncheckedPaths ? 'unchecked'
+        : combined === undefined ? check.freshness : combined.freshness,
         changedFiles: check.changedFiles, staleReasons: check.staleReasons,
         observedFiles: check.observedFiles,
         sourceUnavailable: check.sourceUnavailable, invalid: check.invalid, conflicting: check.conflicting,
@@ -724,6 +807,10 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
         retiredExtraAnchors: check.retiredExtraAnchors, unresolvedFacts: check.unresolvedFacts,
         uncheckedFacts: check.uncheckedFacts, hints: check.hints };
     });
+    let nextRecorded = 0;
+    let nextHeadless = 0;
+    const out = items.map(item => item.version === null ? { ...item, ...result.value.anchorsOnly[nextHeadless++]! }
+      : recordedOut[nextRecorded++]!);
     return { ok: true, value: { items: out as T[], understanding } };
   }
 
@@ -897,24 +984,29 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
    * order is UTF-8 byte order, so `file:src/a-b/y.ts` and `file:src/a.ts` sort
    * between `file:src/a` and `file:src/a/x.ts`. Stop only when the key leaves
    * the whole `file:<prefix>*` range; a sibling that merely fails the directory
-   * boundary is skipped, not treated as the end.
+   * boundary is skipped, not treated as the end. F-38: `headless` (when given) collects the filed notes with no
+   * record head the same scan listed (the caller's scope check applies the directory boundary to them).
    */
-  async function headsOnPathPrefix(projectId: string, prefix: string): Promise<ReadOutcome<NoteHeadSnapshot[]>> {
-    const scanned = await headsOnKeyPrefix(deps.records, projectId, `file:${prefix}`);
+  async function headsOnPathPrefix(ctx: CoreCallContext, prefix: string,
+    headless?: Map<string, HeadlessNote>): Promise<ReadOutcome<NoteHeadSnapshot[]>> {
+    const scanned = await notesOnKeyPrefix(deps.records, knowledgeOf(ctx), `file:${prefix}`);
     if (!scanned.ok) return { ok: false, code: scanned.code, reason: scanned.reason };
-    return { ok: true, value: scanned.value.filter(head =>
+    for (const entry of scanned.value.headless) headless?.set(entry.note.noteId, entry);
+    return { ok: true, value: scanned.value.heads.filter(head =>
       anchorSlots(head).some(key => key.startsWith('file:') && matchesPathPrefix(key, prefix))) };
   }
 
-  async function headsOnReviewStatus(projectId: string, goalId: string | null,
+  async function headsOnReviewStatus(ctx: CoreCallContext, goalId: string | null,
     states: readonly NoteState[]): Promise<ReadOutcome<NoteHeadSnapshot[]>> {
     const seen = new Map<string, NoteHeadSnapshot>();
     for (const state of states) {
-      const page = await readAllHeads(deps.records, S4_NOTE_BY_REVIEW_STATUS_LOOKUP, [projectId, goalId, state]);
+      const page = await readAllHeads(deps.records, S4_NOTE_BY_REVIEW_STATUS_LOOKUP, [ctx.projectId, goalId, state]);
       if (!page.ok) return page;
       for (const head of page.heads) seen.set(head.noteId, head);
     }
-    return { ok: true, value: [...seen.values()] };
+    // KLS-2b: a filed note's knowledge comes from its file.
+    const overlaid = await overlayFileKnowledge([...seen.values()], knowledgeOf(ctx));
+    return overlaid.status === 'ready' ? { ok: true, value: overlaid.value } : asOutcome(overlaid);
   }
 
   /** P7: the project's goals (the `a2-goal-by-workspace` index) plus the project slot. */
@@ -936,8 +1028,9 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     conflictingByNote?: ReadonlyMap<string, boolean>,
     planWindows?: ReadonlyMap<string, PlanRevisionSnapshot | null>,
     understandingAnchors?: string[],
-    understandingPointers?: UnderstandingPointerSeed): Promise<ReadOutcome<{ items: NoteItemV1[]; understanding: UnderstandingStatusV1[] }>> {
-    const cache = newHeadCache();
+    understandingPointers?: UnderstandingPointerSeed, headless: readonly NoteItemV1[] = []):
+  Promise<ReadOutcome<{ items: NoteItemV1[]; understanding: UnderstandingStatusV1[] }>> {
+    const cache = newHeadCache(knowledgeOf(ctx));
     const built: NoteItemV1[] = [];
     const headSnapshots = new Map<string, NoteHeadSnapshot>();
     for (const head of heads) {
@@ -946,11 +1039,12 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       built.push(item.value);
       headSnapshots.set(head.noteId, head);
     }
-    const checked = await withCheck(ctx, built, undefined, headSnapshots, anchorSets, undefined, conflictingByNote,
-      planWindows, understandingAnchors, understandingPointers);
+    const checked = await withCheck(ctx, [...built, ...headless], undefined, headSnapshots, anchorSets, undefined,
+      conflictingByNote, planWindows, understandingAnchors, understandingPointers);
     if (!checked.ok) return checked;
     return { ok: true, value: {
-      items: checked.value.items.map(item => ({ ...item, crossGoal: crossGoalOf(item, currentGoalId) })),
+      // [2B-16]: a filed note with no record head has no goal and is never cross-goal.
+      items: checked.value.items.map(item => item.version === null ? item : { ...item, crossGoal: crossGoalOf(item, currentGoalId) }),
       understanding: checked.value.understanding } };
   }
 
@@ -1116,10 +1210,10 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     return true;
   }
 
-  type Ranked = { head: NoteHeadSnapshot; matchedTerms: string[]; score: number };
+  type Ranked<T> = { head: T; matchedTerms: string[]; score: number };
 
-  function rankMatches(heads: readonly NoteHeadSnapshot[], terms: readonly string[]):
-  { ranked: Ranked[]; partial: boolean } {
+  function rankMatches<T extends FindNote>(heads: readonly T[], terms: readonly string[]):
+  { ranked: Ranked<T>[]; partial: boolean } {
     const scoped = [...heads].sort((l, r) => compareText(l.noteId, r.noteId));
     const partial = scoped.length > textSearchCandidateMax;
     const capped = partial ? scoped.slice(0, textSearchCandidateMax) : scoped;
@@ -1155,7 +1249,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
    * `r(t) = ln(1 + U/U) = ln 2`; the score needs no match-set size and nothing is
    * truncated. Terms are stored per head in byte order.
    */
-  function rankAll(heads: readonly NoteHeadSnapshot[], terms: readonly string[]):
+  function rankAll(heads: readonly FindNote[], terms: readonly string[]):
   Map<string, { matchedTerms: string[]; score: number }> {
     const scores = new Map<string, { matchedTerms: string[]; score: number }>();
     for (const head of heads) {
@@ -1171,22 +1265,109 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     return scores;
   }
 
-  type SearchPageOutcome = { ok: true; records: EncodedRecord[]; next: string | null; complete: boolean }
+  /**
+   * [2B-16]: a filed note with no record head, found by its text: ranked and filtered on its file's knowledge,
+   * never checked; it reads as `headlessItemOf`.
+   */
+  type HeadlessFound = HeadlessNote & { noteId: string; topic: string; topicKey: string; conclusion: string; body: string };
+  type FindNote = NoteHeadSnapshot | HeadlessFound;
+  const isHeadless = (found: FindNote): found is HeadlessFound => 'line' in found;
+
+  /** A headless note has no state or goal: it is in a find's scope only when no state is asked. */
+  function headlessInScope(found: HeadlessFound, input: MemoryFindRequest): boolean {
+    const knowledge = found.note.knowledge;
+    if (input.state !== undefined || !kindMatches(knowledge.kind, input.kind)) return false;
+    if (input.topic !== undefined && found.topicKey !== topicKeyOf(input.topic)) return false;
+    const keys = noteDerivedRowsOf(knowledge).anchorKeys;
+    if (input.anchor !== undefined && !keys.includes(anchorKeyOf(input.anchor))) return false;
+    const prefix = input.pathPrefix;
+    return prefix === undefined || keys.some(key => key.startsWith('file:') && matchesPathPrefix(key, prefix));
+  }
+
+  /** One text match in a find's scope and not related: a head through `headInScope`, a headless one through its file. */
+  function findInScope(found: FindNote, input: MemoryFindRequest, goalId: string | null,
+    skipRelated?: (found: FindNote) => boolean): boolean {
+    if (skipRelated !== undefined && skipRelated(found)) return false;
+    return isHeadless(found) ? headlessInScope(found, input) : headInScope(found, input, goalId);
+  }
+
+  /** §11.2 relatedness; F-27: a headless note is related by its file's anchors, as a head is by its slots. */
+  function isRelatedFound(found: FindNote, keys: ReadonlySet<string>): boolean {
+    if (!isHeadless(found)) return isRelatedHead(found, keys);
+    return isRelatedSlots(found.note.knowledge.kind, noteDerivedRowsOf(found.note.knowledge).anchorKeys, keys);
+  }
+
+  const headlessFoundOf = ({ line, note }: HeadlessNote): HeadlessFound => ({ line, note, noteId: note.noteId,
+    topic: note.knowledge.topic, topicKey: topicKeyOf(note.knowledge.topic), conclusion: note.knowledge.conclusion,
+    body: note.knowledge.body });
+
+  type SearchPageOutcome = { ok: true; heads: FindNote[]; next: string | null; complete: boolean }
     | { ok: false; code: ReadFailureCode | 'unsupported'; reason: string };
 
   /**
    * MF7b, amended by decision 66: `unsupported` stays only for an unregistered
-   * or non-text index.
+   * or non-text index. KLS-2b [2B-15]: one source over two streams, both in
+   * NoteHead refKey (= noteId) order from the same `after`: the filed notes
+   * from the knowledge index of every line (read from their files), the other
+   * notes from the record text index. A page never passes the last key a
+   * stream that has more examined; `next` stays a NoteHead refKey. A filed
+   * note with no record head comes back headless ([2B-16]).
    */
-  async function searchPage(projectId: string, terms: readonly string[], limit: number,
+  async function searchPage(ctx: CoreCallContext, terms: readonly string[], limit: number,
     after: string | undefined, match: 'all' | 'any' = 'all'): Promise<SearchPageOutcome> {
+    const projectId = ctx.projectId;
     const page = await deps.records.searchText({ index: S4_NOTE_TEXT_LOOKUP, values: [projectId], terms, match,
       limit, ...(after === undefined ? {} : { after }) });
     if (page.status !== 'ready') {
       if (page.code === 'unsupported') return { ok: false, code: 'unsupported', reason: page.reason };
       return asOutcome(page);
     }
-    return { ok: true, records: page.value.records, next: page.value.next, complete: page.value.complete };
+    const headKeyOf = (noteId: string): string => noteHeadRefKey({ aggregateType: 'NoteHead', projectId, noteId });
+    const candidates: { refKey: string; head: FindNote | null; noteId: string; lineRef: string | null }[] = [];
+    const filedHeads = new Map<string, NoteHeadSnapshot>();
+    for (const record of page.value.records) {
+      const decoded = decodeNoteHeadSnapshot(record);
+      if (decoded.status !== 'decoded') return { ok: false, code: 'unavailable', reason: 'damaged note head' };
+      if (isKnowledgeAnchor(decoded.value.anchor)) filedHeads.set(decoded.value.noteId, decoded.value);
+      else {
+        candidates.push({ refKey: record.refKey, head: decoded.value, noteId: decoded.value.noteId, lineRef: null });
+      }
+    }
+    const lines = await deps.knowledge.project(ctx);
+    if (lines.status !== 'ready') return asOutcome(lines);
+    let filed: KnowledgeTextPage;
+    try {
+      filed = deps.knowledge.write.indexOf(projectId).searchText({ lineRefs: lines.value.map(line => lineRefKey(line.scope, line.line)),
+        terms, match, after: after === undefined ? null : (JSON.parse(after) as { noteId: string }).noteId, limit });
+    } catch (error) {
+      return { ok: false, code: 'unavailable', reason: `the knowledge index cannot be read: ${messageOf(error)}` };
+    }
+    for (const hit of filed.hits) candidates.push({ refKey: headKeyOf(hit.noteId), head: null, noteId: hit.noteId, lineRef: hit.lineRef });
+    candidates.sort((left, right) => compareRefKeysFast(left.refKey, right.refKey));
+    const bounds = [page.value.complete ? null : page.value.next, filed.complete || filed.next === null ? null : headKeyOf(filed.next)]
+      .filter((bound): bound is string => bound !== null).sort(compareRefKeysFast);
+    const bound = bounds[0] ?? null;
+    const inBound = bound === null ? candidates : candidates.filter(entry => compareRefKeysFast(entry.refKey, bound) <= 0);
+    const taken = inBound.slice(0, limit);
+    const next = taken.length < inBound.length ? taken[taken.length - 1]!.refKey : bound;
+    for (const line of lines.value) {
+      const lineRef = lineRefKey(line.scope, line.line);
+      const wanted = taken.filter(entry => entry.lineRef === lineRef);
+      if (wanted.length === 0) continue;
+      const notes = await lineNotesOf(line, wanted.map(entry => entry.noteId), filedHeads);
+      if (notes.status !== 'ready') return asOutcome(notes);
+      // [2B-17]: an indexed note whose file is gone is unavailable, never a shorter page.
+      const gone = wanted.filter(entry => !notes.value.some(note => note.noteId === entry.noteId));
+      if (gone.length > 0) {
+        return { ok: false, code: 'unavailable',
+          reason: `the indexed note files of ${gone.map(entry => entry.noteId).join(', ')} are missing on ${line.line.folder}` };
+      }
+      for (const note of notes.value) {
+        const entry = wanted.find(candidate => candidate.noteId === note.noteId)!;
+        entry.head = note.head !== null ? headWithFile(note.head, line, note) : headlessFoundOf({ line, note });
+      }
+    }
+    return { ok: true, heads: taken.flatMap(entry => entry.head === null ? [] : [entry.head]), next, complete: next === null };
   }
 
   /**
@@ -1198,22 +1379,18 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
    * evidence of candidate-budget exhaustion.
    */
   async function allTermHeads(ctx: CoreCallContext, input: MemoryFindRequest, terms: readonly string[],
-    limit: number, cursorAfter: string | null, skipRelated?: (head: NoteHeadSnapshot) => boolean):
-  Promise<{ ok: true; value: { items: NoteHeadSnapshot[]; next: string | null } }
+    limit: number, cursorAfter: string | null, skipRelated?: (found: FindNote) => boolean):
+  Promise<{ ok: true; value: { items: FindNote[]; next: string | null } }
     | { ok: false; code: ReadFailureCode | 'unsupported'; reason: string }> {
-    const page = await searchPage(ctx.projectId, terms, limit, cursorAfter ?? undefined);
+    const page = await searchPage(ctx, terms, limit, cursorAfter ?? undefined);
     if (!page.ok) return page;
     const goalId = currentGoalIdOf(ctx);
-    const collected: NoteHeadSnapshot[] = [];
+    const collected: FindNote[] = [];
     const seen = new Set<string>();
-    for (const record of page.records) {
-      const decoded = decodeNoteHeadSnapshot(record);
-      if (decoded.status !== 'decoded') return { ok: false, code: 'unavailable', reason: 'damaged note head' };
-      const head = decoded.value;
+    for (const head of page.heads) {
       if (seen.has(head.noteId)) continue;
       seen.add(head.noteId);
-      if (skipRelated !== undefined && skipRelated(head)) continue;
-      if (headInScope(head, input, goalId)) collected.push(head);
+      if (findInScope(head, input, goalId, skipRelated)) collected.push(head);
     }
     return { ok: true, value: { items: collected, next: page.complete ? null : page.next } };
   }
@@ -1228,24 +1405,20 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
    * production ids are UUIDs so production results do not change.
    */
   async function anyTermHeads(ctx: CoreCallContext, input: MemoryFindRequest, terms: readonly string[],
-    skipRelated?: (head: NoteHeadSnapshot) => boolean):
-  Promise<{ ok: true; value: { items: NoteHeadSnapshot[]; partial: boolean } }
+    skipRelated?: (found: FindNote) => boolean):
+  Promise<{ ok: true; value: { items: FindNote[]; partial: boolean } }
     | { ok: false; code: ReadFailureCode | 'unsupported'; reason: string }> {
     const goalId = currentGoalIdOf(ctx);
-    const collected: NoteHeadSnapshot[] = [];
+    const collected: FindNote[] = [];
     const seen = new Set<string>();
     let after: string | undefined;
     for (;;) {
-      const page = await searchPage(ctx.projectId, terms, 100, after, 'any');
+      const page = await searchPage(ctx, terms, 100, after, 'any');
       if (!page.ok) return page;
-      for (const record of page.records) {
-        const decoded = decodeNoteHeadSnapshot(record);
-        if (decoded.status !== 'decoded') return { ok: false, code: 'unavailable', reason: 'damaged note head' };
-        const head = decoded.value;
+      for (const head of page.heads) {
         if (seen.has(head.noteId)) continue;
         seen.add(head.noteId);
-        if (skipRelated !== undefined && skipRelated(head)) continue;
-        if (!headInScope(head, input, goalId)) continue;
+        if (!findInScope(head, input, goalId, skipRelated)) continue;
         if (collected.length >= textSearchCandidateMax) {
           return { ok: true, value: { items: collected, partial: true } };
         }
@@ -1263,11 +1436,11 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
    * prefix, matched on the shared comparison text and ordered by the NoteHead
    * refKey byte order (precomputed once per head). No port call happens.
    */
-  function scopedMatches(projectId: string, input: MemoryFindRequest, goalId: string | null,
-    source: readonly NoteHeadSnapshot[], terms: readonly string[], match: 'all' | 'any'): { head: NoteHeadSnapshot; refKey: string }[] {
-    const matched: { head: NoteHeadSnapshot; refKey: string }[] = [];
+  function scopedMatches<T extends FindNote>(projectId: string, input: MemoryFindRequest, goalId: string | null,
+    source: readonly T[], terms: readonly string[], match: 'all' | 'any'): { head: T; refKey: string }[] {
+    const matched: { head: T; refKey: string }[] = [];
     for (const head of source) {
-      if (!headInScope(head, input, goalId)) continue;
+      if (!findInScope(head, input, goalId)) continue;
       if (!textMatches(searchTextFrom(head, NOTE_TEXT_PATHS), terms, match)) continue;
       matched.push({ head, refKey: noteHeadRefKey({ aggregateType: 'NoteHead', projectId, noteId: head.noteId }) });
     }
@@ -1323,10 +1496,19 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     return bytes === offset;
   }
 
+  /** KLS-2b #39a: a current read's subject head, with its file's knowledge when it is a filed note. */
+  async function readCurrentHead(ctx: CoreCallContext, noteId: string): Promise<ReadOutcome<NoteHeadSnapshot | null>> {
+    const head = await readHeadRecord(deps.records, ctx.projectId, noteId);
+    if (!head.ok || head.value === null) return head;
+    const overlaid = await overlayFileKnowledge([head.value], knowledgeOf(ctx));
+    return overlaid.status === 'ready' ? { ok: true, value: overlaid.value[0]! } : asOutcome(overlaid);
+  }
+
   async function bodyPageOf(ctx: CoreCallContext, spec: { noteId: string; version?: number; cursor: string | null },
     readOp: 'lookup' | 'history'):
   Promise<ReadOutcome<{ noteId: string; version: number; text: string; next: string | null }>> {
-    const head = await readHeadRecord(deps.records, ctx.projectId, spec.noteId);
+    const head = spec.version === undefined ? await readCurrentHead(ctx, spec.noteId)
+      : await readHeadRecord(deps.records, ctx.projectId, spec.noteId);
     if (!head.ok) return head;
     if (head.value === null) return { ok: false, code: 'not_found', reason: 'the note does not exist' };
     const headVersion = head.value.version;
@@ -1402,7 +1584,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
   // ========================================================================
 
   type FindSegment = 'related' | 'project';
-  type FindEntry = { head: NoteHeadSnapshot; segment: FindSegment | null };
+  type FindEntry = { head: FindNote; segment: FindSegment | null };
 
   /** G-02/RW-7: the strict REQUEST union for `related` — task | module, no extras. */
   function relatedShapeProblem(value: MemoryFindRelatedRequestV1): string | null {
@@ -1420,9 +1602,12 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     return 'related must be a task or a module';
   }
 
-  /** Read the union of the related anchor keys; seed the check's head cache. */
-  async function readHeadsForKeys(ctx: CoreCallContext, keys: Iterable<string>,
-    anchorSets: Map<string, NoteHeadSnapshot[]>): Promise<ReadOutcome<NoteHeadSnapshot[]>> {
+  /**
+   * Read the union of the related anchor keys; seed the check's head cache. F-27: `headless` (when given) collects
+   * the filed notes with no record head the same reads listed.
+   */
+  async function readHeadsForKeys(ctx: CoreCallContext, keys: Iterable<string>, anchorSets: Map<string, NoteHeadSnapshot[]>,
+    headless?: Map<string, HeadlessNote>): Promise<ReadOutcome<NoteHeadSnapshot[]>> {
     const keyList = [...keys];
     const seen = new Map<string, NoteHeadSnapshot>();
     // RW-12(c): a task's stage anchor keys share `stage:<goalId>/`; one prefix
@@ -1436,20 +1621,22 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       else stagePrefixes.add(`stage:${match[1]!}/`);
     }
     for (const key of exactKeys) {
-      const heads = await headsByAnchorKey(deps.records, ctx.projectId, key);
-      if (!heads.ok) return heads;
-      anchorSets.set(`${ctx.projectId}\u0000${key}`, heads.value);
-      for (const head of heads.value) seen.set(head.noteId, head);
+      const notes = await notesByAnchorKey(deps.records, knowledgeOf(ctx), key);
+      if (!notes.ok) return notes;
+      anchorSets.set(`${ctx.projectId}\u0000${key}`, notes.value.heads);
+      for (const head of notes.value.heads) seen.set(head.noteId, head);
+      for (const entry of notes.value.headless) headless?.set(entry.note.noteId, entry);
     }
     for (const prefix of stagePrefixes) {
-      const scanned = await headsOnKeyPrefix(deps.records, ctx.projectId, prefix);
+      const scanned = await notesOnKeyPrefix(deps.records, knowledgeOf(ctx), prefix);
       if (!scanned.ok) return { ok: false, code: scanned.code, reason: scanned.reason };
       for (const key of keyList) {
         if (!key.startsWith(prefix)) continue;
         anchorSets.set(`${ctx.projectId}\u0000${key}`,
-          scanned.value.filter(head => anchorSlots(head).includes(key)));
+          scanned.value.heads.filter(head => anchorSlots(head).includes(key)));
       }
-      for (const head of scanned.value) seen.set(head.noteId, head);
+      for (const head of scanned.value.heads) seen.set(head.noteId, head);
+      for (const entry of scanned.value.headless) headless?.set(entry.note.noteId, entry);
     }
     return { ok: true, value: [...seen.values()] };
   }
@@ -1462,7 +1649,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     const union = new Map<string, NoteHeadSnapshot>();
     for (const slot of [null, ...goalIds.value] as (string | null)[]) {
       const states = input.state !== undefined ? [input.state] : visibleStatusStates(slot, goalId);
-      const heads = await headsOnReviewStatus(ctx.projectId, slot, states);
+      const heads = await headsOnReviewStatus(ctx, slot, states);
       if (!heads.ok) return heads;
       for (const head of heads.value) union.set(head.noteId, head);
     }
@@ -1498,7 +1685,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     const setKey = `${projectId}\u0000project`;
     let projectSet = anchorSets.get(setKey);
     if (projectSet === undefined) {
-      const read = await headsByAnchorKey(deps.records, projectId, 'project');
+      const read = await headsByAnchorKey(deps.records, knowledgeOf(ctx), 'project');
       if (!read.ok) return read;
       projectSet = read.value;
       // The S2.3 pattern: store the unfiltered 5-slot set, and only on success.
@@ -1596,20 +1783,30 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       ...(selection.understanding === null ? [] : [selection.understanding.head]), ...selection.norms];
     const combined: NoteHeadSnapshot[] = [];
     const index = new Map<string, number>();
-    for (const head of [...headerHeads, ...entries.map(entry => entry.head)]) {
+    for (const head of [...headerHeads, ...entries.flatMap(entry => isHeadless(entry.head) ? [] : [entry.head])]) {
       const key = `${head.noteId}@${String(head.version)}`;
       if (index.has(key)) continue;
       index.set(key, combined.length);
       combined.push(head);
     }
-    const checked = await checkedPage(ctx, combined, currentGoalId, anchorSets, undefined, planWindows);
+    // [2B-16]: a headless match is checked only on its anchors, in the page's one check.
+    const headless: NoteItemV1[] = [];
+    for (const { head } of entries) {
+      if (!isHeadless(head)) continue;
+      const item = headlessItemOf(ctx.projectId, head.line, head.note);
+      if (!item.ok) return item;
+      headless.push(item.value);
+    }
+    const checked = await checkedPage(ctx, combined, currentGoalId, anchorSets, undefined, planWindows, undefined,
+      undefined, headless);
     if (!checked.ok) return checked;
     const itemByKey = new Map<string, NoteItemV1>();
     for (const item of checked.value.items) itemByKey.set(`${item.noteId}@${String(item.version)}`, item);
-    const items = entries.map(entry => {
-      const item = itemByKey.get(`${entry.head.noteId}@${String(entry.head.version)}`)!;
-      return entry.segment === null ? item : { ...item, segment: entry.segment };
-    });
+    const items: NoteItemV1[] = [];
+    for (const { head, segment } of entries) {
+      const item = itemByKey.get(`${head.noteId}@${isHeadless(head) ? 'null' : String(head.version)}`)!;
+      items.push(segment === null ? item : { ...item, segment });
+    }
     if (selection === null) return { ok: true, value: { items, header: null, understandingItem: null, normItems: [], checkedNormItems: [] } };
     const understandingHead = selection.understanding === null ? null : selection.understanding.head;
     const understandingItem = understandingHead === null ? null
@@ -1664,19 +1861,25 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     const scores = new Map<string, { matchedTerms: string[]; score: number }>();
     const warnings: string[] = [];
     const startSeg: FindSegment = cursorValue.seg ?? 'related';
-    const skipRelated = (head: NoteHeadSnapshot): boolean => isRelatedHead(head, scope.keys);
+    const skipRelated = (found: FindNote): boolean => isRelatedFound(found, scope.keys);
     const encodeNext = (seg: FindSegment | null, after: string | null): string | null =>
       encodeMemoryCursor(ctx, 'find', request, { after, recordCursor: ledgerCursor, seg, resolved: scope.node });
 
-    const seg1Read = await readHeadsForKeys(ctx, scope.keys, anchorSets);
+    const filedOnly = new Map<string, HeadlessNote>();
+    const seg1Read = await readHeadsForKeys(ctx, scope.keys, anchorSets, filedOnly);
     if (!seg1Read.ok) return seg1Read;
     const seg1Base = seg1Read.value.filter(head => isRelatedHead(head, scope.keys)
       && headInScope(head, scopeInput, currentGoalId));
+    // F-27: a filed note with no record head anchored in the scope is related too ([2B-16]).
+    const seg1Headless = [...filedOnly.values()].map(headlessFoundOf)
+      .filter(found => isRelatedFound(found, scope.keys) && headlessInScope(found, scopeInput));
 
     if (rawTerms === null) {
       const order = (left: NoteHeadSnapshot, right: NoteHeadSnapshot): number => left.createdAt === right.createdAt
         ? compareText(left.noteId, right.noteId) : compareText(left.createdAt, right.createdAt);
-      const segment1 = [...seg1Base].sort(order);
+      // As on one anchor (F-13): the headless notes follow every head, by noteId.
+      const segment1: FindNote[] = [...[...seg1Base].sort(order),
+        ...seg1Headless.sort((left, right) => compareText(left.noteId, right.noteId))];
       const readSegment2 = async (): Promise<ReadOutcome<NoteHeadSnapshot[]>> => {
         const seg2Read = await unscopedHeads(ctx, scopeInput, currentGoalId);
         if (!seg2Read.ok) return seg2Read;
@@ -1719,11 +1922,11 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     }
 
     // Terms: segment 2 uses the text port; segment 1 is a local scoped scan.
-    let seg1Ordered: NoteHeadSnapshot[] = [];
+    let seg1Ordered: FindNote[] = [];
     let partial1 = false;
     {
-      const matched = scopedMatches(ctx.projectId, scopeInput, currentGoalId, seg1Base, terms!, match)
-        .filter(entry => isRelatedHead(entry.head, scope.keys));
+      const matched = scopedMatches(ctx.projectId, scopeInput, currentGoalId, [...seg1Base, ...seg1Headless],
+        terms!, match).filter(entry => isRelatedFound(entry.head, scope.keys));
       if (match === 'any') {
         partial1 = matched.length > textSearchCandidateMax;
         const candidateHeads = (partial1 ? matched.slice(0, textSearchCandidateMax) : matched).map(entry => entry.head);
@@ -1804,14 +2007,14 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
 
   /** Replace the term scores for a page of heads (segment 1's `'all'` page). */
   function scoresClearAndFill(scores: Map<string, { matchedTerms: string[]; score: number }>,
-    heads: readonly NoteHeadSnapshot[], rankTerms: readonly string[]): void {
+    heads: readonly FindNote[], rankTerms: readonly string[]): void {
     for (const [noteId, entry] of rankAll(heads, rankTerms)) scores.set(noteId, entry);
   }
 
   /** Segment 2 under terms: the existing port paths, skipping related notes. */
   async function segmentTwoByTerms(ctx: CoreCallContext, input: MemoryFindRequest, terms: readonly string[],
     rankTerms: readonly string[], limit: number, after: string | null,
-    skipRelated: (head: NoteHeadSnapshot) => boolean,
+    skipRelated: (found: FindNote) => boolean,
     scores: Map<string, { matchedTerms: string[]; score: number }>, warnings: string[], match: 'any' | 'all',
     isAll: boolean, encodeNext: (seg: FindSegment | null, after: string | null) => string | null):
   Promise<ReadOutcome<{ entries: FindEntry[]; next: string | null; ranking: 'full' | 'partial' }>> {
@@ -1988,7 +2191,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       return rejected('revision_conflict', 'the record cursor moved since the first page');
     }
     const anchorKey = anchorKeyOf(anchor);
-    const headSet = await headsByAnchorKey(deps.records, ctx.projectId, anchorKey);
+    const headSet = await headsByAnchorKey(deps.records, knowledgeOf(ctx), anchorKey);
     if (!headSet.ok) return rejected(headSet.code, headSet.reason);
     // F4: seed the check's anchor cache with the raw set this read just loaded.
     const anchorSets = new Map<string, NoteHeadSnapshot[]>();
@@ -2065,7 +2268,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     if (parsed.value.recordCursor !== null && current.value !== parsed.value.recordCursor) {
       return rejected('revision_conflict', 'the record cursor moved since the first page');
     }
-    const heads = await headsOnReviewStatus(ctx.projectId, goalId, [state]);
+    const heads = await headsOnReviewStatus(ctx, goalId, [state]);
     if (!heads.ok) return rejected(heads.code, heads.reason);
     const ordered = [...heads.value].sort((left, right) => left.createdAt === right.createdAt
       ? compareText(left.noteId, right.noteId) : compareText(left.createdAt, right.createdAt));
@@ -2417,10 +2620,28 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
         if (!checked.ok) return rejected(checked.code, checked.reason);
         return { status: 'ready', value: checked.value.items[0]! };
       }
-      const head = await readHeadRecord(deps.records, ctx.projectId, input.noteId);
-      if (!head.ok) return rejected(head.code, head.reason);
-      if (head.value === null) return { status: 'not_found' };
-      const item = await itemOfHead(head.value, ctx.projectId, newHeadCache());
+      // [2B-13]: the note's file on any line of the project carries its knowledge; a filed note with no file is
+      // unavailable (R8), a file with no record of this project reads with empty runtime fields.
+      const recorded = await readHeadRecord(deps.records, ctx.projectId, input.noteId);
+      if (!recorded.ok) return rejected(recorded.code, recorded.reason);
+      const filedNote = recorded.value === null || isKnowledgeAnchor(recorded.value.anchor);
+      const filed = filedNote ? await notesAcrossLines(knowledgeOf(ctx), [input.noteId]) : null;
+      if (filed !== null && filed.status !== 'ready') {
+        return rejected('unavailable', filed.status === 'rejected' ? filed.reason : 'the note file cannot be read');
+      }
+      const file = filed?.value.get(input.noteId);
+      if (recorded.value === null) {
+        if (file === undefined) return { status: 'not_found' };
+        const headless = headlessItemOf(ctx.projectId, file.line, file.note);
+        if (!headless.ok) return rejected(headless.code, headless.reason);
+        const checked = await withCheck(ctx, [headless.value]);
+        return checked.ok ? { status: 'ready', value: checked.value.items[0]! } : rejected(checked.code, checked.reason);
+      }
+      if (isKnowledgeAnchor(recorded.value.anchor) && file === undefined) {
+        return rejected('unavailable', `the note file of ${input.noteId} is missing on every line`);
+      }
+      const head = { ok: true as const, value: file === undefined ? recorded.value : headWithFile(recorded.value, file.line, file.note) };
+      const item = await itemOfHead(head.value, ctx.projectId, newHeadCache(knowledgeOf(ctx)));
       if (!item.ok) return rejected(item.code, item.reason);
       // F4: the head just read goes straight into the check.
       const checked = await withCheck(ctx, [item.value], undefined, new Map([[input.noteId, head.value]]));
@@ -2431,16 +2652,16 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       const anchorRead = await requestAnchorOf(ctx, input.anchor);
       if (!anchorRead.ok) return rejected(anchorRead.code, anchorRead.reason);
       const anchor = anchorRead.value;
-      const paged = await pageAnchorHeads(deps.records, ctx, { ...input, anchor });
+      const paged = await pageAnchorHeads(deps.records, deps.knowledge, ctx, { ...input, anchor }, true);
       if (!paged.ok) return rejected(paged.code, paged.reason);
-      const { heads, all, page, next } = paged.value;
-      if (all.length === 0) {
+      const { heads, all, page, headlessAll, headless, next } = paged.value;
+      if (all.length === 0 && headlessAll.length === 0) {
         const exists = await anchorExistsNow(ctx, anchor);
         if (!exists.ok) return rejected(exists.code, exists.reason);
         if (!exists.exists) return rejected('not_found', 'anchor_not_found');
       }
       const items: NoteItemV1[] = [];
-      const cache = newHeadCache();
+      const cache = newHeadCache(knowledgeOf(ctx));
       const headSnapshots = new Map<string, NoteHeadSnapshot>();
       for (const head of page) {
         const item = await itemOfHead(head, ctx.projectId, cache);
@@ -2450,6 +2671,12 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       }
       // F4: the anchor set and the page's heads already read in this call are
       // handed to the check (the raw `headsByAnchorKey` value, never a filter).
+      // [2B-16]: the page's filed notes with no record head come after every head; only their anchors are checked.
+      for (const entry of headless) {
+        const item = headlessItemOf(ctx.projectId, entry.line, entry.note);
+        if (!item.ok) return rejected(item.code, item.reason);
+        items.push(item.value);
+      }
       const anchorSets = new Map<string, NoteHeadSnapshot[]>();
       anchorSets.set(`${ctx.projectId}\u0000${anchorKeyOf(anchor)}`, heads);
       const checked = await withCheck(ctx, items, undefined, headSnapshots, anchorSets);
@@ -2469,17 +2696,18 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       try {
         const anchorRead = await requestAnchorOf(ctx, input.anchor);
         if (!anchorRead.ok) return rejected(anchorRead.code, anchorRead.reason);
-        const paged = await pageAnchorHeads(deps.records, ctx, { ...input, anchor: anchorRead.value });
+        const paged = await pageAnchorHeads(deps.records, deps.knowledge, ctx, { ...input, anchor: anchorRead.value });
         if (!paged.ok) return rejected(paged.code, paged.reason);
         const items: NoteVersionSnapshot[] = [];
         for (const indexed of paged.value.page) {
-          const head = await readHeadRecord(deps.records, ctx.projectId, indexed.noteId);
+          const head = await readCurrentHead(ctx, indexed.noteId);
           if (!head.ok) return rejected(head.code, head.reason);
           if (head.value === null) return rejected('unavailable', 'the note head is missing');
           const version = await readVersionRecord(deps.records, ctx.projectId, indexed.noteId, head.value.version);
           if (!version.ok) return rejected(version.code, version.reason);
           if (version.value === null) return rejected('unavailable', 'the note version is missing');
-          items.push(version.value);
+          // #39a: the current version carries the knowledge of the note's file.
+          items.push({ ...version.value, ...noteBodyOf(head.value) });
         }
         return { status: 'ready', value: { items, next: paged.value.next, complete: paged.value.next === null } };
       } catch (error) {
@@ -2646,19 +2874,19 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       // F4: every anchor read below is also seeded into the check's cache.
       const anchorSets = new Map<string, NoteHeadSnapshot[]>();
       if (input.noteId !== undefined) {
-        const head = await readHeadRecord(deps.records, ctx.projectId, input.noteId);
+        const head = await readCurrentHead(ctx, input.noteId);
         if (!head.ok) return rejected(head.code, head.reason);
         if (head.value === null) return { status: 'not_found' };
         seen.set(head.value.noteId, head.value);
         for (const key of anchorSlots(head.value)) {
-          const heads = await headsByAnchorKey(deps.records, ctx.projectId, key);
+          const heads = await headsByAnchorKey(deps.records, knowledgeOf(ctx), key);
           if (!heads.ok) return rejected(heads.code, heads.reason);
           anchorSets.set(`${ctx.projectId}\u0000${key}`, heads.value);
           for (const candidate of heads.value) seen.set(candidate.noteId, candidate);
         }
       } else {
         const anchorKey = anchorKeyOf(anchor!);
-        const heads = await headsByAnchorKey(deps.records, ctx.projectId, anchorKey);
+        const heads = await headsByAnchorKey(deps.records, knowledgeOf(ctx), anchorKey);
         if (!heads.ok) return rejected(heads.code, heads.reason);
         anchorSets.set(`${ctx.projectId}\u0000${anchorKey}`, heads.value);
         for (const candidate of heads.value) {
@@ -2679,7 +2907,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       // conflicting candidates go to the check, with `conflicting` handed over so
       // it does not recompute. A derivation read failure still fails the call.
       const currentGoalId = currentGoalIdOf(ctx);
-      const deriveCache = newHeadCache();
+      const deriveCache = newHeadCache(knowledgeOf(ctx));
       for (const [key, heads] of anchorSets) {
         deriveCache.anchors.set(key, { ok: true, value: heads });
       }
@@ -2723,7 +2951,8 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       if (cursor.value.recordCursor !== null && current.value !== cursor.value.recordCursor) {
         return rejected('revision_conflict', 'the record cursor moved since the first page');
       }
-      const head = await readHeadRecord(deps.records, ctx.projectId, input.noteId);
+      const head = await (input.version === undefined ? readCurrentHead(ctx, input.noteId)
+        : readHeadRecord(deps.records, ctx.projectId, input.noteId));
       if (!head.ok) return rejected(head.code, head.reason);
       if (head.value === null) return { status: 'not_found' };
       // R11: a requested version's own relations and anchors drive the read.
@@ -2744,12 +2973,12 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       const anchorSets = new Map<string, NoteHeadSnapshot[]>();
       for (const reference of references) {
         if (reference === input.noteId) continue;
-        const target = await readHeadRecord(deps.records, ctx.projectId, reference);
+        const target = await readCurrentHead(ctx, reference);
         if (!target.ok) return rejected(target.code, target.reason);
         if (target.value !== null) seen.set(target.value.noteId, target.value);
       }
       for (const key of anchorsOfSubject) {
-        const heads = await headsByAnchorKey(deps.records, ctx.projectId, key);
+        const heads = await headsByAnchorKey(deps.records, knowledgeOf(ctx), key);
         if (!heads.ok) return rejected(heads.code, heads.reason);
         anchorSets.set(`${ctx.projectId}\u0000${key}`, heads.value);
         for (const other of heads.value) {
@@ -2802,18 +3031,18 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
         // R6/MF6b: both fields apply (AND). Candidates come from the anchor
         // indexes, then the goal and the accepted/reviewed state are required.
         const anchorKey = anchorKeyOf(anchor);
-        const heads = await headsByAnchorKey(deps.records, ctx.projectId, anchorKey);
+        const heads = await headsByAnchorKey(deps.records, knowledgeOf(ctx), anchorKey);
         if (!heads.ok) return rejected(heads.code, heads.reason);
         anchorSets.set(`${ctx.projectId}\u0000${anchorKey}`, heads.value);
         candidates = heads.value.filter(head => anchorSlots(head).includes(anchorKey)
           && head.goalId === input.goalId && (head.state === 'accepted' || head.state === 'reviewed'));
       } else if (input.goalId !== undefined) {
-        const heads = await headsOnReviewStatus(ctx.projectId, input.goalId, ['accepted', 'reviewed']);
+        const heads = await headsOnReviewStatus(ctx, input.goalId, ['accepted', 'reviewed']);
         if (!heads.ok) return rejected(heads.code, heads.reason);
         candidates = heads.value;
       } else {
         const anchorKey = anchorKeyOf(anchor!);
-        const heads = await headsByAnchorKey(deps.records, ctx.projectId, anchorKey);
+        const heads = await headsByAnchorKey(deps.records, knowledgeOf(ctx), anchorKey);
         if (!heads.ok) return rejected(heads.code, heads.reason);
         anchorSets.set(`${ctx.projectId}\u0000${anchorKey}`, heads.value);
         // R6: anchor-scoped stale covers accepted and reviewed, like the goal route.
@@ -2947,13 +3176,17 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       // S2.3: the exact anchor set this read already loaded, handed to the check
       // so it never re-reads it (keyed exactly as the check's head cache keys).
       const anchorSets = new Map<string, NoteHeadSnapshot[]>();
+      // F-13, F-38: the filed notes with no record head the anchor or prefix read listed ([2B-16]); they are
+      // candidates beside the heads, with terms or without.
+      const filedOnly = new Map<string, HeadlessNote>();
       if (anchor !== undefined) {
         const key = anchorKeyOf(anchor);
-        const heads = await headsByAnchorKey(deps.records, ctx.projectId, key);
-        if (!heads.ok) return rejected(heads.code, heads.reason);
-        anchorSets.set(`${ctx.projectId}\u0000${key}`, heads.value);
-        anchorOnAnchor = heads.value.filter(head => anchorSlots(head).includes(key));
-        if (anchorOnAnchor.length === 0) {
+        const notes = await notesByAnchorKey(deps.records, knowledgeOf(ctx), key);
+        if (!notes.ok) return rejected(notes.code, notes.reason);
+        anchorSets.set(`${ctx.projectId}\u0000${key}`, notes.value.heads);
+        anchorOnAnchor = notes.value.heads.filter(head => anchorSlots(head).includes(key));
+        for (const entry of notes.value.headless) filedOnly.set(entry.note.noteId, entry);
+        if (anchorOnAnchor.length === 0 && filedOnly.size === 0) {
           const exists = await anchorExistsNow(ctx, anchor);
           if (!exists.ok) return rejected(exists.code, exists.reason);
           if (!exists.exists) return anchorNotFound(exists.anchorCandidates, exists.candidatesUnavailable);
@@ -2973,14 +3206,14 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
         rankTerms = decoded.rank;
       }
       const scoped = terms !== null && (anchor !== undefined || pathPrefix !== null);
-      // The scoped candidate source, reused by both match modes.
-      const scopedSource = async (): Promise<ReadOutcome<NoteHeadSnapshot[]>> => {
-        if (anchor !== undefined) return { ok: true, value: anchorOnAnchor! };
-        const heads = await headsOnPathPrefix(ctx.projectId, pathPrefix!);
-        return heads;
+      // The scoped candidate source, reused by both match modes: the heads, then the filed notes with no record head.
+      const scopedSource = async (): Promise<ReadOutcome<FindNote[]>> => {
+        const heads = anchor !== undefined ? { ok: true as const, value: anchorOnAnchor! }
+          : await headsOnPathPrefix(ctx, pathPrefix!, filedOnly);
+        return heads.ok ? { ok: true, value: [...heads.value, ...[...filedOnly.values()].map(headlessFoundOf)] } : heads;
       };
 
-      let pageHeads: NoteHeadSnapshot[];
+      let pageHeads: FindNote[];
       let next: string | null;
       if (terms !== null && match === 'all') {
         // The `'all'` cursor carries the last matched NoteHead refKey on both the
@@ -3026,7 +3259,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
             : encodeMemoryCursor(ctx, 'find', request, { after: heads.value.next, recordCursor: current.value });
         }
       } else {
-        let ordered: NoteHeadSnapshot[];
+        let ordered: FindNote[];
         if (terms !== null) {
           if (scoped) {
             // S2.1 `'any'`: the first `cap` in refKey byte order, then today's
@@ -3057,7 +3290,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
         } else if (anchor !== undefined) {
           ordered = anchorOnAnchor!.filter(head => headInScope(head, scopeInput, currentGoalId));
         } else if (pathPrefix !== null) {
-          const heads = await headsOnPathPrefix(ctx.projectId, pathPrefix);
+          const heads = await headsOnPathPrefix(ctx, pathPrefix, filedOnly);
           if (!heads.ok) return rejected(heads.code, heads.reason);
           ordered = heads.value.filter(head => headInScope(head, scopeInput, currentGoalId));
         } else {
@@ -3072,15 +3305,19 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
             // reads never seed `HeadCache.goals`.
             const states = input.state !== undefined ? [input.state]
               : visibleStatusStates(goalId, currentGoalId);
-            const heads = await headsOnReviewStatus(ctx.projectId, goalId, states);
+            const heads = await headsOnReviewStatus(ctx, goalId, states);
             if (!heads.ok) return rejected(heads.code, heads.reason);
             for (const head of heads.value) union.set(head.noteId, head);
           }
           ordered = [...union.values()].filter(head => headInScope(head, scopeInput, currentGoalId));
         }
         if (rawTerms === null) {
-          ordered.sort((left, right) => left.createdAt === right.createdAt
+          // No terms: the record heads by creation; then, as on one anchor (F-13, F-38), the filed notes with no record
+          // head in scope, by noteId.
+          (ordered as NoteHeadSnapshot[]).sort((left, right) => left.createdAt === right.createdAt
             ? compareText(left.noteId, right.noteId) : compareText(left.createdAt, right.createdAt));
+          ordered = [...ordered, ...[...filedOnly.values()].map(headlessFoundOf)
+            .filter(found => headlessInScope(found, scopeInput)).sort((left, right) => compareText(left.noteId, right.noteId))];
         }
         const slice = sliceByCursor(ordered, cursor.value.after, limit);
         if (!slice.ok) return rejected(slice.code, slice.reason);

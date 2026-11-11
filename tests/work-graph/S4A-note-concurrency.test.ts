@@ -1,11 +1,11 @@
 /**
- * Slice 4A (NE1): the two storage-boundary interleaved-commit doubles of N-07
- * (last case) and N-14. The REAL `createS4ANoteFixture` is composed while a gate
- * wraps the real backends' `records.commit` (see
- * `tests/helpers/S4A-note-interleave-fixture.ts`); the callers are two real
- * executor Runs claimed on `t1`/`t2` of the real `s4a-goal`. Item 15d: the
- * anchor is the required real file anchor `src/a/x.ts`, and N-14 adds a
- * sequential control proving the gate is what admitted both interleaved writes.
+ * Slice 4A (NE1): the two concurrent-write rows N-07 (last case) and N-14 over the
+ * REAL `createS4ANoteFixture` (see `tests/helpers/S4A-note-interleave-fixture.ts`);
+ * the callers are two real executor Runs claimed on `t1`/`t2` of the real
+ * `s4a-goal`. Item 15d: the anchor is the required real file anchor `src/a/x.ts`.
+ * KLS-2b [2B-06]: the project's in-process write queue runs the two writes one
+ * after the other (either may go first), so the second always sees the first;
+ * the commit-boundary interleave the old gate built can no longer happen.
  * Assertions go only through `readNote`; both backends run the same cases.
  */
 import { describe, expect, it } from 'vitest';
@@ -35,7 +35,7 @@ function understanding(overrides: Partial<NoteDraftV1> = {}): NoteDraftV1 {
 const idOf = (result: { status: string }): string => (result as unknown as { noteId: string }).noteId;
 
 describe('S4A N-07 storage-boundary interleaved commit', () => {
-  it.each(KINDS)('N-07 %s two callers writing the 5th and 6th item are both admitted and read overQuota', async kind => {
+  it.each(KINDS)('N-07 %s two callers writing the 5th and 6th item: the one the queue runs second is held over quota', async kind => {
     const f = await createS4AInterleaveFixture(kind, { anchorQuota: 5 });
     try {
       const callerA = f.workCtxA();
@@ -51,20 +51,23 @@ describe('S4A N-07 storage-boundary interleaved commit', () => {
         () => f.notes.writeNote(callerB, { commandId: 's4a-n07-sixth',
           note: general({ topic: 'n07-6' }), expectedPointerRevision: null, goalId: null }),
       );
-      expect(fifth).toMatchObject({ status: 'accepted' });
-      expect(sixth).toMatchObject({ status: 'accepted' });
-      for (const result of [fifth, sixth]) {
+      // The second sees five items: it is held for review over the anchor quota, and neither reads over quota.
+      const results = [fifth, sixth];
+      expect(results.filter(result => result.status === 'accepted')).toHaveLength(1);
+      expect(results.filter(result => result.status === 'pending_review'))
+        .toEqual([expect.objectContaining({ status: 'pending_review', reasons: ['quota_full'] })]);
+      for (const result of results) {
         if (result.status === 'rejected') throw Error('unreachable');
         const item = await f.notes.readNote(f.hostCtx(), { noteId: result.noteId });
         if (item.status !== 'ready') throw Error('unreachable');
-        expect(item.value.overQuota).toBe(true);
+        expect(item.value.overQuota).toBe(false);
       }
     } finally { await f.close(); }
   });
 });
 
 describe('S4A N-14 storage-boundary interleaved same-topic writes', () => {
-  it.each(KINDS)('N-14 %s two callers writing the same topic are both admitted and read conflicting', async kind => {
+  it.each(KINDS)('N-14 %s two callers writing the same topic: the one the queue runs second is refused', async kind => {
     const f = await createS4AInterleaveFixture(kind);
     try {
       const [first, second] = await f.interleave(
@@ -73,22 +76,19 @@ describe('S4A N-14 storage-boundary interleaved same-topic writes', () => {
         () => f.notes.writeNote(f.workCtxB(), { commandId: 's4a-n14-b',
           note: general({ topic: 'same topic' }), expectedPointerRevision: null, goalId: null }),
       );
-      expect(first).toMatchObject({ status: 'accepted' });
-      expect(second).toMatchObject({ status: 'accepted' });
-      for (const result of [first, second]) {
-        if (result.status === 'rejected') throw Error('unreachable');
-        const item = await f.notes.readNote(f.hostCtx(), { noteId: result.noteId });
-        if (item.status !== 'ready') throw Error('unreachable');
-        expect(item.value.conflicting).toBe(true);
-      }
-      // The sequential control: with both interleaved writes committed, a third
-      // relation-free write on the same topic sees them and is refused. This is
-      // what proves the gate (not a missing same-topic check) admitted both.
+      // The second sees the first's topic and is refused; the one note is not conflicting.
+      const results = [first, second];
+      const accepted = results.filter(result => result.status === 'accepted');
+      expect(accepted).toHaveLength(1);
+      expect(results.filter(result => result.status === 'rejected'))
+        .toEqual([expect.objectContaining({ status: 'rejected', code: 'invalid', reason: 'same_topic_unresolved' })]);
+      const item = await f.notes.readNote(f.hostCtx(), { noteId: idOf(accepted[0]!) });
+      if (item.status !== 'ready') throw Error('unreachable');
+      expect(item.value.conflicting).toBe(false);
+      // The sequential control: a third relation-free write on the same topic is refused the same way.
       const control = await f.notes.writeNote(f.workCtxA(), { commandId: 's4a-n14-control',
         note: general({ topic: 'same topic' }), expectedPointerRevision: null, goalId: null });
       expect(control).toMatchObject({ status: 'rejected', code: 'invalid', reason: 'same_topic_unresolved' });
-      // The two accepted ids are real, distinct notes.
-      expect(idOf(first)).not.toBe(idOf(second));
     } finally { await f.close(); }
   });
 });

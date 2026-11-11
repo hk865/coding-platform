@@ -19,7 +19,7 @@ export type SemanticEndV1 = {
 
 /** The link row a semantic read returns. */
 export type SemanticLinkV1 = {
-  noteId: string; version: number; state: 'accepted' | 'reviewed' | 'pending_review';
+  noteId: string; version: number | null; state: 'accepted' | 'reviewed' | 'pending_review' | null; // null: no record ([2B-16])
   relation: SemanticRelationV1; from: SemanticEndV1; to: SemanticEndV1; via: SemanticEndV1 | null;
   key: Exclude<LinkPayloadV1['key'], undefined>;           // read as null for injects and callback
   evidence: Omit<LinkEvidenceStoredV1, 'fileDigest' | 'digestBasis'>[];
@@ -46,8 +46,8 @@ export type SemanticFlowStepV1 = {
 /** The flow row a semantic read returns. */
 export type SemanticFlowV1 = {
   noteId: string;
-  version: number;
-  state: 'accepted' | 'reviewed' | 'pending_review';
+  version: number | null;                      // null with `state`: a flow file with no record ([2B-16])
+  state: 'accepted' | 'reviewed' | 'pending_review' | null;
   topic: string;
   conclusion: string;
   source: NoteSourceV1;

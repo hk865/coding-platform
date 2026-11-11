@@ -12,6 +12,7 @@ import { messageOf } from '../../../contracts/error-message.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type { InitializationSourceV1, InterventionAnswerSourceV1 } from '../../../contracts/initial-planning.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
+import type { PlanRevisionDraft } from '../../../contracts/plan.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type {
   InitialPlanAnswerFacts,
@@ -426,6 +427,8 @@ export function createInitialPlanAnswerReader(deps: InitialPlanAnswerDependencie
     proposal: Extract<PlanProposal, { kind: 'candidate_v2' }>,
     /** The Goal revision the adopting scope read; an explicit source frozen at another revision is a conflict. */
     currentGoalRevision: number,
+    /** [2B-26]: the propose entry's own project view of a draft, the frame the candidate's draft was stored in. */
+    inProjectView: (draft: PlanRevisionDraft) => Promise<{ status: 'ready'; value: PlanRevisionDraft } | Rejection>,
   ): Promise<{ guards: RecordGuard[] } | { rejection: Rejection }> {
     const origin = proposal.draft.origin;
     if (origin === undefined || origin.kind !== 'model_coordination') {
@@ -454,12 +457,14 @@ export function createInitialPlanAnswerReader(deps: InitialPlanAnswerDependencie
     if (normalized.status !== 'plan') {
       return { rejection: rejected('invalid', 'the real answer no longer normalizes to the proposed plan') };
     }
+    const projected = await inProjectView(normalized.draft);
+    if (projected.status !== 'ready') return { rejection: projected };
     // A record frozen before the source arm carries no source; it reads as { kind: 'plain' } only when the
     // re-read facts are plain too. The record is never rewritten and every other field is compared strictly.
     const compared = declaredSource === undefined && facts.resolution.kind === 'plain'
       ? { ...proposal.draft, origin: { ...origin, source: { kind: 'plain' as const } } }
       : proposal.draft;
-    if (canonicalJson(normalized.draft as unknown as JsonValue)
+    if (canonicalJson(projected.value as unknown as JsonValue)
       !== canonicalJson(compared as unknown as JsonValue)) {
       return { rejection: rejected('invalid', 'the candidate draft is not the unique normalization of the real answer') };
     }

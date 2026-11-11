@@ -10,7 +10,8 @@ import type {
   CatalogRepairOpV1, FlowPayloadV1, LinkEvidenceRoleV1, LinkPayloadV1, NoteFactV1, NoteHeadSnapshot, NoteKind,
   NoteSectionsV1, NoteSourceV1, SemanticRelationV1, SymbolRequestV1,
 } from '../../../contracts/note.js';
-import type { StoreResult } from '../../record-store/ports.js';
+import type { DecodeResult, StoreResult } from '../../record-store/ports.js';
+import type { KnowledgeFileKind, KnowledgeIndex, KnowledgeIndexTx } from '../../record-store/knowledge-index-ports.js';
 
 /** git: realpath(git rev-parse --git-common-dir); not git: realpath(the workspace root). */
 export type RepoKey = string;
@@ -65,8 +66,8 @@ export type NoteKnowledgeV1 = {
   replaces: string[]; contradicts: string[]; coexistWith: string[];
   link?: KnowledgeLinkV1; flow?: FlowPayloadV1; repair?: KnowledgeRepairV1;
 };
-/** One note read back: the file's knowledge plus this project's runtime state (`null` when it has none). */
-export type LineNoteV1 = {
+/** One note file read back: its id, path, blob and knowledge. */
+export type LineNoteFileV1 = {
   /** Only from the file name. */
   noteId: string;
   /** Relative to the line's folder: `.workbench/notes/<workspaceId>/<noteId>.md`. */
@@ -74,8 +75,9 @@ export type LineNoteV1 = {
   /** The file bytes' git blob id in this line's object format. */
   blobSha: string;
   knowledge: NoteKnowledgeV1;
-  head: NoteHeadSnapshot | null;
 };
+/** One note read back: the file plus this project's runtime state (`null` when it has none). */
+export type LineNoteV1 = LineNoteFileV1 & { head: NoteHeadSnapshot | null };
 
 /** One file change computed before the commit. */
 export type KnowledgeFileChange = {
@@ -94,7 +96,9 @@ export interface LineKnowledge {
   readonly objectFormat: 'sha1' | 'sha256';
   /** `architecture.json` and `modules/*.json` of this line: file frame in, project view out; one bad file or conflict makes the whole read unavailable with the paths. */
   readArchitecture(): Promise<StoreResult<KnowledgeArchitecture>>;
-  /** The notes of these ids that have a file on this line, with this project's runtime state; an id with no file is left out (the caller judges it). A bad file or one id with two files is unavailable with the ids and paths. */
+  /** The note files of these ids on this line (no record read: a caller that holds the heads already); an id with no file is left out. A bad file or one id with two files is unavailable with the ids and paths. */
+  readNoteFiles(noteIds: readonly string[]): Promise<StoreResult<LineNoteFileV1[]>>;
+  /** `readNoteFiles` with this project's runtime state (one record `readMany`); an id with no file is left out (the caller judges it). */
   readNotesById(noteIds: readonly string[]): Promise<StoreResult<LineNoteV1[]>>;
   /** Before the commit: from the whole project view, the architecture file changes of this line (the partition and the file names are decided here). Writes nothing. */
   writeModule(input: AdoptedArchitecture, baseline: KnowledgeBaselineV1): Promise<StoreResult<KnowledgeFileChange[]>>;
@@ -106,8 +110,23 @@ export interface LineKnowledge {
 
 /** The caller a service holds; `CoreCallContext` is structurally one. */
 export type KnowledgeCaller = { projectId: string; workspaceId?: string };
-/** The dependencies one knowledge write uses; empty until the write queue and the write log add theirs. */
-export type KnowledgeWriteDeps = Readonly<Record<never, never>>;
+/** The in-process knowledge write queue: by project first, then by every folder (sorted). One per Host. */
+export type KnowledgeWriteQueue = {
+  run<T>(projectId: string, folders: readonly string[], work: () => Promise<T>): Promise<T>;
+};
+/**
+ * The one file indexer (`indexKnowledgeFile`). The note and architecture file parsers live above `knowledge/`,
+ * so the composition root hands it in and the write order calls it once the files landed.
+ */
+export type KnowledgeFileIndexer = (tx: KnowledgeIndexTx, line: LineKnowledge, path: string, bytes: Uint8Array | null) =>
+  DecodeResult<{ kind: KnowledgeFileKind; blobSha: string | null }>;
+/** The dependencies one knowledge write uses. */
+export type KnowledgeWriteDeps = {
+  readonly queue: KnowledgeWriteQueue;
+  /** The project's index (one per project: a platform built without a Host may serve several). */
+  readonly indexOf: (projectId: string) => KnowledgeIndex;
+  readonly indexFile: KnowledgeFileIndexer;
+};
 /** The one knowledge entry a service gets (injected by the composition root, required in the service's dependencies). */
 export interface KnowledgeLines {
   /** The project's workspace ids, the main one first; a platform without a Host list has only `caller.workspaceId`. */

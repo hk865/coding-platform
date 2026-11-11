@@ -48,6 +48,7 @@ import { workflowPlanReads } from '../helpers/S1-workflow-archive-fixture.js';
 import { readGoalPhase } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { decisionSourceKey } from '../../src/contracts/goal-decisions.js';
 import { shellSeam } from '../helpers/K3-tool-seams.js';
+import { knowledgeLinesOver } from '../helpers/KLS2-knowledge-lines.js';
 
 // §5.1's blocking `shell` stand-in, hoisted per test file: the record Run's
 // real Kernel Turn holds its first call so RUN-20/RUN-22 read a real
@@ -162,6 +163,7 @@ async function assemble(world: K3ReviewCardWorld, options: {
     }],
   };
   const plans = createPlanService({ records: f.records, bindings: createInitializationBindingReader({ records: f.records }),
+    knowledge: knowledgeLinesOver(f.records),
     now: f.now, eventId: f.newId });
   const goalSettings = createGoalSettingsService({ records: f.records, now: f.now, newId: f.newId,
     operatorActor: f.operatorActor });
@@ -171,7 +173,8 @@ async function assemble(world: K3ReviewCardWorld, options: {
     tasks: createGoalService({ records: f.records, now: f.now, eventId: f.newId }).tasks,
     plans,
     ...planReads,
-    sessions: createSessionDirectory({ records: f.records, lookups: f.records, duty: unknownSessionDuty }),
+    sessions: createSessionDirectory({ records: f.records,
+      knowledge: knowledgeLinesOver(f.records), lookups: f.records, duty: unknownSessionDuty }),
     claims: createTaskClaimService({ records: f.records, now: f.now, newId: f.newId,
       roles: createRoleConfigurationService({ records: f.records, now: f.now, eventId: f.newId }) }),
     executions: createRunStateReader({ records: f.records }),

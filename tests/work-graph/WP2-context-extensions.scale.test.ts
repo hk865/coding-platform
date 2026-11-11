@@ -175,6 +175,7 @@ async function openDeferredDecisionHarness(kind: 'memory' | 'sqlite'): Promise<D
         description: 'F07 test' }] }],
     taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] } };
   const plans = createPlanService({ records: f.records, bindings: createInitializationBindingReader({ records: f.records }),
+    knowledge: f.knowledge,
     materials: materialsFor(f),
     initialPlanning: { bodies: f.bodies }, now: f.now, eventId: f.newId });
   const proposed = await plans.proposePlan(f.ctx, { input: { goalRef, basedOn: null, draft,

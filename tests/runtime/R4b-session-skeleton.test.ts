@@ -6,6 +6,7 @@ import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-s
 import { createSessionOperations } from '../../src/core/agent-runtime/session-operations.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
 import { unknownSessionDuty } from '../helpers/session-duty-double.js';
+import { knowledgeLinesOver } from '../helpers/KLS2-knowledge-lines.js';
 import { sessionRecordSchema } from '../../vendor/coding-agent/dist/public-api.js';
 
 const directories: string[] = [];
@@ -70,7 +71,8 @@ describe('R4b Session skeleton', () => {
   });
 
   it('rejects unbound callers before accessing persistence or Kernel', async () => {
-    const sessions = createSessionDirectory({ records: {} as never, lookups: {} as never, duty: unknownSessionDuty });
+    const sessions = createSessionDirectory({ records: {} as never, lookups: {} as never,
+      knowledge: knowledgeLinesOver({} as never), duty: unknownSessionDuty });
     const result = await sessions.admitSessionCreation({} as never, {} as never);
     expect(result).toMatchObject({ status: 'rejected', code: 'forbidden' });
     const registry = await createKernelStoreRegistry({ entries: [] });

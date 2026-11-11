@@ -58,6 +58,7 @@ import type { RuntimeExecutionDependencies, RuntimeHostBindings, ContinuationWor
 import type { AuthorizeConfiguration } from '../../src/core/work-graph/model/execution-entry-contracts.js';
 import type { ArchiveRequeueOriginV1 } from '../../src/contracts/session-anomaly.js';
 import { storeDirOf } from './KLS1B-host-store.js';
+import { knowledgeLinesOver } from './KLS2-knowledge-lines.js';
 
 export const S1_T0 = '2026-10-08T00:00:00.000Z';
 
@@ -192,7 +193,8 @@ export async function openS1RuntimeFixture(options: {
   const roles = createRoleConfigurationService({ records, now, eventId: newId });
   const materialReads = createMaterialRecordReaders(records);
   const materials = createMaterialService({ bodies, authority: materialReads.authority, now });
-  const sessions = createSessionDirectory({ records, lookups: records, duty: unknownSessionDuty });
+  const sessions = createSessionDirectory({ records,
+    knowledge: knowledgeLinesOver(records), lookups: records, duty: unknownSessionDuty });
   const kernelStores = await createKernelStoreRegistry({ entries: [{ adapterId: 'r4c-claim-kernel',
     storeKey: 'r4c-claim-kernel-store', workspace: base.scope, databasePath: join(base.directory, 'kernel.sqlite') }] });
   const sessionOperations = createSessionOperations({ sessions, kernelStores });
@@ -248,9 +250,10 @@ export async function openS1RuntimeFixture(options: {
     defaultInquiryDeadlineMs: 86_400_000,
     runtimeAdmission: { bodies, authorizeConfiguration }, systemActor: { kind: 'system', id: 's1-mailbox' }, now, newId });
   const sessionFacts = createSessionFactsService({ records });
-  const lifecycle = createSessionLifecycleService({ records, lookups: records, sessionFacts, duty: unknownSessionDuty });
+  const lifecycle = createSessionLifecycleService({ records,
+    knowledge: knowledgeLinesOver(records), lookups: records, sessionFacts, duty: unknownSessionDuty });
   const responsibilities = createSessionResponsibilityService({ records, lookups: records,
-    basis: createSessionResponsibilityBasisReader(records), now, duty: unknownSessionDuty });
+    basis: createSessionResponsibilityBasisReader(records, knowledgeLinesOver(records)), now, duty: unknownSessionDuty });
   const anomalies = createSessionAnomalyService({ records, lookups: records, sessionFacts, now });
   const health = createSessionHealthService({ records, hostInstance, now, eventId: newId });
   const captures: string[] = [];

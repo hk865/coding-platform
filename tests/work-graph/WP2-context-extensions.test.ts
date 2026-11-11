@@ -164,9 +164,9 @@ function decisionsDouble(
         calls.push(input);
         return respond(calls.length, input);
       },
-      // The context reader reads the conflicts' architecture once before its pages (R-window); no catalog here.
-      async readConflictArchitecture() {
-        return { status: 'ready', value: { architecture: null, catalogPointerRevision: null } };
+      // The context reader prepares the queue once before its pages (R-window); no catalog and no source files here.
+      async prepareDecisionQueue() {
+        return { status: 'ready', value: { architecture: null, attempt: { cache: new Map() } } };
       },
       async queryDecisionQueuePrepared(_ctx, input) {
         calls.push(input);
@@ -339,6 +339,7 @@ async function openDeferredDecisionHarness(
         description: 'F07 test' }] }],
     taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] } };
   const plans = createPlanService({ records: f.records, bindings: createInitializationBindingReader({ records: f.records }),
+    knowledge: f.knowledge,
     materials: materialsFor(f),
     initialPlanning: { bodies: f.bodies }, now: f.now, eventId: f.newId });
   const proposed = await plans.proposePlan(f.ctx, { input: { goalRef, basedOn: null, draft,

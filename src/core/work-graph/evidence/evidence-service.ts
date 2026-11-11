@@ -77,6 +77,8 @@ import type { MaterialPort } from '../model/material-contracts.js';
 import { architectureBaselineDigest, readArchitectureBaselineSnapshot } from '../architecture/catalog-record-codecs.js';
 import { repairBindingDigest } from '../architecture/repair-ops.js';
 import { readAllHeads } from '../notes/note-base-reader.js';
+import { overlayFileKnowledge } from '../notes/note-knowledge.js';
+import type { KnowledgeLines } from '../model/line-knowledge.js';
 import { S4_NOTE_BY_STAGED_RUN_LOOKUP } from '../persistence/note-record-codecs.js';
 import { noteBodyOf } from '../state/note-machine.js';
 import {
@@ -873,6 +875,8 @@ export type AutomaticReverifyPolicyV1 = (input: {
  */
 export type EvidenceServiceDependencies = {
     records: GoalRecordTransactionPort & RecordLookupPort;
+    /** KLS-2b: a staged repair's ops come from its note file when a round binds it. */
+    knowledge: KnowledgeLines;
     materials: MaterialPort;
     executions: ExecutionReadPort;
     workspaceHost: WorkspaceHostBindings;
@@ -1005,8 +1009,11 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         const stagedRunKey = `${input.subject.goalId}/${input.subjectRunRef.runId}`;
         const stagedRead = await readAllHeads(records, S4_NOTE_BY_STAGED_RUN_LOOKUP, [scope.projectId, stagedRunKey]);
         if (!stagedRead.ok) return failure({ status: 'rejected', code: stagedRead.code, reason: stagedRead.reason });
-        const stagedRepairs = stagedRead.heads
-            .filter(head => head.kind === 'repair' && head.state === 'staged')
+        // KLS-2b (cross#5): the binding digest is taken on the same file-overlaid body the activation compares.
+        const staged = await overlayFileKnowledge(stagedRead.heads.filter(head => head.kind === 'repair' && head.state === 'staged'),
+            { lines: deps.knowledge, caller: input.hostCtx });
+        if (staged.status !== 'ready') return failure({ status: 'rejected', code: 'unavailable', reason: staged.reason });
+        const stagedRepairs = staged.value
             .map(head => ({ noteId: head.noteId, version: head.version, digest: repairBindingDigest(noteBodyOf(head)) }));
         const policyRead = await readPinnedCompletionPolicy(records, plan.effectiveCompletionPolicy);
         if (policyRead.status !== 'resolved') return failure(mapRejected(policyRead));

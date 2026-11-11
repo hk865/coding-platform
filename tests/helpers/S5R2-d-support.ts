@@ -101,6 +101,7 @@ export async function orderedDriver(f: S5DecisionFixture, script: AdvanceScript,
   const realWorkflow = createWorkflow({
     tasks: createGoalService({ records: f.records, now: f.now, eventId: f.newId }).tasks,
     plans: createPlanService({ records: f.records, bindings: createInitializationBindingReader({ records: f.records }),
+      knowledge: f.knowledge,
       now: f.now, eventId: f.newId }),
     sessions,
     claims: createTaskClaimService({ records: f.records, now: f.now, newId: f.newId,

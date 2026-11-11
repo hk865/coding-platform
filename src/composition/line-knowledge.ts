@@ -26,7 +26,7 @@ import {
 } from '../core/work-graph/architecture/architecture-file.js';
 import type {
   KnowledgeCaller, KnowledgeFileChange, KnowledgeLineScope, KnowledgeLines, KnowledgeWriteDeps, LineKnowledge,
-  LineNoteV1, LineRef,
+  LineNoteFileV1, LineNoteV1, LineRef,
 } from '../core/work-graph/model/line-knowledge.js';
 import { noteFileBytes, noteIdFromFilePath, noteOfFileBytes } from '../core/work-graph/notes/note-file.js';
 import { decodeNoteHeadSnapshot, noteHeadRefKey } from '../core/work-graph/persistence/note-record-codecs.js';
@@ -129,14 +129,22 @@ export async function openLineKnowledge(projectId: string, line: LineRef, scope:
   async function readArchitecture(): ReturnType<LineKnowledge['readArchitecture']> {
     const index = await bytesAt(ARCHITECTURE_FILE_PATH);
     if (index.status !== 'ready') return index;
-    if (index.value === null) return unavailable(`${ARCHITECTURE_FILE_PATH} does not exist in ${line.folder}`);
     const modules = await moduleFiles();
     if (modules.status !== 'ready') return modules;
+    if (index.value === null) {
+      // KLS-2b A8: a workspace that joined after the last architecture write has no files yet and adds no module to
+      // the project view; the main workspace (the baseline) and module files without their index stay unavailable.
+      if (scope.workspaceId !== scope.mainWorkspaceId && modules.value.length === 0) {
+        return ready({ catalog: { modules: [], dependencies: [], requireDag: true },
+          crossWorkspace: { dependencies: [], parentOf: [] }, baseline: null });
+      }
+      return unavailable(`${ARCHITECTURE_FILE_PATH} does not exist in ${line.folder}`);
+    }
     const decoded = architectureOfFiles(index.value, modules.value, scope, projectId);
     return decoded.status === 'decoded' ? ready(decoded.value) : unavailable(decoded.reason);
   }
 
-  async function readNotesById(noteIds: readonly string[]): Promise<StoreResult<LineNoteV1[]>> {
+  async function readNoteFiles(noteIds: readonly string[]): Promise<StoreResult<LineNoteFileV1[]>> {
     const wanted = new Set(noteIds);
     if (wanted.size === 0) return ready([]);
     const directories = await entriesOf(NOTES_DIRECTORY, 'directory');
@@ -156,24 +164,33 @@ export async function openLineKnowledge(projectId: string, line: LineRef, scope:
     if (twice.length > 0) {
       return unavailable(twice.map(([noteId, paths]) => `the note ${noteId} has two files: ${paths.join(', ')}`).join('; '));
     }
-    const found = noteIds.filter((noteId, index) => pathsOf.has(noteId) && noteIds.indexOf(noteId) === index);
-    const keys = found.map(noteId => noteHeadRefKey({ aggregateType: 'NoteHead', projectId, noteId }));
-    const heads = keys.length === 0 ? null : await deps.records.readMany(keys);
-    if (heads !== null && heads.status !== 'ready') return heads;
-    const byKey = new Map((heads?.value.records ?? []).map(record => [record.refKey, record]));
-    const notes: LineNoteV1[] = [];
-    for (const [index, noteId] of found.entries()) {
+    const notes: LineNoteFileV1[] = [];
+    for (const noteId of noteIds.filter((noteId, index) => pathsOf.has(noteId) && noteIds.indexOf(noteId) === index)) {
       const path = pathsOf.get(noteId)![0]!;
       const bytes = await bytesAt(path);
       if (bytes.status !== 'ready') return bytes;
       if (bytes.value === null) return unavailable(`${path} disappeared while it was read`);
       const knowledge = noteOfFileBytes(bytes.value, scope);
       if (knowledge.status !== 'decoded') return unavailable(`${path}: ${knowledge.reason}`);
+      notes.push({ noteId, path, blobSha: gitBlobId(bytes.value, objectFormat), knowledge: knowledge.value });
+    }
+    return ready(notes);
+  }
+
+  async function readNotesById(noteIds: readonly string[]): Promise<StoreResult<LineNoteV1[]>> {
+    const files = await readNoteFiles(noteIds);
+    if (files.status !== 'ready') return files;
+    if (files.value.length === 0) return ready([]);
+    const keys = files.value.map(note => noteHeadRefKey({ aggregateType: 'NoteHead', projectId, noteId: note.noteId }));
+    const heads = await deps.records.readMany(keys);
+    if (heads.status !== 'ready') return heads;
+    const byKey = new Map(heads.value.records.map(record => [record.refKey, record]));
+    const notes: LineNoteV1[] = [];
+    for (const [index, note] of files.value.entries()) {
       const record = byKey.get(keys[index]!);
       const head = record === undefined ? null : decodeNoteHeadSnapshot(record);
-      if (head !== null && head.status !== 'decoded') return unavailable(`the note ${noteId} record is damaged: ${head.reason}`);
-      notes.push({ noteId, path, blobSha: gitBlobId(bytes.value, objectFormat), knowledge: knowledge.value,
-        head: head === null ? null : head.value });
+      if (head !== null && head.status !== 'decoded') return unavailable(`the note ${note.noteId} record is damaged: ${head.reason}`);
+      notes.push({ ...note, head: head === null ? null : head.value });
     }
     return ready(notes);
   }
@@ -238,7 +255,7 @@ export async function openLineKnowledge(projectId: string, line: LineRef, scope:
   }
 
   return ready({ projectId, line, scope, objectFormat,
-    readArchitecture, readNotesById, writeModule, writeNote, applyChange });
+    readArchitecture, readNoteFiles, readNotesById, writeModule, writeNote, applyChange });
 }
 
 /**

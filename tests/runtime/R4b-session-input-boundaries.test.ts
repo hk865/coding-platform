@@ -16,6 +16,7 @@ import type { SessionDirectoryPort } from '../../src/core/work-graph/model/sessi
 import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
 import { createSessionOperations, type CreateSessionRequest } from '../../src/core/agent-runtime/session-operations.js';
 import { createR4HistoryWorld, type R4HistoryRun, type R4HistoryWorld } from '../helpers/R4-history-turn-support.js';
+import { knowledgeLinesOver } from '../helpers/KLS2-knowledge-lines.js';
 
 const at = '2026-09-24T00:00:00.000Z';
 const projectId = 'session-boundary-project';
@@ -57,7 +58,8 @@ async function open() {
     meta: { requestId: 'boundary-register-workspace', expected: [
       { ref: projectRef, revision: 1 }, { ref: workspaceRef, revision: 0 }] } });
   if (registered.status !== 'committed') throw Error(`workspace bootstrap failed: ${JSON.stringify(registered)}`);
-  const sessions = createSessionDirectory({ records: backend.records, lookups: backend.records, duty: unknownSessionDuty });
+  const sessions = createSessionDirectory({ records: backend.records,
+    knowledge: knowledgeLinesOver(backend.records), lookups: backend.records, duty: unknownSessionDuty });
   const kernelStores = await createKernelStoreRegistry({ entries: [{
     adapterId: 'workspace-kernel', storeKey: 'workspace-key', workspace,
     databasePath: path.join(directory, 'kernel.sqlite'),

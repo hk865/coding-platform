@@ -95,6 +95,7 @@ async function open(kind: Kind, pausedB: boolean): Promise<Ctx> {
 }
 function plans(x: Ctx) {
   return createPlanService({ records: x.f.records, bindings: createInitializationBindingReader({ records: x.f.records }),
+    knowledge: x.f.knowledge,
     now: x.f.now, eventId: x.f.newId });
 }
 async function goal(x: Ctx, ref: GoalRef): Promise<GoalSnapshot> {
@@ -212,7 +213,8 @@ async function adoptFreeTasks(x: Ctx, taskIds: readonly string[]): Promise<void>
 /** The selected PB2 Task is unclaimed; each real Session belongs to P/W. */
 async function freeClaim(x: Ctx, requestId: string, taskId = FREE_TASK) {
   const session: SessionRef = await x.f.createS5Session(`${requestId}-session`);
-  const sessionRead = await createSessionDirectory({ records: x.f.records, lookups: x.f.records, duty: unknownSessionDuty }).readSession(x.f.ctx, session);
+  const sessionRead = await createSessionDirectory({ records: x.f.records,
+    knowledge: x.f.knowledge, lookups: x.f.records, duty: unknownSessionDuty }).readSession(x.f.ctx, session);
   if (sessionRead.status !== 'ready') throw new Error(`S5 free Session: ${JSON.stringify(sessionRead)}`);
   expect(sessionRead.value.record.workspaceId).toBe('W');
   expect(sessionRead.value.record.occupancy).toBeNull();
@@ -296,7 +298,8 @@ function mailboxFor(x: Ctx) {
   const materials = createMaterialService({ bodies: f.bodies, authority: readers.authority, now: f.now });
   const deps: SessionMailboxDependencies = { records: f.records,
     defaultInquiryDeadlineMs: 86_400_000,
-    sessions: createSessionDirectory({ records: f.records, lookups: f.records, duty: unknownSessionDuty }),
+    sessions: createSessionDirectory({ records: f.records,
+      knowledge: f.knowledge, lookups: f.records, duty: unknownSessionDuty }),
     executions: createRunStateReader({ records: f.records }),
     roles: createRoleConfigurationService({ records: f.records, now: f.now, eventId: f.newId }),
     materials, systemActor: f.operatorActor, now: f.now, newId: f.newId };

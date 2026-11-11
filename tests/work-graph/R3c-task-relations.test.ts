@@ -105,9 +105,10 @@ it.each(['memory', 'sqlite'] as const)('%s: v2 relations and exact inputs surviv
         { ref: createdProject.value.ref, revision: createdProject.value.revision }, { ref: policyActiveRef, revision: 0 },
       ] } });
     if (activated.status !== 'committed') throw Error(`policy activation failed: ${JSON.stringify(activated)}`);
+    const knowledgeRoot = await mkdtemp(join(tmpdir(), 'r3c-knowledge-'));
     const adopted = await createArchitectureCatalogService({ records: backend.records,
-      knowledge: knowledgeLinesFor({ root: await mkdtemp(join(tmpdir(), 'r3c-knowledge-')), projectId, workspaceId,
-        records: backend.records }) }).adoptInitialArchitecture(ctx, {
+      knowledge: knowledgeLinesFor({ root: knowledgeRoot, projectId, workspaceId, records: backend.records }) })
+      .adoptInitialArchitecture(ctx, {
       input: { baselineId: 'baseline-1', catalog: { modules: [], dependencies: [], requireDag: true },
         description: 'Accepted baseline', constraints: [] },
       meta: { requestId: 'relations-adopt-baseline', expected: [
@@ -120,6 +121,7 @@ it.each(['memory', 'sqlite'] as const)('%s: v2 relations and exact inputs surviv
       eventId: () => `goal-${++sequence}` }).tasks;
     let materialReads = 0;
     const plans = createPlanService({ records: backend.records, bindings: createInitializationBindingReader({ records: backend.records }),
+      knowledge: knowledgeLinesFor({ root: knowledgeRoot, projectId, workspaceId, records: backend.records }),
       now: () => at,
       eventId: () => `plan-${++sequence}`, materials: { openArtifact: async () => {
         materialReads += 1;
@@ -218,6 +220,7 @@ it.each(['memory', 'sqlite'] as const)('%s: v2 relations and exact inputs surviv
     if (kind === 'sqlite') {
       backend = open();
       const resumed = createPlanService({ records: backend.records, bindings: createInitializationBindingReader({ records: backend.records }),
+        knowledge: knowledgeLinesFor({ root: knowledgeRoot, projectId, workspaceId, records: backend.records }),
         now: () => at,
         eventId: () => `resumed-${++sequence}` });
       expect(await resumed.queryTaskGraph(ctx, { goalRef: goal.value.ref })).toMatchObject({ status: 'ready',

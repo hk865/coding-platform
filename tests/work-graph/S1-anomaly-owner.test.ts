@@ -62,6 +62,7 @@ import {
 import { createR3eEvidenceFixture, type R3eEvidenceFixture } from '../helpers/R3e-evidence-fixture.js';
 import type { ClaimFixtureKind, TaskClaimFixture } from '../helpers/task-claim-fixture.js';
 import { checkAllInvariants, invariantStoreOf, readInvariantWorld } from '../state/invariants.js';
+import { knowledgeLinesOver } from '../helpers/KLS2-knowledge-lines.js';
 
 /** Frozen service-fixture clock values (spec §5.1); `B2_AT` is NOT `t0`. */
 const t0 = '2026-10-08T00:00:00.000Z';
@@ -146,7 +147,8 @@ async function open(kind: ClaimFixtureKind, withCompletion = false): Promise<Ope
   const now = () => clock;
   const sessionFacts = createSessionFactsService({ records });
   const anomaly = createSessionAnomalyService({ records, lookups: records, sessionFacts, now });
-  const lifecycle = createSessionLifecycleService({ records, lookups: records, sessionFacts, duty: unknownSessionDuty });
+  const lifecycle = createSessionLifecycleService({ records,
+    knowledge: knowledgeLinesOver(records), lookups: records, sessionFacts, duty: unknownSessionDuty });
   const reads = createRunStateReader({ records });
   const session: SessionRef = { projectId: base.scope.projectId, sessionId: base.sessions.first.sessionId };
 

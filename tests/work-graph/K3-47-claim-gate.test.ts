@@ -39,6 +39,7 @@ import {
 import { openRealRunHarness } from '../helpers/K3-35-continuation-fixture.js';
 import { createScriptedModel } from '../helpers/B2-runtime-fixture.js';
 import { shellSeam } from '../helpers/K3-tool-seams.js';
+import { knowledgeLinesOver } from '../helpers/KLS2-knowledge-lines.js';
 
 // §5.1's stand-in `shell` (the real blocked record) is hoisted per test file.
 const seams = vi.hoisted(() => ({ shellSeam: undefined as unknown }));
@@ -220,6 +221,7 @@ async function durableFacts(world: K3ReviewCardWorld, taskId: string,
 async function taskRowOf(world: K3ReviewCardWorld, taskId: string, records: B2Records): Promise<TaskRow> {
   let seq = 0;
   const plans = createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+    knowledge: knowledgeLinesOver(records),
     now: () => world.fixture.now(),
     eventId: () => `k3-47-plan-event-${String(++seq)}` });
   const read = await plans.queryTaskGraph(world.fixture.ctx, { goalRef: GOAL_B, planRef: PLAN_B2 });

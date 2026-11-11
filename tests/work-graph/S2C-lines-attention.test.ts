@@ -9,6 +9,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ReadResult } from '../../src/contracts/core/results.js';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
+import { createWorkLineReader } from '../../src/core/work-graph/views/work-line-reader.js';
 import { decisionReadsOver, openLineFixture, rowOf, type LineFixture } from '../helpers/S2C-L-line-support.js';
 import { crashedEvent } from '../helpers/S2C-L-runs-support.js';
 
@@ -104,6 +105,20 @@ describe.each(['memory', 'sqlite'] as const)('2C-12 attention from the real queu
     expect(row?.status.attention).toBeNull();
     expect(row?.status.attentionComplete).toBe(false);
   });
+
+  it('2C-12 (4b) (KLS-2b stack reply 3) a decision-queue preparation that throws is the same attention problem',
+    async () => {
+      const f = await lineFixture();
+      const head = (await f.createSession('s12-prepare-fail')).ref;
+      const reader = createWorkLineReader({ ...f.deps, decisions: { ...decisionReadsOver(f.base, f.records),
+        async prepareDecisionQueue() { throw new Error('injected queue preparation failure'); } } });
+      const list = ready(await reader.listWorkLines(f.ctx, { workspace: f.base.scope }));
+      const row = rowOf(list.rows, head);
+      expect(list.attentionComplete).toBe(false);
+      expect(list.attentionProblem).toBe('decision_queue_read_failed: injected queue preparation failure');
+      expect(row?.status.attention).toBeNull();
+      expect(row?.status.attentionComplete).toBe(false);
+    });
 
   it('2C-12 (5) required_task_deferred carries a task pin in source.pins but does not land on the line', async () => {
     const f = await lineFixture();

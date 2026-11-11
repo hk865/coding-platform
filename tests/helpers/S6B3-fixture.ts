@@ -769,7 +769,7 @@ export async function seedS6B3CancelledGoal(world: S6B3World, input: {
   if (item === undefined) throw new Error(`S6B3: the understanding ${noteId}@${String(version)} is not listed`);
   return {
     goal: cancelled, cancelledRevision: cancelled.revision,
-    understanding: { noteId: item.noteId, version: item.version, text: item.conclusion },
+    understanding: { noteId: item.noteId, version: item.version!, text: item.conclusion },
   };
 }
 

@@ -8,6 +8,7 @@ import type { SessionMessageRef } from '../../../contracts/core/session-message.
 import type { ReadResult } from '../../../contracts/core/results.js';
 import type { NoteIndexRowV1, NotesUnderstandingRowV1, UnderstandingStatusV1 } from '../../../contracts/graph-context.js';
 import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../../contracts/plan.js';
+import type { ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
 import type {
   FlowPayloadV1, LinkInputV1, LinkVerificationV1, NoteAnchorV1, NoteDraftAnchorV1, NoteDraftV1, NoteFactV1,
   NoteHeadSnapshot, NoteKind, NoteReviewReason, NoteScopeV1, NoteSectionsV1, NoteSourceV1, NoteState, NoteVersionSnapshot,
@@ -327,7 +328,12 @@ export interface NoteHeadCheckPort extends NoteCheckPort {
       pointer: { noteId: string | null; revision: number | null };
       head: NoteHeadSnapshot | null;
     }>;
-  }): Promise<ReadResult<{ items: NoteCheckV1[]; understanding: UnderstandingStatusV1[] }>>;
+    /**
+     * [2B-16]: the anchors of filed notes with no record head. Only their anchors are checked, in the same call
+     * and by the same rule as the items' slots; the answers come back in `anchorsOnly`, in this order.
+     */
+    anchorsOnly?: { anchor: NoteAnchorV1; extraAnchors: NoteAnchorV1[] }[];
+  }): Promise<ReadResult<{ items: NoteCheckV1[]; understanding: UnderstandingStatusV1[]; anchorsOnly: NoteAnchorCheckV1[] }>>;
   /** The Host-memory queue of head-version links read `refs_pending` with no conclusion yet, by `noteId`. */
   doubtfulLinks(scope: { projectId: string; workspaceId: string }, max: number): { noteId: string; version: number }[];
   /** The Host-memory register of accepted/reviewed head-version links last read `broken`. */
@@ -364,11 +370,24 @@ export type NoteCheckV1 = { noteId: string; version: number;
   hints: NoteHintV1[];
   similar?: NoteSimilarV1[] };
 
+/** [2B-16]: the anchor fields of a filed note with no record head, by the same anchor check as a head's slots. */
+export type NoteAnchorCheckV1 = Pick<NoteCheckV1, 'anchorStatus' | 'anchorRetiredReasons' | 'anchorSlots' | 'retiredExtraAnchors'>;
+
 /** Slice 4C §2 (R-03): the `record_note` / `notes/write` return. A failed check never undoes the write. */
 export type WriteNoteEnvelopeV1 = { write: WriteNoteResult;
   check: NoteCheckV1 | { status: 'unavailable'; reason: string } };
 
-export type NoteItemV1 = { noteId: string; version: number; storedState: NoteState; kind: NoteKind; topic: string;
+/** KLS-2b: this project's "needs verification" mark on the note file's current blob (none = current). */
+export type NoteVerifyV1 = { state: 'needs_verification';
+  reason: 'external_edit' | 'merged' | 'joined_existing_checkout' };
+/** A repair as read: a note file this project has no record of has no pin. */
+export type NoteRepairReadV1 = Omit<RepairPayloadV1, 'pin'> & { pin: ArchitectureCatalogPinV1 | null };
+
+/**
+ * `version`/`storedState` are null for a note file this project has no record of (it reads `unchecked`, cannot be
+ * activated, disposed or current); `verify` is this project's mark on the file's blob.
+ */
+export type NoteItemV1 = { noteId: string; version: number | null; storedState: NoteState | null; kind: NoteKind; topic: string;
   topicKey: string; conclusion: string; anchor: NoteAnchorV1; extraAnchors: NoteAnchorV1[]; source: NoteSourceV1; goalId: string | null;
   replaces: string[]; contradicts: string[]; coexistWith: string[]; confirmedByUser: boolean;
   freshness: 'fresh' | 'stale' | 'unchecked'; changedFiles: { path: string; deleted: boolean }[];
@@ -389,7 +408,8 @@ export type NoteItemV1 = { noteId: string; version: number; storedState: NoteSta
   matchedTerms: string[]; score: number;
   segment?: 'related' | 'project';
   sections?: NoteSectionsV1;
-  repair?: RepairPayloadV1;
+  repair?: NoteRepairReadV1;
+  verify: NoteVerifyV1 | null;
   body?: { text: string; next: string | null } };
 
 /** P9: goal/stage anchors only; `{ null, null }` when no pointer exists yet. */

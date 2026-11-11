@@ -112,6 +112,7 @@ import {
 import { openMemoryPlatform } from './K3-review-card-fixture.js';
 
 import { APPROVED_COMMAND, at, P, W } from './K3-continuation-pure-fixture.js';
+import { knowledgeLinesOver } from './KLS2-knowledge-lines.js';
 
 // The pure construction, the fixed brief literals and `requiredReviewBlock`
 // now live in `K3-continuation-pure-fixture.ts` (F-014). Re-export them here so
@@ -399,7 +400,8 @@ export async function openRealRunHarness(
   const kernelStores = await createKernelStoreRegistry({ entries: [kernelEntry] });
   const reads = createRunStateReader({ records });
   const facts = createSessionFactsService({ records });
-  const lifecycle = createSessionLifecycleService({ records, lookups: records, sessionFacts: facts, duty: unknownSessionDuty });
+  const lifecycle = createSessionLifecycleService({ records,
+    knowledge: knowledgeLinesOver(records), lookups: records, sessionFacts: facts, duty: unknownSessionDuty });
   let minute = 8;
   const now = options.now ?? ((): string => at(minute));
   let seq = 0;

@@ -49,8 +49,10 @@ import type {
   ConflictArchitectureRead,
   DecisionQueuePreparedReader,
   DecisionQueueWindowMoved,
-  PreparedConflictArchitecture,
+  DecisionQueuePreparation,
+  PreparedDecisionQueue,
 } from '../model/decision-contracts.js';
+import { DECISION_WINDOW_MOVED_REASON } from '../model/decision-contracts.js';
 import type { SessionMessage } from '../model/communication-contracts.js';
 import type { MemberCallerV1 } from '../state/member-creation.js';
 import {
@@ -121,7 +123,6 @@ import {
   goalDecisionBasis,
   listWorkspaceGoals,
   lookupAll,
-  readCatalogPointerRevision,
   readGoalTerminalState,
   readWatermark,
   storeFailureToRejection,
@@ -130,6 +131,7 @@ import {
   type GoalConflictAssemblerPort,
   type GoalTerminalState,
 } from './goal-conflicts.js';
+import { readCatalogPointerRevision } from '../architecture/catalog-service.js';
 import { runRefOfPins, taskRefOfPins } from './decision-card-refs.js';
 import { compareNoticePositions, mergeNoticePages, type NoticeSourceItemsV1 } from './notice-position.js';
 import { groupNotices, noticePage, seenThroughOfNotices, type NoticeLineV1 } from './notice-grouping.js';
@@ -269,8 +271,8 @@ export function createDecisionReadModel(
     async queryDecisionQueue(ctx, input): Promise<ReadResult<DecisionQueueReadV1>> {
       return queryDecisionQueue(deps, ctx, input);
     },
-    async readConflictArchitecture(ctx) {
-      return deps.conflicts.readCurrentArchitecture(ctx);
+    async prepareDecisionQueue(ctx, input) {
+      return prepareQueueWindow(deps, ctx, input);
     },
     async queryDecisionQueuePrepared(ctx, input, prepared) {
       return queryDecisionQueuePrepared(deps, ctx, input, prepared);
@@ -352,6 +354,8 @@ export type CardCollectionSourceSpec<T> = {
     Promise<ReadResult<{ item: T } | { closed: DecisionCardV1['closedReason']; openedAt: string | null } | null>>;
   /** The maximum items one OFFSET page serves (1..200, default SOURCE_PAGE_LIMIT). */
   pageLimit?: number;
+  /** R-窗 (ruling 9): the source's knowledge files, read before the queue fixes its window (`DecisionCardSourcePort`). */
+  prepareWindow?: DecisionCardSourcePort['prepareWindow'];
 };
 
 /**
@@ -381,6 +385,7 @@ export function createCollectionCardSource<T>(
   return {
     kind: spec.kind,
     serves: spec.serves,
+    ...(spec.prepareWindow === undefined ? {} : { prepareWindow: spec.prepareWindow }),
     async readPage(ctx, input) {
       // No Goal asks for the bound project's cards; a subject the spec does not
       // serve is an empty page.
@@ -450,13 +455,15 @@ export function createCollectionCardSource<T>(
  */
 export type NoteReviewCardSourceDependencies = {
   records: DecisionReadRecordsPort;
-  noteDecisions: Pick<NoteDecisionSourcePort, 'readNoteDecisions' | 'readNoteDecision'>;
+  noteDecisions: Pick<NoteDecisionSourcePort, 'prepareNoteDecisions' | 'readNoteDecisions' | 'readNoteDecision'>;
 };
 
 export function createNoteReviewCardSource(deps: NoteReviewCardSourceDependencies): DecisionCardSourcePort {
   return createCollectionCardSource<NoteDecisionCardFactsV1>({
     kind: 'note_review',
     serves: ['goal', 'project'],
+    prepareWindow: (ctx, { goals, project, attempt }) => deps.noteDecisions.prepareNoteDecisions(ctx,
+      { goals, project, attempt }),
     readCollection: (ctx, { subject, attempt }) => deps.noteDecisions.readNoteDecisions(ctx, { subject,
       ...(attempt === undefined ? {} : { attempt }) }),
     project: noteCard,
@@ -1079,15 +1086,15 @@ async function queryDecisionQueue(
 
 /**
  * R-window (ruling 9, stack review 2): the queue inside a caller's own ledger
- * window, with the conflicts' architecture the caller read before that window.
- * One attempt: a second one would read the files again inside the caller's
- * window, so a window that moved goes back to the caller.
+ * window, with the preparation the caller made before that window
+ * (`prepareQueueWindow`). One attempt: a second one would read the files again
+ * inside the caller's window, so a window that moved goes back to the caller.
  */
 async function queryDecisionQueuePrepared(
   deps: DecisionReadModelDependencies,
   ctx: CoreCallContext,
   input: QueueInput,
-  prepared: PreparedConflictArchitecture,
+  prepared: PreparedDecisionQueue,
 ): Promise<ReadResult<DecisionQueueReadV1> | DecisionQueueWindowMoved> {
   const problem = queueInputProblem(input);
   if (problem !== null) return problem;
@@ -1136,12 +1143,79 @@ async function readStableWindow(
   mode: WindowModeV1,
 ): Promise<ReadResult<DecisionWindowReadV1>> {
   // §4.1 line 772 / §3.3: one stable window, at most 4 attempts. A window that
-  // keeps moving is `unavailable`, never stamped with a later watermark.
+  // keeps moving is `unavailable`, never stamped with a later watermark. Each
+  // attempt prepares again before its window (F-30).
   for (let attempt = 0; attempt < WINDOW_MAX_ATTEMPTS; attempt += 1) {
-    const result = await readDecisionQueueWindow(deps, ctx, input, mode, undefined);
+    const prepared = await prepareQueueWindow(deps, ctx, input);
+    const result = await readDecisionQueueWindow(deps, ctx, input, mode, prepared);
     if (result !== WINDOW_MOVED) return result;
   }
   return windowNeverStable();
+}
+
+type QueuePreparationInput = Pick<QueueInput, 'workspace' | 'goalRef' | 'sections'>;
+
+/**
+ * §8.2 scope row: the explicit Workspace (and GoalRef) are compared with the
+ * bound scope BEFORE any read; a foreign request is `forbidden`.
+ */
+function queueScopeProblem(ctx: CoreCallContext, input: QueuePreparationInput): CoreRejection | null {
+  const scopeProblem = workspaceScopeProblem(ctx, input.workspace);
+  if (scopeProblem !== null) return scopeProblem;
+  if (input.goalRef !== undefined && input.goalRef.projectId !== ctx.projectId) {
+    return { status: 'rejected', code: 'forbidden', reason: 'the requested goal is outside the bound call scope' };
+  }
+  return null;
+}
+
+/**
+ * KLS-2 ruling 9 (R-window), F-30: what one queue window needs from the
+ * knowledge files, read before the window is fixed, with the subjects listed
+ * once: the conflicts' architecture (cards wanted and no injected
+ * `goal_conflict` source; the window checks the catalog pointer it was read
+ * at), and each card source's `prepareWindow` for every listed Goal and the
+ * project, or the one explicit Goal (inside the window the source reads only
+ * records and answers DECISION_WINDOW_MOVED_REASON when one moved since). A
+ * failure is the queue's own answer. The public read prepares before each
+ * attempt; lines/list and the context's pages prepare before their own window.
+ */
+async function prepareQueueWindow(
+  deps: DecisionReadModelDependencies,
+  ctx: CoreCallContext,
+  input: QueuePreparationInput,
+): Promise<ReadResult<DecisionQueuePreparation>> {
+  const scopeProblem = queueScopeProblem(ctx, input);
+  if (scopeProblem !== null) return scopeProblem;
+  const workspace = input.workspace;
+  const wantsCards = input.sections.some((section) => section !== 'notices');
+  let architecture: ConflictArchitectureRead | null = null;
+  if (wantsCards && !deps.cardSources.some((source) => source.kind === 'goal_conflict')) {
+    const read = await deps.conflicts.readCurrentArchitecture(ctx);
+    if (read.status !== 'ready') return read;
+    architecture = read.value;
+  }
+  const attempt: DecisionSourceAttempt = { cache: new Map() };
+  const preparing = wantsCards ? deps.cardSources.filter(source => source.prepareWindow !== undefined) : [];
+  if (preparing.length > 0) {
+    let subjects: GoalSnapshot[];
+    if (input.goalRef === undefined) {
+      try {
+        subjects = (await listWorkspaceGoals(deps.records, workspace, deps.lookupPageLimit)).goals;
+      } catch (error) {
+        return storeFailureToRejection(error as { code: string; reason: string });
+      }
+    } else {
+      const explicit = await resolveExplicitGoal(deps.records, ctx, input.goalRef);
+      if (explicit.status !== 'ready') return explicit;
+      subjects = [explicit.value];
+    }
+    for (const source of preparing) {
+      const prepared = await source.prepareWindow?.(ctx, { workspace, goals: subjects,
+        project: input.goalRef === undefined, attempt });
+      if (prepared !== undefined && prepared.status !== 'ready') return prepared;
+    }
+  }
+  return { status: 'ready', value: { architecture, attempt } };
 }
 
 async function readDecisionQueueWindow(
@@ -1149,35 +1223,28 @@ async function readDecisionQueueWindow(
   ctx: CoreCallContext,
   input: QueueInput,
   mode: WindowModeV1,
-  prepared: ReadResult<ConflictArchitectureRead> | undefined,
+  prepared: ReadResult<DecisionQueuePreparation>,
 ): Promise<ReadResult<DecisionWindowReadV1> | typeof WINDOW_MOVED> {
   const workspace = input.workspace;
-  // §8.2 scope row: the explicit Workspace (and GoalRef) are compared with the
-  // bound scope BEFORE any read; a foreign request is `forbidden`.
-  const scopeProblem = workspaceScopeProblem(ctx, workspace);
+  const scopeProblem = queueScopeProblem(ctx, input);
   if (scopeProblem !== null) return scopeProblem;
-  if (input.goalRef !== undefined && input.goalRef.projectId !== ctx.projectId) {
-    return { status: 'rejected', code: 'forbidden', reason: 'the requested goal is outside the bound call scope' };
-  }
   const wantsCards = input.sections.some((section) => section !== 'notices');
   const wantsNotices = input.sections.includes('notices');
   const wantsGoals = wantsCards || input.goalRef !== undefined;
 
   const injectedCards = new Map(deps.cardSources.map((source) => [source.kind, source]));
   const injectedNotices = new Map(deps.noticeSources.map((source) => [source.category, source]));
-  // KLS-2 ruling 9 (R-window): the conflicts' architecture comes from the
-  // knowledge files, so it is read BEFORE the window below is fixed (or by the
-  // caller, before its own); the window checks the catalog pointer it was read at.
-  let conflictArchitecture: ConflictArchitectureRead | null = null;
-  if (wantsCards && !injectedCards.has('goal_conflict')) {
-    const read = prepared ?? await deps.conflicts.readCurrentArchitecture(ctx);
-    if (read.status !== 'ready') return read;
-    conflictArchitecture = read.value;
-  }
+  // KLS-2 ruling 9 (R-window): the knowledge files were read BEFORE the window
+  // below is fixed (`prepareQueueWindow`, by this read or by the caller before
+  // its own); a failed preparation is the queue's answer.
+  if (prepared.status !== 'ready') return prepared;
+  const conflictArchitecture = prepared.value.architecture;
   // 2A L11/P1: one attempt-scoped cache, shared by every source this attempt
   // reads. A source assembles its whole collection once and serves its pages
-  // from it; the object is dropped when this window attempt ends.
-  const attempt: DecisionSourceAttempt = { cache: new Map() };
+  // from it; the object is dropped when this window attempt ends. It starts
+  // from the prepared files, which a caller's pages share (never one page's
+  // collections).
+  const attempt: DecisionSourceAttempt = { cache: new Map(prepared.value.attempt.cache) };
   // §2.6/§4.2: the advertised capability starts from the wired adapter and is
   // then DOWNGRADED by what a real read reports. An injected adapter whose
   // provider answers `not_available` must never be advertised as available.
@@ -1340,7 +1407,9 @@ async function readDecisionQueueWindow(
             page: { limit: deps.sourcePageLimit ?? SOURCE_PAGE_LIMIT, ...(cursor === undefined ? {} : { cursor }),
               ...(input.page.atLeastCursor === undefined ? {} : { atLeastCursor: input.page.atLeastCursor }),
               attempt } });
-          if (result.status !== 'ready') return result;
+          if (result.status !== 'ready') {
+            return result.status === 'rejected' && result.reason === DECISION_WINDOW_MOVED_REASON ? WINDOW_MOVED : result;
+          }
           observeAvailability(capabilities, source.kind, result.value.availability);
           if (result.value.availability !== 'available') break;
           for (const card of result.value.items) add(card);

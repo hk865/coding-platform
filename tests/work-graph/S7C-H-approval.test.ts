@@ -51,7 +51,7 @@ function fragmentOf(target: S7CHandoffCore, caller: { session: SessionRef; run: 
     caller: { actor: agentActorOf(caller.session, caller.run), session: caller.session, run: caller.run,
       duty: caller.duty },
     reason: 'S7C H-approval',
-    understanding: [{ noteId: target.note.noteId, version: target.note.version }],
+    understanding: [{ noteId: target.note.noteId, version: target.note.version! }],
   };
 }
 

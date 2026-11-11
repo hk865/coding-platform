@@ -300,6 +300,7 @@ export async function createAdmissionFixture(kind: ClaimFixtureKind): Promise<Ad
   // owner, never a hand-written catalog row.
   const architecture = createArchitectureCatalogService({ records,
     knowledge: knowledgeLinesFor({ root: base.directory, projectId: PROJECT_ID, workspaceId: WORKSPACE_ID, records }) });
+  base.knowledgeRoots.set(JSON.stringify([PROJECT_ID, WORKSPACE_ID]), base.directory);
   const adopted = await architecture.adoptInitialArchitecture(myCtx, {
     input: { baselineId: 's3-baseline', description: 'S3 admission baseline', constraints: [],
       catalog: { requireDag: true, dependencies: [], modules: [{ ref: { projectId: PROJECT_ID, moduleId: 's3-admission' },

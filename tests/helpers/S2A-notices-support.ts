@@ -37,6 +37,7 @@ import { OPERATOR, PROJECT, PROJECT_ID, T, WORKSPACE, WORKSPACE_SCOPE, openS5Dec
   type S5DecisionFixture, type S5FixtureKind } from './S5-decision-fixture.js';
 import { automationContext, committed, endRun, key, mailboxDependencies, materialsFor, noticeWork, pin, ready,
   storedRecord, workspaceSnapshot } from './S5-queue-support.js';
+import { knowledgeLinesOver } from './KLS2-knowledge-lines.js';
 
 export { WORKSPACE_SCOPE, committed, pin, ready };
 type S5NoticeWork = Awaited<ReturnType<typeof noticeWork>>;
@@ -182,6 +183,7 @@ export async function openManyTaskWorld(f: S5DecisionFixture, taskIds: readonly 
         requirementLevel: 'required', description: 'Registered check' }] }],
     taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] }, taskRelations: [], inputRequirements: [] };
   const plans = createPlanService({ records: f.records, bindings: createInitializationBindingReader({ records: f.records }),
+    knowledge: f.knowledge,
     now: f.now, eventId: f.newId });
   const proposal = committed(await plans.proposePlan(ctx, { input: { goalRef, basedOn: null, draft,
     reason: { text: 'Slice 2A rework world', sources: [] } },
@@ -325,7 +327,7 @@ export function openReverifyChain(f: S5DecisionFixture, policy: TaskAutomationPo
     async authorize() { return { status: 'ready' as const, value: { subjectKey: 's2a-notice-host',
       permissionRevision: 's2a-notice-permission', allowsRead: () => true } }; },
   };
-  const evidence = createEvidenceService({ records: f.records, executions: reads, materials, workspaceHost, configuration,
+  const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(f.records, workspaceHost), records: f.records, executions: reads, materials, workspaceHost, configuration,
     automationPolicy: () => policy,
     source: { async capture() { return { status: 'ready' as const, sourceDigest: sha256Hex(`s2a-source-${source.revision}`),
       sourceProof: { kind: 'current-workspace-only' as const, runBaselineKnown: false },

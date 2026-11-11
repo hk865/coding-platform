@@ -23,7 +23,7 @@ import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import type { GoalRecordTransactionPort, RecordGuard, StoreFailure } from '../../record-store/ports.js';
 import { canonicalJson, canonicalOf, type JsonValue } from '../../../contracts/fingerprint.js';
 import { isRecord } from '../../../contracts/validation/common.js';
-import { readCatalogModuleFacts } from '../architecture/catalog-service.js';
+import type { catalogModuleFactsOnce } from '../architecture/catalog-service.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
 
 export type TargetCheck =
@@ -158,18 +158,21 @@ export async function validateTaskTarget(
 /**
  * Validate one formal target and return the record guards it contributes. Only
  * an `active` activation calls this; closing an existing link never does.
+ * KLS-2b A.1 #5: a module is checked in the project view of the files; `modules` is the caller's
+ * `catalogModuleFactsOnce`, so the module targets of one call share one read of the files.
  */
 export async function validateWorkLinkTarget(
   records: GoalRecordTransactionPort,
   ctx: CoreCallContext,
   scope: WorkspaceScope,
   target: WorkLinkTarget,
+  modules: ReturnType<typeof catalogModuleFactsOnce>,
 ): Promise<TargetCheck> {
   if (target.ref.projectId !== scope.projectId) {
     return { ok: false, rejection: rejected('forbidden', 'the work link target belongs to another project') };
   }
   if (target.kind === 'module') {
-    const facts = await readCatalogModuleFacts(records, ctx, target.ref);
+    const facts = await modules(target.ref);
     if (facts.status === 'ready') return { ok: true, guards: [...facts.value.guards] };
     if (facts.status === 'not_found') {
       return { ok: false, rejection: rejected('not_found', `the module ${target.ref.moduleId} is not in the current formal catalog`) };

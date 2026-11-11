@@ -17,23 +17,26 @@
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import type { AdoptedArchitecture } from '../../../contracts/architecture-catalog.js';
-import type { LinkEndRequestV1, LinkVerificationV1, NoteHeadSnapshot } from '../../../contracts/note.js';
+import type { LinkEndRequestV1, LinkVerificationV1, NoteAnchorV1, NoteHeadSnapshot } from '../../../contracts/note.js';
 import type { NoteFlowReadV1, SemanticEndV1, SemanticFlowStepV1, SemanticFlowV1, SemanticLinkV1,
   SemanticPageV1, SemanticScopeV1 } from '../../../contracts/semantic-layer.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
-import type { NoteCheckV1, NoteHeadCheckPort } from '../model/note-contracts.js';
+import type { NoteAnchorCheckV1, NoteCheckV1, NoteHeadCheckPort } from '../model/note-contracts.js';
 import { NOTE_FLOW_CANDIDATE_MAX, NOTE_LINK_VERIFY_MAX } from '../model/note-contracts.js';
 import { REQUEST_PAGE_SIZE } from '../model/request-contracts.js';
 import type { NoteReadDependencies } from './note-read-model.js';
 import type { ReadOutcome } from './note-base-reader.js';
 import { S8E_NOTE_BY_KIND_STATE_LOOKUP, decodeNoteHeadSnapshot } from '../persistence/note-record-codecs.js';
 import { encodeMemoryCursor, flowCheckOf, parseMemoryCursor, readSemanticCatalog } from './note-read-model.js';
-import { anchorSlots, collectModuleFileKeys, headsOnKeyPrefix, interfaceKeysOf, isRelatedHead,
-  matchesPathPrefix, moduleRelatedKeys } from './note-related-scope.js';
+import { interfaceKeysOf, mainWorkspaceOutcomeOf } from './note-related-scope.js';
+import { moduleOfAnchor } from './scribe-scope.js';
 import { readHeadBatch } from './note-batch-reader.js';
 import { endpointIdentityOf, moduleOfFile } from './link-evidence.js';
 import { normalizePath } from './note-anchors.js';
 import { asOutcome, mapStoreFailure } from './store-failures.js';
+import type { KnowledgeEdgeKind } from '../../record-store/knowledge-index-ports.js';
+import { indexedFilesOn, indexedNoteIds, overlayFileKnowledge, type HeadlessNote } from './note-knowledge.js';
+import type { LineKnowledge } from '../model/line-knowledge.js';
 
 export type SemanticReadInput = {
   scope: SemanticScopeV1;
@@ -41,7 +44,7 @@ export type SemanticReadInput = {
   limit: number;
 };
 
-export type SemanticReadDeps = Pick<NoteReadDependencies, 'records' | 'architecture' | 'mainWorkspaceOf'>
+export type SemanticReadDeps = Pick<NoteReadDependencies, 'records' | 'knowledge' | 'architecture' | 'mainWorkspaceOf'>
   & { check: NoteHeadCheckPort; flowCandidateMax?: number };
 
 /** One item's read-time link verification, in the order asked; `null` when the note is not a link. */
@@ -113,20 +116,30 @@ async function readLinks(
 
   const candidates = await scopeHeads(deps, ctx, input.scope, after, input.limit + 1, catalog);
   if (!candidates.ok) return { status: 'rejected', code: candidates.code, reason: candidates.reason };
-  const page = candidates.value.slice(0, input.limit);
-  const hasMore = candidates.value.length > input.limit;
+  // [2B-16]: the scope's filed links with no record head merge in by noteId; only their anchors are checked.
+  const merged = mergedById(candidates.value);
+  const hasMore = merged.length > input.limit;
+  const filed = await pageFiles(deps, ctx, merged.slice(0, input.limit), LINK_KIND);
+  if (!filed.ok) return { status: 'rejected', code: filed.code, reason: filed.reason };
+  const page = filed.value;
+  const heads = page.filter(isHeadEntry);
+  const headless = page.filter((entry): entry is HeadlessNote => !isHeadEntry(entry));
 
   const checked = await deps.check.checkHeads(ctx, {
-    items: page.map(head => ({ head, version: head.version })),
+    items: heads.map(head => ({ head, version: head.version })),
+    anchorsOnly: headless.map(({ note }) => ({ anchor: note.knowledge.anchor, extraAnchors: note.knowledge.extraAnchors })),
   });
   if (checked.status !== 'ready') {
     if (checked.status === 'rejected') return checked;
     return { status: 'rejected', code: 'unavailable', reason: 'the note check is not ready' };
   }
-  const items = page.map((head, index) => semanticLinkOf(head, checked.value.items[index]!, catalog));
+  const checks = new Map(heads.map((head, index) => [head.noteId, checked.value.items[index]!]));
+  const anchorChecks = new Map(headless.map((entry, index) => [entry.note.noteId, checked.value.anchorsOnly[index]!]));
+  const items = page.map(entry => isHeadEntry(entry) ? semanticLinkOf(entry, checks.get(entry.noteId)!, catalog)
+    : headlessLinkOf(entry, anchorChecks.get(entry.note.noteId)!, catalog));
   const next = hasMore
     ? encodeMemoryCursor(ctx, 'semantic_links', request,
-      { after: page[page.length - 1]!.noteId, recordCursor: null })
+      { after: merged[input.limit - 1]!.noteId, recordCursor: null })
     : null;
   return { status: 'ready', value: { items, next, catalogRevision } };
 }
@@ -135,9 +148,10 @@ async function readLinks(
  * The flow page. Project scope pages the three visible flow states; module/file
  * scope first takes every link head of the scope in ANY state (a superseded or
  * withdrawn step still brings its flow into the range) and keeps the flows
- * whose stored steps cite one of those heads. The flow heads are scanned in
- * `noteId` order, bounded per page; the cursor carries the scan position as
- * well as the last result id.
+ * whose files' steps cite one of them (each line's `flow_step` edges). The flow
+ * heads are scanned in `noteId` order, bounded per page; the cursor carries the
+ * scan position as well as the last result id. The page's flows and their step
+ * links show their files' knowledge.
  */
 async function readFlows(
   deps: SemanticReadDeps,
@@ -160,33 +174,50 @@ async function readFlows(
   const flowCandidateMax = deps.flowCandidateMax ?? NOTE_FLOW_CANDIDATE_MAX;
   const cap = input.scope.kind === 'project'
     ? Math.min(input.limit + 1, flowCandidateMax) : flowCandidateMax;
-  let results: NoteHeadSnapshot[];
   const scanned = await projectHeads(deps, ctx, scanAfter, cap, FLOW_KIND);
   if (!scanned.ok) return { status: 'rejected', code: scanned.code, reason: scanned.reason };
   const examined = scanned.value;
-  if (input.scope.kind === 'project') {
-    results = examined;
-  } else {
+  let scopeLinks: string[] | null = null;
+  // A module or file scope reads its link records; a step among them is not read again.
+  let scopeLinkHeads = new Map<string, NoteHeadSnapshot>();
+  if (input.scope.kind !== 'project') {
     const links = await scopeHeads(deps, ctx, input.scope, null, Number.POSITIVE_INFINITY, catalog, false);
     if (!links.ok) return { status: 'rejected', code: links.code, reason: links.reason };
-    const linkIds = new Set(links.value.map(head => head.noteId));
-    results = examined.filter(head => head.flow!.steps.some(step => linkIds.has(step.link)));
+    scopeLinks = mergedById(links.value).map(entry => entry.noteId);
+    scopeLinkHeads = new Map(links.value.heads.map(head => [head.noteId, head]));
   }
+  // [2B-16]: the flows with no record head, from each line's `flow_step` edges (to a scope link, or any in the
+  // project) within the range this page scanned, merge in by noteId; they are never checked.
+  const edges = await edgeNotes(deps, ctx, 'flow_step', scopeLinks, scanAfter, boundOf(examined, cap), examined);
+  if (!edges.ok) return { status: 'rejected', code: edges.code, reason: edges.reason };
+  const results = scopeLinks === null ? examined : examined.filter(head => edges.value.listed.has(head.noteId));
+  const merged = mergedById({ heads: results, headless: edges.value.headless });
 
-  const pageHeads = results.slice(0, input.limit);
-  const hasMore = results.length > input.limit;
+  const hasMore = merged.length > input.limit;
   const capped = !hasMore && examined.length === cap;
+  const slice = merged.slice(0, input.limit);
+  const filed = await pageFiles(deps, ctx, slice, FLOW_KIND);
+  if (!filed.ok) return { status: 'rejected', code: filed.code, reason: filed.reason };
+  const page = filed.value;
+  const pageHeads = page.filter(isHeadEntry);
+  const stepsOf = (entry: FiledEntry): { link: string }[] => (isHeadEntry(entry) ? entry.flow : entry.note.knowledge.flow)!.steps;
 
-  // One batched read of the page's distinct step heads, then one merged check
-  // for the flow heads and those step heads. A missing step head stays absent
-  // and expands to `not_current`.
-  const stepIds = pageHeads.flatMap(head => head.flow!.steps.map(step => step.link));
-  const batch = await readHeadBatch(deps.records, ctx.projectId, stepIds, { requireAll: false });
+  // One batched read of the page's distinct step heads the scope read did not already read, their files' knowledge,
+  // then one merged check for the flow heads and those step heads. A missing step head stays absent and expands to
+  // `not_current`.
+  const stepIds = [...new Set(page.flatMap(entry => stepsOf(entry).map(step => step.link)))];
+  const batch = await readHeadBatch(deps.records, ctx.projectId, stepIds.filter(noteId => !scopeLinkHeads.has(noteId)),
+    { requireAll: false });
   if (!batch.ok) {
     const failure = mapStoreFailure(batch);
     return { status: 'rejected', code: failure.code, reason: failure.reason };
   }
-  const stepHeads = [...batch.value.values()];
+  const steps = await overlayFileKnowledge(stepIds.flatMap(noteId => {
+    const head = scopeLinkHeads.get(noteId) ?? batch.value.get(noteId);
+    return head === undefined ? [] : [head];
+  }), { lines: deps.knowledge, caller: ctx });
+  if (steps.status !== 'ready') return mapStoreFailure(steps);
+  const stepHeads = steps.value;
   const checked = await deps.check.checkHeads(ctx, {
     items: [...pageHeads, ...stepHeads].map(head => ({ head, version: head.version })),
   });
@@ -199,22 +230,24 @@ async function readFlows(
   stepHeads.forEach((head, index) => {
     checkByStep.set(head.noteId, { head, check: checked.value.items[pageHeads.length + index]! });
   });
-  const items = pageHeads.map((head, index) => {
-    const check = checked.value.items[index]!;
-    const steps = head.flow!.steps.flatMap(step => {
+  const checkOfFlow = new Map(pageHeads.map((head, index) => [head.noteId, checked.value.items[index]!]));
+  const items = page.map(entry => {
+    const steps = stepsOf(entry).flatMap(step => {
       const found = checkByStep.get(step.link);
       return found === undefined ? [] : [found];
     });
-    return semanticFlowOf(head, check, expandFlowForHead(ctx, { flow: head, steps, catalog }));
+    const expanded = expandFlowForHead(ctx, { flow: isHeadEntry(entry) ? entry : entry.note.knowledge, steps, catalog });
+    return isHeadEntry(entry) ? semanticFlowOf(entry, checkOfFlow.get(entry.noteId)!, expanded)
+      : headlessFlowOf(entry, expanded);
   });
 
   let next: string | null = null;
   if (hasMore) {
-    const last = pageHeads[pageHeads.length - 1]!.noteId;
+    const last = merged[input.limit - 1]!.noteId;
     next = encodeMemoryCursor(ctx, 'semantic_flows', request, { after: last, recordCursor: last });
   } else if (capped && examined.length > 0) {
     next = encodeMemoryCursor(ctx, 'semantic_flows', request, {
-      after: pageHeads.length === 0 ? null : pageHeads[pageHeads.length - 1]!.noteId,
+      after: slice.length === 0 ? null : slice[slice.length - 1]!.noteId,
       recordCursor: examined[examined.length - 1]!.noteId,
     });
   }
@@ -248,22 +281,90 @@ export function linkChecksOf(rows: readonly NoteCheckV1[]): SemanticLinkChecks {
   };
 }
 
+/** [2B-16]: a filed note with no record head, as the index lists it: its line; the page reads its file. */
+type HeadlessEntry = { line: LineKnowledge; noteId: string };
+/** The heads a scope reads and, beside them, its filed notes with no record head ([2B-16]). */
+type ScopeNotes = { heads: NoteHeadSnapshot[]; headless: HeadlessEntry[] };
+type ScopeEntry = NoteHeadSnapshot | HeadlessEntry;
+/** A page entry with the file it shows. */
+type FiledEntry = NoteHeadSnapshot | HeadlessNote;
+const isHeadEntry = (entry: ScopeEntry | FiledEntry): entry is NoteHeadSnapshot => !('line' in entry);
+
+/** Both kinds of entry, by noteId. */
+function mergedById(notes: ScopeNotes): ScopeEntry[] {
+  return [...notes.heads, ...notes.headless]
+    .sort((left, right) => left.noteId < right.noteId ? -1 : left.noteId > right.noteId ? 1 : 0);
+}
+
+/** The last id a page scan can reach: the cap-th head's when the scan stopped at its cap, else none. */
+function boundOf(heads: readonly NoteHeadSnapshot[], cap: number): string | null {
+  return heads.length === cap ? heads[heads.length - 1]!.noteId : null;
+}
+
+/**
+ * The page's entries with the files they show, and nothing past the page read: the heads take their files'
+ * knowledge ([2B-18]), the filed notes with no record head are read from their lines ([2B-17] for a file gone since
+ * it was indexed). A head whose file now names another kind than the page's is left out.
+ */
+async function pageFiles(deps: SemanticReadDeps, ctx: CoreCallContext, page: readonly ScopeEntry[],
+  kind: NoteHeadSnapshot['kind']): Promise<ReadOutcome<FiledEntry[]>> {
+  const read = await overlayFileKnowledge(page.filter(isHeadEntry), { lines: deps.knowledge, caller: ctx });
+  if (read.status !== 'ready') return asOutcome(read);
+  const overlaid = new Map(read.value.map(head => [head.noteId, head]));
+  const headless = page.filter((entry): entry is HeadlessEntry => !isHeadEntry(entry));
+  const files = new Map<string, HeadlessNote>();
+  for (const line of new Set(headless.map(entry => entry.line))) {
+    const notes = await indexedFilesOn(line, headless.filter(entry => entry.line === line).map(entry => entry.noteId));
+    if (notes.status !== 'ready') return asOutcome(notes);
+    for (const note of notes.value) files.set(note.noteId, { line, note });
+  }
+  return { ok: true, value: page.flatMap((entry): FiledEntry[] => {
+    if (!isHeadEntry(entry)) return [files.get(entry.noteId)!];
+    const head = overlaid.get(entry.noteId)!;
+    return head.kind === kind ? [head] : [];
+  }) };
+}
+
 /**
  * The scope's candidate heads: `link` only, the three visible states, sorted by
- * `noteId`, deduplicated, after the cursor. A failed read is returned as is.
+ * `noteId`, deduplicated, after the cursor; and its filed links with no record
+ * head after the cursor (the project's from each line's `link_from` edges, a
+ * module's or file's from its anchor keys). No note file is read. A failed read
+ * is returned as is.
  */
 async function scopeHeads(deps: SemanticReadDeps, ctx: CoreCallContext, scope: SemanticScopeV1,
   after: string | null, cap: number, catalog: AdoptedArchitecture | null,
-  visibleOnly = true): Promise<ReadOutcome<NoteHeadSnapshot[]>> {
-  if (scope.kind === 'project') return projectHeads(deps, ctx, after, cap);
-  if (scope.kind === 'file') {
-    const path = normalizePath(scope.path);
-    const key = `file:${path}`;
-    return keyHeads(deps, ctx, [key], [path], after, cap, visibleOnly);
+  visibleOnly = true): Promise<ReadOutcome<ScopeNotes>> {
+  if (scope.kind === 'project') {
+    const heads = await projectHeads(deps, ctx, after, cap);
+    if (!heads.ok) return heads;
+    const edges = await edgeNotes(deps, ctx, 'link_from', null, after, boundOf(heads.value, cap), heads.value);
+    return edges.ok ? { ok: true, value: { heads: heads.value, headless: edges.value.headless } } : edges;
   }
-  const keySet = await moduleKeys(deps, ctx, scope.moduleId, catalog);
-  if (!keySet.ok) return keySet;
-  return keyHeads(deps, ctx, [...keySet.value.keys], keySet.value.paths, after, cap, visibleOnly);
+  return keyNotes(deps, ctx, scope, catalog, after, cap, visibleOnly);
+}
+
+/**
+ * [2B-16]: the notes a `kind` edge lists on each line (to one of `toRefs`, or any) after the cursor and up to the
+ * page's bound, and among them the ones with no record head: one batched record read of the ids the scanned `heads`
+ * do not already answer. No file is read here; the page reads its own.
+ */
+async function edgeNotes(deps: SemanticReadDeps, ctx: CoreCallContext, kind: KnowledgeEdgeKind,
+  toRefs: readonly string[] | null, after: string | null, bound: string | null, heads: readonly NoteHeadSnapshot[]):
+Promise<ReadOutcome<{ listed: ReadonlySet<string>; headless: HeadlessEntry[] }>> {
+  const read = await indexedNoteIds({ lines: deps.knowledge, caller: ctx }, (index, lineRef) => index
+    .noteIdsByEdge(lineRef, kind, toRefs).filter(noteId => (after === null || noteId > after) && (bound === null || noteId <= bound)));
+  if (read.status !== 'ready') return asOutcome(read);
+  const known = new Set(heads.map(head => head.noteId));
+  const listed = read.value.flatMap(({ line, ids }) => ids.map(noteId => ({ line, noteId })));
+  const unknown = listed.filter(entry => !known.has(entry.noteId));
+  const batch = await readHeadBatch(deps.records, ctx.projectId, unknown.map(entry => entry.noteId), { requireAll: false });
+  if (!batch.ok) {
+    const failure = mapStoreFailure(batch);
+    return { ok: false, code: failure.code, reason: failure.reason };
+  }
+  return { ok: true, value: { listed: new Set(listed.map(entry => entry.noteId)),
+    headless: unknown.filter(entry => !batch.value.has(entry.noteId)) } };
 }
 
 async function projectHeads(deps: SemanticReadDeps, ctx: CoreCallContext, after: string | null,
@@ -301,58 +402,56 @@ async function projectHeads(deps: SemanticReadDeps, ctx: CoreCallContext, after:
 }
 
 /**
- * §3.8.3: the ordered anchor-path indexes page on a string prefix, so the page
- * keeps only heads whose exact key is in the scope and whose file slots pass
- * the scope's path boundary. A flow range also keeps superseded or withdrawn
- * link heads (`visibleOnly: false`): a step that is no longer current still
- * belongs to the range.
+ * §3.8.3, [2B-14]: a module or file scope's link notes, listed by each line's index without reading a note file:
+ * the notes with an exact scope key in their anchors (the module's own key and its interfaces', or the file's), and
+ * for a module the notes with a file anchor the module owns (the single longest catalog owner, the rule
+ * `collectModuleFileKeys` applies); a link is a note with a `link_from` edge. After the cursor, one batched record
+ * read tells the ones with a record head (the three visible states; a flow range, `visibleOnly: false`, keeps a step
+ * that is no longer current) from the ones without, bounded by the cap as `edgeNotes` is.
  */
-async function keyHeads(deps: SemanticReadDeps, ctx: CoreCallContext, keys: readonly string[],
-  pathPrefixes: readonly string[], after: string | null, cap: number,
-  visibleOnly = true): Promise<ReadOutcome<NoteHeadSnapshot[]>> {
-  const keySet = new Set(keys);
-  const seen = new Map<string, NoteHeadSnapshot>();
-  for (const key of keys) {
-    const read = await headsOnKeyPrefix(deps.records, ctx.projectId, key);
-    if (!read.ok) return read;
-    for (const head of read.value) {
-      if (!isRelatedHead(head, keySet)) continue;
-      if (!pathBoundaryAccepts(head, keySet, pathPrefixes)) continue;
-      keepVisible(seen, head, after, LINK_KIND, visibleOnly);
+async function keyNotes(deps: SemanticReadDeps, ctx: CoreCallContext, scope: Exclude<SemanticScopeV1, { kind: 'project' }>,
+  catalog: AdoptedArchitecture | null, after: string | null, cap: number, visibleOnly: boolean): Promise<ReadOutcome<ScopeNotes>> {
+  const keys: string[] = [];
+  const ownedPrefixes: string[] = [];
+  let owns = (_key: string): boolean => false;
+  if (scope.kind === 'file') keys.push(`file:${normalizePath(scope.path)}`);
+  else {
+    keys.push(`module:${scope.moduleId}`);
+    const module = catalog === null ? undefined : catalog.modules.find(candidate => candidate.ref.moduleId === scope.moduleId);
+    if (catalog !== null && module !== undefined) {
+      keys.push(...interfaceKeysOf(scope.moduleId, module));
+      const main = await mainWorkspaceOutcomeOf(deps, ctx.projectId);
+      if (!main.ok) return main;
+      owns = key => moduleOfAnchor(catalog, { kind: 'file', path: key.slice('file:'.length) } as NoteAnchorV1, main.value)
+        === scope.moduleId;
+      for (const prefix of module.paths) {
+        const stripped = prefix.endsWith('/') ? prefix.slice(0, -1) : prefix;
+        // The root `.` owns every file no concrete prefix claims: its candidates are every file anchor.
+        if (stripped.length > 0) ownedPrefixes.push(stripped === '.' ? 'file:' : `file:${stripped}`);
+      }
     }
   }
-  return { ok: true, value: sortHeadsByNoteId(seen).slice(0, cap) };
-}
-
-async function moduleKeys(deps: SemanticReadDeps, ctx: CoreCallContext, moduleId: string,
-  catalog: AdoptedArchitecture | null): Promise<ReadOutcome<{ keys: string[]; paths: string[] }>> {
-  const module = catalog === null ? undefined
-    : catalog.modules.find(candidate => candidate.ref.moduleId === moduleId);
-  let files: string[] = [];
-  if (catalog !== null && module !== undefined) {
-    const read = await collectModuleFileKeys({ records: deps.records,
-      ...(deps.mainWorkspaceOf === undefined ? {} : { mainWorkspaceOf: deps.mainWorkspaceOf }),
-      relatedFilesMax: 0 }, ctx, catalog, module);
-    if (!read.ok) return read;
-    files = read.value;
+  const read = await indexedNoteIds({ lines: deps.knowledge, caller: ctx }, (index, lineRef) => {
+    const ids = new Set(keys.flatMap(key => index.noteIdsByAnchor(lineRef, key)));
+    for (const prefix of ownedPrefixes) {
+      for (const row of index.noteAnchorsByPrefix(lineRef, prefix)) if (owns(row.anchorKey)) ids.add(row.noteId);
+    }
+    const links = new Set(index.noteIdsByEdge(lineRef, 'link_from', null));
+    return [...ids].filter(noteId => links.has(noteId) && (after === null || noteId > after));
+  });
+  if (read.status !== 'ready') return asOutcome(read);
+  const listed = read.value.flatMap(({ line, ids }) => ids.map(noteId => ({ line, noteId })));
+  const batch = await readHeadBatch(deps.records, ctx.projectId, listed.map(entry => entry.noteId), { requireAll: false });
+  if (!batch.ok) {
+    const failure = mapStoreFailure(batch);
+    return { ok: false, code: failure.code, reason: failure.reason };
   }
-  const interfaces = module === undefined ? [] : interfaceKeysOf(moduleId, module);
-  // The semantic module scope is the module, its interfaces and its files; the
-  // `project` key belongs to general kinds only. The shared builder keeps its
-  // current behaviour for the old `find` read.
-  const keys = moduleRelatedKeys({ moduleId, interfaces, files }).filter(key => key !== 'project');
-  const paths = module === undefined ? [] : module.paths.map(prefix => prefix.endsWith('/') ? prefix.slice(0, -1) : prefix)
-    .filter(prefix => prefix.length > 0);
-  return { ok: true, value: { keys, paths } };
-}
-
-function pathBoundaryAccepts(head: NoteHeadSnapshot, keySet: ReadonlySet<string>,
-  pathPrefixes: readonly string[]): boolean {
-  for (const slot of anchorSlots(head)) {
-    if (!slot.startsWith('file:') || !keySet.has(slot)) continue;
-    if (!pathPrefixes.some(prefix => prefix === '.' || matchesPathPrefix(slot, prefix))) return false;
-  }
-  return true;
+  const seen = new Map<string, NoteHeadSnapshot>();
+  for (const head of batch.value.values()) keepVisible(seen, head, after, LINK_KIND, visibleOnly);
+  const heads = sortHeadsByNoteId(seen).slice(0, cap);
+  const bound = boundOf(heads, cap);
+  return { ok: true, value: { heads, headless: listed.filter(entry => !batch.value.has(entry.noteId)
+    && (bound === null || entry.noteId <= bound)) } };
 }
 
 function keepVisible(seen: Map<string, NoteHeadSnapshot>, head: NoteHeadSnapshot, after: string | null,
@@ -411,6 +510,24 @@ function semanticLinkOf(head: NoteHeadSnapshot, check: NoteCheckV1,
   };
 }
 
+/** [2B-16]: a filed link with no record head: no version or state, its ends' anchors checked, unchecked and never current. */
+function headlessLinkOf({ note }: HeadlessNote, anchorCheck: NoteAnchorCheckV1, catalog: AdoptedArchitecture | null): SemanticLinkV1 {
+  const knowledge = note.knowledge;
+  const link = knowledge.link!;
+  const anchors = [knowledge.anchor, ...knowledge.extraAnchors] as NoteHeadSnapshot['anchor'][];
+  const slots = anchorCheck.anchorSlots;
+  return {
+    noteId: note.noteId, version: null, state: null, relation: link.relation,
+    from: endOf(link.ends.from, anchors[0]!, catalog, slots[0]!),
+    to: endOf(link.ends.to, anchors[1]!, catalog, slots[1]!),
+    via: link.ends.via === null ? null : endOf(link.ends.via, anchors[2]!, catalog, slots[2]!),
+    key: link.key, evidence: link.evidence.map(({ role, at }) => ({ role, at })),
+    verification: { status: 'unchecked', reason: 'unavailable' }, currentEligible: false,
+    topic: knowledge.topic, conclusion: knowledge.conclusion, source: knowledge.source, goalId: null,
+    confirmedByUser: false, freshness: 'unchecked',
+  };
+}
+
 /** Each step's problem is the first of the five values. */
 function problemOf(head: NoteHeadSnapshot, check: NoteCheckV1): SemanticFlowStepV1['problem'] {
   if (head.state !== 'accepted' && head.state !== 'reviewed') return 'not_current';
@@ -425,19 +542,19 @@ function problemOf(head: NoteHeadSnapshot, check: NoteCheckV1): SemanticFlowStep
 
 /**
  * Expand one flow over the step heads and checks read with its page. A missing
- * step head is `not_current` and keeps no item; the other problems keep the
- * item. `gapsAfter` compares step i's "to" with step i+1's "from" by endpoint
- * identity, 1-based, as a hint only.
+ * step head, or one whose file is no longer a link, is `not_current` and keeps
+ * no item; the other problems keep the item. `gapsAfter` compares step i's "to"
+ * with step i+1's "from" by endpoint identity, 1-based, as a hint only.
  */
 export function expandFlowForHead(
   ctx: CoreCallContext,
   input: {
-    flow: NoteHeadSnapshot;
+    flow: Pick<NoteHeadSnapshot, 'flow'>;
     steps: readonly { head: NoteHeadSnapshot; check: NoteCheckV1 }[];
     catalog: AdoptedArchitecture | null;
   },
 ): NoteFlowReadV1 {
-  const byId = new Map(input.steps.map(step => [step.head.noteId, step]));
+  const byId = new Map(input.steps.filter(step => step.head.kind === LINK_KIND).map(step => [step.head.noteId, step]));
   const stored = input.flow.flow!.steps;
   const steps: SemanticFlowStepV1[] = stored.map(step => {
     const found = byId.get(step.link);
@@ -480,5 +597,15 @@ function semanticFlowOf(
     gapsAfter: expanded.gapsAfter,
     currentEligible: combined.currentEligible,
     freshness: combined.freshness,
+  };
+}
+
+/** [2B-16]: a flow with no record head: its steps expanded the same way, unchecked and never current. */
+function headlessFlowOf({ note }: HeadlessNote, expanded: NoteFlowReadV1): SemanticFlowV1 {
+  const knowledge = note.knowledge;
+  return {
+    noteId: note.noteId, version: null, state: null, topic: knowledge.topic, conclusion: knowledge.conclusion,
+    source: knowledge.source, goalId: null, steps: expanded.steps, gapsAfter: expanded.gapsAfter,
+    currentEligible: false, freshness: 'unchecked',
   };
 }

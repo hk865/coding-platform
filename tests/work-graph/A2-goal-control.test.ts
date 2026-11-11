@@ -41,6 +41,7 @@ import { B2_AT } from '../helpers/B2-execution-fixture.js';
 import { createR3eEvidenceFixture, R3E_GATE_TASK_ID, type R3eEvidenceFixture } from '../helpers/R3e-evidence-fixture.js';
 import { createTaskClaimFixture, type TaskClaimFixture } from '../helpers/task-claim-fixture.js';
 import { withBackendOrderedLookup } from '../helpers/ordered-lookup-forward.js';
+import { knowledgeLinesOver } from '../helpers/KLS2-knowledge-lines.js';
 
 type Platform = Awaited<ReturnType<typeof createTargetPlatform>>;
 const KINDS = ['memory', 'sqlite'] as const;
@@ -477,7 +478,7 @@ describe('VD-9 begin read set (VR-02: the begin guards Goal@rev and the active P
     let armed = false;
     const reader = new VerificationWorkspaceReader();
     let sequence = 0;
-    const evidence = createEvidenceService({ records: fixture.records, materials: fixture.materials,
+    const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(fixture.records, fixture.workspaceHost), records: fixture.records, materials: fixture.materials,
       executions: createRunStateReader({ records: fixture.records }), workspaceHost: fixture.workspaceHost,
       source: { async capture(root) {
         if (armed) {

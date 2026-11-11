@@ -28,6 +28,7 @@ import {
 import { openRealRunHarness } from '../helpers/K3-35-continuation-fixture.js';
 import { createScriptedModel } from '../helpers/B2-runtime-fixture.js';
 import { readToolSeam, shellSeam } from '../helpers/K3-tool-seams.js';
+import { knowledgeLinesOver } from '../helpers/KLS2-knowledge-lines.js';
 
 // §5.1's stand-in `shell` (every blocked record) and `read` (the auto-settled
 // record) are hoisted per test file; the real Run's calls use them.
@@ -86,6 +87,7 @@ function failReviewRead(records: B2Records, reviewKey: string, code: ReviewReadF
 async function taskRow(world: K3ReviewCardWorld, taskId: string, records: B2Records = world.records): Promise<TaskRow> {
   let seq = 0;
   const plans = createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+    knowledge: knowledgeLinesOver(records),
     now: () => T, eventId: () => `k3-47-reader-plan-event-${String(++seq)}` });
   const read = await plans.queryTaskGraph(world.fixture.ctx, { goalRef: GOAL_B, planRef: PLAN_B2 });
   if (read.status !== 'ready') throw new Error(`the Task graph read failed: ${JSON.stringify(read)}`);

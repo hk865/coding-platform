@@ -23,6 +23,7 @@ import { sha256Hex } from '../../src/contracts/fingerprint.js';
 import {
   openS2BActivityFixture, type S2BActivityFixture,
 } from './S2B-activity-fixture.js';
+import { knowledgeLinesOver } from './KLS2-knowledge-lines.js';
 
 const CONFIGURATION_REVISION = 's2b-r2-calendar-checks';
 const PERMISSION_REVISION = 's2b-r2-calendar-permission';
@@ -51,7 +52,7 @@ export async function openCalendarReverifyFixture(kind: 'memory' | 'sqlite'): Pr
     checks: [1, 2, 3, 4].map((n) => ({ checkId: `check-${String(n)}`, kind: 'static', command: 'fixture-check',
       cwd: '.', timeoutMs: 1000, taskIds: 'all' })),
   };
-  const evidence = createEvidenceService({
+  const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(records),
     records,
     executions: createRunStateReader({ records }),
     materials: createMaterialService({ bodies: f.b2.bodies,

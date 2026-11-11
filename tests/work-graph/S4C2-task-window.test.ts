@@ -342,7 +342,9 @@ it.each(CARD_KINDS)('T4b %s: a same-project other-workspace task target uses its
     const second = await createSecondWorkspaceGoal(f);
     const pending = await f.platform.notes.writeNote(second.workCtx, { commandId: 'tw-t4b-w2-note',
       note: generalNote({ kind: 'decision', topic: 'tw-t4b-w2-pending',
-        anchor: { kind: 'module', moduleId: 'A' }, conclusion: 'W2 agent note',
+        // KLS-2b: the W2 Run names the main workspace's module A in its own frame.
+        anchor: { kind: 'module', moduleId: `/@ws:${encodeURIComponent(f.scope.workspaceId)}/A` },
+        conclusion: 'W2 agent note',
         replaces: [idOf(w1User)] }), expectedPointerRevision: null, goalId: W2_GOAL });
     expect(pending).toMatchObject({ status: 'pending_review', reasons: ['user_note_replaced'] });
     const w2NoteId = idOf(pending);

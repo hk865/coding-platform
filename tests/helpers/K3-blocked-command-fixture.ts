@@ -68,6 +68,7 @@ import { openK3ReviewCardWorld, type K3ReviewCardWorld } from './K3-review-card-
 import { createRuntimeHostDouble, createScriptedModel } from './B2-runtime-fixture.js';
 import { mailboxToolSeam, shellSeam } from './K3-tool-seams.js';
 import { GOAL_B, PLAN_B2, T, WORKSPACE } from './S5-decision-fixture.js';
+import { knowledgeLinesOver } from './KLS2-knowledge-lines.js';
 
 /**
  * One scripted Kernel call. `command` is the shell command; `name`/`args`
@@ -275,7 +276,8 @@ async function seedBlockedRun(
   const executions = createRunStateReader({ records });
   const roles = createRoleConfigurationService({ records, now,
     eventId: () => `k3-blocked-role-event-${String(next())}` });
-  const sessions = createSessionDirectory({ records, lookups: records, duty: unknownSessionDuty });
+  const sessions = createSessionDirectory({ records,
+    knowledge: knowledgeLinesOver(records), lookups: records, duty: unknownSessionDuty });
   const materialReaders = createMaterialRecordReaders(records);
   const materials = createMaterialService({ bodies: fixture.bodies, authority: materialReaders.authority, now });
   const sessionOperations = createSessionOperations({ sessions, kernelStores });

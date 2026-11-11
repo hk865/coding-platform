@@ -439,6 +439,10 @@ it.each(KINDS)('rework 4 item 1 %s: targets are read only for the counting bucke
 //     relation-target NoteHead batch 1
 //   So the three note batches are 3 per Goal, 6 in total, and the whole queue
 //   reads the catalog once.
+//   KLS-2b R-窗 (ruling 9): that one catalog read (its files) happens before the
+//   queue fixes its window, in the note source's `prepareWindow` (counted under
+//   BEFORE_WINDOW); inside the window g1 and g2 read no catalog, so g1's
+//   catalog 1 above is BEFORE_WINDOW's now.
 //   RED on the old code: g1 catalog 2 (module window + the retired interface's
 //   candidate list), g2 catalog 1 (fresh NoteCall per Goal), total 3.
 // ---------------------------------------------------------------------------
@@ -453,6 +457,8 @@ type QueueCountState = {
   perGoal: Map<string, QueueKinds>;
 };
 
+/** The bucket of the note source's read before the queue window (R-窗). */
+const BEFORE_WINDOW = '(before the window)';
 const zeroQueueKinds = (): QueueKinds => ({ noteIndex: 0, noteHead: 0, pointer: 0, plan: 0,
   catalog: 0, targetHead: 0 });
 
@@ -516,6 +522,17 @@ Promise<{ f: Awaited<ReturnType<typeof createS4ANoteFixture>>; state: QueueCount
     .mockImplementation(deps => {
       const real = originalCardSource(deps);
       return { ...real,
+        async prepareWindow(ctx, input) {
+          state.active = true;
+          state.goalId = BEFORE_WINDOW;
+          state.perGoal.set(BEFORE_WINDOW, zeroQueueKinds());
+          try {
+            return await real.prepareWindow!(ctx, input);
+          } finally {
+            state.active = false;
+            state.goalId = null;
+          }
+        },
         async readPage(ctx, input) {
           const goalId = input.goalRef === undefined ? null : input.goalRef.goalId;
           if (goalId !== null) {
@@ -619,8 +636,9 @@ it.each(KINDS)('rework 2/3 item 1 %s: one plan window and exactly one catalog pe
     // Hand-computed: see the comment block above.
     // ONE catalog window for the WHOLE queue call: g2 reuses g1's attempt window
     // and the retired interface target builds no candidate list.
-    expect(g1.catalog + g2.catalog).toBe(1);
-    expect(g1).toEqual({ noteIndex: 1, noteHead: 1, pointer: 1, plan: 1, catalog: 1, targetHead: 1 });
+    expect((state.perGoal.get(BEFORE_WINDOW)?.catalog ?? 0) + g1.catalog + g2.catalog).toBe(1);
+    expect(state.perGoal.get(BEFORE_WINDOW)?.catalog).toBe(1);
+    expect(g1).toEqual({ noteIndex: 1, noteHead: 1, pointer: 1, plan: 1, catalog: 0, targetHead: 1 });
     expect(g2).toEqual({ noteIndex: 1, noteHead: 1, pointer: 1, plan: 1, catalog: 0, targetHead: 1 });
     // The stage target reuses the window the card source already read per Goal.
     expect(g1.plan).toBe(1);

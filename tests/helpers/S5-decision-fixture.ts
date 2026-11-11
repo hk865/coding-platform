@@ -52,7 +52,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { KnowledgeLines } from '../../src/core/work-graph/model/line-knowledge.js';
-import { knowledgeLinesFor } from './KLS2-knowledge-lines.js';
+import { knowledgeLinesOfRoots, knowledgeLinesOver } from './KLS2-knowledge-lines.js';
 import { DatabaseSync } from 'node:sqlite';
 import type { ArchitectureCatalogPinV1 } from '../../src/contracts/architecture-catalog.js';
 import { artifactBodyDigest } from '../../src/contracts/artifact.js';
@@ -575,8 +575,11 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
   };
   const observed = observeRecords(forwarded, counts);
   const records = observed.records;
-  const knowledge = knowledgeLinesFor({ root: mkdtempSync(join(tmpdir(), 's5-knowledge-')), projectId: PROJECT_ID,
-    workspaceId: WORKSPACE_ID, records });
+  const knowledgeRoot = mkdtempSync(join(tmpdir(), 's5-knowledge-'));
+  // P/W is this world's main workspace; the base plan owner and a second workspace of P (S2A's W2) read
+  // P's architecture files from this root, over the observed records.
+  b2.base.knowledgeRoots.set(JSON.stringify([PROJECT_ID, WORKSPACE_ID]), knowledgeRoot);
+  const knowledge = knowledgeLinesOfRoots(b2.base.knowledgeRoots, records);
   const allocations = createS5Allocations();
   const { allocationCounts, newId, now } = allocations;
   const bodyPath = join(directory, 'artifacts.sqlite');
@@ -657,7 +660,8 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
   }
 
   // ---- real Sessions S / second --------------------------------------------
-  const sessionsPort: SessionDirectoryPort = createSessionDirectory({ records, lookups: records, duty: unknownSessionDuty });
+  const sessionsPort: SessionDirectoryPort = createSessionDirectory({ records,
+    knowledge: knowledgeLinesOver(records), lookups: records, duty: unknownSessionDuty });
   const kernelStores = await createKernelStoreRegistry({ entries: [{
     adapterId: 's5-kernel', storeKey: 's5-kernel-store', workspace: WORKSPACE_SCOPE, databasePath: join(directory, 's5-kernel.sqlite'),
   }] });
@@ -826,7 +830,8 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
   }
   const planCDraft = planDraft('PC1', GOAL_C.goalId, [{ stageId: 'stage-c', title: 'Module N stage' }],
     [workTask('c-work', 'Plan module N work', { kind: 'module', stageId: 'stage-c', moduleRef: MODULE_N.moduleId })], requirementKind);
-  const plans = createPlanService({ records, bindings: createInitializationBindingReader({ records }), now, eventId });
+  const plans = createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+    knowledge, now, eventId });
   async function adoptInitial(goalRef: GoalRef, draft: PlanRevisionDraft): Promise<PlanRevisionSnapshot> {
     const proposed = await plans.proposePlan(ctx, { input: { goalRef, basedOn: null, draft,
       reason: { text: `Initial ${draft.planId}`, sources: [] } },
@@ -1071,7 +1076,8 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
   // The one project link that makes this secretary selectable under the real scope filter (BK-15). It is the
   // public `sessions/link` owner, the same step the route binds, not a seeded link.
   const requestLifecycle = createSessionLifecycleService({
-    records, lookups: records, sessionFacts: requestSessionFacts, duty: duties });
+    records,
+    knowledge: knowledgeLinesOver(records), lookups: records, sessionFacts: requestSessionFacts, duty: duties });
   const requestCard = await sessionsPort.readSession(ctx, requestSecretary);
   if (requestCard.status !== 'ready') throw new Error(`S5 secretary card read failed: ${JSON.stringify(requestCard)}`);
   const requestProjectTarget = { kind: 'project' as const, ref: { projectId: PROJECT_ID } };

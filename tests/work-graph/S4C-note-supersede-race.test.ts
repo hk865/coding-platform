@@ -10,12 +10,12 @@
  * (the disposition-decision read, after the scribe-scope check already read it
  * once) the person accepts that pending target through the real
  * `platform.notes.reviewNote`. No record-store read answers an assertion.
+ * KLS-2b [2B-06]: the disposition's reads and commit now run in the project's
+ * in-process write queue, so the person's accept lands before the scribe's
+ * call (an accept inside the read would wait on the queue the scribe holds).
  */
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { NoteDraftV1 } from '../../src/contracts/note.js';
-import type { GoalRecordTransactionPort } from '../../src/core/record-store/ports.js';
-import * as memoryBackend from '../../src/core/record-store/in-memory-record-store.js';
-import * as sqliteBackend from '../../src/core/record-store/sqlite-record-store.js';
 import { createS4ANoteFixture, type S4ANoteFixture, type S4ANoteFixtureKind } from '../helpers/S4A-note-fixture.js';
 
 const KINDS: readonly S4ANoteFixtureKind[] = ['memory', 'sqlite'];
@@ -31,63 +31,21 @@ function general(overrides: Partial<NoteDraftV1> = {}): NoteDraftV1 {
 
 const idOf = (result: { status: string }): string => (result as unknown as { noteId: string }).noteId;
 
-type RaceSeam = {
-  /** Arm the interleave; `action` runs on the second read of `noteId`'s head. */
-  arm(noteId: string, action: () => Promise<void>): void;
-};
-
-/** The real fixture over a `readMany`-wrapped backend; the wrapper is inert until `arm`. */
-async function buildRaceFixture(kind: S4ANoteFixtureKind): Promise<{ f: S4ANoteFixture; seam: RaceSeam }> {
-  let armed = false;
-  let fired = false;
-  let reads = 0;
-  let target = '';
-  let action: (() => Promise<void>) | null = null;
-  const observe = <T,>(backend: T): T => {
-    const records = (backend as unknown as { records: GoalRecordTransactionPort }).records;
-    const rawReadMany = records.readMany.bind(records);
-    return { ...(backend as object), records: { ...records,
-      async readMany(refKeys: readonly string[]): Promise<unknown> {
-        const result = await rawReadMany(refKeys as string[]);
-        if (armed && !fired && refKeys.some(key => key.includes(target))) {
-          reads += 1;
-          if (reads === 2) {
-            fired = true;
-            const run = action;
-            if (run !== null) await run();
-          }
-        }
-        return result;
-      } } } as unknown as T;
-  };
-  const originalMemory = memoryBackend.createInMemoryRecordBackend;
-  const originalSqlite = sqliteBackend.createSqliteRecordBackend;
-  const memorySpy = vi.spyOn(memoryBackend, 'createInMemoryRecordBackend')
-    .mockImplementation(options => observe(originalMemory(options)) as never);
-  const sqliteSpy = vi.spyOn(sqliteBackend, 'createSqliteRecordBackend')
-    .mockImplementation(options => observe(originalSqlite(options)) as never);
-  let f: S4ANoteFixture;
-  try {
-    // goalQuota 1 makes the second agent note pending_review, so the person can
-    // really `accept` it (only a pending note accepts).
-    f = await createS4ANoteFixture(kind, { goalQuota: 1 });
-  } finally {
-    memorySpy.mockRestore();
-    sqliteSpy.mockRestore();
-  }
-  return { f, seam: { arm(noteId, run) { target = noteId; action = run; reads = 0; fired = false; armed = true; } } };
+/** The real fixture; goalQuota 1 makes the second agent note pending_review, so the person can really `accept` it. */
+async function buildRaceFixture(kind: S4ANoteFixtureKind): Promise<{ f: S4ANoteFixture }> {
+  return { f: await createS4ANoteFixture(kind, { goalQuota: 1 }) };
 }
 
 async function itemOf(f: S4ANoteFixture, noteId: string): Promise<{ storedState: string; version: number;
   confirmedByUser: boolean; replaces: string[]; coexistWith: string[] }> {
   const read = await f.platform.notes.readNote(f.ctx(), { noteId });
   if (read.status !== 'ready') throw new Error(`note ${noteId} is not readable: ${JSON.stringify(read)}`);
-  return read.value;
+  return { ...read.value, version: read.value.version!, storedState: read.value.storedState! };
 }
 
 describe('RW-2 a concurrent user confirmation is not superseded', () => {
-  it.each(KINDS)('RW-2 %s: a user accept between the decision read and the commit is revision_conflict', async kind => {
-    const { f, seam } = await buildRaceFixture(kind);
+  it.each(KINDS)('RW-2 %s: a user accept that lands first keeps the target out of the scribe supersede', async kind => {
+    const { f } = await buildRaceFixture(kind);
     try {
       const user = f.ctx();
       // z: a live agent contradiction (accepted, agent source).
@@ -109,16 +67,16 @@ describe('RW-2 a concurrent user confirmation is not superseded', () => {
       const yId = idOf(y);
       expect(y).toMatchObject({ status: 'pending_review' });
 
-      // The interleave: on the decision read of x, the person accepts x.
-      seam.arm(xId, async () => {
-        const confirmed = await f.platform.notes.reviewNote(user, { commandId: 'rw2-user-confirm',
-          noteId: xId, expectedVersion: 1, expectedPointerRevision: null, verdict: 'accept', reason: '我确认这条' });
-        expect(confirmed).toMatchObject({ status: 'done', state: 'accepted' });
-      });
+      // KLS-2b [2B-06]: the scribe's decision read and its commit run in the project's write queue, so the
+      // person's accept can no longer land between them; it lands first and the scribe decides on the confirmed x.
+      const confirmed = await f.platform.notes.reviewNote(user, { commandId: 'rw2-user-confirm',
+        noteId: xId, expectedVersion: 1, expectedPointerRevision: null, verdict: 'accept', reason: '我确认这条' });
+      expect(confirmed).toMatchObject({ status: 'done', state: 'accepted' });
 
       const result = await f.platform.notes.reviewNote(scribe, { commandId: 'rw2-scribe-accept', noteId: yId,
         expectedVersion: 1, expectedPointerRevision: null, verdict: 'accept', resolution: 'supersede', reason: '收下' });
-      expect(result).toMatchObject({ status: 'rejected', code: 'revision_conflict' });
+      // The scribe decides on the user-confirmed x: its supersede no longer applies.
+      expect(result).toMatchObject({ status: 'rejected', code: 'invalid', reason: 'resolution_not_applicable' });
 
       // The user-confirmed target is still current and was not superseded.
       const xItem = await itemOf(f, xId);

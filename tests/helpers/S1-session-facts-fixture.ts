@@ -49,6 +49,7 @@ import { checkAllInvariants, invariantStoreOf, readInvariantWorld, platformRecor
   type InvariantWorld } from '../state/invariants.js';
 import { B2_HOST, type B2ExecutionFixture, type B2Admitted } from './B2-execution-fixture.js';
 import type { TaskClaimFixture, Records } from './task-claim-fixture.js';
+import { knowledgeLinesOver } from './KLS2-knowledge-lines.js';
 
 export const t0 = '2026-10-08T00:00:00.000Z';
 export const t1 = '2026-10-09T00:00:00.000Z';
@@ -168,8 +169,10 @@ export type StoreObservation = Awaited<ReturnType<typeof observeStore>>;
 export function sessionOwners(base: TaskClaimFixture) {
   const records = base.records;
   const facts = createSessionFactsService({ records });
-  const directory = createSessionDirectory({ records, lookups: records, duty: unknownSessionDuty });
-  const lifecycle = createSessionLifecycleService({ records, lookups: records, sessionFacts: facts, duty: unknownSessionDuty });
+  const directory = createSessionDirectory({ records,
+    knowledge: knowledgeLinesOver(records), lookups: records, duty: unknownSessionDuty });
+  const lifecycle = createSessionLifecycleService({ records,
+    knowledge: knowledgeLinesOver(records), lookups: records, sessionFacts: facts, duty: unknownSessionDuty });
   return { facts, directory, lifecycle };
 }
 

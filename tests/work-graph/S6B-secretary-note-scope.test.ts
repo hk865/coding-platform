@@ -205,7 +205,7 @@ describe('the secretary note scope in a held request round', () => {
           .toMatchObject({ status: 'done', state: 'withdrawn' });
         const user = await readNote(world, userNote.noteId);
         expect(await world.platform.notes.withdrawNote(ctx, { commandId: 's6b-scope-withdraw-user',
-          noteId: user.noteId, expectedVersion: user.version, reason: 'S6B withdraw' }))
+          noteId: user.noteId, expectedVersion: user.version!, reason: 'S6B withdraw' }))
           .toMatchObject({ status: 'rejected', code: 'forbidden' });
       });
       expect((await readNote(world, ids.plain)).goalId).toBe(effective);

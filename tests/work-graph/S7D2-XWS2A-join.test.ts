@@ -21,7 +21,7 @@ import {
   openS7D2RoleLineWorld, S7D2_MODULE_IDS, startLinesOf, type S7D2RoleLineWorld,
 } from '../helpers/S7D2-role-line-world.js';
 import {
-  XWS2A_COARSE_QUESTION, XWS2A_MODULE_ID, XWS2A_MODULE_RAW_PATH, openXWS2AWorld, xws2aJoinRef,
+  XWS2A_COARSE_QUESTION, XWS2A_MODULE_RAW_PATH, openXWS2AWorld, xws2aJoinRef, xws2aModuleInProject,
   xws2aSecondPath, type XWS2AJoinRow, type XWS2AWorld,
 } from '../helpers/XWS2A-world.js';
 import { waitFor } from '../scenarios/harness.js';
@@ -138,7 +138,7 @@ describe('XWS2A: the second workspace joins the project', () => {
     // One catalog: the same revision read from either workspace context.
     expect(second.catalog.ref).toEqual(main.catalog.ref);
     const modules = main.catalog.catalog.modules;
-    const added = modules.find(module => module.ref.moduleId === XWS2A_MODULE_ID);
+    const added = modules.find(module => module.ref.moduleId === xws2aModuleInProject(world.second.scope.workspaceId));
     expect(added).toBeDefined();
     expect(added!.paths).toContain(xws2aSecondPath(world.second.scope.workspaceId, XWS2A_MODULE_RAW_PATH));
     const firstModule = modules.find(module => module.ref.moduleId === 'src');
@@ -151,7 +151,8 @@ describe('XWS2A: the second workspace joins the project', () => {
     await world.base.setOpen('adviser', holders + 2, 'xws2a-adviser-seats');
     await world.approveCoarse();
     const regionScope = (row: { scope: readonly { kind: string; moduleRef?: ModuleRef }[] }): boolean =>
-      row.scope.some(scope => scope.kind === 'region' && scope.moduleRef?.moduleId === XWS2A_MODULE_ID);
+      row.scope.some(scope => scope.kind === 'region'
+        && scope.moduleRef?.moduleId === xws2aModuleInProject(world.second.scope.workspaceId));
     await waitFor(() => world.roleLines(), rows => rows.some(row => row.row.duty === 'adviser'
       && regionScope(row)), 'the second-mod region adviser line');
 

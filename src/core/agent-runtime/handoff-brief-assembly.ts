@@ -171,7 +171,7 @@ async function readHandoffUnderstanding(
     const notes = await readAnchorNotes(deps, ctx, anchor, signal);
     if (notes.status !== 'ready') return notes;
     for (const note of notes.value) {
-      if (note.kind !== 'understanding' || !note.currentEligible) continue;
+      if (note.kind !== 'understanding' || !note.currentEligible || note.version === null) continue;
       if (!noteSourceRunMatches(note.source, sourceRun)) continue;
       const key = `${note.noteId}@${String(note.version)}`;
       if (seen.has(key)) continue;
@@ -193,7 +193,7 @@ async function readModuleNoteIndex(
     index.push({
       moduleId,
       notes: notes.value.filter(note => note.currentEligible)
-        .map(note => ({ noteRef: note.noteId, version: note.version })),
+        .flatMap(note => note.version === null ? [] : [{ noteRef: note.noteId, version: note.version }]),
     });
   }
   return { status: 'ready', value: index };

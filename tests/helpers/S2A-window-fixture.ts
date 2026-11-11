@@ -43,6 +43,7 @@ export function windowReadModel(f: S5DecisionFixture, records: S5Records): Decis
   const materials = createMaterialService({ bodies: f.bodies,
     authority: createMaterialRecordReaders(inner).authority, now: f.now });
   const plans = createPlanService({ records: inner, bindings: createInitializationBindingReader({ records: inner }),
+    knowledge: f.knowledge,
     materials, initialPlanning: { bodies: f.bodies }, now: f.now, eventId: f.newId });
   const causes = createGoalDecisionCauseReader({ records: inner, plans });
   return createDecisionReadModel({ records,

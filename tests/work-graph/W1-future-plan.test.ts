@@ -64,6 +64,7 @@ import type { ClaimTaskInput } from '../../src/core/work-graph/model/claim-contr
 import type { GraphWrite } from '../../src/core/work-graph/model/task-contracts.js';
 import type { PlanProposal, PlanProposalRef, TaskRow } from '../../src/core/work-graph/model/plan-contracts.js';
 import type { TrustedCheckConfiguration } from '../../src/contracts/verification.js';
+import { knowledgeLinesOver } from '../helpers/KLS2-knowledge-lines.js';
 
 const AT = '2026-09-25T00:00:00.000Z';
 // The accepted claim fixture's fixed scope; `setup` verifies it before use.
@@ -380,7 +381,7 @@ async function setup(sourceDraft: PlanDraftV2 = initialDraft()): Promise<W1Fixtu
     };
     const materials = createMaterialService({ bodies: b2.bodies,
       authority: createMaterialRecordReaders(records).authority, now });
-    const evidence = createEvidenceService({ records, materials, executions, workspaceHost,
+    const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(records, workspaceHost), records, materials, executions, workspaceHost,
       source: new VerificationWorkspaceReader(), configuration, now, newId });
     const runner = createRegisteredCheckRunner({ evidence, workspaceHost, kernel, now });
 
@@ -470,6 +471,7 @@ async function setup(sourceDraft: PlanDraftV2 = initialDraft()): Promise<W1Fixtu
 function planServiceOver(records: Records, tag: string): ReturnType<typeof createPlanService> {
   let n = 0;
   return createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+    knowledge: knowledgeLinesOver(records),
     now: () => AT, eventId: () => `w1-${tag}-${++n}` });
 }
 

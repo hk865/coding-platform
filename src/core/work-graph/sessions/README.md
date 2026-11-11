@@ -46,20 +46,20 @@
 ## 可以复用的能力
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
-| `createSessionDirectory` | `src/core/work-graph/sessions/session-directory.ts:690` | 返回 Session 目录端口：创建/注册/读取/按条件列 Session；`findSessions` 给两个 id 读一个工作区，只给 `projectId` 时走 `SESSION_BY_PROJECT_LOOKUP` 读整个项目的 active Session（无 target/role、不含归档） | 需要 Session 的正式写入或目录读取时 |
+| `createSessionDirectory` | `src/core/work-graph/sessions/session-directory.ts:694` | 返回 Session 目录端口：创建/注册/读取/按条件列 Session；`findSessions` 给两个 id 读一个工作区，只给 `projectId` 时走 `SESSION_BY_PROJECT_LOOKUP` 读整个项目的 active Session（无 target/role、不含归档） | 需要 Session 的正式写入或目录读取时 |
 | `createDutyRecipient` **正本** | `duty-recipient.ts:31` | 按固定职责（`adviser`/`secretary`/`scribe`）从真实目录取 `sessionId` 最小的 active 线；scribe 臂无健康过滤且逐字保留旧行为，职责读失败时 scribe 跳过、adviser/secretary 是 `unavailable` | 请求、参谋、秘书和书记的收件人兜底；不要另写第二份职责扫描 |
-| `readSession` | `src/core/work-graph/sessions/session-directory.ts:1748` | 读一个公开 Session 卡，含可用性与当前 revision | 需要按 `SessionRef` 读卡片时 |
-| `reactivationSeatOf` | `src/core/work-graph/sessions/session-directory.ts:601` | 一次性再准入的座位（没有预留、没有两阶段创建），async：只读副本或未知 duty 答 `none`；满座时经注入的 `reclaim` getter 试一次回收，回收成功就用重读的分配与额度再判一次，仍满座答拒绝；否则给出 `add_holder` 的编码记录与两个 guard | 再准入提交；不要另算座位或另写 holder 记录 |
-| `reclaimOnceOf` | `src/core/work-graph/sessions/session-directory.ts:633` | 一次准入只回收一次：把回收 getter 包成只在第一次调用时给出端口，重试的尝试拿到 `undefined` | 准入与重新启用的重试之外建一次；不要在尝试里另记标记 |
+| `readSession` | `src/core/work-graph/sessions/session-directory.ts:1753` | 读一个公开 Session 卡，含可用性与当前 revision | 需要按 `SessionRef` 读卡片时 |
+| `reactivationSeatOf` | `src/core/work-graph/sessions/session-directory.ts:605` | 一次性再准入的座位（没有预留、没有两阶段创建），async：只读副本或未知 duty 答 `none`；满座时经注入的 `reclaim` getter 试一次回收，回收成功就用重读的分配与额度再判一次，仍满座答拒绝；否则给出 `add_holder` 的编码记录与两个 guard | 再准入提交；不要另算座位或另写 holder 记录 |
+| `reclaimOnceOf` | `src/core/work-graph/sessions/session-directory.ts:637` | 一次准入只回收一次：把回收 getter 包成只在第一次调用时给出端口，重试的尝试拿到 `undefined` | 准入与重新启用的重试之外建一次；不要在尝试里另记标记 |
 | `createRoleLineMaintenance`、`RoleLineMaintenancePort`、`RoleLineMaintenanceDeps` | `src/core/work-graph/sessions/role-line-maintenance.ts:221`、`:124`、`:132` | 参谋/书记维护页（`maintain`）、拆线事实读（`readSplitFacts`）和保留上限回收（`reclaimForAdmission`）的唯一实例 | Workflow 的维护页、两个准入的回收 getter 和 `propose_role_split` 的 owner 共用一个；不要另建维护实例 |
 | `roleLineSlowOf`、`ROLE_LINE_SLOW_MESSAGE_LIMIT`、`ROLE_LINE_SLOW_WINDOW_MS` | `src/core/work-graph/sessions/role-line-maintenance.ts:75`、`:74`、`:75` | 太慢的纯重放：按提交顺序折叠收件人的消息，可消费、未接受的 `action_request`/`inquiry` 超过 10 条的连续时段满 30 分钟才是太慢 | 维护页；不要存起点或另加计时器 |
 | `moveProjectScope`、`ProjectScopeMoveV1` | `src/core/work-graph/sessions/session-responsibility-service.ts:232`、`:213` | L38 项目范围移交：选主工作区里同职责负载最小的活跃线，给出目标项目链接、`null → 链接` 的 claim 和两个 guard；只对参谋/书记 | 归档释放并进同一次提交；不要另写选线 |
 | `proofOfAnswer` **正本** | `src/core/work-graph/sessions/session-responsibility-service.ts:204` | b12 证明：有卡的答案时由提交的真实前后 pin 组 `DecisionChangeProofV1`，没有就是 `undefined` | 归档事件与两个责任写者；不要另写证明构造 |
 | `ArchiveSessionOptionsV1` | `src/core/work-graph/sessions/lifecycle-contracts.ts:60` | `archiveSession` 的可选第三参数 `{ proof?, operation? }` | 回收传 `{ operation }`，O3 的 `archive_line` 传两个；人的归档不传 |
-| `stableSessionCreationIdentity` | `src/core/work-graph/sessions/session-directory.ts:182` | 由 actor/project/request 推出稳定的 operationRef 与 plannedSessionRef | 创建前查重、重试或容量预检 |
-| `sessionRegisterIdentityKey` | `src/core/work-graph/sessions/session-directory.ts:168` | Host actor/project/request 的 Session 登记提交身份键（正式 receipt 的 identity） | 按子线登记提交读回执时 |
-| `kernelSessionClaimKey` | `src/core/work-graph/sessions/session-directory.ts:195` | Kernel Session 独占映射槽 key | 绑定/检查 Kernel 映射 claim 时 |
-| `createModuleMaintainer` | `src/core/work-graph/sessions/module-maintainer-service.ts:171` | 模块维护者唯一 owner：维护者读、指定命令（打开/移动/`already_owner`）、决定应用与每步确认/自动模式的工具入口；证明绑定只从存储操作输入重建 | 两条入口（人的路由、adviser 工具）与卡的应用；不要另写指定命令或第二份读取 |
+| `stableSessionCreationIdentity` | `src/core/work-graph/sessions/session-directory.ts:186` | 由 actor/project/request 推出稳定的 operationRef 与 plannedSessionRef | 创建前查重、重试或容量预检 |
+| `sessionRegisterIdentityKey` | `src/core/work-graph/sessions/session-directory.ts:172` | Host actor/project/request 的 Session 登记提交身份键（正式 receipt 的 identity） | 按子线登记提交读回执时 |
+| `kernelSessionClaimKey` | `src/core/work-graph/sessions/session-directory.ts:199` | Kernel Session 独占映射槽 key | 绑定/检查 Kernel 映射 claim 时 |
+| `createModuleMaintainer` | `src/core/work-graph/sessions/module-maintainer-service.ts:174` | 模块维护者唯一 owner：维护者读、指定命令（打开/移动/`already_owner`）、决定应用与每步确认/自动模式的工具入口；证明绑定只从存储操作输入重建 | 两条入口（人的路由、adviser 工具）与卡的应用；不要另写指定命令或第二份读取 |
 | `readMaintainerAssignmentOperation` | `src/core/work-graph/sessions/session-record-codecs.ts:1451` | 存储 `maintainer_assignment` 操作的唯一点读：真实缺失 `null`、损坏 `unavailable`、别的 action 种类 `null` | 卡来源与 owner 共用；不要另建索引或第二次读 |
 | `maintainerAssignmentRecordedCodec` | `src/core/work-graph/sessions/session-record-codecs.ts:1215` | `MaintainerAssignmentRecorded` 事件的编码、解码与注册：每次写 `maintainer_assignment` 操作都追加这条事件（带操作 ref、revision、phase 和整个 action，可带 actor 和证明）；没有新记录格式 | 写维护者操作时编码，命令结果校验时解码；不要另写事件信封 |
 | `checkSessionProvenance` | `src/core/work-graph/sessions/session-record-codecs.ts:363` | 校验 new/task 续接/secretary handoff/readonly-copy provenance | 跟随 successor 或排除副本时 |
@@ -80,13 +80,13 @@
 | `eventIdOf` | `src/core/work-graph/sessions/trusted-context.ts:111` | 由 identity key 加后缀派生事件 id | 生成 Session 事件 id 时 |
 | `readSessionWorkLinks` | `src/core/work-graph/sessions/session-links.ts:19` | 经注册索引完整读一个 Session 的 links，返回读取 watermark | 构建 Session 卡或判断归档阻塞时 |
 | `secretaryHandoffClaimKey` **正本**、`readHandoffFence`、`handoffFenceGuard` | `src/core/work-graph/sessions/session-handoff-fence.ts:73`、`:41`、`:73` | 交接闸门的唯一键体（前缀 + Session 聚合 ref 的规范 JSON）、按 Session 取该闸门（每 workspace 一次分页，没有则 `{held:false, operation:null}`，坏读 `unavailable`）与真实开始的空槽 CAS | 开始、驱动/队列和归档臂读同一个闸门；不要写第二个 claim key，也不要用这个读拿 guards |
-| `createSessionLifecycleService` | `src/core/work-graph/sessions/session-lifecycle.ts:279` | link/archive/reactivate 的 GraphWrite 服务，含 replay 恢复；可选依赖 `archiveCondition`（I1 直接注入 handoff facts 的 `checkArchiveCondition`）收紧最终归档：条件片段并进 `guards`/`claims`/`ledgerHorizon`，条件不成立是 `revision_conflict`，条件存在而端口缺失是 `unavailable` | 生命周期写入口；归档条件只经这里复查，不要另找地方复查或另提交一次 |
+| `createSessionLifecycleService` | `src/core/work-graph/sessions/session-lifecycle.ts:283` | link/archive/reactivate 的 GraphWrite 服务，含 replay 恢复；可选依赖 `archiveCondition`（I1 直接注入 handoff facts 的 `checkArchiveCondition`）收紧最终归档：条件片段并进 `guards`/`claims`/`ledgerHorizon`，条件不成立是 `revision_conflict`，条件存在而端口缺失是 `unavailable` | 生命周期写入口；归档条件只经这里复查，不要另找地方复查或另提交一次 |
 | `createSessionHealthService` | `src/core/work-graph/sessions/session-health.ts:78` | 在 Host 实例租约下观测并写入 Session 健康 | Host 启动 reconcile 或 Turn closure |
 | `createSessionResponsibilityService` | `src/core/work-graph/sessions/session-responsibility-service.ts:290` | 责任转移/关闭/归档责任处置，绑定同一 cursor | 责任交接与归档步骤 |
 | `scopeClaimChangesOf` | `src/core/work-graph/sessions/session-responsibility-service.ts:152` | 共享 claim 适配器：只有 `responsible` 且落在 role scope 的链接参与；两个列表都空时返回 `duty:null` 且不读职责，否则一次职责读取后给出 claim 变更 | 链接写入与责任转移共用；不要另写 claim 判定 |
 | `readGoalRecord` | `src/core/work-graph/sessions/session-targets.ts:77` | `sessions` 内唯一的 Goal 记录读取：规范 key + 一次 `readMany` + `decodeGoalSnapshot`；缺记录 `not_found`、解码失败 `unavailable`、读失败走共享映射 | 目标校验与 reanchor 事实读取共用；不要再 import `tasks` |
 | `validateTaskTarget` | `src/core/work-graph/sessions/session-targets.ts:114` | 校验 Task 目标属于 Goal 当前已采纳 Plan，并返回 guards | 创建或链接 Task 目标时 |
-| `validateWorkLinkTarget` | `src/core/work-graph/sessions/session-targets.ts:162` | 按目标种类校验（Goal 读同一项目的 Goal 及其 revision guard；Project 只比 projectId、无 guard；Task/Module 各按原规则；WorkContext 明确 unsupported） | 链接目标写前校验 |
+| `validateWorkLinkTarget` | `src/core/work-graph/sessions/session-targets.ts:164` | 按目标种类校验（Goal 读同一项目的 Goal 及其 revision guard；Project 只比 projectId、无 guard；Task/Module 各按原规则，模块经调用方的 `catalogModuleFactsOnce`，一次调用只读一次目录文件；WorkContext 明确 unsupported） | 链接目标写前校验 |
 | `createRecipientExecutions` | `src/core/work-graph/sessions/recipient-executions.ts:70` | 读收件 Session 的未结束执行与账本 horizon，供撤回的开放执行窗口判定；Work 只读 Session occupancy 指向的那一个 Run（项目级读，可跨工作区），QueryRun 仍按收件线枚举；读失败、窗口移动或不完整都原样报失败，不返回空集 | 撤回 owner 判定能否撤回时；不要另读执行或自己拼 horizon |
 | `sessionActivityCodec`、`SESSION_ACTIVITY_SCHEMAS` | `src/core/work-graph/sessions/session-activity.ts:38`、`src/core/work-graph/sessions/session-activity.ts:39` | `SessionActivity@1` 的记录 codec 与 schema 注册组 | 组合根注册 schema、提交前编码恰好一条活动记录 |
 | `sessionActivityRefOf` | `src/core/work-graph/sessions/session-activity.ts:42` | 由 SessionRef 构造活动的完整带标记 ref（`aggregateType: 'SessionActivity'`） | 读、guard 或比较活动记录时；不要内联拼 key |

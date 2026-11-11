@@ -77,7 +77,7 @@
 | `createActivityBackfill` | `src/business/workflow/activity-backfill.ts:112` | 用 `countRunActivity`/`countQueryActivity` 计数并经 `recordRunActivity`/`recordQueryActivity` 写回填批次，不改 Run/Task/Attempt/Query | 启动自动回填与人工区间回填 |
 | `orderTasksByDependency` | `src/business/workflow/task-order.ts:14` | 按 DAG 边的稳定 Kahn 排序，只影响候选尝试顺序 | 选择候选 Task 前的软排序 |
 | `DEFAULT_SESSION_ARCHIVE_POLICY` | `src/business/workflow/ports.ts:102` | 冻结默认归档策略：一天、每页 100 | 组合根未显式配置时 |
-| `stableSessionCreationIdentity` | `src/core/work-graph/sessions/session-directory.ts:182` | 由同一稳定 `commandId` 派生 Session 创建身份 | 建线与崩溃重试；不要另写身份配方（MH-03、FP-13） |
+| `stableSessionCreationIdentity` | `src/core/work-graph/sessions/session-directory.ts:183` | 由同一稳定 `commandId` 派生 Session 创建身份 | 建线与崩溃重试；不要另写身份配方（MH-03、FP-13） |
 | `compareRequestRounds` | `src/core/work-graph/queries/request-rounds-read.ts:96` | request round 的稳定先后比较，只取 `ref` 与 `since` 两项 | drain、最老 pending 选择与请求队列候选的排序；不要另写排序 |
 | `orderCandidates`、`createSecretarySelection` | `src/core/work-graph/tasks/secretary-selection.ts:469`、`src/core/work-graph/tasks/secretary-selection.ts:469` | 秘书候选的准入子集、busy 分类与稳定排序 | 请求分配；不要另算候选或另写排序 |
 | `servingBinding`、`servedRoleIds` **正本** | `src/business/workflow/role-bindings.ts:8`、`src/business/workflow/role-bindings.ts:19` | 角色绑定的唯一正本：恰好一个受信绑定的判据，以及一个 workspace scope 下被服务的 distinct `roleBinding.templateId`（UTF-16 code units 排序） | Workflow 选角色与可用角色读取；不要另写绑定匹配或第二份角色过滤 |

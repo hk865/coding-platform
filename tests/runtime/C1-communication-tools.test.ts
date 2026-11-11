@@ -26,6 +26,7 @@ import { unknownSessionDuty } from '../helpers/session-duty-double.js';
 import type { SessionMessageCommandPort, SessionMessageSendInputV1, SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import { createSessionMailboxTools } from '../../src/core/agent-runtime/communication-tools.js';
 import type { ToolCall, ToolResult, WorkspaceSandbox } from '../../vendor/coding-agent/dist/public-api.js';
+import { knowledgeLinesOver } from '../helpers/KLS2-knowledge-lines.js';
 
 const AT = '2026-09-26T00:00:00.000Z';
 const KINDS = ['memory', 'sqlite'] as const;
@@ -342,7 +343,8 @@ describe.each(KINDS)('C1 SessionMailbox tools against the real %s mailbox', kind
 
   it('does not change the Session record or open a model when the factory is built', async () => {
     const h = await openReal(kind);
-    const sessions = createSessionDirectory({ records: h.backend.records, lookups: h.backend.records, duty: unknownSessionDuty });
+    const sessions = createSessionDirectory({ records: h.backend.records,
+      knowledge: knowledgeLinesOver(h.backend.records), lookups: h.backend.records, duty: unknownSessionDuty });
     const before = await sessions.readSession(h.ctxHost, h.busySession);
     expect(before).toMatchObject({ status: 'ready' });
     if (before.status !== 'ready') return;

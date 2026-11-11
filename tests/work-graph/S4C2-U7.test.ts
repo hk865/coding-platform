@@ -61,6 +61,7 @@ function countingSource(real: DecisionCardSourcePort,
   return {
     kind: real.kind,
     serves: real.serves,
+    ...(real.prepareWindow === undefined ? {} : { prepareWindow: real.prepareWindow }),
     async readPage(ctx, input) {
       list.value += 1;
       return real.readPage(ctx, input);

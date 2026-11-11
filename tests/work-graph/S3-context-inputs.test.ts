@@ -17,7 +17,7 @@
  * In part 1 every method throws `not implemented: …`, so the cases are RED by
  * design; this file must still compile and run all 36 cases (18 cases × M/S).
  */
-import { knowledgeLinesFor } from '../helpers/KLS2-knowledge-lines.js';
+import { knowledgeLinesFor, knowledgeLinesOfRoots, knowledgeLinesOver } from '../helpers/KLS2-knowledge-lines.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -429,7 +429,12 @@ async function createInputFixture(
         reason: 'S3 fixture setup reads no artifact for a Plan' };
     },
   };
+  const otherRoot = join(directory, 'w2-root');
+  await mkdir(otherRoot, { recursive: true });
   const plans = createPlanService({ records: backend.records, bindings: createInitializationBindingReader({ records: backend.records }),
+    // IN04's Goal lives in w2: the plan owner reads the project's files across both workspaces (w2 has none).
+    knowledge: knowledgeLinesOfRoots(new Map([[JSON.stringify([PROJECT_ID, WORKSPACE_ID]), directory],
+      [JSON.stringify([PROJECT_ID, OTHER_WORKSPACE_ID]), otherRoot]]), backend.records),
     materials: planMaterials, now: () => AT, eventId });
 
   /**
@@ -594,7 +599,7 @@ async function createInputFixture(
       signal: new AbortController().signal };
     const evidenceMaterials = createMaterialService({ bodies: rawBodies, authority: baseAuthority, now: () => AT });
     let evidenceSeq = 0;
-    const evidence = createEvidenceService({ records: backend.records, materials: evidenceMaterials,
+    const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(backend.records, workspaceHost), records: backend.records, materials: evidenceMaterials,
       executions: createRunStateReader({ records: backend.records }), workspaceHost,
       source: new VerificationWorkspaceReader(), configuration, now: () => AT,
       newId: () => `s3-evidence-${++evidenceSeq}` });

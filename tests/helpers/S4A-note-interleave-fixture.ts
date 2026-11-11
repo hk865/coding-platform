@@ -5,13 +5,13 @@
  * What it builds and through which public calls: the complete real
  * `createS4ANoteFixture` (project, workspace, catalog, goal, plan, real
  * Sessions and Runs through `sessions.*`/`claims.claimTask`, the production duty
- * resolver), on memory or SQLite. The ONLY double is the commit gate: both
+ * resolver), on memory or SQLite. KLS-2b [2B-06]: the commit gate is gone (the
+ * project's in-process write queue runs one note write at a time, so a held
+ * commit could never meet the second write); `interleave` starts both writes at
+ * once. The ONLY double left is the one-shot `eventAt` failure: both
  * record-backend factories are spied (the WP2 pattern) while the fixture is
- * composed, so the real backend's `records.commit` is wrapped — no Run, duty,
- * plan or Session fact is invented. A `PreparedCommit` is held only when its
- * events include `NoteWritten`; a write that settles without reaching commit
- * releases the gate, so nothing deadlocks. The spies are restored right after
- * composition; the returned platform is the real one.
+ * composed — no Run, duty, plan or Session fact is invented. The spies are
+ * restored right after composition; the returned platform is the real one.
  *
  * The two callers are the real executor Runs claimed on `t1` and `t2` of
  * `s4a-goal`. Nothing reads the record store to answer an assertion; tests
@@ -20,7 +20,7 @@
 import { vi } from 'vitest';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
-import type { GoalRecordTransactionPort, PreparedCommit, StoreCommitReceipt } from '../../src/core/record-store/ports.js';
+import type { GoalRecordTransactionPort } from '../../src/core/record-store/ports.js';
 import type { NoteReadPort, NoteWritePort } from '../../src/core/work-graph/model/note-contracts.js';
 import * as memoryBackend from '../../src/core/record-store/in-memory-record-store.js';
 import * as sqliteBackend from '../../src/core/record-store/sqlite-record-store.js';
@@ -41,21 +41,12 @@ export type S4AInterleaveFixture = {
 
 export async function createS4AInterleaveFixture(kind: S4ANoteFixtureKind,
   options: { anchorQuota?: number; goalQuota?: number } = {}): Promise<S4AInterleaveFixture> {
-  // The commit gate. Inactive outside `interleave`, so normal sequential setup
-  // and tests never block; it holds only the note-writing commits.
-  let gate: ((run: () => Promise<unknown>) => Promise<unknown>) | null = null;
   // Item 5 (4): one injected storage-boundary read failure for the replay path.
   let failNextEventAt = false;
   const observe = <T,>(backend: T): T => {
     const records = (backend as { records: GoalRecordTransactionPort }).records;
-    const rawCommit = records.commit.bind(records);
     const rawEventAt = records.eventAt.bind(records);
     const wrapped = { ...records,
-      async commit(input: PreparedCommit): Promise<StoreCommitReceipt> {
-        const isNoteWrite = input.events.some(event => event.eventType === 'NoteWritten');
-        if (gate === null || !isNoteWrite) return rawCommit(input);
-        return gate(() => rawCommit(input)) as Promise<StoreCommitReceipt>;
-      },
       async eventAt(cursor: Parameters<GoalRecordTransactionPort['eventAt']>[0]):
       ReturnType<GoalRecordTransactionPort['eventAt']> {
         if (!failNextEventAt) return rawEventAt(cursor);
@@ -90,27 +81,10 @@ export async function createS4AInterleaveFixture(kind: S4ANoteFixtureKind,
     runA,
     runB,
     async interleave<T>(left: () => Promise<T>, right: () => Promise<T>): Promise<[T, T]> {
-      let arrivals = 0;
-      let released = false;
-      let openGate: () => void = () => undefined;
-      const opened = new Promise<void>(resolve => { openGate = resolve; });
-      const release = (): void => { if (!released) { released = true; openGate(); } };
-      gate = async (run) => {
-        arrivals += 1;
-        if (arrivals === 1) await opened; else release();
-        return run();
-      };
-      // A write that settles without reaching commit (a rejection, a read
-      // failure) must release a first arrival already waiting at the gate.
-      const settle = <T,>(promise: Promise<T>): Promise<T> => promise.then(
-        value => { if (arrivals < 2) release(); return value; },
-        error => { if (arrivals < 2) release(); throw error; });
-      try {
-        return await Promise.all([settle(left()), settle(right())]);
-      } finally {
-        gate = null;
-        release();
-      }
+      // KLS-2b [2B-06]: a note write's prepare, commit, files and index run in the project's in-process write
+      // queue, so a second write can no longer reach the commit while the first is held there (the old commit
+      // gate deadlocked). Both writes start at once; the queue runs them one after the other, left first.
+      return Promise.all([left(), right()]);
     },
     failNextEventAtOnce: () => { failNextEventAt = true; },
     close: () => inner.close(),

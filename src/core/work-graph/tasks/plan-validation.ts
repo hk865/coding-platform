@@ -12,6 +12,7 @@ import { rejected } from '../../../contracts/core/rejections.js';
 import type { CoreRejection } from '../../../contracts/core/results.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import { isRecord } from '../../../contracts/validation/common.js';
+import { projectModuleIdOfFile } from '../../../contracts/workspace-module-id.js';
 import type { FutureCarrierRemovalV1, FutureDispositionChangeV1 } from '../state/plan-machine.js';
 import {
   buildFrozenTaskDefinitions, executionDefinitionsAgree, frozenTaskDefinitionsAgree, isBasisUnsupported,
@@ -692,4 +693,28 @@ export function unknownModuleTasksOf(draft: Pick<PlanDraftView, 'tasks'>, catalo
 /** The one refusal; called only with a non-empty list. One entry per task, no de-duplication of module ids. */
 export function unknownModuleRejection(tasks: readonly UnknownModuleTaskV1[]): CoreRejection {
   return rejected('invalid', `unknown_module: ${tasks.map((task) => `${task.taskId}=${task.moduleId}`).join(', ')}`);
+}
+
+/**
+ * [2B-26]: every module scope's `moduleRef` from the caller frame (the Goal's workspace) to the project view.
+ * The propose entries call it once, where they read the draft; an adoption's source proof puts the draft it
+ * re-normalizes from the answer in the same view before comparing. A task or scope that is not an object stays as
+ * it is (`validatePlanDraft` names it); a reference that is not a module id of the grammar throws, and
+ * `planDraftInProjectView` catches it as the draft's `invalid` (workspace-module-id.ts `rawModuleId`).
+ */
+export function qualifyPlanDraft(draft: PlanRevisionDraft, goalWorkspaceId: string,
+  mainWorkspaceId: string): PlanRevisionDraft {
+  if (!Array.isArray(draft.tasks)) return draft;
+  const tasks = draft.tasks.map(task => {
+    if (!isRecord(task) || !isRecord(task.scope) || task.scope.kind !== 'module' || typeof task.scope.moduleRef !== 'string') {
+      return task;
+    }
+    try {
+      return { ...task, scope: { ...task.scope,
+        moduleRef: projectModuleIdOfFile(task.scope.moduleRef, goalWorkspaceId, mainWorkspaceId) } };
+    } catch {
+      throw new Error(`task ${String(task.taskId)}: ${task.scope.moduleRef} is not a module id`);
+    }
+  });
+  return { ...draft, tasks };
 }

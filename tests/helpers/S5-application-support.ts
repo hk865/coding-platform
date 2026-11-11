@@ -37,6 +37,7 @@ import { createGoalConflictAssembler } from '../../src/core/work-graph/views/goa
 import { createNoticeDisplayToken } from '../../src/core/work-graph/views/notice-display-token.js';
 import { createNoticePositionComparator } from '../../src/core/work-graph/views/notice-position.js';
 import { asS5OrderedRecords, GOAL_B, OPERATOR, WORKSPACE_SCOPE, type S5DecisionFixture, type S5Records } from './S5-decision-fixture.js';
+import { knowledgeLinesOver } from './KLS2-knowledge-lines.js';
 
 export const keyOf = (ref: object): string => canonicalJson(ref as JsonValue);
 export const pin = (ref: VersionPin['ref'], revision: number): VersionPin => ({ ref, revision });
@@ -93,7 +94,8 @@ export function owners(f: S5DecisionFixture, records: S5Records = f.records, bod
   const materials = createMaterialService({ bodies, authority: createMaterialRecordReaders(records).authority, now: f.now });
   const mailboxDeps: SessionMailboxDependencies = {
     defaultInquiryDeadlineMs: 86_400_000,
-    records, sessions: createSessionDirectory({ records, lookups: records, duty: unknownSessionDuty }),
+    records, sessions: createSessionDirectory({ records,
+      knowledge: knowledgeLinesOver(records), lookups: records, duty: unknownSessionDuty }),
     executions: createRunStateReader({ records }), roles, materials, systemActor: { ...OPERATOR },
     now: f.now, newId: f.newId,
     duties: ({
@@ -110,7 +112,8 @@ export function owners(f: S5DecisionFixture, records: S5Records = f.records, bod
   const decisions = createDecisionMessageService({ records, now: f.now, newId: f.newId, operatorActor: { ...OPERATOR },
     messages: mailbox, materials, messageWrites: createMessageWriteOwner(mailboxDeps),
     sources: createDecisionSourceFacts({ structuralProposalObjects: readStructuralProposalObjects, records, bindings: createInitializationBindingReader({ records }) }) });
-  const planDeps = { records, bindings: createInitializationBindingReader({ records }), materials, initialPlanning: { bodies },
+  const planDeps = { records, bindings: createInitializationBindingReader({ records }), knowledge: f.knowledge,
+    materials, initialPlanning: { bodies },
     now: f.now, eventId: f.newId };
   const plans = createPlanService(planDeps);
   const queryJobs = createQueryJobService({ records, now: f.now, eventId: f.newId });

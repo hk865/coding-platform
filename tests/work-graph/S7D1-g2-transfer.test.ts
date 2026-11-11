@@ -23,6 +23,7 @@ import type { ResponsibilityBasisV1 } from '../../src/core/work-graph/model/sess
 import { createSessionResponsibilityBasisReader } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
 import { openS7D1RoleLineWorld, type S7D1RoleLineWorld } from '../helpers/S7D1-role-line-world.js';
+import { knowledgeLinesFor } from '../helpers/KLS2-knowledge-lines.js';
 
 const worlds: S7D1RoleLineWorld[] = [];
 afterEach(async () => {
@@ -48,7 +49,8 @@ describe('G2-transfer-basis', () => {
         : arm === 'project' ? { kind: 'project', projectRef: { projectId: S6A_SCOPE.projectId } }
           : { kind: 'module', moduleRef: { projectId: S6A_SCOPE.projectId, moduleId: 's6a-core' }, catalogRevision: 1 };
 
-      const basis = createSessionResponsibilityBasisReader(world.world.platform.disconnect.records);
+      const basis = createSessionResponsibilityBasisReader(world.world.platform.disconnect.records,
+        knowledgeLinesFor({ root: world.world.root, ...S6A_SCOPE, records: world.world.platform.disconnect.records }));
       const read = await basis.readResponsibilityBasis(world.world.humanContext(), input);
       if (read.status !== 'ready') throw new Error(`the ${arm} basis is not ready: ${JSON.stringify(read)}`);
       expect(read.status).toBe('ready');

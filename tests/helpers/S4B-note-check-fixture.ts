@@ -173,7 +173,7 @@ export async function createS4BNoteCheckFixture(kind: S4ANoteFixtureKind = 'memo
 export async function currentVersion(fixture: S4BNoteCheckFixture, noteId: string): Promise<number> {
   const read = await fixture.notes.readNote(fixture.ctx(), { noteId });
   if (read.status !== 'ready') throw new Error(`readNote(${noteId}) failed: ${JSON.stringify(read)}`);
-  return read.value.version;
+  return read.value.version!;
 }
 
 export type { NoteDraftV1 };

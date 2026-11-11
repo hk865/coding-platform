@@ -156,6 +156,11 @@ export type S5RecordPort = GoalRecordTransactionPort & RecordLookupPort;
  * dropped with the attempt, so nothing is cached across calls.
  */
 export type DecisionSourceAttempt = { readonly cache: Map<string, unknown> };
+/**
+ * R-窗 (ruling 9): the reason a card source answers (code `source_stale`) when a record it checks inside the queue
+ * window moved since its `prepareWindow` read the knowledge files; the queue retries the window.
+ */
+export const DECISION_WINDOW_MOVED_REASON = 'decision_window_moved';
 
 export type DecisionOwnerBaseDependencies = {
   records: S5RecordPort; now: () => string; newId: () => string;
@@ -283,6 +288,13 @@ export type NoteDecisionCardFactsV1 = NoteDecisionCardV1 & {
   pins: VersionPin[]; objects: DecisionObjectV1[]; options: DecisionOptionV1[] };
 export type NoteDecisionClosedReasonV1 = 'goal_cancelled' | 'source_resolved';
 export interface NoteDecisionSourcePort {
+  /**
+   * R-窗 (ruling 9): before the queue fixes its window, the pending notes of these Goals (a cancelled one shows no
+   * card and is skipped) and, with `project`, of the project, and their targets, are overlaid with their files into
+   * `attempt`.
+   */
+  prepareNoteDecisions(ctx: CoreCallContext, input: { goals: readonly GoalSnapshot[]; project: boolean;
+    attempt: DecisionSourceAttempt }): Promise<ReadResult<void>>;
   readNoteDecisions(ctx: CoreCallContext, input: { subject: DecisionSubjectV1; attempt?: DecisionSourceAttempt }):
     Promise<ReadResult<NoteDecisionCardFactsV1[]>>;
   /**
@@ -506,25 +518,37 @@ export type ConflictArchitectureRead = {
 };
 
 /**
- * R-window for a reader whose own ledger window wraps the queue read
- * (lines/list, the context's paged queue): it reads the conflicts'
- * architecture before ITS window and hands the read, failed or not, to every
- * queue page. Such a queue read makes ONE attempt (stack review 2): a window
- * that moved comes back `moved`, and the caller reads the architecture again
- * and its whole own window, at most `WINDOW_MAX_ATTEMPTS` times. On the
- * caller's last attempt a moved window is the queue's own `unavailable`.
- * Internal only; no route reaches it.
+ * R-window (ruling 9, F-30): what one queue window reads from the knowledge
+ * files, read before the window is fixed: the conflicts' architecture (`null`
+ * when the queue reads no conflicts) and, in `attempt`, what the card sources'
+ * `prepareWindow` read for the subjects, listed once. Internal only.
  */
-export type PreparedConflictArchitecture = {
-  read: ReadResult<ConflictArchitectureRead>;
+export type DecisionQueuePreparation = {
+  architecture: ConflictArchitectureRead | null;
+  attempt: DecisionSourceAttempt;
+};
+/**
+ * R-window for a reader whose own ledger window wraps the queue read
+ * (lines/list, the context's paged queue): it prepares the queue before ITS
+ * window and hands the preparation, failed or not, to every queue page. Such a
+ * queue read makes ONE attempt (stack review 2): a window that moved comes back
+ * `moved`, and the caller prepares again and reads its whole own window, at
+ * most `WINDOW_MAX_ATTEMPTS` times. On the caller's last attempt a moved window
+ * is the queue's own `unavailable`. Internal only; no route reaches it.
+ */
+export type PreparedDecisionQueue = {
+  read: ReadResult<DecisionQueuePreparation>;
   /** The caller's last attempt: a window that moved answers `unavailable`, not `moved`. */
   last: boolean;
 };
 export type DecisionQueueWindowMoved = { status: 'moved' };
 export interface DecisionQueuePreparedReader {
-  readConflictArchitecture(ctx: CoreCallContext): Promise<ReadResult<ConflictArchitectureRead>>;
+  /** The preparation for queue reads of this workspace, Goal and sections (their pages share it). */
+  prepareDecisionQueue(ctx: CoreCallContext,
+    input: Pick<Parameters<DecisionReadPort['queryDecisionQueue']>[1], 'workspace' | 'goalRef' | 'sections'>):
+    Promise<ReadResult<DecisionQueuePreparation>>;
   queryDecisionQueuePrepared(ctx: CoreCallContext, input: Parameters<DecisionReadPort['queryDecisionQueue']>[1],
-    prepared: PreparedConflictArchitecture): Promise<ReadResult<DecisionQueueReadV1> | DecisionQueueWindowMoved>;
+    prepared: PreparedDecisionQueue): Promise<ReadResult<DecisionQueueReadV1> | DecisionQueueWindowMoved>;
 }
 
 // ------------------------------------------------------------------------ //
@@ -546,6 +570,13 @@ export interface DecisionCardSourcePort {
     workspace: WorkspaceScope; goalRef?: GoalRef;
     page: { limit: number; cursor?: string; atLeastCursor?: CommitCursor; attempt?: DecisionSourceAttempt };
   }): Promise<ReadResult<DecisionSourcePageV1<DecisionCardV1>>>;
+  /**
+   * R-窗 (ruling 9): a source that shows knowledge files reads them here, before the queue fixes its ledger
+   * window, into `attempt`, for the subjects the window will read (`goals`; the project when `project`); inside the
+   * window it reads only records and checks them against what it read here.
+   */
+  prepareWindow?(ctx: CoreCallContext, input: { workspace: WorkspaceScope; goals: readonly GoalSnapshot[];
+    project: boolean; attempt: DecisionSourceAttempt }): Promise<ReadResult<void>>;
   /** Optional direct read of one source key (spec §4.2). */
   readByKey?(ctx: CoreCallContext, input: { workspace: WorkspaceScope; source: DecisionSourceV1 }):
     Promise<ReadResult<DecisionCardV1 | null>>;

@@ -372,7 +372,7 @@ describe('K3-48 (二) optional model text admission', () => {
     expect(accepted.value.revision).toBe(revision + 1);
   }, 120_000);
 
-  it.each([['memory', 403], ['sqlite', 322]] as const)('K3-48 (二) %s: the real near-budget proposal refuses 2,000 characters as capacity and admits 100', async (kind, cwdBytes) => {
+  it.each([['memory', 403], ['sqlite', 269]] as const)('K3-48 (二) %s: the real near-budget proposal refuses 2,000 characters as capacity and admits 100', async (kind, cwdBytes) => {
     const fx = await nearBudgetProposalFixture(kind);
     const reviewRef = fx.round.record.ref;
     const before = await fx.world.reviews.readReview(fx.round.context, { ref: reviewRef });
@@ -414,7 +414,7 @@ describe('K3-48 (二) optional model text admission', () => {
     // The precondition is asserted against that fixed literal; the pre-write
     // size below is only the independent after-the-fact check of it:
     //   memory: 156,043 + 274 + 403 = 156,720
-    //   sqlite: 156,124 + 274 + 322 = 156,720
+    //   sqlite: 156,177 + 274 + 269 = 156,720
     // W2b-21: the record Run's Session is now the real one. Its Kernel Session id
     // is the platform's `session-` + 64 hex = 72 bytes, where the handwritten
     // `s5-kernel-session-k3-48-2-near-<kind>` was 18 + 19 = 37 bytes; the record
@@ -432,6 +432,10 @@ describe('K3-48 (二) optional model text admission', () => {
     // is 19 bytes shorter (422 -> 403; 341 -> 322). No Host runs here: the sqlite
     // fixture keeps its store in its own directory, so the notVisible list above
     // still names the four store files and the 81-byte gap stays (403 - 81 = 322).
+    // KLS-2b: the sqlite store also keeps the project's knowledge index, so the
+    // notVisible list gains "index.sqlite" 15 + "index.sqlite-shm" 19 +
+    // "index.sqlite-wal" 19 = 53 bytes (156,124 -> 156,177) and the sqlite cwd is
+    // 53 bytes shorter (322 -> 269).
     const BEFORE_TEXT = 156_720;
     expect(B - 2_000).toBe(BEFORE_TEXT);
     expect(k3SerializedBytes(before.value) + REVISION_BYTES + PROPOSAL_JSON_BYTES + cwdBytes)

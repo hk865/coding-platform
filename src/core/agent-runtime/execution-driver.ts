@@ -1173,7 +1173,8 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
                   if (page.status === 'rejected' && page.code === 'not_found' && page.reason === 'anchor_not_found') break;
                   if (page.status !== 'ready') return pythonInputs;
                   for (const item of page.value.items) {
-                    if (item.kind === 'link' && (item.storedState === 'accepted' || item.storedState === 'reviewed')) {
+                    if (item.kind === 'link' && item.version !== null
+                      && (item.storedState === 'accepted' || item.storedState === 'reviewed')) {
                       heads.set(item.noteId, item.version);
                     }
                   }

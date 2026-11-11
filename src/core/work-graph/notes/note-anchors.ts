@@ -33,6 +33,7 @@ import type { WorkspaceToolsHandle } from '../../workspace/workspace-tools.js';
 import type { ArchitectureCatalogPort, CatalogModuleFacts } from '../architecture/catalog-contracts.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import { readCatalogModuleFacts } from '../architecture/catalog-service.js';
+import type { KnowledgeLines } from '../model/line-knowledge.js';
 import { endpointIdentityOf } from './link-evidence.js';
 import type { GoalPlanWindow } from '../tasks/plan-readers.js';
 import type { AnchorGoalPlanFacts } from './note-anchor-facts.js';
@@ -64,6 +65,8 @@ export type NoteAnchorWorkspace = Pick<WorkspaceToolsPort, 'readWorkspace'> & {
 
 export type NoteAnchorFactsDeps = {
   records: GoalRecordTransactionPort;
+  /** A.1 #3: the current catalog a module or interface target is checked against is the knowledge files'. */
+  knowledge: KnowledgeLines;
   /** Candidate/containment catalog read; absent in narrow doubles keeps class 1–2 shape checks working. */
   architecture?: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'>;
   /**
@@ -726,7 +729,7 @@ Promise<{ status: 'ok'; value: NoteAnchorV1; ended: boolean; symbolUnresolved?: 
   // caller's per-call window cache, the fallback keeps narrow doubles working.
   const moduleFactsOf = (moduleId: string): Promise<ReadResult<CatalogModuleFacts>> =>
     deps.catalogModuleFacts === undefined
-      ? readCatalogModuleFacts(deps.records, ctx, moduleRefOf(ctx.projectId, moduleId))
+      ? readCatalogModuleFacts(deps.records, ctx, moduleRefOf(ctx.projectId, moduleId), { lines: deps.knowledge, caller: ctx })
       : deps.catalogModuleFacts(ctx, moduleId);
   switch (draft.kind) {
     case 'module': {

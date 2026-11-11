@@ -47,6 +47,7 @@ import { SESSION_MAILBOX_TOOL_NAMES } from '../../src/core/agent-runtime/communi
 import { createTaskClaimFixture, type ClaimFixtureKind, type TaskClaimFixture } from './task-claim-fixture.js';
 import { createS2BRuntimeSteps } from './S2B-runtime-steps-fixture.js';
 import type { TaskClaim } from '../../src/core/work-graph/model/claim-contracts.js';
+import { knowledgeLinesOver } from './KLS2-knowledge-lines.js';
 
 export const AT = '2026-09-26T00:00:00.000Z';
 const systemActor = { kind: 'system' as const, id: 'c1-mailbox-body-system' };
@@ -128,7 +129,8 @@ export async function createC1Harness(kind: ClaimFixtureKind): Promise<C1Harness
   if (claimResult.status !== 'committed') throw new Error(`C1 fixture claim failed: ${JSON.stringify(claimResult)}`);
   const claim = claimResult.value;
 
-  const sessions = createSessionDirectory({ records: fixture.records, lookups: fixture.records, duty: unknownSessionDuty });
+  const sessions = createSessionDirectory({ records: fixture.records,
+    knowledge: knowledgeLinesOver(fixture.records), lookups: fixture.records, duty: unknownSessionDuty });
   const busySession: SessionRef = { projectId: claim.sessionRef.projectId, sessionId: claim.sessionRef.sessionId };
   const idleSession: SessionRef = { projectId: fixture.sessions.second.projectId, sessionId: fixture.sessions.second.sessionId };
   const runKey = key(claim.runRef);
@@ -191,7 +193,8 @@ export async function createC1Harness(kind: ClaimFixtureKind): Promise<C1Harness
     const openExecutions = recipientReader === undefined ? createRecipientExecutions({
       sessions: createSessionFactsService({ records }), executions: createRunStateReader({ records }), records,
     }) : recipientReader;
-    return { records, sessions: createSessionDirectory({records,lookups:records, duty: unknownSessionDuty}), executions: createRunStateReader({records}),
+    return { records, sessions: createSessionDirectory({records,
+      knowledge: knowledgeLinesOver(records),lookups:records, duty: unknownSessionDuty}), executions: createRunStateReader({records}),
       roles: createRoleConfigurationService({records,now,eventId}), materials: materialPort, systemActor,
       // SR11 / Decided 12: this fixture's own inquiries name their duration; the
       // owner has no second default.
@@ -209,7 +212,8 @@ export async function createC1Harness(kind: ClaimFixtureKind): Promise<C1Harness
   }
   const mailbox = makeMailbox();
   let secondary: Awaited<ReturnType<TaskClaimFixture['reopenService']>> | undefined;
-  const lifecycle = createSessionLifecycleService({ records: backend.records, lookups: backend.records, duty: unknownSessionDuty });
+  const lifecycle = createSessionLifecycleService({ records: backend.records,
+    knowledge: knowledgeLinesOver(backend.records), lookups: backend.records, duty: unknownSessionDuty });
   const ctxHost: CoreCallContext = { projectId: busySession.projectId, workspaceId: currentRun.workspaceSnapshot.workspaceId,
     principal: { kind: 'host', actor: { kind: 'human', id: 'c1-host' } },
     materialReader: { kind: 'host', projectId: busySession.projectId, workspaceId: currentRun.workspaceSnapshot.workspaceId, actor: { kind: 'human', id: 'c1-host' } },

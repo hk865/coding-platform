@@ -91,6 +91,7 @@ import { moveKernelAside, restoreKernel } from './A2-restart-fixture.js';
 import { createB2ExecutionFixture, unknownWork, retireSession, type B2ExecutionFixture, type B2Records }
   from './S1-workflow-archive-fixture.js';
 import { createRuntimeHostDouble, createScriptedModel } from './B2-runtime-fixture.js';
+import { knowledgeLinesFor } from './KLS2-knowledge-lines.js';
 
 const T0 = '2026-10-08T00:00:00.000Z';
 const T1 = '2026-10-09T00:00:00.000Z';
@@ -196,13 +197,17 @@ async function createHandoverWorkflow(b2: B2ExecutionFixture, options: HandoverW
   const sessionFacts = createSessionFactsService({ records });
   const sessionDuty = createSessionDutyResolver({ readRoleSpec: roles.readRoleSpec,
     configuration: options.configuration });
+  const knowledge = knowledgeLinesFor({ root: base.directory, projectId: base.scope.projectId,
+    workspaceId: base.scope.workspaceId, records });
   const responsibilities = createSessionResponsibilityService({ records, lookups: records,
-    basis: createSessionResponsibilityBasisReader(records), now, duty: sessionDuty });
-  const sessionLifecycle = createSessionLifecycleService({ records, lookups: records, sessionFacts, duty: sessionDuty });
+    basis: createSessionResponsibilityBasisReader(records, knowledge), now, duty: sessionDuty });
+  const sessionLifecycle = createSessionLifecycleService({ records,
+    knowledge, lookups: records, sessionFacts, duty: sessionDuty });
   const sessionAnomalies = createSessionAnomalyService({ records, lookups: records, sessionFacts, now });
   const forbiddenCheck = async () => { throw new Error('WP1 given must not start a check'); };
   // Only the one maintainer read the module hover shows; nothing here assigns a maintainer.
   const maintainers = createModuleMaintainer({ findSessions: base.sessionsPort.findSessions, records, duty: sessionDuty,
+    knowledge,
     executions: reads, catalog: { readArchitectureRevision: forbiddenCheck }, notifyProject: forbiddenCheck,
     goalSettings: { readGoalSettings: forbiddenCheck } });
   const deps: WorkflowDependencies = {

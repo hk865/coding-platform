@@ -51,6 +51,10 @@ import { xws2pProjectPath } from './XWS2P-world.js';
 
 /** The frozen names of the row set: the module the coarse split proposes and its raw (unqualified) path. */
 export const XWS2A_MODULE_ID = 'second-mod';
+/** KLS-2b: `second-mod` in the project view (the second workspace's Run proposed it in its own frame). */
+export function xws2aModuleInProject(secondWorkspaceId: string): string {
+  return `/@ws:${encodeURIComponent(secondWorkspaceId)}/${XWS2A_MODULE_ID}`;
+}
 export const XWS2A_MODULE_RAW_PATH = 'src/second';
 /** The region proposal's child module (the join's `proposals` batch). */
 export const XWS2A_SUB_MODULE_ID = 'second-sub';
@@ -139,12 +143,15 @@ async function rootOf(base: Pick<S7D2RoleLineWorld, 'world'>, scope: WorkspaceSc
   return root;
 }
 
+/** KLS-2b: the main workspace's region module as a second-workspace Run names it (in its own frame). */
+const MAIN_REGION_FROM_SECOND = `/@ws:${encodeURIComponent(S6A_SCOPE.workspaceId)}/${S7D2_MODULE_IDS.region}`;
+
 /** The join exploration's one `record_note` call: a decision on the project's existing region module. */
 const joinNote = {
   callId: 'xws2a-join-note', name: 'record_note', args: {
     op: 'write', kind: 'decision', topic: 'xws2a-join-note',
     conclusion: 'XA-14: the join exploration wrote this note', body: 'XA-14',
-    anchor: { kind: 'module', moduleId: S7D2_MODULE_IDS.region }, extraAnchors: [],
+    anchor: { kind: 'module', moduleId: MAIN_REGION_FROM_SECOND }, extraAnchors: [],
     structural: false, replaces: [], expectedPointerRevision: null,
   } as Record<string, unknown>,
 };
@@ -161,7 +168,7 @@ export const noteCall = (index: number, contradicts: readonly string[] = []):
     op: 'write', kind: 'decision', topic: `xws2a-reminder-${String(index)}`,
     conclusion: `XWS2A reminder note ${String(index)}`, body: `XWS2A reminder note ${String(index)}`,
     anchor: { kind: 'file', path: `src/note-${String(index)}.ts` },
-    extraAnchors: [{ kind: 'module', moduleId: S7D2_MODULE_IDS.region }],
+    extraAnchors: [{ kind: 'module', moduleId: MAIN_REGION_FROM_SECOND }],
     structural: false, replaces: [], contradicts: [...contradicts], coexistWith: [],
     expectedPointerRevision: null,
   } as Record<string, unknown>,

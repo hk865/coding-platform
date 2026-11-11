@@ -111,7 +111,7 @@
 - `ledger.ts` — 聚合引用/快照、`AggregateRef` 闭集、`makeCommitCursor`（`src/contracts/ledger.ts:131`）/ `seqOfCommitCursor`（`src/contracts/ledger.ts:137`）/ `compareCursors`（`src/contracts/ledger.ts:149`）；`GoalSnapshot` 带创建提交的 `since`，创建路径用预绑定的 `PendingGoalSnapshot`（`since` 为提交占位符）；每个 Goal 自带出生字段 `settings`、`continuedFrom`（`GoalContinuationV1` 或 null）和 `copiedInterventions`，缺字段的记录被拒绝。7A-1 加 `DispatchCounterRef`（`src/contracts/ledger.ts:159`）、`DispatchBasisV1`（`:152`）、`DispatchCurrentV1`（`:157`），`AggregateRef` 增 `DispatchCounterRef` 成员，并转出 `DispatchCounterV1`（`:159`）；7D2 的 `AggregateRef` 再增四个角色线记录 ref（`GoalAdviserQueueRef`/`AutonomyRuleRef`/`AutonomyRuleSetRef`/`RoleCapacityEpisodeRef`，`src/contracts/ledger.ts:53`）。
 - `line-delta.ts` — 真实文本行 diff 的唯一正本：`lineDelta`（`contentLines` 切行，返回 `added`/`deleted`/`totalLines`）、`lineEditCounts`（同一个算法，LCS 超过 250k 格改用 Myers，Myers 可以设编辑距离上限，过了答 null）、`gitLines`（git 的切法，任务图的“未提交”读用）；`MAX_LCS_CELLS` 私有；注意力、Run activity tally 和 WorkspaceTools 共用（`core` 不 import `app`）。
 - `memory.ts` — `MemoryPurpose`：记忆用途闭集。
-- `note.ts` — 注记 Head/Version/CurrentPointer、锚点、种类闭集 `NOTE_KINDS`（含 `understanding`/`repair`/`link`/`flow`）、通用子集 `NOTE_GENERAL_KINDS` 与 `isGeneral`、载荷字段表 `NOTE_PAYLOAD_KINDS`（`repair`/`link`/`flow`）与 `payloadKindProblem`、`renderNoteHeader`（旧种类、link 与 flow 三种形式）；Agent 来源带 `runRef`（Work Run）和 `queryRunRef`（秘书的 QueryRun），各自可为 null；书记范围 `NoteScopeV1`（project、一个 region 或一个 goal）的正本也在这里，`W/model/note-contracts.ts` 再导出，纯 state 直接引这里。
+- `note.ts` — 注记 Head/Version/CurrentPointer、锚点、种类闭集 `NOTE_KINDS`（含 `understanding`/`repair`/`link`/`flow`）、通用子集 `NOTE_GENERAL_KINDS` 与 `isGeneral`、载荷字段表 `NOTE_PAYLOAD_KINDS`（`repair`/`link`/`flow`）与 `payloadKindProblem`、联系关系闭集的判断 `isSemanticRelation` 和证据角色闭集的判断 `isLinkEvidenceRole`、`renderNoteHeader`（旧种类、link 与 flow 三种形式）；Agent 来源带 `runRef`（Work Run）和 `queryRunRef`（秘书的 QueryRun），各自可为 null；书记范围 `NoteScopeV1`（project、一个 region 或一个 goal）的正本也在这里，`W/model/note-contracts.ts` 再导出，纯 state 直接引这里。
 - `semantic-layer.ts` — 语义链接与流程的纯类型：`SemanticEndV1`、`SemanticLinkV1`、`LinkReadPayloadV1`、`SemanticFlowStepV1`、`SemanticFlowV1`、`NoteFlowReadV1`、`SemanticScopeV1`、`SemanticPageV1<T>`；只声明形状，无运行时导出。
 - `opaque.ts` — `Opaque<Value, Brand>` 品牌类型。
 - `platform-duty.ts` — `PlatformDutyV1`：五种平台职责；`PLATFORM_DUTIES` 是它唯一的运行时列表。
@@ -220,8 +220,10 @@
 | `approvedMethodLinesZh` | `src/contracts/continuation-brief-render.ts:839` | 渲染已批准方法的固定行。 | 简报审查段的必选块。 |
 | `continuationBriefShapeProblem` | `src/contracts/continuation-brief.ts:438` | 校验简报结构，返回首个问题或 null。 | 读回/接受简报时。 |
 | `ContinuationBriefCapacityError` | `src/contracts/continuation-brief-render.ts:920` | 简报强制段超出字节上限的错误。 | 调用方把它映射为 `capacity` 拒绝。 |
-| `renderNoteHeader` | `src/contracts/note.ts:297` | 渲染 `<类名>(<锚点>)<!>：<结论>` 标题。 | 展示注记；结构性问题才带 `!`。 |
-| `headerExtrasOf` | `src/contracts/note.ts:343` | link/flow 注记 header 的可选扩展片段（到/从锚点），供渲染用 | 渲染 link 或 flow 注记时；不要另写一份 header 拼接 |
+| `renderNoteHeader` | `src/contracts/note.ts:313` | 渲染 `<类名>(<锚点>)<!>：<结论>` 标题。 | 展示注记；结构性问题才带 `!`。 |
+| `headerExtrasOf` | `src/contracts/note.ts:359` | link/flow 注记 header 的可选扩展片段（到/从锚点），供渲染用 | 渲染 link 或 flow 注记时；不要另写一份 header 拼接 |
+| `isSemanticRelation` | `src/contracts/note.ts:117` | 值是不是六种联系关系之一 | 写注记的 link 门和注记文件的解析都用它；不要另写一份关系表 |
+| `isLinkEvidenceRole` | `src/contracts/note.ts:132` | 值是不是七种证据角色之一 | 写注记的 link 门和注记文件的解析都用它；按关系的角色表在 `link-evidence.ts` |
 | `planValidationError` | `src/contracts/plan.ts:316` | 构造 `{path,code,message}` 计划校验错误。 | 计划校验累积错误时。 |
 | `revisionAssignments` | `src/contracts/plan.ts:322` | 取计划 assignment；显式空数组覆盖 origin。 | 读取已接受计划的分配。 |
 | `DEFAULT_PLAN_LOOP_LIMITS`、`GROWTH_UNIT_TOKENS`、`growthUnitsOf` | `src/contracts/plan-loop-limits.ts:31`、`src/contracts/plan-loop-limits.ts:28`、`src/contracts/plan-loop-limits.ts:31` | 规划环的纯默认上限（按任务档位的提醒/两倍 token、行倍数、两个阶段预算）与增长单位换算（token ÷ 64，不取整）。 | 计划环读阶段预算、显示增长单位；生效值由 Host 设置层发布，不要另写默认值。 |

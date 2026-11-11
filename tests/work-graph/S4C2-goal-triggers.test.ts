@@ -66,6 +66,7 @@ import {
   createWP2Platform, preparedBundle, type WP2PlatformFixture,
 } from '../helpers/WP2-platform-support.js';
 import type { Records } from '../helpers/task-claim-fixture.js';
+import { knowledgeLinesFor, knowledgeLinesOver } from '../helpers/KLS2-knowledge-lines.js';
 
 // A4: wrap the real SQLite backend factory only to keep its real records port
 // for the production reader under test. The wrapper returns the real backend
@@ -174,6 +175,7 @@ async function setupPlans(): Promise<PlanFixture> {
     if (created.status !== 'committed') throw new Error(`S4C2 trigger Goal creation failed: ${JSON.stringify(created)}`);
 
     const plans = createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+      knowledge: knowledgeLinesFor({ root: b2.base.directory, ...b2.base.scope, records }),
       now: () => planClock.at, eventId });
 
     async function currentGoal(): Promise<GoalSnapshot> {
@@ -223,7 +225,7 @@ async function setupPlans(): Promise<PlanFixture> {
     const executions = createRunStateReader({ records });
     const materials = createMaterialService({ bodies: b2.bodies,
       authority: createMaterialRecordReaders(records).authority, now: () => AT });
-    const evidence = createEvidenceService({ records, materials, executions, workspaceHost,
+    const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(records, workspaceHost), records, materials, executions, workspaceHost,
       source: new VerificationWorkspaceReader(), configuration, now: () => AT, newId });
     const runner = createRegisteredCheckRunner({ evidence, workspaceHost, kernel, now: () => AT });
 

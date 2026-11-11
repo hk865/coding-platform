@@ -70,6 +70,7 @@ import { VerificationWorkspaceReader } from '../../src/core/workspace/verificati
 import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
 import { createB2ExecutionFixture, completeWork, type B2ExecutionFixture } from './S1-workflow-archive-fixture.js';
 import { createScriptedModel } from './B2-runtime-fixture.js';
+import { knowledgeLinesOver } from './KLS2-knowledge-lines.js';
 
 const T0 = '2026-10-08T00:00:00.000Z';
 const T1 = '2026-10-09T00:00:00.000Z';
@@ -212,9 +213,10 @@ export async function openDutyMaintenanceFixture(
     const task1 = { projectId: scope.projectId, goalId: goalRef.goalId, taskId: taskIds[0]! };
     const task2 = { projectId: scope.projectId, goalId: goalRef.goalId, taskId: taskIds[1]! };
     const facts = createSessionFactsService({ records });
-    const lifecycle = createSessionLifecycleService({ records, lookups: records, sessionFacts: facts, duty: unknownSessionDuty });
+    const lifecycle = createSessionLifecycleService({ records,
+      knowledge: knowledgeLinesOver(records), lookups: records, sessionFacts: facts, duty: unknownSessionDuty });
     const responsibilities = createSessionResponsibilityService({ records, lookups: records,
-      basis: createSessionResponsibilityBasisReader(records), now: () => T0, duty: unknownSessionDuty });
+      basis: createSessionResponsibilityBasisReader(records, knowledgeLinesOver(records)), now: () => T0, duty: unknownSessionDuty });
     const executions = createRunStateReader({ records });
     // Stable real source capture, outside the changing Kernel/ledger files.
     const root = join(base.directory, 'wp1-cu-verification');
@@ -234,7 +236,7 @@ export async function openDutyMaintenanceFixture(
     };
     const materials = createMaterialService({ bodies: b2.bodies,
       authority: createMaterialRecordReaders(records).authority, now: () => T0 });
-    const evidence = createEvidenceService({ records, materials, executions, workspaceHost,
+    const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(records, workspaceHost), records, materials, executions, workspaceHost,
       source: new VerificationWorkspaceReader(), now: () => T0, newId: id,
       configuration: { configurationRevision: 'wp1-cu-checks', workspace: base.workspaceRef, executor: actor,
         permissionRevision: 'wp1-cu-permission', sourceAccess: 'verification_workspace', processAccess: 'all_except_denied',

@@ -35,6 +35,7 @@ import type { NoteDraftV1 } from '../../src/contracts/note.js';
 import type { NoteWritePort, WriteNoteResult } from '../../src/core/work-graph/model/note-contracts.js';
 import type { TaskRequeueRef } from '../../src/contracts/task-requeue.js';
 import type { RuntimeHostBindings } from '../../src/core/agent-runtime/execution-contracts.js';
+import type { KnowledgeIndex } from '../../src/core/record-store/knowledge-index-ports.js';
 import { createTargetPlatform } from '../../src/composition/create-platform.js';
 import { hostProjectStoreDirectory } from './KLS1B-host-store.js';
 
@@ -113,7 +114,10 @@ export async function createS4ANoteFixture(kind: S4ANoteFixtureKind,
     /** Slice 4C-2 U6: the trusted configured operator, so a test can drive the
      * real finite decision coordinator's answer step (`answerDecision` refuses
      * with `unsupported` when no operator is installed). */
-    operatorActor?: { kind: 'human' | 'system'; id: string } } = {}): Promise<S4ANoteFixture> {
+    operatorActor?: { kind: 'human' | 'system'; id: string };
+    /** F-27: the platform's own knowledge index seam (a wrapper around the real index), so a test shares the
+     * real index and can index a file a person put in the knowledge folder with the platform's indexer. */
+    knowledgeIndexFactory?: (projectId: string, path: string | null) => KnowledgeIndex } = {}): Promise<S4ANoteFixture> {
   const directory = await mkdtemp(join(tmpdir(), `s4a-note-${kind}-`));
   const root = join(directory, 'workspace');
   await mkdir(join(root, 'src/a/one'), { recursive: true });
@@ -166,6 +170,7 @@ export async function createS4ANoteFixture(kind: S4ANoteFixtureKind,
     ...(options.runtime === undefined ? {} : { runtime: options.runtime }),
     ...(options.noteNewId === undefined ? {} : { noteNewId: options.noteNewId }),
     ...(options.operatorActor === undefined ? {} : { operatorActor: options.operatorActor }),
+    ...(options.knowledgeIndexFactory === undefined ? {} : { knowledgeIndexFactory: options.knowledgeIndexFactory }),
   });
 
   const hostCtx = (): CoreCallContext => ({ projectId: PROJECT, workspaceId: WORKSPACE,

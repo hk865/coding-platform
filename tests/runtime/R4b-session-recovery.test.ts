@@ -20,6 +20,7 @@ import { createSessionOperations } from '../../src/core/agent-runtime/session-op
 import type { SessionHistoryEntry } from '../../src/core/agent-runtime/session-operations.js';
 import { createR4HistoryWorld } from '../helpers/R4-history-turn-support.js';
 import { unknownSessionDuty } from '../helpers/session-duty-double.js';
+import { knowledgeLinesOver } from '../helpers/KLS2-knowledge-lines.js';
 
 const at = '2026-09-24T00:00:00.000Z';
 const projectId = 'session-project';
@@ -65,7 +66,8 @@ async function open(kind: 'memory' | 'sqlite') {
     meta: { requestId: 'session-register-workspace', expected: [
       { ref: projectRef, revision: 1 }, { ref: workspaceRef, revision: 0 }] } });
   if (registered.status !== 'committed') throw new Error(`workspace bootstrap failed: ${JSON.stringify(registered)}`);
-  const sessions = createSessionDirectory({ records: backend.records, lookups: backend.records, duty: unknownSessionDuty });
+  const sessions = createSessionDirectory({ records: backend.records,
+    knowledge: knowledgeLinesOver(backend.records), lookups: backend.records, duty: unknownSessionDuty });
   const kernelStores = await createKernelStoreRegistry({ entries: [{
     adapterId: 'workspace-kernel', storeKey: 'workspace-key', workspace,
     databasePath: path.join(directory, 'kernel.sqlite'),
@@ -121,7 +123,8 @@ describe('R4b SQLite recovery and raw history acceptance', () => {
     } finally { await first.backend.close(); }
     const backend = createSqliteRecordBackend({ schemas, path: first.ledgerPath });
     try {
-      const sessions = createSessionDirectory({ records: backend.records, lookups: backend.records, duty: unknownSessionDuty });
+      const sessions = createSessionDirectory({ records: backend.records,
+        knowledge: knowledgeLinesOver(backend.records), lookups: backend.records, duty: unknownSessionDuty });
       const recovered = await createSessionOperations({ sessions, kernelStores: first.kernelStores }).createSession(ctx, request);
       expect(recovered.status).toBe('completed');
       if (recovered.status !== 'completed') return;
@@ -155,7 +158,8 @@ describe('R4b SQLite recovery and raw history acceptance', () => {
 
     const backend = createSqliteRecordBackend({ schemas, path: first.ledgerPath });
     try {
-      const sessions = createSessionDirectory({ records: backend.records, lookups: backend.records, duty: unknownSessionDuty });
+      const sessions = createSessionDirectory({ records: backend.records,
+        knowledge: knowledgeLinesOver(backend.records), lookups: backend.records, duty: unknownSessionDuty });
       const changedDefault = await createKernelStoreRegistry({ entries: [{
         adapterId: 'replacement-kernel', storeKey: 'replacement-key', workspace, databasePath: replacementPath,
       }] });

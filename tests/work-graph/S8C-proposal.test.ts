@@ -26,7 +26,6 @@ vi.mock('../../src/core/record-store/sqlite-record-store.js', async importOrigin
 
 const worlds: ProposalWorld[] = [];
 afterEach(async () => {
-  (globalThis as unknown as Record<string, unknown>)['__dshS8CWindowHook'] = null;
   const left = commitBarrier.reset();
   await Promise.all(worlds.splice(0).map(world => world.close()));
   expect(left).toEqual([]);
@@ -281,63 +280,74 @@ describe.each(['memory', 'sqlite'] as const)('R13 (%s): the frozen base is re-ch
     const hold = commitBarrier.holdAfter(byIdentityPrefix('session-message-decision-'), 'R13 window');
     const answering = target.answer(card, 'approve', 's8c-r13-window');
     await hold.reached;
-    // The apply's first window read sees the frozen base; the planner's re-read sees the moved one.
-    (globalThis as unknown as Record<string, unknown>)['__dshS8CWindowHook'] =
-      async () => { await target.revise([addModule(target, 's8c-r13-w2', 'src/w2')]); };
+    // KLS-2b [2B-06]: the apply's window reads and its commit run in the project's write queue, so a revise can no
+    // longer land between the first window read and the planner's re-read (it would wait on the queue the apply
+    // holds); it lands while the answer is held, before the apply reads the window.
+    await target.revise([addModule(target, 's8c-r13-w2', 'src/w2')]);
     hold.release();
     expect((await answering).state).toBe('applied');
     expect(target.lastApply()).toMatchObject({ status: 'source_stale', receipt: expect.anything() });
     expect((await target.read(proposalRefOf(proposal!))).proposal).toMatchObject({ state: 'stale' });
   });
 
-  it('a second copy of the same application, held after the planner read the catalog, answers the first copy '
-    + '(quick check 5)', async () => {
+  it('a second copy of the same application, sent while the first holds the write queue at its commit, answers the '
+    + 'first copy (quick check 5)', async () => {
     const target = await world(backend);
     const [proposal] = await target.propose([{ baseCatalogPin: target.pin,
       ops: [addModule(target, 's8c-qc5', 'src/qc5')], reason: 'QC5 two copies' }])
       .then(results => results.map(needsDecision));
     const card = await target.cardByKey(proposal!.cardKey);
-    const hold = commitBarrier.holdAfter(byIdentityPrefix('session-message-decision-'), 'QC5 answer');
+    const holdAnswer = commitBarrier.holdAfter(byIdentityPrefix('session-message-decision-'), 'QC5 answer');
     const answering = target.answer(card, 'approve', 's8c-qc5-answer');
-    await hold.reached;
-    // The answer's application reads the window twice (its own read, then the planner's): after the second, the
-    // same application runs to the end through the owner before the held copy computes its file changes.
-    let first: unknown = null;
-    const hooks = globalThis as unknown as Record<string, (() => Promise<void>) | null>;
-    hooks['__dshS8CWindowHook'] = async () => {
-      hooks['__dshS8CWindowHook'] = async () => {
-        const saved = await target.readAnswer(card.source);
-        if (saved.status !== 'ready' || saved.value.message === null) throw new Error('no saved answer');
-        first = await target.apply(batchOf(await target.read(proposalRefOf(proposal!))), saved.value.message.ref);
-        expect(first, JSON.stringify(first)).toMatchObject({ status: 'applied' });
-      };
-    };
-    hold.release();
+    await holdAnswer.reached;
+    const saved = await target.readAnswer(card.source);
+    if (saved.status !== 'ready' || saved.value.message === null) throw new Error('no saved answer');
+    const batchRef = batchOf(await target.read(proposalRefOf(proposal!)));
+    // KLS-2b [2B-06]: an application's reads, plan and commit run in the project's write queue, so the second copy
+    // can no longer run inside the first. A is held before its commit (it holds the queue); B is sent then (A has no
+    // receipt yet) and is answered after A, with A's result.
+    const holdFirst = commitBarrier.hold(byIdentityPrefix('architecture-proposal-apply'), 'QC5 A prepared');
+    const firstCall = target.apply(batchRef, saved.value.message.ref);
+    await holdFirst.reached;
+    const secondCall = target.apply(batchRef, saved.value.message.ref);
+    holdFirst.release();
+    const first = await firstCall;
+    expect(first, JSON.stringify(first)).toMatchObject({ status: 'applied' });
+    expect(await secondCall).toEqual(first);
+    // The answer's own application comes after both and replays the same result.
+    holdAnswer.release();
     expect((await answering).state).toBe('applied');
-    expect(hooks['__dshS8CWindowHook']).toBeNull();
     expect(target.lastApply()).toEqual(first);
     expect((await target.read(proposalRefOf(proposal!))).proposal).toMatchObject({ state: 'applied' });
   });
 
-  it('a held application whose commit replays a stale close of the same command answers that close and writes no '
-    + 'file (quick check 8)', async () => {
+  it('a second copy of the same application, sent while the first holds the write queue at its stale close, answers '
+    + 'that close and writes no file (quick check 8)', async () => {
     const target = await world(backend);
     const [proposal] = await target.propose([{ baseCatalogPin: target.pin,
       ops: [addModule(target, 's8c-qc8', 'src/qc8')], reason: 'QC8 replayed close' }])
       .then(results => results.map(needsDecision));
     const card = await target.cardByKey(proposal!.cardKey);
-    // B: the answer's own application, prepared and held before its commit.
-    const hold = commitBarrier.hold(byIdentityPrefix('architecture-proposal-apply'), 'QC8 B prepared');
+    const holdAnswer = commitBarrier.holdAfter(byIdentityPrefix('session-message-decision-'), 'QC8 answer');
     const answering = target.answer(card, 'approve', 's8c-qc8-answer');
-    await hold.reached;
-    // Another command revises the catalog; then the same application A finds no receipt, sees the base moved and
-    // closes the members stale under the original identity.
+    await holdAnswer.reached;
+    // KLS-2b [2B-06]: a revise waits on the write queue an application holds, so another command moves the base
+    // first. A then finds no receipt, sees the base moved and closes the members stale under the original identity;
+    // its close is held before its commit (it holds the queue). B is sent then (A has no receipt yet) and is answered
+    // after A, with A's close.
     await target.revise([addModule(target, 's8c-qc8-other', 'src/qc8other')]);
     const saved = await target.readAnswer(card.source);
     if (saved.status !== 'ready' || saved.value.message === null) throw new Error('no saved answer');
-    const first = await target.apply(batchOf(await target.read(proposalRefOf(proposal!))), saved.value.message.ref);
+    const batchRef = batchOf(await target.read(proposalRefOf(proposal!)));
+    const holdFirst = commitBarrier.hold(byIdentityPrefix('architecture-proposal-apply'), 'QC8 A stale close');
+    const firstCall = target.apply(batchRef, saved.value.message.ref);
+    await holdFirst.reached;
+    const secondCall = target.apply(batchRef, saved.value.message.ref);
+    holdFirst.release();
+    const first = await firstCall;
     expect(first, JSON.stringify(first)).toMatchObject({ status: 'source_stale' });
-    hold.release();
+    expect(await secondCall).toEqual(first);
+    holdAnswer.release();
     await answering;
     expect(target.lastApply()).toEqual(first);
     expect((await target.read(proposalRefOf(proposal!))).proposal).toMatchObject({ state: 'stale' });

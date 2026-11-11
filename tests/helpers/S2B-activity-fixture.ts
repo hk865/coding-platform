@@ -67,6 +67,7 @@ import type { ReadResult } from '../../src/contracts/core/results.js';
 import {
   B2_AT, B2_HOST, createB2ExecutionFixture, type B2ExecutionFixture,
 } from './B2-execution-fixture.js';
+import { knowledgeLinesOver } from './KLS2-knowledge-lines.js';
 
 export type S2BActivityFixtureKind = 'memory' | 'sqlite';
 
@@ -256,7 +257,7 @@ export async function openS2BActivityFixture(
     checks: [1, 2, 3, 4].map((n) => ({ checkId: `check-${String(n)}`, kind: 'static', command: 'fixture-check',
       cwd: '.', timeoutMs: 1000, taskIds: 'all' })),
   };
-  const evidence = createEvidenceService({
+  const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(baseRecords),
     records: baseRecords,
     executions: createRunStateReader({ records: baseRecords }),
     materials: createMaterialService({ bodies: b2.bodies, authority: materialAuthority, now }),
@@ -293,7 +294,8 @@ export async function openS2BActivityFixture(
   }
 
   /** The real Session lifecycle owner (`linkSessionWork`), over the same store. */
-  const lifecycle = createSessionLifecycleService({ records: baseRecords, lookups: baseRecords, duty: unknownSessionDuty });
+  const lifecycle = createSessionLifecycleService({ records: baseRecords,
+    knowledge: knowledgeLinesOver(baseRecords), lookups: baseRecords, duty: unknownSessionDuty });
 
   /** Opens or closes one real `responsible` SessionWorkLink on the gate task. */
   async function setResponsible(sessionRef: SessionRef, taskId: string, active: boolean): Promise<void> {

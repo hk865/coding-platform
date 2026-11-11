@@ -14,12 +14,14 @@
 - `commit-extensions.ts` — 唯一 claim 校验/冲突、ledger horizon 比较、事务内游标绑定、事务内拒绝异常。
 - `guarded-revision.ts` — 事务内用存储正文解码 guard 目标的真实 revision；invalid 只能映射为 corrupt。
 - `in-memory-record-store.ts` — 内存记录 backend：同一事务语义、单份 eventLog/snapshots/claims，供内存模式与测试；另暴露只读的 `commitIdentities` 成员。
+- `knowledge-index-ports.ts` — KLS-2b 知识索引的端口（`index.sqlite` 的七张表）：`KnowledgeIndex`、`KnowledgeIndexTx`、文件行、派生行、注记核对状态和全文页的形状。
 - `lookup-index.ts` — lookup 注册、请求规则、候选 key、排序/比较、全文词项与比较文本。
 - `lookup-ports.ts` — 精确/有序/计数/全文四个 lookup 端口及其请求/页类型和全文边界常量。
 - `migrations.ts` — 旧 4 表 DDL、逐表列/主键/affinity 兼容检查、`initRecordStoreSchema`；从不删表或重建。
 - `ports.ts` — 核心机械协议：`GoalRecordTransactionPort`、`RecordCommitIdentityPort`（按 identity 读已提交回执和提交时的 fingerprint）、`PreparedCommit`、guard/claim/receipt、记录与事件 DTO、schema 注册形状。
 - `record-codec.ts` — schema 注册、JSON envelope/refKey/revision 一致性、`planPreparedCommit`、事务内游标绑定、guard 规则、幂等行与回执。
-- `sqlite-body-store.ts` — `artifacts(key, record)` 表上的原子 `INSERT ... ON CONFLICT DO NOTHING` 正文实现，`close` 幂等。
+- `sqlite-body-store.ts` — `artifacts(key, record)` 表上的原子 `INSERT ... ON CONFLICT DO NOTHING` 正文实现，`close` 幂等。 `openSqliteFile` 是正文库和知识索引共用的打开方式（忙等重试、WAL、`synchronous FULL`）。
+- `sqlite-knowledge-index.ts` — KLS-2b 的 `createKnowledgeIndex(projectId, path | null)`：SQLite 用 `openSqliteFile`，memory 用 `:memory:`，同一套 DDL；全文复用 `scanEntries`，按 noteId 升序；`noteIdsByEdge` 按边的种类（和可选的 `to_ref`）列出这条线的注记；`noteAnchorsByPrefix` 是 `noteIdsByAnchorPrefix` 的同一次范围读，每行带锚点键（调用者要逐个判键时用）。打不开的库抛错带路径。
 - `sqlite-lookup-indexes.ts` — 每个注册 lookup 一张按 aggregateType 分区的部分表达式索引，以及开库时的增量迁移。
 - `sqlite-record-store.ts` — SQLite 记录 backend：一个连接、`BEGIN IMMEDIATE` 事务、旧列/旧 JSON 字节兼容、精确 `eventAt`；另暴露只读的 `commitIdentities` 成员。
 - `sqlite-sql-literals.ts` — 只接受注册期已验证的 aggregateType 与 LIMIT 字面量，避免每类查询重新规划。
@@ -48,7 +50,7 @@
 | `OrderedLookupRequest`、`OrderedLookupValue`、`RecordOrderedLookupPage` | `src/core/record-store/lookup-ports.ts:61`、`src/core/record-store/lookup-ports.ts:61`、`src/core/record-store/lookup-ports.ts:61` | 有序 lookup 的请求/续页形状。 | 有序列表、队列、历史翻页。 |
 | `RecordCountRequest`、`RecordCountResult` | `src/core/record-store/lookup-ports.ts:87`、`src/core/record-store/lookup-ports.ts:87` | 计数请求与结果。 | 调用 count 端口时。 |
 | `TextSearchRequest`、`TextSearchPage` | `src/core/record-store/lookup-ports.ts:122`、`src/core/record-store/lookup-ports.ts:122` | 全文请求与页（含 complete）。 | 调用 searchText 时。 |
-| `TEXT_SEARCH_PAGE_MAX`、`TEXT_SEARCH_MAX_TERMS`、`TEXT_SEARCH_TERM_MIN`、`TEXT_SEARCH_TERM_MAX` | `src/core/record-store/lookup-ports.ts:101`、`src/core/record-store/lookup-ports.ts:102`、`src/core/record-store/lookup-ports.ts:103`、`src/core/record-store/lookup-ports.ts:104`、`src/core/work-graph/model/note-contracts.ts:65` | 全文检索边界：单页 100 条、1–8 个词、每词 2–64 码点。 | 校验全文请求；`TEXT_SEARCH_MAX_TERMS` 在 WorkGraph 另有一份同值常量，正本待 lead 定。 |
+| `TEXT_SEARCH_PAGE_MAX`、`TEXT_SEARCH_MAX_TERMS`、`TEXT_SEARCH_TERM_MIN`、`TEXT_SEARCH_TERM_MAX` | `src/core/record-store/lookup-ports.ts:101`、`src/core/record-store/lookup-ports.ts:102`、`src/core/record-store/lookup-ports.ts:103`、`src/core/record-store/lookup-ports.ts:104`、`src/core/work-graph/model/note-contracts.ts:66` | 全文检索边界：单页 100 条、1–8 个词、每词 2–64 码点。 | 校验全文请求；`TEXT_SEARCH_MAX_TERMS` 在 WorkGraph 另有一份同值常量，正本待 lead 定。 |
 | `RawArtifactStorePort`、`RawArtifactPut`、`RawArtifactRecord`、`MaterialOrigin` | `src/core/record-store/body-ports.ts:23`、`src/core/record-store/body-ports.ts:10`、`src/core/record-store/body-ports.ts:17`、`src/core/record-store/body-ports.ts:7` | 原始正文端口：put 内容寻址、read 校验；origin 只记录来源，不解释授权。 | Runtime/WorkGraph 存取 artifact 正文时。 |
 | `RawArtifactBodyStore` | `src/core/record-store/body-store.ts:24` | 内存正文实现，共享 put/read 规则，Map seam 可替换。 | 内存存储的组合根或测试。 |
 | `createSqliteRawArtifactStore` | `src/core/record-store/sqlite-body-store.ts:25` | SQLite `artifacts` 表实现，`close` 幂等。 | 持久化内容寻址正文时。 |
@@ -89,4 +91,4 @@
 - 不要手填提交游标：记录里先留 null 占位，再用 `commitCursorBindings`，事务内绑定后做最终 schema 校验（CS-01、CS-08、CS-10）。
 - 不要在 store 外重建回执或重放：用 `lookupCommit`/`eventAt`；恢复时不要把 lookup 失败当“未提交”（M1-14、M1-15、M1-26）。
 - 不要重写 idempotency/快照的编码，也不要重新序列化旧记录：保持旧列/旧 JSON 的原字节（CS-01、CS-08、CS-10；另写事件/记录构造的同类错误见 M1-37）。
-- `lookupReceipt` 不是本层导出：它只是 `src/core/work-graph/queries/query-job-service.ts:436`、`src/core/work-graph/tasks/completion.ts:174`、`src/core/work-graph/evidence/evidence-service.ts:519` 各自的私有包装；不要把它写成 `ports.ts` 的端口，收拢前按各 owner 的代码使用。
+- `lookupReceipt` 不是本层导出：它只是 `src/core/work-graph/queries/query-job-service.ts:436`、`src/core/work-graph/tasks/completion.ts:174`、`src/core/work-graph/evidence/evidence-service.ts:521` 各自的私有包装；不要把它写成 `ports.ts` 的端口，收拢前按各 owner 的代码使用。

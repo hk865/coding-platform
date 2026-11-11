@@ -72,6 +72,7 @@ import { loadPreparedManifest } from '../../src/core/agent-runtime/execution-pre
 import type { PreparedTaskExecution, PreparedTaskManifestV1 } from '../../src/contracts/core/prepared-execution.js';
 import { createB2ExecutionFixture, type B2ExecutionFixture, type B2Records } from '../helpers/S1-workflow-archive-fixture.js';
 import { createRuntimeHostDouble, createScriptedModel } from '../helpers/B2-runtime-fixture.js';
+import { knowledgeLinesOver } from '../helpers/KLS2-knowledge-lines.js';
 
 const T0 = '2026-10-08T00:00:00.000Z';
 const T1 = '2026-10-09T00:00:00.000Z';
@@ -213,10 +214,11 @@ async function open(kind: 'memory' | 'sqlite', options: OpenOptions = {}): Promi
   const sessionFacts = createSessionFactsService({ records });
   // The trusted basis is the REAL reader, never a fake.
   createSessionResponsibilityService({
-    records, lookups: records, basis: createSessionResponsibilityBasisReader(records), duty: unknownSessionDuty, now,
+    records, lookups: records, basis: createSessionResponsibilityBasisReader(records, knowledgeLinesOver(records)), duty: unknownSessionDuty, now,
   });
   const sessionAnomalies = createSessionAnomalyService({ records, lookups: records, sessionFacts, now });
-  const sessionLifecycle = createSessionLifecycleService({ records, lookups: records, sessionFacts, duty: unknownSessionDuty });
+  const sessionLifecycle = createSessionLifecycleService({ records,
+    knowledge: knowledgeLinesOver(records), lookups: records, sessionFacts, duty: unknownSessionDuty });
   const controls = createRunControlService({
     records, authority: createMaterialRecordReaders(records).authority, reads, now, eventId,
   });

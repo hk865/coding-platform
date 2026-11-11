@@ -8,6 +8,7 @@ import { createSessionDirectory } from '../../src/core/work-graph/sessions/sessi
 import { encodeSessionRecord } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { createGraphSessionFixture, lifecycleRequest, linkRequest,
   type GraphSessionFixture } from '../helpers/graph-session-fixture.js';
+import { knowledgeLinesOver } from '../helpers/KLS2-knowledge-lines.js';
 
 const fixtures: GraphSessionFixture[] = [];
 afterEach(async () => { for (const f of fixtures.splice(0)) await f.close(); });
@@ -45,7 +46,8 @@ describe.each(['memory', 'sqlite'] as const)('A1 Session independent %s races', 
         return missed;
       },
     };
-    const raced = await submit(createSessionLifecycleService({ records, lookups: records, duty: unknownSessionDuty }));
+    const raced = await submit(createSessionLifecycleService({ records,
+      knowledge: knowledgeLinesOver(records), lookups: records, duty: unknownSessionDuty }));
     expect(injected).toBe(true);
     expect(original).toMatchObject({ status: 'committed', replayed: false });
     expect(raced).toEqual({ ...original, replayed: true });
@@ -71,7 +73,8 @@ describe.each(['memory', 'sqlite'] as const)('A1 Session independent %s races', 
         return page;
       },
     };
-    const directory = createSessionDirectory({ records, lookups: records, duty: unknownSessionDuty });
+    const directory = createSessionDirectory({ records,
+      knowledge: knowledgeLinesOver(records), lookups: records, duty: unknownSessionDuty });
     const result = await directory.findSessions(f.ctx,
       { workspace: f.scope, target, includeArchived: false, page: { limit: 5 } });
     expect(closed).toBe(true);
@@ -105,7 +108,8 @@ describe.each(['memory', 'sqlite'] as const)('A1 Session independent %s races', 
         return missed;
       },
     };
-    const raced = await createSessionLifecycleService({ records, lookups: records, duty: unknownSessionDuty }).linkSessionWork(f.ctx, opening);
+    const raced = await createSessionLifecycleService({ records,
+      knowledge: knowledgeLinesOver(records), lookups: records, duty: unknownSessionDuty }).linkSessionWork(f.ctx, opening);
     expect(injected).toBe(true);
     expect(original).toMatchObject({ status: 'committed', replayed: false });
     expect(raced).toEqual({ ...original, replayed: true });

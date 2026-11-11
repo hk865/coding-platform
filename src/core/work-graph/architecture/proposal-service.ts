@@ -66,7 +66,7 @@ import {
   decodeArchitectureCatalogRevisedEvent, encodeArchitectureCatalogRevisedEvent,
 } from './catalog-record-codecs.js';
 import {
-  architectureWritePlansOf, catalogPinOf, knowledgeBaselineOf, readCurrentCatalogWindow,
+  architectureWritePlansOf, catalogPinOf, knowledgeBaselineOf, opsInProjectView, readCurrentCatalogWindow, reframeRepairOps,
 } from './catalog-service.js';
 import { exactKeys } from './architecture-service.js';
 import {
@@ -728,24 +728,7 @@ Promise<ReadResult<{ sessionRef: SessionRef; role: RoleConfigurationRef;
 /** Write-side path qualification for every op that declares module/interface paths. */
 export function qualifyOps(ops: readonly CatalogRepairOpV1[], requestWorkspaceId: string,
   mainWorkspaceId: string): CatalogRepairOpV1[] {
-  const qualify = (path: string): string => qualifyProjectPath(requestWorkspaceId, path, mainWorkspaceId);
-  const qualifyPaths = (paths: readonly string[]): string[] => paths.map(qualify);
-  return ops.map(op => {
-    switch (op.op) {
-      case 'add_module':
-        return { ...op, module: { ...op.module, paths: qualifyPaths(op.module.paths),
-          interfaces: op.module.interfaces.map(iface => ({ ...iface, paths: qualifyPaths(iface.paths) })) } };
-      case 'add_path':
-      case 'remove_path':
-        return { ...op, path: qualify(op.path) };
-      case 'add_interface':
-        return { ...op, interface: { ...op.interface, paths: qualifyPaths(op.interface.paths) } };
-      case 'set_interface':
-        return op.paths === undefined ? op : { ...op, paths: qualifyPaths(op.paths) };
-      default:
-        return op;
-    }
-  });
+  return reframeRepairOps(ops, id => id, path => qualifyProjectPath(requestWorkspaceId, path, mainWorkspaceId));
 }
 
 export async function proposeArchitectureRevision(deps: ProposalServiceDeps, ctx: CoreCallContext,
@@ -780,7 +763,15 @@ export async function proposeArchitectureRevision(deps: ProposalServiceDeps, ctx
     }
     mainWorkspaceId = main.value ?? requestWorkspaceId;
   }
-  const qualifiedInput = { ...input, ops: qualifyOps(parsed.ops, requestWorkspaceId, mainWorkspaceId) };
+  // KLS-2b: the ops' module ids are in the caller's frame too; the proposal stores the project view.
+  let qualifiedOps: CatalogRepairOpV1[];
+  try {
+    qualifiedOps = opsInProjectView(qualifyOps(parsed.ops, requestWorkspaceId, mainWorkspaceId), requestWorkspaceId,
+      mainWorkspaceId);
+  } catch (error) {
+    return { status: 'invalid', reason: `a module id cannot be read in the caller's frame: ${messageOf(error)}` };
+  }
+  const qualifiedInput = { ...input, ops: qualifiedOps };
   const keys = await proposalWriteKeys(deps, ctx, input);
   const prior = await lookupCommittedReceipt(deps.records, keys.identityKey, keys.fingerprint);
   if (prior.status === 'conflict') return rejected('idempotency_conflict', prior.reason);
@@ -991,7 +982,9 @@ Promise<ApplyBatchResult<ArchitectureRevision>> {
   if (members.status === 'rejected') return members;
   if (members.status !== 'ready') return rejected('unavailable', 'the proposal batch members are not readable');
   if (members.value.some(member => member.state !== 'pending')) {
-    return rejected('invalid', 'the proposal batch is no longer pending');
+    // The same command may have committed after the receipt lookup above (a copy ahead of this one in the write
+    // queue): its result comes first (quick check 5), not `invalid`.
+    return await priorApproval(deps, keys) ?? rejected('invalid', 'the proposal batch is no longer pending');
   }
   const answer = await readApprovalAnswer(deps, ctx, batch.value.ref, input.answerMessageRef);
   if (answer.status === 'rejected') return answer;

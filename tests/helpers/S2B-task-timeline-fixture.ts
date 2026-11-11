@@ -83,6 +83,7 @@ import {
 import { createB2ExecutionFixture, type B2ExecutionFixture } from './B2-execution-fixture.js';
 import { createS2BRuntimeSteps, type S2BRunHandle } from './S2B-runtime-steps-fixture.js';
 import type { ClaimFixtureKind } from './task-claim-fixture.js';
+import { knowledgeLinesOver } from './KLS2-knowledge-lines.js';
 
 /** One slow timeline file may take up to 1,800 s (spec §7 / L-fixtures). */
 export const S2B_SLOW_TIMEOUT_MS = 1_800_000;
@@ -189,10 +190,12 @@ export async function openS2BTimelineFixture(kind: ClaimFixtureKind = 'memory'):
   const eventId = (): string => `s2b-timeline-event-${++seq}`;
   const newId = (): string => `s2b-timeline-id-${++seq}`;
   const plans = createPlanService({ records: baseRecords, bindings: createInitializationBindingReader({ records: baseRecords }),
+    knowledge: b2.base.knowledge,
     now, eventId });
   const runReads = createRunStateReader({ records: baseRecords });
   const sessionFacts = createSessionFactsService({ records: baseRecords });
-  const lifecycle = createSessionLifecycleService({ records: baseRecords, lookups: baseRecords, sessionFacts, duty: unknownSessionDuty });
+  const lifecycle = createSessionLifecycleService({ records: baseRecords,
+    knowledge: b2.base.knowledge, lookups: baseRecords, sessionFacts, duty: unknownSessionDuty });
   const anomalies = createSessionAnomalyService({ records: baseRecords, lookups: baseRecords, sessionFacts, now });
   const authority = createMaterialRecordReaders(baseRecords).authority;
   const materials = createMaterialService({ bodies: b2.bodies, authority, now });
@@ -221,7 +224,7 @@ export async function openS2BTimelineFixture(kind: ClaimFixtureKind = 'memory'):
     checks: [{ checkId: 'check-1', kind: 'static', command: 'fixture-check',
       cwd: '.', timeoutMs: 1000, taskIds: 'all' }],
   };
-  const evidence = createEvidenceService({
+  const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(baseRecords),
     records: baseRecords, executions: runReads, materials,
     workspaceHost: {
       async resolveRoot() { return { status: 'ready' as const, value: { root: b2.base.directory, workspaceRevision: 1 } }; },

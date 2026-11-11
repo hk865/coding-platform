@@ -28,9 +28,13 @@ import type { ObservedArchitecturePort } from '../architecture/contracts.js';
 import { readCurrentCatalogWindow } from '../architecture/catalog-service.js';
 import { repairNeedsCard } from '../architecture/repair-ops.js';
 import { REPAIR_APPROVAL_OPTIONS } from '../communication/decision-source-facts.js';
-import type { DecisionCardSourcePort, DecisionCardV1, S5RecordPort } from '../model/decision-contracts.js';
+import {
+  DECISION_WINDOW_MOVED_REASON, type DecisionCardSourcePort, type DecisionCardV1, type S5RecordPort,
+} from '../model/decision-contracts.js';
 import { readBoundRepairRound, readObservation, footprintProblem } from '../notes/activate-repair.js';
 import { readAllHeads } from '../notes/note-base-reader.js';
+import { overlayFileKnowledge, prepareNoteFiles, preparedHeads } from '../notes/note-knowledge.js';
+import type { KnowledgeLines } from '../model/line-knowledge.js';
 import { moduleRefOf } from '../notes/note-anchors.js';
 import { mapStoreFailure } from '../notes/store-failures.js';
 import {
@@ -49,6 +53,8 @@ import type { DecisionReadRecordsPort } from './goal-conflicts.js';
 
 export type RepairApprovalSourceDependencies = {
   records: DecisionReadRecordsPort;
+  /** #46: a repair's ops come from its note file (the pin and moves stay the record's). */
+  knowledge: KnowledgeLines;
   observation: Pick<ObservedArchitecturePort, 'observationState' | 'listFiles'>;
   /** The project's main workspace; absent treats the Run's workspace as main. */
   mainWorkspaceOf?: (projectId: string) => Promise<ReadResult<string | null>>;
@@ -279,12 +285,25 @@ Promise<ReadResult<'every_step' | 'after_plan_confirmation'>> {
   return { status: 'ready', value: readGoalSettings(read.goal).autonomy };
 }
 
+/** R-窗 (ruling 9): where a queue attempt keeps the staged repair heads overlaid before the window. */
+const REPAIR_FILES = 'repair.approvalFiles';
+
 export function createRepairApprovalSource(
   deps: RepairApprovalSourceDependencies,
 ): DecisionCardSourcePort {
   return createCollectionCardSource<NoteHeadSnapshot>({
     kind: 'repair_approval',
     serves: ['goal'],
+    async prepareWindow(ctx, { goals, attempt }) {
+      const heads: NoteHeadSnapshot[] = [];
+      for (const goal of goals) {
+        const page = await readAllHeads(deps.records, S4_NOTE_BY_REVIEW_STATUS_LOOKUP, [ctx.projectId, goal.ref.goalId, 'staged']);
+        if (!page.ok) return rejected(page.code, page.reason);
+        heads.push(...page.heads);
+      }
+      const prepared = await prepareNoteFiles(attempt, REPAIR_FILES, heads, { lines: deps.knowledge, caller: ctx });
+      return prepared.status === 'ready' ? { status: 'ready', value: undefined } : mapStoreFailure(prepared);
+    },
     async readCollection(ctx, { subject, attempt }) {
       if (subject.kind !== 'goal') return { status: 'ready', value: [] };
       const goalRef = subject.goalRef;
@@ -293,8 +312,14 @@ export function createRepairApprovalSource(
       const page = await readAllHeads(deps.records, S4_NOTE_BY_REVIEW_STATUS_LOOKUP,
         [ctx.projectId, goalRef.goalId, 'staged']);
       if (!page.ok) return rejected(page.code, page.reason);
+      // In the queue window the files were read before it; a staged head that moved since is the window's move.
+      const shown = preparedHeads(attempt, REPAIR_FILES, page.heads);
+      if (shown === 'moved') return rejected('source_stale', DECISION_WINDOW_MOVED_REASON);
+      const overlaid = shown !== undefined ? { status: 'ready' as const, value: shown }
+        : await overlayFileKnowledge(page.heads, { lines: deps.knowledge, caller: ctx });
+      if (overlaid.status !== 'ready') return mapStoreFailure(overlaid);
       const notes: NoteHeadSnapshot[] = [];
-      for (const head of page.heads) {
+      for (const head of overlaid.value) {
         if (head.kind !== 'repair' || head.stagedRunKey === null) continue;
         const facts = await readFootprintFacts(deps, ctx, head, attempt?.cache);
         if (facts.status !== 'ready') return facts;
@@ -316,7 +341,9 @@ export function createRepairApprovalSource(
       if (source.subject.kind !== 'goal') return { status: 'ready', value: null };
       const head = await readRepairNoteHead(deps.records, pin);
       if (head.status !== 'ready') return head;
-      const note = head.value;
+      const overlaid = await overlayFileKnowledge([head.value], { lines: deps.knowledge, caller: ctx });
+      if (overlaid.status !== 'ready') return mapStoreFailure(overlaid);
+      const note = overlaid.value[0]!;
       if (note.version !== pin.revision || note.kind !== 'repair' || note.state !== 'staged'
         || note.stagedRunKey === null || note.goalId !== source.subject.goalRef.goalId) {
         return { status: 'ready', value: null };

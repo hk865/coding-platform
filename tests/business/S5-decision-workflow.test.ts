@@ -104,8 +104,10 @@ async function assemble(fixture: S5DecisionFixture, goalSettings: GoalSettingsPo
   const dependencies: WorkflowDependencies = {
     tasks: createGoalService({ records: fixture.records, now: fixture.now, eventId: fixture.newId }).tasks,
     plans: createPlanService({ records: fixture.records, bindings: createInitializationBindingReader({ records: fixture.records }),
+      knowledge: fixture.knowledge,
       now: fixture.now, eventId: fixture.newId }),
-    sessions: createSessionDirectory({ records: fixture.records, lookups: fixture.records, duty: unknownSessionDuty }),
+    sessions: createSessionDirectory({ records: fixture.records,
+      knowledge: fixture.knowledge, lookups: fixture.records, duty: unknownSessionDuty }),
     claims,
     executions: createRunStateReader({ records: fixture.records }),
     runtime, evidence, checks,
@@ -127,7 +129,8 @@ function selectWork(
 /** A real P/W Session nobody claims; §5.4 WF02: the same idle Session can take both pending advances. */
 async function createIdleSession(fixture: S5DecisionFixture): Promise<SessionRef> {
   const ref = await fixture.createS5Session('s5-wf02-idle');
-  const sessions = createSessionDirectory({ records: fixture.records, lookups: fixture.records, duty: unknownSessionDuty });
+  const sessions = createSessionDirectory({ records: fixture.records,
+    knowledge: fixture.knowledge, lookups: fixture.records, duty: unknownSessionDuty });
   expect(ready(await sessions.readSession(fixture.ctx, ref)).record).toMatchObject({ lifecycle: 'active', occupancy: null });
   return ref;
 }
@@ -169,6 +172,7 @@ async function endRunCrashed(fixture: S5DecisionFixture, claim: TaskClaim): Prom
   const result = committed(await entry.recordRunResult(fixture.ctx, request));
   expect(result.value).toMatchObject({ status: 'ended', outcome: 'crashed', endedAt: T });
   const plans = createPlanService({ records: fixture.records, bindings: createInitializationBindingReader({ records: fixture.records }),
+    knowledge: fixture.knowledge,
     now: fixture.now, eventId: fixture.newId });
   const graph = ready(await plans.queryTaskGraph(fixture.ctx, { goalRef: GOAL_B }));
   expect(graph.tasks.find(task => task.ref.taskId === claim.task.taskId)).toMatchObject({

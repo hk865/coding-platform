@@ -1380,12 +1380,6 @@
       "name": "rawModuleRef",
       "reason": "kept-for",
       "note": "kept for KLS-3a, decision 121-75"
-    },
-    {
-      "file": "src/core/work-graph/model/line-knowledge.ts",
-      "name": "lineRefKey",
-      "reason": "kept-for",
-      "note": "kept for KLS-2b, decision 121-75: the line key of the knowledge index, snapshots, write log and pins"
     }
   ]
 }
