@@ -1,0 +1,8 @@
+{
+  "description": "The only way to give this round's execution review answer. Fill the three fields and call it; the platform builds and stores the answer from them. Do not write the answer as text.",
+  "parameters": {
+    "verdict": "\"pass\" or \"fix\".",
+    "basis": "The short basis of the verdict: what you read and why it passes or needs rework. Non-empty, at most 4096 bytes.",
+    "report": "The full review report; for fix, say what has to change. Non-empty."
+  }
+}

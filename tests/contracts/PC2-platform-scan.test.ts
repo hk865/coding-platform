@@ -15,7 +15,7 @@ import {
 } from '../../src/contracts/prompts/render-template.js';
 import { SESSION_MAILBOX_TOOL_NAMES, USER_DECISION_TOOL_NAMES } from '../../src/core/agent-runtime/communication-tools.js';
 import { REQUEST_COMMAND_RERUN_TOOL_NAMES } from '../../src/core/agent-runtime/command-rerun-tools.js';
-import { GRAPH_TOOL_NAMES } from '../../src/core/agent-runtime/graph-tools.js';
+import { EXECUTION_HISTORY_TOOL_NAMES, GRAPH_TOOL_NAMES } from '../../src/core/agent-runtime/graph-tools.js';
 import { LINK_CHECK_TOOL_NAMES } from '../../src/core/agent-runtime/link-check-tool.js';
 import { NOTE_TOOL_NAMES } from '../../src/core/agent-runtime/note-tool.js';
 import { ANSWER_TOOL_NAMES } from '../../src/core/agent-runtime/answer-tools.js';
@@ -43,6 +43,7 @@ const EVERY_TOOL_NAME: ReadonlySet<string> = new Set<string>([
     ...WHITEBOARD_TOOL_NAMES,
     ...SESSION_DISCOVERY_TOOL_NAMES,
     ...GRAPH_TOOL_NAMES,
+    ...EXECUTION_HISTORY_TOOL_NAMES,
     ...LINK_CHECK_TOOL_NAMES,
     ...NOTE_TOOL_NAMES,
     ...RECORD_UNKNOWN_CALL_REVIEW_TOOL_NAMES,
@@ -114,7 +115,7 @@ describe('PC-19 platform tool-name scan (ruling 18)', () => {
     it('scans every builtin, reserved and extension tool name the platform can register', () => {
         expect(EVERY_TOOL_NAME.size).toBe(RESERVED_TOOL_NAMES.size + SESSION_MAILBOX_TOOL_NAMES.length
             + USER_DECISION_TOOL_NAMES.length + WHITEBOARD_TOOL_NAMES.length + SESSION_DISCOVERY_TOOL_NAMES.length
-            + GRAPH_TOOL_NAMES.length + LINK_CHECK_TOOL_NAMES.length + NOTE_TOOL_NAMES.length + RECORD_UNKNOWN_CALL_REVIEW_TOOL_NAMES.length
+            + GRAPH_TOOL_NAMES.length + EXECUTION_HISTORY_TOOL_NAMES.length + LINK_CHECK_TOOL_NAMES.length + NOTE_TOOL_NAMES.length + RECORD_UNKNOWN_CALL_REVIEW_TOOL_NAMES.length
             + PROPOSE_SAFER_METHOD_TOOL_NAMES.length + REQUEST_COMMAND_RERUN_TOOL_NAMES.length
             + ANSWER_TOOL_NAMES.length + READ_REQUESTS_TOOL_NAMES.length + 1
             + REWORK_TOOL_NAMES.length + 5);

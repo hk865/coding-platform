@@ -585,6 +585,11 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
           message: requestQuestion,
         });
         if (guideProblem !== null) return guideProblem;
+      } else if (shape === 'exec_review') {
+        // The packet header is the request body itself; the guide adds only the
+        // three inputs, the read-only rule and the three form members (slice 9).
+        const guideProblem = appendGuide('exec-review-input', {});
+        if (guideProblem !== null) return guideProblem;
       } else if (!requestRound && execution.kind === 'initial_coordination') {
         const guideProblem = appendGuide('initial-planning-answer', {});
         if (guideProblem !== null) return guideProblem;

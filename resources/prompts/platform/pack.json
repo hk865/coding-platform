@@ -73,6 +73,11 @@
       "version": 1,
       "mentionsTools": []
     },
+    "exec-review-input": {
+      "file": "templates/exec-review-input.txt",
+      "version": 1,
+      "mentionsTools": []
+    },
     "scribe-reminder": {
       "file": "templates/scribe-reminder.txt",
       "version": 2,
@@ -225,6 +230,8 @@
     "read_user_decision": "tools/read_user_decision.json",
     "record_decision_application": "tools/record_decision_application.json",
     "look_graph": "tools/look_graph.json",
+    "read_execution_history": "tools/read_execution_history.json",
+    "submit_exec_review": "tools/submit_exec_review.json",
     "find_graph": "tools/find_graph.json",
     "check_links": "tools/check_links.json",
     "find_related_sessions": "tools/find_related_sessions.json",

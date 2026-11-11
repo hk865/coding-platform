@@ -1,0 +1,4 @@
+{
+  "description": "Read the original execution history of the Run under review, one page at a time. The platform binds the Run; send only afterCursor (omit or null for the first page, then the previous page's nextCursor) and limit (1 to 200, default 50). An archived or busy Run can still be read.",
+  "parameters": {}
+}

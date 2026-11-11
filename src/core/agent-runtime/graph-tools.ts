@@ -23,6 +23,7 @@ import type { RunRef, TaskTriple } from '../../contracts/dispatch.js';
 import type { GraphNodeRefV1, TaskInputPageRequestV1 } from '../../contracts/graph-context.js';
 import type { GoalRef } from '../../contracts/ledger.js';
 import type { PlanRevisionRef } from '../../contracts/plan.js';
+import type { QueryAnswerShapeV1 } from '../../contracts/query-job.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
 import type { ToolTextV1 } from '../../contracts/prompts/prompt-pack.js';
 import { MEMORY_PAGE_DEFAULT, TEXT_SEARCH_MAX_TERMS } from '../work-graph/model/note-contracts.js';
@@ -49,6 +50,19 @@ const PLATFORM_TOOL_TEXTS: Readonly<Record<string, ToolTextV1>> = PLATFORM_PROMP
 
 export const GRAPH_TOOL_NAMES = ['look_graph', 'find_graph'] as const;
 
+/**
+ * Slice 9: the exec review Query's own history read. It is mounted by
+ * the frozen answer shape like the submit tools, never by a graph grant, so it
+ * is not in `GRAPH_TOOL_NAMES`.
+ */
+export const EXECUTION_HISTORY_TOOL_NAMES = ['read_execution_history'] as const;
+export type ExecutionHistoryToolName = (typeof EXECUTION_HISTORY_TOOL_NAMES)[number];
+
+/** The read tools one answer shape mounts beside its submit tool: only `exec_review` reads its subject Run's history. */
+export function answerReadToolNamesOf(shape: QueryAnswerShapeV1 | null): readonly ExecutionHistoryToolName[] {
+  return shape === 'exec_review' ? EXECUTION_HISTORY_TOOL_NAMES : [];
+}
+
 export type GraphToolsConfig = {
   /** The trusted current Goal; `null` is a request without one (the project read branch). */
   context: CoreCallContext; goalRef: GoalRef | null;
@@ -59,7 +73,20 @@ export type GraphToolsConfig = {
   notes?: NoteMemoryReadPort;
   /** The platform tools' model-facing texts; defaults to the generated pack. */
   texts?: Readonly<Record<string, ToolTextV1>>;
+  /**
+   * Slice 9: the frozen review packet's subject Run. Present, the factory also
+   * builds `read_execution_history` bound to it; the model never names a Run.
+   */
+  subjectRunRef?: RunRef;
+  /**
+   * Slice 9: `false` leaves the history mode out of `look_graph`'s
+   * schema, so the exec review Query reads history only through its own tool.
+   * Absent keeps today's schema.
+   */
+  lookHistory?: false;
 };
+
+type HistoryArgs = { afterCursor?: string | null; limit?: number };
 
 type LookArgs =
   | { mode: 'node'; target: GraphNodeRefV1; relation?: GraphLookRequestV1['relation'];
@@ -325,6 +352,11 @@ const memoryStaleSchema = z.object({
 const findMemorySchema = z.object({ memory: z.discriminatedUnion('op', [memoryFindSchema, memoryStaleSchema]) }).strict();
 const findSchema: z.ZodType = z.union([findGraphSchema, findMemorySchema]);
 const lookSchema: z.ZodType = z.union([...lookModeSchemas, lookMemorySchema]);
+const [nodeLookSchema, pathLookSchema, historyLookSchema, inputLookSchema] = lookModeSchemas;
+/** `look_graph` without the history mode: the exec review Query's schema. */
+const lookSchemaWithoutHistory: z.ZodType = z.union([nodeLookSchema, pathLookSchema, inputLookSchema, lookMemorySchema]);
+/** `read_execution_history`: the history mode's page members only; the Run is the frozen packet's. */
+const executionHistorySchema = historyLookSchema.omit({ mode: true, runRef: true });
 
 export function createGraphTools(config: GraphToolsConfig): {
   names: readonly string[];
@@ -345,6 +377,11 @@ export function createGraphTools(config: GraphToolsConfig): {
   const fixedGoalRef: GoalRef | null = config.goalRef === null ? null : {
     aggregateType: 'Goal', projectId: config.goalRef.projectId, goalId: config.goalRef.goalId,
   };
+  const fixedSubjectRunRef: RunRef | null = config.subjectRunRef === undefined
+    ? null : structuredClone(config.subjectRunRef);
+  const fixedLookSchema = config.lookHistory === false ? lookSchemaWithoutHistory : lookSchema;
+  const toolNames: readonly ((typeof GRAPH_TOOL_NAMES)[number] | ExecutionHistoryToolName)[] =
+    fixedSubjectRunRef === null ? GRAPH_TOOL_NAMES : [...GRAPH_TOOL_NAMES, ...EXECUTION_HISTORY_TOOL_NAMES];
 
   /** Snapshot the trusted context and keep this call's ORIGINAL signal. */
   function snapshotContext(signal: AbortSignal): CoreCallContext {
@@ -357,18 +394,22 @@ export function createGraphTools(config: GraphToolsConfig): {
     };
   }
 
+  /**
+   * One page of one Run's original execution history. The Run is read against
+   * one Goal: the history port validates its card in that Goal's universe first,
+   * and with no trusted Goal it refuses instead of serving another Goal's history.
+   */
+  async function readHistory(callId: string, runRef: RunRef, args: HistoryArgs, context: CoreCallContext): Promise<ToolResult> {
+    const result = await config.history.readTaskExecutionHistory(context, {
+      runRef,
+      afterCursor: args.afterCursor ?? null,
+      limit: args.limit ?? DEFAULT_HISTORY_LIMIT,
+    });
+    return mapRead(callId, result, 'the original execution history could not be read');
+  }
+
   async function dispatchLook(callId: string, args: LookArgs, context: CoreCallContext): Promise<ToolResult> {
-    if (args.mode === 'history') {
-      // A Run history is read against one Goal: its card is validated in that
-      // Goal's universe first. With no trusted Goal there is nothing to check
-      // the Run against, so refuse instead of serving another Goal's history.
-      const result = await config.history.readTaskExecutionHistory(context, {
-        runRef: args.runRef,
-        afterCursor: args.afterCursor ?? null,
-        limit: args.limit ?? DEFAULT_HISTORY_LIMIT,
-      });
-      return mapRead(callId, result, 'the original execution history could not be read');
-    }
+    if (args.mode === 'history') return readHistory(callId, args.runRef, args, context);
     if (args.mode === 'input') {
       // A task input page belongs to one Task of one Goal. With no trusted Goal
       // there is no Task to check the request against, so refuse here instead
@@ -465,7 +506,7 @@ export function createGraphTools(config: GraphToolsConfig): {
   }
 
   async function execute(
-    name: (typeof GRAPH_TOOL_NAMES)[number],
+    name: (typeof GRAPH_TOOL_NAMES)[number] | ExecutionHistoryToolName,
     call: Readonly<ToolCall>,
     signal: AbortSignal,
     schema: z.ZodType,
@@ -490,6 +531,11 @@ export function createGraphTools(config: GraphToolsConfig): {
         { status: 'rejected', code: 'cancelled', reason: 'the graph call was cancelled before the read' });
     }
     try {
+      if (name === 'read_execution_history') {
+        // The definition exists only when the factory froze a subject Run.
+        return finalize(callId,
+          await readHistory(callId, structuredClone(fixedSubjectRunRef!), accepted as HistoryArgs, context));
+      }
       const hasMemory = (accepted as { memory?: unknown }).memory !== undefined;
       if (name === 'find_graph') {
         if (hasMemory) return dispatchFindMemory(callId, (accepted as { memory: MemoryFindArgs }).memory, context);
@@ -510,17 +556,19 @@ export function createGraphTools(config: GraphToolsConfig): {
     }
   }
 
-  function definitionFor(name: (typeof GRAPH_TOOL_NAMES)[number]): ToolDefinition {
-    const schema = name === 'find_graph' ? findSchema : lookSchema;
+  function definitionFor(name: (typeof GRAPH_TOOL_NAMES)[number] | ExecutionHistoryToolName): ToolDefinition {
+    const history = name === 'read_execution_history';
+    const schema = name === 'find_graph' ? findSchema : name === 'look_graph' ? fixedLookSchema : executionHistorySchema;
     return {
       name,
-      description: descriptions[name],
+      description: history ? textOf(name).description : descriptions[name],
       inputSchema: schema,
       effectClass: 'read_only',
       requiredCapabilities: ['workspace_read'],
       defaultTimeoutMs: 10000,
       outputLimitBytes: 64 * 1024,
-      independentReadOnly: true,
+      // The history read is not independent, like the submit tools (slice 9).
+      independentReadOnly: !history,
       summarize: () => ({ paths: [], cwd: null, commandPreview: null }),
       handler: {
         async execute(call: Readonly<ToolCall>, options: Readonly<{ signal: AbortSignal }>): Promise<ToolResult> {
@@ -531,8 +579,8 @@ export function createGraphTools(config: GraphToolsConfig): {
   }
 
   return {
-    names: GRAPH_TOOL_NAMES,
-    create: () => GRAPH_TOOL_NAMES.map(name => definitionFor(name)),
+    names: toolNames,
+    create: () => toolNames.map(name => definitionFor(name)),
   };
 }
 export { success, failure, rejectedResult };

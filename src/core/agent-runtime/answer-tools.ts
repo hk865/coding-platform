@@ -21,9 +21,10 @@ import type {
 } from '../../contracts/architecture-catalog.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { CompletionPolicyContentV1 } from '../../contracts/governance.js';
-import type {
-  GoalCardDraftV1, GoalScreeningV1, QueryAnswerShapeV1, QueryJobAnswerV1, QueryRunRef,
-  SecretaryRequestManifestV1,
+import {
+  MAX_ANSWER_BYTES,
+  type GoalCardDraftV1, type GoalScreeningV1, type QueryAnswerShapeV1, type QueryJobAnswerV1, type QueryRunRef,
+  type SecretaryRequestManifestV1,
 } from '../../contracts/query-job.js';
 import { PLANNED_FILES_MAX, type PlanRevisionDraft, type RuntimeTask, type TaskInputRequirementV2 } from '../../contracts/plan.js';
 import { isLiteralSourceFilePath } from '../workspace/path-validation.js';
@@ -31,6 +32,9 @@ import { parseInitialPlanningResponseV2 } from '../../contracts/initial-planning
 import {
   planReviewAnswerText, parsePlanReviewAnswer, type PlanReviewFormV1,
 } from '../../contracts/plan-review.js';
+import {
+  execReviewAnswerText, parseExecReviewAnswer, type ExecReviewFormV1,
+} from '../../contracts/exec-review.js';
 import type { InitialPlanningSetupV2 } from '../../contracts/initial-planning.js';
 import type { ToolTextV1 } from '../../contracts/prompts/prompt-pack.js';
 import type {
@@ -56,12 +60,12 @@ import {
 } from '../../../vendor/coding-agent/dist/public-api.js';
 import { success, rejectedResult } from './graph-tools.js';
 import type { ToolGroup } from './tool-group-assembly.js';
-import { MAX_ANSWER_BYTES, PLANNING_MAX_ANSWER_BYTES } from './query-observation.js';
+import { PLANNING_MAX_ANSWER_BYTES } from './query-observation.js';
 
 /** The submit tool names, in the order the answer shapes freeze them. */
 export const ANSWER_TOOL_NAMES = [
   'submit_secretary_answer', 'submit_initial_plan', 'submit_initial_questions',
-  'submit_plan_round', 'submit_plan_review',
+  'submit_plan_round', 'submit_plan_review', 'submit_exec_review',
 ] as const;
 
 export type AnswerToolName = (typeof ANSWER_TOOL_NAMES)[number];
@@ -80,6 +84,7 @@ export function answerToolNamesOf(kind: AnswerToolKind | null): readonly AnswerT
   if (kind === 'initial') return ['submit_initial_plan', 'submit_initial_questions'];
   if (kind === 'plan_round') return ['submit_plan_round'];
   if (kind === 'plan_review') return ['submit_plan_review'];
+  if (kind === 'exec_review') return ['submit_exec_review'];
   return [];
 }
 
@@ -120,7 +125,8 @@ export type InitialPlanForm = { summary: string; plan: PlanForm; setup: SetupFor
 export type PlanRoundForm = { answerKind: 'plan' | 'questions'; summary: string;
   plan?: PlanForm; questions?: string[]; reason?: { text: string; affectedTaskIds?: string[]; objective?: string } };
 /** One submit form as the Kernel parsed it against the per-Run schema. */
-export type AnswerForm = SemanticForm | QuestionsForm | InitialPlanForm | PlanRoundForm | PlanReviewFormV1;
+export type AnswerForm = SemanticForm | QuestionsForm | InitialPlanForm | PlanRoundForm | PlanReviewFormV1
+  | ExecReviewFormV1;
 
 function filledScreening(projectId: string, screening: ScreeningForm | null | undefined): Record<string, unknown> | null {
   if (screening === null || screening === undefined) return null;
@@ -187,6 +193,7 @@ export function buildAnswerText(
     });
   }
   if (shape === 'plan_review') return planReviewAnswerText(form as PlanReviewFormV1);
+  if (shape === 'exec_review') return execReviewAnswerText(form as ExecReviewFormV1);
   if (shape === 'plan_round') {
     const round = form as PlanRoundForm;
     if (round.answerKind === 'questions') {
@@ -461,6 +468,15 @@ function planReviewSchema(): z.ZodType {
   }).strict();
 }
 
+/** The exec review form (slice 9): the verdict and two texts; the header members are never the model's. */
+function execReviewSchema(texts: ToolTextV1['parameters']): z.ZodType {
+  return z.object({
+    verdict: textField(z.enum(['pass', 'fix']), texts, 'verdict'),
+    basis: textField(z.string(), texts, 'basis'),
+    report: textField(z.string(), texts, 'report'),
+  }).strict();
+}
+
 function answerSchemaFor(name: AnswerToolName, goalLess: boolean, texts: ToolTextV1['parameters']): z.ZodType {
   switch (name) {
     case 'submit_secretary_answer': return semanticSchema(goalLess, texts);
@@ -468,6 +484,7 @@ function answerSchemaFor(name: AnswerToolName, goalLess: boolean, texts: ToolTex
     case 'submit_initial_questions': return questionsSchema(goalLess, texts);
     case 'submit_plan_round': return planRoundSchema(texts);
     case 'submit_plan_review': return planReviewSchema();
+    case 'submit_exec_review': return execReviewSchema(texts);
   }
 }
 
@@ -507,6 +524,11 @@ export function answerProblems(
   }
   if (shape === 'plan_review') {
     const parsed = parsePlanReviewAnswer(built);
+    if (parsed.status !== 'parsed') return [{ section: 'answer', reason: parsed.reason }];
+    return [];
+  }
+  if (shape === 'exec_review') {
+    const parsed = parseExecReviewAnswer(built);
     if (parsed.status !== 'parsed') return [{ section: 'answer', reason: parsed.reason }];
     return [];
   }

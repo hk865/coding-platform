@@ -16,7 +16,9 @@ import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { RunExecutionHistoryV1 } from '../../contracts/core/execution-history.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
 import type { SourceRefV1 } from '../../contracts/dispatch.js';
-import type { QueryAnswerShapeV1, QueryJobAnswerV1, QueryRunRef } from '../../contracts/query-job.js';
+import {
+  MAX_ANSWER_BYTES, type QueryAnswerShapeV1, type QueryJobAnswerV1, type QueryRunRef,
+} from '../../contracts/query-job.js';
 import type { PreparedQueryManifestV1 } from '../../contracts/core/prepared-execution.js';
 import {
   answerBoundBytes, answerSubmitNamesIn, buildAnswerText, submittedAnswerArgumentsOf,
@@ -45,7 +47,6 @@ export type QueryObservationPort = {
 
 /** Bounded per-call pagination: a Turn is reconstructed page by page, never by an unbounded scan. */
 const MAX_OBSERVATION_PAGES = 64;
-export const MAX_ANSWER_BYTES = 16 * 1024;
 /** The one planning answer bound: only an accepted `submit_plan_round` text may reach it. */
 export const PLANNING_MAX_ANSWER_BYTES = 256 * 1024;
 const MAX_SOURCES = 64;
@@ -482,7 +483,7 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
     // The frozen shape decides the accepted-answer bound and the formal reading.
     const shape = manifest.answerShape;
     if (!(shape === null || shape === 'secretary' || shape === 'initial'
-      || shape === 'plan_round' || shape === 'plan_review')) {
+      || shape === 'plan_round' || shape === 'plan_review' || shape === 'exec_review')) {
       return rejected('unavailable', 'the persisted Query manifest has no valid answerShape');
     }
     // Only a round whose frozen list holds a submit tool can hold an accepted

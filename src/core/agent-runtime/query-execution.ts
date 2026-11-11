@@ -15,7 +15,7 @@ import { isRecord, nonEmpty } from '../../contracts/validation/common.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { PreparedQueryExecution, PreparedQueryManifestV1 } from '../../contracts/core/prepared-execution.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
-import type { ModelCallAccess } from '../../contracts/dispatch.js';
+import type { ModelCallAccess, RunRef } from '../../contracts/dispatch.js';
 import { queryExecutionBindingOf, type QueryModelUsageV1, type QueryRunRef } from '../../contracts/query-job.js';
 import type { GoalRef } from '../../contracts/ledger.js';
 import type { HookPort, ToolCall } from '../../../vendor/coding-agent/dist/public-api.js';
@@ -26,7 +26,8 @@ import {
 } from '../../contracts/prompts/prompt-set.js';
 import { QUERY_MANIFEST_CONTENT_TYPE } from '../../contracts/no-progress.js';
 import { packString } from '../../contracts/prompts/pack-string.js';
-import { GRAPH_TOOL_NAMES } from './graph-tools.js';
+import { EXECUTION_HISTORY_TOOL_NAMES, GRAPH_TOOL_NAMES } from './graph-tools.js';
+import { execReviewPacketOfText } from '../work-graph/tasks/exec-review-packet.js';
 import type { SourceToolOptions } from './exploration-tools.js';
 import { ModelBudget, type MeterEntry, type ModelTokenBudget } from './model-budget.js';
 import { RuntimeModelCallRejected } from './model-call-access.js';
@@ -425,6 +426,16 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       const noteNames: readonly string[] = NOTE_TOOL_NAMES.filter(name => frozenToolNames.includes(name));
       // The answer tools follow the frozen request kind, never the Host grant.
       const submitNames = answerSubmitNamesIn(frozenToolNames);
+      // The exec review's history read follows the frozen answer shape too
+      // (slice 9). Its Run comes only from the packet frozen in the original
+      // question, never from the model.
+      const historyNames: readonly string[] = EXECUTION_HISTORY_TOOL_NAMES.filter(name => frozenToolNames.includes(name));
+      let subjectRunRef: RunRef | null = null;
+      if (historyNames.length > 0) {
+        const packet = execReviewPacketOfText(record.job.job.intent.question);
+        if (packet.status !== 'ready') return packet;
+        subjectRunRef = packet.value.packet.subjectRunRef;
+      }
       // Only a secretary request round selects the four mailbox names and the
       // two platform tools; every other Query's frozen list carries none.
       const secretaryMailboxNames: readonly string[] = manifest.request === null ? []
@@ -442,14 +453,15 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       const graphDeps = deps.graphContext === undefined || deps.taskInputs === undefined
         ? null
         : { graph: deps.graphContext, inputs: deps.taskInputs };
-      if (grantedGraphNames.length > 0 && graphDeps === null) {
-        return rejected('unsupported', `the Query grant selects graph read tools but no graph read dependency is bound: ${grantedGraphNames.join(', ')}`);
+      if ((grantedGraphNames.length > 0 || historyNames.length > 0) && graphDeps === null) {
+        return rejected('unsupported', `the Query grant selects graph read tools but no graph read dependency is bound: ${[...grantedGraphNames, ...historyNames].join(', ')}`);
       }
       if (grantedLinkCheckNames.length > 0 && deps.notes?.check === undefined) {
         return rejected('unsupported', `the Query grant selects check_links but no note check dependency is bound: ${grantedLinkCheckNames.join(', ')}`);
       }
       let coordinationTools: ToolGroup | null = null;
-      if (grantedGraphNames.length > 0 || grantedLinkCheckNames.length > 0 || noteAdmission.class !== 'none' || submitNames.length > 0
+      if (grantedGraphNames.length > 0 || historyNames.length > 0 || grantedLinkCheckNames.length > 0
+        || noteAdmission.class !== 'none' || submitNames.length > 0
         || secretaryMailboxNames.length > 0 || memberNames.length > 0 || readRequestNames.length > 0
         || architectureNames.length > 0) {
         // The original query_run tool context (spec §4.1: tool inputs never
@@ -486,7 +498,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           signal,
         };
         let graphTools: ToolGroup | null = null;
-        if (grantedGraphNames.length > 0 && graphDeps !== null) {
+        if ((grantedGraphNames.length > 0 || historyNames.length > 0) && graphDeps !== null) {
           let goalRef: GoalRef | null;
           if (secretary) {
             goalRef = frozenGoalId === null
@@ -499,7 +511,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
             goalRef = facts.value.goal === null ? null : facts.value.goal.ref;
           }
           graphTools = createQueryGraphToolGroup({
-            names: grantedGraphNames,
+            names: [...grantedGraphNames, ...historyNames],
             context: toolContext,
             goalRef,
             graph: graphDeps.graph,
@@ -511,6 +523,9 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
             // explicit refusal.
             ...((secretary || exploration) && deps.notes?.memory !== undefined ? { notes: deps.notes.memory } : {}),
             texts: toolTexts,
+            ...(subjectRunRef === null ? {} : { subjectRunRef }),
+            // The reviewer reads history only through its own tool (slice 9).
+            ...(shape === 'exec_review' ? { lookHistory: false as const } : {}),
           });
         }
         const linkCheckTools = grantedLinkCheckNames.length > 0
@@ -608,7 +623,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           });
         }
         const names = [
-          ...grantedGraphNames, ...grantedLinkCheckNames, ...noteNames, ...architectureNames, ...secretaryMailboxNames,
+          ...grantedGraphNames, ...historyNames, ...grantedLinkCheckNames, ...noteNames, ...architectureNames, ...secretaryMailboxNames,
           ...memberNames, ...readRequestNames, ...submitNames,
         ];
         if (names.length > 0) {

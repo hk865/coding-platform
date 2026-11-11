@@ -1380,6 +1380,36 @@
       "name": "rawModuleRef",
       "reason": "kept-for",
       "note": "kept for KLS-3a, decision 121-75"
+    },
+    {
+      "file": "src/core/work-graph/tasks/exec-review-packet.ts",
+      "name": "EXEC_REVIEW_BODY",
+      "reason": "kept-for",
+      "note": "kept for slice 9 of the orchestration design: S9 G1 lands the exec review packet header and its parse is wired now; G3 sends execReviewPacketText(execReviewPacketOfRound(round)) and G2's readAcceptedAnswer compares against execReviewPacketOfRound; the group that wires the build and the text deletes these entries"
+    },
+    {
+      "file": "src/core/work-graph/tasks/exec-review-packet.ts",
+      "name": "byCode",
+      "reason": "kept-for",
+      "note": "kept for slice 9 of the orchestration design: S9 G1 lands the exec review packet header and its parse is wired now; G3 sends execReviewPacketText(execReviewPacketOfRound(round)) and G2's readAcceptedAnswer compares against execReviewPacketOfRound; the group that wires the build and the text deletes these entries"
+    },
+    {
+      "file": "src/core/work-graph/tasks/exec-review-packet.ts",
+      "name": "execReviewPacketOfRound",
+      "reason": "kept-for",
+      "note": "kept for slice 9 of the orchestration design: S9 G1 lands the exec review packet header and its parse is wired now; G3 sends execReviewPacketText(execReviewPacketOfRound(round)) and G2's readAcceptedAnswer compares against execReviewPacketOfRound; the group that wires the build and the text deletes these entries"
+    },
+    {
+      "file": "src/core/work-graph/tasks/exec-review-packet.ts",
+      "name": "jsonLine",
+      "reason": "kept-for",
+      "note": "kept for slice 9 of the orchestration design: S9 G1 lands the exec review packet header and its parse is wired now; G3 sends execReviewPacketText(execReviewPacketOfRound(round)) and G2's readAcceptedAnswer compares against execReviewPacketOfRound; the group that wires the build and the text deletes these entries"
+    },
+    {
+      "file": "src/core/work-graph/tasks/exec-review-packet.ts",
+      "name": "execReviewPacketText",
+      "reason": "kept-for",
+      "note": "kept for slice 9 of the orchestration design: S9 G1 lands the exec review packet header and its parse is wired now; G3 sends execReviewPacketText(execReviewPacketOfRound(round)) and G2's readAcceptedAnswer compares against execReviewPacketOfRound; the group that wires the build and the text deletes these entries"
     }
   ]
 }

@@ -9,13 +9,13 @@
 ## 文件
 - `delivery-input.ts` — 投递输入的公开形状：`DeliveryInputV1`、`DeliveryTemplateIdV1`、按包顺序的 `DELIVERY_TEMPLATE_IDS`，以及从执行冻结文本渲染一条投递输入的 `renderDeliveryInput`。
 - `pack-string.ts` — 从已解析包里取一个固定字符串；缺键是包缺陷，抛错而不是回退。
-- `platform-pack.generated.ts` — 由 `resources/prompts/platform/` 经 `scripts/build-platform-prompts.mjs` 生成的平台包常量，运行时直接引用，不读盘。平台包的 `intervention-planning` 模板正文在 `resources/prompts/platform/templates/intervention-planning.txt`；平台事实的免责声明是 `resources/prompts/platform/strings.json` 的 `context.consultation.platformFactsDisclaimer`。
+- `platform-pack.generated.ts` — 由 `resources/prompts/platform/` 经 `scripts/build-platform-prompts.mjs` 生成的平台包常量，运行时直接引用，不读盘。平台包的 `intervention-planning` 模板正文在 `resources/prompts/platform/templates/intervention-planning.txt`；平台事实的免责声明是 `resources/prompts/platform/strings.json` 的 `context.consultation.platformFactsDisclaimer`。第 9 片的执行审阅指南是 `templates/exec-review-input.txt`（没有槽），两个工具文字是 `tools/submit_exec_review.json`、`tools/read_execution_history.json`，在 `pack.json` 里登记在 `look_graph` 旁边。
 - `platform-skills.ts` — 平台 Skill 的 id/title/kind/priority/templateId 清单；包只提供文字，身份与选择优先级留在代码里。
 - `prompt-pack.ts` — 包清单、链条目、解析结果、`PromptPackSourcePort` 和生成平台包的来源实现。
 - `prompt-set.ts` — 冻结的提示词集、模型请求事实、内容类型常量、严格解码、工具说明规范正文/摘要与正文校验。
 - `render-template.ts` — 三种模板构造的解析与渲染、槽的 UTF-8 字节范围、渲染错误类型；`secretary-round` 的三个 `task_*` 槽是同一个 `task` 段，必须相邻且保持内部顺序；六个交接模板各只有一个 `task_round` 槽，其中两个秘书模板 `handoff-write-understanding-secretary` 和 `handoff-brief-secretary` 渲染出来是秘书轮 task 段开头的一段材料。
 - `resolve-pack.ts` — 继承链（请求包在前、`platform` 最后）的校验与合并，收集全部问题且不抛错。
-- `slot-tables.ts` — 代码拥有的槽表：包可以改文字，不能增删槽或改必填性。除 `secretary-round` 的三个 task 槽外，六个交接模板各有一行必填的 `task_round`；六个投递模板 `action-request-delivery`、`inquiry-delivery`、`notify-delivery`、`wait-reply-delivery`、`wait-expiry-delivery`、`intervention-delivery` 各有一行必填槽；`intervention-planning` 的 `role`/`goal`/`message` 必填，`plan`（映射到 `task` 段）与 `prelude` 可选；Run 里联系被改断时的输入 `link-breaks-input` 的 `noteId`、`version`、`missing` 三个槽都必填；Run 里改过的 Python 文件有语法错时的输入 `python-syntax-input` 只有一个必填槽 `problems`；压缩的摘要提示 `context-summary-request`（slice-K2-SPEC L18）是固定文字，没有槽，表里照样有一行（每个模板都要有键）。
+- `slot-tables.ts` — 代码拥有的槽表：`exec-review-input` 没有槽；包可以改文字，不能增删槽或改必填性。除 `secretary-round` 的三个 task 槽外，六个交接模板各有一行必填的 `task_round`；六个投递模板 `action-request-delivery`、`inquiry-delivery`、`notify-delivery`、`wait-reply-delivery`、`wait-expiry-delivery`、`intervention-delivery` 各有一行必填槽；`intervention-planning` 的 `role`/`goal`/`message` 必填，`plan`（映射到 `task` 段）与 `prelude` 可选；Run 里联系被改断时的输入 `link-breaks-input` 的 `noteId`、`version`、`missing` 三个槽都必填；Run 里改过的 Python 文件有语法错时的输入 `python-syntax-input` 只有一个必填槽 `problems`；压缩的摘要提示 `context-summary-request`（slice-K2-SPEC L18）是固定文字，没有槽，表里照样有一行（每个模板都要有键）。
 
 ## 可以复用的能力
 | 名字 | 位置 | 做什么 | 什么时候用 |

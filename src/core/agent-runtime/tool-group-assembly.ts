@@ -27,7 +27,7 @@ import { createHandoffTools, HANDOFF_TOOL_NAMES } from './handoff-tools.js';
 import { READ_REQUESTS_TOOL_NAME } from './request-read-tools.js';
 import { createWhiteboardTools, WHITEBOARD_TOOL_NAMES } from './whiteboard-tools.js';
 import { createSessionDiscoveryTools, SESSION_DISCOVERY_TOOL_NAMES } from './session-discovery-tools.js';
-import { createGraphTools, GRAPH_TOOL_NAMES } from './graph-tools.js';
+import { answerReadToolNamesOf, createGraphTools, GRAPH_TOOL_NAMES } from './graph-tools.js';
 import { createLinkCheckTools, LINK_CHECK_TOOL_NAMES } from './link-check-tool.js';
 import { createNoteTools, NOTE_TOOL_NAMES } from './note-tool.js';
 import { createArchitectureTools, ARCHITECTURE_TOOL_NAMES } from './architecture-tools.js';
@@ -485,11 +485,12 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
 }
 
 /**
- * The Query grant's two read-only graph tools. The caller keeps the grant
- * projection, the dependency check and the identity construction; this factory
- * only builds the handle and filters its definitions by the passed names. It
- * has NO completeness or duplication check (the Work product check is not
- * shared with Query).
+ * The Query grant's two read-only graph tools and, for an exec review Query,
+ * its `read_execution_history` bound to the frozen subject Run. The caller
+ * keeps the grant projection, the dependency check and the identity
+ * construction; this factory only builds the handle and filters its
+ * definitions by the passed names. It has NO completeness or duplication check
+ * (the Work product check is not shared with Query).
  */
 export function createQueryGraphToolGroup(input: {
   names: readonly string[];
@@ -505,6 +506,10 @@ export function createQueryGraphToolGroup(input: {
   notes?: NoteMemoryReadPort;
   /** The frozen tool texts the graph factory reads. */
   texts?: Readonly<Record<string, ToolTextV1>>;
+  /** The exec review packet's subject Run; present only when the frozen list holds the history read. */
+  subjectRunRef?: RunRef;
+  /** `false` for the exec review Query: `look_graph` without its history mode. */
+  lookHistory?: false;
 }): ToolGroup {
   const names = input.names;
   // The original query_run tool context (spec §4.1: tool inputs never
@@ -523,11 +528,13 @@ export function createQueryGraphToolGroup(input: {
     }),
     ...(input.notes === undefined ? {} : { notes: input.notes }),
     ...(input.texts === undefined ? {} : { texts: input.texts }),
+    ...(input.subjectRunRef === undefined ? {} : { subjectRunRef: input.subjectRunRef }),
+    ...(input.lookHistory === undefined ? {} : { lookHistory: input.lookHistory }),
   });
   return {
     names,
     create: (workspace: WorkspaceSandbox): ToolDefinition[] =>
-      handle.create(workspace).filter(definition => names.includes(definition.name as (typeof GRAPH_TOOL_NAMES)[number])),
+      handle.create(workspace).filter(definition => names.includes(definition.name)),
   };
 }
 
@@ -806,7 +813,14 @@ export function finalToolNamesOf(input: FinalToolListInputV1): ToolGroupResult<s
   const readonlyName = input.readOnly && input.readonlyCommand.requested
     && input.readonlyCommand.access === 'all_except_denied' && input.readonlyCommand.allowsReadWholeWorkspace
     ? READONLY_COMMAND_TOOL_NAME : null;
-  const answerNames = answerToolNamesOf(input.answerTools ?? null);
+  // The exec review's history read follows the answer shape like its submit
+  // tool (slice 9) and reads through the graph owner; without it the shape cannot
+  // register its read, which is `unsupported`, never a silent drop.
+  const answerReadNames = answerReadToolNamesOf(input.answerTools ?? null);
+  if (answerReadNames.length > 0 && !owners.graph) {
+    return { ok: false, rejection: rejected('unsupported', `the answer shape mounts ${answerReadNames.join(', ')} but no graph read dependency is bound`) };
+  }
+  const answerNames = [...answerReadNames, ...answerToolNamesOf(input.answerTools ?? null)];
   const extensionNames = [...coordinationNames,
     ...(readonlyName === null ? [] : [readonlyName]),
     ...(reviewToolName === null ? [] : [reviewToolName]),

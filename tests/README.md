@@ -11,7 +11,7 @@
 - `tests/business/` — 业务流程：Workflow、决定/审批、归档、交接（90 个），例如 `R5c-workflow.test.ts`、`WP1-continuation-handover.test.ts`。
 - `tests/composition/` — `createTargetPlatform` 组合根和真实 Host 接线（45 个），例如 `AG1-session-discovery.test.ts`。
 - `tests/context/` — 上下文装配，只有 `verification-workspace-reader.test.ts` 一个。
-- `tests/contracts/` — 契约、提示词包/文本、平台能力和 Skill 声明（28 个），例如 `PC-prompt-set-v1.test.ts`。
+- `tests/contracts/` — 契约、提示词包/文本、平台能力和 Skill 声明（31 个），例如 `PC-prompt-set-v1.test.ts`；第 9 片 G1 的三个纯表 `S9-packet-pure`、`S9-answer-pure`、`S9-shape-pure` 也在这里。
 - `tests/core/` — 只有 `work-graph/MVP-execution-list.test.ts`，核对与 `src/core` 对齐的清单。
 - `tests/data/` — 记录存储、材料、工作区文件、git 操作和编码边界（56 个），例如 `R2e-git-operations.test.ts`。
 - `tests/helpers/` — 共享测试夹具，共 203 个文件；本清单主体在下一节。

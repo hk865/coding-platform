@@ -11,7 +11,7 @@
 
 ## 文件
 
-本目录 96 个 `.ts`，按主题分组。
+本目录 97 个 `.ts`，按主题分组。
 
 ### 请求、秘书与决定卡（21 个）
 
@@ -108,7 +108,7 @@
 - `run-reconcile-service.ts` — 无 Kernel terminal 的 Run end 判定、未知结果处置与一 commit。`commitDecided` 在 `bindsStart` 时并入记录 5 的同一次消费贡献：读 Run 的冻结 manifest，无 binding 不贡献，有 binding 按它精确读记录，再调与正常进入提交共用的 `sessions/work-handoff-brief-consumption.ts` 的 `workHandoffBriefConsumptionForCommit`；这是 FH-2 的崩溃恢复提交。
 - `run-state-service.ts` — 精确 Task execution 读取：三段 `readMany`，只在引用漂移时重试。Run 与 claim 的工作区相等由 `:227` 守；Session 的工作区允许与 claim 不同（项目级线在别的工作区替 Goal 跑 Work）。
 
-### 记录读取与共享纯规则（13 个）
+### 记录读取与共享纯规则（14 个）
 
 做工作线时钟、owner 单条读、receipt 重放、路由守卫与阻塞命令纯规则的去这组。
 
@@ -125,6 +125,7 @@
 - `task-review-reader.ts` — Task review 的分页读取，失败原样返回。
 - `trusted-context.ts` — 可信 Host 上下文绑定与同步请求隔离的共用缝。
 - `adviser-slots.ts` — 参谋候选的纯比较器 `adviserCandidateOf`（`AdviserSlotFactsV1`、`AdviserCandidateV1`）：先判资格（可用、不在交接、active、未退役、进行中的目标少于 `MAX_GOALS_PER_ADVISER`，一个都没有，或这个目标和它进行中的目标都是 `small`），再按进行中目标数、未结束任务数、最近活动最早、Session 键排；已正式完成的目标由队列服务的事实读去掉。秘书选人的比较键不同，不复用它。
+- `exec-review-packet.ts` — 第 9 片执行审阅请求正文的包头 `ExecReviewPacketV1`：`execReviewPacketOfRound` 只读冻结轮（轮、采用的计划、Task、被审 Run、已完成核对的报告按 `checkId`、源摘要、走审阅包的 reviewer 覆盖对排序去重，空覆盖 `invalid`），`execReviewPacketText` 写请求 id、七行规范 JSON、一个空行和固定正文，`execReviewPacketOfText` 原样读回并用既有的完整 ref 编解码核对；固定正文只在本文件声明一次、不导出。不是记录。
 
 ### 编解码（10 个）
 
@@ -226,9 +227,10 @@
 | `executionReadGuards`、`claimEffectRecords`、`claimLeaseOf`、`claimSessionOf`、`hostLeaseOf` | `execution-entry-service.ts:979`、`execution-entry-service.ts:922`、`execution-entry-service.ts:707`、`execution-entry-service.ts:718`、`execution-entry-service.ts:825` | 执行读 guard、Run effect 到记录/effect 的翻译、Lease/Session 上下文 | 执行/对账 commit；不要手拼相关记录 |
 | `identifyDelegatedWriter`、`authorizeDelegatedWrite` | `plan-write-admission.ts:223`、`plan-write-admission.ts:223` | 委派写者身份识别与当前权限复核（含真实 guards） | Agent 计划写、requeue；两步顺序不可换 |
 | `admitGoalCreation`、`createGoalService` | `task-service.ts:419`、`task-service.ts:419` | Goal 创建的准入管线与服务工厂；新 Goal 以 `DEFAULT_GOAL_SETTINGS_V1` 的副本、`continuedFrom: null`、`copiedInterventions: []` 出生 | Host 建 Goal |
+| `execReviewPacketOfRound`、`execReviewPacketText`、`execReviewPacketOfText` | `src/core/work-graph/tasks/exec-review-packet.ts:53`、`src/core/work-graph/tasks/exec-review-packet.ts:90`、`src/core/work-graph/tasks/exec-review-packet.ts:126` | 执行审阅包头的唯一构造、写和读（第 9 片）；读回的 `value.packet` 才是包，`value.body` 是正文 | 发审阅轮、核对收下的审阅回答和启动审阅 Query 时；不要另拼包头 |
 | `createInitialPlanAnswerReader`、`sourceFactsGuards`、`proveInterventionSource` | `initial-plan-answer.ts:74`、`initial-plan-answer.ts:74`、`initial-plan-answer.ts:73` | 初始 Plan 答案的事实读取与采用侧重核（同一 records/materials/bodies 端口）；读取可带来源选择（`binding`/`prepared_goal`/`intervention`）：`intervention` 选择器只校验完整消息 ref，不比较 `answerRef`，解析出 `resolution.kind: 'intervention'`（Goal 与 revision 来自冻结 manifest，要求 manifest 也是 `intervention_planning`），带来源时不再套普通 Query 的 intent/Goal 准入 | 初答读取、模型协调草稿与干预提案的采用前证明 |
-| `InitialPlanSourceResolutionV1`（读取的结果） | `src/contracts/query-job.ts:703` | 来源与 Goal 只解析一次的产物：以哪条来源读（plain/binding/prepared_goal/intervention）、`bindingRef`、Goal 与 `goalRevision`；plain 是 Job 自己的 Goal 与冻结 manifest 的 revision，`binding` 的 Goal 与 revision 来自绑定；`prepared_goal` 只认冻结 manifest 的 `initial_coordination`，`intervention` 只认冻结 manifest 的同种类准备并把 `sourceMessageRef` 来源带回；绑定来源要注入绑定读端口（缺了是 `unavailable`） | 规范化、提案与采用重核都只用它取 Goal 与版本，不要再从 `job.intent.goalId` 推 |
-| `createPlanService`、`createRequestCandidateService`、`planProposalIdFor` | `plan-service.ts:413`、`plan-service.ts:1071`、`plan-service.ts:2396` | Plan 采用/task 读服务、request candidate 服务与提案 id。`proposePlan` 的带来源臂先用 Goal 无关的回执定位（身份 + `initialPlanProposalIdFor` + `sourceProposeFingerprint`（`initial-plan.ts:57`）），命中就还原原提案；未命中才读答案、从 `InitialPlanSourceResolutionV1` 取 Goal，并经同一个 `commitHostPlanProposal`（`writer: 'host'`、答案/Job/Run/绑定 guards、`requestRef`/`basedOn`/`replaces` 为 null）提交；同一请求换了来源是 `idempotency_conflict`。草稿臂的窄准入：带 `sourceMessageRef` 时按消息键与 candidate facts 的 `interventionSource` 比较，并要求请求不是 operator 发起的 root；不带时仍要求 root 且 `initiatedByOperator`（Host 与 Agent 两处同规则，`plan-service.ts:1172`–`:1166`/`:3476`）。`sourceMessageRef` 只在出现时进指纹，记录与事件里是必填可空；`acknowledgement`（7A §3.5）同样只在带它时进入指纹、事件与提交回执（`proofReceipt`），旧调用逐字节不变 | 组合根接线；带来源的提议不要等读完答案才查回执 |
+| `InitialPlanSourceResolutionV1`（读取的结果） | `src/contracts/query-job.ts:710` | 来源与 Goal 只解析一次的产物：以哪条来源读（plain/binding/prepared_goal/intervention）、`bindingRef`、Goal 与 `goalRevision`；plain 是 Job 自己的 Goal 与冻结 manifest 的 revision，`binding` 的 Goal 与 revision 来自绑定；`prepared_goal` 只认冻结 manifest 的 `initial_coordination`，`intervention` 只认冻结 manifest 的同种类准备并把 `sourceMessageRef` 来源带回；绑定来源要注入绑定读端口（缺了是 `unavailable`） | 规范化、提案与采用重核都只用它取 Goal 与版本，不要再从 `job.intent.goalId` 推 |
+| `createPlanService`、`createRequestCandidateService`、`planProposalIdFor` | `plan-service.ts:413`、`plan-service.ts:1071`、`plan-service.ts:2405` | Plan 采用/task 读服务、request candidate 服务与提案 id。`proposePlan` 的带来源臂先用 Goal 无关的回执定位（身份 + `initialPlanProposalIdFor` + `sourceProposeFingerprint`（`initial-plan.ts:57`）），命中就还原原提案；未命中才读答案、从 `InitialPlanSourceResolutionV1` 取 Goal，并经同一个 `commitHostPlanProposal`（`writer: 'host'`、答案/Job/Run/绑定 guards、`requestRef`/`basedOn`/`replaces` 为 null）提交；同一请求换了来源是 `idempotency_conflict`。草稿臂的窄准入：带 `sourceMessageRef` 时按消息键与 candidate facts 的 `interventionSource` 比较，并要求请求不是 operator 发起的 root；不带时仍要求 root 且 `initiatedByOperator`（Host 与 Agent 两处同规则，`plan-service.ts:1172`–`:1166`/`:3476`）。`sourceMessageRef` 只在出现时进指纹，记录与事件里是必填可空；`acknowledgement`（7A §3.5）同样只在带它时进入指纹、事件与提交回执（`proofReceipt`），旧调用逐字节不变 | 组合根接线；带来源的提议不要等读完答案才查回执 |
 | `readPlanImpact` | `plan-impact.ts:127` | request candidate 的机械影响标记：改动、取消、替代三类任务的完整新旧冻结定义、正在做的 Run/Session 与 subject ∪ coverage 证据；新增任务不标，不判断证据适不适用 | `plans/request-candidate` 的 `impact` 读投影；不要用 `reason.affectedTaskIds` 代替真实 delta |
 | `readAdoptionStopTargets` | `plan-service.ts:1959` | PS §3.2 的只读目标：公开提议读之后，候选无来源返回空；否则读来源 Plan、取 `deriveFuturePlanDelta` 的 `dispositionOnlyTaskIds`，再用 `readDispositionChangeTaskFacts` 返回每个任务的全部 Run（无 Run 的任务略去）。只读，不写记录，不新增授权判断 | 组合根的采用前停止包装；不要用候选 `reason.affectedTaskIds` 代替它 |
 | `queryGoal` 的 `continuedBy` | `plan-service.ts:1873`（`GoalDetail` 在 `src/core/work-graph/model/plan-contracts.ts:81`） | 副本 GoalRef 列表：按 `GOAL_BY_CONTINUED_FROM_INDEX` 的 `continuedFrom.goal.goalId` 用 `lookupAll` 分页读到结尾，按 canonical 键序返回；没有副本为 `[]`，坏记录 `unavailable`；原 Goal 不写反向链接（DESIGN :335） | `goals/read`；`goals/display` 不含此字段 |

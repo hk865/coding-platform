@@ -1,5 +1,5 @@
 /**
- * The system-round contract: the five round shapes, their one request-id
+ * The system-round contract: the six round shapes, their one request-id
  * format, the fixed Host sender and its message identity, and the pure reply /
  * read helpers (§5.2.2, §5.2.5–§5.2.6, §5.3.5, §5.6).
  *
@@ -13,12 +13,14 @@ import type { CoreRejection } from './core/results.js';
 import type { SessionMessageRef } from './core/session-message.js';
 import { canonicalJson, sha256Hex, type JsonValue } from './fingerprint.js';
 import { parseInitialPlanningResponseV2 } from './initial-planning-parse.js';
+import { parseExecReviewAnswer } from './exec-review.js';
 import type { GoalRef } from './ledger.js';
 import type { PlanRevisionDraft, PlanRevisionSnapshot } from './plan.js';
 import { parsePlanReviewAnswer } from './plan-review.js';
 import type { PlanningAnswerShapeV1, QueryJobRef } from './query-job.js';
 import { validSessionMessageRef } from './query-job.js';
 import { inList, isPos, nonEmpty, parseObject } from './validation/common.js';
+import type { VerificationRoundRef } from './verification.js';
 
 /** A `refine:` target: a stage, or the plan-only placeholder task at goal level. */
 export type RefinementTargetV1 =
@@ -33,7 +35,9 @@ export type SystemRoundV1 =
   | { kind: 'deviation'; goalRef: GoalRef; taskId: string; cause: DeviationRoundKind; planRevision: number }
   | { kind: 'planreview'; goalRef: GoalRef; proposalId: string; proposalRevision: number }
   | { kind: 'planfix'; goalRef: GoalRef; proposalId: string; proposalRevision: number }
-  | { kind: 'planresume'; goalRef: GoalRef; queryJobId: string; originalMessageRef: SessionMessageRef };
+  | { kind: 'planresume'; goalRef: GoalRef; queryJobId: string; originalMessageRef: SessionMessageRef }
+  /** Slice 9: the reviewer's execution-result round of one open verification round. */
+  | { kind: 'exec_review'; goalRef: GoalRef; roundRef: VerificationRoundRef };
 
 /** The read-side head of a round: only the first line's segments, never a guess. */
 export type SystemRoundHeadV1 =
@@ -41,7 +45,9 @@ export type SystemRoundHeadV1 =
   | { kind: 'deviation'; goalId: string; taskId: string; cause: DeviationRoundKind; planRevision: number }
   | { kind: 'planreview'; proposalId: string; proposalRevision: number }
   | { kind: 'planfix'; proposalId: string; proposalRevision: number }
-  | { kind: 'planresume'; goalId: string; queryJobId: string };
+  | { kind: 'planresume'; goalId: string; queryJobId: string }
+  /** No `goalId` (the `planreview` precedent): the Goal comes from the source message's `goalRef`. */
+  | { kind: 'exec_review'; roundId: string };
 
 /** The one system-round sender; a fixed id is what makes one request id one message. */
 export const SYSTEM_ROUND_ACTOR = Object.freeze({ kind: 'system' as const, id: 'host:plan-round' });
@@ -100,6 +106,10 @@ export function systemRoundRequestId(
     return { status: 'ready', value: `${round.kind}:${round.proposalId}:${round.proposalRevision}` };
   }
   if (round.goalRef.goalId.length === 0) return rejected('invalid', 'goalId is empty');
+  if (round.kind === 'exec_review') {
+    if (round.roundRef.roundId.length === 0) return rejected('invalid', 'roundId is empty');
+    return { status: 'ready', value: `execreview:${round.roundRef.roundId}` };
+  }
   if (round.queryJobId.length === 0) return rejected('invalid', 'queryJobId is empty');
   return { status: 'ready', value: `planresume:${round.goalRef.goalId}:${round.queryJobId}` };
 }
@@ -181,6 +191,12 @@ export function systemRoundOfText(text: string): SystemRoundHeadV1 | null {
     if (!nonEmpty(goalId) || !nonEmpty(queryJobId)) return null;
     return { kind: 'planresume', goalId, queryJobId };
   }
+  if (prefix === 'execreview') {
+    if (segments.length !== 2) return null;
+    const [, roundId] = segments;
+    if (!nonEmpty(roundId)) return null;
+    return { kind: 'exec_review', roundId };
+  }
   return null;
 }
 
@@ -207,8 +223,9 @@ export function planResumeOriginalQueryOfText(text: string): SessionMessageRef |
 
 /**
  * The short reply derived from the frozen answer shape (§5.3.5): a plan
- * summary, a review verdict, or the original text. Only a `plan_review` answer
- * that no longer parses has no reply (`null` -> terminal invalid).
+ * summary, a review verdict, or the original text. Only a `plan_review` or
+ * `exec_review` answer that no longer parses has no reply (`null` -> terminal
+ * invalid). The exec review reply never carries the answer JSON (slice 9).
  */
 export function planningReplyTextOf(input: {
   shape: PlanningAnswerShapeV1;
@@ -222,6 +239,11 @@ export function planningReplyTextOf(input: {
     return parsed.verdict === 'pass'
       ? '审阅通过'
       : `审阅要求返修：${parsed.findings.length} 条意见，见 Query ${input.queryJobId}`;
+  }
+  if (input.shape === 'exec_review') {
+    const parsed = parseExecReviewAnswer(input.answerText);
+    if (parsed.status !== 'parsed') return null;
+    return parsed.verdict === 'pass' ? '执行结果审阅通过' : `执行结果审阅要求返工：见 Query ${input.queryJobId}`;
   }
   const parsed = parseInitialPlanningResponseV2(input.answerText);
   if (parsed.status === 'parsed') return parsed.response.summary;

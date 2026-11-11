@@ -91,6 +91,9 @@ export const TEMPLATE_SLOTS: Readonly<Record<string, TemplateSlotTableV1>> = {
         candidate: { required: true },
         message: { required: true },
     },
+    // Slice 9: the exec review guide is fixed prose; the packet header is the
+    // request body itself, so the guide takes no slot.
+    'exec-review-input': {},
     'initial-planning-answer': {},
     'continuation-brief': {
         marker: { required: true },
