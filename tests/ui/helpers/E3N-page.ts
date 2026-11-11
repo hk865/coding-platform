@@ -1,7 +1,10 @@
 import { expect } from 'vitest';
-import { bootPage, findClass, findElement, type BootedPage, type PageFetch } from './boot-page.js';
+import { bootPage, findAllClass, findClass, findElement, type BootedPage, type PageFetch } from './boot-page.js';
 import { FakeElement } from './dom.js';
 import type { S6ARequestWorld } from '../../helpers/S6A-request-fixture.js';
+
+/** The Host a page talks to: an S6A world, or a Host scenario's `h.host` (read on every call). */
+export type E3NTarget = Pick<S6ARequestWorld, 'base' | 'token'>;
 
 /**
  * E3W page base: the one boot wrapper for the Main and TaskMap rows. It boots
@@ -16,6 +19,8 @@ export type RecordedCall = {
   input: unknown;
   body: unknown;
   token: string;
+  /** The Host's answer body once it arrived (`undefined` while the call is open). */
+  reply: unknown;
 };
 
 export type PageLog = {
@@ -77,8 +82,16 @@ function bodyOf(init: RequestInit | undefined): Record<string, unknown> {
   }
 }
 
-/** The forwarded Host origin is read on every call, so a reopen's new address is used. */
-export function forwardPage(world: S6ARequestWorld, log: PageLog, mode: ChangeMode = 'stream'): PageFetch {
+/** A2 (tests/RULES.md): the one route a row holds `unavailable`, answered as the Host's own rejection shape. */
+const UNAVAILABLE = { status: 'rejected', code: 'unavailable', reason: 'E3U: this route is held unavailable' };
+
+/**
+ * The forwarded Host origin is read on every call, so a reopen's new address
+ * is used. `unavailable` names one core route whose every call answers the
+ * Host's `unavailable` rejection instead of reaching the Host.
+ */
+export function forwardPage(world: Pick<E3NTarget, 'base'>, log: PageLog, mode: ChangeMode = 'stream',
+  unavailable: string | null = null): PageFetch {
   return async (url, init, realFetch) => {
     const route = routeOf(url);
     if (route === 'changes') {
@@ -98,11 +111,18 @@ export function forwardPage(world: S6ARequestWorld, log: PageLog, mode: ChangeMo
      * page through this same global fetch (no token header); it is not a page
      * read and must not enter the log. An absolute URL is already the target
      * (the reopened Host), so it must not resolve against a closed `world.base`. */
+    let call: RecordedCall | null = null;
     if (route !== 'changes' && url.includes(CORE)) {
-      log.calls.push({ route, url, input: body['input'] ?? writeInput?.input ?? null, body, token: tokenOf(init) });
+      call = { route, url, input: body['input'] ?? writeInput?.input ?? null, body, token: tokenOf(init), reply: undefined };
+      log.calls.push(call);
+      if (route === unavailable) {
+        call.reply = UNAVAILABLE;
+        return new Response(JSON.stringify(UNAVAILABLE), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
     }
     const target = /^https?:/i.test(url) ? url : new URL(url, world.base).href;
     const answer = await realFetch(target, init);
+    if (call !== null) call.reply = await answer.clone().json().catch(() => null);
     if (route === 'requests/submit') {
       log.submits.push(await answer.clone().json().catch(() => null));
     }
@@ -113,9 +133,9 @@ export function forwardPage(world: S6ARequestWorld, log: PageLog, mode: ChangeMo
   };
 }
 
-export async function bootE3N(world: S6ARequestWorld, name: 'Main' | 'TaskMap' | 'Goals' | 'ArchOverview' | 'Decide' | 'Member' | 'Chain', options: {
+export async function bootE3N(world: E3NTarget, name: 'Main' | 'TaskMap' | 'Goals' | 'ArchOverview' | 'Decide' | 'Member' | 'Chain', options: {
   search?: string; mode?: ChangeMode; token?: string | (() => string | null); source?: string;
-  gate?: boolean;
+  gate?: boolean; unavailable?: string;
 } = {}): Promise<{ page: BootedPage; log: PageLog }> {
   const log = newPageLog();
   if (options.gate === true) gateChanges(log);
@@ -123,7 +143,7 @@ export async function bootE3N(world: S6ARequestWorld, name: 'Main' | 'TaskMap' |
     name,
     ...(options.search === undefined ? {} : { search: options.search }),
     token: options.token ?? (() => world.token),
-    request: forwardPage(world, log, options.mode ?? 'stream'),
+    request: forwardPage(world, log, options.mode ?? 'stream', options.unavailable ?? null),
     ...(options.source === undefined ? {} : { source: options.source }),
   });
   const restore = page.restore;
@@ -137,8 +157,46 @@ export async function bootE3N(world: S6ARequestWorld, name: 'Main' | 'TaskMap' |
   return { page, log };
 }
 
+/**
+ * E3U card worlds (test sheet §0): Main booted on a Host scenario (`h.host`,
+ * as `E3D-page.ts` `hostTarget`); every non-stream request goes to that Host.
+ */
+export async function bootMainCard(h: { readonly host: E3NTarget }, search: string): Promise<{ page: BootedPage; log: PageLog }> {
+  return await bootE3N({ get base() { return h.host.base; }, get token() { return h.host.token; } }, 'Main', { search });
+}
+
 export function countRoute(log: PageLog, route: string): number {
   return log.calls.filter((call) => call.route === route).length;
+}
+
+export function callsTo(log: PageLog, route: string): RecordedCall[] {
+  return log.calls.filter((call) => call.route === route);
+}
+
+/** A graph write's `{ input, meta }` as the page sent it. */
+export function sentWrite(call: RecordedCall | undefined): { input: Record<string, unknown>; meta: { requestId?: string; expected: unknown[] } } {
+  return (call?.body as { request: { input: Record<string, unknown>; meta: { requestId?: string; expected: unknown[] } } }).request;
+}
+
+/**
+ * Waits until no new core call starts for `stillMs` and every call has its
+ * answer (25 ms turns of the runner's clock, never `Date`: the S6A worlds fake it).
+ */
+export async function quietPage(log: PageLog, stillMs = 300, timeoutMs = 8_000): Promise<number> {
+  let last = -1;
+  let still = 0;
+  for (let waited = 0; waited < timeoutMs; waited += 25) {
+    const open = log.calls.some((call) => call.reply === undefined);
+    if (log.calls.length !== last || open) {
+      last = log.calls.length;
+      still = 0;
+    } else {
+      still += 25;
+      if (still >= stillMs) return last;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return log.calls.length;
 }
 
 export function routesSince(log: PageLog, from: number): string[] {
@@ -205,7 +263,10 @@ export function goalRows(root: FakeElement): FakeElement[] {
 }
 
 export function goalRowNamed(root: FakeElement, name: string): FakeElement | undefined {
-  return goalRows(root).find((row) => textOf(findClass(row, 'row-name')) === name);
+  return goalRows(root).find((row) => {
+    const text = textOf(findClass(row, 'row-name'));
+    return text === name || text.endsWith(' · ' + name);
+  });
 }
 
 /** The working-line rows in the rail, excluding the 已归档 expansion's rows. */
@@ -244,4 +305,34 @@ export function separator(root: FakeElement, label: string): FakeElement {
     && element.getAttribute('aria-label') === label);
   if (found === undefined) throw new Error(`no separator named ${label}`);
   return found;
+}
+
+/* ------------------------------------------------- E3U Main thread DOM reads */
+
+/** The main conversation (`.thread`); its rows are `.msg-user`, `.msg-agent` and `.sys-line`. */
+export function thread(root: FakeElement): FakeElement | undefined {
+  return findClass(root, 'thread');
+}
+
+/** The user bubbles' text in document order (a bubble without quotes is the round's input). */
+export function userTexts(root: FakeElement): string[] {
+  const holder = thread(root);
+  return holder === undefined ? [] : findAllClass(holder, 'msg-user').map((row) => textOf(findClass(row, 'bubble')));
+}
+
+/** The secretary answers' text (`.msg-agent .prose`) in document order. */
+export function answerTexts(root: FakeElement): string[] {
+  const holder = thread(root);
+  return holder === undefined ? [] : findAllClass(holder, 'msg-agent').map((row) => textOf(findClass(row, 'prose')));
+}
+
+/**
+ * The element that carries a click listener and whose text contains `text`,
+ * the narrowest one: the fake DOM does not bubble, so a row is clicked where
+ * the board bound it.
+ */
+export function clickable(root: FakeElement, text: string): FakeElement | undefined {
+  const found = [root, ...descendants(root)].filter((element) => (element.listeners.get('click')?.length ?? 0) > 0
+    && element.textContent.includes(text));
+  return found.sort((a, b) => a.textContent.length - b.textContent.length)[0];
 }

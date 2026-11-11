@@ -257,6 +257,23 @@ button.bq-ref:hover { color: var(--text); }
       <div class="thread">
         <div class="col">
 
+          <!-- §2.3: the first read's error text and its retry come from `pageProps` -->
+          <sc-if value="{{readError.show}}" hint-placeholder-val="{{ false }}">
+            <div class="sys-line">
+              <span>{{readError.text}}</span>
+              <button class="btn-text" type="button" onClick="{{readError.retry}}">重试</button>
+            </div>
+          </sc-if>
+
+          <!-- §2.4/MF4: the one page cursor; a click reads the previous page in the same loop -->
+          <sc-if value="{{older.show}}" hint-placeholder-val="{{ false }}">
+            <div class="sys-line" onClick="{{older.more}}">
+              <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M12.75 3.25v3h-3"></path><path d="M12.5 6.25A5 5 0 1 0 13 9.25"></path></svg>
+              <span>还有更早的对话，点这里展开</span>
+              <span class="t"></span>
+            </div>
+          </sc-if>
+
           <!-- goal 1: sample Goal -->
           <sc-if value="{{isG1}}" hint-placeholder-val="{{ true }}">
             <div class="sys-line">
@@ -354,106 +371,6 @@ button.bq-ref:hover { color: var(--text); }
               <p class="prose">其余 13 项与第 1 轮相同，但现在的做法会把 14 项整轮重跑，约 6 分钟。下面两个做法，选一个后可以接着在对话里改；点“采用”后按本目标的自治档位执行。</p>
             </div>
 
-            <!-- plan versions: round 1 always, round 2 after one iteration -->
-            <sc-for list="{{plans}}" as="p" hint-placeholder-count="1">
-              <sc-if value="{{p.isRound2}}" hint-placeholder-val="{{ false }}">
-                <div class="msg-user">
-                  <!-- quotes sent with the message: the reference line, the quoted lines folded under it -->
-                  <div class="bubble"><sc-for list="{{sentQuotes}}" as="q" hint-placeholder-count="0"><span class="bq"><sc-if value="{{q.canOpen}}" hint-placeholder-val="{{ true }}"><button class="bq-ref" type="button" onClick="{{q.toggle}}" aria-expanded="{{q.open}}" title="{{q.tip}}"><svg class="ico xs chev {{q.chevCls}}" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"></path></svg><span class="bq-path">{{q.path}}</span><span>{{q.lines}}</span><sc-if value="{{q.snap}}" hint-placeholder-val="{{ false }}"><span class="cq-snap">草稿快照</span></sc-if></button></sc-if><sc-if value="{{q.cantOpen}}" hint-placeholder-val="{{ false }}"><span class="bq-ref"><svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.75h5.25l3 3v9.5H4Z"></path><path d="M9 1.75V5h3.25"></path></svg><span class="bq-path">{{q.path}}</span><span>{{q.lines}}</span><sc-if value="{{q.snap}}" hint-placeholder-val="{{ false }}"><span class="cq-snap">草稿快照</span></sc-if></span></sc-if><sc-if value="{{q.open}}" hint-placeholder-val="{{ false }}"><span class="bq-text">{{q.text}}</span></sc-if></span></sc-for>{{sent}}</div>
-                  <span class="msg-time">14:12</span>
-                </div>
-                <div>
-                  <button class="{{run2.cls}}" type="button" onClick="{{run2.toggle}}" aria-expanded="{{run2.open}}">
-                    <svg class="ico sm chev" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"></path></svg>
-                    <span>用时 1 分，已修改方案</span>
-                    <span class="t">14:12–14:13</span>
-                  </button>
-                  <sc-if value="{{run2.open}}" hint-placeholder-val="{{ false }}">
-                    <div class="steps">
-                      <div class="step">
-                        <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.75h5.25l3 3v9.5H4Z"></path><path d="M9 1.75V5h3.25"></path></svg>
-                        <span class="step-verb">读取</span><span class="step-dot">·</span><span class="step-obj is-path">plans/recheck-options.md</span>
-                      </div>
-                      <sc-if value="{{showThink}}" hint-placeholder-val="{{ true }}">
-                        <div class="step">
-                          <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.6 10.4A4 4 0 1 1 10.4 10.4c-.5.4-.65.9-.65 1.35v.5h-3.5v-.5c0-.45-.15-.95-.65-1.35Z"></path><path d="M6.6 14.25h2.8"></path></svg>
-                          <span class="step-verb">思考</span><span class="step-dot">·</span><span class="step-obj">{{p.think}}</span>
-                        </div>
-                      </sc-if>
-                      <div class="step">
-                        <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M10.75 2.75 13.25 5.25 6 12.5H3.5V10Z"></path><path d="M9.25 4.25l2.5 2.5"></path></svg>
-                        <span class="step-verb">编辑</span><span class="step-dot">·</span><span class="step-obj is-path">plans/recheck-options.md</span><span class="step-meta"><span class="add">+9</span> <span class="del">−4</span></span>
-                      </div>
-                      <div class="step">
-                        <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M10.75 2.75 13.25 5.25 6 12.5H3.5V10Z"></path><path d="M9.25 4.25l2.5 2.5"></path></svg>
-                        <span class="step-verb">编辑</span><span class="step-dot">·</span><span class="step-obj is-path">plans/recheck-acceptance.md</span><span class="step-meta"><span class="add">+3</span> <span class="del">−1</span></span>
-                      </div>
-                    </div>
-                  </sc-if>
-                </div>
-                <div class="msg-agent">
-                  <p class="prose">{{p.reply}}</p>
-                </div>
-              </sc-if>
-
-              <sc-if value="{{p.showLine}}" hint-placeholder-val="{{ false }}">
-                <div class="plan-line">
-                  <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.75 4.25h6.5M6.75 8h6.5M6.75 11.75h6.5"></path><path d="m2.5 4.25.9.9 1.6-1.65M2.5 8l.9.9L5 7.25M2.75 11.75h1.5"></path></svg>
-                  <span>{{p.lineText}}</span>
-                  <button class="btn-text" type="button" onClick="{{p.toggleLine}}" aria-expanded="{{p.lineOpen}}">{{p.lineAct}}</button>
-                </div>
-              </sc-if>
-
-              <sc-if value="{{p.showCard}}" hint-placeholder-val="{{ true }}">
-                <section class="plan" aria-label="{{p.title}}">
-                  <div class="plan-head">
-                    <span class="ttl">{{p.title}}</span>
-                    <span class="scope">检查与返工，涉及 2 个任务</span>
-                    <span class="st">{{p.stText}}</span>
-                  </div>
-                  <sc-if value="{{p.hasDelta}}" hint-placeholder-val="{{ false }}">
-                    <ul class="plan-delta" aria-label="这一版改了什么">
-                      <sc-for list="{{p.delta}}" as="dl" hint-placeholder-count="3">
-                        <li><span class="dm">{{dl.dm}}</span><span>{{dl.text}}</span></li>
-                      </sc-for>
-                    </ul>
-                  </sc-if>
-                  <div class="opts" role="radiogroup" aria-label="选一个方案">
-                    <sc-for list="{{p.opts}}" as="o" hint-placeholder-count="2">
-                      <div class="{{o.cls}}">
-                        <button class="opt-top" type="button" role="radio" aria-checked="{{o.on}}" onClick="{{o.pick}}">
-                          <span class="radio" aria-hidden="true"></span>
-                          <span class="opt-key">{{o.key}}</span>
-                          <span class="opt-title">{{o.title}}</span>
-                          <sc-if value="{{o.hasRec}}" hint-placeholder-val="{{ false }}"><span class="opt-rec">推荐</span></sc-if>
-                          <span class="opt-est">{{o.est}}</span>
-                        </button>
-                        <sc-if value="{{o.hasBody}}" hint-placeholder-val="{{ true }}">
-                          <div class="opt-body">
-                            <p class="opt-how">{{o.how}}</p>
-                            <sc-if value="{{o.hasKv}}" hint-placeholder-val="{{ true }}">
-                              <dl class="opt-kv">
-                                <sc-for list="{{o.kv}}" as="kv" hint-placeholder-count="3"><dt>{{kv.k}}</dt><dd>{{kv.v}}</dd></sc-for>
-                              </dl>
-                            </sc-if>
-                          </div>
-                        </sc-if>
-                      </div>
-                    </sc-for>
-                  </div>
-                  <sc-if value="{{p.canAct}}" hint-placeholder-val="{{ true }}">
-                    <div class="plan-foot">
-                      <span class="note">采用后自动执行；改目标、验收或范围时会再问你。</span>
-                      <button class="btn" type="button" onClick="{{p.iterate}}">
-                        <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.75 3.25h10.5v7.25H8l-3 2.5v-2.5H2.75Z"></path></svg>
-                        在对话里修改
-                      </button>
-                      <button class="btn btn-primary" type="button" onClick="{{p.adopt}}">{{p.adoptLabel}}</button>
-                    </div>
-                  </sc-if>
-                </section>
-              </sc-if>
-            </sc-for>
           </sc-if>
 
           <!-- goal 2: 工作台界面改版 (planning, conflicts with goal 1) -->
@@ -578,6 +495,15 @@ button.bq-ref:hover { color: var(--text); }
                 <span class="msg-time">{{l.t}}</span>
               </div>
             </sc-if>
+            <!-- A13 (第三轮 Main 3): the prototype run button, fixed words, never open .steps -->
+            <sc-if value="{{l.isRun}}" hint-placeholder-val="{{ false }}">
+              <div>
+                <button class="run is-off" type="button" title="还没接通" aria-disabled="true" onClick="{{runOff}}">
+                  <svg class="ico sm chev" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"></path></svg>
+                  <span>运行步骤还没接通</span>
+                </button>
+              </div>
+            </sc-if>
             <sc-if value="{{l.isAgent}}" hint-placeholder-val="{{ false }}">
               <div class="msg-agent">
                 <sc-if value="{{l.hasFrom}}" hint-placeholder-val="{{ false }}"><span class="msg-from">{{l.from}}</span></sc-if>
@@ -585,6 +511,107 @@ button.bq-ref:hover { color: var(--text); }
               </div>
             </sc-if>
           </sc-for>
+
+            <!-- plan versions: round 1 always, round 2 after one iteration -->
+            <sc-for list="{{plans}}" as="p" hint-placeholder-count="1">
+              <sc-if value="{{p.isRound2}}" hint-placeholder-val="{{ false }}">
+                <div class="msg-user">
+                  <!-- quotes sent with the message: the reference line, the quoted lines folded under it -->
+                  <div class="bubble"><sc-for list="{{sentQuotes}}" as="q" hint-placeholder-count="0"><span class="bq"><sc-if value="{{q.canOpen}}" hint-placeholder-val="{{ true }}"><button class="bq-ref" type="button" onClick="{{q.toggle}}" aria-expanded="{{q.open}}" title="{{q.tip}}"><svg class="ico xs chev {{q.chevCls}}" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"></path></svg><span class="bq-path">{{q.path}}</span><span>{{q.lines}}</span><sc-if value="{{q.snap}}" hint-placeholder-val="{{ false }}"><span class="cq-snap">草稿快照</span></sc-if></button></sc-if><sc-if value="{{q.cantOpen}}" hint-placeholder-val="{{ false }}"><span class="bq-ref"><svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.75h5.25l3 3v9.5H4Z"></path><path d="M9 1.75V5h3.25"></path></svg><span class="bq-path">{{q.path}}</span><span>{{q.lines}}</span><sc-if value="{{q.snap}}" hint-placeholder-val="{{ false }}"><span class="cq-snap">草稿快照</span></sc-if></span></sc-if><sc-if value="{{q.open}}" hint-placeholder-val="{{ false }}"><span class="bq-text">{{q.text}}</span></sc-if></span></sc-for>{{sent}}</div>
+                  <span class="msg-time">14:12</span>
+                </div>
+                <div>
+                  <button class="{{run2.cls}}" type="button" onClick="{{run2.toggle}}" aria-expanded="{{run2.open}}">
+                    <svg class="ico sm chev" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"></path></svg>
+                    <span>用时 1 分，已修改方案</span>
+                    <span class="t">14:12–14:13</span>
+                  </button>
+                  <sc-if value="{{run2.open}}" hint-placeholder-val="{{ false }}">
+                    <div class="steps">
+                      <div class="step">
+                        <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.75h5.25l3 3v9.5H4Z"></path><path d="M9 1.75V5h3.25"></path></svg>
+                        <span class="step-verb">读取</span><span class="step-dot">·</span><span class="step-obj is-path">plans/recheck-options.md</span>
+                      </div>
+                      <sc-if value="{{showThink}}" hint-placeholder-val="{{ true }}">
+                        <div class="step">
+                          <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.6 10.4A4 4 0 1 1 10.4 10.4c-.5.4-.65.9-.65 1.35v.5h-3.5v-.5c0-.45-.15-.95-.65-1.35Z"></path><path d="M6.6 14.25h2.8"></path></svg>
+                          <span class="step-verb">思考</span><span class="step-dot">·</span><span class="step-obj">{{p.think}}</span>
+                        </div>
+                      </sc-if>
+                      <div class="step">
+                        <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M10.75 2.75 13.25 5.25 6 12.5H3.5V10Z"></path><path d="M9.25 4.25l2.5 2.5"></path></svg>
+                        <span class="step-verb">编辑</span><span class="step-dot">·</span><span class="step-obj is-path">plans/recheck-options.md</span><span class="step-meta"><span class="add">+9</span> <span class="del">−4</span></span>
+                      </div>
+                      <div class="step">
+                        <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M10.75 2.75 13.25 5.25 6 12.5H3.5V10Z"></path><path d="M9.25 4.25l2.5 2.5"></path></svg>
+                        <span class="step-verb">编辑</span><span class="step-dot">·</span><span class="step-obj is-path">plans/recheck-acceptance.md</span><span class="step-meta"><span class="add">+3</span> <span class="del">−1</span></span>
+                      </div>
+                    </div>
+                  </sc-if>
+                </div>
+                <div class="msg-agent">
+                  <p class="prose">{{p.reply}}</p>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{p.showLine}}" hint-placeholder-val="{{ false }}">
+                <div class="plan-line">
+                  <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.75 4.25h6.5M6.75 8h6.5M6.75 11.75h6.5"></path><path d="m2.5 4.25.9.9 1.6-1.65M2.5 8l.9.9L5 7.25M2.75 11.75h1.5"></path></svg>
+                  <span>{{p.lineText}}</span>
+                  <button class="btn-text" type="button" onClick="{{p.toggleLine}}" aria-expanded="{{p.lineOpen}}">{{p.lineAct}}</button>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{p.showCard}}" hint-placeholder-val="{{ true }}">
+                <section class="plan" aria-label="{{p.title}}">
+                  <div class="plan-head">
+                    <span class="ttl">{{p.title}}</span>
+                    <span class="scope">{{p.scope}}</span>
+                    <span class="st">{{p.stText}}</span>
+                  </div>
+                  <sc-if value="{{p.hasDelta}}" hint-placeholder-val="{{ false }}">
+                    <ul class="plan-delta" aria-label="这一版改了什么">
+                      <sc-for list="{{p.delta}}" as="dl" hint-placeholder-count="3">
+                        <li><span class="dm">{{dl.dm}}</span><span>{{dl.text}}</span></li>
+                      </sc-for>
+                    </ul>
+                  </sc-if>
+                  <div class="opts" role="radiogroup" aria-label="选一个方案">
+                    <sc-for list="{{p.opts}}" as="o" hint-placeholder-count="2">
+                      <div class="{{o.cls}}">
+                        <button class="opt-top" type="button" role="radio" aria-checked="{{o.on}}" onClick="{{o.pick}}">
+                          <span class="radio" aria-hidden="true"></span>
+                          <span class="opt-key">{{o.key}}</span>
+                          <span class="opt-title">{{o.title}}</span>
+                          <sc-if value="{{o.hasRec}}" hint-placeholder-val="{{ false }}"><span class="opt-rec">推荐</span></sc-if>
+                          <span class="opt-est">{{o.est}}</span>
+                        </button>
+                        <sc-if value="{{o.hasBody}}" hint-placeholder-val="{{ true }}">
+                          <div class="opt-body">
+                            <p class="opt-how">{{o.how}}</p>
+                            <sc-if value="{{o.hasKv}}" hint-placeholder-val="{{ true }}">
+                              <dl class="opt-kv">
+                                <sc-for list="{{o.kv}}" as="kv" hint-placeholder-count="3"><dt>{{kv.k}}</dt><dd>{{kv.v}}</dd></sc-for>
+                              </dl>
+                            </sc-if>
+                          </div>
+                        </sc-if>
+                      </div>
+                    </sc-for>
+                  </div>
+                  <sc-if value="{{p.canAct}}" hint-placeholder-val="{{ true }}">
+                    <div class="plan-foot">
+                      <span class="note">采用后自动执行；改目标、验收或范围时会再问你。</span>
+                      <button class="{{p.iterateCls}}" type="button" onClick="{{p.iterate}}" title="{{p.iterateTip}}" aria-disabled="{{p.iterateOff}}">
+                        <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.75 3.25h10.5v7.25H8l-3 2.5v-2.5H2.75Z"></path></svg>
+                        在对话里修改
+                      </button>
+                      <button class="{{p.adoptCls}}" type="button" onClick="{{p.adopt}}" title="{{p.adoptTip}}" aria-disabled="{{p.adoptOff}}">{{p.adoptLabel}}</button>
+                    </div>
+                  </sc-if>
+                </section>
+              </sc-if>
+            </sc-for>
 
         </div>
       </div>
@@ -617,6 +644,9 @@ button.bq-ref:hover { color: var(--text); }
                 <div class="lg-row"><span class="lg-c num">10-03 18:41</span><span class="lg-c">系统</span><span class="lg-c mono">goal_3a02</span><span class="lg-c lg-w mono">goal_3 · waiting_for goal_1</span></div>
                 <div class="lg-row is-on"><span class="lg-c num">10-03 18:41</span><span class="lg-c">回答</span><span class="lg-c mono">turn_5b19</span><span class="lg-c lg-w">秘书 → 你 · 未来意图 13 项</span></div>
             </sc-if>
+            <sc-for list="{{track}}" as="r" hint-placeholder-count="1">
+              <div class="lg-row"><span class="lg-c num">{{r.at}}</span><span class="lg-c">{{r.type}}</span><span class="lg-c mono">{{r.id}}</span><span class="lg-c lg-w is-off" title="还没接通">{{r.summary}}</span></div>
+            </sc-for>
           </div>
         </div>
       </div>
@@ -651,7 +681,7 @@ button.bq-ref:hover { color: var(--text); }
               </button>
             </sc-if>
             <sc-if value="{{gb.canRequeue}}" hint-placeholder-val="{{ false }}">
-              <button class="{{gb.requeueCls}}" type="button" onClick="{{gb.requeue}}" title="{{gb.requeueTip}}" aria-disabled="{{gb.requeueAria}}">
+              <button class="{{gb.requeueCls}}" type="button" onClick="{{gb.requeue}}">
                 <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M12.75 3.25v3h-3"></path><path d="M12.5 6.25A5 5 0 1 0 13 9.25"></path></svg>
                 重新入队
               </button>
@@ -674,9 +704,9 @@ button.bq-ref:hover { color: var(--text); }
             <div class="dc-head">
               <span class="{{dc.sq}}" aria-hidden="true"></span>
               <span class="lvl">{{dc.lvl}}</span>
-              <button class="btn-text ellipsis" type="button" onClick="{{dc.locate}}" title="{{dc.locateTip}}">{{dc.path}}</button>
+              <button class="btn-text ellipsis {{dc.locateCls}}" type="button" onClick="{{dc.locate}}" title="{{dc.locateTip}}" aria-disabled="{{dc.locateOff}}">{{dc.path}}</button>
               <span class="pos">{{dc.pos}}</span>
-              <a class="btn-text" href="Decide.dc.html" title="“需要你决定”页：全部目标的待处理和已处理">全部</a>
+              <a class="btn-text" href="{{dc.allHref}}" title="“需要你决定”页：全部目标的待处理和已处理">全部</a>
               <sc-if value="{{dc.hasNext}}" hint-placeholder-val="{{ false }}">
                 <button class="btn btn-icon btn-sm" type="button" onClick="{{dc.next}}" aria-label="下一条" title="下一条">
                   <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"></path></svg>
@@ -712,15 +742,15 @@ button.bq-ref:hover { color: var(--text); }
               </dl>
             </sc-if>
             <div class="dc-foot">
-              <button class="btn btn-sm first" type="button" onClick="{{dc.ask}}">
+              <button class="btn btn-sm first {{dc.askCls}}" type="button" onClick="{{dc.ask}}" title="{{dc.askTip}}" aria-disabled="{{dc.askOff}}">
                 <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.75 3.25h10.5v7.25H8l-3 2.5v-2.5H2.75Z"></path></svg>
                 问秘书
               </button>
               <sc-for list="{{dc.acts}}" as="a" hint-placeholder-count="2">
-                <button class="btn btn-sm btn-line" type="button" onClick="{{a.go}}">{{a.label}}</button>
+                <button class="{{a.cls}}" type="button" onClick="{{a.go}}" title="{{a.tip}}" aria-disabled="{{a.off}}">{{a.label}}</button>
               </sc-for>
               <sc-if value="{{dc.hasPrimary}}" hint-placeholder-val="{{ true }}">
-                <button class="{{dc.primaryCls}}" type="button" onClick="{{dc.primaryGo}}" aria-disabled="{{dc.primaryOff}}">{{dc.primaryLabel}}</button>
+                <button class="{{dc.primaryCls}}" type="button" onClick="{{dc.primaryGo}}" title="{{dc.primaryTip}}" aria-disabled="{{dc.primaryOff}}">{{dc.primaryLabel}}</button>
               </sc-if>
             </div>
           </section>
@@ -751,8 +781,8 @@ button.bq-ref:hover { color: var(--text); }
             <label class="sr-only" for="composer-input">{{composerLabel}}</label>
             <textarea id="composer-input" rows="2" placeholder="{{composerPh}}" value="{{draft}}" onChange="{{onDraft}}"></textarea>
             <div class="composer-foot">
-              <sc-if value="{{ax.hasQuotes}}" hint-placeholder-val="{{ false }}"><span class="to">{{ax.quoteNote}}</span></sc-if>
-              <button class="{{sendCls}}" type="button" onClick="{{send}}" aria-label="发送" title="{{sendTip}}" aria-disabled="{{sendAria}}">
+              <sc-if value="{{hasNote}}" hint-placeholder-val="{{ false }}"><span class="to">{{composerNote}}</span></sc-if>
+              <button class="{{sendCls}}" type="button" onClick="{{send}}" aria-label="发送" title="发送">
                 <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 12.75V3.5M4.25 7.25 8 3.5l3.75 3.75"></path></svg>
               </button>
             </div>
@@ -1720,6 +1750,21 @@ class Component extends DCLogic {
   componentDidUpdate(prev) {
     const s = this.state || {};
     if (prev && prev.theme !== this.props.theme && s.theme) this.setState({ theme: null });
+    /* a successful reread is the new state: an action error no longer shows, and the
+       local bubbles the read now carries are not drawn twice (Main A §2.6/Main 6) */
+    if (prev && prev.dataVersion !== this.props.dataVersion) {
+      const data = this.props.data || {};
+      const roots = new Set((data.conversation || []).map((r) => r.root));
+      const pending = (s.pending || []).filter((p) => !roots.has(p.root));
+      const patch = {};
+      /* L05: the rail keeps the order it first showed; the first read with
+         lines fixes it, and only the offered re-sort changes it later. */
+      const lines = data.lines || [];
+      if (!s.railOrder && lines.length > 0) patch.railOrder = lines.map((line) => line.id);
+      if (s.err) patch.err = '';
+      if (pending.length !== (s.pending || []).length) patch.pending = pending;
+      if (Object.keys(patch).length > 0) this.setState(patch);
+    }
     /* a node page (x1, x2 …) belongs to the old scale; the maps and the auxiliary pages (文件, 命令, Diff, file pages) stay */
     /* decision 33: a line the new scale's rail does not have (a synthetic line of the 600 example) closes back to the main
        conversation; a story line (执行者 · SSE 推送 …) is on both and stays open */
@@ -2996,9 +3041,10 @@ class Component extends DCLogic {
       goals: [], selectedGoalId: null, selectedGoalRevision: null, selectedDisplay: null,
       lines: [], archived: [], archivedText: '没有已归档的工作线', head: '工作中 0 · 待命 0',
       headTip: '', counts: { working: 0, standby: 0, archived: 0 },
-      inbox: { decideN: 0, noticeN: 0, hasDecide: false, hasNotice: false, none: true }, detail: null, hasGoal: false
+      inbox: { decideN: 0, noticeN: 0, hasDecide: false, hasNotice: false, none: true }, detail: null, hasGoal: false,
+      decisions: null, conversation: [], older: null, track: null, progress: { done: 0, total: 0 }
     };
-    return this.navRenderVals(base, data);
+    return this.mainRenderVals(this.navRenderVals(base, data), data);
   }
 
   navLineRow(L) {
@@ -3034,14 +3080,14 @@ class Component extends DCLogic {
     const inbox = {
       hasDecide: !!data.inbox.hasDecide, decideN: data.inbox.decideN,
       hasNotice: !!data.inbox.hasNotice, noticeN: data.inbox.noticeN,
-      none: !!data.inbox.none, openDecide: () => {}, openNotice: () => {}
+      none: !!data.inbox.none
     };
     const rail = {
       head: data.head, headTip: data.headTip,
       hasArch: (data.archived || []).length > 0 || data.counts.archived > 0,
       archText: data.archivedText,
       archTip: '执行者的工作线在任务已满足超过一天后归档；点一下列出它们',
-      hasSynth: false, synth: '', synthTip: '', stale: false, resort: () => {}, staleTip: '',
+      hasSynth: false, synth: '', synthTip: '',
       archOpen: !!s.railArch, chevCls: 'ico xs chev' + (s.railArch ? ' is-open' : ''),
       toggleArch: () => {
         const open = !(this.state || {}).railArch;
@@ -3088,8 +3134,6 @@ class Component extends DCLogic {
     const selected = data.selectedDisplay;
     const phase = selected ? selected.phase : '';
     const finished = phase === 'COMPLETED' || phase === 'CANCELLED';
-    const nc = typeof actions.notConnectedAttrs === 'function' ? actions.notConnectedAttrs()
-      : { class: 'is-off', title: '还没接通', 'aria-disabled': 'true' };
     const read = this.props.readState || null;
     const control = (kind) => { if (typeof actions.controlGoal === 'function') void actions.controlGoal(kind); };
     const gb = Object.assign({}, base.gb, {
@@ -3097,7 +3141,7 @@ class Component extends DCLogic {
       word: selected ? selected.word : '状态未读',
       why: read && read.stale && read.staleText ? String(read.staleText) : selected ? selected.why : '',
       whyTip: null,
-      hasDecide: !!data.inbox.hasDecide, decideN: data.inbox.decideN, openDecide: () => {},
+      hasDecide: !!data.inbox.hasDecide, decideN: data.inbox.decideN,
       canPause: selected !== null && !finished && phase !== 'PAUSED',
       canResume: phase === 'PAUSED',
       canCancel: selected !== null && !finished,
@@ -3110,17 +3154,247 @@ class Component extends DCLogic {
       confirm: !!s.confirmCancel,
       askCancel: () => this.setState({ confirmCancel: true }),
       keep: () => this.setState({ confirmCancel: false }),
-      cancel: () => { this.setState({ confirmCancel: false }); control('cancel'); },
-      requeueCls: 'btn btn-sm ' + nc.class,
-      requeueTip: nc.title,
-      requeueAria: nc['aria-disabled'],
-      requeue: (ev) => { if (typeof actions.notConnected === 'function') actions.notConnected(ev); }
+      cancel: () => { this.setState({ confirmCancel: false }); control('cancel'); }
     });
     return Object.assign({}, base, { goalsHref: goalsHref, taskMapHref: taskMapHref,
       headTitle: selectedGoal ? selectedGoal.objective : base.headTitle,
-      inbox: inbox, goals: goals, rail: rail, lvr: lvr, lv: lv, gb: gb,
-      sendCls: 'send ' + nc.class, sendTip: nc.title, sendAria: nc['aria-disabled'],
-      send: (ev) => { if (typeof actions.notConnected === 'function') actions.notConnected(ev); } });
+      inbox: inbox, goals: goals, rail: rail, lvr: lvr, lv: lv, gb: gb });
+  }
+
+  /* ------------------------------------------------------------ Main A data layer */
+  /* E3-Main A §2.1/§2.4–§2.9: the thread, the track, the decision card, the Goal bar,
+     the rail order and the composer, all from `props.data` (the main adapter). Only
+     values change; the prototype's holes, classes and layout stay. */
+  mainRenderVals(base, data) {
+    const s = this.state || {};
+    const actions = this.props.actions || {};
+    const set = (p) => this.setState(p);
+    const nc = actions.notConnected;
+    const msg = (e) => String(e && e.message ? e.message : e);
+    const selectedId = s.navGoalId !== undefined ? s.navGoalId : data.selectedGoalId || null;
+    const read = this.props.readState || null;
+    const decisions = data.decisions || null;
+    const decideRows = (decisions ? decisions.sections : [])
+      .filter((x) => x.level === 'decide' || x.level === 'notice')
+      .reduce((all, x) => all.concat(x.rows), []);
+    const nBy = {};
+    for (const row of decideRows) {
+      if (row.level === 'decide' && row.goalId) nBy[row.goalId] = (nBy[row.goalId] || 0) + 1;
+    }
+
+    /* A06/L01/L02: the Goal bar and the inbox count the same read; the inbox stays
+       the workspace's own total (Y1), the Goal bar counts only the selected Goal. */
+    const openAt = (index) => { if (index >= 0) set({ dcAt: index, dcOpen: true, picked: null, facts: false }); };
+    const inbox = Object.assign({}, base.inbox, {
+      openDecide: () => openAt(decideRows.findIndex((row) => row.level === 'decide')),
+      openNotice: () => openAt(decideRows.findIndex((row) => row.level === 'notice'))
+    });
+    const goals = base.goals.map((row, i) => {
+      const n = nBy[data.goals[i].goalId] || 0;
+      return Object.assign({}, row, { n: n, hasN: n > 0, pick: () => {
+        set({ mainPages: 1, dcOpen: false, picked: null, facts: false, pending: [] });
+        row.pick();
+      } });
+    });
+
+    /* L05: the rail keeps the order it first showed; a change only offers a local
+       re-sort, never `goals/reorder`. */
+    const lineIds = (data.lines || []).map((L) => L.id);
+    const railOrder = s.railOrder || lineIds;
+    const kept = railOrder.filter((id) => lineIds.indexOf(id) >= 0);
+    const added = lineIds.filter((id) => kept.indexOf(id) < 0);
+    const orderedIds = kept.concat(added);
+    const stale = railOrder.filter((id) => lineIds.indexOf(id) >= 0).join('|')
+      !== lineIds.filter((id) => railOrder.indexOf(id) >= 0).join('|');
+    const rail = Object.assign({}, base.rail, {
+      stale: stale,
+      staleTip: '工作线有新活动，左栏顺序变了；点一下按现在的顺序排',
+      resort: () => set({ railOrder: (data.lines || []).map((L) => L.id) })
+    });
+    const rowById = {};
+    for (const row of (base.lvr && base.lvr.rows) || []) rowById[row.id] = row;
+    const lvr = Object.assign({}, base.lvr, {
+      rows: orderedIds.map((id) => rowById[id]).filter((row) => !!row)
+    });
+
+    /* A12/A13/A15: the read rows plus the bubbles still waiting for the reread. */
+    const roots = new Set((data.conversation || []).map((row) => row.root));
+    const pending = (s.pending || []).filter((row) => !roots.has(row.root));
+    const log = [];
+    const pushRow = (row, quotes) => log.push(Object.assign({}, row, {
+      quotes: this.bqItems(quotes || [], 'M' + log.length, s.bqOpen, set)
+    }));
+    for (const row of data.conversation || []) pushRow(row, row.quotes);
+    for (const row of pending) {
+      pushRow({ root: row.root, isSys: false, isUser: true, isAgent: false, isRun: false,
+        text: row.input, t: '', from: '', hasFrom: false, quotes: [], hasQuotes: false, ideas: [], hasIdeas: false }, []);
+      if (row.answer !== null && row.answer !== undefined) {
+        pushRow({ root: row.root, isSys: false, isUser: false, isAgent: true, isRun: false,
+          text: row.answer, t: '', from: '', hasFrom: false, quotes: [], hasQuotes: false, ideas: [], hasIdeas: false }, []);
+      }
+    }
+    const older = {
+      show: !!data.older,
+      more: () => {
+        const n = (this.state.mainPages || 1) + 1;
+        set({ mainPages: n });
+        if (typeof actions.readMore === 'function') actions.readMore({ mainPages: n });
+      }
+    };
+    const track = (data.track || []).map((row) => ({ at: row.at, type: row.type, id: row.id, summary: row.summary }));
+
+    /* MF6(4): the newest answer's ideas become one plan card; adopting and iterating
+       are not connected in Main A. */
+    const ideaRow = (data.conversation || []).slice().reverse()
+      .find((row) => row.hasIdeas && Array.isArray(row.ideas) && row.ideas.length > 0) || null;
+    let plans = [];
+    if (ideaRow !== null) {
+      const ids = ideaRow.ideas.map((idea, i) => String.fromCharCode(65 + i));
+      const pick = ids.indexOf(s.plan) >= 0 ? s.plan : ids[0];
+      const opts = ideaRow.ideas.map((idea, i) => {
+        const key = ids[i];
+        const on = key === pick;
+        return { key: key, title: idea.title, est: '', how: idea.detail, hasRec: false, kv: [],
+          on: on, hasBody: on, hasKv: false, cls: 'opt' + (on ? ' is-on' : ''), pick: () => set({ plan: key }) };
+      });
+      plans = [{
+        isRound2: false, title: '方案', scope: '', stText: '还没接通', hasDelta: false, delta: [], opts: opts, canAct: true,
+        showLine: false, lineOpen: false, lineAct: '', lineText: '', toggleLine: () => {}, showCard: true,
+        iterate: nc, iterateCls: 'btn is-off', iterateTip: '还没接通', iterateOff: 'true',
+        adopt: nc, adoptCls: 'btn btn-primary is-off', adoptTip: '还没接通', adoptOff: 'true', adoptLabel: '采用方案 ' + pick,
+        think: '', reply: ''
+      }];
+    }
+
+    /* A05/A07: the same display read and the same `taskProgressOf` result as Goals. */
+    const display = data.selectedDisplay;
+    const phase = display ? display.phase : '';
+    const progress = data.progress;
+    const why = read && read.stale && read.staleText ? String(read.staleText)
+      : phase === 'CANCELLED' ? '记录保留，可重新入队'
+        : phase === 'PAUSED' ? '已暂停'
+          : (data.counts.working || 0) > 0 ? data.counts.working + ' 条工作线工作中'
+            : '没有工作线在工作';
+    const goalIndex = decideRows.findIndex((row) => row.level === 'decide' && row.goalId === selectedId);
+    const gb = Object.assign({}, base.gb, {
+      why: why, whyTip: null,
+      done: progress.done + '/' + progress.total,
+      hasDecide: goalIndex >= 0, decideN: selectedId ? (nBy[selectedId] || 0) : 0,
+      openDecide: () => openAt(goalIndex),
+      requeueCls: 'btn btn-sm',
+      requeue: () => {
+        if (selectedId === null || typeof actions.copyGoal !== 'function') return;
+        Promise.resolve(actions.copyGoal(selectedId)).catch((e) => set({ err: msg(e) }));
+      }
+    });
+
+    /* A23–A30: the card comes from the queue's complete card (never `decisions/card`).
+       A closed card hands the composer back; an answer failure leaves it closed so
+       the write error lands in the composer's own `.to` slot. */
+    const closeCard = (patch) => set(Object.assign({ dcOpen: false, picked: null, facts: false }, patch || {}));
+    let dc = { show: false };
+    if (decideRows.length > 0 && s.dcOpen && !s.confirmCancel) {
+      const at = (s.dcAt || 0) % decideRows.length;
+      const row = decideRows[at];
+      const v = row.view || null;
+      const same = decideRows.filter((r) => r.level === row.level);
+      const k = same.indexOf(row);
+      const stepPrimary = v !== null && v.primary !== null && v.primary.key !== 'answer';
+      const isChoice = !!v && v.options.length > 0;
+      const needsPick = !!v && v.options.length > 0 && s.picked === null;
+      const opts = (v ? v.options : []).map((o) => {
+        const on = s.picked === o.id;
+        return { title: o.label, how: '', on: on, cls: 'opt' + (on ? ' is-on' : ''), pick: () => set({ picked: o.id }) };
+      });
+      const facts = (v ? v.facts : []).map((f) => ({ k: f.k, v: f.v }));
+      const submitAnswer = (optionId) => {
+        Promise.resolve(actions.answerCard(row.key, optionId))
+          .then(() => closeCard())
+          .catch((e) => closeCard({ err: msg(e) }));
+      };
+      dc = Object.assign({}, base.dc, {
+        show: true,
+        sq: 'sq z8 ' + (row.level === 'decide' ? 's-decide' : 's-waiting'),
+        lvl: row.level === 'decide' ? '要决定' : '请知悉',
+        title: row.label, line: v ? v.line : row.sub, path: v ? v.path : '',
+        pos: same.length > 1 ? (k + 1) + ' / ' + same.length : '',
+        hasNext: decideRows.length > 1,
+        next: () => set({ dcAt: ((s.dcAt || 0) + 1) % decideRows.length, picked: null, facts: false }),
+        close: () => closeCard(),
+        locate: nc, locateTip: '还没接通', locateCls: 'is-off', locateOff: 'true',
+        isChoice: isChoice,
+        opts: opts,
+        hasFacts: facts.length > 0,
+        showFacts: !!s.facts && facts.length > 0,
+        factsLabel: s.facts ? '收起详情' : '详情',
+        toggleFacts: () => set({ facts: !s.facts }),
+        facts: facts,
+        ask: v === null ? nc : () => {
+          set({ askCardKey: row.key, askRef: row.label,
+            askSq: 'sq z8 ' + (row.level === 'decide' ? 's-decide' : 's-waiting'),
+            dcOpen: false, picked: null, facts: false, pane: 'chat', confirmCancel: false });
+        },
+        askCls: v === null ? 'is-off' : '', askTip: v === null ? '还没接通' : '', askOff: v === null ? 'true' : 'false',
+        hasPrimary: v === null || v.primary !== null || isChoice,
+        primaryLabel: v ? (v.primary ? v.primary.label : '确定') : '标为已读',
+        primaryGo: v === null
+          ? () => {
+            Promise.resolve(actions.markNoticeSeen(row.key))
+              .then(() => closeCard())
+              .catch((e) => closeCard({ err: msg(e) }));
+          }
+          : stepPrimary ? nc
+            : () => { if (s.picked !== null) submitAnswer(s.picked); },
+        primaryTip: stepPrimary ? '还没接通' : '',
+        primaryCls: 'btn btn-sm btn-primary' + (stepPrimary || needsPick ? ' is-off' : ''),
+        primaryOff: stepPrimary || needsPick ? 'true' : 'false',
+        acts: (v ? v.acts : []).map((a) => ({ label: a.label, cls: 'btn btn-sm btn-line is-off',
+          tip: '还没接通', off: 'true', go: nc })),
+        allHref: 'Decide.dc.html' + (data.selectedGoalId ? '?goal=' + encodeURIComponent(data.selectedGoalId) : '')
+      });
+    }
+
+    /* A18/A19/A21/A28: send reads the two quote areas apart; the card ref goes as
+       `cardRefs`, the file quotes as structured references, never as a text prefix. */
+    const sendMain = () => {
+      const st = this.state || {};
+      const text = String(st.draft || '').trim();
+      if (!text || st.sending) return;
+      const quotes = Array.isArray(st.quotes) ? st.quotes : [];
+      const refs = quotes.map((q) => ({
+        path: q.path,
+        startLine: q.a === undefined ? null : q.a,
+        endLine: q.b === undefined ? null : q.b,
+        snapshot: q.snap ? (q.snapText || null) : null
+      }));
+      set({ sending: true, err: '' });
+      const call = st.askCardKey ? actions.askCard(st.askCardKey, text) : actions.askSecretary(text, refs);
+      Promise.resolve(call).then((reply) => {
+        if (!reply) { set({ sending: false }); return; }
+        set({ sending: false, pending: (this.state.pending || []).concat([{ root: reply.root, input: reply.input, answer: reply.answer }]),
+          draft: '', quotes: [], askRef: '', askSq: '', askCardKey: '' });
+      }).catch((e) => set({ sending: false, err: msg(e) }));
+    };
+
+    const errText = s.err || '';
+    const quoteNote = base.ax && base.ax.hasQuotes ? base.ax.quoteNote : '';
+    const readError = read && read.status === 'error'
+      ? { show: true, text: read.message, retry: read.retry }
+      : { show: false };
+    return Object.assign({}, base, {
+      isG1: false, isG2: false, isG3: false,
+      inbox: inbox, goals: goals, rail: rail, lvr: lvr, gb: gb, dc: dc,
+      log: log, track: track, plans: plans, older: older,
+      composerOpen: !dc.show && !s.confirmCancel,
+      hasAsk: !!s.askRef, askRef: s.askRef || '', askSq: s.askSq || 'sq z8 s-pending',
+      clearAsk: () => set({ askRef: '', askSq: '', askCardKey: '' }),
+      runOff: nc,
+      send: sendMain, sendCls: 'send' + (String(s.draft || '').trim() || (s.quotes || []).length ? '' : ' is-off'),
+      hasNote: !!errText || !!quoteNote, composerNote: errText || quoteNote,
+      readError: readError,
+      showTrace: () => { set({ pane: 'trace', densMenu: false }); if (typeof actions.readMore === 'function') actions.readMore({ mainTrack: true }); },
+      showChat: () => { set({ pane: 'chat' }); if (typeof actions.readMore === 'function') actions.readMore({ mainTrack: false }); }
+    });
   }
 
   /* ------------------------------------------------------------ renderVals */
@@ -3359,7 +3633,7 @@ class Component extends DCLogic {
       const isAdopted = adopted && adopted.round === 1;
       const showLine = superseded || isAdopted;
       const lo = !!lineOpen.p1;
-      plans.push({ isRound2: false, title: '方案 · 第 1 版', stText: isAdopted ? '已采用' : superseded ? '已由第 2 版取代' : '未采用',
+      plans.push({ isRound2: false, title: '方案 · 第 1 版', scope: '检查与返工，涉及 2 个任务', iterateCls: 'btn', iterateTip: '', iterateOff: 'false', adoptCls: 'btn btn-primary', adoptTip: '', adoptOff: 'false', stText: isAdopted ? '已采用' : superseded ? '已由第 2 版取代' : '未采用',
         hasDelta: false, delta: [], opts: optsFor(['A1', 'B1'], current), canAct: current,
         showLine: showLine, lineOpen: lo, lineAct: lo ? '收起' : '展开',
         lineText: isAdopted ? '已采用方案 ' + adopted.key + '（第 1 版）' : '方案 · 第 1 版，已由第 2 版取代',
@@ -3371,7 +3645,7 @@ class Component extends DCLogic {
       const isAdopted = adopted && adopted.round === 2;
       const lo = !!lineOpen.p2;
       const ids = planIter === 'A' ? ['A2', 'B1'] : ['A1', 'B2'];
-      plans.push({ isRound2: true, title: '方案 · 第 2 版', stText: isAdopted ? '已采用' : '未采用',
+      plans.push({ isRound2: true, title: '方案 · 第 2 版', scope: '检查与返工，涉及 2 个任务', iterateCls: 'btn', iterateTip: '', iterateOff: 'false', adoptCls: 'btn btn-primary', adoptTip: '', adoptOff: 'false', stText: isAdopted ? '已采用' : '未采用',
         hasDelta: true, delta: (planIter === 'A' ? D.dA : D.dB).map((x) => ({ dm: x[0], text: x[1] })), opts: optsFor(ids, current), canAct: current,
         showLine: !!isAdopted, lineOpen: lo, lineAct: lo ? '收起' : '展开', lineText: isAdopted ? '已采用方案 ' + adopted.key + '（第 2 版）' : '',
         toggleLine: () => set({ lineOpen: Object.assign({}, lineOpen, { p2: !lo }) }),
@@ -3471,12 +3745,13 @@ class Component extends DCLogic {
         factsLabel: s.facts ? '收起详情' : '详情', toggleFacts: () => set({ facts: !(this.state || {}).facts }),
         facts: cur.facts.map((f) => ({ k: f[0], v: f[1] })),
         ask: () => set({ askRef: cur.path.split(' / ').pop() + '：' + cur.title, askSq: dc.sq, dec: null, pane: 'chat', confirmCancel: false }),
-        acts: cur.acts.map((a) => ({ label: a[1], go: () => resolve(cur, a[0]) })),
+        acts: cur.acts.map((a) => ({ label: a[1], cls: 'btn btn-sm btn-line', tip: '', off: 'false', go: () => resolve(cur, a[0]) })),
         /* the goal conflict: the thread card's three equal choices (same pick), 确定 waits for one (BRIEF-V2B 6e), as on Decide and Phone */
         isChoice: cur.id === 'q2', opts: cur.id === 'q2' ? cf2.opts : [],
         hasPrimary: !!cur.primary, primaryLabel: cur.primary ? cur.primary[1] : '',
         primaryGo: cur.id === 'q2' ? cf2.go : cur.primary ? () => resolve(cur, cur.primary[0]) : () => {},
-        primaryOff: cur.id === 'q2' && !cfPick, primaryCls: 'btn btn-sm btn-primary' + (cur.id === 'q2' && !cfPick ? ' is-off' : '')
+        primaryOff: cur.id === 'q2' && !cfPick, primaryTip: '', allHref: 'Decide.dc.html',
+        primaryCls: 'btn btn-sm btn-primary' + (cur.id === 'q2' && !cfPick ? ' is-off' : '')
       });
     }
 
@@ -3749,7 +4024,7 @@ class Component extends DCLogic {
       showThink: dens !== '简洁', full: dens === '完全展开',
       run1: runOf(s.run1, 'run1'), run2: runOf(s.run2, 'run2'), run3: runOf(s.run3, 'run3'),
       refT20: () => go.selTask('T20'), refT20Sq: 'sq ' + this.sqAt((tm1.byId.T20 || {}).st || 'blocked'),
-      plans: plans, sent: s.sent || '', sentQuotes: this.bqItems(s.sentQuotes, 'sent', s.bqOpen, set), cf2: cf2,
+      plans: goal === 'g1' ? plans : [], sent: s.sent || '', sentQuotes: this.bqItems(s.sentQuotes, 'sent', s.bqOpen, set), cf2: cf2,
       log: (s.log || []).map((l, i) => [l, i]).filter((p) => (p[0].goal || 'g1') === goal).map((p) => {
         const l = p[0];
         return { isSys: !!l.isSys, isUser: !!l.isUser, isAgent: !!l.isAgent, text: l.text, t: l.t, from: l.from || '', hasFrom: !!l.from,
@@ -3770,6 +4045,7 @@ class Component extends DCLogic {
       clearAsk: () => set({ askRef: '', askSq: '' }),
       draft: draft, onDraft: (e) => { const val = e && e.target ? e.target.value : ''; set(val ? { draft: val } : { draft: '', iterating: false }); },
       sendCls: 'send' + (draft.trim() || (s.quotes || []).length ? '' : ' is-off'), send: send,
+      hasNote: !!ax.hasQuotes, composerNote: ax.quoteNote,
 
       /* G2: the auxiliary area (tab strip, dividers, 文件 / 命令 / Diff / file pages, quotes in the composer) */
       ax: ax,

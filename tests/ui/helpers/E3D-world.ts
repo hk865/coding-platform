@@ -1,4 +1,5 @@
 import type { QueryJobRef } from '../../../src/contracts/query-job.js';
+import type { WorkspaceScope } from '../../../src/contracts/core/identity.js';
 import type { DecisionCardV1 } from '../../../src/core/work-graph/model/decision-contracts.js';
 import { AG2B_WORK_TASK_ID, graphWrite, plain } from '../../helpers/AG2b-collaboration-fixture.js';
 import { moveKernelAside } from '../../helpers/A2-restart-fixture.js';
@@ -123,13 +124,35 @@ export async function openDeferredWorld(): Promise<HostScenario> {
   return h;
 }
 
-/** `decisions/notices/seen` of every `plan_adoption` notice a read shows, with that read's token and positions. */
+type CorePost = (route: string, body: unknown) => Promise<unknown>;
+
+/**
+ * `decisions/notices/seen` of every `plan_adoption` notice a read shows, with
+ * that read's token and positions. One body serves both the Host scenario
+ * (`h.post`) and the cards workspace (`ws.post`); its `post` is the boundary.
+ */
+export async function seePlanAdoptionsVia(post: CorePost, scope: WorkspaceScope, label: string): Promise<void> {
+  const read = await post('decisions/queue', plain(scope, { workspace: scope, sections: ['notices'],
+    categories: ['plan_adoption'], page: { limit: 100 } })) as
+    { value?: { notices?: unknown[]; displayToken?: string | null; seenThrough?: unknown } };
+  if ((read.value?.notices ?? []).length === 0) return;
+  const displayToken = read.value?.displayToken;
+  if (displayToken === null || displayToken === undefined) throw new Error('E3D: the plan_adoption read issued no display token');
+  const registration = await post('workspaces/registration',
+    plain(scope, { projectId: scope.projectId, workspaceId: scope.workspaceId })) as
+    { value?: { workspace?: { revision: number } } };
+  const revision = registration.value?.workspace?.revision;
+  if (revision === undefined) throw new Error('E3D: workspaces/registration returned no workspace revision');
+  const workspaceRef = { aggregateType: 'Workspace' as const, projectId: scope.projectId, workspaceId: scope.workspaceId };
+  const seen = await post('decisions/notices/seen', graphWrite(scope, {
+    workspace: scope, displayToken, seenThrough: read.value?.seenThrough,
+  }, `s6a-cards-seen-${scope.workspaceId}-${label}`, [{ ref: workspaceRef, revision }])) as { status?: string };
+  if (seen.status !== 'committed') throw new Error(`E3D: the plan adoptions were not marked seen: ${JSON.stringify(seen)}`);
+}
+
+/** The cards-workspace call of `seePlanAdoptionsVia`. */
 export async function seePlanAdoptions(ws: S6ACardsWorkspace, label: string): Promise<void> {
-  const read = await ws.readNotices({ categories: ['plan_adoption'] });
-  if (read.notices.length === 0) return;
-  if (read.displayToken === null) throw new Error('E3D: the plan_adoption read issued no display token');
-  const answer = await ws.markSeen({ label, displayToken: read.displayToken, seenThrough: read.seenThrough });
-  if (answer['status'] !== 'committed') throw new Error(`E3D: the plan adoptions were not marked seen: ${JSON.stringify(answer)}`);
+  await seePlanAdoptionsVia((route, body) => ws.post(route, body), ws.scope, label);
 }
 
 /** The text the secretary answered the first round of the D44a request with. */

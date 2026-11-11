@@ -6,6 +6,7 @@
  */
 import type { SessionRef } from '../../contracts/core/identity.js';
 import type { SubmittedControl } from '../../contracts/control-intent.js';
+import type { SessionHistoryEntry } from '../../contracts/session-activity.js';
 import type { TaskRow } from '../../contracts/task-graph.js';
 import type { LineControlV1, WorkLineDetailV1 } from '../../contracts/work-line.js';
 import {
@@ -41,6 +42,17 @@ export async function submitRunControl(
     input: { runRef, kind, reason: null },
     meta: { requestId: crypto.randomUUID(), expected: control.pins },
   }), 'controls/submit');
+}
+
+/** The only `sessions/history` read both pages make: the line's latest records,
+ * with no cursor window. */
+export async function readSessionTrace(
+  client: UiClient, scope: CoreScope, sessionRef: LineKey,
+): Promise<SessionHistoryEntry[]> {
+  const page = readyRouteValue<{ items: SessionHistoryEntry[] }>(await client.post('sessions/history', scope, {
+    sessionRef, afterCursor: null, throughCursor: null, limit: 100,
+  }), 'sessions/history');
+  return page.items;
 }
 
 /** X3: 重新入队 is shown only for a failed Task whose public requeue actors

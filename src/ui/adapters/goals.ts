@@ -250,6 +250,16 @@ function taskRowsOf(graph: unknown): Array<Record<string, unknown>> {
   return Array.isArray(tasks) ? tasks.map((entry) => asRecord(entry)) : [];
 }
 
+/** §2.7 A07: the one done/total rule Goals and Main share. A Goal without an
+ * adopted Plan reads as 0/0, not as an error. */
+export function taskProgressOf(graph: unknown): { done: number; total: number } {
+  const rows = taskRowsOf(graph);
+  return {
+    done: rows.filter((row) => asText(row.effectivePhase) === 'satisfied').length,
+    total: rows.length,
+  };
+}
+
 function taskIdOf(row: Record<string, unknown>): string {
   return asText(asRecord(row.definition).taskId);
 }
@@ -474,8 +484,7 @@ export function adaptGoals(input: GoalsInput, selected: string | null): GoalsDat
     }
     const graph = tasks[goal.id];
     const rows = taskRowsOf(graph);
-    const total = rows.length;
-    const satisfied = rows.filter((row) => asText(row.effectivePhase) === 'satisfied').length;
+    const progress = taskProgressOf(graph);
     const changed = new Set(rows.flatMap((row) => plannedFilesOf(row))).size;
     const last = index === bases.length - 1;
     return {
@@ -497,7 +506,7 @@ export function adaptGoals(input: GoalsInput, selected: string | null): GoalsDat
       hasN: n > 0,
       n,
       kv: {
-        progress: String(satisfied) + '/' + String(total) + ' 已满足',
+        progress: String(progress.done) + '/' + String(progress.total) + ' 已满足',
         line: workLineOf(goal.id),
         changed: String(changed),
         autonomy: AUTONOMY_TEXT[goal.autonomy],

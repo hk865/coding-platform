@@ -452,7 +452,7 @@ function recordsOf(source: MemberSource, detail: WorkLineDetailV1): { items: Mem
   return { items, groups: [...groups.values()].filter((group) => group.rows.length > 0) };
 }
 
-function traceOf(history: SessionHistoryEntry[] | null): MemberTraceRow[] {
+export function traceOf(history: SessionHistoryEntry[] | null): MemberTraceRow[] {
   if (history === null) return [];
   return history.map((entry) => {
     const body = entry.body;

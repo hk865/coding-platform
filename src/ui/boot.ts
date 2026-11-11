@@ -9,10 +9,15 @@ import { qualifyProjectPath } from '../contracts/workspace-path.js';
 import { createAutoRefresh, type RefreshRead, type RefreshSnapshot, type RefreshSources } from './refresh.js';
 import { adaptNav, completionRevisionOf, goalHref, type LineKey, type NavData, type NavLineDetail } from './adapters/nav.js';
 import {
-  adaptMember, messageBodyKey, type MemberData, type MemberSource, type MemberWriteBasis,
+  adaptMember, messageBodyKey, traceOf, type MemberData, type MemberSource, type MemberWriteBasis,
 } from './adapters/member.js';
 import { adaptChain, type ChainData, type ChainSource } from './adapters/chain.js';
-import { readLine, requeueVisible, submitRunControl, type LineReadValue } from './adapters/line-shared.js';
+import {
+  readLine, readSessionTrace, requeueVisible, submitRunControl, type LineReadValue,
+} from './adapters/line-shared.js';
+import {
+  adaptMain, requestRootKey, type MainData, type MainPageCursorV1, type MainPageV1, type MainTrackRow,
+} from './adapters/main.js';
 import { adaptGoals, conflictSelectionOf, goalOrderOf, type GoalsData } from './adapters/goals.js';
 import {
   adaptDecide, budgetTokensOf, draftOf, pinsFor, taskTripleOf, type DecideCard, type DecideData, type DecideRow, type DecideStepKey,
@@ -28,6 +33,7 @@ import type { GraphHoverReadV1, LineExecutionItemV1, LineMessageStateV1, WorkLin
 import type { SessionMessageRef } from '../contracts/core/session-message.js';
 import type { QueryJobAnswerSnapshot } from '../contracts/query-job.js';
 import type { QueryExecutionRecord } from '../contracts/query-job.js';
+import type { GoalCopyDraftResultV1 } from '../contracts/goal-card.js';
 import type { MessageBody, SessionMessageReadV1 } from '../contracts/mailbox.js';
 import type { TaskExecutionRecord } from '../contracts/execution-read.js';
 import type { TaskGraph } from '../contracts/task-graph.js';
@@ -39,6 +45,7 @@ import type { NoteAnchorV1 } from '../contracts/note.js';
 import type { DecisionCardV1, DecisionQueueReadV1 } from './adapters/decide.js';
 import { guardNotConnected, notConnectedAttrs } from './not-connected.js';
 import type { RequestReferenceInputV1 } from '../contracts/query-job.js';
+import type { QueryJobRef } from '../contracts/query-job.js';
 import {
   NO_PLAN_TEXT, adaptTaskMap, adaptTaskMapCalendar, adaptTaskMapDecisionCards, adaptTaskMapDetail, adaptTaskMapTime,
   isFinishedGoalDisplayPhase, localShortAt, type GoalDisplayPhaseCode, type TaskMapQueueRead,
@@ -52,6 +59,12 @@ import {
 const RECONNECT_TEXT = '连接断开，正在重连。';
 /** The Host refused the stream with 429: too many pages open on it (lead ruling 7 of E3-5). */
 const TOO_MANY_PAGES_TEXT = '这台主机同时打开的页面太多，这一页暂时不自动更新；关掉别的页签后会自己接上。';
+
+/** The scope and selected Goal of the last successful read of any board; the
+ * one `askSecretary` seam reads them, so Goals and Main send through the same
+ * scope. A failed reread never becomes the next write's basis (§2.10). */
+let latestNavScope: CoreScope | null = null;
+let latestSelectedGoalId: string | null = null;
 
 /** Ruling 4: the board tells boot which not-yet-read material it needs; the read
  * joins the same refresh loop. */
@@ -100,6 +113,11 @@ export type TaskMapActions = {
  * line's `lines/read`; the archive row reads `lines/archived` only while open. */
 export type BoardReadDemand = TaskMapReadDemand & {
   archive?: boolean;
+  /** Main only: how many `main/read` pages the conversation has expanded to;
+   * `pickGoal` resets it to 1. */
+  mainPages?: number;
+  /** Main only: the 轨迹 tab is open, so `sessions/history` joins the read. */
+  mainTrack?: boolean;
   /** ArchOverview's page state: the search needle, the work-only switch, the
    * directory view and the selected node's anchor. Explicit values replace the
    * old demand, so closing one passes `''`, `false` or `null`. */
@@ -125,15 +143,18 @@ export type BoardActions = {
   /** §2.3: one `goals/reorder` write with every Goal's current revision, then
    * the same refresh loop rereads the list. */
   reorderGoal: (goalId: string, direction: 'up' | 'down') => Promise<void>;
+  /** §2.7 A10: `goals/copy-draft` then `goals/copy-confirm`, both from the
+   * draft's own source revision, then the same refresh loop rereads. */
+  copyGoal: (goalId: string) => Promise<void>;
   /** §2.4: one `decisions/answer` write for the shown conflict card, then a
    * reread; `revision_conflict` is shown, never retried with fresh revisions. */
   answerConflict: (cardKey: string, optionId: 'wait' | 'order' | 'parallel') => Promise<void>;
   /** §2.6: one `requests/submit` plus one `requests/read`; returns the round's
-   * user text and the secretary's non-null answer so the page can append it to
-   * its own log. `null` only when the submit reply carried no `requestRoot`. */
+   * root key, user text and the secretary's non-null answer so the page can append
+   * it to its own log. `null` only when the submit reply carried no `requestRoot`. */
   askSecretary: (text: string,
     reference: RequestReferenceInputV1 | readonly RequestReferenceInputV1[] | null,
-  ) => Promise<{ input: string; answer: string | null } | null>;
+  ) => Promise<{ root: string; input: string; answer: string | null } | null>;
   /** D18/D30: one `decisions/answer` with the card's own source and pins. */
   answerCard: (cardKey: string, optionId: string) => Promise<void>;
   /** D22/D24/D34/D35: `tasks/requeue`, afterRun and pins from the card itself. */
@@ -148,8 +169,9 @@ export type BoardActions = {
   addRepairTask: (cardKey: string, input: { name: string; checkIds: string[] }) => Promise<void>;
   /** D28: `decisions/notices/seen` with the row's own page token. */
   markNoticeSeen: (itemKey: string) => Promise<void>;
-  /** D31/D43/D44: the card's question; returns the user's text and this round's answer. */
-  askCard: (cardKey: string, text: string) => Promise<{ input: string; answer: string | null } | null>;
+  /** D31/D43/D44: the card's question; returns the user's text, this round's root
+   * key and answer. */
+  askCard: (cardKey: string, text: string) => Promise<{ root: string; input: string; answer: string | null } | null>;
   /** E3 Member §2.12: one published control of the line in the centre. */
   controlLine: (kind: 'pause' | 'resume' | 'cancel') => Promise<void>;
   /** E3 Member §2.12: one `tasks/requeue` from the facts of the last successful read. */
@@ -250,7 +272,6 @@ export async function bootBoardPage(): Promise<void> {
   let controlSeq = 0;
   let reorderSeq = 0;
   let answerSeq = 0;
-  let askSeq = 0;
   const decideRowOf = (key: string): DecideRow | null => {
     const data = latestDecide;
     if (data === null) return null;
@@ -318,6 +339,8 @@ export async function bootBoardPage(): Promise<void> {
       goalId = next === '' ? null : next;
       demand.lineKey = null;
       demand.archive = false;
+      /* §2.3: a Goal pick goes back to the conversation's first page. */
+      demand.mainPages = 1;
       void refresh.reread();
     },
     openLine(key: TaskMapSessionRef | null): void {
@@ -370,6 +393,27 @@ export async function bootBoardPage(): Promise<void> {
           },
         });
         committedRouteValue(reply, 'goals/reorder');
+      } catch (error) {
+        throw new Error(writeTextOf(error));
+      }
+      await refresh.reread();
+    },
+    async copyGoal(goalId: string): Promise<void> {
+      const scope = latestNavScope;
+      if (scope === null) throw new Error(writeTextOf(new Error('no navigation scope')));
+      const goalRef = { aggregateType: 'Goal' as const, projectId: scope.projectId, goalId };
+      try {
+        const draft = readyRouteValue<GoalCopyDraftResultV1>(
+          await client.post('goals/copy-draft', scope, { goalRef }), 'goals/copy-draft');
+        /* A10: the confirm pins the revision the draft just read and copies no
+           intervention; `goals/copy-confirm` is a plain route, so its input is
+           sent as-is and committed is its own receipt. */
+        committedRouteValue(await client.post('goals/copy-confirm', scope, {
+          commandId: crypto.randomUUID(),
+          sourceGoalRef: goalRef,
+          expectedSourceRevision: draft.source.revision,
+          selectedInterventions: [],
+        }), 'goals/copy-confirm');
       } catch (error) {
         throw new Error(writeTextOf(error));
       }
@@ -440,17 +484,16 @@ export async function bootBoardPage(): Promise<void> {
     async askSecretary(
       text: string,
       reference: RequestReferenceInputV1 | readonly RequestReferenceInputV1[] | null,
-    ): Promise<{ input: string; answer: string | null } | null> {
-      const scope = latestGoalsScope;
-      if (scope === null) throw new Error(writeTextOf(new Error('no Goals scope')));
+    ): Promise<{ root: string; input: string; answer: string | null } | null> {
+      const scope = latestNavScope;
+      if (scope === null) throw new Error(writeTextOf(new Error('no navigation scope')));
       const references: RequestReferenceInputV1[] = reference === null ? []
         : Array.isArray(reference) ? [...reference] : [reference as RequestReferenceInputV1];
-      askSeq += 1;
       let reply: RouteReply;
       try {
         reply = await client.post('requests/submit', scope, {
-          commandId: 'goals-ask-' + String(askSeq),
-          goalId: latestGoals?.selectedGoalId ?? null,
+          commandId: crypto.randomUUID(),
+          goalId: latestSelectedGoalId,
           text,
           continues: null,
           recipient: null,
@@ -481,7 +524,7 @@ export async function bootBoardPage(): Promise<void> {
         /* The submit stands; a failed read only means no answer to append yet. */
         answer = null;
       }
-      return { input: text, answer };
+      return { root: requestRootKey(requestRoot as QueryJobRef), input: text, answer };
     },
     async answerCard(cardKey: string, optionId: string): Promise<void> {
       const card = decideCardOf(cardKey);
@@ -675,7 +718,7 @@ export async function bootBoardPage(): Promise<void> {
       }
       await refresh.reread();
     },
-    async askCard(cardKey: string, text: string): Promise<{ input: string; answer: string | null } | null> {
+    async askCard(cardKey: string, text: string): Promise<{ root: string; input: string; answer: string | null } | null> {
       const card = decideCardOf(cardKey);
       const scope = latestDecideScope;
       if (card === null || scope === null) throw new Error(writeTextOf(new Error('the shown card is gone')));
@@ -708,10 +751,13 @@ export async function bootBoardPage(): Promise<void> {
         throw new Error(writeTextOf(error));
       }
       let answer: string | null = null;
+      let readRoot: unknown = null;
       try {
         const read = readyRouteValue<unknown>(
           await client.post('requests/read', scope, { requestRoot }), 'requests/read',
         );
+        const echoed = asRecord(read).requestRoot;
+        if (echoed !== null && echoed !== undefined) readRoot = echoed;
         const rounds = asRecord(read).rounds;
         const targetId = asText(asRecord(target).queryJobId);
         if (Array.isArray(rounds) && targetId !== '') {
@@ -723,7 +769,7 @@ export async function bootBoardPage(): Promise<void> {
         /* The send stands; a failed read only means this round has no answer yet. */
         answer = null;
       }
-      return { input: text, answer };
+      return { root: requestRootKey((readRoot ?? requestRoot) as QueryJobRef), input: text, answer };
     },
     async controlLine(kind: 'pause' | 'resume' | 'cancel'): Promise<void> {
       const data = latestMember;
@@ -858,6 +904,10 @@ export async function bootBoardPage(): Promise<void> {
          the pins of a control write (§2.8: no second, stale read window). */
       if (snapshot.error === null) {
         latest = snapshot.data as NavData | null;
+        /* §2.10: every board's successful read publishes the scope and selected
+           Goal the one `askSecretary` seam sends with. */
+        latestNavScope = (snapshot.data as { scope?: CoreScope | null } | null)?.scope ?? null;
+        latestSelectedGoalId = (snapshot.data as { selectedGoalId?: string | null } | null)?.selectedGoalId ?? null;
         if (boardName === 'Goals') {
           latestGoals = snapshot.data as GoalsData | null;
           latestGoalsScope = latestGoals?.scope ?? null;
@@ -865,6 +915,13 @@ export async function bootBoardPage(): Promise<void> {
         if (boardName === 'Decide') {
           latestDecide = snapshot.data as DecideData | null;
           latestDecideScope = latestDecide?.scope ?? null;
+        }
+        /* MainData is flat `NavData &` extras, so the card writes use this
+           read's queue exactly like Decide's own. */
+        const main = snapshot.data as MainData | null;
+        if (boardName === 'Main' && main?.decisions) {
+          latestDecide = main.decisions;
+          latestDecideScope = main.scope;
         }
         if (boardName === 'Member') latestMember = snapshot.data as MemberData | null;
         if (boardName === 'Chain') latestChain = snapshot.data as ChainData | null;
@@ -1083,31 +1140,17 @@ export async function readNav(
 }
 
 /**
- * E3-DECIDE §2.2: the Decide read. The navigation segment is `readNav`'s one
- * read (so the rail keeps the workspace's own counts, Y1); the queue body
- * follows `decideDone`/`decideGoal`. Every queue page keeps its own notice
+ * §2.10: the one decision-queue read Decide and Main share. The section follows
+ * `decideDone`, the page follows `decideGoal`, every page keeps its own notice
  * token, and `tasks/query` is read only for Goals that actually carry a Task
- * card. `materials/open` is the one on-demand read (§2.2 step 9).
+ * card. A card-bearing Goal the navigation read already read
+ * (`nav.phaseRevision`) is not read twice. `materials/open` stays the caller's
+ * on-demand step.
  */
-export async function readDecide(
-  client: ReturnType<typeof createHostClient>, goalId: string | null,
-  demand: BoardReadDemand = {},
-): Promise<RefreshRead<DecideData>> {
-  const boot = await client.bootstrap();
-  const cursor = boot.changesHead ?? null;
-  const found = await taskMapScope(client, boot.workspaces, goalId);
-  if (found === null) return { data: null, cursor };
-  const scope = found.scope;
-  /* D8: the Workspace pin is the record's current revision, not the Host
-     configuration number `bootstrap.workspaces[]` was opened with. */
-  const registration = readyRouteValue<{ workspace: { ref: unknown; revision: number } }>(
-    await client.post('workspaces/registration', scope, scope), 'workspaces/registration',
-  );
-  /* §2.2 step 8: the GoalPhase pin is taken only from a card-bearing Goal's
-     own `tasks/query`; the navigation read does not make a second read for an
-     empty rail. */
-  const navRead = await readNav(client, goalId, demand, boot, false);
-  if (navRead.data === null) return { data: null, cursor };
+export async function readDecisionQueue(
+  client: ReturnType<typeof createHostClient>, scope: CoreScope, nav: NavData,
+  demand: BoardReadDemand, workspaceRevision: number,
+): Promise<DecideData> {
   const sections: Array<'waiting_answer' | 'notices' | 'answered_pending_application' | 'history'> =
     demand.decideDone === true ? ['answered_pending_application', 'history'] : ['waiting_answer', 'notices'];
   const pages: DecisionQueueReadV1[] = [];
@@ -1133,6 +1176,12 @@ export async function readDecide(
     }
   }
   for (const id of goalIds) {
+    if (id === nav.selectedGoalId && nav.phaseRevision !== null) {
+      /* §2.3 step 1 already read this Goal's graph; a card is not a reason to
+         read the same `tasks/query` again. */
+      tasks[id] = nav.tasks;
+      continue;
+    }
     try {
       tasks[id] = readyRouteValue<unknown>(await client.post('tasks/query', scope,
         { goalRef: { aggregateType: 'Goal', projectId: scope.projectId, goalId: id } }), 'tasks/query');
@@ -1141,37 +1190,61 @@ export async function readDecide(
       tasks[id] = null;
     }
   }
+  return adaptDecide({
+    nav, scope, workspaceRevision, queue: pages, tasks, selectedGoalId: nav.selectedGoalId,
+  }, {
+    tab: demand.decideDone === true ? 'done' : 'open',
+    goalFilter: demand.decideGoal ?? null,
+    selectedCardKey: demand.decideAnswer ?? null,
+    factsOpen: false, step: null, form: {}, lineKey: demand.lineKey ?? null,
+  });
+}
+
+/**
+ * E3-DECIDE §2.2: the Decide read. The navigation segment is `readNav`'s one
+ * read (so the rail keeps the workspace's own counts, Y1); the queue body is
+ * the shared `readDecisionQueue`. The GoalPhase pin is taken from a card-bearing
+ * Goal's own `tasks/query`; `materials/open` is the one on-demand read
+ * (§2.2 step 9).
+ */
+export async function readDecide(
+  client: ReturnType<typeof createHostClient>, goalId: string | null,
+  demand: BoardReadDemand = {},
+): Promise<RefreshRead<DecideData>> {
+  const boot = await client.bootstrap();
+  const cursor = boot.changesHead ?? null;
+  const found = await taskMapScope(client, boot.workspaces, goalId);
+  if (found === null) return { data: null, cursor };
+  const scope = found.scope;
+  /* D8: the Workspace pin is the record's current revision, not the Host
+     configuration number `bootstrap.workspaces[]` was opened with. */
+  const registration = readyRouteValue<{ workspace: { ref: unknown; revision: number } }>(
+    await client.post('workspaces/registration', scope, scope), 'workspaces/registration',
+  );
+  /* §2.2 step 8: the GoalPhase pin is taken only from a card-bearing Goal's
+     own `tasks/query`; the navigation read does not make a second read for an
+     empty rail. */
+  const navRead = await readNav(client, goalId, demand, boot, false);
+  if (navRead.data === null) return { data: null, cursor };
+  const queue = await readDecisionQueue(client, scope, navRead.data, demand,
+    registration.workspace.revision);
   /* §2.2 step 8: a card-bearing selected Goal hands its own `tasks/query`
-     completion revision to the navigation segment; no separate read. */
-  if (goalId !== null && tasks[goalId] !== undefined) {
-    navRead.data.phaseRevision = completionRevisionOf(tasks[goalId]);
+     completion revision to the navigation segment; no separate read. A
+     `not_found` read is still a read and keeps the original 0. */
+  if (goalId !== null && queue.taskGoalIds.includes(goalId)) {
+    navRead.data.phaseRevision = completionRevisionOf(queue.plans[goalId]);
   }
-  let answerBody: string | null = null;
-  let answerFor: string | null = null;
   if (demand.decideAnswer !== null && demand.decideAnswer !== undefined) {
-    const card = pages.flatMap((page) => [...(page.answeredPendingApplication ?? []), ...(page.history ?? [])])
-      .find((entry) => entry.cardKey === demand.decideAnswer) ?? null;
-    const bodyRef = card?.answer?.bodyRef ?? null;
+    const row = queue.sections.flatMap((section) => section.rows).concat(queue.history)
+      .find((entry) => entry.key === demand.decideAnswer) ?? null;
+    const bodyRef = row?.card?.answer?.bodyRef ?? null;
     if (bodyRef !== null) {
       const material = readyRouteValue<{ body?: unknown }>(await client.post('materials/open', scope,
         { ref: bodyRef, usage: 'historical_explanation' }), 'materials/open');
-      answerBody = asText(material.body);
-      answerFor = demand.decideAnswer;
+      queue.answerBodies[demand.decideAnswer] = asText(material.body);
     }
   }
-  return {
-    data: adaptDecide({
-      nav: navRead.data, scope, workspaceRevision: registration.workspace.revision,
-      queue: pages, tasks, selectedGoalId: goalId,
-      answerBody, answerFor,
-    }, {
-      tab: demand.decideDone === true ? 'done' : 'open',
-      goalFilter: demand.decideGoal ?? null,
-      selectedCardKey: demand.decideAnswer ?? null,
-      factsOpen: false, step: null, form: {}, lineKey: demand.lineKey ?? null,
-    }),
-    cursor,
-  };
+  return { data: queue, cursor };
 }
 
 /**
@@ -1340,10 +1413,7 @@ export async function readMember(
   }
   let history: SessionHistoryEntry[] | null = null;
   if (demand.traceOpen === true && key !== null) {
-    const page = readyRouteValue<{ items: SessionHistoryEntry[] }>(await client.post('sessions/history', scope, {
-      sessionRef: key, afterCursor: null, throughCursor: null, limit: 100,
-    }), 'sessions/history');
-    history = page.items;
+    history = await readSessionTrace(client, scope, key);
   }
   let files: UncommittedFilesV1 | null = null;
   let filesPartial = false;
@@ -1609,14 +1679,93 @@ export async function readChain(
   return { data: adaptChain(source, { selected: key, ownKey, dens: '标准', theme: 'dark' }), cursor };
 }
 
-/** The `BOARD_READERS` entry for Main: this package wires the chrome (rail,
- * Goals bar, inbox, line switch); the main conversation body joins the same
- * `props.data` in the Main page package (§2.7). */
+/**
+ * §2.3: the Main read. The chrome is `readNav`'s one read (so `lines/list`,
+ * `bootstrap` and the selected Goal's `tasks/query` are not read twice); the
+ * conversation follows `mainPages`, the cards are the shared
+ * `readDecisionQueue`, and the 轨迹 tab adds the one `sessions/history` read.
+ * A failed queue read hides the cards only; every other failure fails the read.
+ */
 export async function readMain(
   client: ReturnType<typeof createHostClient>, goalId: string | null,
   demand: BoardReadDemand = {},
-): Promise<RefreshRead<NavData>> {
-  return readNav(client, goalId, demand);
+): Promise<RefreshRead<MainData>> {
+  const navRead = await readNav(client, goalId, demand);
+  if (navRead.data === null) return { data: null, cursor: navRead.cursor };
+  const nav = navRead.data;
+  const scope = nav.scope;
+  if (scope === null) return { data: null, cursor: navRead.cursor };
+  /* §2.3 step 2: first page at `cursor: null`, then each page's `next`; a
+     missing Goal (only with a Goal selected) keeps the pages read so far. */
+  let cursor: MainPageCursorV1 | null = null;
+  const pages: MainPageV1[] = [];
+  const want = Math.max(1, demand.mainPages ?? 1);
+  for (let index = 0; index < want; index += 1) {
+    try {
+      const page: MainPageV1 = readyRouteValue<MainPageV1>(await client.post('main/read', scope, {
+        goalId: nav.selectedGoalId, cursor,
+      }), 'main/read');
+      pages.push(page);
+      cursor = page.next;
+    } catch (error) {
+      if (error instanceof RouteReadError && error.code === 'not_found' && nav.selectedGoalId !== null) break;
+      throw error;
+    }
+    if (cursor === null) break;
+  }
+  /* §2.3 step 3: the cards are the queue's; a failed queue read hides them and
+     is not an error of the page. */
+  let decisions: DecideData | null = null;
+  try {
+    decisions = await readDecisionQueue(client, scope, nav, { decideGoal: null }, 0);
+  } catch {
+    decisions = null;
+  }
+  /* §2.3 step 4: the Workspace pin is read once, and only when a 请知悉 row is
+     drawn (Decide D8). */
+  if (decisions !== null
+    && decisions.sections.some((section) => section.level === 'notice' && section.rows.length > 0)) {
+    const registration = readyRouteValue<{ workspace: { ref: unknown; revision: number } }>(
+      await client.post('workspaces/registration', scope, scope), 'workspaces/registration',
+    );
+    decisions.workspaceRevision = registration.workspace.revision;
+  }
+  /* §2.3 step 5: the trace is read only while the 轨迹 tab is open. The line is
+     the newest request's owner; a request without an owner falls back to the
+     first round's session. `not_found` is the empty trace, nothing else. */
+  let track: MainTrackRow[] | null = null;
+  if (demand.mainTrack === true) {
+    let sessionRef: LineKey | null = null;
+    for (const page of pages) {
+      for (const request of page.requests) {
+        if (request.owner !== null) {
+          sessionRef = { projectId: request.owner.projectId, sessionId: request.owner.sessionId };
+          break;
+        }
+      }
+      if (sessionRef !== null) break;
+    }
+    if (sessionRef === null) {
+      const session = pages[0]?.requests[0]?.rounds[0]?.session ?? null;
+      if (session !== null) sessionRef = { projectId: session.projectId, sessionId: session.sessionId };
+    }
+    if (sessionRef === null) {
+      track = [];
+    } else {
+      try {
+        track = traceOf(await readSessionTrace(client, scope, sessionRef)).map((row) => ({
+          at: row.at, type: row.kind, id: row.recordId, summary: '',
+        }));
+      } catch (error) {
+        if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
+        track = [];
+      }
+    }
+  }
+  return {
+    data: adaptMain({ nav, pages, decisions, older: cursor, track }),
+    cursor: navRead.cursor,
+  };
 }
 
 /**

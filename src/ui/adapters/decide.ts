@@ -78,10 +78,6 @@ export type DecideSource = {
   queue: DecisionQueueReadV1[];
   tasks: Record<string, unknown | null>;
   selectedGoalId: string | null;
-  /** The on-demand `materials/open` body of the answer the page asked for. */
-  answerBody?: string | null;
-  /** The card whose answer body was asked for. */
-  answerFor?: string | null;
 };
 
 /** The page's own state; the adapter only needs the two tab/filter switches. */
@@ -110,6 +106,9 @@ export type DecideData = {
   task: DecideTaskFacts | null;
   /** Raw `tasks/query` per Goal, kept for the two plan writes (§2.7). */
   plans: Record<string, unknown>;
+  /** The Goals whose `tasks/query` was read this round, including `not_found`
+   * (absent from `plans`), so `readDecide` keeps the original 0-phase result. */
+  taskGoalIds: string[];
   /** The on-demand answer body, by cardKey. */
   answerBodies: Record<string, string>;
 };
@@ -637,10 +636,6 @@ export function adaptDecide(source: DecideSource, ui: DecideUi): DecideData {
     if (value !== null) plans[goalId] = value;
   }
   const answerBodies: Record<string, string> = {};
-  if (source.answerBody !== null && source.answerBody !== undefined && source.answerFor !== null
-    && source.answerFor !== undefined) {
-    answerBodies[source.answerFor] = source.answerBody;
-  }
   const sections: DecideSection[] = ui.tab === 'done'
     ? (done.length > 0 ? [{ name: '已处理', level: 'done', rows: done }] : [])
     : [
@@ -667,6 +662,7 @@ export function adaptDecide(source: DecideSource, ui: DecideUi): DecideData {
     task: goalId === null || selectedTask === null ? null
       : { goalId, row: selectedTask, task: selectedTaskRow },
     plans,
+    taskGoalIds: Object.keys(source.tasks),
     answerBodies,
   };
 }
