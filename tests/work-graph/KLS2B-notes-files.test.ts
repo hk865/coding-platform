@@ -413,3 +413,55 @@ it('B19 (code review 3) a review card whose file a person pointed at another not
   expect(cards.map(card => card.objects.map(object => object.kind === 'aggregate'
     ? (object.pin.ref as { noteId?: string }).noteId : null))).toEqual([[pending, b]]);
 });
+
+it('B13② a version read of a note whose file is gone is unavailable, not the stored version', async () => {
+  const world = await knowledgeWorld();
+  await adoptCatalog(world);
+  const noteId = await written(world, 'kls2b-b13b', noteDraft({}));
+  rmSync(join(world.root, notePath(noteId)));
+  const read = await world.platform.notes.readNote(world.ctx(), { noteId, version: 1 });
+  expect(read).toMatchObject({ status: 'rejected', code: 'unavailable' });
+  expect((read as { reason: string }).reason).toContain(noteId);
+});
+
+it('B18② a relation is checked with the knowledge a person put in its note file', async () => {
+  const world = await knowledgeWorld();
+  await adoptCatalog(world);
+  await world.claimExecutorRun();
+  const a = await written(world, 'kls2b-b18b-a', noteDraft({ topic: 'kls2b-b18b-a', conclusion: '旧' }));
+  editNote(world, a, '"moduleId": "core"', '"moduleId": "billing"');
+  const b = await world.platform.notes.writeNote(world.ctx('work_run'), { commandId: 'kls2b-b18b-b',
+    note: noteDraft({ topic: 'kls2b-b18b-b', conclusion: '新', replaces: [a] }), expectedPointerRevision: null, goalId: null });
+  expect(b).toMatchObject({ status: 'rejected', code: 'invalid', reason: 'anchor_not_found' });
+});
+
+it('B18③ accepting a pending replacement writes back the knowledge in the replaced note file', async () => {
+  const world = await knowledgeWorld();
+  await adoptCatalog(world);
+  await world.claimExecutorRun();
+  const a = await written(world, 'kls2b-b18c-a', noteDraft({ topic: 'kls2b-b18c', conclusion: '旧' }));
+  editNote(world, a, '"conclusion": "旧"', '"conclusion": "人改的"');
+  const b = await world.platform.notes.writeNote(world.ctx('work_run'), { commandId: 'kls2b-b18c-b',
+    note: noteDraft({ topic: 'kls2b-b18c', conclusion: '新', replaces: [a] }), expectedPointerRevision: null, goalId: null });
+  expect(b).toMatchObject({ status: 'pending_review' });
+  const accepted = await world.platform.notes.reviewNote(world.ctx(), { commandId: 'kls2b-b18c-accept',
+    noteId: noteIdOf(b), expectedVersion: 1, expectedPointerRevision: null, verdict: 'accept', reason: '收下' });
+  expect(accepted).toMatchObject({ status: 'done', state: 'accepted' });
+  expect((await itemOf(world, { noteId: a })).storedState).toBe('superseded');
+  expect(headerOf(world.file(notePath(a)))['conclusion']).toBe('人改的');
+});
+
+it('B13③ a waiting note that contradicts a current one is unavailable when its file is gone', async () => {
+  const world = await knowledgeWorld();
+  await adoptCatalog(world);
+  await world.claimExecutorRun();
+  const a = await written(world, 'kls2b-b13c-a', noteDraft({ topic: 'kls2b-b13c-a' }));
+  const b = await world.platform.notes.writeNote(world.ctx('work_run'), { commandId: 'kls2b-b13c-b',
+    note: noteDraft({ topic: 'kls2b-b13c-b', contradicts: [a] }), expectedPointerRevision: null, goalId: null });
+  expect(b).toMatchObject({ status: 'pending_review' });
+  const bId = noteIdOf(b);
+  rmSync(join(world.root, notePath(bId)));
+  const read = await world.platform.notes.readNote(world.ctx(), { noteId: bId });
+  expect(read).toMatchObject({ status: 'rejected', code: 'unavailable' });
+  expect((read as { reason: string }).reason).toContain(bId);
+});
