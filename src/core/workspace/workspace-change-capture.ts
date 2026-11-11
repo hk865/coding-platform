@@ -21,6 +21,7 @@ import { lstat, readdir, readFile, readlink, realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { ARTIFACT_MAX_SIZE_BYTES } from '../../contracts/artifact.js';
+import { KNOWLEDGE_DIRECTORY, withinKnowledgeDirectory } from '../../contracts/knowledge.js';
 import type {
   CapturedPathV1, WorkspaceBaselineEntryV1, WorkspaceBaselineV1, WorkspaceChangeCaptureV1,
 } from '../../contracts/unknown-call-review.js';
@@ -111,6 +112,32 @@ export async function gitCommonDir(root: string): Promise<string | null> {
   }
 }
 
+/** One checkout's identity (KLS-2): a git work tree, or a folder that is in none. */
+export type CheckoutProbe =
+  | { kind: 'git'; repoKey: string; folder: string; branch: string; objectFormat: 'sha1' | 'sha256' }
+  | { kind: 'not_git'; folder: string };
+
+/** The checked-out branch; a detached HEAD is `HEAD`, and a fresh repository's unborn branch still has its name. */
+export async function readCheckoutBranch(root: string): Promise<string> {
+  try {
+    return (await git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD'])).trim();
+  } catch {
+    return 'HEAD';
+  }
+}
+
+/** `folder` is the real root; `repoKey` the real common git directory. A root that does not exist throws. */
+export async function identifyCheckout(root: string): Promise<CheckoutProbe> {
+  const folder = await realpath(root);
+  const repoKey = await gitCommonDir(folder);
+  if (repoKey === null) return { kind: 'not_git', folder };
+  let objectFormat: ObjectFormat = 'sha1';
+  try {
+    if ((await git(folder, ['rev-parse', '--show-object-format'])).trim() === 'sha256') objectFormat = 'sha256';
+  } catch { /* a git without the option is sha1 */ }
+  return { kind: 'git', repoKey, folder, branch: await readCheckoutBranch(folder), objectFormat };
+}
+
 function normalizePrefix(prefix: string): string {
   const trimmed = prefix.replace(/^\.\//, '').replace(/\/+$/, '');
   return trimmed;
@@ -178,6 +205,9 @@ async function traverse(
     for (const name of (await readdir(dir)).sort()) {
       const path = prefix ? `${prefix}/${name}` : name;
       if (isProtected(path)) continue;
+      // KLS-2: the platform's code-knowledge directory is not the workspace's source change (it is written by
+      // the platform's knowledge writes and committed on its own), so it is neither captured nor named.
+      if (path === KNOWLEDGE_DIRECTORY) continue;
       if (name === '.git' || FIXED_IGNORED.has(name)) { addNotVisible(path); continue; }
       if (isGitIgnored(path + '/')) { addNotVisible(path + '/'); continue; }
       if (isGitIgnored(path)) { addNotVisible(path); continue; }
@@ -273,8 +303,9 @@ export async function readWorkspaceBaseline(input: WorkspaceBaselineReadInput): 
     const current = await traverse(input.root, deniedPrefixes, format);
     const tree = await readTree(input.root, head, format);
     const protectedPrefixes = deniedPrefixes.map(normalizePrefix).filter(prefix => prefix.length > 0);
+    // KLS-2: the traversal skips the knowledge directory, so its HEAD entries are left out here too.
     const visible = (path: string): boolean => !protectedPrefixes.some(prefix => isUnder(path, prefix))
-      && !path.split('/').some(part => FIXED_IGNORED.has(part));
+      && !path.split('/').some(part => FIXED_IGNORED.has(part)) && !withinKnowledgeDirectory(path);
     const dirty: WorkspaceBaselineEntryV1[] = [];
     const paths = [...new Set([...tree.keys(), ...current.entries.keys()])].sort();
     for (const path of paths) {
@@ -321,8 +352,9 @@ export async function captureWorkspaceChange(input: WorkspaceChangeCaptureInput)
     const before = await traverse(input.root, deniedPrefixes, format);
     const baseCommit = baseline?.headCommit ?? headBefore;
     const protectedPrefixes = deniedPrefixes.map(normalizePrefix).filter(prefix => prefix.length > 0);
+    // KLS-2: the knowledge directory is not compared on either side (the traversal skips it; HEAD may carry it).
     const gone = (path: string): boolean => protectedPrefixes.some(prefix => isUnder(path, prefix))
-      || path.split('/').some(part => FIXED_IGNORED.has(part));
+      || path.split('/').some(part => FIXED_IGNORED.has(part)) || withinKnowledgeDirectory(path);
     const start = await readTree(input.root, baseCommit, format);
     if (baseline !== null) {
       for (const entry of baseline.dirty) {

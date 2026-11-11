@@ -270,6 +270,7 @@ import { createRepairActivationService } from '../core/work-graph/notes/activate
 import { createArchitectureProposalService } from '../core/work-graph/architecture/proposal-service.js';
 import { ARCHITECTURE_PROPOSAL_SCHEMAS } from '../core/work-graph/architecture/proposal-record-codecs.js';
 import type { CatalogRevisionDependencies } from '../core/work-graph/architecture/revision-planner.js';
+import { createKnowledgeLines } from './line-knowledge.js';
 import type { CatalogPlanFactsV1 } from '../core/work-graph/model/catalog-revision-ports.js';
 import type { SessionRecord, SessionWorkLink } from '../contracts/core/session.js';
 import { SESSION_ACTIVITY_SCHEMAS, createSessionActivityReader } from '../core/work-graph/sessions/session-activity.js';
@@ -436,6 +437,11 @@ const COLD_START_ROUND_DETACHED: QueryStageOutcome = {
 export type TargetPlatformOptions = {
   storage: { kind: 'memory' } | { kind: 'sqlite'; directory: string };
   workspace: WorkspaceHostBindings;
+  /**
+   * The Host's registered workspaces of a project, the main one first; the knowledge lines read it live. A Host
+   * always passes it; a platform built without a Host serves a single-workspace project (the caller's workspace).
+   */
+  knowledgeWorkspaces?: (projectId: string) => readonly string[];
   now?: () => string;
   /** Trusted source route; defaults to TypeScript at tsconfig.json. No language inference.
    * `configPath: null` captures with no project configuration. */
@@ -1481,10 +1487,16 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
      * the responsibility arm reads the directory cards and builds the same
      * role-line contribution the reanchor writer uses.
      */
+    // KLS-2: the ONE knowledge-lines object; every architecture and note service reads and writes the files through it.
+    const knowledgeLines = createKnowledgeLines({
+      resolveRoot: workspaceRef => options.workspace.resolveRoot(workspaceRef),
+      ...(options.knowledgeWorkspaces === undefined ? {} : { workspacesOf: options.knowledgeWorkspaces }),
+    }, { records: backend.records }, {});
     const catalogRevision: CatalogRevisionDependencies = {
       records: backend.records,
       now,
       eventId: randomUUID,
+      knowledge: knowledgeLines,
       taskFacts: {
         async read(records, projectId) {
           const goals = await readGoalsByProject(records, projectId);
@@ -1640,7 +1652,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       },
       duty: sessionDutyResolver,
     };
-    const catalog = createArchitectureCatalogService({ records: backend.records, revision: catalogRevision });
+    const catalog = createArchitectureCatalogService({ records: backend.records, revision: catalogRevision,
+      knowledge: knowledgeLines });
     // A project's main workspace is fixed when its first workspace is
     // registered: the three `start_lines` are born in the same commit. So ONE
     // wrapper caches the READY id per project for every injection point. A
@@ -1829,6 +1842,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       observation: observed,
       decisionMessages: { readDecisionMessagePin: decisionMessageOwner.readDecisionMessagePin },
       catalogRevision,
+      knowledge: knowledgeLines,
       now,
       eventId: randomUUID,
       newId: randomUUID,
@@ -3163,6 +3177,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       scopes: scribeScope,
       // 120-13 丙: the one effective-scope read (built later in this root), for a region adviser's write.
       regionScopes: { readEffectiveScope: (ctx, input) => effectiveScope.readEffectiveScope(ctx, input) },
+      knowledge: knowledgeLines,
       now, eventId: randomUUID, newId: options.noteNewId ?? randomUUID,
       ...(options.noteLimits === undefined ? {} : options.noteLimits),
     });

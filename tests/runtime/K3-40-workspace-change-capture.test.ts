@@ -8,7 +8,7 @@
  * the L5 classification order.
  */
 import { execFileSync } from 'node:child_process';
-import { chmod, mkdtemp, rm, symlink, unlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -109,6 +109,30 @@ describe('K3-40 git change capture from the start baseline', () => {
     const captured = await captureWorkspaceChange({ root, deniedPrefixes: [], baseline: baseline.baseline });
     if (captured.status !== 'captured') throw new Error(`capture: ${captured.status}`);
     expect(captured.capture.changed).toEqual([{ path: 'content.txt', change: 'modified' }]);
+  });
+
+  it('K3-40 (vii) knowledge files committed in HEAD are neither a start difference nor a Run change, with or without a baseline', async () => {
+    const root = await gitWorkspace();
+    // The platform's knowledge directory, committed with the code (KLS-2): an index and two module files.
+    await mkdir(join(root, '.workbench', 'modules'), { recursive: true });
+    await writeFile(join(root, '.workbench', 'architecture.json'), '{}\n');
+    await writeFile(join(root, '.workbench', 'modules', 'a.json'), '{"id":"a"}\n');
+    await writeFile(join(root, '.workbench', 'modules', 'b.json'), '{"id":"b"}\n');
+    execFileSync('git', ['-C', root, 'add', '-A'], { stdio: 'ignore' });
+    execFileSync('git', ['-C', root, 'commit', '-q', '-m', 'knowledge'], { stdio: 'ignore' });
+    const baseline = await readWorkspaceBaseline({ root, deniedPrefixes: [] });
+    if (baseline.status !== 'captured') throw new Error(`baseline: ${baseline.status}`);
+    expect(baseline.baseline.dirty).toEqual([]);
+
+    // In the Run the platform rewrites one module file and removes the other; the Run itself edits one source file.
+    await writeFile(join(root, '.workbench', 'modules', 'a.json'), '{"id":"a","name":"A"}\n');
+    await unlink(join(root, '.workbench', 'modules', 'b.json'));
+    await writeFile(join(root, 'content.txt'), 'content after\n');
+    for (const start of [baseline.baseline, null]) {
+      const captured = await captureWorkspaceChange({ root, deniedPrefixes: [], baseline: start });
+      if (captured.status !== 'captured') throw new Error(`capture: ${captured.status}`);
+      expect(captured.capture.changed).toEqual([{ path: 'content.txt', change: 'modified' }]);
+    }
   });
 
   it('K3-40 (vi) a throwing baseline read keeps the manifest and the capture reports no run baseline', async () => {

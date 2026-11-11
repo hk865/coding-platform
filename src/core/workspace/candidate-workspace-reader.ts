@@ -3,11 +3,12 @@ import { readdir, readFile, lstat, readlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { canonicalJson } from '../../contracts/fingerprint.js';
 import { withinProjectStore } from './denied-prefixes.js';
+import { withinKnowledgeDirectory } from '../../contracts/knowledge.js';
 const digest = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
 const ignored = new Set(['.git', '.platform-runtime', 'node_modules', 'dist', 'coverage', 'test-results', '.cache']);
 /** The existing candidate digest scope, shared by labelled source comparisons. */
 export function candidateWorkspaceIncludesPath(path: string): boolean {
-  return !path.split('/').some(part => ignored.has(part)) && !withinProjectStore(path);
+  return !path.split('/').some(part => ignored.has(part)) && !withinProjectStore(path) && !withinKnowledgeDirectory(path);
 }
 export type CandidateWorkspaceGitEntry = { path: string; mode: string; sha1: string; sha256: string };
 function gitEntry(path: string, mode: string, body: Buffer): CandidateWorkspaceGitEntry {
@@ -33,8 +34,9 @@ async function candidateWorkspaceSnapshot(root: string): Promise<{ digest: strin
       if (ignored.has(name))
         continue;
       const path = prefix ? prefix + '/' + name : name;
-      // X1: the project store kept in the workspace is never candidate content.
-      if (withinProjectStore(path))
+      // X1: the project store kept in the workspace is never candidate content; KLS-2: nor are the platform's
+      // knowledge files (written and committed on their own, they are not the source under verification).
+      if (withinProjectStore(path) || withinKnowledgeDirectory(path))
         continue;
       const absolute = join(dir, name),
         stat = await lstat(absolute);

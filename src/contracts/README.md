@@ -77,6 +77,8 @@
 
 ### 材料与架构
 做架构目录/观察/源码快照、artifact、材料授权与路径归属的去这组。
+- `workspace-module-id.ts` — 模块编号的项目视图语法（和 `workspace-path.ts` 的路径语法并列）：主工作区的模块保持模型给的编号（本身以 `/@ws:` 开头的写成 `/@ws:#` 加编码），别的工作区的模块是 `/@ws:<编码的工作区>/<编码的编号>`；还有“文件帧”的四个换算（文件或调用者所在的工作区当主工作区来写），只换参数调这两条语法，不另写语法。
+- `knowledge.ts` — 代码知识文件的共用形状：知识目录名 `KNOWLEDGE_DIRECTORY` 和判定 `withinKnowledgeDirectory`（知识文件路径、观测和 Run 的变更捕获共用这一个名字）；一个工作区的模块文件之间的冲突 `KnowledgeConflictV1`（同一编号两个文件、同一路径两个模块认领、指向本工作区不存在的编号）；读回闸门和对账通知用同一个判定。
 - `workspace-path.ts` — 项目路径的唯一语法与两条读规则：`WORKSPACE_PROJECT_PATH_PREFIX`（`/@ws:`）、`isSafeWorkspaceRelativePath`、`isSafeProjectPath`、`splitWorkspacePath`、`qualifyProjectPath`、`normalizeProjectPath`、`normalizeRequestProjectPath`、`resolveStoredProjectPath`、`displayProjectPath`；主工作区路径不带前缀，第二工作区用 `encodeURIComponent(workspaceId)` 的规范前缀，别名先解码再编码，主工作区前缀在请求侧拒绝、已存侧视为坏记录。
 - `workspace-catalog.ts` — 正式架构按工作区的读时投影 `catalogForWorkspace`：保留该工作区的模块路径并去掉前缀，依赖和 containment 只留两端都保留的项；正式 catalog 仍是一份。
 - `architecture-catalog.ts` — 架构目录 DTO：`ModuleDefinition`、`AdoptedArchitecture`、`ArchitectureCatalogPinV1`、`isUndividedModule`（目录里只有这一个模块，且路径正好是 `.`）；捕获用的一份映射 `mappingsOf`（模块，加每个模块的接口，接口身份是 `canonicalJson([moduleId, interfaceId])`，没有路径的接口不列；`moduleMappingsOf` 是它的模块一半）和分两层的归属 `ownershipRuleOf`（一律在完整映射上判；文件先按最长合法路径归模块，再在这个模块的接口里取最长前缀；平手/无主都是 `null`；接口里的文件仍属于它的模块）、`ownerNodesOf`（归属对应的观测节点：`module:<id>`，在接口里再加 `interface:` + 身份串）；R1 字段表形状 `architectureBaselineRevisionRefShape`、`architectureCatalogRefShape`、`architectureCatalogPinShape`（pin 的 `catalogRef` 必须与 `baseline.ref` 同 project/baseline/revision）。
@@ -191,6 +193,10 @@
 | `goalContextDigestV1` | `src/contracts/graph-context.ts:206` | Goal 上下文内容摘要。 | 比较 Goal 内容是否变化。 |
 | `pathOwnershipOf` | `src/contracts/path-ownership.ts:36` | 最长前缀路径归属，返回 owner/none/tie 与命中前缀。 | 文件到模块/范围归属；全仓唯一实现，不要另写。 |
 | `isSafeWorkspaceRelativePath`、`isSafeProjectPath`、`splitWorkspacePath`、`qualifyProjectPath`、`normalizeProjectPath`、`displayProjectPath` | `src/contracts/workspace-path.ts:21`、`:47`、`:68`、`:99`、`:122`、`:156` | 工作区相对路径与项目路径的唯一语法、解析、写侧限定、规范化和显示。 | 注记锚、模块路径、联系证据；这是唯一的正本；`architecture-record-codecs.ts` 的 `safeRelativePath` 和 `session-anomaly-codecs.ts` 的 `pathProblem` 还各留一份旧规则，在清理清单上。 |
+| `projectModuleId`、`rawModuleId` | `src/contracts/workspace-module-id.ts:22`、`src/contracts/workspace-module-id.ts:34` | 模块编号的项目视图和它的反向；反向遇到不合语法的前缀抛错（接收模型输入的入口接住、回 `invalid`），`workspaceId: null` 是主工作区。 | 记录、索引、钉版本、跨工作区引用的模块编号；不要另拼 `/@ws:` 前缀。 |
+| `projectModuleRef`、`rawModuleRef` | `src/contracts/workspace-module-id.ts:47`、`src/contracts/workspace-module-id.ts:52` | 同一对规则作用在 `ModuleRef` 上（`projectModuleRef` 第一个参数是 projectId）。 | 要 `ModuleRef` 时。 |
+| `fileModuleId`、`projectModuleIdOfFile`、`fileProjectPath`、`projectPathOfFile` | `src/contracts/workspace-module-id.ts:57`、`src/contracts/workspace-module-id.ts:63`、`src/contracts/workspace-module-id.ts:69`、`src/contracts/workspace-module-id.ts:75` | 文件帧：项目视图的编号和路径写进某个工作区的文件（那个工作区不带前缀、别的工作区一律带前缀，项目主工作区也带），以及读回。调用者帧用同一对。 | 知识文件的写和读回；架构采用和修订入口把调用者给的编号转成项目视图。 |
+| `KNOWLEDGE_DIRECTORY`、`withinKnowledgeDirectory` | `src/contracts/knowledge.ts:7`、`src/contracts/knowledge.ts:10` | 工作区根下的知识目录（相对路径）和一条根相对路径在不在它里面 | 写知识文件路径、观测和 Run 的变更捕获跳过它时；不要另写 `.workbench` 字面量 |
 | `catalogForWorkspace` | `src/contracts/workspace-catalog.ts:16` | 把一份正式 catalog 投影到一个工作区（去前缀、丢别的模块、过滤依赖/containment）。 | 观测比较、提醒、W 搜索与任务图的归属；不要另写投影。 |
 | `bestModuleDirectoryPrefixLength` | `src/contracts/path-ownership.ts:93` | 候选模块路径的最佳公共目录段数。 | 归属打平后的回退排序/打分。 |
 | `validMaterialSourcePin` | `src/contracts/material-access.ts:66` | 校验材料来源 pin 的结构与摘要。 | 读取/接受 material basis 前。 |

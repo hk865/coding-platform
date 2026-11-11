@@ -6,6 +6,7 @@
  * same table narrowed to one duty. The project line of the second workspace is readable because the reader reads
  * its Session record by ref, not through `sessions.readSession`.
  */
+import { knowledgeLinesFor } from '../helpers/KLS2-knowledge-lines.js';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
 import type { ArchitectureRevision } from '../../src/core/work-graph/architecture/catalog-contracts.js';
@@ -114,7 +115,9 @@ describe('the effective scope read port', () => {
         return records.readMany(keys);
       } };
       const reader = (await import('../../src/core/work-graph/views/role-scope-reader.js'))
-        .createEffectiveScopeReader({ records, architecture: createArchitectureCatalogService({ records: wrapped }),
+        .createEffectiveScopeReader({ records, architecture: createArchitectureCatalogService({ records: wrapped,
+          knowledge: knowledgeLinesFor({ root: opened.world.root, projectId: opened.projectId,
+            workspaceId: ctx.workspaceId!, records: wrapped }) }),
           duties: s6b2Duty });
       expect(await reader.effectiveRegionOf(ctx, {
         projectRef: { projectId: opened.projectId }, duty: 'adviser', moduleRef: opened.catalog.moduleM,

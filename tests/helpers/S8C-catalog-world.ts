@@ -21,6 +21,7 @@ import type { createTargetPlatform } from '../../src/composition/create-platform
 import { platformRoleProfile } from '../../src/core/agent-runtime/role-profiles.js';
 import type { ArchitectureCatalogPort } from '../../src/core/work-graph/architecture/catalog-contracts.js';
 import type { CatalogRevisionDependencies } from '../../src/core/work-graph/architecture/revision-planner.js';
+import type { KnowledgeLines } from '../../src/core/work-graph/model/line-knowledge.js';
 import type { RoleConfigurationPort } from '../../src/core/work-graph/model/configuration-contracts.js';
 import type { PlanProposal } from '../../src/core/work-graph/model/plan-contracts.js';
 import type { CatalogPlanFactsPort, CatalogPlanFactsV1, CatalogResponsibilityPort } from '../../src/core/work-graph/model/catalog-revision-ports.js';
@@ -164,7 +165,8 @@ function responsibilityPort(access: CatalogAccess): CatalogResponsibilityPort {
 /** The `vi.mock` factory for `catalog-service.js`: the real service with the real capabilities. */
 export async function catalogRevisionModule(importOriginal: () => Promise<unknown>): Promise<Record<string, unknown>> {
   const actual = await importOriginal() as {
-    createArchitectureCatalogService: (stores: { records: GoalRecordTransactionPort; revision?: unknown }) => ArchitectureCatalogPort;
+    createArchitectureCatalogService: (stores: { records: GoalRecordTransactionPort; revision?: unknown;
+      knowledge: KnowledgeLines }) => ArchitectureCatalogPort;
   };
   const access: CatalogAccess = {
     get projectId() { return live?.projectId ?? ''; },
@@ -174,32 +176,33 @@ export async function catalogRevisionModule(importOriginal: () => Promise<unknow
     get signal() { return live?.signal ?? new AbortController().signal; },
   };
   return { ...actual,
-    createArchitectureCatalogService: (stores: { records: GoalRecordTransactionPort; revision?: unknown }) =>
+    createArchitectureCatalogService: (stores: { records: GoalRecordTransactionPort; revision?: unknown;
+      knowledge: KnowledgeLines }) =>
       actual.createArchitectureCatalogService({ ...stores,
-        revision: revisionDeps(stores.records as GoalRecordTransactionPort & RecordLookupPort, access) }) };
+        revision: revisionDeps(stores.records as GoalRecordTransactionPort & RecordLookupPort, access, stores.knowledge) }) };
 }
 
 /** One record-store/G5 capability set: the real task facts, responsibility and duty readers. */
 function revisionDeps(records: GoalRecordTransactionPort & RecordLookupPort,
-  access: CatalogAccess): CatalogRevisionDependencies {
+  access: CatalogAccess, knowledge: KnowledgeLines): CatalogRevisionDependencies {
   const duty = createSessionDutyResolver({
     readRoleSpec: (ctx, input) => access.readRoleSpec === null
       ? Promise.resolve({ status: 'rejected', code: 'unavailable', reason: 'the RoleSpec read is not bound' })
       : access.readRoleSpec(ctx, input),
     configuration: undefined,
   });
-  return { records, now: () => S8C_AT, eventId: () => randomUUID(),
+  return { records, now: () => S8C_AT, eventId: () => randomUUID(), knowledge,
     taskFacts: taskFactsPort(),
     responsibility: responsibilityPort(access), duty };
 }
 
 /** Standalone binding for the restored old delete rows: the real service over their fixture's records. */
 export function catalogRevisionDeps(platform: Platform, ctx: CoreCallContext,
-  records: GoalRecordTransactionPort & RecordLookupPort): CatalogRevisionDependencies {
+  records: GoalRecordTransactionPort & RecordLookupPort, knowledge: KnowledgeLines): CatalogRevisionDependencies {
   return revisionDeps(records, { projectId: ctx.projectId, catalog: platform.architecture,
     sessionDirectory: platform.sessions,
     readRoleSpec: (callCtx, input, options) => platform.roles.readRoleSpec(callCtx, input, options),
-    signal: ctx.signal });
+    signal: ctx.signal }, knowledge);
 }
 
 /** Binds the module factory to a platform the caller built (the old delete fixtures do this). */

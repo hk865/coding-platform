@@ -1368,6 +1368,30 @@
       "name": "readAcrossProjects",
       "reason": "kept-for",
       "note": "kept for second-workspace B (xws2b), decision 121-75"
+    },
+    {
+      "file": "src/composition/line-knowledge.ts",
+      "name": "resolveKnowledgeLine",
+      "reason": "kept-for",
+      "note": "kept for KLS-2b and KLS-2c-1, decision 121-75: the one uncached (project, workspace) to line resolution the Host and the later packages call; the composition root's KnowledgeLines runs the same steps with its cached checkout probe"
+    },
+    {
+      "file": "src/contracts/workspace-module-id.ts",
+      "name": "projectModuleRef",
+      "reason": "kept-for",
+      "note": "kept for KLS-2b, decision 121-75: the project-view ModuleRef the note, plan and structural-proposal entries build from a caller-frame id"
+    },
+    {
+      "file": "src/contracts/workspace-module-id.ts",
+      "name": "rawModuleRef",
+      "reason": "kept-for",
+      "note": "kept for KLS-3a, decision 121-75"
+    },
+    {
+      "file": "src/core/work-graph/model/line-knowledge.ts",
+      "name": "lineRefKey",
+      "reason": "kept-for",
+      "note": "kept for KLS-2b, decision 121-75: the line key of the knowledge index, snapshots, write log and pins"
     }
   ]
 }

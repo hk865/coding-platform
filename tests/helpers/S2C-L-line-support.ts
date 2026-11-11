@@ -64,7 +64,8 @@ import {
   decodeSessionWorkLink, plainSessionRefToAggregate,
 } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import type { SessionDutyReadPort, WorkLineReadPort } from '../../src/core/work-graph/model/work-line-contracts.js';
-import type { DecisionReadPort, DecisionCardSourcePort } from '../../src/core/work-graph/model/decision-contracts.js';
+import type { DecisionReadPort, DecisionCardSourcePort,
+  DecisionQueuePreparedReader } from '../../src/core/work-graph/model/decision-contracts.js';
 import type { TaskClaimFixture } from './task-claim-fixture.js';
 import { createTaskClaimFixture, CLAIM_FIXTURE_AT, type ClaimFixtureKind } from './task-claim-fixture.js';
 import { createS2BRuntimeSteps, type S2BRuntimeSteps } from './S2B-runtime-steps-fixture.js';
@@ -157,7 +158,7 @@ export function lineReaderOver(base: TaskClaimFixture, records: WorkLineStore,
 
 /** The real 2A decision queue over a records surface (2C-03, 2C-12). */
 export function decisionReadsOver(base: TaskClaimFixture, records: WorkLineStore,
-  options: { autoReworkLimit?: number } = {}): DecisionReadPort {
+  options: { autoReworkLimit?: number } = {}): DecisionReadPort & DecisionQueuePreparedReader {
   const plans = options.autoReworkLimit === undefined ? base.plans
     : createPlanService({ records, bindings: createInitializationBindingReader({ records }),
       materials: { async openArtifact() {
@@ -178,6 +179,8 @@ export function decisionReadsOver(base: TaskClaimFixture, records: WorkLineStore
     cardSources: [createGoalCauseCardSource(causes), emptyGoalConflict],
     noticeSources: [],
     conflicts: { async queryGoalConflicts() {
+      return { status: 'rejected', code: 'unsupported', reason: 'the goal-conflict source is not wired for the line reads' };
+    }, async readCurrentArchitecture() {
       return { status: 'rejected', code: 'unsupported', reason: 'the goal-conflict source is not wired for the line reads' };
     } },
     positions: createNoticePositionComparator(),

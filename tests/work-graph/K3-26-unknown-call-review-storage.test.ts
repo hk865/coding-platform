@@ -344,7 +344,7 @@ function cardReads(f: ReviewWorldFixture) {
   const cardSource = createUnknownCallReviewCardSource({ records, reviews: f.reviews });
   return createDecisionReadModel({ records, cardSources: [cardSource], noticeSources: [],
     conflicts: createGoalConflictAssembler({ records,
-      catalog: createArchitectureCatalogService({ records }),
+      catalog: createArchitectureCatalogService({ records, knowledge: f.world.fixture.knowledge }),
       executedFiles: createGoalExecutedFilesReader({ records }) }),
     positions: createNoticePositionComparator(), displayTokens: createNoticeDisplayToken(new Uint8Array(32)),
     lineage: { messages: f.world.mailbox,

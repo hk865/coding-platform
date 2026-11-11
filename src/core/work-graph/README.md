@@ -1,7 +1,7 @@
 # src/core/work-graph：WorkGraph 子模块的根与窄 source-authority 端口
 
 ## 负责什么，不负责什么
-- 这里是 WorkGraph 模块的根：根下只放两个 `source-authority-*` 文件，其余职责都在 13 个子模块里，按各自 README 导航。
+- 这里是 WorkGraph 模块的根：根下只放两个 `source-authority-*` 文件，其余职责都在 14 个子模块里，按各自 README 导航。
 - `source-authority-ports.ts` 只声明端口类型，依赖 `materials`；`source-authority-reader.ts` 依赖 `source-authority-ports`、`materials`、`queries`，不得反向依赖 `tasks`、`views` 等上层。
 - 只读取已经接受的规范事实（Workspace/Run/QueryRun/QueryJob）；授权、当前生命周期、占用和权限仍由调用方判断。
 - 不做状态迁移、不写记录、不打开第二个 Store、不扫描历史：状态迁移一律经 `src/core/work-graph/state/`（根 `AGENTS.md` 第 9 条）。
@@ -16,6 +16,7 @@
 - `configuration/` — 项目/工作区配置的读写服务；见 [`configuration/README.md`](configuration/README.md)。
 - `materials/` — 材料、工件与规范事实读取器；见 [`materials/README.md`](materials/README.md)。
 - `architecture/` — 架构目录与采纳版本的管理；见 [`architecture/README.md`](architecture/README.md)。
+- `knowledge/` — 代码知识文件的唯一写入顺序（架构和注记的写点都经它）；见 [`knowledge/README.md`](knowledge/README.md)。
 - `sessions/` — Session 目录、生命周期、健康、消息与 Session codec；见 [`sessions/README.md`](sessions/README.md)。
 - `queries/` — Query 提交、执行、结果与恢复；见 [`queries/README.md`](queries/README.md)。
 - `tasks/` — Task/Run/Attempt 编排与请求入口；见 [`tasks/README.md`](tasks/README.md)。

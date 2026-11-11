@@ -51,6 +51,7 @@ import {
   type ProjectStoreLease,
 } from '../composition/project-runtime.js';
 import { kernelStoreDirectory, kernelStoreEntry } from '../composition/project-store-paths.js';
+import { ensureKnowledgeDirectory } from '../composition/line-knowledge.js';
 import type { WorkspaceHostBindings } from '../core/workspace/access.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { SessionRef, WorkspaceScope } from '../contracts/core/identity.js';
@@ -570,6 +571,11 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   if (promptsRoot !== undefined) {
     for (const workspace of workspaces) await assertRootOutsidePrompts(workspace.root, promptsRoot);
   }
+  // KLS-2: every start-up workspace whose root is a directory gets its knowledge directory once; a workspace opened
+  // later gets it in `addWorkspaceState`.
+  for (const workspace of workspaces) {
+    if (await stat(workspace.root).then(info => info.isDirectory(), () => false)) ensureKnowledgeDirectory(workspace.root);
+  }
   const architectureSource = options.architectureSource === undefined
     ? undefined
     : { provider: options.architectureSource.provider, configPath: options.architectureSource.configPath };
@@ -753,6 +759,10 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     },
   };
 
+  /** A project's registered workspaces for its knowledge lines, read live: the main one (its first) first. */
+  const knowledgeWorkspacesOf = (projectId: string, mainWorkspaceId: string): readonly string[] => [mainWorkspaceId,
+    ...workspaces.filter(workspace => workspace.scope.projectId === projectId && workspace.scope.workspaceId !== mainWorkspaceId)
+      .map(workspace => workspace.scope.workspaceId)];
   /** A project's platform sees only that project's workspaces: another project's workspace is `not_found`. */
   const projectBindings = (projectId: string): WorkspaceHostBindings => ({
     async resolveRoot(workspace: WorkspaceRef) {
@@ -851,6 +861,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     createPlatform: input => openTargetPlatform({
       storage: input.storage,
       workspace: projectBindings(input.projectId),
+      knowledgeWorkspaces: projectId => knowledgeWorkspacesOf(projectId, input.workspaces[0]!.workspaceId),
       commitObserver: commitObserverFor(input.projectId),
       hostInstance: { hostInstanceId: input.lease.hostInstanceId, lease: input.lease.lease, takeover: input.lease.takeover },
       hostClosing: hostClosing.signal,
@@ -1935,6 +1946,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     if (byScope.has(key)) return;
     workspaces.push(config);
     byScope.set(key, config);
+    ensureKnowledgeDirectory(config.root);
     workbenchTools.addWorkspace({
       scope: config.scope, root: config.root, readPrefixes: config.readPrefixes,
       ...(config.writePrefixes === undefined ? {} : { writePrefixes: config.writePrefixes }),

@@ -217,9 +217,10 @@ describe('RL-23: the cold start and the exploration round', () => {
         input: { selection: { kind: 'current' } } })).body, 'ready', 'the adopted catalog');
     const adopted = catalog.catalog.catalog;
     const childIds = new Set((adopted.containment?.parentOf ?? []).map(edge => edge.child.moduleId));
-    expect(adopted.modules.map(module => module.ref.moduleId)).toEqual(['src', 'docs', 'src/a', 'src/b']);
+    // G1: a catalog read back from the knowledge files is in module-id order.
+    expect(adopted.modules.map(module => module.ref.moduleId)).toEqual(['docs', 'src', 'src/a', 'src/b']);
     expect(adopted.modules.filter(module => !childIds.has(module.ref.moduleId)).map(module => module.ref.moduleId))
-      .toEqual(['src', 'docs']);
+      .toEqual(['docs', 'src']);
     await cold.waitForExplorations(2);
     const afterSrc = await cold.coldStart();
     expect(afterSrc.actionPhase).toBe('regions');

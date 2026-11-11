@@ -142,7 +142,7 @@ describe.each(['memory', 'sqlite'] as const)('A1 architecture catalog over real 
   it('commits exactly one of two concurrent first adoptions', async () => {
     const fixture = await make(kind);
     const barrier = commitBarrier(fixture.records);
-    const service = createArchitectureCatalogService({ records: barrier.records });
+    const service = createArchitectureCatalogService({ records: barrier.records, knowledge: fixture.knowledge });
     const [left, right] = await Promise.all([
       barrier.run(() => service.adoptInitialArchitecture(fixture.ctx, adoption(fixture, 'adopt-concurrent-left'))),
       barrier.run(() => service.adoptInitialArchitecture(fixture.ctx, adoption(fixture, 'adopt-concurrent-right'))),
@@ -217,7 +217,7 @@ describe.each(['memory', 'sqlite'] as const)('A1 architecture catalog over real 
     const records = { ...f.records,
       async lookupCommit(input: Parameters<typeof f.records.lookupCommit>[0]) { mutate(); return f.records.lookupCommit(input); },
       async readMany(keys: readonly string[]) { mutate(); return f.records.readMany(keys); } };
-    const service = createArchitectureCatalogService({ records });
+    const service = createArchitectureCatalogService({ records, knowledge: f.knowledge });
     const result = await service.adoptInitialArchitecture(f.ctx, request);
     expect(mutated).toBe(true);
     expect(result).toMatchObject({ status: 'committed', value: { catalog: { catalog: original } } });

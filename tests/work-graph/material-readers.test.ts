@@ -1,3 +1,6 @@
+import { tmpdir } from 'node:os';
+import { mkdtemp } from 'node:fs/promises';
+import { knowledgeLinesFor } from '../helpers/KLS2-knowledge-lines.js';
 import { expect, it } from 'vitest';
 import { join } from 'node:path';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
@@ -148,7 +151,9 @@ it.each(['memory', 'sqlite'] as const)('%s: canonical material records use compl
         { ref: { aggregateType: 'ProjectCompletionPolicyActive' as const, projectId: projectB }, revision: 0 }] },
     });
     if (activatedB.status !== 'committed') throw new Error(`other policy activation failed: ${JSON.stringify(activatedB)}`);
-    const architectureB = await createArchitectureCatalogService({ records: f.records }).adoptInitialArchitecture(ctxB, {
+    const architectureB = await createArchitectureCatalogService({ records: f.records,
+      knowledge: knowledgeLinesFor({ root: await mkdtemp(join(tmpdir(), 'materials-b-')), projectId: projectB,
+        workspaceId: workspaceB, records: f.records }) }).adoptInitialArchitecture(ctxB, {
       input: { baselineId: 'other-baseline', description: 'Other project baseline', constraints: [], catalog: {
         requireDag: true, dependencies: [], modules: [
           { ref: { projectId: projectB, moduleId: 'R' }, name: 'R', responsibility: 'root', paths: ['.'], interfaces: [] },

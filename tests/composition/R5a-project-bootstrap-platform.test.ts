@@ -68,10 +68,15 @@ type HostState = { revision: number | null; readAllowed: boolean; resolveRootCal
 /** Held Host binding state: the domain workspace revision is learned ONLY from
  * the public registration result; the Host permission generation is a separate
  * opaque value; both call counters prove registration opens no directory. */
-function workspaceBindings(directory: string, state: HostState): WorkspaceHostBindings {
+function workspaceBindings(directory: string, state: HostState,
+  second?: { projectId: string; workspaceId: string; root: string }): WorkspaceHostBindings {
   return {
     async resolveRoot(requested) {
       state.resolveRootCalls += 1;
+      // KLS-2: a second project's workspace has its own root (its knowledge files are its own).
+      if (second !== undefined && requested.projectId === second.projectId && requested.workspaceId === second.workspaceId) {
+        return { status: 'ready', value: { root: second.root, workspaceRevision: 1 } };
+      }
       if (requested.projectId !== projectId || requested.workspaceId !== workspaceId || state.revision === null) {
         return { status: 'rejected', code: 'not_found', reason: 'the workspace is not registered in this Host' };
       }
@@ -232,8 +237,11 @@ it('bootstraps an empty SQLite store to an accepted Plan and replays the four in
 it('creates a second project/Workspace without touching the first, and isolates a missing policy cause', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'next-r5a-multi-'));
   directories.push(directory);
+  const secondRoot = await mkdtemp(join(tmpdir(), 'next-r5a-second-'));
+  directories.push(secondRoot);
   const state = newState();
-  const options = { storage: { kind: 'sqlite' as const, directory }, workspace: workspaceBindings(directory, state), now: () => AT };
+  const options = { storage: { kind: 'sqlite' as const, directory }, workspace: workspaceBindings(directory, state,
+    { projectId: 'r5a-second-project', workspaceId: 'r5a-second-project-workspace', root: secondRoot }), now: () => AT };
   const platform = await createTargetPlatform(options);
   try {
     const firstProject = await platform.projects.createProject(hostCtx(), { meta: { requestId: 'r5a-p1', expected: [{ ref: projectRef, revision: 0 }] },

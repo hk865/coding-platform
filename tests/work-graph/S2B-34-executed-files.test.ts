@@ -7,6 +7,7 @@
  * through the public `createGoalConflictAssembler` (the implementation behind
  * `decisions.queryGoalConflicts`); the HTTP route seam belongs to Group W.
  */
+import { knowledgeLinesFor } from '../helpers/KLS2-knowledge-lines.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { RunActivityFactsV1 } from '../../src/contracts/run-activity.js';
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
@@ -17,6 +18,11 @@ import { countedFacts } from '../helpers/S2B-activity-fixture.js';
 
 const opened: S2BTrackFixture[] = [];
 afterEach(async () => { for (const fixture of opened.splice(0)) await fixture.close(); });
+
+/** KLS-2: the knowledge lines over the track world's own workspace root. */
+function trackKnowledge(f: S2BTrackFixture) {
+  return knowledgeLinesFor({ root: f.b2.base.directory, ...f.b2.base.scope, records: f.records });
+}
 
 async function open(kind: 'memory' | 'sqlite'): Promise<S2BTrackFixture> {
   const fixture = await openS2BTrackFixture(kind);
@@ -203,7 +209,7 @@ describe.each(['memory', 'sqlite'] as const)('S2B executed files (%s)', (kind) =
 
     const assembler = createGoalConflictAssembler({
       records: f.records,
-      catalog: createArchitectureCatalogService({ records: f.records }),
+      catalog: createArchitectureCatalogService({ records: f.records, knowledge: trackKnowledge(f) }),
       executedFiles: f.goalExecutedFiles(),
     });
     const result = await assembler.queryGoalConflicts(f.ctx, { workspace: f.b2.base.scope });
@@ -233,7 +239,7 @@ describe.each(['memory', 'sqlite'] as const)('S2B executed files (%s)', (kind) =
       changedFiles: { definite: ['src/module-m/f.ts'] },
     }));
 
-    const catalog = createArchitectureCatalogService({ records: f.records });
+    const catalog = createArchitectureCatalogService({ records: f.records, knowledge: trackKnowledge(f) });
     const executedFiles = f.goalExecutedFiles();
     const assembler = createGoalConflictAssembler({ records: f.records, catalog, executedFiles });
     const result = await assembler.queryGoalConflicts(f.ctx, { workspace: f.b2.base.scope });

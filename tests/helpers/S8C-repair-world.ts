@@ -41,6 +41,7 @@ import { checkConfiguration, S7A_REPLY_TOOLS } from './S7A-fixture.js';
 import { OPERATOR, S6A_SCOPE, S6A_SCRIBE_ROLE, S6A_SCRIBE_ROLE_BINDING, S6A_WORK_ROLE, S6A_WORK_ROLE_BINDING,
   type S6ASession } from './S6A-request-fixture.js';
 import { s6aCardsWorkspace, type S6ACardsWorkspace } from './S6A-cards-fixture.js';
+import { knowledgeLinesFor } from './KLS2-knowledge-lines.js';
 import { openS6AHostWorld, type S6AHostWorld } from './S6A-host-fixture.js';
 import { ag2bPlanDraft } from './AG2b-collaboration-fixture.js';
 import { createS6BLine, governS6B, openS6BRoleLine } from './S6B1-fixture.js';
@@ -436,6 +437,8 @@ export async function openS8CRepairWorld(options: { label: string; tasks?: reado
   if (link === undefined) throw new Error('S8C: the line has no open responsible link');
   await mkdir(join(world.root, 'src'), { recursive: true });
   const records = captured as GoalRecordTransactionPort & RecordLookupPort;
+  const knowledge = knowledgeLinesFor({ root: world.root, projectId: S6A_SCOPE.projectId,
+    workspaceId: S6A_SCOPE.workspaceId, records });
   const dependenciesOf = (
     recordsPort: RepairActivationDependencies['records'],
     observation: RepairActivationDependencies['observation'],
@@ -451,7 +454,8 @@ export async function openS8CRepairWorld(options: { label: string; tasks?: reado
     // The real task-facts, responsibility and duty readers the production
     // composition hands the planner; a `remove_module` activation needs them.
     catalogRevision: catalogRevisionDeps(world.platform, world.humanContext(),
-      recordsPort as Parameters<typeof catalogRevisionDeps>[2]),
+      recordsPort as Parameters<typeof catalogRevisionDeps>[2], knowledge),
+    knowledge,
     now: () => world.clock.now(), eventId: () => randomUUID(), newId: () => randomUUID(),
   });
   // Normal rows use the one platform activator the composition built and the

@@ -17,6 +17,7 @@
  * In part 1 every method throws `not implemented: …`, so the cases are RED by
  * design; this file must still compile and run all 36 cases (18 cases × M/S).
  */
+import { knowledgeLinesFor } from '../helpers/KLS2-knowledge-lines.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -406,7 +407,8 @@ async function createInputFixture(
       { ref: projectRef, revision: 1 }, { ref: activePolicyRef, revision: 0 }] },
   });
   if (activated.status !== 'committed') throw new Error(`S3 fixture policy activation failed: ${JSON.stringify(activated)}`);
-  const adoptedArchitecture = await createArchitectureCatalogService({ records: backend.records })
+  const adoptedArchitecture = await createArchitectureCatalogService({ records: backend.records,
+    knowledge: knowledgeLinesFor({ root: directory, projectId: PROJECT_ID, workspaceId: WORKSPACE_ID, records: backend.records }) })
     .adoptInitialArchitecture(ctx, {
       input: { baselineId: 's3-baseline', description: 'S3 context-input fixture baseline', constraints: [],
         catalog: { requireDag: true, dependencies: [], modules: [{

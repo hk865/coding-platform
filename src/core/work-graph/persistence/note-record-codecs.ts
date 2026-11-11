@@ -167,7 +167,7 @@ function rangeProblem(value: unknown, label: string): string | null {
   }
   return null;
 }
-function noteAnchorProblem(value: unknown): string | null {
+export function noteAnchorProblem(value: unknown): string | null {
   if (!isRecord(value) || typeof value['kind'] !== 'string') return 'anchor must be an object with a kind';
   switch (value['kind']) {
     case 'module':
@@ -202,7 +202,7 @@ function noteAnchorProblem(value: unknown): string | null {
  */
 const NoteSourceQueryRunShape = defineShape({ name: 'NoteSourceV1', fields: { queryRunRef: f.nullable(f.ref(QueryRunRefShape)) } });
 
-function sourceProblem(value: unknown, label: string): string | null {
+export function sourceProblem(value: unknown, label: string): string | null {
   if (!isRecord(value)) return `${label} must be a NoteSourceV1`;
   if (value['kind'] === 'platform') return hasOnlyKeys(value, ['kind']) ? null : `${label} platform carries unknown fields`;
   if (value['kind'] === 'user') {
@@ -252,7 +252,7 @@ export function factProblem(value: unknown): string | null {
       return 'fact kind is not recognized';
   }
 }
-function sectionsProblem(value: unknown): string | null {
+export function sectionsProblem(value: unknown): string | null {
   if (!isRecord(value) || !hasOnlyKeys(value, ['status', 'decided', 'open', 'next', 'risks'])) {
     return 'understanding sections carry unknown fields';
   }

@@ -125,6 +125,8 @@ export async function createS4BMultiScope(f: S4BNoteCheckFixture): Promise<S4BMu
     meta: { requestId: 's4b-multiscope-policy2-activate', expected: [{ ref: project2Ref, revision: 1 },
       { ref: { aggregateType: 'ProjectCompletionPolicyActive', projectId: P2 }, revision: 0 }] },
     input: { target: { ref: installed['ref'] as never, digest: installed['contentDigest'] as string } } }));
+  // KLS-2: the second project's workspace has its own root (two projects never share one knowledge folder).
+  await f.inner.addWorkspaceRoot(P2, W2);
   committed('architecture2', await platform.architecture.adoptInitialArchitecture(ctx2, {
     meta: { requestId: 's4b-multiscope-architecture2', expected: [{ ref: project2Ref, revision: 1 }, { ref: workspace2Ref, revision: 1 }] },
     input: { baselineId: 's4b-baseline-2', description: 'S4B second project catalog', constraints: [], catalog: {

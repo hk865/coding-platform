@@ -73,7 +73,7 @@ describe.each(['memory', 'sqlite'] as const)('S2B round-2 planned-vs-executed co
     // conflict reads use the same underlying B2 store, which implements all
     // three record ports (`readMany`, `lookup`, `lookupOrdered`).
     const records = f.b2.base.records as unknown as Parameters<typeof createGoalExecutedFilesReader>[0]['records'];
-    const catalog = createArchitectureCatalogService({ records: records as never });
+    const catalog = createArchitectureCatalogService({ records: records as never, knowledge: f.knowledge });
     const executedFiles = createGoalExecutedFilesReader({ records });
     const assembler = createGoalConflictAssembler({ records: records as never, catalog, executedFiles });
     const result = await assembler.queryGoalConflicts(f.ctx, { workspace: f.base.scope });

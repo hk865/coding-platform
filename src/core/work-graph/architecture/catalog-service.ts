@@ -35,13 +35,26 @@ import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fin
 import type { ArchitectureBaselineRevisionRef } from '../../../contracts/governance.js';
 import type { ProjectRef, WorkspaceRef } from '../../../contracts/ledger.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
-import type { EncodedRecord, GoalRecordTransactionPort, RecordGuard, StoreFailure } from '../../record-store/ports.js';
-import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
+import type { CatalogRepairOpV1, ResponsibilityMoveV1 } from '../../../contracts/note.js';
+import { projectModuleIdOfFile } from '../../../contracts/workspace-module-id.js';
 import type {
-  AdoptInitialArchitectureInput, ArchitectureBaselineContentV1, ArchitectureBaselineRevisionSnapshot,
+  EncodedRecord, GoalRecordTransactionPort, RecordGuard, StoreFailure, StoreResult,
+} from '../../record-store/ports.js';
+import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
+import {
+  knowledgeCommit, knowledgeFilesNotWritten, writeKnowledge, type KnowledgePrepared,
+  type KnowledgeWritePlan,
+} from '../knowledge/knowledge-write.js';
+import type {
+  KnowledgeBaselineV1, KnowledgeCaller, KnowledgeLines, LineKnowledge,
+} from '../model/line-knowledge.js';
+import type {
+  AdoptedArchitecture, AdoptInitialArchitectureInput, ArchitectureBaselineContentV1, ArchitectureBaselineRevisionSnapshot,
   ArchitectureCatalogPort, ArchitectureCatalogRecord, ArchitectureCatalogRef, ArchitectureRevision,
   CatalogModuleFacts, ReadArchitectureRevisionInput, ReviseArchitectureCatalogOpsInput,
 } from './catalog-contracts.js';
+import { ARCHITECTURE_FILE_PATH, inModuleIdOrder } from './architecture-file.js';
+import { qualifyOps } from './proposal-service.js';
 import {
   ARCHITECTURE_CATALOG_ADOPTED_EVENT, ARCHITECTURE_CATALOG_REVISED_EVENT, architectureBaselineDigest,
   decodeArchitectureCatalogAdoptedEvent, decodeArchitectureCatalogRecord, decodeArchitectureCatalogRevisedEvent,
@@ -57,7 +70,8 @@ import { mergeGuards } from '../persistence/record-guards.js';
 import { sessionStoreFailureToRejection } from '../persistence/read-result-failures.js';
 import type { CatalogRevisionDependencies, CatalogRevisionInputV1 } from './revision-planner.js';
 import {
-  catalogRevisionKeys, catalogRevisionMovesProblem, catalogRevisionPinProblem, planCatalogRevision,
+  catalogRevisionKeys, catalogRevisionMovesProblem, catalogRevisionPinProblem, draftCatalogRevision,
+  finishCatalogRevision,
 } from './revision-planner.js';
 import { parseRepairOps } from './repair-ops.js';
 
@@ -69,7 +83,12 @@ export type ArchitectureCatalogStores = {
   records: GoalRecordTransactionPort;
   /** The task/role-scope capabilities a revising caller binds (G5). */
   revision?: CatalogRevisionDependencies;
+  /** The knowledge files: the current read reads them and every write writes them. */
+  knowledge: KnowledgeLines;
 };
+
+/** The knowledge lines a current read takes and the caller it reads them for. */
+export type KnowledgeRead = { lines: KnowledgeLines; caller: KnowledgeCaller };
 
 const ADOPT_IDENTITY_PREFIX = 'architecture-catalog-adopt:';
 const ADOPT_COMMAND_TYPE = 'AdoptInitialArchitecture';
@@ -332,8 +351,9 @@ async function restoreRevised(records: GoalRecordTransactionPort, receipt: Commi
   }
   // The event embeds the pre-bind revision (the `since` placeholder is null);
   // the store bound this commit's cursor into the written catalog row. Returning
-  // that same cursor keeps a replay result equal to the original write result.
-  const restored = { ...event.revision, catalog: { ...event.revision.catalog, since: receipt.cursor } };
+  // that same cursor keeps a replay result equal to the original write result, in the same read-back order (G1).
+  const restored = { ...event.revision, catalog: { ...event.revision.catalog,
+    catalog: inModuleIdOrder(event.revision.catalog.catalog), since: receipt.cursor } };
   return { status: 'restored', value: restored };
 }
 
@@ -375,9 +395,14 @@ export type CurrentCatalogWindow =
  * window, re-verifies the pointer (so a concurrent activation cannot mix
  * versions) and returns both the decoded revision and the exact guards a CAS
  * caller must join. `readCurrentRevision` and `readCatalogModuleFacts` share it.
+ *
+ * With `knowledge`, the catalog and the baseline's knowledge fields come from
+ * the line's files: the records keep the identity, the
+ * digest, the source binding and the guards. A file that cannot be read is the
+ * read's failure, never the record instead.
  */
 export async function readCurrentCatalogWindow(records: Pick<GoalRecordTransactionPort, 'readMany'>,
-  projectId: string): Promise<CurrentCatalogWindow> {
+  projectId: string, knowledge?: KnowledgeRead): Promise<CurrentCatalogWindow> {
   const activeKey = activeRefKey(projectId);
   const pointerRead = await records.readMany([activeKey]);
   if (pointerRead.status !== 'ready') return mapStoreFailure(pointerRead);
@@ -415,7 +440,83 @@ export async function readCurrentCatalogWindow(records: Pick<GoalRecordTransacti
     { refKey: activeKey, expectedRevision: pointer.revision },
     { refKey: catalogKey, expectedRevision: catalogRecord.revision },
   ];
-  return { status: 'ready', baseline, catalog, guards, activeRevision: pointer.revision };
+  if (knowledge === undefined) return { status: 'ready', baseline, catalog, guards, activeRevision: pointer.revision };
+  const lines = await knowledge.lines.project(knowledge.caller);
+  if (lines.status !== 'ready') return mapStoreFailure(lines);
+  // A project of several workspaces reads the record until the project view merges every line's files.
+  if (lines.value.length !== 1) return { status: 'ready', baseline, catalog, guards, activeRevision: pointer.revision };
+  const file = await lines.value[0]!.readArchitecture();
+  if (file.status !== 'ready') return mapStoreFailure(file);
+  if (file.value.baseline === null) return unavailable(`${ARCHITECTURE_FILE_PATH} of the main workspace carries no baseline`);
+  const { sourceBinding } = baseline.content;
+  return {
+    status: 'ready', guards, activeRevision: pointer.revision,
+    baseline: { ...baseline, content: { schemaVersion: 1, ...file.value.baseline,
+      ...(sourceBinding === undefined ? {} : { sourceBinding }) } },
+    catalog: { ...catalog, catalog: file.value.catalog },
+  };
+}
+
+/** The baseline fields a knowledge file keeps; the schema version and the source binding stay in the record. */
+export function knowledgeBaselineOf(content: ArchitectureBaselineContentV1): KnowledgeBaselineV1 {
+  return { description: content.description, constraints: content.constraints,
+    ...(content.dependencyRules === undefined ? {} : { dependencyRules: content.dependencyRules }) };
+}
+
+/** Every line's architecture file changes for one project-view catalog (each line keeps its own workspace's part). */
+export async function architectureWritePlansOf(lines: readonly LineKnowledge[], catalog: AdoptedArchitecture,
+  baseline: KnowledgeBaselineV1): Promise<StoreResult<KnowledgeWritePlan[]>> {
+  const plans: KnowledgeWritePlan[] = [];
+  for (const line of lines) {
+    const changes = await line.writeModule(catalog, baseline);
+    if (changes.status !== 'ready') return changes;
+    plans.push({ line, changes: changes.value });
+  }
+  return { status: 'ready', value: plans };
+}
+
+/**
+ * The module ids a caller hands in are written in its own frame (its
+ * workspace is the main one); every entry turns them into the project view
+ * once, so records and files only ever see the project view. A malformed id
+ * throws and the entry answers `invalid`.
+ */
+function moduleRefInProjectView(ref: ModuleRef, callerWorkspaceId: string, mainWorkspaceId: string): ModuleRef {
+  return { ...ref, moduleId: projectModuleIdOfFile(ref.moduleId, callerWorkspaceId, mainWorkspaceId) };
+}
+
+function catalogInProjectView(catalog: AdoptedArchitecture, callerWorkspaceId: string,
+  mainWorkspaceId: string): AdoptedArchitecture {
+  const view = (ref: ModuleRef): ModuleRef => moduleRefInProjectView(ref, callerWorkspaceId, mainWorkspaceId);
+  return {
+    ...catalog,
+    modules: catalog.modules.map(module => ({ ...module, ref: view(module.ref) })),
+    dependencies: catalog.dependencies.map(edge => ({ ...edge, from: view(edge.from), to: view(edge.to) })),
+    ...(catalog.containment === undefined ? {} : { containment: { parentOf: catalog.containment.parentOf
+      .map(edge => ({ parent: view(edge.parent), child: view(edge.child) })) } }),
+  };
+}
+
+function opsInProjectView(ops: readonly CatalogRepairOpV1[], callerWorkspaceId: string,
+  mainWorkspaceId: string): CatalogRepairOpV1[] {
+  const id = (moduleId: string): string => projectModuleIdOfFile(moduleId, callerWorkspaceId, mainWorkspaceId);
+  const view = (ref: ModuleRef): ModuleRef => moduleRefInProjectView(ref, callerWorkspaceId, mainWorkspaceId);
+  return ops.map((op): CatalogRepairOpV1 => {
+    switch (op.op) {
+      case 'add_module': return { ...op, module: { ...op.module, ref: view(op.module.ref) } };
+      case 'set_parent': return { ...op, moduleId: id(op.moduleId), parentId: op.parentId === null ? null : id(op.parentId) };
+      case 'set_dependency_reason': case 'add_dependency': case 'remove_dependency':
+      case 'add_forbid_rule': case 'remove_forbid_rule':
+        return { ...op, from: view(op.from), to: view(op.to) };
+      default: return { ...op, moduleId: id(op.moduleId) };
+    }
+  });
+}
+
+function movesInProjectView(moves: readonly ResponsibilityMoveV1[], callerWorkspaceId: string,
+  mainWorkspaceId: string): ResponsibilityMoveV1[] {
+  return moves.map(move => move.to.kind === 'standby' ? move : { ...move, to: { kind: 'modules',
+    destinations: move.to.destinations.map(ref => moduleRefInProjectView(ref, callerWorkspaceId, mainWorkspaceId)) } });
 }
 
 /** Reads the catalog row for a known baseline revision. A missing, damaged or
@@ -464,7 +565,13 @@ export function catalogPinOf(revision: { baseline: ArchitectureBaselineRevisionS
 // --------------------------------------------------------------------------
 
 export function createArchitectureCatalogService(stores: ArchitectureCatalogStores): ArchitectureCatalogPort {
-  const { records } = stores;
+  const { records, knowledge } = stores;
+
+  /** The project's main workspace, the frame the caller-frame ids are read against. */
+  async function knowledgeMainWorkspace(ctx: CoreCallContext): Promise<{ status: 'ok'; value: string } | Rejection> {
+    const listed = await knowledge.workspaces(ctx);
+    return listed.status === 'ready' ? { status: 'ok', value: listed.value[0]! } : mapStoreFailure(listed);
+  }
 
   async function adoptInitialArchitecture(ctx: CoreCallContext,
     request: GraphWrite<AdoptInitialArchitectureInput>): Promise<WriteResult<ArchitectureRevision>> {
@@ -497,7 +604,14 @@ export function createArchitectureCatalogService(stores: ArchitectureCatalogStor
     if (ctx.signal.aborted) return rejected('cancelled', 'the adoption was cancelled before admission');
     const candidate = validateAdoptedArchitecture(rawInput['catalog'], projectId);
     if (candidate.status !== 'ok') return rejected(candidate.code, candidate.reason);
-    const catalog = candidate.value;
+    const main = await knowledgeMainWorkspace(ctx);
+    if (main.status !== 'ok') return main;
+    let catalog: AdoptedArchitecture;
+    try {
+      catalog = catalogInProjectView(candidate.value, workspaceId, main.value);
+    } catch (error) {
+      return invalid('a module id is not a module id of the caller frame: ' + messageOf(error));
+    }
 
     const fingerprint = sha256Hex(canonicalJson({
       schemaVersion: 1, commandType: ADOPT_COMMAND_TYPE, projectId, workspaceId, baselineId,
@@ -519,48 +633,54 @@ export function createArchitectureCatalogService(stores: ArchitectureCatalogStor
     if (early.code === 'idempotency_conflict') return rejected('idempotency_conflict', early.reason);
     if (early.code !== 'not_found') return unavailable(early.code + ': ' + early.reason);
 
-    const scope = await readAdoptionScope(records, pins, projectId, workspaceId, baselineId);
-    if (scope.status !== 'ready') {
-      // The peer may have committed after our lookup and before this window.
-      if (scope.code === 'revision_conflict') {
-        return recoverConflictByIdentity(records, identityKey, fingerprint, scope,
-          receipt => restoreAdopted(records, receipt, expectedIdentity));
+    type Adopted = WriteResult<ArchitectureRevision>;
+    const exit = (value: Adopted): KnowledgePrepared<Adopted> => ({ kind: 'exit', value });
+    const thrown = { message: null as string | null };
+    let adopted = null as ArchitectureRevision | null;
+    // The scope read, the records and the file changes are prepared after the knowledge lines are taken.
+    const outcome = await writeKnowledge(knowledge, ctx, async (lines): Promise<KnowledgePrepared<Adopted>> => {
+      const scope = await readAdoptionScope(records, pins, projectId, workspaceId, baselineId);
+      if (scope.status !== 'ready') {
+        // The peer may have committed after our lookup and before this window.
+        return exit(scope.code === 'revision_conflict'
+          ? await recoverConflictByIdentity(records, identityKey, fingerprint, scope,
+            receipt => restoreAdopted(records, receipt, expectedIdentity))
+          : scope);
       }
-      return scope;
-    }
 
-    const baselineRef = baselineRefFor(projectId, baselineId, 1);
-    const content: ArchitectureBaselineContentV1 = { schemaVersion: 1, description, constraints };
-    const contentDigest = architectureBaselineDigest({ schemaVersion: 1, baselineId, contentRevision: 1, content });
-    if (contentDigest === null) return invalid('the baseline content is not canonical JSON');
-    const baseline: ArchitectureBaselineRevisionSnapshot = {
-      ref: baselineRef, revision: 1, schemaVersion: 1, baselineId, contentRevision: 1, contentDigest, content,
-    };
-    const catalogRef = catalogRefFor(projectId, baselineId, 1);
-    const catalogRecord: ArchitectureCatalogRecord = { ref: catalogRef, revision: 1, baselineRef, schemaVersion: 1, catalog, since: null };
-    const activeRecord = {
-      ref: { aggregateType: 'ProjectArchitectureBaselineActive' as const, projectId },
-      projectId, revision: 1, activeRevision: baselineRef,
-    };
-    const occurredAt = new Date().toISOString();
-    const event: ArchitectureCatalogAdoptedEventV1 = {
-      eventId: randomUUID(), eventType: ARCHITECTURE_CATALOG_ADOPTED_EVENT, schemaVersion: 1,
-      occurredAt, projectId, baselineRef, catalogRef, baseline, catalog,
-    };
-    const baselineKey = canonicalJson(baselineRef as unknown as JsonValue);
-    const catalogKey = canonicalJson(catalogRef as unknown as JsonValue);
-    const activeKey = activeRefKey(projectId);
-    const guards: RecordGuard[] = [
-      { refKey: canonicalJson(projectRefFor(projectId) as unknown as JsonValue), expectedRevision: scope.projectRevision },
-      { refKey: canonicalJson(workspaceRefFor(projectId, workspaceId) as unknown as JsonValue), expectedRevision: scope.workspaceRevision },
-      { refKey: baselineKey, expectedRevision: null },
-      { refKey: catalogKey, expectedRevision: null },
-      { refKey: activeKey, expectedRevision: null },
-    ];
-    if (ctx.signal.aborted) return rejected('cancelled', 'the adoption was cancelled before commit');
-    let committed;
-    try {
-      committed = await records.commit({
+      const baselineRef = baselineRefFor(projectId, baselineId, 1);
+      const content: ArchitectureBaselineContentV1 = { schemaVersion: 1, description, constraints };
+      const contentDigest = architectureBaselineDigest({ schemaVersion: 1, baselineId, contentRevision: 1, content });
+      if (contentDigest === null) return exit(invalid('the baseline content is not canonical JSON'));
+      const baseline: ArchitectureBaselineRevisionSnapshot = {
+        ref: baselineRef, revision: 1, schemaVersion: 1, baselineId, contentRevision: 1, contentDigest, content,
+      };
+      const catalogRef = catalogRefFor(projectId, baselineId, 1);
+      const catalogRecord: ArchitectureCatalogRecord = { ref: catalogRef, revision: 1, baselineRef, schemaVersion: 1, catalog, since: null };
+      const activeRecord = {
+        ref: { aggregateType: 'ProjectArchitectureBaselineActive' as const, projectId },
+        projectId, revision: 1, activeRevision: baselineRef,
+      };
+      const occurredAt = new Date().toISOString();
+      const event: ArchitectureCatalogAdoptedEventV1 = {
+        eventId: randomUUID(), eventType: ARCHITECTURE_CATALOG_ADOPTED_EVENT, schemaVersion: 1,
+        occurredAt, projectId, baselineRef, catalogRef, baseline, catalog,
+      };
+      const baselineKey = canonicalJson(baselineRef as unknown as JsonValue);
+      const catalogKey = canonicalJson(catalogRef as unknown as JsonValue);
+      const activeKey = activeRefKey(projectId);
+      const guards: RecordGuard[] = [
+        { refKey: canonicalJson(projectRefFor(projectId) as unknown as JsonValue), expectedRevision: scope.projectRevision },
+        { refKey: canonicalJson(workspaceRefFor(projectId, workspaceId) as unknown as JsonValue), expectedRevision: scope.workspaceRevision },
+        { refKey: baselineKey, expectedRevision: null },
+        { refKey: catalogKey, expectedRevision: null },
+        { refKey: activeKey, expectedRevision: null },
+      ];
+      if (ctx.signal.aborted) return exit(rejected('cancelled', 'the adoption was cancelled before commit'));
+      const plans = await architectureWritePlansOf(lines, catalog, { description, constraints });
+      if (plans.status !== 'ready') return exit(mapStoreFailure(plans));
+      adopted = { baseline, catalog: catalogRecord };
+      return { kind: 'ready', plans: plans.value, commit: knowledgeCommit(prepared => records.commit(prepared), {
         identityKey, fingerprint, guards,
         records: [
           { refKey: baselineKey, schemaId: BASELINE_SCHEMA_ID, revision: 1, json: JSON.stringify(baseline) },
@@ -569,21 +689,23 @@ export function createArchitectureCatalogService(stores: ArchitectureCatalogStor
         ],
         claims: [], indexGuards: [], indexChanges: [],
         events: [encodeArchitectureCatalogAdoptedEvent(event)],
-      });
-    } catch (error) {
-      return unavailable('the adoption transaction failed: ' + messageOf(error));
-    }
-    if (committed.status !== 'committed') {
-      const failure = mapStoreFailure(committed);
+      }, thrown) };
+    });
+    if (outcome.kind === 'exit') return outcome.value;
+    if (outcome.kind === 'rejected') {
+      if (thrown.message !== null) return unavailable('the adoption transaction failed: ' + thrown.message);
+      const failure = mapStoreFailure(outcome.failure);
       // A concurrent commit of this same identity may have won the guards.
-      if (committed.code === 'revision_conflict') {
+      if (outcome.failure.code === 'revision_conflict') {
         return recoverConflictByIdentity(records, identityKey, fingerprint, failure,
           receipt => restoreAdopted(records, receipt, expectedIdentity));
       }
       return failure;
     }
-    if (!committed.replayed) {
-      return { status: 'committed', value: { baseline, catalog: catalogRecord }, replayed: false, cursor: committed.cursor };
+    const committed = outcome.receipt;
+    if (outcome.files !== null && outcome.files.status !== 'ready') return unavailable(knowledgeFilesNotWritten(outcome.files));
+    if (!committed.replayed && adopted !== null) {
+      return { status: 'committed', value: adopted, replayed: false, cursor: committed.cursor };
     }
     const restored = await restoreAdopted(records, committed, expectedIdentity);
     if (restored.status !== 'restored') return restored;
@@ -627,12 +749,19 @@ export function createArchitectureCatalogService(stores: ArchitectureCatalogStor
     const bound = bindHostWriteContext(ctx, projectId, workspaceId);
     if (bound.status !== 'ok') return bound;
     if (ctx.signal.aborted) return rejected('cancelled', 'the catalog revision was cancelled before admission');
-    const revisionInput: CatalogRevisionInputV1 = {
-      expected, ops: parsed.ops, responsibilityMoves: rawInput['responsibilityMoves'] as CatalogRevisionInputV1['responsibilityMoves'],
-      reason, commandId: requestId,
-    };
-    const movesProblem = catalogRevisionMovesProblem(revisionInput.responsibilityMoves, projectId, null);
+    const rawMoves = rawInput['responsibilityMoves'] as CatalogRevisionInputV1['responsibilityMoves'];
+    const movesProblem = catalogRevisionMovesProblem(rawMoves, projectId, null);
     if (movesProblem !== null) return invalid(movesProblem);
+    const main = await knowledgeMainWorkspace(ctx);
+    if (main.status !== 'ok') return main;
+    let revisionInput: CatalogRevisionInputV1;
+    try {
+      // Module ids and paths are the caller's frame: both turn into the project view here, once.
+      revisionInput = { expected, ops: qualifyOps(opsInProjectView(parsed.ops, workspaceId, main.value), workspaceId, main.value),
+        responsibilityMoves: movesInProjectView(rawMoves, workspaceId, main.value), reason, commandId: requestId };
+    } catch (error) {
+      return invalid('a module id or path is not one of the caller frame: ' + messageOf(error));
+    }
     const keys = catalogRevisionKeys(revisionInput, bound.actor, projectId);
     const expectedIdentity = { identityKey: keys.identityKey, projectId, expected };
 
@@ -648,77 +777,82 @@ export function createArchitectureCatalogService(stores: ArchitectureCatalogStor
     if (early.code === 'idempotency_conflict') return rejected('idempotency_conflict', early.reason);
     if (early.code !== 'not_found') return unavailable(early.code + ': ' + early.reason);
 
-    const callerScope = await readCallerScope(records, pins, projectId, workspaceId);
-    if (callerScope.status !== 'ready') {
-      // A peer using the same identity may have committed between the early
-      // receipt miss above and this scope read; the scope read then sees the
-      // later Project/Workspace revision even though our receipt now exists.
-      // That is the same conflict shape as the planner and commit exits, so it
-      // takes the ONE identity re-query exit; without a matching receipt the
-      // scope conflict still stands.
-      return callerScope.code === 'revision_conflict'
-        ? recoverConflictByIdentity(records, keys.identityKey, keys.fingerprint, callerScope,
-          receipt => restoreRevised(records, receipt, expectedIdentity))
-        : callerScope;
-    }
-
-    const revisionDeps = stores.revision ?? {
-      records: records as GoalRecordTransactionPort & RecordLookupPort,
-      now: () => new Date().toISOString(),
-      eventId: () => randomUUID(),
-    };
-    const planned = await planCatalogRevision(revisionDeps, ctx, revisionInput);
-    if (planned.status !== 'ready') {
-      if (planned.status === 'rejected') {
-        if (planned.code === 'revision_conflict' || planned.code === 'source_stale') {
-          return recoverConflictByIdentity(records, keys.identityKey, keys.fingerprint, planned,
-            receipt => restoreRevised(records, receipt, expectedIdentity));
-        }
-        return planned;
+    type Revised = WriteResult<ArchitectureRevision>;
+    const exit = (value: Revised): KnowledgePrepared<Revised> => ({ kind: 'exit', value });
+    const recover = (rejection: Rejection): Promise<Revised> => recoverConflictByIdentity(records, keys.identityKey,
+      keys.fingerprint, rejection, receipt => restoreRevised(records, receipt, expectedIdentity));
+    const thrown = { message: null as string | null };
+    let revised = null as ArchitectureRevision | null;
+    // The scope read, the plan and the file changes are prepared after the lines are taken; the planner's draft
+    // reads the current files and the file changes are computed before its ledger half reads the basis the
+    // commit is checked against (stack review 1).
+    const outcome = await writeKnowledge(knowledge, ctx, async (lines): Promise<KnowledgePrepared<Revised>> => {
+      const callerScope = await readCallerScope(records, pins, projectId, workspaceId);
+      if (callerScope.status !== 'ready') {
+        // A peer using the same identity may have committed between the early
+        // receipt miss above and this scope read; the scope read then sees the
+        // later Project/Workspace revision even though our receipt now exists.
+        // That is the same conflict shape as the planner and commit exits, so it
+        // takes the ONE identity re-query exit; without a matching receipt the
+        // scope conflict still stands.
+        return exit(callerScope.code === 'revision_conflict' ? await recover(callerScope) : callerScope);
       }
-      return unavailable('the catalog revision plan is not ready');
-    }
-    if (ctx.signal.aborted) return rejected('cancelled', 'the catalog revision was cancelled before commit');
-    const { revision, pin: _pin, ...fragment } = planned.value;
-    // The planner re-reads Project/Workspace, but the caller's own earlier read
-    // is the pin it declared. Merging both guards turns a commit that raised
-    // either revision in between into mergeGuards' revision_conflict instead of
-    // silently admitting the stale caller pin under the newer version.
-    const scoped = mergeGuards([...fragment.guards,
-      { refKey: canonicalJson(projectRefFor(projectId) as unknown as JsonValue),
-        expectedRevision: callerScope.projectRevision },
-      { refKey: canonicalJson(workspaceRefFor(projectId, workspaceId) as unknown as JsonValue),
-        expectedRevision: callerScope.workspaceRevision },
-    ]);
-    // A conflict on the caller's own pins is the same conflict shape as a
-    // planner or commit one: the identity may have committed the same command
-    // while the scope moved, so it takes that ONE recovery exit too.
-    if (!scoped.ok) {
-      return scoped.rejection.code === 'revision_conflict'
-        ? recoverConflictByIdentity(records, keys.identityKey, keys.fingerprint, scoped.rejection,
-          receipt => restoreRevised(records, receipt, expectedIdentity))
-        : scoped.rejection;
-    }
-    let committed;
-    try {
-      committed = await records.commit({
+
+      const revisionDeps = stores.revision ?? {
+        records: records as GoalRecordTransactionPort & RecordLookupPort,
+        now: () => new Date().toISOString(),
+        eventId: () => randomUUID(),
+        knowledge,
+      };
+      const revisionRefused = async (planned: Exclude<ReadResult<never>, { status: 'ready' }>): Promise<KnowledgePrepared<Revised>> => {
+        if (planned.status === 'rejected') {
+          return exit(planned.code === 'revision_conflict' || planned.code === 'source_stale' ? await recover(planned) : planned);
+        }
+        return exit(unavailable('the catalog revision plan is not ready'));
+      };
+      const draft = await draftCatalogRevision(revisionDeps, ctx, revisionInput);
+      if (draft.status !== 'ready') return revisionRefused(draft);
+      const plans = await architectureWritePlansOf(lines, draft.value.catalog, knowledgeBaselineOf(draft.value.content));
+      if (plans.status !== 'ready') return exit(mapStoreFailure(plans));
+      const planned = await finishCatalogRevision(revisionDeps, ctx, draft.value);
+      if (planned.status !== 'ready') return revisionRefused(planned);
+      if (ctx.signal.aborted) return exit(rejected('cancelled', 'the catalog revision was cancelled before commit'));
+      const { revision, pin: _pin, ...fragment } = planned.value;
+      // The planner re-reads Project/Workspace, but the caller's own earlier read
+      // is the pin it declared. Merging both guards turns a commit that raised
+      // either revision in between into mergeGuards' revision_conflict instead of
+      // silently admitting the stale caller pin under the newer version.
+      const scoped = mergeGuards([...fragment.guards,
+        { refKey: canonicalJson(projectRefFor(projectId) as unknown as JsonValue),
+          expectedRevision: callerScope.projectRevision },
+        { refKey: canonicalJson(workspaceRefFor(projectId, workspaceId) as unknown as JsonValue),
+          expectedRevision: callerScope.workspaceRevision },
+      ]);
+      // A conflict on the caller's own pins is the same conflict shape as a
+      // planner or commit one: the identity may have committed the same command
+      // while the scope moved, so it takes that ONE recovery exit too.
+      if (!scoped.ok) {
+        return exit(scoped.rejection.code === 'revision_conflict' ? await recover(scoped.rejection) : scoped.rejection);
+      }
+      revised = revision;
+      return { kind: 'ready', plans: plans.value, commit: knowledgeCommit(prepared => records.commit(prepared), {
         ...fragment, guards: scoped.guards,
         identityKey: keys.identityKey, fingerprint: keys.fingerprint, indexGuards: [], indexChanges: [],
-      });
-    } catch (error) {
-      return unavailable('the catalog revision transaction failed: ' + messageOf(error));
+      }, thrown) };
+    });
+    if (outcome.kind === 'exit') return outcome.value;
+    if (outcome.kind === 'rejected') {
+      if (thrown.message !== null) return unavailable('the catalog revision transaction failed: ' + thrown.message);
+      const failure = mapStoreFailure(outcome.failure);
+      return outcome.failure.code === 'revision_conflict' ? recover(failure) : failure;
     }
-    if (committed.status !== 'committed') {
-      const failure = mapStoreFailure(committed);
-      if (committed.code === 'revision_conflict') {
-        return recoverConflictByIdentity(records, keys.identityKey, keys.fingerprint, failure,
-          receipt => restoreRevised(records, receipt, expectedIdentity));
-      }
-      return failure;
-    }
-    if (!committed.replayed) {
+    const committed = outcome.receipt;
+    if (outcome.files !== null && outcome.files.status !== 'ready') return unavailable(knowledgeFilesNotWritten(outcome.files));
+    if (!committed.replayed && revised !== null) {
+      // The answer lists the catalog in the read-back order (ruling G1), so it equals the current read.
       return { status: 'committed',
-        value: { ...revision, catalog: { ...revision.catalog, since: committed.cursor } },
+        value: { ...revised, catalog: { ...revised.catalog, catalog: inModuleIdOrder(revised.catalog.catalog),
+          since: committed.cursor } },
         replayed: false, cursor: committed.cursor };
     }
     const restored = await restoreRevised(records, committed, expectedIdentity);
@@ -738,7 +872,7 @@ export function createArchitectureCatalogService(stores: ArchitectureCatalogStor
     if (!nonEmpty(projectId)) return forbidden('a bound project call context is required');
     if (selection['kind'] === 'current') {
       if (!exactKeys(selection, ['kind'])) return invalid('a current selection carries only kind');
-      const current = await readCurrentCatalogWindow(records, projectId);
+      const current = await readCurrentCatalogWindow(records, projectId, { lines: knowledge, caller: ctx });
       if (current.status !== 'ready') return current;
       return { status: 'ready', value: { baseline: current.baseline, catalog: current.catalog } };
     }

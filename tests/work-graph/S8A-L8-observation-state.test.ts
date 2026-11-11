@@ -19,6 +19,7 @@
  * - the capture gate wraps the real `captureObservation`, so the driver's start
  *   snapshot can be proven by identity, watermark and the stale failure guard.
  */
+import { knowledgeLinesFor } from '../helpers/KLS2-knowledge-lines.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
@@ -154,7 +155,8 @@ async function fixture(kind: 'memory' | 'sqlite', options: FixtureOptions = {}) 
   if (registered.status !== 'committed') throw Error('Workspace registration failed: ' + JSON.stringify(registered));
 
   const records = backend.records as unknown as GoalRecordTransactionPort & RecordLookupPort;
-  const catalog = createArchitectureCatalogService({ records });
+  const catalog = createArchitectureCatalogService({ records,
+    knowledge: knowledgeLinesFor({ root: directory, projectId, workspaceId, records }) });
   const deps = (overrides: { workspace?: WorkspaceToolsPort; records?: typeof records;
     bodies?: RawArtifactStorePort; catalog?: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'> } = {}) => ({
     workspace: overrides.workspace ?? handle.tools,

@@ -1,3 +1,4 @@
+import { knowledgeLinesFor } from '../helpers/KLS2-knowledge-lines.js';
 import { afterEach, expect, it } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -104,7 +105,9 @@ it.each(['memory', 'sqlite'] as const)('%s: v2 relations and exact inputs surviv
         { ref: createdProject.value.ref, revision: createdProject.value.revision }, { ref: policyActiveRef, revision: 0 },
       ] } });
     if (activated.status !== 'committed') throw Error(`policy activation failed: ${JSON.stringify(activated)}`);
-    const adopted = await createArchitectureCatalogService({ records: backend.records }).adoptInitialArchitecture(ctx, {
+    const adopted = await createArchitectureCatalogService({ records: backend.records,
+      knowledge: knowledgeLinesFor({ root: await mkdtemp(join(tmpdir(), 'r3c-knowledge-')), projectId, workspaceId,
+        records: backend.records }) }).adoptInitialArchitecture(ctx, {
       input: { baselineId: 'baseline-1', catalog: { modules: [], dependencies: [], requireDag: true },
         description: 'Accepted baseline', constraints: [] },
       meta: { requestId: 'relations-adopt-baseline', expected: [

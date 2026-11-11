@@ -4,15 +4,16 @@
 
 - 负责：注记写入/复核/撤回/决定应用；按 id、锚点和记忆的读取；锚点解析与写入门；书记范围与配额计数；更新到期折叠；版本列表；书记待办；决定卡来源；记忆材料读取。
 - 不负责：记录 codec 和游标绑定在 `src/core/work-graph/persistence/note-record-codecs.ts`；注记状态与准入判断在 `src/core/work-graph/state/note-machine.ts`（`query_run` 的写入范围与 `storedGoalId` 由其中的纯 `secretaryNoteScope` 按 `SecretaryNoteScopeFactsV1` 判定）。本层只调用它们，不自己改记录字段。
-- 允许依赖 `model`、`state`、`persistence`、`architecture`、`sessions`、`tasks`，以及 `WorkspaceTools`/`RecordStore` 端口；不得 import `queries`、`evidence`、`communication`、`views`、`agent-runtime`、`app/`、`business/`、`composition/`（`docs/refactor/module-target.json`）。
+- 允许依赖 `model`、`state`、`persistence`、`knowledge`、`architecture`、`sessions`、`tasks`，以及 `WorkspaceTools`/`RecordStore` 端口；不得 import `queries`、`evidence`、`communication`、`views`、`agent-runtime`、`app/`、`business/`、`composition/`（`docs/refactor/module-target.json`）。
 - 状态迁移只经过 `src/core/work-graph/state/`（根 `AGENTS.md` 第 9 条）。读失败不得折成空列表、空范围、0 或“没有书记”（FP-05、FP-06、M1-12）。
 
 ## 文件
 
-`note-service.ts` — 唯一的注记写入器：写入、复核/撤回、决定应用、用户理由事实、工具提交回读；命令身份 `noteCommandIdentity`（write/review/withdraw/activate）。
+`note-service.ts` — 唯一的注记写入器：写入、复核/撤回、决定应用、用户理由事实、工具提交回读；命令身份 `noteCommandIdentity`（write/review/withdraw/activate）。写注记和处置经 `writeKnowledge` 提交，同一提交写出的每个 head（新注记、它取代或撤回的、被处置的）由 `noteFileWritesOf` 算注记文件的改动。
+`note-file.ts` — 注记的知识文件格式（纯）：首行 `--- knowledge-note@1`、`prettyJson` 的头、一行 `---`、原样的正文字节；没有 id 键，注记号只在文件名里（`noteIdFromFilePath`）。只有主锚点是模块、接口或文件的注记进文件，工作过程的附加锚点留在记录；file 锚点不带符号，file 事实和依据文件不带摘要；模块编号和路径按文件帧写，读回转回项目视图。link、flow、repair 这一版没有文件形式（写和读回都回 `invalid`）。
 `note-read-model.ts` — 注记读端口：按 id/锚点读取、六种记忆读、`find`、记忆材料（无 Goal 时只读项目理解与 norms）；并转出基础读法与唯一的记忆游标 helper（`encodeMemoryCursor`/`parseMemoryCursor`/`callerIdentityOf`）；`NoteReadDependencies.expandFlowForHead` 是 flow 项的展开依赖，`flowCheckOf` 合成流程的 freshness/currentEligible，`readSemanticCatalog` 是语义页的唯一目录读。
 `semantic-layer-read.ts` — 语义层的读侧：`readSemanticLinks` 按 project/module/file 范围读 `link` 的三状态页，`readSemanticFlows` 读 `flow` 的三状态页并按存储的步骤 id 展开（module/file 范围先取范围里任意状态的 `link`）；两页都一次 `checkHeads`，分别映射成 `SemanticLinkV1`/`SemanticFlowV1`。
-`activate-repair.ts` — 8C 的唯一 repair 激活 owner 与纯 footprint 判定：把 staged `repair` 注记绑到 Run 轮链的有效 head，检查轮 PASS、批准与 footprint，再一次 `PreparedCommit` 提交 `staged → accepted` 与 catalog revision contribution；`readBoundRepairRound`、`footprintProblem`、`activateRepair`、`readObservation`、`attemptRepairsForGoal` 与 `createRepairActivationService`。
+`activate-repair.ts` — 8C 的唯一 repair 激活 owner 与纯 footprint 判定：把 staged `repair` 注记绑到 Run 轮链的有效 head，检查轮 PASS、批准与 footprint，再一次 `PreparedCommit` 提交 `staged → accepted` 与 catalog revision contribution；激活（含当前目录读、规划、架构和注记文件改动）和任务不在时的撤回都经同一次 `writeKnowledge`，撤回用自己的命令身份；规划回“依据变了”（`source_stale`）时先按激活命令的身份查回执，同一命令已提交就重放它的结果（快速核对 5）；`readBoundRepairRound`、`footprintProblem`、`activateRepair`、`readObservation`、`attemptRepairsForGoal` 与 `createRepairActivationService`。
 `note-anchors.ts` — 锚点 key、主题归一化、写时锚点解析（含 symbol 定位：TS/JS 在工作树单文件的导航项里找，Python/C++ 经单文件查 `lookup`，都不开捕获）。Python 语法错只退回那个文件的锚，`ResolvedNoteAnchors.symbolProblems` 和成功回执的 `symbolProblems` 带文件、行、原因；别的锚照常解析。
 `note-anchor-facts.ts` — 锚点校验所需的 Goal/Plan 窗口事实读取，不经通用 Plan 服务。
 `note-related-scope.ts` — `find` 的 related 范围解析，以及纯 key 集合/相关谓词。
@@ -33,8 +34,12 @@
 
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
-| `createNoteService` | `src/core/work-graph/notes/note-service.ts:782` | 唯一注记写入端口：write/review/withdraw/applyNoteDecision/userReasonFacts/lookupToolCommit；`query_run` 准入只经注入的 `secretaryQueryRun` 端口；秘书的阶段锚点取本轮准备时冻结的 Plan 的版本，准备时没有 Plan 的轮拒绝阶段锚点；文件锚点的存在、候选、符号读和基准文件的读经 `noteCheckWorkspace`，写入、准入、额度和存下的作者仍是调用者；注入了 `regionScopes?` 时，区域参谋（Work Run 和冷启动的探索轮同一道）写的注记至少要有一个锚点在自己的有效区域模块里、或是自己目标的锚点，否则 `forbidden`/`anchor_out_of_region`（`link` 看检查后的两头，`flow` 看各步注记的锚点，证据和依据文件不算锚点）；开场参谋（项目范围）和只有目标范围的参谋不受这一道限 | 注入给 composition；所有注记写入与处置走它 |
-| `createRepairActivationService` | `src/core/work-graph/notes/activate-repair.ts:744` | 绑定 records/catalog/evidence 等依赖，返回 `readBoundRepairRound`/`activateRepair`/`attemptRepairsForGoal`；激活检查轮 PASS、批准、footprint 并一次提交注记与 catalog 修订 | 组合根装配 repair 激活；不要另开激活入口 |
+| `createNoteService` | `src/core/work-graph/notes/note-service.ts:829` | 唯一注记写入端口：write/review/withdraw/applyNoteDecision/userReasonFacts/lookupToolCommit；`query_run` 准入只经注入的 `secretaryQueryRun` 端口；秘书的阶段锚点取本轮准备时冻结的 Plan 的版本，准备时没有 Plan 的轮拒绝阶段锚点；文件锚点的存在、候选、符号读和基准文件的读经 `noteCheckWorkspace`，写入、准入、额度和存下的作者仍是调用者；注入了 `regionScopes?` 时，区域参谋（Work Run 和冷启动的探索轮同一道）写的注记至少要有一个锚点在自己的有效区域模块里、或是自己目标的锚点，否则 `forbidden`/`anchor_out_of_region`（`link` 看检查后的两头，`flow` 看各步注记的锚点，证据和依据文件不算锚点）；开场参谋（项目范围）和只有目标范围的参谋不受这一道限 | 注入给 composition；所有注记写入与处置走它 |
+| `noteFileWritesOf` | `src/core/work-graph/notes/note-service.ts:172` | 一次注记提交写出的每个 head 的文件改动：主锚点是知识锚点的进它那个工作区的线（模块编号的工作区，或存储路径的工作区）；link/flow/repair 这一版不进文件；字节没变给空改动 | 4 个注记写点（写注记、处置、修补激活、撤回）都调它；不要另写选线 |
+| `noteIdFromFilePath`、`isKnowledgeAnchor` | `src/core/work-graph/notes/note-file.ts:34`、`src/core/work-graph/notes/note-file.ts:38` | 注记文件路径到注记号；锚点是不是三种知识锚点 | 读注记文件、判注记进不进文件 |
+| `noteKnowledgeOf` | `src/core/work-graph/notes/note-file.ts:52` | 带 `source` 的 head → 文件里的知识字段（项目视图） | 写注记文件前；不要另取字段 |
+| `noteFileBytes`、`noteOfFileBytes` | `src/core/work-graph/notes/note-file.ts:86`、`src/core/work-graph/notes/note-file.ts:148` | 知识字段 ↔ 注记文件字节，文件帧是这条线的工作区；读回查精确键、知识锚点、按种类的专用字段（`payloadKindProblem`）和导出的锚点、来源、五段检查 | 组合根的 `writeNote`/`readNotesById` |
+| `createRepairActivationService` | `src/core/work-graph/notes/activate-repair.ts:801` | 绑定 records/catalog/evidence 等依赖，返回 `readBoundRepairRound`/`activateRepair`/`attemptRepairsForGoal`；激活检查轮 PASS、批准、footprint 并一次提交注记与 catalog 修订 | 组合根装配 repair 激活；不要另开激活入口 |
 | `createNoteReadModel` | `src/core/work-graph/notes/note-read-model.ts:480` | 注记读端口：`readNote`、`listByAnchor`、六种 `memory*`、`readMemoryMaterial`（无 Goal 只回项目理解与 norms，其余为空）；`expandFlowForHead` 依赖把 flow 项展开成 `flow` | 读注记、记忆查找、组装材料；Query 的当前 Goal 是本轮准备时冻结的 `effectiveGoalId`（由 `tasks/secretary-query-run.ts` 的解析器给出），绝不取模型参数 |
 | `createSemanticLayerRead` | `src/core/work-graph/notes/semantic-layer-read.ts:59` | 语义层的唯一读端口：`readSemanticLinks`（project/module/file，limit 1–100）、`readSemanticFlows`（project/module/file，limit 1–50，一页最多 500 个流程头）；一页一次核对；`checkSemanticLinks`（`semantic-layer-read.ts:55`，1–`NOTE_LINK_VERIFY_MAX` 条，按钮的优先级交第二档） | Host 的 `architecture/semantic-links`、`architecture/semantic-flows`、`architecture/semantic-links/check` 路由；不要另写范围、分页或 item 映射 |
 | `linkChecksOf` | `src/core/work-graph/notes/semantic-layer-read.ts:245` | 纯投影：核对的行 → `{ items: { noteId, version, verification } }`，不是联系的 `verification: null` | “重新核对”路由和 agent 的只读核对工具；不要另写投影 |

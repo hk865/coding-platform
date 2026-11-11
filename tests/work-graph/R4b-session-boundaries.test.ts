@@ -1,6 +1,7 @@
 /** R4b implementation acceptance. These cases are deliberately red while the
  * SessionDirectory and Runtime bridge return unsupported. Do not replace their
  * real stores with an in-process fake to make them pass. */
+import { knowledgeLinesFor } from '../helpers/KLS2-knowledge-lines.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -106,7 +107,9 @@ async function open(kind: 'memory' | 'sqlite') {
         responsibility: `Work link target ${moduleId}`, paths: [`src/${moduleId}`], interfaces: [] };
     }),
   ];
-  const catalog = createArchitectureCatalogService({ records: backend.records });
+  const catalog = createArchitectureCatalogService({ records: backend.records,
+    knowledge: knowledgeLinesFor({ root: directory, projectId: ctx.projectId, workspaceId: ctx.workspaceId!,
+      records: backend.records }) });
   const adopted = await catalog.adoptInitialArchitecture(ctx, {
     input: { baselineId: 'r4b-baseline', description: 'R4b Session boundary modules', constraints: [],
       catalog: { requireDag: true, dependencies: [], modules } },

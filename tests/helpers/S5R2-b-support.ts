@@ -85,7 +85,7 @@ export async function assembleB(f: S5DecisionFixture) {
       createPlanningQuestionCardSource(createPlanningQuestionReader({ records, plans,
         bindings: createInitializationBindingReader({ records }) }))],
     noticeSources: [createAutomaticReworkNoticeSource({ records })],
-    conflicts: createGoalConflictAssembler({ records, catalog: createArchitectureCatalogService({ records }),
+    conflicts: createGoalConflictAssembler({ records, catalog: createArchitectureCatalogService({ records, knowledge: f.knowledge }),
       executedFiles: createGoalExecutedFilesReader({ records }) }),
     positions: createNoticePositionComparator(), displayTokens: createNoticeDisplayToken(new Uint8Array(32)),
     lineage: { messages: mailbox, queries: createQueryJobService({ records, now: f.now, eventId: f.newId }), plans },

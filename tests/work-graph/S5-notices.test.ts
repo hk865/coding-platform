@@ -59,7 +59,7 @@ function harness(f: S5DecisionFixture, sources: readonly DecisionNoticeSourcePor
     displayTokens, positions, operatorActor: OPERATOR });
   const reads = createDecisionReadModel({ records: f.records, cardSources: [], noticeSources: sources,
     conflicts: createGoalConflictAssembler({ records: f.records,
-      catalog: createArchitectureCatalogService({ records: f.records }),
+      catalog: createArchitectureCatalogService({ records: f.records, knowledge: f.knowledge }),
       executedFiles: createGoalExecutedFilesReader({ records: f.records }) }), positions, displayTokens,
     lineage: { messages: createSessionMailbox(mailboxDependencies(f)),
       queries: createQueryJobService({ records: f.records, now: f.now, eventId: f.newId }),

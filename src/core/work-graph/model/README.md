@@ -64,6 +64,7 @@
 - `context-input-contracts.ts` — `TaskContextInputPort`：任务输入选择与分页读取。
 - `graph-context-contracts.ts` — 图上下文、任务卡、节点卡的读端口与 DTO；`look`/`find` 的 `goalRef` 可为 `null`（项目分支，不借任何 Goal 的 universe）；extensions 另有空目标的请求类型（只读项目理解和 norms，整份上下文读取仍要求 Goal）。
 - `kernel-command-read-contracts.ts` — Kernel 原始命令与 workspace 文件读取的窄端口类型。
+- `line-knowledge.ts` — 代码知识文件的端口：一条线（`LineRef`：仓库身份、工作区根的 realpath、分支）的 `LineKnowledge`（读架构文件、按 id 读注记文件、提交前算改动、提交后写一处改动）和服务拿到的 `KnowledgeLines`（项目工作区列表、一条线、项目全部线）；文件里的知识形状 `KnowledgeArchitecture`、`NoteKnowledgeV1`、`KnowledgeAnchorV1` 等；`lineRefKey` 是线的键（工作区和分支）。实现在组合根，服务只经它读写。
 - `material-contracts.ts` — `MaterialPort`：artifact 存储与按引用打开。
 - `note-contracts.ts` — 注记/记忆的写入、读取、检查、决定应用端口，上限常量与 `recordNoteRequestOf`；`NoteScopeV1` 的正本在 `contracts/note.ts`，这里只再导出。
 - `work-line-contracts.ts` — 工作线、节点详情、悬停读取与线 pin 写入端口。
@@ -71,6 +72,8 @@
 ## 可以复用的能力
 | 名字 | 文件:行 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
+| `lineRefKey` | `src/core/work-graph/model/line-knowledge.ts:22` | 线的键：`canonicalJson([workspaceId, branch])` | 索引、快照、写入记录、钉版本按线分时；不要另拼 |
+| `LineKnowledge`、`KnowledgeLines` | `src/core/work-graph/model/line-knowledge.ts:90`、`src/core/work-graph/model/line-knowledge.ts:112` | 一条线的知识文件读写端口；服务在依赖里拿 `KnowledgeLines`（必填），由组合根注入 | 架构和注记服务读写知识文件；不要直接碰磁盘 |
 | `GraphWrite` **正本** | `src/core/work-graph/model/task-contracts.ts:28` | 写请求信封 `{input, meta}`。`session-contracts.ts:18`、`src/core/work-graph/architecture/contracts.ts:16` 只是转出，不是副本 | 所有 GraphWrite 端口的请求参数 |
 | `TaskClaimPort` | `src/core/work-graph/model/claim-contracts.ts:155` | 认领、重新入队、审查认领的写入口；`ClaimTaskInput`/`RequeueTaskInput` 各有可选 `acknowledgement`，写结果带可选 `proofReceipt` | Task claim owner 注入时 |
 | `SessionDirectoryPort` | `src/core/work-graph/model/session-contracts.ts:143` | Session 创建、读取与分页目录；`findSessions` 给 `projectId` + `workspaceId` 读一个工作区，只给 `projectId` 时读整个项目的 active Session（无 target/role、不含归档） | Session 目录消费者 |
@@ -91,7 +94,7 @@
 | `PlanProposalWithAdoption`、`PlanImpactMarkV1`、`RequestCandidateImpactV1` | `src/core/work-graph/model/plan-contracts.ts:38`、`src/core/work-graph/model/plan-contracts.ts:41`、`src/core/work-graph/model/plan-contracts.ts:53` | 只读投影：已采用提案的 `adoptedBy?`（`plans/proposal`），以及 request candidate 的机械影响标记（`plans/request-candidate` 的 `impact.marks`；`before`/`after` 是完整 `FrozenTaskDefinition`）与本请求上一版候选的 `previous`（`plans/proposal` 读旧 draft） | 采用人读口与候选影响读口；不进存储类型、不加路由 |
 | `AdoptionStopTargetsV1` / `PlanServicePort.readAdoptionStopTargets` | `src/core/work-graph/model/plan-contracts.ts:241` | PS §3.2 的只读停目标：候选只改处置的任务及每个任务的全部 Run（没有 Run 的任务不列出）；方法只加在真实 `PlanServicePort`，实现复用公开 `readPlanProposal` 的授权路径 | 组合根的采用前停止包装读取；不要扩大 `PlanTaskPort` |
 | `GoalReadV1`、`TaskRow.attemptOrdinal`、`PlanTaskPort.readGoalOrdinal` | `src/core/work-graph/model/plan-contracts.ts:84`、`src/contracts/task-graph.ts:92`（`attemptOrdinal`）、`src/core/work-graph/model/plan-contracts.ts:233` | `goals/read` 的人在值：`GoalDetail` 加 `ordinal`（读不到 `null`）；任务行带选定 Run 的尝试序号（没有选定 Run 时不出现）；可选读口让旧 `PlanTaskPort` 替身照旧编译 | 界面读号；内部 `queryGoal` 保持 `GoalDetail` |
-| `CandidateRequestFactsPort` | `src/core/work-graph/model/decision-contracts.ts:86` | candidate request facts：`root`、`initiatedByOperator`、`currentSecretary` 与 `guards` 之外，另带 `interventionSource`（admitted `intervention_planning` Query 的来源消息，其他 Query 为 `null`） | 计划提案的窄准入与候选头读取；不要另读 Query 意图 |
+| `CandidateRequestFactsPort` | `src/core/work-graph/model/decision-contracts.ts:87` | candidate request facts：`root`、`initiatedByOperator`、`currentSecretary` 与 `guards` 之外，另带 `interventionSource`（admitted `intervention_planning` Query 的来源消息，其他 Query 为 `null`） | 计划提案的窄准入与候选头读取；不要另读 Query 意图 |
 | `ProposedPlanDraftRequestV1` | `src/core/work-graph/model/plan-contracts.ts:55` | 提议的草稿臂：Goal、基于的 Plan、草稿与原因；`source` 必须缺省；`sourceMessageRef?` 是干预来源消息，present-only（缺省时旧指纹逐字节不变），记录与事件里是必填可空 | 现有调用方经 `ProposedPlanRequestV1` 使用这一臂；干预提案带 `sourceMessageRef` |
 | `ProposedPlanSourceRequestV1` | `src/core/work-graph/model/plan-contracts.ts:64` | 提议的来源臂：无 Goal、无草稿，只带 `InitializationSourceV1` | 无 Goal 的初始提议；不要在这臂传草稿 |
 | `ProposedPlanRequestV1` | `src/core/work-graph/model/plan-contracts.ts:52` | 两臂联合（草稿臂 `ProposedPlanDraftRequestV1` 或来源臂 `ProposedPlanSourceRequestV1`） | 所有 `proposePlan` 请求；按 `source` 有无选臂 |
@@ -113,12 +116,13 @@
 | `MaterialPort` | `src/core/work-graph/model/material-contracts.ts:11` | 存 artifact、按引用打开并区分历史用途 | 材料读写 |
 | `SessionMailboxPort` | `src/core/work-graph/model/communication-contracts.ts:352` | 消息发送、读取、ack、回复；读不改状态；7C-1 另带可选的 Host 发送回执读 `lookupHostSendCommit`（只按原发送身份查，不改答案） | 收件箱与决定消息 |
 | `ForwardMessageInputV1`、`DisposeWaitInputV1`、`ForwardMessageResultV1`、`MessageForwardingPort` | `src/core/work-graph/model/communication-contracts.ts:530` | 转发 owner 的输入/结果 DTO 与端口：`forwarded` 是一次提交，`existing` 是第二次同目标命令且不带游标；P 的复制转发只经 `forwardCopiedIntervention` | 组合根装配转发 owner、P 的复制 owner 与 F 的行时；不要另写转发输入/结果或端口 |
-| `DecisionReadPort` | `src/core/work-graph/model/decision-contracts.ts:479` | 决定队列、来源页与冲突读取 | 决定读模型 |
-| `GoalListPhaseV1`、`GoalListRowV1`、`GoalListReadV1`、`GoalListReadPort` | `src/core/work-graph/model/decision-contracts.ts:320`、`:323`、`:334`、`:336` | 全工作区 Goal 列表读：无游标，行只带 settings/显示摘要，`ordinal` 读不全为 `null`，phase 只回四个可判值（其余 `null` 走 `goals/display`） | `goals/list` 路由；不要另造 Goal 行 DTO 或循环读单 Goal |
-| `DecisionSourceFactsPort` | `src/core/work-graph/model/decision-contracts.ts:241` | 重建决定来源事实；`readSource` 的 `goal` 在项目 subject 为 `null` | 答复/卡片前证明来源真实时 |
-| `NoteDecisionSourcePort` | `src/core/work-graph/model/decision-contracts.ts:282` | 注记复核卡：`readNoteDecisions` 收 `subject`（Goal 或 project）、按 pin 读一张（带回注记自己的 `subject`，只在过时信号时为 `null`）与应用 | 装配注记卡来源时 |
-| `DecisionCardSourcePort` | `src/core/work-graph/model/decision-contracts.ts:498` | 把来源记录投影成决定卡；`serves` 声明来源服务的 subject（`goal`：每个 Goal 读一次；`project`：读不按 Goal 过滤时为绑定的项目读一次，零 Goal 也读）；`readPage` 不带 `goalRef` 即读项目的卡，不服务的 subject 回空页 | 卡片来源适配 |
-| `DecisionNoticeSourcePort` | `src/core/work-graph/model/decision-contracts.ts:518` | notice 项的读取与排序 | notice 来源适配 |
+| `DecisionReadPort` | `src/core/work-graph/model/decision-contracts.ts:480` | 决定队列、来源页与冲突读取 | 决定读模型 |
+| `ConflictArchitectureRead`、`PreparedConflictArchitecture`、`DecisionQueueWindowMoved`、`DecisionQueuePreparedReader` | `src/core/work-graph/model/decision-contracts.ts:503`、`:518`、`:523`、`:524` | R-窗（KLS-2 第九轮裁定）：定窗之前读的冲突架构和当时的目录指针 revision；给自己也有账本窗的调用方先读一次、交给每一页队列读的内部读口，没有路由。带预读的队列读只试一次，窗口移动回 `moved`，由调用方重新预读、整轮重读自己的窗，最多 `WINDOW_MAX_ATTEMPTS` 次；调用方最后一次（`last`）移动就是队列自己的 `unavailable`（叠树审查 2） | lines/list、上下文的分页队列 |
+| `GoalListPhaseV1`、`GoalListRowV1`、`GoalListReadV1`、`GoalListReadPort` | `src/core/work-graph/model/decision-contracts.ts:321`、`:323`、`:334`、`:336` | 全工作区 Goal 列表读：无游标，行只带 settings/显示摘要，`ordinal` 读不全为 `null`，phase 只回四个可判值（其余 `null` 走 `goals/display`） | `goals/list` 路由；不要另造 Goal 行 DTO 或循环读单 Goal |
+| `DecisionSourceFactsPort` | `src/core/work-graph/model/decision-contracts.ts:242` | 重建决定来源事实；`readSource` 的 `goal` 在项目 subject 为 `null` | 答复/卡片前证明来源真实时 |
+| `NoteDecisionSourcePort` | `src/core/work-graph/model/decision-contracts.ts:283` | 注记复核卡：`readNoteDecisions` 收 `subject`（Goal 或 project）、按 pin 读一张（带回注记自己的 `subject`，只在过时信号时为 `null`）与应用 | 装配注记卡来源时 |
+| `DecisionCardSourcePort` | `src/core/work-graph/model/decision-contracts.ts:534` | 把来源记录投影成决定卡；`serves` 声明来源服务的 subject（`goal`：每个 Goal 读一次；`project`：读不按 Goal 过滤时为绑定的项目读一次，零 Goal 也读）；`readPage` 不带 `goalRef` 即读项目的卡，不服务的 subject 回空页 | 卡片来源适配 |
+| `DecisionNoticeSourcePort` | `src/core/work-graph/model/decision-contracts.ts:554` | notice 项的读取与排序 | notice 来源适配 |
 | `CopyInterventionReadPort`、`CopyInterventionRetractionPort`、`CopyInterventionCandidateV1` | `src/core/work-graph/model/goal-copy-contracts.ts:17`、`src/core/work-graph/model/goal-copy-contracts.ts:22`、`src/core/work-graph/model/goal-copy-contracts.ts:15` | 复制取消 Goal 时读可复制干预、撤回一条，以及候选 DTO（C 的正本再导出；失败是拒绝，不是空集） | 实现或注入 copy 端口时 |
 | `NoteWritePort` | `src/core/work-graph/model/note-contracts.ts:110` | 注记写入、审核、撤回 | 注记写 owner |
 | `NoteHeadCheckPort`、`NoteLinkVerifyV1` | `src/core/work-graph/model/note-contracts.ts:300`、`src/core/work-graph/model/note-contracts.ts:253` | 注记检查端口：`checkNotes`（不带 `verifyLinks` 只做第一档、从不建程序；带 `verifyLinks: NoteLinkVerifyV1` 时存疑的头版本联系交第二档；`heldByRun` 是替哪个 Run 读）、`checkHeads`，和两个只读 Host 内存的方法：`doubtfulLinks`（读出 `refs_pending`、还没有结论的头版本联系，按 `noteId`）、`brokenLinks`（读出 `broken` 的 accepted/reviewed 头版本联系，带 `heldByRun`） | 注记读模型、写后核对、“重新核对”路由、Run 里改文件后的检查；Host 的后台批量读 `doubtfulLinks`，书记提醒读 `brokenLinks` |

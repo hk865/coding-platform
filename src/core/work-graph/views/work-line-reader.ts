@@ -45,7 +45,9 @@ import type {
 import type { QueryExecutionStateV1, QueryRunRef } from '../../../contracts/query-job.js';
 import type { RoundSnapshot, VerificationRoundRef } from '../../../contracts/verification.js';
 import type { SessionDutyReadPort, WorkLineReadPort } from '../model/work-line-contracts.js';
-import type { DecisionCardV1, DecisionReadPort } from '../model/decision-contracts.js';
+import type { DecisionCardV1, DecisionQueuePreparedReader, DecisionQueueWindowMoved, DecisionReadPort,
+  PreparedConflictArchitecture } from '../model/decision-contracts.js';
+import { WINDOW_MAX_ATTEMPTS } from './decision-read-model.js';
 import type { SessionWaitV1 } from '../model/session-facts-contracts.js';
 import {
   deriveMessageDelivery, type MessageDeliveryFactsV1, type SessionMailboxPort, type SessionMessage,
@@ -122,7 +124,7 @@ export type WorkLineReaderDeps = {
    * read", while a present port that fails marks every row `attentionComplete:
    * false` (rule 5). The composition root injects the real read model.
    */
-  decisions?: Pick<DecisionReadPort, 'queryDecisionQueue'>;
+  decisions?: Pick<DecisionReadPort, 'queryDecisionQueue'> & DecisionQueuePreparedReader;
   /** The stored name is one branch ahead of 2C's chain: one batch read for the page's
    *  heads, never per row. Optional so every existing caller compiles; absent = null. */
   roleFacts?: RoleFactsReadPort;
@@ -423,10 +425,12 @@ async function assembleLineRows(
   order: 'sort-key' | 'given' = 'sort-key',
   /** L1/N1 (review item 4a): the already-enumerated active copies, by source Session. */
   activeCopies?: ActiveCopies,
+  /** R-window: the queue the active list read inside its own window (`openActiveWindow`). */
+  listQueue?: QueueRead,
 ): Promise<ReadResult<{ rows: LineRowV1[]; facts: Map<string, LineFactsV1>; attentionProblem: string | null; legacyUnchecked: LineCountV1 }>> {
   const budgetValue = deps.historyReadBudget ?? LINE_HISTORY_READ_BUDGET;
   const shared: SharedReads = { goals: new Map(), workspace: null, secretaryOrdinals: null };
-  const queue = await readDecisionQueue(deps, ctx, workspace);
+  const queue = listQueue ?? await readDecisionQueue(deps, ctx, workspace);
   // L1/N1 (review item 4a): read the active copies once per list (the active list
   // already enumerated them and passes the index in). Bounded by current work.
   let copiesIndex: ActiveCopies;
@@ -2159,16 +2163,26 @@ const EXCLUDED_GOAL_CAUSES: ReadonlySet<string> = new Set([
   'required_task_deferred', 'initial_plan_pending', 'change_pending',
 ]);
 
-/** A present-but-failed queue read is a read-incomplete, never "no cards" (rule 5). */
-async function readDecisionQueue(deps: WorkLineReaderDeps, ctx: CoreCallContext, workspace: WorkspaceScope): Promise<QueueRead> {
+/**
+ * A present-but-failed queue read is a read-incomplete, never "no cards" (rule 5).
+ * Only a prepared read (inside the active list's window) can come back `moved`.
+ */
+function readDecisionQueue(deps: WorkLineReaderDeps, ctx: CoreCallContext, workspace: WorkspaceScope): Promise<QueueRead>;
+function readDecisionQueue(deps: WorkLineReaderDeps, ctx: CoreCallContext, workspace: WorkspaceScope,
+  queueArchitecture: PreparedConflictArchitecture | undefined): Promise<QueueRead | DecisionQueueWindowMoved>;
+async function readDecisionQueue(deps: WorkLineReaderDeps, ctx: CoreCallContext, workspace: WorkspaceScope,
+  queueArchitecture?: PreparedConflictArchitecture): Promise<QueueRead | DecisionQueueWindowMoved> {
   if (deps.decisions === undefined) return { cards: [], complete: true, problem: null };
   const listPageLimit = deps.listPageLimit ?? 100;
   const cards: DecisionCardV1[] = [];
   try {
     let cursor: string | undefined;
     for (;;) {
-      const read = await deps.decisions.queryDecisionQueue(ctx, { workspace, sections: ['waiting_answer'],
-        page: cursor === undefined ? { limit: listPageLimit } : { limit: listPageLimit, cursor } });
+      const queueInput: Parameters<DecisionReadPort['queryDecisionQueue']>[1] = { workspace, sections: ['waiting_answer'],
+        page: cursor === undefined ? { limit: listPageLimit } : { limit: listPageLimit, cursor } };
+      const read = queueArchitecture === undefined ? await deps.decisions.queryDecisionQueue(ctx, queueInput)
+        : await deps.decisions.queryDecisionQueuePrepared(ctx, queueInput, queueArchitecture);
+      if (read.status === 'moved') return read;
       if (read.status !== 'ready') {
         return { cards: [], complete: false,
           problem: `decision_queue_read_failed: ${read.status === 'rejected' ? read.reason : read.status}` };
@@ -3054,16 +3068,39 @@ async function readCopiesSection(
     sourceCursor: sourceCursor ?? ('c0000000000' as CommitCursor) } };
 }
 
+/**
+ * KLS-2 ruling 9 (R-window), stack review 2: the active list's window (opened
+ * by the active heads' read, closed by the archived count's same instant) and
+ * the decision queue it reads first. The queue's conflicts read the
+ * architecture files, so those are read before the window and the queue makes
+ * one attempt inside it (a failed architecture read is the queue's own
+ * failure); a queue window that moved opens the list's window again from a new
+ * architecture read, at most WINDOW_MAX_ATTEMPTS times. On the last attempt the
+ * queue answers its own `unavailable`, which the list carries as its attention
+ * problem as before.
+ */
+async function openActiveWindow(deps: WorkLineReaderDeps, ctx: CoreCallContext, workspace: WorkspaceScope,
+  lookupPageLimit: number): Promise<StoreRead<{ window: ActiveWindow & { heads: SessionRecord[] }; queue: QueueRead }>> {
+  for (let attempt = 1; ; attempt += 1) {
+    const prepared = deps.decisions === undefined ? undefined
+      : { read: await deps.decisions.readConflictArchitecture(ctx), last: attempt === WINDOW_MAX_ATTEMPTS };
+    const window = await listActiveHeads(deps.records, workspace, lookupPageLimit);
+    if (window.status !== 'ready') return window;
+    const queue = await readDecisionQueue(deps, ctx, workspace, prepared);
+    if (!('status' in queue)) return { status: 'ready', value: { window: window.value, queue } };
+  }
+}
+
 export function createWorkLineReader(deps: WorkLineReaderDeps): WorkLineReadPort {
   const lookupPageLimit = deps.lookupPageLimit ?? 200;
   return {
     async listWorkLines(ctx, input): Promise<ReadResult<WorkLineListV1>> {
-      const windowResult = await listActiveHeads(deps.records, input.workspace, lookupPageLimit);
-      if (windowResult.status !== 'ready') return windowResult;
-      const window = windowResult.value;
+      const opened = await openActiveWindow(deps, ctx, input.workspace, lookupPageLimit);
+      if (opened.status !== 'ready') return opened;
+      const { window, queue } = opened.value;
       const assembled = await assembleLineRows(deps, ctx, input.workspace,
         window.heads.map((session) => ({ projectId: session.ref.projectId, sessionId: session.ref.sessionId })),
-        'sort-key', indexActiveCopies(window.sessions));
+        'sort-key', indexActiveCopies(window.sessions), queue);
       if (assembled.status !== 'ready') return assembled;
       const rows = assembled.value.rows;
       const attentionProblem = assembled.value.attentionProblem;

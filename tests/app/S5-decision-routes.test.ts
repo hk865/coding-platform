@@ -225,7 +225,7 @@ it('RT06 decisions/notices/seen with a mismatched display token is invalid and c
     // port is the real `lookupOrdered` itself.
     const reads = createDecisionReadModel({ records, cardSources: [],
       noticeSources: [createAutomaticReworkNoticeSource({ records })], displayTokens, positions,
-      conflicts: createGoalConflictAssembler({ records, catalog: createArchitectureCatalogService({ records }),
+      conflicts: createGoalConflictAssembler({ records, catalog: createArchitectureCatalogService({ records, knowledge: f.knowledge }),
         executedFiles: createGoalExecutedFilesReader({ records }) }),
       // The real platform's own mailbox/Query/Plan owners over this same ledger.
       lineage: { messages: composed.messages, queries: composed.queries, plans: composed.plans } });

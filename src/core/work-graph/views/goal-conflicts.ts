@@ -20,7 +20,9 @@ import { decisionSourceKey,
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import type { ArchitectureCatalogPort } from '../architecture/catalog-contracts.js';
+import { activeRefKey } from '../architecture/catalog-service.js';
 import type {
+  ConflictArchitectureRead,
   DecisionCardV1,
   GoalConflictReadV1,
   GoalExecutedFilesPort,
@@ -56,9 +58,15 @@ export type DecisionReadRecordsPort = Pick<S5RecordPort, 'readMany' | 'lookup'>;
 
 /** The narrow conflict read the aggregator (F42) delegates to. */
 export interface GoalConflictAssemblerPort {
+  /**
+   * `architecture` is one the caller read before ITS stable window
+   * (`readCurrentArchitecture`), and the caller checks the catalog pointer
+   * inside that window. Absent, every attempt reads it before its own window.
+   */
   queryGoalConflicts(ctx: CoreCallContext, input: {
-    workspace: WorkspaceScope; atLeastCursor?: CommitCursor;
+    workspace: WorkspaceScope; atLeastCursor?: CommitCursor; architecture?: AdoptedArchitecture | null;
   }): Promise<ReadResult<GoalConflictReadV1>>;
+  readCurrentArchitecture(ctx: CoreCallContext): Promise<ReadResult<ConflictArchitectureRead>>;
 }
 
 /** Only the current catalog, the executed-files seam and read-only records are needed. */
@@ -112,6 +120,23 @@ function unavailableReason(error: unknown): string {
     return (error as { reason: string }).reason;
   }
   return error instanceof Error ? error.message : 'the read failed';
+}
+
+/** R-window: the current catalog pointer record's revision, `null` when no catalog is adopted. */
+export async function readCatalogPointerRevision(
+  records: DecisionReadRecordsPort,
+  projectId: string,
+): Promise<ReadResult<number | null>> {
+  const refKey = activeRefKey(projectId);
+  let read: Awaited<ReturnType<DecisionReadRecordsPort['readMany']>>;
+  try {
+    read = await records.readMany([refKey]);
+  } catch (error) {
+    return storeFailureToRejection(error as { code: string; reason: string });
+  }
+  if (read.status !== 'ready') return storeFailureToRejection(read);
+  const record = read.value.records.find((candidate) => candidate.refKey === refKey);
+  return { status: 'ready', value: record === undefined ? null : record.revision };
 }
 
 /** The store's read watermark; a failure is returned, never turned into `null`. */
@@ -208,32 +233,52 @@ export function createGoalConflictAssembler(
     async queryGoalConflicts(ctx, input) {
       return queryGoalConflicts(deps, ctx, input);
     },
+    async readCurrentArchitecture(ctx) {
+      return readConflictArchitecture(deps, ctx);
+    },
   };
 }
 
 async function queryGoalConflicts(
   deps: GoalConflictAssemblerDependencies,
   ctx: CoreCallContext,
-  input: { workspace: WorkspaceScope; atLeastCursor?: CommitCursor },
+  input: { workspace: WorkspaceScope; atLeastCursor?: CommitCursor; architecture?: AdoptedArchitecture | null },
 ): Promise<ReadResult<GoalConflictReadV1>> {
+  // §8.2 scope row: the explicit Workspace is compared with the bound scope
+  // before any foreign Goal/Plan record is read.
+  const scopeProblem = workspaceScopeProblem(ctx, input.workspace);
+  if (scopeProblem !== null) return scopeProblem;
   // §4.1 line 772 / §3.3: one stable window, at most 4 attempts.
   for (let attempt = 0; attempt < WINDOW_MAX_ATTEMPTS; attempt += 1) {
-    const result = await assembleGoalConflicts(deps, ctx, input);
+    // R-window: the knowledge files are read before the window is fixed. An
+    // architecture the caller passed is checked in the caller's window.
+    let windowArchitecture: WindowArchitecture;
+    if (input.architecture !== undefined) {
+      windowArchitecture = { architecture: input.architecture, checkedByCaller: true };
+    } else {
+      const read = await readConflictArchitecture(deps, ctx);
+      if (read.status !== 'ready') return read;
+      windowArchitecture = { ...read.value, checkedByCaller: false };
+    }
+    const result = await assembleGoalConflicts(deps, ctx, input, windowArchitecture);
     if (result !== CONFLICT_WINDOW_MOVED) return result;
   }
   return { status: 'rejected', code: 'unavailable',
     reason: `conflicts did not yield one stable read window within ${String(WINDOW_MAX_ATTEMPTS)} attempts` };
 }
 
+/** The architecture one conflict window maps files with; the pointer is checked here unless the caller does it. */
+type WindowArchitecture =
+  | { architecture: AdoptedArchitecture | null; checkedByCaller: true }
+  | (ConflictArchitectureRead & { checkedByCaller: false });
+
 async function assembleGoalConflicts(
   deps: GoalConflictAssemblerDependencies,
   ctx: CoreCallContext,
   input: { workspace: WorkspaceScope; atLeastCursor?: CommitCursor },
+  windowArchitecture: WindowArchitecture,
 ): Promise<ReadResult<GoalConflictReadV1> | typeof CONFLICT_WINDOW_MOVED> {
-  // §8.2 scope row: the explicit Workspace is compared with the bound scope
-  // before any foreign Goal/Plan record is read.
-  const scopeProblem = workspaceScopeProblem(ctx, input.workspace);
-  if (scopeProblem !== null) return scopeProblem;
+  const { architecture } = windowArchitecture;
   let listed: Awaited<ReturnType<typeof listWorkspaceGoals>>;
   try {
     listed = await listWorkspaceGoals(deps.records, input.workspace, deps.lookupPageLimit);
@@ -246,7 +291,7 @@ async function assembleGoalConflicts(
   const watermark = listed.watermark;
   const footprints: { goal: GoalSnapshot; footprint: GoalFootprintV1 }[] = [];
   for (const goal of listed.goals) {
-    const read = await readGoalFootprint(deps, ctx, { goalRef: goal.ref,
+    const read = await readGoalFootprint(deps, ctx, { goalRef: goal.ref, architecture,
       ...(input.atLeastCursor === undefined ? {} : { atLeastCursor: input.atLeastCursor }) });
     if (read.status !== 'ready') return read;
     footprints.push({ goal, footprint: read.value });
@@ -260,6 +305,14 @@ async function assembleGoalConflicts(
     const terminalRead = await readGoalTerminalState(deps.records, goal);
     if (terminalRead.status !== 'ready') return terminalRead;
     terminalByKey.set(canonicalJson(goal.ref as unknown as JsonValue), terminalRead.value);
+  }
+
+  // R-window: a catalog pointer that moved since the architecture was read means
+  // the footprints may map files with an older catalog than this window's.
+  if (!windowArchitecture.checkedByCaller) {
+    const pointer = await readCatalogPointerRevision(deps.records, input.workspace.projectId);
+    if (pointer.status !== 'ready') return pointer;
+    if (pointer.value !== windowArchitecture.catalogPointerRevision) return CONFLICT_WINDOW_MOVED;
   }
 
   // §4.1 line 772: a later horizon proves the listing and the footprint reads did
@@ -363,7 +416,8 @@ function conflictCard(left: GoalSnapshot, right: GoalSnapshot, terminal: GoalTer
 export async function readGoalFootprint(
   deps: GoalConflictAssemblerDependencies,
   ctx: CoreCallContext,
-  input: { goalRef: GoalRef; atLeastCursor?: CommitCursor },
+  /** `architecture`: read before the caller's stable window; absent, the footprint reads the current one. */
+  input: { goalRef: GoalRef; atLeastCursor?: CommitCursor; architecture?: AdoptedArchitecture | null },
 ): Promise<ReadResult<GoalFootprintV1>> {
   let goal: GoalSnapshot;
   try {
@@ -378,26 +432,14 @@ export async function readGoalFootprint(
     return storeFailureToRejection(error as { code: string; reason: string });
   }
 
-  // The current formal catalog (a baseline without a catalog is NOT an empty one).
-  // §8.2 data row: a catalog read that cannot complete is `unavailable` naming
-  // the source, never the legitimate "no catalog adopted" answer. Only a real
-  // `not_found` stays `architecture = null`.
-  let architecture: AdoptedArchitecture | null = null;
-  let revision: Awaited<ReturnType<ArchitectureCatalogPort['readArchitectureRevision']>>;
-  try {
-    revision = await deps.catalog.readArchitectureRevision(ctx, { selection: { kind: 'current' } });
-  } catch (error) {
-    return { status: 'rejected', code: 'unavailable',
-      reason: `architecture catalog: ${unavailableReason(error)}` };
+  let architecture: AdoptedArchitecture | null;
+  if (input.architecture !== undefined) {
+    architecture = input.architecture;
+  } else {
+    const read = await readCurrentCatalog(deps, ctx);
+    if (read.status !== 'ready') return read;
+    architecture = read.value;
   }
-  if (revision.status === 'ready') {
-    architecture = revision.value.catalog.catalog;
-  } else if (revision.status === 'rejected') {
-    return { status: 'rejected', code: 'unavailable', reason: `architecture catalog: ${revision.reason}` };
-  } else if (revision.status === 'not_ready') {
-    return { status: 'rejected', code: 'unavailable', reason: 'architecture catalog: the read window was not ready' };
-  }
-  // `not_found` is the genuine "no catalog adopted" answer: keep it as absence.
 
   // DESIGN §1.2: the active Plan's module claims and planned files, by the one plan-footprint rule.
   let planned: Pick<GoalFootprintV1, 'plannedModules' | 'plannedFiles'> = { plannedModules: [], plannedFiles: [] };
@@ -447,4 +489,39 @@ export async function readGoalFootprint(
     possiblyIncomplete: executed.value.possiblyIncomplete || executed.value.availability !== 'available'
       || mapped.some((file) => file.moduleRef === null),
   } };
+}
+
+/**
+ * The current formal catalog (a baseline without a catalog is NOT an empty one).
+ * §8.2 data row: a catalog read that cannot complete is `unavailable` naming
+ * the source, never the legitimate "no catalog adopted" answer. Only a real
+ * `not_found` is the absence (`null`).
+ */
+async function readCurrentCatalog(deps: GoalConflictAssemblerDependencies, ctx: CoreCallContext):
+  Promise<ReadResult<AdoptedArchitecture | null>> {
+  let revision: Awaited<ReturnType<ArchitectureCatalogPort['readArchitectureRevision']>>;
+  try {
+    revision = await deps.catalog.readArchitectureRevision(ctx, { selection: { kind: 'current' } });
+  } catch (error) {
+    return { status: 'rejected', code: 'unavailable',
+      reason: `architecture catalog: ${unavailableReason(error)}` };
+  }
+  if (revision.status === 'ready') return { status: 'ready', value: revision.value.catalog.catalog };
+  if (revision.status === 'rejected') {
+    return { status: 'rejected', code: 'unavailable', reason: `architecture catalog: ${revision.reason}` };
+  }
+  if (revision.status === 'not_ready') {
+    return { status: 'rejected', code: 'unavailable', reason: 'architecture catalog: the read window was not ready' };
+  }
+  return { status: 'ready', value: null };
+}
+
+/** R-window: the catalog pointer revision first, then the architecture it (or a later pointer) names. */
+async function readConflictArchitecture(deps: GoalConflictAssemblerDependencies, ctx: CoreCallContext):
+  Promise<ReadResult<ConflictArchitectureRead>> {
+  const pointer = await readCatalogPointerRevision(deps.records, ctx.projectId);
+  if (pointer.status !== 'ready') return pointer;
+  const architecture = await readCurrentCatalog(deps, ctx);
+  if (architecture.status !== 'ready') return architecture;
+  return { status: 'ready', value: { architecture: architecture.value, catalogPointerRevision: pointer.value } };
 }

@@ -31,7 +31,7 @@
  * directly.
  */
 import { createHash } from 'node:crypto';
-import { mkdir, writeFile as writeFileOnDisk } from 'node:fs/promises';
+import { cp, mkdir, writeFile as writeFileOnDisk } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { vi } from 'vitest';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
@@ -271,6 +271,8 @@ export async function createS2BBe1Platform(options: S2BBe1PlatformOptions): Prom
   })();
   const workspaceDir = join(f.directory, 'workspace');
   await mkdir(workspaceDir, { recursive: true });
+  // KLS-2: the workspace root moved here keeps its knowledge files (the claim fixture adopted the catalog in its directory).
+  await cp(join(f.directory, '.workbench'), join(workspaceDir, '.workbench'), { recursive: true });
   const workspaceHost: WorkspaceHostBindings = {
     async resolveRoot(scope) {
       return scope.projectId === f.scope.projectId && scope.workspaceId === f.scope.workspaceId

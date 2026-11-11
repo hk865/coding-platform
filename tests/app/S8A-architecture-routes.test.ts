@@ -13,6 +13,7 @@
  * validation (its `invalid` reason names the method) instead of the route
  * layer's unpublished-route `not_found`.
  */
+import { knowledgeLinesFor } from '../helpers/KLS2-knowledge-lines.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -118,7 +119,8 @@ describe('S8A architecture read routes', () => {
       await fx.edit('src/a/one.ts', 'import { lib } from "../b/lib";\nexport const one = lib;\n');
       await fx.edit('src/b/lib.ts', 'import { one } from "../a/one";\nexport const lib = one;\n');
       fx.allowOnly(['src/a/one.ts', 'src/b/lib.ts']);
-      const catalog = createArchitectureCatalogService({ records: fx.deps().records });
+      const catalog = createArchitectureCatalogService({ records: fx.deps().records,
+        knowledge: knowledgeLinesFor({ root: fx.root, ...scope, records: fx.deps().records }) });
       const observed = createObservedArchitecture({ ...fx.deps(),
         source: { provider: 'typescript', configPath: null } });
       const architecture = { ...catalog, ...observed } as unknown as CoreRoutePlatform['architecture'];

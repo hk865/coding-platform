@@ -141,7 +141,7 @@ export function owners(f: S5DecisionFixture, records: S5Records = f.records, bod
         bindings: createInitializationBindingReader({ records }), ...planningQuestionWidths }))],
     noticeSources: [createAutomaticReworkNoticeSource({ records: orderedRecords, ...automaticReworkWidths })],
     conflicts: createGoalConflictAssembler({ records: orderedRecords,
-      catalog: createArchitectureCatalogService({ records: orderedRecords }),
+      catalog: createArchitectureCatalogService({ records: orderedRecords, knowledge: f.knowledge }),
       executedFiles: createGoalExecutedFilesReader({ records: orderedRecords }),
       ...(widths.decision?.lookupPageLimit === undefined
         ? {} : { lookupPageLimit: widths.decision.lookupPageLimit }) }),

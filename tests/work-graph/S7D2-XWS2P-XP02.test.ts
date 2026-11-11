@@ -27,7 +27,7 @@ import type { NoteDraftV1 } from '../../src/contracts/note.js';
 import type { GraphReadPageV1, NodeCardV1 } from '../../src/core/work-graph/model/graph-context-contracts.js';
 import { anchorKeyOf } from '../../src/core/work-graph/notes/note-anchors.js';
 import {
-  addXWS2PSecondModule, findXWS2P, listXWS2PNotes, lookXWS2P, openXWS2PWorld, readXWS2PCatalog,
+  addXWS2PSecondModule, xws2pModuleId, findXWS2P, listXWS2PNotes, lookXWS2P, openXWS2PWorld, readXWS2PCatalog,
   readXWS2PNote, writeXWS2PNote, xws2pProjectPath, type XWS2PWorld,
 } from '../helpers/XWS2P-world.js';
 
@@ -51,17 +51,18 @@ describe('XP-02 two workspaces, one project catalog, two note anchors', () => {
     const setup = await addXWS2PSecondModule(world, {
       moduleId: 'second-mod', name: 'second-mod', summary: 'second workspace module' });
     expect(setup).toMatchObject({ status: 'committed' });
+    const secondMod = xws2pModuleId(world.second.scope.workspaceId, 'second-mod');
 
     // 1. The one project catalog: M1 keeps its bare path, M2 carries the second workspace's prefix.
     const catalog = await readXWS2PCatalog(world);
     const modules = catalog.catalog.catalog.modules;
     const m1 = modules.find(module => module.ref.moduleId === 's6a-core');
-    const m2 = modules.find(module => module.ref.moduleId === 'second-mod');
+    const m2 = modules.find(module => module.ref.moduleId === secondMod);
     expect(m1?.name).toBe('first-mod');
     expect(m1?.paths).toEqual(['src']);
     expect(m2?.paths).toEqual([qualified]);
     expect(m1?.ref.moduleId).not.toBe(m2?.ref.moduleId);
-    expect(modules.filter(module => module.ref.moduleId === 'second-mod')).toHaveLength(1);
+    expect(modules.filter(module => module.ref.moduleId === secondMod)).toHaveLength(1);
 
     // 2. The two notes: the second workspace's stored anchor is the canonical project path.
     const mainWrite = await writeXWS2PNote(world, world.main, noteAt('src/a.ts', 'xp02-main'), 'xp02-main');
@@ -98,7 +99,7 @@ describe('XP-02 two workspaces, one project catalog, two note anchors', () => {
     expect(secondLook.status).toBe('ready');
     if (mainLook.status !== 'ready' || secondLook.status !== 'ready') return;
     expect(moduleIdsOf(mainLook.value)).toEqual(['s6a-core']);
-    expect(moduleIdsOf(secondLook.value)).toEqual(['second-mod']);
+    expect(moduleIdsOf(secondLook.value)).toEqual([secondMod]);
 
     // 4. `graph/find('src/a.ts')` attributes the file to the workspace's own module.
     const mainFind = await findXWS2P(world, world.main, 'src/a.ts');
@@ -107,8 +108,8 @@ describe('XP-02 two workspaces, one project catalog, two note anchors', () => {
     expect(secondFind.status).toBe('ready');
     if (mainFind.status !== 'ready' || secondFind.status !== 'ready') return;
     expect(moduleIdsOf(mainFind.value)).toContain('s6a-core');
-    expect(moduleIdsOf(mainFind.value)).not.toContain('second-mod');
-    expect(moduleIdsOf(secondFind.value)).toContain('second-mod');
+    expect(moduleIdsOf(mainFind.value)).not.toContain(secondMod);
+    expect(moduleIdsOf(secondFind.value)).toContain(secondMod);
     expect(moduleIdsOf(secondFind.value)).not.toContain('s6a-core');
   }, 180_000);
 });

@@ -25,7 +25,9 @@ import type {
   ArchiveLineInput, ArchiveLineResultV1, ArchiveStepReceiptV1,
 } from '../../src/business/workflow/session-archive.js';
 import { AG2B_SCOPE, AG2B_WORK_TASK_ID, corePost, plain } from '../helpers/AG2b-collaboration-fixture.js';
-import { installS1ScenarioClock, ledgerCounts, loseResponse, ready } from '../helpers/S1-runtime-scenario-fixture.js';
+import {
+  installS1ScenarioClock, ledgerCounts, loseResponse, ready, scribeReminderSent,
+} from '../helpers/S1-runtime-scenario-fixture.js';
 import {
   assertInvariants, cleanupScenarios, hostCtx, openHostScenario, performs, type HostScenario,
 } from './harness.js';
@@ -125,6 +127,7 @@ async function expectArchived(c: Interrupted, requestId: string): Promise<Archiv
   expect(result.value).toMatchObject({ state: 'archived', message: '已归档', pendingOn: null, rejection: null,
     session: { lifecycle: 'archived', archiveRequest: null } });
   // D10: a plain continuation after finalization reports CURRENT state only.
+  await scribeReminderSent(c.host.database);
   const before = { files: c.host.counts(), ledger: ledgerCounts(c.host.database) };
   const current = ready(await resume(c, requestId));
   expect(current).toEqual({ ...result.value, receipts: [] });

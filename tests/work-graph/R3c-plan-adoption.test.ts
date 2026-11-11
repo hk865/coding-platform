@@ -1,3 +1,4 @@
+import { knowledgeLinesFor } from '../helpers/KLS2-knowledge-lines.js';
 import { afterEach, expect, it } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -114,7 +115,9 @@ it.each(['memory', 'sqlite'] as const)('%s: real Goal→candidate→accepted Pla
     // The hand-written prerequisite used an architecture content revision 2.
     // The initial adoption writes revision 1, so one public revision writes the
     // same revision-2 baseline content the original assertion expects.
-    const catalog = createArchitectureCatalogService({ records: backend.records });
+    const catalog = createArchitectureCatalogService({ records: backend.records,
+      knowledge: knowledgeLinesFor({ root: await mkdtemp(join(tmpdir(), 'r3c-knowledge-')), projectId, workspaceId,
+        records: backend.records }) });
     const catalogBody = { modules: [{ ref: { projectId, moduleId: 'r3c-module' }, name: 'R3c module',
       responsibility: 'The R3c module', paths: ['src/r3c'], interfaces: [] }],
     dependencies: [], requireDag: true as const };

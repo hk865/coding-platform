@@ -126,6 +126,25 @@ export function ledgerCounts(directory: string) {
   } finally { db.close(); }
 }
 
+/**
+ * Waits (10 ms polls, 30 s cap) until the ledger holds a scribe reminder: a restarted Host's start-up pass sends it
+ * as `host-start-up-reconcile`, so counts taken before it lands would see it as a later write.
+ */
+export async function scribeReminderSent(directory: string): Promise<void> {
+  // Counted polls, not `Date.now()`: the S1 clock fakes Date.
+  for (let polls = 0; polls < 3_000; polls += 1) {
+    const db = new DatabaseSync(join(storeDirOf(directory), 'ledger.sqlite'), { readOnly: true });
+    let count: number;
+    try {
+      count = Number((db.prepare("SELECT COUNT(*) AS n FROM events WHERE instr(event_json, '\"requestId\":\"scribe-reminder:') > 0")
+        .get() as { n: number }).n);
+    } finally { db.close(); }
+    if (count > 0) return;
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  throw new Error('the restarted Host sent no scribe reminder within 30 s');
+}
+
 /** A missing Kernel mapping is a health fact; only the real health owner retires
  * the Session. This seam does not manufacture a Session/Run/Attempt snapshot. */
 export async function retireS1Session(directory: string, ctx: CoreCallContext, sessionRef: SessionRef) {

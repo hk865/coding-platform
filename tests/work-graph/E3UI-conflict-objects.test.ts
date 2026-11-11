@@ -27,6 +27,7 @@ import { ag2bPlanDraft, graphWrite } from '../helpers/AG2b-collaboration-fixture
 import { countedFacts } from '../helpers/S2B-activity-fixture.js';
 import { openS2BTrackFixture, type S2BTrackFixture } from '../helpers/S2B-track-fixture.js';
 import { openS5DecisionFixture, type S5DecisionFixture } from '../helpers/S5-decision-fixture.js';
+import { knowledgeLinesFor } from '../helpers/KLS2-knowledge-lines.js';
 import { S6A_AT, S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
 import { openS7C1World, S7C1_CREATE_ROLE, type S7C1World } from '../helpers/S7C-member-fixture.js';
 import { valueOf } from '../helpers/S6B3-fixture.js';
@@ -135,7 +136,8 @@ describe('E3UI conflict cards: the files and the time the two Goals share', () =
 
     const assembler = createGoalConflictAssembler({
       records: f.records,
-      catalog: createArchitectureCatalogService({ records: f.records }),
+      catalog: createArchitectureCatalogService({ records: f.records, knowledge: knowledgeLinesFor({ root: f.b2.base.directory,
+        ...f.b2.base.scope, records: f.records }) }),
       executedFiles: f.goalExecutedFiles(),
     });
     const result = await assembler.queryGoalConflicts(f.ctx, { workspace: f.b2.base.scope });
@@ -204,7 +206,7 @@ describe('E3UI conflict cards: the files and the time the two Goals share', () =
     expect(wrote).toMatchObject({ status: 'committed' });
 
     const records = f.b2.base.records as unknown as Parameters<typeof createGoalExecutedFilesReader>[0]['records'];
-    const catalog = createArchitectureCatalogService({ records: records as never });
+    const catalog = createArchitectureCatalogService({ records: records as never, knowledge: f.knowledge });
     const executedFiles = createGoalExecutedFilesReader({ records });
     const assembler = createGoalConflictAssembler({ records: records as never, catalog, executedFiles });
     const result = await assembler.queryGoalConflicts(f.ctx, { workspace: f.base.scope });

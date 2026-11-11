@@ -10,6 +10,7 @@
  * barrier in `afterEach` before closing its worlds. A held adoption promise must be awaited in `finally` after
  * releasing its hold, before closing the world. `reset()` releases holds but does not drain those calls.
  */
+import { knowledgeLinesFor } from './KLS2-knowledge-lines.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -267,7 +268,8 @@ export async function openAgentWorld(backend: Backend) {
   return {
     scope: w2.base.scope, goalRef: w2.goalRef, planRef: w2.planRef, plans: w2.plans, ctx: w2.ctxHost,
     futureDraft: w2.futureDraft, proposeAsWorkRun, proposeAsHost: w2.proposeAsHost, applyAsHost: w2.applyAsHost,
-    ...catalogSteps(createArchitectureCatalogService({ records: w2.records }), w2.ctxHost,
+    ...catalogSteps(createArchitectureCatalogService({ records: w2.records,
+      knowledge: knowledgeLinesFor({ root: w2.base.directory, ...w2.base.scope, records: w2.records }) }), w2.ctxHost,
       () => scopePinsOf(projects, w2.ctxHost, w2.base.scope), 's8b-agent'),
     close: () => w2.close(),
   };

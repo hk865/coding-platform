@@ -187,7 +187,7 @@ export function readConstraints(value: unknown): { name: string; scope: string }
 
 /** Reads the frozen fixture-shaped baseline content. Additive optional fields are
  * preserved verbatim: the digest covers the whole object, so nothing is stripped. */
-function readBaselineContent(value: unknown): ArchitectureBaselineContentV1 | null {
+export function readArchitectureBaselineContent(value: unknown): ArchitectureBaselineContentV1 | null {
   if (!isRecord(value)) return null;
   if (value['schemaVersion'] !== 1) return null;
   if (typeof value['description'] !== 'string') return null;
@@ -222,7 +222,7 @@ export function readArchitectureBaselineSnapshot(value: unknown): ArchitectureBa
   if (!isSafeRevision(value['contentRevision']) || value['contentRevision'] < 1) return null;
   if (value['contentRevision'] !== ref.revision) return null;
   if (!isSha256(value['contentDigest'])) return null;
-  const content = readBaselineContent(value['content']);
+  const content = readArchitectureBaselineContent(value['content']);
   if (content === null) return null;
   const digest = architectureBaselineDigest({
     schemaVersion: value['schemaVersion'], baselineId: value['baselineId'],

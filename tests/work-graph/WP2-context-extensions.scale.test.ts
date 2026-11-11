@@ -10,7 +10,8 @@ import type { ContextExtensionsV1 } from '../../src/contracts/graph-context.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft, PlanRevisionRef } from '../../src/contracts/plan.js';
 import type { SessionAnomalyViewV1 } from '../../src/contracts/session-anomaly.js';
-import type { DecisionCardSourcePort, DecisionReadPort } from '../../src/core/work-graph/model/decision-contracts.js';
+import type { DecisionCardSourcePort, DecisionQueuePreparedReader,
+  DecisionReadPort } from '../../src/core/work-graph/model/decision-contracts.js';
 import type { ContextReadRequestV1 } from '../../src/core/work-graph/model/graph-context-contracts.js';
 import type { SessionPage } from '../../src/core/work-graph/model/session-contracts.js';
 import { decisionSourceKey } from '../../src/contracts/goal-decisions.js';
@@ -67,13 +68,13 @@ function anomalyDouble(): Pick<SessionAnomalyPort, 'listSessionAnomalies'> {
  * card/page is used for these two rows.
  */
 function realDecisionQueue(f: S5DecisionFixture,
-  cardSources: readonly DecisionCardSourcePort[] = []): DecisionReadPort {
+  cardSources: readonly DecisionCardSourcePort[] = []): DecisionReadPort & DecisionQueuePreparedReader {
   return createDecisionReadModel({
     records: f.records,
     cardSources: [...cardSources],
     noticeSources: [],
     conflicts: createGoalConflictAssembler({ records: f.records,
-      catalog: createArchitectureCatalogService({ records: f.records }),
+      catalog: createArchitectureCatalogService({ records: f.records, knowledge: f.knowledge }),
       executedFiles: createGoalExecutedFilesReader({ records: f.records }) }),
     positions: createNoticePositionComparator(),
     displayTokens: createNoticeDisplayToken(new Uint8Array(32).fill(2)),
@@ -89,7 +90,7 @@ type DecisionHarness = {
   f: S5DecisionFixture;
   mailbox: ReturnType<typeof createSessionMailbox>;
   decisions: ReturnType<typeof createDecisionMessageService>;
-  queue: DecisionReadPort;
+  queue: DecisionReadPort & DecisionQueuePreparedReader;
 };
 
 async function openDecisionHarness(): Promise<DecisionHarness> {
@@ -123,7 +124,7 @@ const F07_CANDIDATE_COUNT = 100;
 
 type DeferredDecisionHarness = {
   f: S5DecisionFixture;
-  queue: DecisionReadPort;
+  queue: DecisionReadPort & DecisionQueuePreparedReader;
   /** W2b-22: the real SessionAnomaly reader over the same world's records. */
   anomalies: SessionAnomalyPort;
   goalRef: GoalRef;

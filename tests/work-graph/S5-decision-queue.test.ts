@@ -1,5 +1,10 @@
 /** SPEC §5.3 DQ01–DQ09. Every service row runs on memory and SQLite. */
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { KnowledgeLines } from '../../src/core/work-graph/model/line-knowledge.js';
+import { knowledgeLinesFor } from '../helpers/KLS2-knowledge-lines.js';
 import type { DecisionSelectionV1, DecisionSourceV1 } from '../../src/contracts/goal-decisions.js';
 import { decisionSourceKey } from '../../src/contracts/goal-decisions.js';
 import type { VersionPin } from '../../src/contracts/core/identity.js';
@@ -46,13 +51,13 @@ const closers: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of closers.splice(0)) await close(); });
 
 function readers(records: S5RecordPort & RecordOrderedLookupPort, plans: PlanTaskPort,
-  lineage: PlanSourceLineageDeps) {
+  lineage: PlanSourceLineageDeps, knowledge: KnowledgeLines) {
   return createDecisionReadModel({ records,
     cardSources: [createGoalCauseCardSource(createGoalDecisionCauseReader({ records, plans })),
       createPlanningQuestionCardSource(createPlanningQuestionReader({ records, plans,
         bindings: createInitializationBindingReader({ records }) }))],
     noticeSources: [createAutomaticReworkNoticeSource({ records })],
-    conflicts: createGoalConflictAssembler({ records, catalog: createArchitectureCatalogService({ records }),
+    conflicts: createGoalConflictAssembler({ records, catalog: createArchitectureCatalogService({ records, knowledge }),
       executedFiles: createGoalExecutedFilesReader({ records }) }),
     positions: createNoticePositionComparator(), displayTokens: createNoticeDisplayToken(new Uint8Array(32)),
     lineage });
@@ -70,7 +75,7 @@ async function open(kind: 'memory' | 'sqlite', reopen = false) {
   const mailboxDeps = mailboxDependencies(f);
   const mailbox = createSessionMailbox(mailboxDeps);
   const queryJobs = createQueryJobService({ records: f.records, now: f.now, eventId: f.newId });
-  const reads = readers(f.records, plans, { messages: mailbox, queries: queryJobs, plans });
+  const reads = readers(f.records, plans, { messages: mailbox, queries: queryJobs, plans }, f.knowledge);
   const decisions = createDecisionMessageService({ records: f.records, now: f.now, newId: f.newId, operatorActor: OPERATOR,
     messages: mailbox, materials: mailboxDeps.materials,
     messageWrites: createMessageWriteOwner(mailboxDeps), sources: createDecisionSourceFacts({ structuralProposalObjects: readStructuralProposalObjects, records: f.records, bindings: createInitializationBindingReader({ records: f.records }) }) });
@@ -176,7 +181,9 @@ describe.each(['memory', 'sqlite'] as const)('S5 decision queue (%s)', kind => {
 
   it('DQ03 exposes missing initial architecture as a Goal cause', async () => {
     const f = await openUninitializedQueue(kind); closers.push(f.close);
-    expect(await createArchitectureCatalogService({ records: f.records }).readArchitectureRevision(f.ctx, { selection: { kind: 'current' } }))
+    const knowledge = knowledgeLinesFor({ root: mkdtempSync(join(tmpdir(), 's5-dq03-')), projectId: WORKSPACE.projectId,
+      workspaceId: WORKSPACE.workspaceId, records: f.records });
+    expect(await createArchitectureCatalogService({ records: f.records, knowledge }).readArchitectureRevision(f.ctx, { selection: { kind: 'current' } }))
       .toMatchObject({ status: 'not_found' });
     const lineageMailbox = createSessionMailbox({
       records: f.records,
@@ -191,7 +198,7 @@ describe.each(['memory', 'sqlite'] as const)('S5 decision queue (%s)', kind => {
       messages: lineageMailbox,
       queries: createQueryJobService({ records: f.records, now: () => T, eventId: () => 'dq03-lineage' }),
       plans: f.plans,
-    }).queryDecisionQueue(f.ctx,
+    }, knowledge).queryDecisionQueue(f.ctx,
       { workspace: WORKSPACE_SCOPE, goalRef: GOAL_B, sections: SECTIONS, page: { limit: 50 } }));
     const architecture = read.waitingAnswer.filter(c => c.source.kind === 'goal_cause' && c.actions.includes('adopt_architecture'));
     expect(architecture).toHaveLength(1);

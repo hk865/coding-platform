@@ -250,9 +250,11 @@ async function withSourceFault<T>(options: WP2PlatformOptions, action: () => Pro
   }
   if (options.failDecisionsRead === true) {
     const original = decisionReadSource.createDecisionReadModel;
+    // The context's paged queue reads through `queryDecisionQueuePrepared` (KLS-2 ruling 9): it fails the same way.
     spies.push(vi.spyOn(decisionReadSource, 'createDecisionReadModel').mockImplementation(
-      (...args: Parameters<typeof original>) =>
-        withThrowingMethod(original(...args), 'queryDecisionQueue', 'WP2 injected decision queue read failure')));
+      (...args: Parameters<typeof original>) => withThrowingMethod(
+        withThrowingMethod(original(...args), 'queryDecisionQueue', 'WP2 injected decision queue read failure'),
+        'queryDecisionQueuePrepared', 'WP2 injected decision queue read failure')));
   }
   try { return await action(); } finally { for (const spy of spies) spy.mockRestore(); }
 }

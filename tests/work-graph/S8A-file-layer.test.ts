@@ -7,6 +7,7 @@
  * and the query, edges only between the page's nodes. Item 8: a capture with no
  * TS files still succeeds with an empty module layer.
  */
+import { knowledgeLinesFor } from '../helpers/KLS2-knowledge-lines.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -373,7 +374,8 @@ describe('A-01 file-level observation layer', () => {
       if (captured.status !== 'committed') return;
       const module = (moduleId: string, paths: string[]) => ({ ref: { projectId, moduleId }, name: moduleId,
         responsibility: moduleId, paths, interfaces: [] as { id: string; description: string; paths: string[] }[] });
-      const catalogService = createArchitectureCatalogService({ records: fx.deps().records });
+      const catalogService = createArchitectureCatalogService({ records: fx.deps().records,
+        knowledge: knowledgeLinesFor({ root: fx.root, projectId, workspaceId, records: fx.deps().records }) });
       const adopted = await catalogService.adoptInitialArchitecture(context, {
         input: { baselineId: 'base-1', description: 'S8A comparison', constraints: [],
           catalog: { modules: [module('E', ['src/e']), module('F', ['src/f'])],
@@ -414,7 +416,8 @@ describe('A-01 file-level observation layer', () => {
       if (captured.status !== 'committed') return;
       const module = (moduleId: string, paths: string[]) => ({ ref: { projectId, moduleId }, name: moduleId,
         responsibility: moduleId, paths, interfaces: [] as { id: string; description: string; paths: string[] }[] });
-      const catalogService = createArchitectureCatalogService({ records: fx.deps().records });
+      const catalogService = createArchitectureCatalogService({ records: fx.deps().records,
+        knowledge: knowledgeLinesFor({ root: fx.root, projectId, workspaceId, records: fx.deps().records }) });
       const adopted = await catalogService.adoptInitialArchitecture(context, {
         input: { baselineId: 'base-1', description: 'S8A comparison guards', constraints: [],
           catalog: { modules: [module('E', ['src/e'])], dependencies: [], requireDag: true } },

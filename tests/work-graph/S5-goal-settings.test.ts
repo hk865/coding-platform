@@ -312,7 +312,7 @@ function decisions(x: Ctx) {
 async function conflicts(x: Ctx): Promise<GoalConflictReadV1> {
   const reads = createDecisionReadModel({ records: x.f.records, cardSources: [], noticeSources: [],
     conflicts: createGoalConflictAssembler({ records: x.f.records,
-      catalog: createArchitectureCatalogService({ records: x.f.records }),
+      catalog: createArchitectureCatalogService({ records: x.f.records, knowledge: x.f.knowledge }),
       executedFiles: createGoalExecutedFilesReader({ records: x.f.records }) }),
     positions: createNoticePositionComparator(), displayTokens: createNoticeDisplayToken(new Uint8Array(32)),
     lineage: { messages: mailboxFor(x).mailbox,

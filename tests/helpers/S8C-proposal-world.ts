@@ -304,8 +304,8 @@ export async function openProposalWorld(options: { backend?: 'memory' | 'sqlite'
       });
     });
     const realWindowRead = catalogServiceModule.readCurrentCatalogWindow;
-    windowSpy = vi.spyOn(catalogServiceModule, 'readCurrentCatalogWindow').mockImplementation(async (records, projectId) => {
-      const result = await realWindowRead(records, projectId);
+    windowSpy = vi.spyOn(catalogServiceModule, 'readCurrentCatalogWindow').mockImplementation(async (records, projectId, knowledge) => {
+      const result = await realWindowRead(records, projectId, knowledge);
       const hook = windowGlobals[WINDOW_HOOK_KEY];
       if (hook != null) { windowGlobals[WINDOW_HOOK_KEY] = null; await hook(); }
       return result;

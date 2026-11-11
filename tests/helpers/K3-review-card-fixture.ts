@@ -383,7 +383,8 @@ export async function openK3ReviewCardWorld(
   // `additionalSchemas`, `forwarded`, `observeRecords`).
   const readModel = createDecisionReadModel({ records, cardSources, noticeSources: [],
     conflicts: createGoalConflictAssembler({ records,
-      catalog: createArchitectureCatalogService({ records }), executedFiles: createGoalExecutedFilesReader({ records }) }),
+      catalog: createArchitectureCatalogService({ records, knowledge: fixture.knowledge }),
+      executedFiles: createGoalExecutedFilesReader({ records }) }),
     positions: createNoticePositionComparator(), displayTokens: createNoticeDisplayToken(new Uint8Array(32)),
     lineage: { messages: mailbox, queries: createQueryJobService({ records, now: () => T, eventId: nextDecisionId }),
       plans: fixture.b2.base.plans } });

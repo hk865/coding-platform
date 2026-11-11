@@ -17,7 +17,7 @@ import type { GoalRef } from '../../../contracts/ledger.js';
 import type { ModuleRef, VersionPin } from '../../../contracts/core/identity.js';
 import type { SessionMessageRecord } from '../state/message-machine.js';
 import type { DecisionChangeProofV1, DecisionSubjectV1 } from '../../../contracts/goal-decisions.js';
-import type { NoteBodyV1, CatalogRepairOpV1, NoteHeadSnapshot } from '../../../contracts/note.js';
+import type { NoteBodyV1, CatalogRepairOpV1, NoteHeadSnapshot, PendingNoteHeadSnapshot } from '../../../contracts/note.js';
 import type { RunActivitySnapshot } from '../../../contracts/run-activity.js';
 import type { RoundSnapshot } from '../../../contracts/verification.js';
 import type { RunSnapshot } from '../../../contracts/dispatch.js';
@@ -29,11 +29,17 @@ import type {
 } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { ObservedArchitecturePort } from '../architecture/contracts.js';
-import { readCurrentCatalogWindow, catalogPinOf } from '../architecture/catalog-service.js';
+import {
+  architectureWritePlansOf, catalogPinOf, knowledgeBaselineOf, readCurrentCatalogWindow,
+} from '../architecture/catalog-service.js';
+import {
+  knowledgeCommit, knowledgeFilesNotWritten, writeKnowledge, type KnowledgeCommitThrow, type KnowledgePrepared,
+} from '../knowledge/knowledge-write.js';
+import type { KnowledgeLines, LineKnowledge } from '../model/line-knowledge.js';
 import { decodeArchitectureCatalogRevisedEvent, encodeArchitectureCatalogRevisedEvent,
   ARCHITECTURE_CATALOG_REVISED_EVENT } from '../architecture/catalog-record-codecs.js';
 import {
-  planCatalogRevision, type CatalogRevisionDependencies,
+  draftCatalogRevision, finishCatalogRevision, type CatalogRevisionDependencies,
 } from '../architecture/revision-planner.js';
 import { repairBindingDigest, repairNeedsCard } from '../architecture/repair-ops.js';
 import { decodeEvidenceSnapshot } from '../persistence/evidence-record-codecs.js';
@@ -53,7 +59,7 @@ import { runActivityRefOf } from '../tasks/run-activity-service.js';
 import { evidenceApplicabilityWithBasis } from '../tasks/evidence-coverage.js';
 import { replayCommittedReceipt } from '../tasks/receipt-replay.js';
 import { mapExecutedFilesToModules } from '../model/architecture-footprint.js';
-import { noteCommandIdentity } from './note-service.js';
+import { noteCommandIdentity, noteFileWritesOf } from './note-service.js';
 import { normalizePath } from './note-anchors.js';
 import { readAllHeads } from './note-base-reader.js';
 import { mapStoreFailure } from './store-failures.js';
@@ -69,6 +75,8 @@ export type RepairActivationDependencies = {
       Promise<ReadResult<{ message: SessionMessageRecord | null }>>;
   };
   catalogRevision: Pick<CatalogRevisionDependencies, 'taskFacts' | 'responsibility' | 'duty'>;
+  /** The knowledge files the activation reads the current catalog from and writes. */
+  knowledge: KnowledgeLines;
   /** The project's main workspace; absent treats the Run's workspace as main. */
   mainWorkspaceOf?: (projectId: string) => Promise<ReadResult<string | null>>;
   now(): string;
@@ -291,6 +299,20 @@ async function replayActivation(deps: RepairActivationDependencies, ctx: CoreCal
   return replayed.status === 'committed' ? replayed.value : replayed;
 }
 
+/**
+ * The original result of this activation command when it already committed (a concurrent copy may have),
+ * the failed lookup's rejection, or null when it has not committed.
+ */
+async function priorActivation(deps: RepairActivationDependencies, ctx: CoreCallContext,
+  keys: { identityKey: string; fingerprint: string },
+  input: { commandId: string; noteId: string; expectedVersion: number }): Promise<ActivateRepairResult | null> {
+  const prior = await deps.records.lookupCommit(keys);
+  if (prior.status === 'ready') return replayActivation(deps, ctx, prior.value, input);
+  if (prior.code === 'idempotency_conflict') return rejected('idempotency_conflict', prior.reason);
+  if (prior.code !== 'not_found') return rejected('unavailable', prior.reason);
+  return null;
+}
+
 export async function activateRepair(
   deps: RepairActivationDependencies, ctx: CoreCallContext,
   input: { commandId: string; noteId: string; expectedVersion: number },
@@ -345,69 +367,120 @@ async function activateRepairWith(
 ): Promise<ActivateRepairResult> {
   const identityKey = noteCommandIdentity('activate', ctx, input.commandId);
   const fingerprint = fingerprintOfActivation(ctx, input);
-  const prior = await deps.records.lookupCommit({ identityKey, fingerprint });
-  if (prior.status === 'ready') return replayActivation(deps, ctx, prior.value, input);
-  if (prior.code === 'idempotency_conflict') return rejected('idempotency_conflict', prior.reason);
-  if (prior.code !== 'not_found') return rejected('unavailable', prior.reason);
+  const prior = await priorActivation(deps, ctx, { identityKey, fingerprint }, input);
+  if (prior !== null) return prior;
 
+  const thrown = { message: null as string | null };
+  const activation = { result: null as ActivationPrepared | null };
+  const outcome = await writeKnowledge(deps.knowledge, ctx, lines => prepareActivation(deps, ctx, input,
+    observationCache, { identityKey, fingerprint }, lines, thrown, activation));
+  if (outcome.kind === 'exit') return outcome.value;
+  const result = activation.result;
+  if (outcome.kind === 'rejected') {
+    // DR-02: the withdrawal commits under its own identity and answers `withdrawn` once it landed.
+    if (result?.kind === 'withdrawn') {
+      const landed = await deps.records.lookupCommit(result.keys);
+      if (landed.status === 'ready') return rejected('invalid', 'withdrawn');
+      return thrown.message !== null ? rejected('unavailable', 'the withdrawal commit could not be re-checked')
+        : mapStoreFailure(outcome.failure);
+    }
+    const restored = await deps.records.lookupCommit({ identityKey, fingerprint });
+    if (restored.status === 'ready') return replayActivation(deps, ctx, restored.value, input);
+    return thrown.message !== null ? rejected('unavailable', 'the activation commit could not be re-checked')
+      : mapStoreFailure(outcome.failure);
+  }
+  const receipt = outcome.receipt;
+  if (result?.kind !== 'withdrawn' && receipt.replayed) return replayActivation(deps, ctx, receipt, input);
+  if (outcome.files !== null && outcome.files.status !== 'ready') {
+    return rejected('unavailable', knowledgeFilesNotWritten(outcome.files));
+  }
+  if (result === null) return rejected('unavailable', 'the activation was not prepared');
+  if (result.kind === 'withdrawn') return rejected('invalid', 'withdrawn');
+  // The event carries the pre-bind revision (`catalog.since` is null); the
+  // caller's result carries the commit cursor, exactly as the replay restores
+  // it and as the human catalog-revision route fills it.
+  const { noteId, version, revision } = result;
+  return { status: 'activated', noteId, version, cursor: receipt.cursor,
+    revision: { ...revision, catalog: { ...revision.catalog, since: receipt.cursor } } };
+}
+
+/** What a prepared activation answers once its commit lands: the activation, or the subject's withdrawal. */
+type ActivationPrepared =
+  | { kind: 'activated'; noteId: string; version: number; revision: ArchitectureRevision }
+  | { kind: 'withdrawn'; keys: { identityKey: string; fingerprint: string } };
+
+/**
+ * Everything after the receipt lookup: the note, round, footprint and approval
+ * checks, the current catalog read (from the knowledge files), the plan, the
+ * records and the file changes, prepared after the knowledge lines are taken.
+ */
+async function prepareActivation(
+  deps: RepairActivationDependencies, ctx: CoreCallContext,
+  input: { commandId: string; noteId: string; expectedVersion: number },
+  observationCache: ObservationCache, keys: { identityKey: string; fingerprint: string },
+  lines: readonly LineKnowledge[], thrown: KnowledgeCommitThrow,
+  activation: { result: ActivationPrepared | null },
+): Promise<KnowledgePrepared<ActivateRepairResult>> {
+  const { identityKey, fingerprint } = keys;
+  const exit = (value: ActivateRepairResult): KnowledgePrepared<ActivateRepairResult> => ({ kind: 'exit', value });
   const noteKey = noteHeadRefKey({ aggregateType: 'NoteHead', projectId: ctx.projectId, noteId: input.noteId });
   const headRead = await deps.records.readMany([noteKey]);
-  if (headRead.status !== 'ready') return mapStoreFailure(headRead);
+  if (headRead.status !== 'ready') return exit(mapStoreFailure(headRead));
   const headRecord = headRead.value.records.find((record) => record.refKey === noteKey);
-  if (headRecord === undefined) return rejected('not_found', 'the note does not exist');
+  if (headRecord === undefined) return exit(rejected('not_found', 'the note does not exist'));
   const decodedHead = decodeNoteHeadSnapshot(headRecord);
-  if (decodedHead.status !== 'decoded') return rejected('unavailable', `the note head is damaged: ${decodedHead.reason}`);
+  if (decodedHead.status !== 'decoded') return exit(rejected('unavailable', `the note head is damaged: ${decodedHead.reason}`));
   const head = decodedHead.value;
-  if (head.state === 'withdrawn') return rejected('invalid', 'withdrawn');
-  if (head.state !== 'staged') return rejected('invalid', 'not_staged');
-  if (input.expectedVersion !== head.version) return { status: 'source_stale', reason: 'note_version_changed' };
-  if (head.stagedRunKey === null) return rejected('invalid', 'not_staged');
+  if (head.state === 'withdrawn') return exit(rejected('invalid', 'withdrawn'));
+  if (head.state !== 'staged') return exit(rejected('invalid', 'not_staged'));
+  if (input.expectedVersion !== head.version) return exit({ status: 'source_stale', reason: 'note_version_changed' });
+  if (head.stagedRunKey === null) return exit(rejected('invalid', 'not_staged'));
   const repair = head.repair!;
 
   const goalRef: GoalRef = { aggregateType: 'Goal', projectId: head.ref.projectId, goalId: head.goalId! };
   const goalRead = await readGoal(deps.records, goalRef);
-  if (goalRead.status !== 'ready') return goalRead;
+  if (goalRead.status !== 'ready') return exit(goalRead);
   const goal = goalRead.goal;
   if (roundGoalActivityProblem(goal.desiredState) !== null) {
-    return { status: 'not_ready', reason: 'goal_paused' };
+    return exit({ status: 'not_ready', reason: 'goal_paused' });
   }
 
   const chainRead = await readRunChain(deps.records, head);
-  if (chainRead.status !== 'ready') return repairReadFailure(chainRead);
-  if (chainRead.value === null) return { status: 'source_stale', reason: 'round_changed' };
+  if (chainRead.status !== 'ready') return exit(repairReadFailure(chainRead));
+  if (chainRead.value === null) return exit({ status: 'source_stale', reason: 'round_changed' });
   const chain = chainRead.value;
   const bound = boundRoundOf(head, chain);
-  if (bound.status !== 'ready') return repairReadFailure(bound);
+  if (bound.status !== 'ready') return exit(repairReadFailure(bound));
   const round = bound.value;
-  if (round === null) return { status: 'source_stale', reason: 'round_changed' };
+  if (round === null) return exit({ status: 'source_stale', reason: 'round_changed' });
   if (round.status !== 'finalized' || round.outcome !== 'PASS' || round.gaps.length > 0) {
-    return { status: 'not_ready', reason: 'check_not_passed' };
+    return exit({ status: 'not_ready', reason: 'check_not_passed' });
   }
   const binding = round.stagedRepairs.find((entry) => entry.noteId === head.noteId && entry.version === head.version);
   if (binding === undefined || binding.digest !== repairBindingDigest(noteBodyOf(head))) {
-    return { status: 'source_stale', reason: 'round_changed' };
+    return exit({ status: 'source_stale', reason: 'round_changed' });
   }
   if (canonicalJson(round.identity.baselinePin as unknown as JsonValue)
     !== canonicalJson(repair.pin.baseline as unknown as JsonValue)) {
-    return { status: 'source_stale', reason: 'round_changed' };
+    return exit({ status: 'source_stale', reason: 'round_changed' });
   }
   const run = chain.run;
   const planRead = await readPlan(deps.records, run.planRef);
-  if (planRead.status !== 'ready') return repairReadFailure(planRead);
+  if (planRead.status !== 'ready') return exit(repairReadFailure(planRead));
   const plan = planRead.plan;
   // Recompute the PASS applicability against the repair's pinned catalog, never
   // the catalog this activation is about to write.
   if (round.evidenceRefs.length > 0) {
     const evidenceKeys = round.evidenceRefs.map((ref) => canonicalJson(ref as unknown as JsonValue));
     const evidenceRead = await deps.records.readMany(evidenceKeys);
-    if (evidenceRead.status !== 'ready') return mapStoreFailure(evidenceRead);
+    if (evidenceRead.status !== 'ready') return exit(mapStoreFailure(evidenceRead));
     const byKey = new Map(evidenceRead.value.records.map((record) => [record.refKey, record]));
     for (const [index, ref] of round.evidenceRefs.entries()) {
       const key = evidenceKeys[index]!;
       const record = byKey.get(key);
-      if (record === undefined) return rejected('incomplete', 'a bound round Evidence is absent');
+      if (record === undefined) return exit(rejected('incomplete', 'a bound round Evidence is absent'));
       const decodedEvidence = decodeEvidenceSnapshot(record);
-      if (decodedEvidence.status !== 'decoded') return rejected('unavailable', decodedEvidence.reason);
+      if (decodedEvidence.status !== 'decoded') return exit(rejected('unavailable', decodedEvidence.reason));
       const currentAnchor = {
         schemaVersion: 1 as const, planRef: plan.ref, planRevision: plan.planRevision,
         workspaceRevision: round.identity.workspaceRevision,
@@ -417,7 +490,7 @@ async function activateRepairWith(
       const decision = evidenceApplicabilityWithBasis({
         evidence: decodedEvidence.value.evidence, adoptedPlan: plan, evidencePlan: plan, currentAnchor,
       });
-      if (decision.applicability !== 'APPLICABLE') return { status: 'source_stale', reason: 'round_changed' };
+      if (decision.applicability !== 'APPLICABLE') return exit({ status: 'source_stale', reason: 'round_changed' });
     }
   }
 
@@ -428,27 +501,27 @@ async function activateRepairWith(
 
   const activityKey = runActivityRefKey(runActivityRefOf({ ref: run.ref }));
   const activityRead = await deps.records.readMany([activityKey]);
-  if (activityRead.status !== 'ready') return mapStoreFailure(activityRead);
+  if (activityRead.status !== 'ready') return exit(mapStoreFailure(activityRead));
   const activityRecord = activityRead.value.records.find((record) => record.refKey === activityKey);
   if (activityRecord === undefined && !activityRead.value.missing.includes(activityKey)) {
-    return rejected('unavailable', 'the RunActivity read neither returned nor reported missing the record');
+    return exit(rejected('unavailable', 'the RunActivity read neither returned nor reported missing the record'));
   }
   let activity: RunActivitySnapshot | null = null;
   if (activityRecord !== undefined) {
     const decodedActivity = decodeRunActivitySnapshot(activityRecord);
-    if (decodedActivity.status !== 'decoded') return rejected('unavailable', decodedActivity.reason);
+    if (decodedActivity.status !== 'decoded') return exit(rejected('unavailable', decodedActivity.reason));
     activity = decodedActivity.value;
   }
 
   const observationRead = await repairObservationOf(deps, ctx, run, observationCache);
-  if (!observationRead.ok) return observationRead.rejection;
+  if (!observationRead.ok) return exit(observationRead.rejection);
   const observation = observationRead.files;
 
-  const catalogWindow = await readCurrentCatalogWindow(deps.records, run.ref.projectId);
+  const catalogWindow = await readCurrentCatalogWindow(deps.records, run.ref.projectId, { lines: deps.knowledge, caller: ctx });
   if (catalogWindow.status !== 'ready') {
-    return catalogWindow.status === 'not_found'
+    return exit(catalogWindow.status === 'not_found'
       ? rejected('not_found', 'the project has no current architecture catalog')
-      : repairReadFailure(catalogWindow);
+      : repairReadFailure(catalogWindow));
   }
   const pinnedCatalog = catalogWindow.catalog.catalog;
   // The activity's changed files and the observation are the Run workspace's
@@ -461,7 +534,7 @@ async function activateRepairWith(
     // A failed main read refuses the activation as `unavailable`; a ready `null`
     // (no workspace yet) keeps the Run's workspace as main.
     if (main.status !== 'ready') {
-      return rejected('unavailable', main.status === 'rejected' ? main.reason : 'the main workspace cannot be read');
+      return exit(rejected('unavailable', main.status === 'rejected' ? main.reason : 'the main workspace cannot be read'));
     }
     mainWorkspaceId = main.value ?? runWorkspaceId;
   }
@@ -484,53 +557,68 @@ async function activateRepairWith(
       pins: [headPin],
     };
     const answerRead = await deps.decisionMessages.readDecisionMessagePin(ctx, { source });
-    if (answerRead.status !== 'ready') return repairReadFailure(answerRead);
+    if (answerRead.status !== 'ready') return exit(repairReadFailure(answerRead));
     const message = answerRead.value.message;
     const response = message?.response ?? null;
     const selection = response !== null && 'decision' in response ? response.decision.selection : null;
     const approved = selection !== null && selection.kind === 'option' && selection.optionId === 'approve';
-    if (!approved) return { status: 'not_ready', reason: 'approval_pending' };
+    if (!approved) return exit({ status: 'not_ready', reason: 'approval_pending' });
     if (message !== null) approvalMessage = message;
     problem = footprintProblem({ activity, catalog: runCatalog, declared, observation, ops: repair.ops,
       workspaceId: runWorkspaceId, mainWorkspaceId, approval: 'approve' });
   }
-  if (problem !== null && problem.kind === 'unknown') return { status: 'not_ready', reason: 'footprint_unknown' };
-  if (problem !== null) return { status: 'forbidden', reason: 'outside_footprint', paths: problem.paths };
+  if (problem !== null && problem.kind === 'unknown') return exit({ status: 'not_ready', reason: 'footprint_unknown' });
+  if (problem !== null) return exit({ status: 'forbidden', reason: 'outside_footprint', paths: problem.paths });
 
   if (canonicalJson(catalogPinOf(catalogWindow) as unknown as JsonValue)
     !== canonicalJson(repair.pin as unknown as JsonValue)) {
-    return { status: 'source_stale', reason: 'catalog_changed' };
+    return exit({ status: 'source_stale', reason: 'catalog_changed' });
   }
 
   const taskProblem = await currentTaskProblem(deps.records, goal, run, plan);
   // A failed read of the current Plan rejects unchanged and writes nothing; only
   // a successfully read non-active subject takes the withdrawal path.
-  if (taskProblem.status !== 'ready') return taskProblem;
+  if (taskProblem.status !== 'ready') return exit(taskProblem);
   if (taskProblem.value !== null) {
-    const withdrawal = await withdrawRepair(deps, ctx, head, goalRef, input.commandId);
-    if (withdrawal !== null) return withdrawal;
-    return rejected('invalid', 'withdrawn');
+    const withdrawal = withdrawalOf(deps, ctx, head, goalRef, input.commandId);
+    if (!withdrawal.ok) return exit(withdrawal.rejection);
+    const notePlans = await noteFileWritesOf([withdrawal.head], lines);
+    if (notePlans.status !== 'ready') return exit(mapStoreFailure(notePlans));
+    activation.result = { kind: 'withdrawn',
+      keys: { identityKey: withdrawal.prepared.identityKey, fingerprint: withdrawal.prepared.fingerprint } };
+    return { kind: 'ready', plans: notePlans.value,
+      commit: knowledgeCommit(commit => deps.records.commit(commit), withdrawal.prepared, thrown) };
   }
 
-  const planned = await planCatalogRevision({
-    records: deps.records, now: deps.now, eventId: deps.eventId, ...deps.catalogRevision,
-  }, ctx, {
+  const revisionDeps: CatalogRevisionDependencies = {
+    records: deps.records, now: deps.now, eventId: deps.eventId, knowledge: deps.knowledge, ...deps.catalogRevision,
+  };
+  const activationRefused = async (planned: Exclude<ReadResult<never>, { status: 'ready' }>):
+    Promise<KnowledgePrepared<ActivateRepairResult>> => {
+    if (planned.status !== 'rejected') return exit(repairReadFailure(planned));
+    if (planned.code === 'revision_conflict') return exit({ status: 'revision_conflict', current: planned.current ?? [] });
+    // Quick check 5: the basis moved; when this same command committed meanwhile, its result comes first.
+    if (planned.code === 'source_stale') return exit(await priorActivation(deps, ctx, keys, input) ?? planned);
+    return exit(planned);
+  };
+  // Stack review 1: the architecture and note files are read and their changes computed before the planner's
+  // ledger half reads the basis the commit is checked against.
+  const draft = await draftCatalogRevision(revisionDeps, ctx, {
     expected: repair.pin, ops: repair.ops, responsibilityMoves: repair.responsibilityMoves,
     reason: head.body, commandId: input.commandId,
   });
-  if (planned.status !== 'ready') {
-    if (planned.status === 'rejected') {
-      return planned.code === 'revision_conflict'
-        ? { status: 'revision_conflict', current: planned.current ?? [] }
-        : planned;
-    }
-    return repairReadFailure(planned);
-  }
+  if (draft.status !== 'ready') return activationRefused(draft);
+  const transition = transitionNote(head, { kind: 'activate' });
+  if (!transition.ok) return exit(rejected(transition.code, transition.detail));
+  const activatedHead = transition.next;
+  const plans = await architectureWritePlansOf(lines, draft.value.catalog, knowledgeBaselineOf(draft.value.content));
+  if (plans.status !== 'ready') return exit(mapStoreFailure(plans));
+  const notePlans = await noteFileWritesOf([activatedHead], lines);
+  if (notePlans.status !== 'ready') return exit(mapStoreFailure(notePlans));
+  const planned = await finishCatalogRevision(revisionDeps, ctx, draft.value);
+  if (planned.status !== 'ready') return activationRefused(planned);
   const contribution = planned.value;
 
-  const transition = transitionNote(head, { kind: 'activate' });
-  if (!transition.ok) return rejected(transition.code, transition.detail);
-  const activatedHead = transition.next;
   const now = deps.now();
   const version = newNoteVersionRecord(activatedHead, {
     kind: 'activate', by: { kind: 'platform' }, reason: null, decisionMessageRef: null,
@@ -553,7 +641,7 @@ async function activateRepairWith(
     { refKey: noteVersionRecord.refKey, expectedRevision: null },
     { refKey: canonicalJson(round.ref as unknown as JsonValue), expectedRevision: round.revision },
   ]);
-  if (!merged.ok) return merged.rejection;
+  if (!merged.ok) return exit(merged.rejection);
 
   const records: EncodedRecord[] = [...contribution.records, noteHeadRecord, noteVersionRecord];
   const events: EncodedDomainEvent[] = [noteEvent, ...contribution.events];
@@ -564,7 +652,7 @@ async function activateRepairWith(
     const last = events[events.length - 1];
     const decoded = last === undefined ? null : decodeArchitectureCatalogRevisedEvent(last);
     if (decoded === null || decoded.status !== 'decoded') {
-      return rejected('unavailable', 'the activation catalog event is not readable');
+      return exit(rejected('unavailable', 'the activation catalog event is not readable'));
     }
     const proof: DecisionChangeProofV1 = {
       acknowledgementRef: structuredClone(approvalMessage.ref),
@@ -586,28 +674,10 @@ async function activateRepairWith(
     guards: merged.guards, records, claims: contribution.claims, events, commitCursorBindings,
     ...(contribution.ledgerHorizon === undefined ? {} : { ledgerHorizon: contribution.ledgerHorizon }),
   };
-  let receipt;
-  try {
-    receipt = await deps.records.commit(prepared);
-  } catch {
-    const restored = await deps.records.lookupCommit({ identityKey, fingerprint });
-    if (restored.status === 'ready') return replayActivation(deps, ctx, restored.value, input);
-    return rejected('unavailable', 'the activation commit could not be re-checked');
-  }
-  if (receipt.status !== 'committed') {
-    const restored = await deps.records.lookupCommit({ identityKey, fingerprint });
-    if (restored.status === 'ready') return replayActivation(deps, ctx, restored.value, input);
-    return mapStoreFailure(receipt);
-  }
-  if (receipt.replayed) return replayActivation(deps, ctx, receipt, input);
-  // The event carries the pre-bind revision (`catalog.since` is null); the
-  // caller's result carries the commit cursor, exactly as the replay restores
-  // it and as the human catalog-revision route fills it.
-  return {
-    status: 'activated', noteId: head.noteId, version: activatedHead.version, cursor: receipt.cursor,
-    revision: { ...contribution.revision,
-      catalog: { ...contribution.revision.catalog, since: receipt.cursor } },
-  };
+  activation.result = { kind: 'activated', noteId: head.noteId, version: activatedHead.version,
+    revision: contribution.revision };
+  return { kind: 'ready', plans: [...plans.value, ...notePlans.value],
+    commit: knowledgeCommit(commit => deps.records.commit(commit), prepared, thrown) };
 }
 
 /**
@@ -637,13 +707,15 @@ async function currentTaskProblem(records: RepairActivationDependencies['records
 /**
  * DR-02: a cancelled/superseded subject really withdraws the note before the
  * owner answers `invalid/withdrawn`. It reuses `transitionNote(withdraw)`, the
- * note writer's head/version encoders and one commit; there is no catalog
- * revision in this path. A second call sees a non-staged head and writes nothing.
+ * note writer's head/version encoders and one commit (under its own identity,
+ * through the activation's knowledge write); there is no catalog revision in
+ * this path. A second call sees a non-staged head and writes nothing.
  */
-async function withdrawRepair(deps: RepairActivationDependencies, ctx: CoreCallContext, head: NoteHeadSnapshot,
-  goalRef: GoalRef, commandId: string): Promise<CoreRejection | null> {
+function withdrawalOf(deps: RepairActivationDependencies, ctx: CoreCallContext, head: NoteHeadSnapshot,
+  goalRef: GoalRef, commandId: string):
+  { ok: true; head: PendingNoteHeadSnapshot; prepared: PreparedCommit } | { ok: false; rejection: CoreRejection } {
   const transition = transitionNote(head, { kind: 'withdraw' });
-  if (!transition.ok) return rejected(transition.code, transition.detail);
+  if (!transition.ok) return { ok: false, rejection: rejected(transition.code, transition.detail) };
   const withdrawn = transition.next;
   const now = deps.now();
   const version = newNoteVersionRecord(withdrawn, { kind: 'withdraw', by: { kind: 'platform' }, reason: null,
@@ -661,7 +733,7 @@ async function withdrawRepair(deps: RepairActivationDependencies, ctx: CoreCallC
     workspaceId: ctx.workspaceId ?? null, commandId, noteId: head.noteId, expectedVersion: head.version,
     goalId: goalRef.goalId,
   } as unknown as JsonValue));
-  const prepared: PreparedCommit = {
+  return { ok: true, head: withdrawn, prepared: {
     identityKey, fingerprint, indexGuards: [], indexChanges: [],
     guards: [
       { refKey: headRecord.refKey, expectedRevision: head.version },
@@ -672,19 +744,7 @@ async function withdrawRepair(deps: RepairActivationDependencies, ctx: CoreCallC
       { refKey: headRecord.refKey, field: 'since' },
       { refKey: versionRecord.refKey, field: 'since' },
     ],
-  };
-  let receipt;
-  try {
-    receipt = await deps.records.commit(prepared);
-  } catch {
-    const restored = await deps.records.lookupCommit({ identityKey, fingerprint });
-    return restored.status === 'ready' ? null : rejected('unavailable', 'the withdrawal commit could not be re-checked');
-  }
-  if (receipt.status !== 'committed') {
-    const restored = await deps.records.lookupCommit({ identityKey, fingerprint });
-    return restored.status === 'ready' ? null : mapStoreFailure(receipt);
-  }
-  return null;
+  } };
 }
 
 export async function attemptRepairsForGoal(

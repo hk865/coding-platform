@@ -24,6 +24,7 @@ import type {
 } from '../model/graph-context-contracts.js';
 import type {
   DecisionCardV1,
+  DecisionQueuePreparedReader,
   DecisionQueueReadV1,
   DecisionReadPort,
   GoalSettingsPort,
@@ -32,12 +33,13 @@ import type { SessionAnomalyPort } from '../tasks/session-anomaly-service.js';
 import { sessionAnomalyRefKey } from '../tasks/session-anomaly-codecs.js';
 import type { NoteMemoryMaterialInputV1, NoteMemoryMaterialPort, NoteMemoryMaterialV1 } from '../model/note-contracts.js';
 import { taskPinRefOf, type TaskPinRef } from './decision-card-refs.js';
+import { WINDOW_MAX_ATTEMPTS } from './decision-read-model.js';
 
 export type ContextExtensionsDependencies = {
   anomalies: Pick<SessionAnomalyPort, 'listSessionAnomalies'>;
   hostActor: Extract<ActorRef, { kind: 'human' | 'system' }>;
   goalSettings?: Pick<GoalSettingsPort, 'readGoalSettings'>;
-  decisions?: Pick<DecisionReadPort, 'queryDecisionQueue'>;
+  decisions?: Pick<DecisionReadPort, 'queryDecisionQueue'> & DecisionQueuePreparedReader;
   /** U8: the one memory-material read per assembly, when wired. */
   memoryMaterial?: NoteMemoryMaterialPort;
   /** The page width of the decision-queue read (default DECISION_PAGE_LIMIT = 100). */
@@ -359,36 +361,48 @@ export function createContextExtensionsReader(deps: ContextExtensionsDependencie
     } else {
       const cards: DecisionCardV1[] = [];
       let capabilities: DecisionQueueReadV1['capabilities'] = [];
-      let sourceCursor: DecisionQueueReadV1['sourceCursor'] | null = null;
-      let cursor: string | undefined;
       try {
-        for (;;) {
-          const read = await deps.decisions.queryDecisionQueue(hostCtx, {
-            workspace: { projectId, workspaceId },
-            goalRef: request.goalRef,
-            sections: ['waiting_answer'],
-            page: cursor === undefined
-              ? { limit: decisionPageLimit }
-              : { limit: decisionPageLimit, cursor },
-          });
-          if (read.status === 'not_found') return { status: 'not_found' };
-          if (read.status === 'not_ready') {
-            return rejection('incomplete', 'decision_queue_not_ready: the decision queue is not readable at the required watermark');
+        // KLS-2 ruling 9 (R-window), stack review 2: the pages must share one
+        // ledger window, so the conflicts' architecture files are read before
+        // the first page and each page makes one attempt; a page whose window
+        // moved starts the pages again from a new architecture read, at most
+        // WINDOW_MAX_ATTEMPTS times (on the last, the queue answers its own
+        // `unavailable`).
+        pages: for (let attempt = 1; ; attempt += 1) {
+          const prepared = { read: await deps.decisions.readConflictArchitecture(hostCtx),
+            last: attempt === WINDOW_MAX_ATTEMPTS };
+          cards.length = 0;
+          let sourceCursor: DecisionQueueReadV1['sourceCursor'] | null = null;
+          let cursor: string | undefined;
+          for (;;) {
+            const read = await deps.decisions.queryDecisionQueuePrepared(hostCtx, {
+              workspace: { projectId, workspaceId },
+              goalRef: request.goalRef,
+              sections: ['waiting_answer'],
+              page: cursor === undefined
+                ? { limit: decisionPageLimit }
+                : { limit: decisionPageLimit, cursor },
+            }, prepared);
+            if (read.status === 'moved') continue pages;
+            if (read.status === 'not_found') return { status: 'not_found' };
+            if (read.status === 'not_ready') {
+              return rejection('incomplete', 'decision_queue_not_ready: the decision queue is not readable at the required watermark');
+            }
+            if (read.status !== 'ready') return read;
+            if (sourceCursor === null) {
+              sourceCursor = read.value.sourceCursor;
+              capabilities = read.value.capabilities;
+            } else if (read.value.sourceCursor !== sourceCursor) {
+              return rejection('unavailable', 'decision_queue_window_changed: the decision queue pages did not share one ledger window');
+            }
+            for (const card of read.value.waitingAnswer) {
+              if (card.state !== 'waiting_answer') continue;
+              cards.push(card);
+            }
+            const next = read.value.nextCursor;
+            if (next === null) break pages;
+            cursor = next;
           }
-          if (read.status !== 'ready') return read;
-          if (sourceCursor === null) {
-            sourceCursor = read.value.sourceCursor;
-            capabilities = read.value.capabilities;
-          } else if (read.value.sourceCursor !== sourceCursor) {
-            return rejection('unavailable', 'decision_queue_window_changed: the decision queue pages did not share one ledger window');
-          }
-          for (const card of read.value.waitingAnswer) {
-            if (card.state !== 'waiting_answer') continue;
-            cards.push(card);
-          }
-          const next = read.value.nextCursor;
-          if (next === null) break;
-          cursor = next;
         }
       } catch (error) {
         return rejection('unavailable', `decision_queue_read_failed: ${messageOf(error)}`);

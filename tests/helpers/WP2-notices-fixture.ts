@@ -113,7 +113,8 @@ export async function openWP2NoticesFixture(kind: 'memory' | 'sqlite', factory: 
     const positions = createNoticePositionComparator();
     const queue = createDecisionReadModel({ records, cardSources: [], noticeSources: [source], positions, displayTokens: tokens,
       // Notice-only requests never call the unrelated conflict assembler.
-      conflicts: { async queryGoalConflicts() { throw new Error('notice-only reads must not query conflicts'); } },
+      conflicts: { async queryGoalConflicts() { throw new Error('notice-only reads must not query conflicts'); },
+        async readCurrentArchitecture() { throw new Error('notice-only reads must not read the conflicts\' architecture'); } },
       lineage: { messages: userMailbox, queries: createQueryJobService({ records, now: f.now, eventId: f.id }),
         plans: b2.base.plans } });
     const settings = createDecisionSettingsService({ records, now: f.now, newId: f.id, operatorActor: actor, positions, displayTokens: tokens });

@@ -10,6 +10,8 @@
  * behavior stays RED; the fixture only seeds trusted scope and, when a test
  * explicitly asks, a legacy baseline without a catalog.
  */
+import { knowledgeLinesFor } from './KLS2-knowledge-lines.js';
+import type { KnowledgeLines } from '../../src/core/work-graph/model/line-knowledge.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -113,6 +115,8 @@ export type GraphSessionFixture = {
   records: GraphRecords;
   spy: GraphRecordSpy;
   catalog: ArchitectureCatalogPort;
+  /** KLS-2: the knowledge lines a service built over this world takes. */
+  knowledge: KnowledgeLines;
   lifecycle: SessionLifecyclePort;
   sessionsPort: SessionDirectoryPort;
   duty: SessionDutyReadPort;
@@ -373,7 +377,9 @@ export async function createGraphSessionFixture(kind: GraphFixtureKind = 'memory
     eventId: () => `a1-graph-role-event-${String(++roleEventSeq)}` });
   let duty: SessionDutyReadPort = createSessionDutyResolver({ readRoleSpec: roles.readRoleSpec,
     configuration: workflowConfiguration });
-  let catalog: ArchitectureCatalogPort = createArchitectureCatalogService({ records: wrapped });
+  // KLS-2: one knowledge root for this world, kept across a reopen.
+  const knowledge = knowledgeLinesFor({ root: directory, ...scope, records: wrapped });
+  let catalog: ArchitectureCatalogPort = createArchitectureCatalogService({ records: wrapped, knowledge });
   let lifecycle: SessionLifecyclePort = createSessionLifecycleService({ records: wrapped, lookups: wrapped, duty });
   let sessionsPort: SessionDirectoryPort = createSessionDirectory({ records: wrapped, lookups: wrapped, duty });
   const kernelStores = await createKernelStoreRegistry({ entries: [{
@@ -481,7 +487,7 @@ export async function createGraphSessionFixture(kind: GraphFixtureKind = 'memory
   }
 
   const fixture: GraphSessionFixture = {
-    kind, directory, ledgerPath, records: wrapped, spy, catalog, lifecycle, sessionsPort, duty,
+    kind, directory, ledgerPath, records: wrapped, spy, catalog, knowledge, lifecycle, sessionsPort, duty,
     ctx, scope, projectId, workspaceId, projectRef, workspaceRef,
     moduleRef(moduleId: string): ModuleRef { return { projectId, moduleId }; },
     async adopt(requestId, overrides = {}, ctxOverride) {
@@ -517,7 +523,7 @@ export async function createGraphSessionFixture(kind: GraphFixtureKind = 'memory
       roles = createRoleConfigurationService({ records: wrapped, now: () => GRAPH_FIXTURE_AT,
         eventId: () => `a1-graph-role-event-${String(++roleEventSeq)}` });
       duty = createSessionDutyResolver({ readRoleSpec: roles.readRoleSpec, configuration: workflowConfiguration });
-      catalog = createArchitectureCatalogService({ records: wrapped });
+      catalog = createArchitectureCatalogService({ records: wrapped, knowledge });
       lifecycle = createSessionLifecycleService({ records: wrapped, lookups: wrapped, duty });
       sessionsPort = createSessionDirectory({ records: wrapped, lookups: wrapped, duty });
       // Keep the top-level fixture accessors pointing at the reopened backend.

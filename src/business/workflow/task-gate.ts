@@ -175,7 +175,7 @@ export function closeBranches(edges: readonly FormalDependencyEdgeV1[], blocks: 
   return waiting;
 }
 
-export function goalWaitBasisOf(goal: GoalSnapshot, reasons: readonly string[],
+export function goalWaitBasisOf(goal: Pick<GoalSnapshot, 'ref'>, reasons: readonly string[],
   recordKinds: readonly AggregateRef['aggregateType'][]): GoalWaitBasisV1 {
   return { projectId: goal.ref.projectId, goalId: goal.ref.goalId, recordKinds, reasons };
 }

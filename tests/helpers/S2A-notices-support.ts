@@ -81,7 +81,8 @@ export function noticesHarness(f: S5DecisionFixture, sources: readonly DecisionN
     displayTokens, positions, operatorActor: OPERATOR });
   const reads = createDecisionReadModel({ records: f.records, cardSources: [], noticeSources: sources,
     // Notice-only requests never call the unrelated conflict assembler.
-    conflicts: { async queryGoalConflicts() { throw new Error('notice-only reads must not query conflicts'); } },
+    conflicts: { async queryGoalConflicts() { throw new Error('notice-only reads must not query conflicts'); },
+      async readCurrentArchitecture() { throw new Error('notice-only reads must not read the conflicts\' architecture'); } },
     positions, displayTokens,
     lineage: { messages: createSessionMailbox(mailboxDependencies(f)),
       queries: createQueryJobService({ records: f.records, now: f.now, eventId: f.newId }),

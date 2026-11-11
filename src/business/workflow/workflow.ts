@@ -589,6 +589,12 @@ const PLAN_CANDIDATE_WAIT_KINDS = ['PlanProposal', 'PlanRevision', 'SessionMessa
 function planWaitBasisOf(goal: GoalSnapshot, reasons: readonly string[]): GoalWaitBasisV1 {
   return goalWaitBasisOf(goal, reasons, PLAN_CANDIDATE_WAIT_KINDS);
 }
+/**
+ * A Task claim pins the Goal, the Workspace, the Plan and the Session and guards the task facts it read
+ * (`claim-service.ts`): any of them moving is a `revision_conflict`. After its one re-selection a claim that
+ * conflicts again waits on all of them (the candidate wait's kinds cover the Plan, the Session and the task facts).
+ */
+const CLAIM_CONFLICT_WAIT_KINDS = ['Goal', 'Workspace', ...PLAN_CANDIDATE_WAIT_KINDS] as const;
 
 function receiptReason(result: unknown, fallback: string): string {
   if (isRecord(result) && typeof result['reason'] === 'string' && result['reason'].length > 0) return result['reason'];
@@ -3018,7 +3024,8 @@ export function createWorkflow(deps: WorkflowDependencies & {
     return await deps.messages.sendMessage(automationContext(owned), request);
   }
 
-  async function performStep(owned: Owned, base: Base, operation: WorkflowOperation): Promise<WorkflowAdvanceResult> {
+  async function performStep(owned: Owned, base: Base, operation: WorkflowOperation,
+    claimRetried = false): Promise<WorkflowAdvanceResult> {
     // §4.5 (rule 16): `perform` shares the automation policy with `select_work`.
     // A gated automatic rework waits with its formal cause and performs nothing.
     const gatedRework = await gatePerform(owned, base, operation);
@@ -3132,6 +3139,20 @@ export function createWorkflow(deps: WorkflowDependencies & {
       case 'claim_task': {
         const result = await deps.claims.claimTask(owned.ctx, operation.request);
         const receipt: WorkflowStepReceipt = { kind: 'claim_task', result };
+        if (result.status !== 'committed' && result.code === 'revision_conflict') {
+          // A record the claim pins moved after the selection read it (a link or a transfer of the Session, a Goal
+          // or Workspace write): select once more on what is there now. A second conflict waits on any record kind a
+          // claim pins, which the Host's wait registry wakes this Goal on (the moving write may predate this step's
+          // read cursor, so only the re-selection sees the first one).
+          if (claimRetried) {
+            return waiting(receipt, result.reason, undefined,
+              goalWaitBasisOf({ ref: base.goalRef }, ['claim_conflict'], CLAIM_CONFLICT_WAIT_KINDS));
+          }
+          const again = await selectNext(owned, base);
+          const next = again.status === 'ready' ? again.value.next : null;
+          if (next === null || next.kind !== 'perform' || next.operation.kind !== 'claim_task') return again;
+          return await performStep(owned, { ...base, sessionHint: next.sessionHint }, next.operation, true);
+        }
         if (result.status !== 'committed') return waiting(receipt, result.reason);
         const claim = result.value;
         const nextBase: Base = { ...base, sessionHint: claim.sessionRef };

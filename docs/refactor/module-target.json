@@ -47,6 +47,14 @@
           ]
         },
         {
+          "id": "knowledge",
+          "path": "knowledge/",
+          "dependencies": [
+            "model"
+          ],
+          "note": "知识文件的写入顺序（KLS-2，kls-design §2.2.4）：architecture 和 notes 的写点都经它；它不 import architecture/ 和 notes/，否则成环。"
+        },
+        {
           "id": "configuration",
           "path": "configuration/",
           "dependencies": [
@@ -69,7 +77,8 @@
           "dependencies": [
             "model",
             "state",
-            "persistence"
+            "persistence",
+            "knowledge"
           ]
         },
         {
@@ -130,6 +139,7 @@
             "model",
             "state",
             "persistence",
+            "knowledge",
             "architecture",
             "sessions",
             "tasks"

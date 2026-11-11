@@ -137,12 +137,13 @@ describe('S8C R10 responsibility moves', () => {
     const moves = [to(world, world.links.l1, 'src/a'), to(world, world.links.l2, 'src/a'),
       to(world, world.links.l4, 'src/a')];
     const revision = committed(await world.revise({ ops, responsibilityMoves: moves, reason: 'reparent twice' }));
+    // G1: the revise answer lists modules by id and containment by (parent, child), as the current read does.
     expect(revision.catalog.catalog.modules.map(module => module.ref.moduleId))
-      .toEqual(['root', 'src/a', 'src/a/x', 'docs']);
+      .toEqual(['docs', 'root', 'src/a', 'src/a/x']);
     expect(revision.catalog.catalog.containment?.parentOf).toEqual([
       { parent: dest(world, 'docs'), child: dest(world, 'src/a') },
-      { parent: dest(world, 'src/a'), child: dest(world, 'src/a/x') },
       { parent: dest(world, 'root'), child: dest(world, 'docs') },
+      { parent: dest(world, 'src/a'), child: dest(world, 'src/a/x') },
     ]);
     for (const [line, link] of [[world.lines.l1, world.links.l1], [world.lines.l2, world.links.l2],
       [world.lines.l4, world.links.l4]] as const) {
@@ -159,12 +160,13 @@ describe('S8C R10 responsibility moves', () => {
     const ops: CatalogRepairOpV1[] = [...fillers, { op: 'remove_module', moduleId: 'src/a/x' }];
     expect(ops).toHaveLength(20);
     const revision = committed(await world.revise({ ops, reason: 'twenty ops' }));
+    // G1: the revise answer lists modules by id and containment by (parent, child), as the current read does.
     expect(revision.catalog.catalog.modules.map(module => module.ref.moduleId))
-      .toEqual(['root', 'src', 'src/a', 'docs']);
+      .toEqual(['docs', 'root', 'src', 'src/a']);
     expect(revision.catalog.catalog.containment?.parentOf).toEqual([
+      { parent: dest(world, 'root'), child: dest(world, 'docs') },
       { parent: dest(world, 'root'), child: dest(world, 'src') },
       { parent: dest(world, 'src'), child: dest(world, 'src/a') },
-      { parent: dest(world, 'root'), child: dest(world, 'docs') },
     ]);
   });
 

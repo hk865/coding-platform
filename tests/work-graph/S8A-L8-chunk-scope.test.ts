@@ -218,6 +218,9 @@ async function openWorld(backend: Backend): Promise<World> {
   const platform = await createTargetPlatform({
     storage: backend === 'memory' ? { kind: 'memory' } : { kind: 'sqlite', directory },
     workspace: host, now: () => now,
+    // KLS-2: the Host's workspace list of each project, the first one main, as a Host hands it to the platform.
+    knowledgeWorkspaces: projectId => PROJECTS.find(project => project.projectId === projectId)
+      ?.workspaces.map(workspace => workspace.workspaceId) ?? [],
     architectureSource: { provider: 'typescript', configPath: null },
     fileGraph: { maxNodes: 20_000, maxEdges: 100_000, chunkBytes: CHUNK_BYTES },
     runtime: runtimeHost(),

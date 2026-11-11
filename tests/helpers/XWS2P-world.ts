@@ -56,6 +56,10 @@ export type XWS2PWorld = {
 export const xws2pProjectPath = (workspaceId: string, path: string): string =>
   `/@ws:${encodeURIComponent(workspaceId)}${path === '.' ? '' : `/${path}`}`;
 
+/** Another workspace's module in the project view (hand-computed, not a product call). */
+export const xws2pModuleId = (workspaceId: string, moduleId: string): string =>
+  `/@ws:${encodeURIComponent(workspaceId)}/${encodeURIComponent(moduleId)}`;
+
 export async function openXWS2PWorld(): Promise<XWS2PWorld> {
   const world = await openS6AHostWorld({ backend: 'memory' });
   let removeSecond: () => Promise<void> = async () => undefined;
@@ -109,7 +113,8 @@ export async function addXWS2PSecondModule(world: XWS2PWorld, input: {
     graphWrite(world.second.scope, {
       expected: pin,
       ops: [
-        { op: 'set_module_name', moduleId: 's6a-core', name: 'first-mod' },
+        // The ids are the caller's frame (the second workspace): the main workspace's module carries its prefix.
+        { op: 'set_module_name', moduleId: xws2pModuleId(world.main.scope.workspaceId, 's6a-core'), name: 'first-mod' },
         { op: 'add_module', module: {
           ref: { projectId: world.second.scope.projectId, moduleId: input.moduleId },
           name: input.name, responsibility: input.summary,

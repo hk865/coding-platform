@@ -132,10 +132,16 @@ it('opens 8 then 2 Sessions, skips the two reasons and turns on the person messa
   if (actionRequest === undefined) throw new Error('S7B2: the agent action_request is not in the target inbox');
   expect(actionRequest.release).toBe('released');
   await world.scripted.script(wait.sender, [{ kind: 'text', text: 'S7B2 consume person-first answer' }]);
-  for (let pass = 0; pass < 6; pass += 1) {
+  // Each heartbeat is one real Host pass; how many the Session's turn on the person message needs depends on how fast
+  // the Host's reads are, so wait until it is accepted (up to 60 passes) and fail with the message's state otherwise.
+  let waited: Awaited<ReturnType<typeof readS7BMessage>> | undefined;
+  for (let pass = 0; pass < 60; pass += 1) {
     await heartbeat(consume);
-    const read = await readS7BMessage(consume.world, person.ref);
-    if ((read.acceptedInputs ?? []).some(input => input.part === 'message')) break;
+    waited = await readS7BMessage(consume.world, person.ref);
+    if ((waited.acceptedInputs ?? []).some(input => input.part === 'message')) break;
+  }
+  if (!(waited?.acceptedInputs ?? []).some(input => input.part === 'message')) {
+    throw new Error(`S7B2: the person message was not accepted within 60 heartbeats: ${JSON.stringify(waited)}`);
   }
   const personRead = await readS7BMessage(consume.world, person.ref);
   expect((personRead.acceptedInputs ?? []).some(input => input.part === 'message')).toBe(true);

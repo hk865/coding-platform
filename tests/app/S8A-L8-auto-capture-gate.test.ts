@@ -197,7 +197,7 @@ async function openPlatform(backend: Backend,
         return { status: 'rejected', code: 'forbidden', reason: 'unknown workspace' };
       }
       const id = requested.workspaceId;
-      await gates[id].enter();
+      if (!knowledgeWrite) await gates[id].enter();
       return { status: 'ready', value: { root: roots[id], workspaceRevision: 1 } };
     },
     async authorize(bound, requested) {
@@ -256,13 +256,23 @@ const catalogWith = (projectId: string, responsibility: string) => ({
   modules: [{ ref: { projectId, moduleId: 'A' }, name: 'A', responsibility, paths: ['src'], interfaces: [] }],
 });
 
+/**
+ * KLS-2: an architecture write resolves the workspace root for its knowledge files; while one runs, the gates
+ * (which hold captures) let that resolution through. No capture can start meanwhile: the held slot stays taken.
+ */
+let knowledgeWrite = false;
+
 /** A real first adoption; the platform's own trigger reaches the driver sink. */
 async function adoptCatalog(platform: Platform, scope: WorkspaceScope): Promise<void> {
-  const adopted = await platform.architecture.adoptInitialArchitecture(contextOf(scope), {
-    meta: { requestId: scope.projectId + '-adopt', expected: scopePins(scope) },
-    input: { baselineId: scope.projectId + '-baseline', description: 'Module A owns src',
-      constraints: [], catalog: catalogWith(scope.projectId, 'The src subtree') },
-  });
+  knowledgeWrite = true;
+  let adopted;
+  try {
+    adopted = await platform.architecture.adoptInitialArchitecture(contextOf(scope), {
+      meta: { requestId: scope.projectId + '-adopt', expected: scopePins(scope) },
+      input: { baselineId: scope.projectId + '-baseline', description: 'Module A owns src',
+        constraints: [], catalog: catalogWith(scope.projectId, 'The src subtree') },
+    });
+  } finally { knowledgeWrite = false; }
   expect(adopted).toMatchObject({ status: 'committed', replayed: false });
 }
 

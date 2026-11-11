@@ -78,7 +78,7 @@ export type XWS2AWorld = {
   waitJoin(done: (row: XWS2AJoinRow | null) => boolean, what: string): Promise<XWS2AJoinRow>;
   /** The coarse exploration entry saved and its Query ended (the opening adviser is free again). */
   waitCoarseAnswered(): Promise<XWS2AJoinRow>;
-  /** The person's `decisions/answer` of the coarse proposal's card; waits until the join reads `regions`. */
+  /** The person's `decisions/answer` of the coarse proposal's card; waits until the join reads `regions` or later. */
   approveCoarse(): Promise<XWS2AJoinRow>;
   /** Holds the join's `proposals` phase commit (holdAfter) so the region Query is scripted before it runs. */
   holdJoinProposals(): CommitHold;
@@ -290,7 +290,10 @@ export async function openXWS2AWorld(options: {
         const proposalCard = card.find(candidate => candidate.source.kind === 'structural_proposal'
           && candidate.state === 'waiting_answer')!;
         await handle.approve(proposalCard, 'xws2a-approve-coarse');
-        return await handle.waitJoin(candidate => candidate?.actionPhase === 'regions', 'the join regions phase');
+        // A fast approval can carry the join past `regions` between two polls: any phase from `regions` on is the
+        // approval taken.
+        return await handle.waitJoin(candidate => candidate?.actionPhase === 'regions'
+          || candidate?.actionPhase === 'proposals', 'the join regions phase (or a later one)');
       },
       holdJoinProposals() {
         // The first join record whose action phase is `proposals`, after it lands (the region Query is submitted

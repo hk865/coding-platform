@@ -78,6 +78,7 @@ import { createArchitectureCatalogService } from '../../src/core/work-graph/arch
 import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
 import { completedEvent, crashedEvent, L_HOST } from './S2C-L-runs-support.js';
 import { decisionReadsOver, openLineFixture, type LineFixture } from './S2C-L-line-support.js';
+import { knowledgeLinesFor } from './KLS2-knowledge-lines.js';
 import { preparationHost, prepareTaskForReal, type ClaimFixtureKind } from './task-claim-fixture.js';
 
 /**
@@ -263,7 +264,8 @@ async function addResponsibleModules(f: LineFixture, count: number,
     projectId, moduleId: `s2c-x-link-${String(index + 1)}`,
   }));
   if (count === 0) return refs;
-  const catalogService = createArchitectureCatalogService({ records: f.base.records });
+  const catalogService = createArchitectureCatalogService({ records: f.base.records,
+    knowledge: knowledgeLinesFor({ root: f.base.directory, ...f.base.scope, records: f.base.records }) });
   // P1-05: the baseline pin and the current catalog are the platform's values,
   // read through the public current-selection read (never the internal window).
   const current = await catalogService.readArchitectureRevision(f.ctx, { selection: { kind: 'current' } });

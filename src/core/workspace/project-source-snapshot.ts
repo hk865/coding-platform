@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type { SourceAccess } from './source-index.js';
 import type { TypeScriptSourceQuery } from './typescript-source-query.js';
 import { WORKSPACE_DENIED_PREFIXES } from './denied-prefixes.js';
+import { withinKnowledgeDirectory } from '../../contracts/knowledge.js';
 
 /**
  * WorkspaceTools — the single live projection of permission-filtered project inputs.
@@ -151,9 +152,13 @@ export function observationSkipReason(error: unknown): string {
   return 'source unavailable, denied or exceeds file capacity';
 }
 
-/** Access control is the Host's, not the observation's: check the denied prefixes explicitly too. */
+/**
+ * Access control is the Host's, not the observation's: check the denied prefixes explicitly too. KLS-2: the
+ * platform's code-knowledge directory is left out as well; Agents read it (it is not a denied prefix), but its
+ * files are the knowledge about the source, never part of an observed source graph.
+ */
 const isDeniedObservationPath = (path: string): boolean =>
-  WORKSPACE_DENIED_PREFIXES.some(prefix => path === prefix || path.startsWith(prefix + '/'));
+  WORKSPACE_DENIED_PREFIXES.some(prefix => path === prefix || path.startsWith(prefix + '/')) || withinKnowledgeDirectory(path);
 
 const keepObservationPath = (access: ProjectSourceAccess, path: string): boolean =>
   isSafeSourcePath(path) && !isObservationSkippedPath(path) && !isDeniedObservationPath(path) && access.allowed(path);

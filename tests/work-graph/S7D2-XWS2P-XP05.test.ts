@@ -24,7 +24,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { GraphHoverReadV1 } from '../../src/contracts/work-line.js';
 import type { GraphReadPageV1, NodeCardV1 } from '../../src/core/work-graph/model/graph-context-contracts.js';
 import {
-  addXWS2PSecondModule, findXWS2P, lookXWS2P, openXWS2PWorld, xws2pProjectPath, type XWS2PWorld,
+  addXWS2PSecondModule, xws2pModuleId, findXWS2P, lookXWS2P, openXWS2PWorld, xws2pProjectPath, type XWS2PWorld,
 } from '../helpers/XWS2P-world.js';
 import { plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
@@ -46,28 +46,29 @@ describe('XP-05 the second workspace read, search and display', () => {
     const setup = await addXWS2PSecondModule(world, {
       moduleId: 'second-mod', name: 'second-mod', summary: 'second workspace module' });
     expect(setup).toMatchObject({ status: 'committed' });
+    const secondMod = xws2pModuleId(world.second.scope.workspaceId, 'second-mod');
     const qualified = xws2pProjectPath(world.second.scope.workspaceId, 'src');
 
     // 1. path target and the find path branch: the second workspace's own projection only.
     const secondLook = await lookXWS2P(world, world.second, 'src');
     expect(secondLook.status).toBe('ready');
     if (secondLook.status !== 'ready') return;
-    expect(moduleIdsOf(secondLook.value)).toEqual(['second-mod']);
+    expect(moduleIdsOf(secondLook.value)).toEqual([secondMod]);
     const secondFindSrc = await findXWS2P(world, world.second, 'src');
     expect(secondFindSrc.status).toBe('ready');
     if (secondFindSrc.status !== 'ready') return;
-    expect(moduleIdsOf(secondFindSrc.value)).toContain('second-mod');
+    expect(moduleIdsOf(secondFindSrc.value)).toContain(secondMod);
     expect(moduleIdsOf(secondFindSrc.value)).not.toContain('s6a-core');
 
     // 2. name and summary are matched over the whole project, from EITHER workspace.
     const nameFromMain = await findXWS2P(world, world.main, 'second-mod');
     expect(nameFromMain.status).toBe('ready');
     if (nameFromMain.status !== 'ready') return;
-    expect(moduleIdsOf(nameFromMain.value)).toContain('second-mod');
+    expect(moduleIdsOf(nameFromMain.value)).toContain(secondMod);
     const summaryFromMain = await findXWS2P(world, world.main, 'second workspace module');
     expect(summaryFromMain.status).toBe('ready');
     if (summaryFromMain.status !== 'ready') return;
-    expect(moduleIdsOf(summaryFromMain.value)).toContain('second-mod');
+    expect(moduleIdsOf(summaryFromMain.value)).toContain(secondMod);
     const firstNameFromSecond = await findXWS2P(world, world.second, 'first-mod');
     expect(firstNameFromSecond.status).toBe('ready');
     if (firstNameFromSecond.status !== 'ready') return;
@@ -80,7 +81,7 @@ describe('XP-05 the second workspace read, search and display', () => {
       label: 'xws2p-hover', taskIds: ['xws2p-hover'], role: S6A_WORK_ROLE.templateId });
     const hover = readyValue<GraphHoverReadV1>(await world.world.dispatch('graph/hover', world.main.ctx,
       plain(world.main.scope, { goalRef: world.world.goals.first })), 'graph/hover');
-    expect(hover.modules.find(module => module.module.moduleId === 'second-mod')?.paths)
+    expect(hover.modules.find(module => module.module.moduleId === secondMod)?.paths)
       .toEqual([`${world.second.scope.workspaceId}/src`]);
     expect(hover.modules.find(module => module.module.moduleId === 's6a-core')?.paths).toEqual(['src']);
     expect(qualified).toBe(`/@ws:${encodeURIComponent(world.second.scope.workspaceId)}/src`);

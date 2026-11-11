@@ -17,6 +17,7 @@
  * path reads the world's own backend, so both backends reach the same facts.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { KnowledgeLines } from '../../src/core/work-graph/model/line-knowledge.js';
 import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.js';
 import type {
   DecisionCardSourcePort, DecisionNoticeSourcePort, DecisionQueueReadV1,
@@ -96,7 +97,7 @@ describe('K3-20 review card source paging', () => {
     const lineage = { messages: world.mailbox,
       queries: createQueryJobService({ records: f.records, now: f.now, eventId: f.newId }),
       plans: f.b2.base.plans };
-    const readModel = completeReadModel(f.records, [cardSource], lineage);
+    const readModel = completeReadModel(f.records, [cardSource], lineage, f.knowledge);
 
     // The source itself: pageLimit 2 -> four items over TWO offset pages.
     const attemptBefore = { cache: new Map<string, unknown>() };
@@ -191,7 +192,7 @@ describe('K3-20 review card source paging', () => {
       now: () => T, eventId: () => 'k3-20-mid-read' });
     const wrappedCards = createUnknownCallReviewCardSource({ records: wrappedRecords, reviews: reviewsForQueue,
       pageLimit: 2 });
-    const wrappedReads = completeReadModel(wrappedRecords, [wrappedCards], lineage);
+    const wrappedReads = completeReadModel(wrappedRecords, [wrappedCards], lineage, f.knowledge);
     const { cards: afterCards, final: afterFinal } = await allQueuePages(wrappedReads, 2);
     expect(midReadDone).toBe(true);
     expect(records).toHaveLength(5);
@@ -295,7 +296,7 @@ type ReadRecords = K3ReviewCardWorld['records'];
  * notices; production wires the real adapters instead.
  */
 function completeReadModel(records: ReadRecords, cardSources: readonly DecisionCardSourcePort[],
-  lineage: PlanSourceLineageDeps) {
+  lineage: PlanSourceLineageDeps, knowledge: KnowledgeLines) {
   return createDecisionReadModel({
     records,
     lineage,
@@ -310,7 +311,7 @@ function completeReadModel(records: ReadRecords, cardSources: readonly DecisionC
       emptyCardSource('role_capacity'), emptyCardSource('role_line_change')],
     noticeSources: (['second_expiry', 'handoff', 'note_review', 'undelivered_reply', 'automatic_rework',
       'continuation', 'disconnect', 'project_notice', 'plan_adoption', 'plan_notice'] as const).map(emptyNoticeSource),
-    conflicts: createGoalConflictAssembler({ records, catalog: createArchitectureCatalogService({ records }),
+    conflicts: createGoalConflictAssembler({ records, catalog: createArchitectureCatalogService({ records, knowledge }),
       executedFiles: createGoalExecutedFilesReader({ records }) }),
     positions: createNoticePositionComparator(),
     displayTokens: createNoticeDisplayToken(new Uint8Array(32)),

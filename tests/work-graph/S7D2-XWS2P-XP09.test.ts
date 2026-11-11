@@ -17,7 +17,7 @@ import { footprintProblem } from '../../src/core/work-graph/notes/activate-repai
 import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { readyValue } from '../helpers/S6A-memory-fixture.js';
 import {
-  addXWS2PSecondModule, openXWS2PWorld, readXWS2PCatalog, readXWS2PNote, writeXWS2PNote, xws2pProjectPath,
+  addXWS2PSecondModule, xws2pModuleId, openXWS2PWorld, readXWS2PCatalog, readXWS2PNote, writeXWS2PNote, xws2pProjectPath,
   type XWS2PWorld,
 } from '../helpers/XWS2P-world.js';
 
@@ -51,9 +51,9 @@ function counted(definite: string[]): RunActivitySnapshot {
 
 const setM: CatalogRepairOpV1 = { op: 'set_responsibility', moduleId: 'M', text: 'repair' };
 
-const linkDraft = (topic: string, path: string): LinkDraftV1 => ({
+const linkDraft = (topic: string, path: string, toModule: string): LinkDraftV1 => ({
   kind: 'link', topic, conclusion: `${topic} conclusion`, body: '',
-  anchor: { kind: 'file', path }, extraAnchors: [{ kind: 'module', moduleId: 'second-mod' }],
+  anchor: { kind: 'file', path }, extraAnchors: [{ kind: 'module', moduleId: toModule }],
   facts: [], basisFiles: [], structural: false, replaces: [], contradicts: [], coexistWith: [],
   link: { relation: 'spawns', key: { kind: 'literal', text: 'a' },
     evidence: [{ role: 'launch', at: { path } }, { role: 'entry', at: { path } }] },
@@ -100,15 +100,15 @@ describe('XP-09 round-three path fixes', () => {
     WORLDS.push(world);
     expect(await addXWS2PSecondModule(world, { moduleId: 'second-mod', name: 'second-mod', summary: 'second' }))
       .toMatchObject({ status: 'committed' });
-    const first = await writeXWS2PNote(world, world.second, linkDraft('xp09-flow-a', 'src/a.ts'), 'xp09-flow-a');
-    const second = await writeXWS2PNote(world, world.second, linkDraft('xp09-flow-b', 'src/a.ts'), 'xp09-flow-b');
+    const first = await writeXWS2PNote(world, world.second, linkDraft('xp09-flow-a', 'src/a.ts', xws2pModuleId(world.second.scope.workspaceId, 'second-mod')), 'xp09-flow-a');
+    const second = await writeXWS2PNote(world, world.second, linkDraft('xp09-flow-b', 'src/a.ts', xws2pModuleId(world.second.scope.workspaceId, 'second-mod')), 'xp09-flow-b');
     expect(first.write).toMatchObject({ status: 'accepted' });
     expect(second.write).toMatchObject({ status: 'accepted' });
     if (first.write.status === 'rejected' || second.write.status === 'rejected') return;
     const flow: NoteDraftV1 = {
       kind: 'flow', topic: 'xp09-flow', conclusion: 'the two links form a flow', body: '',
       anchor: { kind: 'file', path: 'src/a.ts' },
-      extraAnchors: [{ kind: 'module', moduleId: 'second-mod' }],
+      extraAnchors: [{ kind: 'module', moduleId: xws2pModuleId(world.second.scope.workspaceId, 'second-mod') }],
       facts: [], basisFiles: [], structural: false, replaces: [], contradicts: [], coexistWith: [],
       flow: { steps: [{ link: first.write.noteId }, { link: second.write.noteId }] },
     };
@@ -227,7 +227,7 @@ describe('XP-09 round-three path fixes', () => {
     if (result.status !== 'ready' || result.value === undefined) return;
     const modules = result.value.items
       .flatMap(item => item.kind === 'module' ? [item.nodeRef.ref.moduleId] : []);
-    expect(modules).toEqual(['second-mod']);
+    expect(modules).toEqual([xws2pModuleId(world.second.scope.workspaceId, 'second-mod')]);
   });
 
   it('XP-09h a repair footprint accepts the Run workspace root as a directory prefix', () => {
@@ -261,6 +261,6 @@ describe('XP-09 round-three path fixes', () => {
     expect(result.status).toBe('ready');
     if (result.status !== 'ready' || result.value === undefined) return;
     const file = result.value.items.find(item => item.kind === 'file');
-    expect(file).toMatchObject({ path: 'src/a.ts', module: { ref: { moduleId: 'second-mod' } } });
+    expect(file).toMatchObject({ path: 'src/a.ts', module: { ref: { moduleId: xws2pModuleId(world.second.scope.workspaceId, 'second-mod') } } });
   });
 });

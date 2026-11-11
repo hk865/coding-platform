@@ -133,6 +133,8 @@ export async function createS4ANoteScopeFixture(kind: S4ANoteScopeFixtureKind,
   const platform = await createTargetPlatform({
     storage: kind === 'memory' ? { kind: 'memory' } : { kind: 'sqlite', directory: join(directory, 'storage') },
     workspace: bindings,
+    // KLS-2: the Host's workspace list is the one root it resolves.
+    knowledgeWorkspaces: projectId => projectId === PROJECT ? [WORKSPACE] : [],
     now,
     kernelStores: { entries: [{ adapterId: 's4a-kernel', storeKey: 's4a-kernel-store', workspace: scope,
       databasePath: join(directory, 'kernel.sqlite') }] },

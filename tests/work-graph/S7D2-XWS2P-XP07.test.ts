@@ -23,17 +23,17 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { LinkDraftV1 } from '../../src/contracts/note.js';
 import {
-  addXWS2PSecondModule, openXWS2PWorld, readXWS2PNote, writeXWS2PNote, xws2pProjectPath,
+  addXWS2PSecondModule, xws2pModuleId, openXWS2PWorld, readXWS2PNote, writeXWS2PNote, xws2pProjectPath,
   type XWS2PWorld,
 } from '../helpers/XWS2P-world.js';
 
 const WORLDS: XWS2PWorld[] = [];
 afterEach(async () => { await Promise.allSettled(WORLDS.splice(0).map(world => world.close())); });
 
-const linkDraft = (topic: string): LinkDraftV1 => ({
+const linkDraft = (topic: string, toModule: string): LinkDraftV1 => ({
   kind: 'link', topic, conclusion: `${topic} conclusion`, body: '',
   anchor: { kind: 'file', path: 'src/a.ts' },
-  extraAnchors: [{ kind: 'module', moduleId: 'second-mod' }],
+  extraAnchors: [{ kind: 'module', moduleId: toModule }],
   facts: [], basisFiles: [], structural: false, replaces: [], contradicts: [], coexistWith: [],
   // `spawns` is the tree's relation whose `entry` evidence is owned by the `to` module;
   // the sheet's `relation:'use'`/`role:'use'` does not exist (see the header).
@@ -48,10 +48,11 @@ describe('XP-07 evidence is owned after projection', () => {
     const setup = await addXWS2PSecondModule(world, {
       moduleId: 'second-mod', name: 'second-mod', summary: 'second workspace module' });
     expect(setup).toMatchObject({ status: 'committed' });
+    const secondMod = xws2pModuleId(world.second.scope.workspaceId, 'second-mod');
     const secondPath = xws2pProjectPath(world.second.scope.workspaceId, 'src/a.ts');
 
     // 1. The second workspace's own file is inside M2: the write is accepted.
-    const write = await writeXWS2PNote(world, world.second, linkDraft('xp07-second'), 'xp07-second');
+    const write = await writeXWS2PNote(world, world.second, linkDraft('xp07-second', secondMod), 'xp07-second');
     expect(write.write).toMatchObject({ status: 'accepted' });
     if (write.write.status === 'rejected') return;
     const read = await readXWS2PNote(world, world.second, write.write.noteId);
@@ -61,11 +62,11 @@ describe('XP-07 evidence is owned after projection', () => {
     // 2. `from` is stored as the canonical project path.
     expect(read.value.anchor).toEqual({ kind: 'file', path: secondPath });
     // 3. The evidence belongs to the second workspace's module, never the main workspace's M1.
-    expect(read.value.link?.ends.to).toEqual({ kind: 'module', moduleId: 'second-mod' });
+    expect(read.value.link?.ends.to).toEqual({ kind: 'module', moduleId: secondMod });
     expect(read.value.link?.ends.to).not.toEqual({ kind: 'module', moduleId: 's6a-core' });
 
     // Reversal: the same target from the MAIN workspace names ws1/src/a.ts, which is M1's file.
-    const reversed = await writeXWS2PNote(world, world.main, linkDraft('xp07-main'), 'xp07-main');
+    const reversed = await writeXWS2PNote(world, world.main, linkDraft('xp07-main', secondMod), 'xp07-main');
     expect(reversed.write.status).toBe('rejected');
   }, 180_000);
 });

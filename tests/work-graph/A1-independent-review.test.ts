@@ -51,7 +51,7 @@ describe.each(['memory', 'sqlite'] as const)('A1 independent %s review', kind =>
       }
       return read;
     } };
-    const result = await createArchitectureCatalogService({ records }).readArchitectureRevision(f.ctx,
+    const result = await createArchitectureCatalogService({ records, knowledge: f.knowledge }).readArchitectureRevision(f.ctx,
       { selection: { kind: 'current' } });
     expect(moved).toBe(true);
     expect(advanced).toBeDefined();

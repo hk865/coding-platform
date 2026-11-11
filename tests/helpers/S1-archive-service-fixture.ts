@@ -388,6 +388,9 @@ export async function createArchiveServiceFixture(kind: ClaimFixtureKind) {
         runtime: { tokenBudget: 10000, maxModelRequests: 2, maxToolCalls: 2 }, tools: { enabledNames: ['read'] },
         workspace: { consistencyMode: 'session' }, storage: { databasePath },
         skills: { resourceRoot: base.directory, enabledIds: [] }, memory: { provider: 'empty' } },
+      // As in production the Host hands the Kernel its Skills (observed-model-run.ts), so the
+      // Kernel never scans the workspace root, which holds `.workbench/` once an architecture is adopted.
+      skills: [],
       providerRegistry: registry, secretSource: { get: () => 'local-scripted-provider' },
       inputSupply: async point => point.acceptedInputIds.includes(inputId) ? [] : [{ inputId, text: body.text,
         sourceRef: { kind: 'SessionMessage', messageRef: message.ref, part: 'response' } }],

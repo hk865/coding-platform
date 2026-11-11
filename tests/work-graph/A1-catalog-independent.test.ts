@@ -37,7 +37,7 @@ describe.each(['memory', 'sqlite'] as const)('A1 independent catalog interleavin
         return f.records.readMany(keys);
       },
     };
-    const service = createArchitectureCatalogService({ records });
+    const service = createArchitectureCatalogService({ records, knowledge: f.knowledge });
     const result = await service.adoptInitialArchitecture(f.ctx, request);
     expect(interleaved).toBe(true);
     expect(result).toEqual({ ...original, replayed: true });
@@ -70,7 +70,7 @@ describe.each(['memory', 'sqlite'] as const)('A1 independent catalog interleavin
           return f.records.commit(batch);
         },
       };
-      const service = createArchitectureCatalogService({ records });
+      const service = createArchitectureCatalogService({ records, knowledge: f.knowledge });
       expect(await service.adoptInitialArchitecture(f.ctx, changedRequest))
         .toMatchObject({ status: 'rejected', code: 'idempotency_conflict' });
       expect(interleaved).toBe(true);

@@ -46,6 +46,10 @@ import type {
   NoticePositionComparatorPort,
   NoteDecisionCardFactsV1,
   NoteDecisionSourcePort,
+  ConflictArchitectureRead,
+  DecisionQueuePreparedReader,
+  DecisionQueueWindowMoved,
+  PreparedConflictArchitecture,
 } from '../model/decision-contracts.js';
 import type { SessionMessage } from '../model/communication-contracts.js';
 import type { MemberCallerV1 } from '../state/member-creation.js';
@@ -117,6 +121,7 @@ import {
   goalDecisionBasis,
   listWorkspaceGoals,
   lookupAll,
+  readCatalogPointerRevision,
   readGoalTerminalState,
   readWatermark,
   storeFailureToRejection,
@@ -209,8 +214,12 @@ const CARD_ACTIONS: readonly CardAction[] = ['answer', 'ask_secretary', 'apply',
 /** §4.1 line 772: one source page is at most 200 items (2A L10 keeps the page size). */
 const SOURCE_PAGE_LIMIT = 200;
 
-/** §4.1 line 772 / §3.3: one read window that keeps moving is retried at most 4 times. */
-const WINDOW_MAX_ATTEMPTS = 4;
+/**
+ * §4.1 line 772 / §3.3: one read window that keeps moving is retried at most 4
+ * times; a reader whose own window wraps a prepared queue read retries that
+ * whole window as often (stack review 2).
+ */
+export const WINDOW_MAX_ATTEMPTS = 4;
 /** Internal sentinel: this attempt did not observe one stable ledger window. */
 const WINDOW_MOVED: unique symbol = Symbol('decision-read-model.window-moved');
 
@@ -255,10 +264,16 @@ type QueuePageCursorV1 = {
 /** Builds the read model; the factory itself never throws. */
 export function createDecisionReadModel(
   deps: DecisionReadModelDependencies,
-): DecisionReadPort & DecisionWholePageReader {
+): DecisionReadPort & DecisionWholePageReader & DecisionQueuePreparedReader {
   return {
     async queryDecisionQueue(ctx, input): Promise<ReadResult<DecisionQueueReadV1>> {
       return queryDecisionQueue(deps, ctx, input);
+    },
+    async readConflictArchitecture(ctx) {
+      return deps.conflicts.readCurrentArchitecture(ctx);
+    },
+    async queryDecisionQueuePrepared(ctx, input, prepared) {
+      return queryDecisionQueuePrepared(deps, ctx, input, prepared);
     },
     async readWholePage(ctx, input): Promise<ReadResult<DecisionWholePageV1>> {
       return readWholePage(deps, ctx, input);
@@ -267,7 +282,10 @@ export function createDecisionReadModel(
       return readDecisionCard(deps, ctx, input.source);
     },
     async queryGoalConflicts(ctx, input): Promise<ReadResult<GoalConflictReadV1>> {
-      return deps.conflicts.queryGoalConflicts(ctx, input);
+      // The public read never carries a caller's architecture: only an internal
+      // window passes one it read itself (R-window).
+      return deps.conflicts.queryGoalConflicts(ctx, { workspace: input.workspace,
+        ...(input.atLeastCursor === undefined ? {} : { atLeastCursor: input.atLeastCursor }) });
     },
   };
 }
@@ -1054,10 +1072,40 @@ async function queryDecisionQueue(
   ctx: CoreCallContext,
   input: QueueInput,
 ): Promise<ReadResult<DecisionQueueReadV1>> {
-  // The sections and the page are required inputs: a read without one is `invalid`, like a bad cursor.
+  const problem = queueInputProblem(input);
+  if (problem !== null) return problem;
+  return readStableWindow(deps, ctx, input, { kind: 'queue' });
+}
+
+/**
+ * R-window (ruling 9, stack review 2): the queue inside a caller's own ledger
+ * window, with the conflicts' architecture the caller read before that window.
+ * One attempt: a second one would read the files again inside the caller's
+ * window, so a window that moved goes back to the caller.
+ */
+async function queryDecisionQueuePrepared(
+  deps: DecisionReadModelDependencies,
+  ctx: CoreCallContext,
+  input: QueueInput,
+  prepared: PreparedConflictArchitecture,
+): Promise<ReadResult<DecisionQueueReadV1> | DecisionQueueWindowMoved> {
+  const problem = queueInputProblem(input);
+  if (problem !== null) return problem;
+  const result = await readDecisionQueueWindow(deps, ctx, input, { kind: 'queue' }, prepared.read);
+  if (result !== WINDOW_MOVED) return result;
+  return prepared.last ? windowNeverStable() : { status: 'moved' };
+}
+
+/** The sections and the page are required inputs: a read without one is `invalid`, like a bad cursor. */
+function queueInputProblem(input: QueueInput): CoreRejection | null {
   if (!Array.isArray(input.sections)) return { status: 'rejected', code: 'invalid', reason: 'the queue read requires sections' };
   if (!isRecord(input.page)) return { status: 'rejected', code: 'invalid', reason: 'the queue read requires a page' };
-  return readStableWindow(deps, ctx, input, { kind: 'queue' });
+  return null;
+}
+
+function windowNeverStable(): CoreRejection {
+  return { status: 'rejected', code: 'unavailable',
+    reason: `the decision queue did not yield one stable read window within ${String(WINDOW_MAX_ATTEMPTS)} attempts` };
 }
 
 async function readWholePage(
@@ -1090,11 +1138,10 @@ async function readStableWindow(
   // §4.1 line 772 / §3.3: one stable window, at most 4 attempts. A window that
   // keeps moving is `unavailable`, never stamped with a later watermark.
   for (let attempt = 0; attempt < WINDOW_MAX_ATTEMPTS; attempt += 1) {
-    const result = await readDecisionQueueWindow(deps, ctx, input, mode);
+    const result = await readDecisionQueueWindow(deps, ctx, input, mode, undefined);
     if (result !== WINDOW_MOVED) return result;
   }
-  return { status: 'rejected', code: 'unavailable',
-    reason: `the decision queue did not yield one stable read window within ${String(WINDOW_MAX_ATTEMPTS)} attempts` };
+  return windowNeverStable();
 }
 
 async function readDecisionQueueWindow(
@@ -1102,6 +1149,7 @@ async function readDecisionQueueWindow(
   ctx: CoreCallContext,
   input: QueueInput,
   mode: WindowModeV1,
+  prepared: ReadResult<ConflictArchitectureRead> | undefined,
 ): Promise<ReadResult<DecisionWindowReadV1> | typeof WINDOW_MOVED> {
   const workspace = input.workspace;
   // §8.2 scope row: the explicit Workspace (and GoalRef) are compared with the
@@ -1117,6 +1165,15 @@ async function readDecisionQueueWindow(
 
   const injectedCards = new Map(deps.cardSources.map((source) => [source.kind, source]));
   const injectedNotices = new Map(deps.noticeSources.map((source) => [source.category, source]));
+  // KLS-2 ruling 9 (R-window): the conflicts' architecture comes from the
+  // knowledge files, so it is read BEFORE the window below is fixed (or by the
+  // caller, before its own); the window checks the catalog pointer it was read at.
+  let conflictArchitecture: ConflictArchitectureRead | null = null;
+  if (wantsCards && !injectedCards.has('goal_conflict')) {
+    const read = prepared ?? await deps.conflicts.readCurrentArchitecture(ctx);
+    if (read.status !== 'ready') return read;
+    conflictArchitecture = read.value;
+  }
   // 2A L11/P1: one attempt-scoped cache, shared by every source this attempt
   // reads. A source assembles its whole collection once and serves its pages
   // from it; the object is dropped when this window attempt ends.
@@ -1296,8 +1353,9 @@ async function readDecisionQueueWindow(
   }
 
   // ---- source 6 goal_conflict ----------------------------------------------
-  if (wantsCards && !injectedCards.has('goal_conflict')) {
+  if (conflictArchitecture !== null) {
     const conflicts = await deps.conflicts.queryGoalConflicts(ctx, { workspace,
+      architecture: conflictArchitecture.architecture,
       ...(input.page.atLeastCursor === undefined ? {} : { atLeastCursor: input.page.atLeastCursor }) });
     if (conflicts.status !== 'ready') return conflicts;
     for (const card of conflicts.value.cards) add(card);
@@ -1424,6 +1482,13 @@ async function readDecisionQueueWindow(
   // the first listing (or the first horizon read). A horizon observed later than
   // that window proves the reads did NOT share it: retry the whole window and
   // only ever report the fixed window as `sourceCursor`.
+  // R-window: a catalog pointer that moved since the conflicts' architecture was
+  // read means the conflict cards may use an older catalog than this window's.
+  if (conflictArchitecture !== null) {
+    const pointer = await readCatalogPointerRevision(deps.records, workspace.projectId);
+    if (pointer.status !== 'ready') return pointer;
+    if (pointer.value !== conflictArchitecture.catalogPointerRevision) return WINDOW_MOVED;
+  }
   const watermarkRead = await readWatermark(deps.records);
   if (watermarkRead.status !== 'ready') return watermarkRead;
   const observed = later(watermark, watermarkRead.value);

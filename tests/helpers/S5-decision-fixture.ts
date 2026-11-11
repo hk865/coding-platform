@@ -48,7 +48,11 @@
  * lookups are the real registered indexes, so a matching seed is proven by the
  * Store, not by a mock.
  */
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { KnowledgeLines } from '../../src/core/work-graph/model/line-knowledge.js';
+import { knowledgeLinesFor } from './KLS2-knowledge-lines.js';
 import { DatabaseSync } from 'node:sqlite';
 import type { ArchitectureCatalogPinV1 } from '../../src/contracts/architecture-catalog.js';
 import { artifactBodyDigest } from '../../src/contracts/artifact.js';
@@ -376,6 +380,8 @@ export type S5DecisionFixture = {
   plans: { A1: PlanRevisionSnapshot; B1: PlanRevisionSnapshot; C1: PlanRevisionSnapshot };
   /** The adopted catalog's pin, from the public current-revision read after the adoption: a seeded candidate's pin. */
   catalogPin: ArchitectureCatalogPinV1;
+  /** KLS-2: the knowledge lines every service of this world takes (one temporary root for P/W). */
+  knowledge: KnowledgeLines;
   sessionS: SessionRef;
   sessionSecond: SessionRef;
   claimRA: TaskClaim;
@@ -569,6 +575,8 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
   };
   const observed = observeRecords(forwarded, counts);
   const records = observed.records;
+  const knowledge = knowledgeLinesFor({ root: mkdtempSync(join(tmpdir(), 's5-knowledge-')), projectId: PROJECT_ID,
+    workspaceId: WORKSPACE_ID, records });
   const allocations = createS5Allocations();
   const { allocationCounts, newId, now } = allocations;
   const bodyPath = join(directory, 'artifacts.sqlite');
@@ -730,7 +738,7 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
   // The Plan drafts below scope tasks to M and N, so both branches adopt them; the default keeps its "no file
   // ownership" meaning through empty paths.
   const pathsOf = (module: 'M' | 'N'): string[] => catalogKind === 'modules' ? [...MODULE_PATHS[module]] : [];
-  const catalog = await createArchitectureCatalogService({ records }).adoptInitialArchitecture(ctx, {
+  const catalog = await createArchitectureCatalogService({ records, knowledge }).adoptInitialArchitecture(ctx, {
     input: { baselineId: 's5-baseline', description: 'S5 architecture baseline', constraints: [],
       catalog: { requireDag: true, dependencies: [], modules: [
         { ref: MODULE_M, name: 'M', responsibility: 'Module M work', paths: pathsOf('M'), interfaces: [] },
@@ -741,7 +749,7 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
     ] },
   });
   if (catalog.status !== 'committed') throw new Error(`S5 catalog adoption failed: ${JSON.stringify(catalog)}`);
-  const adopted = await createArchitectureCatalogService({ records }).readArchitectureRevision(ctx, { selection: { kind: 'current' } });
+  const adopted = await createArchitectureCatalogService({ records, knowledge }).readArchitectureRevision(ctx, { selection: { kind: 'current' } });
   if (adopted.status !== 'ready') throw new Error(`S5 catalog read failed: ${JSON.stringify(adopted)}`);
   const catalogPin: ArchitectureCatalogPinV1 = { catalogRef: adopted.value.catalog.ref,
     baseline: { ref: adopted.value.baseline.ref, digest: adopted.value.baseline.contentDigest } };
@@ -1094,7 +1102,7 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
   };
   const requestFacts = createRequestFacts({ records });
   const requestEffectiveScope = createEffectiveScopeReader({
-    records, architecture: createArchitectureCatalogService({ records }), duties });
+    records, architecture: createArchitectureCatalogService({ records, knowledge }), duties });
   const requestSelection = createSecretarySelection({
     records,
     sessionFacts: requestSessionFacts,
@@ -1325,7 +1333,7 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
   let secondary: Awaited<ReturnType<B2ExecutionFixture['base']['reopenService']>> | undefined;
 
   const fixture: S5DecisionFixture = {
-    kind, b2, records, counts, bodies, base, ctx, workspace, allocationCounts, newId, now, storeSnapshot,
+    kind, b2, records, counts, bodies, base, ctx, workspace, allocationCounts, newId, now, storeSnapshot, knowledge,
     goals: { A: { ref: GOAL_A, snapshot: goalA, order: GOAL_ORDER.A, autonomy: goalA.settings!.autonomy },
       B: { ref: GOAL_B, snapshot: goalB, order: GOAL_ORDER.B, autonomy: goalB.settings!.autonomy },
       C: { ref: GOAL_C, snapshot: goalC, order: GOAL_ORDER.C, autonomy: goalC.settings!.autonomy } },

@@ -39,7 +39,7 @@
  *   is made here; a route the tree does not publish yet answers its 404, which the step reports and never reads as a
  *   business answer.
  */
-import { mkdtemp, rename, rm } from 'node:fs/promises';
+import { chmod, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AdoptedArchitecture, ModuleDefinition } from '../../src/contracts/architecture-catalog.js';
@@ -232,8 +232,9 @@ export async function lineOfS7D2(world: Pick<S6AHostWorld, 'readSession'>, label
 /**
  * The project's policy and catalog through the memory fixture's governance seed (once per world). The catalog is
  * `input.catalog`, else `s7d2Catalog` shaped by the variant: `containment_absent` without the `containment` field,
- * `ownership_ambiguous` with the twin module. `capture_failed` moves the workspace root away while the adoption's
- * automatic capture runs and puts it back after the capture settled. Answers `architecture/observation-state` after.
+ * `ownership_ambiguous` with the twin module. `capture_failed` makes the workspace's `src` unreadable while the
+ * adoption's automatic capture runs and restores it after the capture settled (the root stays: the adoption writes its
+ * knowledge files there, KLS-2). Answers `architecture/observation-state` after.
  */
 export async function adoptS7D2Governance(world: S6AHostWorld,
   input: { catalog?: AdoptedArchitecture; observation?: S7D2ObservationVariant } = {}):
@@ -242,12 +243,12 @@ Promise<ArchitectureObservationStateV1> {
   const catalog = input.catalog ?? s7d2Catalog(S6A_SCOPE.projectId, {
     containment: input.observation !== 'containment_absent', twin: input.observation === 'ownership_ambiguous' });
   if (input.observation === 'capture_failed') {
-    const away = `${world.root}-away`;
-    await rename(world.root, away);
+    const source = join(world.root, 'src');
+    await chmod(source, 0o000);
     try {
       await governance.adoptArchitecture({ catalog, settle: true });
     } finally {
-      await rename(away, world.root);
+      await chmod(source, 0o755);
     }
   } else {
     await governance.adoptArchitecture({ catalog, settle: true });
@@ -553,7 +554,11 @@ export async function linkS7D2Scopes(world: S6ARequestWorld,
   input: { line: S6ASession | SessionRef; targets: readonly WorkLinkTarget[]; label: string }): Promise<SessionWorkLink[]> {
   const links: SessionWorkLink[] = [];
   for (const [index, target] of input.targets.entries()) {
-    const write = await openLink(world, { line: input.line, target, requestId: `${input.label}-${String(index)}` });
+    const step = { line: input.line, target, requestId: `${input.label}-${String(index)}` };
+    let write = await openLink(world, step);
+    // The autonomous start after an adoption can claim in this same line between the card read and the link (the
+    // claim moves the card): the link reads the card once more, as any client does after a revision conflict.
+    if (write.result.status === 'rejected' && write.result.code === 'revision_conflict') write = await openLink(world, step);
     links.push(valueOf<SessionWorkLink>(write.result, 'committed', `the ${target.kind} link ${input.label}`));
   }
   return links;

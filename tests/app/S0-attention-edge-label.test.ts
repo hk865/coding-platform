@@ -69,11 +69,13 @@ function unsupportedWork() {
 
 async function openPlatform(kind: 'memory' | 'sqlite'): Promise<Platform> {
   const directory = kind === 'sqlite' ? await tempDir('s0-attention-') : undefined;
+  // KLS-2: an architecture adoption writes its knowledge files into the workspace root, an empty temporary directory.
+  const root = await tempDir('s0-attention-root-');
   const platform = await createTargetPlatform({
     storage: directory === undefined ? { kind: 'memory' } : { kind: 'sqlite', directory },
     workspace: {
       async resolveRoot() {
-        return { status: 'rejected', code: 'not_found', reason: 'the S0 attention fixture has no workspace IO' };
+        return { status: 'ready', value: { root, workspaceRevision: 1 } };
       },
       async authorize() {
         return { status: 'rejected', code: 'forbidden', reason: 'the S0 attention fixture has no workspace IO' };

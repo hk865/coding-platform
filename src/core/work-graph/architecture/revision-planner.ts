@@ -30,17 +30,18 @@ import {
   encodeArchitectureCatalogRevisedEvent, type ArchitectureCatalogRevisedEventV1,
 } from './catalog-record-codecs.js';
 import type {
-  ArchitectureBaselineContentV1, ArchitectureBaselineRevisionSnapshot, ArchitectureCatalogRecord,
+  AdoptedArchitecture, ArchitectureBaselineContentV1, ArchitectureBaselineRevisionSnapshot, ArchitectureCatalogRecord,
   ArchitectureRevision,
 } from './catalog-contracts.js';
 import { parseRepairOps, applyRepairOps, catalogRevisionMovesProblem } from './repair-ops.js';
 import {
   BASELINE_ACTIVE_SCHEMA_ID, BASELINE_SCHEMA_ID, activeRefKey, baselineRefFor, catalogPinOf, catalogRefFor,
-  readCurrentCatalogWindow,
+  readCurrentCatalogWindow, type CurrentCatalogWindow,
 } from './catalog-service.js';
 import { exactKeys } from './architecture-service.js';
 import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
 import type { CatalogPlanFactsPort, CatalogResponsibilityPort } from '../model/catalog-revision-ports.js';
+import type { KnowledgeLines } from '../model/line-knowledge.js';
 
 /** The catalog service imports the move check from here; its one definition is in repair-ops. */
 export { catalogRevisionMovesProblem };
@@ -65,6 +66,8 @@ export type CatalogRevisionDependencies = {
   taskFacts?: CatalogPlanFactsPort;
   responsibility?: CatalogResponsibilityPort;
   duty?: SessionDutyReadPort;
+  /** The knowledge files the plan reads the current catalog from. */
+  knowledge: KnowledgeLines;
 };
 
 const REVISE_IDENTITY_PREFIX = 'architecture-catalog-revise:';
@@ -124,12 +127,40 @@ export function catalogRevisionPinProblem(pin: ArchitectureCatalogPinV1): string
 }
 
 /**
+ * The catalog half of one revision: the current catalog (the knowledge files),
+ * the pin, the op engine and the move check, and no ledger basis. A writer
+ * computes its file changes from `catalog` and `content` and only then calls
+ * `finishCatalogRevision` (stack review 1): the task-facts horizon a module
+ * delete commits with is read after every file read, so a commit that lands
+ * while the files are read cannot fail the write.
+ */
+export type CatalogRevisionDraft = {
+  input: CatalogRevisionInputV1;
+  actor: ActorRef;
+  projectId: string;
+  workspaceId: string;
+  current: Extract<CurrentCatalogWindow, { status: 'ready' }>;
+  /** The revised catalog. */
+  catalog: AdoptedArchitecture;
+  /** The revised baseline content: the parent's, with the op engine's dependency rules. */
+  content: ArchitectureBaselineContentV1;
+  removed: ReadonlySet<string>;
+};
+
+/** The draft and the ledger half in one go, for a caller that writes no file (the proposal's write trial). */
+export async function planCatalogRevision(deps: CatalogRevisionDependencies, ctx: CoreCallContext,
+  input: CatalogRevisionInputV1): Promise<ReadResult<CatalogRevisionContribution>> {
+  const draft = await draftCatalogRevision(deps, ctx, input);
+  return draft.status === 'ready' ? finishCatalogRevision(deps, ctx, draft.value) : draft;
+}
+
+/**
  * The book removes a containment edge when the child is removed in the same
  * revision; `remove_module` in the op engine does that, so the planner applies
  * the caller's original ops and keeps its fingerprint untouched.
  */
-export async function planCatalogRevision(deps: CatalogRevisionDependencies, ctx: CoreCallContext,
-  input: CatalogRevisionInputV1): Promise<ReadResult<CatalogRevisionContribution>> {
+export async function draftCatalogRevision(deps: CatalogRevisionDependencies, ctx: CoreCallContext,
+  input: CatalogRevisionInputV1): Promise<ReadResult<CatalogRevisionDraft>> {
   const actor = revisionHostActorOf(ctx);
   if ('status' in actor) return actor;
   if (!isRecord(input) || !exactKeys(input, ['expected', 'ops', 'responsibilityMoves', 'reason', 'commandId'])) {
@@ -151,7 +182,7 @@ export async function planCatalogRevision(deps: CatalogRevisionDependencies, ctx
   if (!parsed.ok) return invalid(parsed.problem.reason);
   const ops = parsed.ops;
 
-  const current = await readCurrentCatalogWindow(deps.records, projectId);
+  const current = await readCurrentCatalogWindow(deps.records, projectId, { lines: deps.knowledge, caller: ctx });
   if (current.status === 'not_found') return rejected('incomplete', 'the project has no active architecture baseline to revise');
   if (current.status !== 'ready') return current;
   if (canonicalJson(catalogPinOf(current) as unknown as JsonValue)
@@ -159,8 +190,6 @@ export async function planCatalogRevision(deps: CatalogRevisionDependencies, ctx
     return rejected('source_stale', 'the expected catalog pin is not the current architecture revision');
   }
 
-  const identity = catalogRevisionKeys(input, actor, projectId);
-  const occurredAt = deps.now();
   const parentCatalog = current.catalog.catalog;
   const parentModules = new Map(parentCatalog.modules.map(module => [module.ref.moduleId, module]));
   const ruleSet = current.baseline.content.dependencyRules ?? [];
@@ -172,10 +201,28 @@ export async function planCatalogRevision(deps: CatalogRevisionDependencies, ctx
   }
   const trialModules = new Set(trial.catalog.modules.map(module => module.ref.moduleId));
   const removed = new Set([...parentModules.keys()].filter(moduleId => !trialModules.has(moduleId)));
-  const moves = input.responsibilityMoves;
-  const movesProblem = catalogRevisionMovesProblem(moves, projectId, trialModules);
+  const movesProblem = catalogRevisionMovesProblem(input.responsibilityMoves, projectId, trialModules);
   if (movesProblem !== null) return invalid(movesProblem);
+  const content = structuredClone(current.baseline.content) as ArchitectureBaselineContentV1;
+  if (content.dependencyRules !== undefined || trial.rules.length > 0) content.dependencyRules = trial.rules;
+  return { status: 'ready', value: { input, actor, projectId, workspaceId, current, catalog: trial.catalog, content,
+    removed } };
+}
 
+/**
+ * The ledger half of one revision, after the writer's file reads: the task
+ * facts (their horizon is a module delete's `ledgerHorizon`), the
+ * responsibility facts, the scope records and the catalog pointer. A pointer
+ * that moved since the draft read the files is `source_stale`, the planner's
+ * own "the basis changed". It reads no file.
+ */
+export async function finishCatalogRevision(deps: CatalogRevisionDependencies, ctx: CoreCallContext,
+  draft: CatalogRevisionDraft): Promise<ReadResult<CatalogRevisionContribution>> {
+  const { input, actor, projectId, workspaceId, current, content, removed } = draft;
+  const identity = catalogRevisionKeys(input, actor, projectId);
+  const occurredAt = deps.now();
+  const parentCatalog = current.catalog.catalog;
+  const moves = input.responsibilityMoves;
   const scope: WorkspaceScope = { projectId, workspaceId };
   const planGuards: RecordGuard[] = [];
   let taskFactsWatermark: CommitCursor | null | undefined;
@@ -235,7 +282,7 @@ export async function planCatalogRevision(deps: CatalogRevisionDependencies, ctx
       byDuty.set(duty, list);
     }
     const oldCatalog = { state: 'present' as const, revision: current.activeRevision, catalog: parentCatalog };
-    const proposedCatalog = { state: 'present' as const, revision: current.activeRevision + 1, catalog: trial.catalog };
+    const proposedCatalog = { state: 'present' as const, revision: current.activeRevision + 1, catalog: draft.catalog };
     const sessions = new Map<string, import('../../../contracts/core/session.js').SessionRecord>();
     const links = new Map<string, { link: ResponsibilityMoveV1['link']; next: import('../../../contracts/core/session.js').PendingSessionWorkLink | null }>();
     const claimChanges = new Map<string, import('../../../contracts/role-lines.js').RoleScopeClaimChangeV1>();
@@ -275,7 +322,8 @@ export async function planCatalogRevision(deps: CatalogRevisionDependencies, ctx
 
   const projectKey = canonicalJson(projectRefFor(projectId) as unknown as JsonValue);
   const workspaceKey = canonicalJson(workspaceRefFor(projectId, workspaceId) as unknown as JsonValue);
-  const scopeRead = await deps.records.readMany([projectKey, workspaceKey]);
+  const pointerKey = activeRefKey(projectId);
+  const scopeRead = await deps.records.readMany([projectKey, workspaceKey, pointerKey]);
   if (scopeRead.status !== 'ready') return unavailable(scopeRead.code + ': ' + scopeRead.reason);
   const scopeByKey = new Map(scopeRead.value.records.map(record => [record.refKey, record]));
   const projectRecord = scopeByKey.get(projectKey);
@@ -288,11 +336,13 @@ export async function planCatalogRevision(deps: CatalogRevisionDependencies, ctx
   if (project.status !== 'decoded' || workspace.status !== 'decoded') {
     return unavailable('the canonical project/workspace records are damaged');
   }
+  // Stack review 1: the draft read the files at this pointer.
+  if (scopeByKey.get(pointerKey)?.revision !== current.activeRevision) {
+    return rejected('source_stale', 'the active baseline pointer moved after the knowledge files were read');
+  }
 
   const baselineId = input.expected.baseline.ref.baselineId;
   const nextRevision = input.expected.baseline.ref.revision + 1;
-  const content = structuredClone(current.baseline.content) as ArchitectureBaselineContentV1;
-  if (content.dependencyRules !== undefined || trial.rules.length > 0) content.dependencyRules = trial.rules;
   const contentDigest = architectureBaselineDigest({
     schemaVersion: 1, baselineId, contentRevision: nextRevision, content,
   });
@@ -303,7 +353,7 @@ export async function planCatalogRevision(deps: CatalogRevisionDependencies, ctx
   };
   const catalogRef = catalogRefFor(projectId, baselineId, nextRevision);
   const catalogRecord: ArchitectureCatalogRecord = {
-    ref: catalogRef, revision: 1, baselineRef, schemaVersion: 1, catalog: trial.catalog, since: null,
+    ref: catalogRef, revision: 1, baselineRef, schemaVersion: 1, catalog: draft.catalog, since: null,
   };
   const activeRecord = {
     ref: { aggregateType: 'ProjectArchitectureBaselineActive' as const, projectId },

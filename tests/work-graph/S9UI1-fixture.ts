@@ -8,6 +8,7 @@
  * file graph from `captureSourceChanges` over real files in a temporary root. The
  * two rows use only public steps (a route or a public owner) from there.
  */
+import { knowledgeLinesFor } from '../helpers/KLS2-knowledge-lines.js';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -176,7 +177,8 @@ export async function openSearchWorld(kind: Backend): Promise<SearchWorld> {
     if (registered.status !== 'committed') throw new Error(`S9UI1: Workspace registration failed: ${JSON.stringify(registered)}`);
   }
 
-  const catalog = createArchitectureCatalogService({ records: backend.records });
+  const catalog = createArchitectureCatalogService({ records: backend.records,
+    knowledge: knowledgeLinesFor({ root: rootA, ...WORKSPACE_A, records: backend.records }) });
   const observed = createObservedArchitecture(deps());
   let adopted = false;
   const architecture = { ...catalog, ...observed } as unknown as CoreRoutePlatform['architecture'];

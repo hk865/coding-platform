@@ -7,6 +7,8 @@
  * adviser line, the real propose_architecture_revision tool, and the G5 composition's
  * one proposal owner, card source and application row.
  */
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { byIdentityPrefix, commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import { openProposalWorld, type ProposalWorld } from '../helpers/S8C-proposal-world.js';
@@ -286,6 +288,64 @@ describe.each(['memory', 'sqlite'] as const)('R13 (%s): the frozen base is re-ch
     expect((await answering).state).toBe('applied');
     expect(target.lastApply()).toMatchObject({ status: 'source_stale', receipt: expect.anything() });
     expect((await target.read(proposalRefOf(proposal!))).proposal).toMatchObject({ state: 'stale' });
+  });
+
+  it('a second copy of the same application, held after the planner read the catalog, answers the first copy '
+    + '(quick check 5)', async () => {
+    const target = await world(backend);
+    const [proposal] = await target.propose([{ baseCatalogPin: target.pin,
+      ops: [addModule(target, 's8c-qc5', 'src/qc5')], reason: 'QC5 two copies' }])
+      .then(results => results.map(needsDecision));
+    const card = await target.cardByKey(proposal!.cardKey);
+    const hold = commitBarrier.holdAfter(byIdentityPrefix('session-message-decision-'), 'QC5 answer');
+    const answering = target.answer(card, 'approve', 's8c-qc5-answer');
+    await hold.reached;
+    // The answer's application reads the window twice (its own read, then the planner's): after the second, the
+    // same application runs to the end through the owner before the held copy computes its file changes.
+    let first: unknown = null;
+    const hooks = globalThis as unknown as Record<string, (() => Promise<void>) | null>;
+    hooks['__dshS8CWindowHook'] = async () => {
+      hooks['__dshS8CWindowHook'] = async () => {
+        const saved = await target.readAnswer(card.source);
+        if (saved.status !== 'ready' || saved.value.message === null) throw new Error('no saved answer');
+        first = await target.apply(batchOf(await target.read(proposalRefOf(proposal!))), saved.value.message.ref);
+        expect(first, JSON.stringify(first)).toMatchObject({ status: 'applied' });
+      };
+    };
+    hold.release();
+    expect((await answering).state).toBe('applied');
+    expect(hooks['__dshS8CWindowHook']).toBeNull();
+    expect(target.lastApply()).toEqual(first);
+    expect((await target.read(proposalRefOf(proposal!))).proposal).toMatchObject({ state: 'applied' });
+  });
+
+  it('a held application whose commit replays a stale close of the same command answers that close and writes no '
+    + 'file (quick check 8)', async () => {
+    const target = await world(backend);
+    const [proposal] = await target.propose([{ baseCatalogPin: target.pin,
+      ops: [addModule(target, 's8c-qc8', 'src/qc8')], reason: 'QC8 replayed close' }])
+      .then(results => results.map(needsDecision));
+    const card = await target.cardByKey(proposal!.cardKey);
+    // B: the answer's own application, prepared and held before its commit.
+    const hold = commitBarrier.hold(byIdentityPrefix('architecture-proposal-apply'), 'QC8 B prepared');
+    const answering = target.answer(card, 'approve', 's8c-qc8-answer');
+    await hold.reached;
+    // Another command revises the catalog; then the same application A finds no receipt, sees the base moved and
+    // closes the members stale under the original identity.
+    await target.revise([addModule(target, 's8c-qc8-other', 'src/qc8other')]);
+    const saved = await target.readAnswer(card.source);
+    if (saved.status !== 'ready' || saved.value.message === null) throw new Error('no saved answer');
+    const first = await target.apply(batchOf(await target.read(proposalRefOf(proposal!))), saved.value.message.ref);
+    expect(first, JSON.stringify(first)).toMatchObject({ status: 'source_stale' });
+    hold.release();
+    await answering;
+    expect(target.lastApply()).toEqual(first);
+    expect((await target.read(proposalRefOf(proposal!))).proposal).toMatchObject({ state: 'stale' });
+    const folder = join(target.staff.world.root, '.workbench/modules');
+    const ids = existsSync(folder) ? readdirSync(folder)
+      .map(name => (JSON.parse(readFileSync(join(folder, name), 'utf8')) as { id: string }).id) : [];
+    expect(ids).toContain('s8c-qc8-other');
+    expect(ids).not.toContain('s8c-qc8');
   });
 
   it('closes a rejected batch with no stale reason', async () => {

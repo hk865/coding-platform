@@ -1,5 +1,6 @@
 /** R4b implementation acceptance against real Memory/SQLite stores. These
  * tests preserve durable identity, directory and link semantics across adapters. */
+import { knowledgeLinesFor } from '../helpers/KLS2-knowledge-lines.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -104,7 +105,9 @@ async function open(kind: 'memory' | 'sqlite') {
     ] },
   });
   if (activated.status !== 'committed') throw new Error(`policy activation failed: ${JSON.stringify(activated)}`);
-  const adopted = await createArchitectureCatalogService({ records: backend.records }).adoptInitialArchitecture(ctx, {
+  const adopted = await createArchitectureCatalogService({ records: backend.records,
+    knowledge: knowledgeLinesFor({ root: directory, projectId: ctx.projectId, workspaceId: ctx.workspaceId!,
+      records: backend.records }) }).adoptInitialArchitecture(ctx, {
     input: { baselineId: 'baseline-1', description: 'Task fixture baseline', constraints: [],
       catalog: { requireDag: true, dependencies: [], modules: [] } },
     meta: { requestId: 'r4b-adopt-architecture', expected: [

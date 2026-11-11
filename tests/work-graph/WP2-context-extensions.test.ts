@@ -26,6 +26,7 @@ import type { SessionAnomalyViewV1 } from '../../src/contracts/session-anomaly.j
 import type {
   DecisionCardSourcePort,
   DecisionCardV1,
+  DecisionQueuePreparedReader,
   DecisionQueueReadV1,
   DecisionReadPort,
   GoalSettingsPort,
@@ -154,12 +155,20 @@ function queuePage(options: {
 
 function decisionsDouble(
   respond: (call: number, input: QueueInput) => ReadResult<DecisionQueueReadV1>,
-): { port: Pick<DecisionReadPort, 'queryDecisionQueue'>; calls: QueueInput[] } {
+): { port: Pick<DecisionReadPort, 'queryDecisionQueue'> & DecisionQueuePreparedReader; calls: QueueInput[] } {
   const calls: QueueInput[] = [];
   return {
     calls,
     port: {
       async queryDecisionQueue(_ctx, input) {
+        calls.push(input);
+        return respond(calls.length, input);
+      },
+      // The context reader reads the conflicts' architecture once before its pages (R-window); no catalog here.
+      async readConflictArchitecture() {
+        return { status: 'ready', value: { architecture: null, catalogPointerRevision: null } };
+      },
+      async queryDecisionQueuePrepared(_ctx, input) {
         calls.push(input);
         return respond(calls.length, input);
       },
@@ -213,13 +222,13 @@ type DecisionReadWidths = { sourcePageLimit?: number; lookupPageLimit?: number }
  */
 function realDecisionQueue(f: S5DecisionFixture,
   cardSources: readonly DecisionCardSourcePort[] = [],
-  widths: DecisionReadWidths = {}): DecisionReadPort {
+  widths: DecisionReadWidths = {}): DecisionReadPort & DecisionQueuePreparedReader {
   return createDecisionReadModel({
     records: f.records,
     cardSources: [...cardSources],
     noticeSources: [],
     conflicts: createGoalConflictAssembler({ records: f.records,
-      catalog: createArchitectureCatalogService({ records: f.records }),
+      catalog: createArchitectureCatalogService({ records: f.records, knowledge: f.knowledge }),
       executedFiles: createGoalExecutedFilesReader({ records: f.records }) }),
     positions: createNoticePositionComparator(),
     displayTokens: createNoticeDisplayToken(new Uint8Array(32).fill(2)),
@@ -237,7 +246,7 @@ type DecisionHarness = {
   f: S5DecisionFixture;
   mailbox: ReturnType<typeof createSessionMailbox>;
   decisions: ReturnType<typeof createDecisionMessageService>;
-  queue: DecisionReadPort;
+  queue: DecisionReadPort & DecisionQueuePreparedReader;
 };
 
 async function openDecisionHarness(widths: DecisionReadWidths = {}): Promise<DecisionHarness> {
@@ -271,7 +280,7 @@ const F07_CANDIDATE_COUNT = 100;
 
 type DeferredDecisionHarness = {
   f: S5DecisionFixture;
-  queue: DecisionReadPort;
+  queue: DecisionReadPort & DecisionQueuePreparedReader;
   /** W2b-22: the real SessionAnomaly reader over the same world's records. */
   anomalies: SessionAnomalyPort;
   goalRef: GoalRef;
@@ -647,6 +656,59 @@ describe('WP2 context extensions provider (module side; E2 evidence in WP2-wirin
     expect(overKeys.has(`decision:${overflowSource.key}`)).toBe(true);
     for (const key of [...created, ...seedKeys, ...hintKeys]) expect(overKeys.has(key)).toBe(true);
     expect(over.decisions.rows).toHaveLength(15);
+  });
+
+  it('F07 (small, quick check 6) an answer and a catalog revision between the first and the second page start the '
+    + 'pages again: the answered card is gone and every other card is read once', async () => {
+    const h = await openDecisionHarness({ lookupPageLimit: 2 });
+    // A3: the real queue; one armed step runs after the next page's real return, then the page is returned as it is.
+    let afterPage: (() => Promise<void>) | null = null;
+    const queue: DecisionReadPort & DecisionQueuePreparedReader = { ...h.queue,
+      async queryDecisionQueuePrepared(ctx, input, prepared) {
+        const page = await h.queue.queryDecisionQueuePrepared(ctx, input, prepared);
+        const step = afterPage;
+        afterPage = null;
+        if (step !== null) await step();
+        return page;
+      } };
+    const read = createContextExtensionsReader({ anomalies: anomalyDouble(), hostActor: HOST_ACTOR,
+      decisions: queue, decisionPageLimit: 2 });
+    const request: ContextReadRequestV1 = { goalRef: GOAL_B, focusTaskIds: [] };
+    const created: string[] = [];
+    for (let index = 0; index < 4; index += 1) {
+      const sent = await sendDecisionRequest(h, `Paged decision ${String(index)}`);
+      const source = sent.decision?.source;
+      if (source === undefined) throw new Error('the sent decision request carries no decision source');
+      created.push(`decision:${source.key}`);
+    }
+    const source = h.f.messages.decision.decision?.source;
+    if (source === undefined) throw new Error('the S5 fixture decision message carries no decision source');
+    const answeredKey = `decision:${source.key}`;
+    const before = readyExtensions(await read(h.f.ctx, request)).decisions.rows.map(row => row.key);
+    // 4 seed + 4 created card rows and the 6 hint rows, as in the row above.
+    expect(before).toHaveLength(14);
+    expect(before).toContain(answeredKey);
+
+    afterPage = async () => {
+      // The existing decision answered through the real owner (as in F06) …
+      await committed(await h.decisions.answerDecision(h.f.ctx, { input: { source,
+        selection: { kind: 'option', optionId: 'accept' }, text: '', annotations: [] },
+        meta: { requestId: h.f.newId(), expected: [await pin(h.f.records, h.f.messages.decision.ref), ...source.pins] } }));
+      // … and the catalog revised through the public owner (a module's responsibility), so the pointer the first
+      // page's conflict cards were read at moves.
+      await committed(await createArchitectureCatalogService({ records: h.f.records, knowledge: h.f.knowledge })
+        .reviseArchitectureCatalog(h.f.ctx, {
+          meta: { requestId: h.f.newId(), expected: [await pin(h.f.records, PROJECT), await pin(h.f.records, WORKSPACE)] },
+          input: { expected: h.f.catalogPin, ops: [{ op: 'set_responsibility', moduleId: 'M', text: 'M 的新职责' }],
+            responsibilityMoves: [], reason: 'WP2 paged context revision' } }));
+    };
+    const after = readyExtensions(await read(h.f.ctx, request)).decisions.rows.map(row => row.key);
+    expect(afterPage).toBeNull();
+    expect(after).not.toContain(answeredKey);
+    for (const key of created) expect(after).toContain(key);
+    expect(new Set(after).size).toBe(after.length);
+    expect(after).toHaveLength(13);
+    expect([...after].sort()).toEqual(before.filter(key => key !== answeredKey).sort());
   });
 
   it('SUP (fault injection) an installed Goal-settings read failure fails the whole context read', async () => {

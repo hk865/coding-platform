@@ -147,9 +147,17 @@ export async function fixture(backend: Backend, projectId: string, entries: Entr
     const workspaceId = 'main';
     const scope: WorkspaceScope = { projectId, workspaceId };
     const actor = { kind: 'human' as const, id: `${projectId}-operator` };
+    // KLS-2: another project on this platform gets its own root, so its knowledge files never share this folder.
+    const otherRoots = new Map<string, Promise<string>>();
     const host: WorkspaceHostBindings = {
       async resolveRoot(requested) {
-        return requested.projectId === projectId && requested.workspaceId === workspaceId
+        if (requested.projectId !== projectId) {
+          const key = JSON.stringify([requested.projectId, requested.workspaceId]);
+          const other = otherRoots.get(key) ?? mkdtemp(join(directory, 'other-project-'));
+          otherRoots.set(key, other);
+          return { status: 'ready', value: { root: await other, workspaceRevision: 1 } };
+        }
+        return requested.workspaceId === workspaceId
           ? { status: 'ready', value: { root, workspaceRevision: 1 } }
           : { status: 'rejected', code: 'forbidden', reason: 'unknown workspace' };
       },

@@ -15,6 +15,8 @@
  * The reminder-fault rows are A2 wrappers around the composition root's REAL
  * reminder reader; the cancellation rows abort a real prepare context.
  */
+import { chmod } from 'node:fs/promises';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { ArchitectureObservationStateV1 } from '../../src/contracts/architecture-observation.js';
 import type { PreparedTaskExecution } from '../../src/contracts/core/prepared-execution.js';
@@ -374,9 +376,9 @@ describe('A-03 failure and retry through real catalog revisions', () => {
       const before = await world.prepare(world.ctx, 's8a-l8-prepare-before-failure', prepNow);
       expect(architectureRows(before.input)).toEqual(a03Rows);
 
-      // A REAL failure: the sandbox cannot resolve the moved workspace root. The
-      // second capture is requested by a real, non-replayed catalog revision.
-      const away = await world.moveRootAway();
+      // A REAL failure: the source directory cannot be read. The root stays (a catalog revision writes its
+      // knowledge files there, KLS-2), so the second capture is still requested by a real, non-replayed revision.
+      await chmod(join(world.root, 'src'), 0o000);
       await world.reviseCatalog('s8a-l8-revise-failure');
       const failed = await waitObservationState(world, state =>
         state.autoCapture?.requestSeq === 2 && state.autoCapture.status === 'failed'
@@ -384,9 +386,9 @@ describe('A-03 failure and retry through real catalog revisions', () => {
       expect(failed.current?.captureRef).toEqual(savedRef);
       expect(failed.autoCapture?.failure).not.toBeNull();
 
-      // Root restored, but BEFORE the retry: the preparation still reads the old
+      // Source readable again, but BEFORE the retry: the preparation still reads the old
       // successful observation and its original time.
-      await world.restoreRoot(away);
+      await chmod(join(world.root, 'src'), 0o755);
       const beforeRetry = await world.prepare(world.ctx, 's8a-l8-prepare-before-retry', prepNow);
       expect(architectureRows(beforeRetry.input)).toEqual(a03Rows);
 
@@ -397,6 +399,7 @@ describe('A-03 failure and retry through real catalog revisions', () => {
         && state.current !== null && state.current.captureRef.captureId !== savedRef.captureId);
       expect(retried.previous).toEqual(savedRef);
     } finally {
+      await chmod(join(world.root, 'src'), 0o755).catch(() => undefined);
       await world.close();
     }
   });

@@ -12,6 +12,7 @@
  * services. No successful port result is mocked; the Host configuration callback
  * is the same trusted test double the frozen B2 fixture uses.
  */
+import { knowledgeLinesFor } from '../helpers/KLS2-knowledge-lines.js';
 import { rename, rm, writeFile } from 'node:fs/promises';
 import { withBackendOrderedLookup } from '../helpers/ordered-lookup-forward.js';
 import { join } from 'node:path';
@@ -297,7 +298,8 @@ export async function createAdmissionFixture(kind: ClaimFixtureKind): Promise<Ad
 
   // TQ-091: the baseline/catalog/active rows come from the public adoption
   // owner, never a hand-written catalog row.
-  const architecture = createArchitectureCatalogService({ records });
+  const architecture = createArchitectureCatalogService({ records,
+    knowledge: knowledgeLinesFor({ root: base.directory, projectId: PROJECT_ID, workspaceId: WORKSPACE_ID, records }) });
   const adopted = await architecture.adoptInitialArchitecture(myCtx, {
     input: { baselineId: 's3-baseline', description: 'S3 admission baseline', constraints: [],
       catalog: { requireDag: true, dependencies: [], modules: [{ ref: { projectId: PROJECT_ID, moduleId: 's3-admission' },

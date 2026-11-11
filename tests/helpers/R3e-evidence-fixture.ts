@@ -23,7 +23,7 @@
  * `EvidencePort` is the production skeleton, so target assertions are expected
  * RED on its first `unsupported`.
  */
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
@@ -280,6 +280,8 @@ export async function createR3eEvidenceFixture(
         // ---- real workspace + material chain over the same scope/records ------
         const workspaceRoot = await mkdtemp(join(tmpdir(), `next-r3e-${kind}-`));
         await mkdir(join(workspaceRoot, 'src'));
+        // KLS-2: the workspace root moved here keeps its knowledge files (the catalog was adopted in the claim root).
+        await cp(join(b2.base.directory, '.workbench'), join(workspaceRoot, '.workbench'), { recursive: true });
         await writeFile(join(workspaceRoot, 'src', 'input.txt'), 'r3e verification source v1\n');
 
         const hostState: R3eHostState = { permissionRevision: R3E_PERMISSION_REVISION, allowSource: true, root: workspaceRoot };

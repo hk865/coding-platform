@@ -182,7 +182,7 @@ describe.each(['memory', 'sqlite'] as const)('F-076/F-101: cancellation stays ca
       cardSources: [source],
       noticeSources: [],
       conflicts: createGoalConflictAssembler({ records: world.fixture.records,
-        catalog: createArchitectureCatalogService({ records: world.fixture.records }),
+        catalog: createArchitectureCatalogService({ records: world.fixture.records, knowledge: world.fixture.knowledge }),
         executedFiles: createGoalExecutedFilesReader({ records: world.fixture.records }) }),
       positions: createNoticePositionComparator(),
       displayTokens: createNoticeDisplayToken(new Uint8Array(32)),

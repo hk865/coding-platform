@@ -42,6 +42,7 @@
  * claim time; AN07 can claim existing implement-b before consuming A's output.
  * plan-machine.ts:1244-1253 requires GE04's newly added future Task untraced.
  */
+import { knowledgeLinesFor } from './KLS2-knowledge-lines.js';
 import { vi } from 'vitest';
 import { join } from 'node:path';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
@@ -129,7 +130,8 @@ function graphOwners(b2: B2ExecutionFixture) {
   const executions = createRunStateReader({ records: base.records, bodies });
   const materials = createMaterialService({ bodies, authority: createMaterialRecordReaders(base.records).authority, now });
   const inputs = createTaskContextInputService({ records: base.records, materials, bodies, hostActor });
-  const architecture = createArchitectureCatalogService({ records: base.records });
+  const architecture = createArchitectureCatalogService({ records: base.records,
+    knowledge: knowledgeLinesFor({ root: base.directory, ...base.scope, records: base.records }) });
   function graphReader(extensions: GraphContextReaderDependencies['extensions']): GraphContextReadPort {
     return createGraphContextReader({ records: base.records, goals: base.plans, plans: base.plans,
       architecture, sessions: base.sessionsPort, executions, inputs, hostActor,

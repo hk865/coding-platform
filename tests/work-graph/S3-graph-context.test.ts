@@ -23,6 +23,7 @@
  * public creation results) so the Query session bridge has a canonical
  * QueryJobSubmitted event and a persisted Session binding.
  */
+import { knowledgeLinesFor } from '../helpers/KLS2-knowledge-lines.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { withBackendOrderedLookup } from '../helpers/ordered-lookup-forward.js';
 import { join } from 'node:path';
@@ -452,7 +453,8 @@ async function createFixture(kind: 'memory' | 'sqlite', options: FixtureOptions 
   ];
   if (options.moduleThreePaths !== undefined) modules.push({ ...moduleM3, paths: options.moduleThreePaths });
   const chosenCatalog: AdoptedArchitecture = { modules, dependencies: [], requireDag: true };
-  const adopted = await createArchitectureCatalogService({ records: rawRecords }).adoptInitialArchitecture(ctx, {
+  const knowledge = knowledgeLinesFor({ root: directory, ...scope, records: rawRecords });
+  const adopted = await createArchitectureCatalogService({ records: rawRecords, knowledge }).adoptInitialArchitecture(ctx, {
     input: { baselineId: 's3-baseline', catalog: chosenCatalog, description: 'S3 graph fixture architecture', constraints: [] },
     meta: { requestId: 'gr-adopt-architecture', expected: [
       { ref: projectRef, revision: 1 }, { ref: workspaceRef, revision: 1 },
@@ -735,7 +737,7 @@ async function createFixture(kind: 'memory' | 'sqlite', options: FixtureOptions 
   const readerRecords = options.corruptCatalog === true ? corruptRecordReads(records, catalogKey) : records;
 
   const architecture: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'> =
-    createArchitectureCatalogService({ records: readerRecords });
+    createArchitectureCatalogService({ records: readerRecords, knowledge });
   const readerPlans = createPlanService({ records: readerRecords, bindings: createInitializationBindingReader({ records: readerRecords }),
     now, eventId });
   const sessionDirectory = createSessionDirectory({ records: readerRecords, lookups: readerRecords, duty: unknownSessionDuty });

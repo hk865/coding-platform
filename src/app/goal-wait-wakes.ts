@@ -39,6 +39,8 @@ export const WAKE_LIMIT = 16;
 export const GOAL_WAIT_WAKE_AGGREGATE_TYPES: readonly AggregateRef['aggregateType'][] = Object.freeze([
   'SessionMessage', 'VerificationRound', 'Evidence', 'TaskEvidenceIndex', 'PlanRevision', 'PlanProposal',
   'TaskLease', 'DispatchOutboxEntry', 'Run', 'Goal', 'Session', 'TaskRequeue', 'UnknownCallReview',
+  // A claim's Workspace pin (`claim-service.ts`): a claim that conflicted on it waits for its next write.
+  'Workspace',
   'CoreOperation',
   'NoteHead',
   'NoteVersion', 'CurrentPointer', 'ModuleOverlapGate',

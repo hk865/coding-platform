@@ -87,6 +87,8 @@ export type S4ANoteFixture = {
     role: S4ARole, requeueRef?: TaskRequeueRef): Promise<RunRef>;
   write(ctx: CoreCallContext, draft: NoteDraftV1, goalId: string | null,
     options?: { commandId?: string; expectedPointerRevision?: number | null }): Promise<WriteNoteResult>;
+  /** KLS-2: the fixture's Host gets a real root for another (project, workspace); its knowledge files live there. */
+  addWorkspaceRoot(projectId: string, workspaceId: string): Promise<string>;
   close(): Promise<void>;
 };
 
@@ -132,10 +134,13 @@ export async function createS4ANoteFixture(kind: S4ANoteFixtureKind,
   const now = () => new Date(Date.parse(S4A_AT) + (++clock) * 1000).toISOString();
   const runBindings = new Map<string, RoleBindingRefV1>();
   const hostActor = { kind: 'human' as const, id: 's4a-operator' };
+  // KLS-2: the Host's workspace roots by project, main first; the platform's knowledge list is the same table.
+  const roots = new Map<string, Map<string, string>>([[PROJECT, new Map([[WORKSPACE, root]])]]);
   const bindings: WorkspaceHostBindings = {
     async resolveRoot(requested) {
-      return requested.projectId === PROJECT && requested.workspaceId === WORKSPACE
-        ? { status: 'ready', value: { root, workspaceRevision: 1 } }
+      const known = roots.get(requested.projectId)?.get(requested.workspaceId);
+      return known !== undefined
+        ? { status: 'ready', value: { root: known, workspaceRevision: 1 } }
         : { status: 'rejected', code: 'not_found', reason: 'the workspace is not registered' };
     },
     async authorize() {
@@ -153,6 +158,7 @@ export async function createS4ANoteFixture(kind: S4ANoteFixtureKind,
   const platform = await createTargetPlatform({
     storage: storeDirectory === null ? { kind: 'memory' } : { kind: 'sqlite', directory: storeDirectory },
     workspace: bindings,
+    knowledgeWorkspaces: projectId => [...(roots.get(projectId)?.keys() ?? [])],
     now,
     kernelStores: { entries: [{ adapterId: 's4a-kernel', storeKey: 's4a-kernel-store', workspace: scope,
       databasePath: join(directory, 'kernel.sqlite') }] },
@@ -286,6 +292,11 @@ export async function createS4ANoteFixture(kind: S4ANoteFixtureKind,
     async write(callCtx, draft, goalId, opts = {}) {
       return platform.notes.writeNote(callCtx, { commandId: opts.commandId ?? `s4a-${suffixCounter++}`,
         note: draft, expectedPointerRevision: opts.expectedPointerRevision ?? null, goalId });
+    },
+    async addWorkspaceRoot(projectId, workspaceId) {
+      const added = await mkdtemp(join(directory, 'workspace-'));
+      roots.set(projectId, (roots.get(projectId) ?? new Map<string, string>()).set(workspaceId, added));
+      return added;
     },
     async close() {
       await platform.close();

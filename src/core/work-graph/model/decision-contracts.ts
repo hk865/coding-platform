@@ -5,6 +5,7 @@
  * This file declares only the narrow contracts the owners and the read model
  * share; the implementations live in their owner modules.
  */
+import type { AdoptedArchitecture } from '../../../contracts/architecture-catalog.js';
 import type { ArtifactRef } from '../../../contracts/artifact.js';
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
@@ -489,6 +490,41 @@ export interface DecisionReadPort {
   queryGoalConflicts(ctx: CoreCallContext, input: {
     workspace: WorkspaceScope; atLeastCursor?: CommitCursor;
   }): Promise<ReadResult<GoalConflictReadV1>>;
+}
+
+/**
+ * KLS-2 ruling 9 (R-window): the current architecture comes from the knowledge
+ * files, and a stable ledger window reads only records. So the conflicts'
+ * architecture is read BEFORE a window is fixed, right after the revision of
+ * the current catalog pointer record (`activeRefKey`); the window re-reads that
+ * pointer, and a different revision is a moved window. A `null` architecture
+ * and revision: no catalog adopted.
+ */
+export type ConflictArchitectureRead = {
+  architecture: AdoptedArchitecture | null;
+  catalogPointerRevision: number | null;
+};
+
+/**
+ * R-window for a reader whose own ledger window wraps the queue read
+ * (lines/list, the context's paged queue): it reads the conflicts'
+ * architecture before ITS window and hands the read, failed or not, to every
+ * queue page. Such a queue read makes ONE attempt (stack review 2): a window
+ * that moved comes back `moved`, and the caller reads the architecture again
+ * and its whole own window, at most `WINDOW_MAX_ATTEMPTS` times. On the
+ * caller's last attempt a moved window is the queue's own `unavailable`.
+ * Internal only; no route reaches it.
+ */
+export type PreparedConflictArchitecture = {
+  read: ReadResult<ConflictArchitectureRead>;
+  /** The caller's last attempt: a window that moved answers `unavailable`, not `moved`. */
+  last: boolean;
+};
+export type DecisionQueueWindowMoved = { status: 'moved' };
+export interface DecisionQueuePreparedReader {
+  readConflictArchitecture(ctx: CoreCallContext): Promise<ReadResult<ConflictArchitectureRead>>;
+  queryDecisionQueuePrepared(ctx: CoreCallContext, input: Parameters<DecisionReadPort['queryDecisionQueue']>[1],
+    prepared: PreparedConflictArchitecture): Promise<ReadResult<DecisionQueueReadV1> | DecisionQueueWindowMoved>;
 }
 
 // ------------------------------------------------------------------------ //

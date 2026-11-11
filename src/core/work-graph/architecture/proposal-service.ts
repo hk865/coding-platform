@@ -36,10 +36,16 @@ import { canonicalJson, canonicalKey, sha256Hex, type JsonValue } from '../../..
 import { checkShape } from '../../../contracts/validation/data-format.js';
 import { OperationRefShape } from '../../../contracts/data-format-refs.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
-import type { EncodedRecord, GoalRecordTransactionPort, RecordGuard, StoreFailure } from '../../record-store/ports.js';
+import type {
+  EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreFailure,
+} from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { SessionMessage } from '../model/communication-contracts.js';
 import { platformCheckContext } from '../model/platform-check-context.js';
+import type { LineKnowledge } from '../model/line-knowledge.js';
+import {
+  knowledgeCommit, knowledgeFilesNotWritten, writeKnowledge, type KnowledgePrepared,
+} from '../knowledge/knowledge-write.js';
 import { commandKeys, type CommitFragment } from '../persistence/command-executor.js';
 import { lookupAll } from '../persistence/lookup-all.js';
 import { mergeGuards } from '../persistence/record-guards.js';
@@ -60,12 +66,12 @@ import {
   decodeArchitectureCatalogRevisedEvent, encodeArchitectureCatalogRevisedEvent,
 } from './catalog-record-codecs.js';
 import {
-  catalogPinOf, readCurrentCatalogWindow,
+  architectureWritePlansOf, catalogPinOf, knowledgeBaselineOf, readCurrentCatalogWindow,
 } from './catalog-service.js';
 import { exactKeys } from './architecture-service.js';
 import {
-  catalogRevisionMovesProblem, catalogRevisionPinProblem, planCatalogRevision,
-  type CatalogRevisionDependencies,
+  catalogRevisionMovesProblem, catalogRevisionPinProblem, draftCatalogRevision, finishCatalogRevision,
+  planCatalogRevision, type CatalogRevisionDependencies,
 } from './revision-planner.js';
 import { parseRepairOps } from './repair-ops.js';
 
@@ -898,10 +904,27 @@ function selectionOption(body: UserDecisionBodyV1): 'approve' | 'reject' | null 
     ? body.selection.optionId : null;
 }
 
+/**
+ * The original result of this application command when it already committed (a concurrent copy may have),
+ * the failed lookup's rejection, or null when it has not committed.
+ */
+async function priorApproval(deps: ProposalServiceDeps,
+  keys: { identityKey: string; fingerprint: string }): Promise<ApplyBatchResult<ArchitectureRevision> | null> {
+  const prior = await lookupCommittedReceipt(deps.records, keys.identityKey, keys.fingerprint);
+  if (prior.status === 'conflict') return rejected('idempotency_conflict', prior.reason);
+  if (prior.status === 'found') return replayApproval(deps, keys, prior.receipt);
+  if (prior.status !== 'missing') return rejected('unavailable', prior.reason);
+  return null;
+}
+
+/**
+ * Closes the members `rejected` or `stale` under the application command's own identity. A commit that replays
+ * (the same command already committed) answers that command's original result (quick check 5), never this close.
+ */
 async function writeClosedMembers(deps: ProposalServiceDeps, ctx: CoreCallContext,
   keys: { identityKey: string; fingerprint: string }, batch: ArchitectureProposalBatchV1,
   members: readonly ArchitectureProposalRecordV1[], message: SessionMessage,
-  state: 'rejected' | 'stale'): Promise<CoreRejection | { receipt: ReturnType<typeof receiptOf> }> {
+  state: 'rejected' | 'stale'): Promise<ApplyBatchResult<ArchitectureRevision>> {
   const actor = hostActorOf(ctx);
   if (actor === null) return rejected('forbidden', 'a proposal answer is applied by the Host');
   const proof = changeProof(message, proposalPins(members));
@@ -932,13 +955,12 @@ async function writeClosedMembers(deps: ProposalServiceDeps, ctx: CoreCallContex
   }
   if (committed.status !== 'committed') {
     const prior = await lookupCommittedReceipt(deps.records, keys.identityKey, keys.fingerprint);
-    if (prior.status === 'found') {
-      const replay = await replayApproval(deps, keys, prior.receipt);
-      return replay.status === 'rejected' ? replay : { receipt: receiptOf(keys, prior.receipt.cursor) };
-    }
+    if (prior.status === 'found') return replayApproval(deps, keys, prior.receipt);
     return rejectionOf(committed);
   }
-  return { receipt: receiptOf(keys, committed.cursor) };
+  if (committed.replayed) return replayApproval(deps, keys, committed);
+  const receipt = receiptOf(keys, committed.cursor);
+  return state === 'rejected' ? { status: 'rejected', receipt } : { status: 'source_stale', receipt };
 }
 
 export async function applyArchitectureProposalBatch(deps: ProposalServiceDeps, ctx: CoreCallContext,
@@ -959,10 +981,8 @@ Promise<ApplyBatchResult<ArchitectureRevision>> {
     commandId: `${input.batchRef.batchId}:${input.answerMessageRef.messageId}`,
     fingerprintInput: { batchRef: input.batchRef, answerMessageRef: input.answerMessageRef } as unknown as JsonValue,
   });
-  const prior = await lookupCommittedReceipt(deps.records, keys.identityKey, keys.fingerprint);
-  if (prior.status === 'conflict') return rejected('idempotency_conflict', prior.reason);
-  if (prior.status === 'found') return replayApproval(deps, keys, prior.receipt);
-  if (prior.status !== 'missing') return rejected('unavailable', prior.reason);
+  const prior = await priorApproval(deps, keys);
+  if (prior !== null) return prior;
 
   const batch = await readBatch(deps, input.batchRef);
   if (batch.status === 'rejected') return batch;
@@ -987,110 +1007,129 @@ Promise<ApplyBatchResult<ArchitectureRevision>> {
     }
     const begun = await deps.repropose(ctx, { batchRef: batch.value.ref, reason: answer.value.body.text });
     if (begun.status !== 'committed') return begun;
-    const closed = await writeClosedMembers(deps, ctx, keys, batch.value, members.value,
-      answer.value.message, 'rejected');
-    if ('status' in closed) return closed;
-    return { status: 'rejected', receipt: closed.receipt };
+    return writeClosedMembers(deps, ctx, keys, batch.value, members.value, answer.value.message, 'rejected');
   }
   const option = selectionOption(answer.value.body);
   if (option === null) return rejected('invalid', 'a structural proposal answers approve or reject');
 
   if (option === 'reject') {
-    const closed = await writeClosedMembers(deps, ctx, keys, batch.value, members.value,
-      answer.value.message, 'rejected');
-    if ('status' in closed) return closed;
-    return { status: 'rejected', receipt: closed.receipt };
+    return writeClosedMembers(deps, ctx, keys, batch.value, members.value, answer.value.message, 'rejected');
   }
 
-  const window = await readCurrentCatalogWindow(deps.records, batch.value.ref.projectId);
-  if (window.status === 'rejected') return window;
-  if (window.status !== 'ready') return rejected('unavailable', 'the current architecture catalog is not readable');
-  const sameBaseline = canonicalKey(batch.value.baseCatalogPin.baseline.ref)
+  const thrown = { message: null as string | null };
+  const applied = { revision: null as ArchitectureRevision | null };
+  const commandId = `${input.batchRef.batchId}:${input.answerMessageRef.messageId}`;
+  const outcome = await writeKnowledge(deps.knowledge, ctx, lines => prepareApproval(deps, ctx, keys, commandId, batch.value,
+    members.value, answer.value.message, lines, thrown, applied));
+  if (outcome.kind === 'exit') return outcome.value;
+  if (outcome.kind === 'rejected') {
+    if (thrown.message !== null) return rejected('unavailable', `the proposal application outcome is unknown: ${thrown.message}`);
+    const again = await lookupCommittedReceipt(deps.records, keys.identityKey, keys.fingerprint);
+    if (again.status === 'found') return replayApproval(deps, keys, again.receipt);
+    return rejectionOf(outcome.failure);
+  }
+  // Quick check 8: a commit the store replayed is the same command's original result (a concurrent copy may have
+  // closed it stale); this copy's own plan was never committed and wrote no file.
+  if (outcome.receipt.replayed) return replayApproval(deps, keys, outcome.receipt);
+  if (outcome.files !== null && outcome.files.status !== 'ready') {
+    return rejected('unavailable', knowledgeFilesNotWritten(outcome.files));
+  }
+  if (applied.revision === null) return rejected('unavailable', 'the applied catalog revision was not prepared');
+  return { status: 'applied', receipt: receiptOf(keys, outcome.receipt.cursor), revision: applied.revision };
+}
+
+type ApprovalResult = ApplyBatchResult<ArchitectureRevision>;
+
+/** The approval's current read, plan, records and file changes, prepared after the knowledge lines are taken. */
+async function prepareApproval(deps: ProposalServiceDeps, ctx: CoreCallContext,
+  keys: { identityKey: string; fingerprint: string }, commandId: string, batch: ArchitectureProposalBatchV1,
+  members: readonly ArchitectureProposalRecordV1[], message: SessionMessage, lines: readonly LineKnowledge[],
+  thrown: { message: string | null }, applied: { revision: ArchitectureRevision | null }):
+  Promise<KnowledgePrepared<ApprovalResult>> {
+  const exit = (value: ApprovalResult): KnowledgePrepared<ApprovalResult> => ({ kind: 'exit', value });
+  const closeStale = async (): Promise<KnowledgePrepared<ApprovalResult>> =>
+    exit(await writeClosedMembers(deps, ctx, keys, batch, members, message, 'stale'));
+  const window = await readCurrentCatalogWindow(deps.records, batch.ref.projectId, { lines: deps.knowledge, caller: ctx });
+  if (window.status === 'rejected') return exit(window);
+  if (window.status !== 'ready') return exit(rejected('unavailable', 'the current architecture catalog is not readable'));
+  const sameBaseline = canonicalKey(batch.baseCatalogPin.baseline.ref)
       === canonicalKey(window.baseline.ref)
-    && batch.value.baseCatalogPin.baseline.digest === window.baseline.contentDigest;
-  if (!sameBaseline) {
-    const closed = await writeClosedMembers(deps, ctx, keys, batch.value, members.value,
-      answer.value.message, 'stale');
-    if ('status' in closed) return closed;
-    return { status: 'source_stale', receipt: closed.receipt };
-  }
+    && batch.baseCatalogPin.baseline.digest === window.baseline.contentDigest;
+  if (!sameBaseline) return closeStale();
 
-  const reason = proposalBatchReason(members.value);
-  const planned = await planCatalogRevision(deps, ctx, {
-    expected: batch.value.baseCatalogPin,
-    ops: batch.value.ops,
-    responsibilityMoves: batch.value.responsibilityMoves,
-    reason,
-    commandId: `${input.batchRef.batchId}:${input.answerMessageRef.messageId}`,
-  });
-  if (planned.status === 'rejected') {
-    if (planned.code === 'invalid') return { status: 'invalid', reason: planned.reason };
+  const approvalRefused = async (planned: Exclude<ReadResult<never>, { status: 'ready' }>):
+    Promise<KnowledgePrepared<ApprovalResult>> => {
+    if (planned.status !== 'rejected') return exit(rejected('unavailable', 'the catalog revision plan is not ready'));
+    if (planned.code === 'invalid') return exit({ status: 'invalid', reason: planned.reason });
+    // The planner's re-read, or the pointer behind the files it read, moved after the first window read: the same
+    // stale close as above, unless this same command committed meanwhile (quick check 5: its result comes first).
     if (planned.code === 'source_stale') {
-      // The planner's re-read moved after the first window read: the same stale close as above.
-      const closed = await writeClosedMembers(deps, ctx, keys, batch.value, members.value,
-        answer.value.message, 'stale');
-      if ('status' in closed) return closed;
-      return { status: 'source_stale', receipt: closed.receipt };
+      const prior = await priorApproval(deps, keys);
+      return prior === null ? closeStale() : exit(prior);
     }
-    return planned;
-  }
-  if (planned.status !== 'ready') return rejected('unavailable', 'the catalog revision plan is not ready');
+    return exit(planned);
+  };
+  const reason = proposalBatchReason(members);
+  // Stack review 1: the files are read and their changes computed before the planner's ledger half reads the basis.
+  const draft = await draftCatalogRevision(deps, ctx, {
+    expected: batch.baseCatalogPin,
+    ops: batch.ops,
+    responsibilityMoves: batch.responsibilityMoves,
+    reason,
+    commandId,
+  });
+  if (draft.status !== 'ready') return approvalRefused(draft);
+  const plans = await architectureWritePlansOf(lines, draft.value.catalog, knowledgeBaselineOf(draft.value.content));
+  if (plans.status !== 'ready') return exit(rejectionOf(plans));
+  const planned = await finishCatalogRevision(deps, ctx, draft.value);
+  if (planned.status !== 'ready') return approvalRefused(planned);
 
   const actor = hostActorOf(ctx);
-  if (actor === null) return rejected('forbidden', 'a proposal answer is applied by the Host');
+  if (actor === null) return exit(rejected('forbidden', 'a proposal answer is applied by the Host'));
   const changes: { before: VersionPin; after: VersionPin }[] = [
-    { before: baselinePinOf(batch.value.baseCatalogPin, 1), after: baselinePinOf(catalogPinOf(planned.value.revision), 1) },
+    { before: baselinePinOf(batch.baseCatalogPin, 1), after: baselinePinOf(catalogPinOf(planned.value.revision), 1) },
     { before: activePinOf(ctx.projectId, window.activeRevision),
       after: activePinOf(ctx.projectId, window.activeRevision + 1) },
-    ...proposalPins(members.value),
+    ...proposalPins(members),
   ];
-  const proof = changeProof(answer.value.message, changes);
+  const proof = changeProof(message, changes);
 
   const appliedMembers: ArchitectureProposalRecordV1[] = [];
-  for (const member of members.value) {
+  for (const member of members) {
     const next = transitionArchitectureProposal(member, { kind: 'apply' });
-    if (!next.ok) return rejected(next.code, next.detail);
+    if (!next.ok) return exit(rejected(next.code, next.detail));
     appliedMembers.push(next.next);
   }
   const records = [...planned.value.records, ...appliedMembers.map(encodeArchitectureProposalRecord)];
   const proposalEvents = appliedMembers.map(member => encodeArchitectureProposalChangedEvent({
     eventId: deps.eventId(), eventType: ARCHITECTURE_PROPOSAL_CHANGED_EVENT, schemaVersion: 1,
     occurredAt: deps.now(), projectId: ctx.projectId, proposalRef: member.ref,
-    revision: member.revision, state: member.state, batchRef: batch.value.ref, actor,
+    revision: member.revision, state: member.state, batchRef: batch.ref, actor,
   }));
   const fragment: CommitFragment = planned.value;
   const catalogEvents = fragment.events;
   const lastCatalog = catalogEvents[catalogEvents.length - 1];
-  if (lastCatalog === undefined) return rejected('unavailable', 'the catalog revision contribution has no event');
+  if (lastCatalog === undefined) return exit(rejected('unavailable', 'the catalog revision contribution has no event'));
   const decodedCatalog = decodeArchitectureCatalogRevisedEvent(lastCatalog);
   if (decodedCatalog.status !== 'decoded') {
-    return rejected('unavailable', `the catalog revision event is damaged: ${decodedCatalog.reason}`);
+    return exit(rejected('unavailable', `the catalog revision event is damaged: ${decodedCatalog.reason}`));
   }
   const catalogEvent = encodeArchitectureCatalogRevisedEvent({ ...decodedCatalog.value, proof });
   const events = [...catalogEvents.slice(0, -1), ...proposalEvents, catalogEvent];
-  const memberGuards: RecordGuard[] = members.value.map(member => ({
+  const memberGuards: RecordGuard[] = members.map(member => ({
     refKey: canonicalKey(member.ref), expectedRevision: member.revision,
   }));
   const merged = mergeGuards([...fragment.guards, ...memberGuards]);
-  if (!merged.ok) return merged.rejection;
-  let committed;
-  try {
-    committed = await deps.records.commit({
-      identityKey: keys.identityKey, fingerprint: keys.fingerprint,
-      guards: merged.guards, records, claims: fragment.claims,
-      indexGuards: [], indexChanges: [], events,
-      ...(fragment.ledgerHorizon === undefined ? {} : { ledgerHorizon: fragment.ledgerHorizon }),
-      ...(fragment.commitCursorBindings === undefined ? {} : { commitCursorBindings: fragment.commitCursorBindings }),
-    });
-  } catch (error) {
-    return rejected('unavailable', `the proposal application outcome is unknown: ${messageOf(error)}`);
-  }
-  if (committed.status !== 'committed') {
-    const again = await lookupCommittedReceipt(deps.records, keys.identityKey, keys.fingerprint);
-    if (again.status === 'found') return replayApproval(deps, keys, again.receipt);
-    return rejectionOf(committed);
-  }
-  return { status: 'applied', receipt: receiptOf(keys, committed.cursor), revision: planned.value.revision };
+  if (!merged.ok) return exit(merged.rejection);
+  applied.revision = planned.value.revision;
+  const prepared: PreparedCommit = {
+    identityKey: keys.identityKey, fingerprint: keys.fingerprint,
+    guards: merged.guards, records, claims: fragment.claims,
+    indexGuards: [], indexChanges: [], events,
+    ...(fragment.ledgerHorizon === undefined ? {} : { ledgerHorizon: fragment.ledgerHorizon }),
+    ...(fragment.commitCursorBindings === undefined ? {} : { commitCursorBindings: fragment.commitCursorBindings }),
+  };
+  return { kind: 'ready', plans: plans.value, commit: knowledgeCommit(commit => deps.records.commit(commit), prepared, thrown) };
 }
 
 export async function readArchitectureProposal(deps: ProposalServiceDeps, ctx: CoreCallContext,

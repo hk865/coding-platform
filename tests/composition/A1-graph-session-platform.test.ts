@@ -319,7 +319,7 @@ it('revises the adopted catalog with explicit containment, links the new module,
     expect(current).toMatchObject({ status: 'ready', value: revised.value });
     if (current.status !== 'ready') throw Error('current revised catalog is unavailable');
     expect(current.value.catalog?.catalog.modules.map(module => module.ref.moduleId))
-      .toEqual([parentModule.ref.moduleId, childModule.ref.moduleId]);
+      .toEqual([childModule.ref.moduleId, parentModule.ref.moduleId]);
     const historical = await platform.architecture.readArchitectureRevision(ctx,
       { selection: { kind: 'revision', ref: adopted.value.baseline.ref } });
     expect(historical).toMatchObject({ status: 'ready', value: adopted.value });

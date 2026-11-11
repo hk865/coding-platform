@@ -42,6 +42,12 @@ import { S2B_PLAN_REVISION_BY_GOAL_LOOKUP, decodePlanRevisionSnapshot } from '..
 import { headsByAnchorKey, readAllHeads, type ReadFailureCode } from './note-base-reader.js';
 import { renderUnderstandingBody } from './note-rendering.js';
 import { mapStoreFailure } from './store-failures.js';
+import { isKnowledgeAnchor, noteKnowledgeOf } from './note-file.js';
+import { rawModuleId } from '../../../contracts/workspace-module-id.js';
+import type { KnowledgeFileChange, KnowledgeLines, LineKnowledge } from '../model/line-knowledge.js';
+import {
+  knowledgeCommit, knowledgeFilesNotWritten, writeKnowledge, type KnowledgePrepared, type KnowledgeWritePlan,
+} from '../knowledge/knowledge-write.js';
 import type { ArchitectureCatalogPort } from '../architecture/catalog-contracts.js';
 import type { CurrentCatalogWindow } from '../architecture/catalog-service.js';
 import { catalogModuleFactsOf, readCurrentCatalogWindow, readRevisionByRef } from '../architecture/catalog-service.js';
@@ -66,7 +72,9 @@ import {
   NOTE_LINK_EVIDENCE_MAX, NOTE_PROJECT_FLOW_QUOTA, PROJECT_UNDERSTANDING_BODY_MAX_BYTES,
   UNDERSTANDING_BODY_MAX_BYTES,
 } from '../model/note-contracts.js';
-import type { GoalRecordTransactionPort, EncodedRecord, EncodedDomainEvent, PreparedCommit, RecordGuard, StoreCommitReceipt } from '../../record-store/ports.js';
+import type {
+  GoalRecordTransactionPort, EncodedRecord, EncodedDomainEvent, PreparedCommit, RecordGuard, StoreCommitReceipt, StoreResult,
+} from '../../record-store/ports.js';
 import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import {
   CURRENT_POINTER_MOVED_EVENT_TYPE, NOTE_DISPOSITION_CHANGED_EVENT_TYPE,
@@ -120,6 +128,8 @@ export type NoteServiceDependencies = {
   scopes?: ScribeScope;
   /** 120-13 丙: the line's effective scope, read for a region adviser's write; absent, no region check. */
   regionScopes?: Pick<EffectiveScopeReadPort, 'readEffectiveScope'>;
+  /** KLS-2: the note files every write and disposition writes after its commit. */
+  knowledge: KnowledgeLines;
   now(): string;
   eventId(): string;
   newId(): string;
@@ -146,6 +156,43 @@ function isProjectAnchorDraft(anchor: unknown): boolean {
 function noteCodeOf(code: string): NoteErrorCode {
   return code === 'invalid' || code === 'forbidden' || code === 'not_found' || code === 'revision_conflict'
     || code === 'unavailable' || code === 'unsupported' ? code : 'unavailable';
+}
+
+/** A head one note commit writes: the knowledge fields, its id and its source. */
+type NoteFileHead = Parameters<typeof noteKnowledgeOf>[0] & Pick<NoteHeadSnapshot, 'noteId'>;
+
+/**
+ * KLS-2: the note-file changes of every head one note commit writes (the new
+ * note, the ones it supersedes or withdraws, a disposed, activated or withdrawn
+ * one), computed before the commit. A head whose primary anchor is a module,
+ * interface or file goes into the line of that anchor's workspace (a module
+ * id's, or a stored path's); link, flow and repair notes have no file form in
+ * this format version. Unchanged bytes give no change.
+ */
+export async function noteFileWritesOf(heads: readonly NoteFileHead[], lines: readonly LineKnowledge[]):
+Promise<StoreResult<KnowledgeWritePlan[]>> {
+  const changes = new Map<LineKnowledge, KnowledgeFileChange[]>();
+  for (const head of heads) {
+    const anchor = head.anchor;
+    if (!isKnowledgeAnchor(anchor) || head.kind === 'link' || head.kind === 'flow' || head.kind === 'repair') continue;
+    // writeKnowledge hands every line of the project (never none); all of them share the main workspace.
+    const mainWorkspaceId = lines[0]!.scope.mainWorkspaceId;
+    let workspaceId: string;
+    try {
+      workspaceId = anchor.kind === 'file' ? resolveStoredProjectPath(anchor.path, mainWorkspaceId).workspaceId
+        : rawModuleId(anchor.moduleId).workspaceId ?? mainWorkspaceId;
+    } catch {
+      return { status: 'rejected', code: 'invalid', reason: `the note ${head.noteId} has no workspace for its anchor` };
+    }
+    const line = lines.find(candidate => candidate.scope.workspaceId === workspaceId);
+    if (line === undefined) {
+      return { status: 'rejected', code: 'unavailable', reason: `the workspace ${workspaceId} of the note ${head.noteId} has no line` };
+    }
+    const written = await line.writeNote(noteKnowledgeOf(head), head.noteId);
+    if (written.status !== 'ready') return written;
+    changes.set(line, [...(changes.get(line) ?? []), ...written.value]);
+  }
+  return { status: 'ready', value: [...changes].map(([line, lineChanges]) => ({ line, changes: lineChanges })) };
 }
 
 function codepointLength(value: string): number { return [...value].length; }
@@ -973,7 +1020,9 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
 
   type SupersessionSubject = Pick<NoteHeadSnapshot, 'noteId' | 'kind' | 'replaces' | 'coexistWith'>;
   type SupersessionOutcome =
-    | { ok: true; records: EncodedRecord[]; guards: Map<string, number | null>; events: EncodedDomainEvent[] }
+    | { ok: true; records: EncodedRecord[]; guards: Map<string, number | null>; events: EncodedDomainEvent[];
+        /** The superseded heads as written (their note files are written too). */
+        heads: PendingNoteHeadSnapshot[] }
     | { ok: false; rejection: Rejected };
 
   /**
@@ -994,6 +1043,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     const records: EncodedRecord[] = [];
     const guards = new Map<string, number | null>();
     const events: EncodedDomainEvent[] = [];
+    const written: PendingNoteHeadSnapshot[] = [];
     const base = eventBase(ctx.projectId, ctx.workspaceId ?? '', now);
     const targets = supersessionTargetsOf(subject, pointer?.noteId ?? null);
     // RW-12a: every target not already preread by the decision is read in ONE
@@ -1030,6 +1080,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
       const version = newNoteVersionRecord(bumped, { kind: 'supersede', by, reason: null,
         decisionMessageRef: null }, now, null);
       records.push(encodeNoteHeadSnapshot(bumped), encodeNoteVersionSnapshot(version));
+      written.push(bumped);
       guards.set(encodeNoteHeadSnapshot(bumped).refKey, head.version);
       guards.set(encodeNoteVersionSnapshot(version).refKey, null);
       events.push(encodeNoteDispositionChangedEvent({ ...base, eventId: deps.eventId(),
@@ -1049,7 +1100,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
       events.push(encodeCurrentPointerMovedEvent({ ...base, eventId: deps.eventId(),
         eventType: CURRENT_POINTER_MOVED_EVENT_TYPE, pointer: moved }));
     }
-    return { ok: true, records, guards, events };
+    return { ok: true, records, guards, events, heads: written };
   }
 
   /** The card-mode proof input (the answering user; no proof on the scribe path). */
@@ -1123,12 +1174,14 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
 
     // Supersession: only an accepting disposition supersedes (and moves the pointer).
     const bumped: { noteId: string; head: NoteHeadSnapshot }[] = [];
+    const written: PendingNoteHeadSnapshot[] = [transition.next];
     if (acceptance) {
       const supersession = await supersessionOf(ctx, transition.next, caller.source, decisionHeads,
         pointerKey, pointer, now);
       if (!supersession.ok) {
         return { status: 'rejected', code: supersession.rejection.code, reason: supersession.rejection.reason, noteId };
       }
+      written.push(...supersession.heads);
       for (const targetId of supersessionTargetsOf(transition.next, pointer?.noteId ?? null)) {
         const targetHead = decisionHeads.get(targetId) ?? (targetId === pointer?.noteId ? pointedHead : null);
         if (targetHead === null || targetHead === undefined) continue;
@@ -1219,18 +1272,26 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
       .map(record => ({ refKey: record.refKey, field: 'since' as const }));
     const prepared: PreparedCommit = { identityKey, fingerprint, guards: realGuards, records, claims: [],
       indexGuards: [], indexChanges: [], events, commitCursorBindings };
-    let receipt: StoreCommitReceipt;
-    try {
-      receipt = await deps.records.commit(prepared);
-    } catch {
-      const restored = await recheckDisposition(identityKey, fingerprint, noteId);
-      return restored ?? { status: 'rejected', code: 'unavailable',
-        reason: 'the disposition commit could not be re-checked', noteId };
-    }
-    if (receipt.status !== 'committed') {
+    // KLS-2: the note files of every head this commit writes are computed on the lines before it.
+    const thrown = { message: null as string | null };
+    const outcome = await writeKnowledge(deps.knowledge, ctx,
+      async (lines): Promise<KnowledgePrepared<NoteDispositionResult>> => {
+        const plans = await noteFileWritesOf(written, lines);
+        if (plans.status !== 'ready') {
+          const mapped = mapStoreFailure(plans);
+          return { kind: 'exit', value: { status: 'rejected', code: mapped.code, reason: mapped.reason, noteId } };
+        }
+        return { kind: 'ready', plans: plans.value,
+          commit: knowledgeCommit(commit => deps.records.commit(commit), prepared, thrown) };
+      });
+    if (outcome.kind === 'exit') return outcome.value;
+    if (outcome.kind === 'rejected') {
       const restored = await recheckDisposition(identityKey, fingerprint, noteId);
       if (restored !== null) return restored;
-      const mapped = mapStoreFailure(receipt);
+      if (thrown.message !== null) {
+        return { status: 'rejected', code: 'unavailable', reason: 'the disposition commit could not be re-checked', noteId };
+      }
+      const mapped = mapStoreFailure(outcome.failure);
       // L8: a lost pointer CAS returns the current pointer; a failed re-read does
       // not fabricate one.
       if (mapped.code === 'revision_conflict' && pointerKey !== null && pointer !== null) {
@@ -1241,7 +1302,11 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
       }
       return { status: 'rejected', code: mapped.code, reason: mapped.reason, noteId };
     }
+    const receipt = outcome.receipt;
     if (receipt.replayed) return replayDisposition(receipt, identityKey, fingerprint, noteId);
+    if (outcome.files !== null && outcome.files.status !== 'ready') {
+      return { status: 'rejected', code: 'unavailable', reason: knowledgeFilesNotWritten(outcome.files), noteId };
+    }
     return { status: 'done', noteId, version: transition.next.version, state: transition.next.state,
       receipt: { identityKey, fingerprint, cursor: receipt.cursor } };
   }
@@ -2094,9 +2159,11 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     // L6/S4-NOTE-05/08: an accepted write supersedes its current `replaces`
     // targets AND, for an understanding, the note the pointer leaves — in one
     // pass, so a target in both sets is bumped exactly once.
+    const written: PendingNoteHeadSnapshot[] = [head];
     if (admission.state === 'accepted') {
       const supersession = await supersessionOf(ctx, head, caller.source, relations, pointerKey, pointerRead, now);
       if (!supersession.ok) return rejectedInput(input, supersession.rejection.code, supersession.rejection.reason);
+      written.push(...supersession.heads);
       records.push(...supersession.records);
       for (const [refKey, revision] of supersession.guards) guards.set(refKey, revision);
       events.push(...supersession.events);
@@ -2111,6 +2178,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
       const withdrawnVersion = newNoteVersionRecord(withdrawnHead, { kind: 'withdraw', by: caller.source,
         reason: 'revised_while_pending', decisionMessageRef: null }, now, null);
       records.push(encodeNoteHeadSnapshot(withdrawnHead), encodeNoteVersionSnapshot(withdrawnVersion));
+      written.push(withdrawnHead);
       guards.set(encodeNoteHeadSnapshot(withdrawnHead).refKey, pendingHead.version);
       guards.set(encodeNoteVersionSnapshot(withdrawnVersion).refKey, null);
       events.push(encodeNoteDispositionChangedEvent({ ...base, eventId: deps.eventId(),
@@ -2136,18 +2204,24 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     if (ctx.signal?.aborted) return rejectedInput(input, 'unavailable', 'the write was cancelled');
     const prepared: PreparedCommit = { identityKey, fingerprint, guards: realGuards, records, claims: [],
       indexGuards: [], indexChanges: [], events, commitCursorBindings };
-    let receipt: StoreCommitReceipt;
-    try {
-      receipt = await deps.records.commit(prepared);
-    } catch {
-      // The mailbox pattern: a thrown commit is re-checked by identity only.
-      const restored = await recheckWrite(identityKey, fingerprint, input, ctx.projectId);
-      return restored ?? rejectedInput(input, 'unavailable', 'the write commit could not be re-checked');
-    }
-    if (receipt.status !== 'committed') {
+    // KLS-2: the note files of every head this commit writes are computed on the lines before it.
+    const thrown = { message: null as string | null };
+    const outcome = await writeKnowledge(deps.knowledge, ctx, async (lines): Promise<KnowledgePrepared<WriteNoteResult>> => {
+      const plans = await noteFileWritesOf(written, lines);
+      if (plans.status !== 'ready') {
+        const mapped = mapStoreFailure(plans);
+        return { kind: 'exit', value: rejectedInput(input, mapped.code, mapped.reason) };
+      }
+      return { kind: 'ready', plans: plans.value,
+        commit: knowledgeCommit(commit => deps.records.commit(commit), prepared, thrown) };
+    });
+    if (outcome.kind === 'exit') return outcome.value;
+    if (outcome.kind === 'rejected') {
+      // The mailbox pattern: a thrown or refused commit is re-checked by identity only.
       const restored = await recheckWrite(identityKey, fingerprint, input, ctx.projectId);
       if (restored !== null) return restored;
-      const mapped = mapStoreFailure(receipt);
+      if (thrown.message !== null) return rejectedInput(input, 'unavailable', 'the write commit could not be re-checked');
+      const mapped = mapStoreFailure(outcome.failure);
       // L8: a lost pointer CAS comes back with the pointer it lost to. A failed
       // re-read returns the conflict WITHOUT a fabricated pointer.
       if (mapped.code === 'revision_conflict' && isUnderstanding && pointerKey !== null) {
@@ -2158,7 +2232,10 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     }
     // Never fall through to the freshly minted noteId: a replayed receipt is
     // answered ONLY from its recorded event.
-    if (receipt.replayed) return replayWrite(receipt, input, ctx.projectId);
+    if (outcome.receipt.replayed) return replayWrite(outcome.receipt, input, ctx.projectId);
+    if (outcome.files !== null && outcome.files.status !== 'ready') {
+      return rejectedInput(input, 'unavailable', knowledgeFilesNotWritten(outcome.files));
+    }
     return successResult;
   }
 

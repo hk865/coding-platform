@@ -53,7 +53,7 @@ export function windowReadModel(f: S5DecisionFixture, records: S5Records): Decis
     // The production executed-files reader over the real records; the S5 fixture
     // registers RUN_ACTIVITY_RECORD_SCHEMAS and forwards the real `lookupOrdered`.
     conflicts: createGoalConflictAssembler({ records: inner,
-      catalog: createArchitectureCatalogService({ records: inner }),
+      catalog: createArchitectureCatalogService({ records: inner, knowledge: f.knowledge }),
       executedFiles: createGoalExecutedFilesReader({ records: inner }) }),
     lineage: { messages: createSessionMailbox(mailboxDependencies(f)),
       queries: createQueryJobService({ records: inner, now: f.now, eventId: f.newId }), plans },
