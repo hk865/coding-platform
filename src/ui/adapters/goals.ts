@@ -16,6 +16,7 @@ import { goalDisplayState, type GoalDisplayPhaseCode } from './task-map.js';
 import { completionRevisionOf } from './nav.js';
 import type { DecisionSelectionV1, GoalAutonomyV1 } from '../../contracts/goal-decisions.js';
 import type { GoalRef } from '../../contracts/ledger.js';
+import type { TaskGraph } from '../../contracts/task-graph.js';
 
 /** The four expanded-row facts (`Goals.dc.html:128-136`). */
 export type GoalsKv = {
@@ -538,11 +539,57 @@ export function adaptGoals(input: GoalsInput, selected: string | null): GoalsDat
   };
 }
 
-/** The architecture tree: modules from the adopted catalog and their declared
- * files. Containment is optional; absent means flat, never inferred from paths. */
-function buildArchMap(
-  architecture: unknown, overlap: Set<string>, hitA: GoalsConflictTask[], hitB: GoalsConflictTask[],
-  undecided: boolean, projectId: string,
+/** §2.3: one Goal's stage/task tree. The Goals conflict map and Main's task
+ * panel are the same rule; the caller adds its own conflict highlighting. */
+export function goalTaskTree(goal: { id: string; name: string }, graph: TaskGraph | null): GoalsTaskNode | null {
+  const root: GoalsTaskNode = { id: goal.id, name: goal.name, kind: 'goal', goal: goal.id, kids: [] };
+  const stages = asRecord(asRecord(graph).plan).stages;
+  const stageNodes = new Map<string, GoalsTaskNode>();
+  for (const entry of Array.isArray(stages) ? stages : []) {
+    const stage = asRecord(entry);
+    const id = asText(stage.stageId);
+    if (id === '') continue;
+    const node: GoalsTaskNode = { id, name: asText(stage.title), kind: 'stage', goal: goal.id, kids: [] };
+    stageNodes.set(id, node);
+    root.kids.push(node);
+  }
+  const dependsOn = asRecord(asRecord(asRecord(graph).plan).executionDag).dependsOn;
+  const depsOf = (taskId: string): string[] => (Array.isArray(dependsOn) ? dependsOn : [])
+    .map((entry) => asRecord(entry))
+    .filter((edge) => asText(edge.taskId) === taskId)
+    .map((edge) => asText(edge.dependsOnId))
+    .filter((id) => id !== '');
+  for (const row of taskRowsOf(graph)) {
+    const st = taskStateOf(row);
+    if (st === null) continue;
+    const id = taskIdOf(row);
+    const files = plannedFilesOf(row);
+    const stageId = taskStageOf(asRecord(row.definition));
+    const task: GoalsTaskNode = {
+      id, name: taskNameOf(row), kind: 'task', goal: goal.id, st, files, hit: false, deps: depsOf(id), kids: [],
+    };
+    /* A task without a stage hangs on its goal, as TaskMap's tree does (lead 11-12). */
+    if (stageId === '') {
+      root.kids.push(task);
+      continue;
+    }
+    let stageNode = stageNodes.get(stageId);
+    if (stageNode === undefined) {
+      stageNode = { id: stageId, name: stageId, kind: 'stage', goal: goal.id, kids: [] };
+      stageNodes.set(stageId, stageNode);
+      root.kids.push(stageNode);
+    }
+    stageNode.kids.push({ ...task, stage: stageNode.id });
+  }
+  return root;
+}
+
+/** §2.3: the catalog → module → file tree before any conflict lighting. Goals
+ * lights its overlap files over this result; Main draws it as it is. A file's
+ * state is the worst state of the plan's Tasks that name it. `work` is S12's
+ * current-work file set: non-null keeps only those files (and their modules). */
+export function catalogArchTree(
+  architecture: unknown, projectId: string, graph: TaskGraph | null, work: ReadonlySet<string> | null,
 ): GoalsArchNode | null {
   if (architecture === null || architecture === undefined) return null;
   const adopted = asRecord(asRecord(asRecord(architecture).catalog).catalog);
@@ -556,12 +603,17 @@ function buildArchMap(
     const child = asText(asRecord(edge.child).moduleId);
     if (parent !== '' && child !== '' && parent !== child) parentByChild.set(child, parent);
   }
-  const hitIds = [...hitA, ...hitB];
-  const worstByPath = new Map<string, string>();
-  for (const task of hitIds) {
-    for (const path of task.files) {
-      if (!overlap.has(path)) continue;
-      worstByPath.set(path, worstState(worstByPath.get(path) ?? 'none', task.st));
+  const fileState = new Map<string, string>();
+  const fileTasks = new Map<string, string[]>();
+  for (const row of taskRowsOf(graph)) {
+    const st = taskStateOf(row);
+    if (st === null) continue;
+    const id = taskIdOf(row);
+    for (const path of plannedFilesOf(row)) {
+      fileState.set(path, worstState(fileState.get(path) ?? 'none', st));
+      const tasks = fileTasks.get(path) ?? [];
+      if (!tasks.includes(id)) tasks.push(id);
+      fileTasks.set(path, tasks);
     }
   }
   const seenPaths = new Set<string>();
@@ -588,15 +640,53 @@ function buildArchMap(
     const paths = Array.isArray(module.paths) ? module.paths.map((path) => asText(path)) : [];
     for (const path of paths) {
       if (path === '' || seenPaths.has(path)) continue;
+      if (work !== null && !work.has(path)) continue;
       seenPaths.add(path);
-      const both = overlap.has(path);
-      const tasks = both ? hitIds.filter((task) => task.files.includes(path)).map((task) => task.id) : [];
-      const st = both ? (undecided ? 'decide' : worstByPath.get(path) ?? 'none') : 'none';
       moduleNode.kids.push({
-        id: path, name: path.split('/').pop() ?? path, kind: 'file', path, st, hit: both, both, tasks, kids: [],
+        id: path, name: path.split('/').pop() ?? path, kind: 'file', path,
+        st: fileState.get(path) ?? 'none', hit: false, both: false,
+        tasks: fileTasks.get(path) ?? [], kids: [],
       });
     }
   }
+  if (work !== null) {
+    /* S12: only the modules that keep a current file, directly or below. */
+    const keep = (node: GoalsArchNode): boolean => {
+      node.kids = node.kids.filter((kid) => kid.kind === 'file' || keep(kid));
+      return node.kids.length > 0;
+    };
+    keep(root);
+  }
+  return root;
+}
+
+/** The architecture tree: modules from the adopted catalog and their declared
+ * files. Containment is optional; absent means flat, never inferred from paths. */
+function buildArchMap(
+  architecture: unknown, overlap: Set<string>, hitA: GoalsConflictTask[], hitB: GoalsConflictTask[],
+  undecided: boolean, projectId: string,
+): GoalsArchNode | null {
+  const root = catalogArchTree(architecture, projectId, null, null);
+  if (root === null) return null;
+  const hitIds = [...hitA, ...hitB];
+  const worstByPath = new Map<string, string>();
+  for (const task of hitIds) {
+    for (const path of task.files) {
+      if (!overlap.has(path)) continue;
+      worstByPath.set(path, worstState(worstByPath.get(path) ?? 'none', task.st));
+    }
+  }
+  const light = (node: GoalsArchNode): void => {
+    if (node.kind === 'file' && node.path !== undefined) {
+      const both = overlap.has(node.path);
+      node.both = both;
+      node.hit = both;
+      node.tasks = both ? hitIds.filter((task) => task.files.includes(node.path!)).map((task) => task.id) : [];
+      node.st = both ? (undecided ? 'decide' : worstByPath.get(node.path) ?? 'none') : 'none';
+    }
+    node.kids.forEach(light);
+  };
+  light(root);
   return root;
 }
 
@@ -611,43 +701,14 @@ function buildTaskMap(
   for (const goalId of [conflict.earlierId, conflict.laterId]) {
     if (goalId === '') continue;
     const goalRow = goals.find((goal) => goal.id === goalId);
-    const goalNode: GoalsTaskNode = {
-      id: goalId, name: goalRow?.name ?? '', kind: 'goal', goal: goalId, kids: [],
+    const graph = tasks[goalId] === null || tasks[goalId] === undefined ? null : tasks[goalId] as TaskGraph;
+    const goalNode = goalTaskTree({ id: goalId, name: goalRow?.name ?? '' }, graph);
+    if (goalNode === null) continue;
+    const light = (node: GoalsTaskNode): void => {
+      if (node.kind === 'task') node.hit = (node.files ?? []).some((path) => overlap.has(path));
+      node.kids.forEach(light);
     };
-    const graph = tasks[goalId];
-    const stages = asRecord(graph).plan === undefined ? [] : asRecord(asRecord(graph).plan).stages;
-    const stageNodes = new Map<string, GoalsTaskNode>();
-    for (const entry of Array.isArray(stages) ? stages : []) {
-      const stage = asRecord(entry);
-      const id = asText(stage.stageId);
-      if (id === '') continue;
-      const node: GoalsTaskNode = { id, name: asText(stage.title), kind: 'stage', goal: goalId, kids: [] };
-      stageNodes.set(id, node);
-      goalNode.kids.push(node);
-    }
-    const dependsOn = asRecord(asRecord(asRecord(graph).plan).executionDag).dependsOn;
-    const depsOf = (taskId: string): string[] => (Array.isArray(dependsOn) ? dependsOn : [])
-      .map((entry) => asRecord(entry))
-      .filter((edge) => asText(edge.taskId) === taskId)
-      .map((edge) => asText(edge.dependsOnId))
-      .filter((id) => id !== '');
-    for (const row of taskRowsOf(graph)) {
-      const st = taskStateOf(row);
-      if (st === null) continue;
-      const id = taskIdOf(row);
-      const files = plannedFilesOf(row);
-      const stageId = taskStageOf(asRecord(row.definition));
-      let stageNode = stageNodes.get(stageId);
-      if (stageNode === undefined) {
-        stageNode = { id: stageId === '' ? 'stage' : stageId, name: stageId, kind: 'stage', goal: goalId, kids: [] };
-        stageNodes.set(stageNode.id, stageNode);
-        goalNode.kids.push(stageNode);
-      }
-      stageNode.kids.push({
-        id, name: taskNameOf(row), kind: 'task', goal: goalId, stage: stageNode.id, st,
-        files, hit: files.some((path) => overlap.has(path)), deps: depsOf(id), kids: [],
-      });
-    }
+    light(goalNode);
     root.kids.push(goalNode);
   }
   return root;

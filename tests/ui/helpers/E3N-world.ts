@@ -1,14 +1,16 @@
 import { execFileSync } from 'node:child_process';
-import { cp, mkdtemp, readdir, rm } from 'node:fs/promises';
+import { chmod, cp, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { GoalRef } from '../../../src/contracts/ledger.js';
 import type { QueryJobRef, RequestReferenceInputV1 } from '../../../src/contracts/query-job.js';
+import type { CoreScope } from '../../../src/app/core-http-types.js';
 import {
   S6A_SCOPE, S6A_WORK_ROLE, openS6ARequestWorld,
-  type S6ABackend, type S6ARequestWorld, type S6ASession,
+  type S6ABackend, type S6ARequestWorld, type S6ASession, type S6AWorldOptions,
 } from '../../helpers/S6A-request-fixture.js';
+import { gitIn } from '../../scenarios/support/git-workspace.js';
 import { ensureProjectPointers, openS6AHostWorld, type S6AHostWorld } from '../../helpers/S6A-host-fixture.js';
 import { s6aCardsWorkspace } from '../../helpers/S6A-cards-fixture.js';
 import { adoptS6BPlan, createS6BLine, governS6B } from '../../helpers/S6B1-fixture.js';
@@ -17,7 +19,9 @@ import { sessionOf } from '../../helpers/S7A-fixture.js';
 import { secretaryAnswer, type S6AIdea } from '../../helpers/S6A-history-fixture.js';
 import { claimWithSecretaryProfile, prepareAttempt, start } from '../../helpers/request-claim-steps.js';
 import { readActivePlan } from '../../scenarios/support/S5-decisions.js';
-import { ag2bChecksConfiguration, graphWrite, plain } from '../../helpers/AG2b-collaboration-fixture.js';
+import {
+  AG2B_GATE_TASK_ID, ag2bChecksConfiguration, ag2bPlanDraft, graphWrite, plain,
+} from '../../helpers/AG2b-collaboration-fixture.js';
 
 /**
  * E3W worlds (run sheet §1.3): one real S6A Host world per row. W1 is the
@@ -36,7 +40,11 @@ export type E3NWorld = {
 const root = fileURLToPath(new URL('../../..', import.meta.url));
 
 export async function openW1(backend: S6ABackend = 'memory'): Promise<E3NWorld> {
-  const world = await openS6ARequestWorld({ backend });
+  return await openW1With({ backend });
+}
+
+async function openW1With(options: S6AWorldOptions): Promise<E3NWorld> {
+  const world = await openS6ARequestWorld(options);
   try {
     const secretary = await world.createSecretary('e3n-secretary');
     const work = await world.createWorkSession('e3n-work');
@@ -67,9 +75,10 @@ export async function openW3(): Promise<E3NWorld> {
  * The old Plan is satisfied by the public Workflow and `completeGoal`; the next
  * Plan is then proposed against the active Plan and adopted. `tasks/query`
  * keeps the old completion (`revision` 1) with `selectedPlanMatches: false`,
- * which is the non-zero GoalPhase pin N33 reads.
+ * which is the non-zero GoalPhase pin N33 reads. `emptyStage` (E3U, lead
+ * 11-12) adds one plan stage no task belongs to (`E3U_EMPTY_STAGE`).
  */
-export async function openW4(options: { nextPlan?: boolean } = {}): Promise<{ world: S6AHostWorld; goal: GoalRef }> {
+export async function openW4(options: { nextPlan?: boolean; emptyStage?: true } = {}): Promise<{ world: S6AHostWorld; goal: GoalRef }> {
   const world = await openS6AHostWorld({ backend: 'memory' });
   try {
     const ws = s6aCardsWorkspace(world, S6A_SCOPE);
@@ -85,6 +94,9 @@ export async function openW4(options: { nextPlan?: boolean } = {}): Promise<{ wo
     const draft = (JSON.parse(refinementPlanFrom(active, goal, {
       label: 'e3n-w4-next', taskId: 'e3n-w4-next', role: S6A_WORK_ROLE.templateId,
     })) as { plan: Record<string, unknown> }).plan;
+    if (options.emptyStage === true) {
+      draft['stages'] = [...(draft['stages'] as unknown[]), { stageId: 'e3u-empty-stage', title: E3U_EMPTY_STAGE }];
+    }
     const goalRead = await world.post('goals/read', plain(S6A_SCOPE, goal));
     if (goalRead.body === null || (goalRead.body as { status?: string }).status !== 'ready') {
       throw new Error(`E3N W4: the completed Goal is not readable: ${JSON.stringify(goalRead.body)}`);
@@ -110,6 +122,9 @@ export async function openW4(options: { nextPlan?: boolean } = {}): Promise<{ wo
     throw error;
   }
 }
+
+/** The title of `openW4({ emptyStage: true })`'s stage without tasks. */
+export const E3U_EMPTY_STAGE = 'E3U 空阶段';
 
 /** `goals/control` cancel through the public route: read the Goal, then commit with both pins. */
 export async function cancelGoal(world: S6ARequestWorld, goal: GoalRef): Promise<void> {
@@ -261,6 +276,51 @@ export async function openWProgress(): Promise<{ world: S6AHostWorld; goal: Goal
 }
 
 /**
+ * WD (Main B rework, SPEC-14): one adopted Plan of two work Tasks where
+ * `E3U_WD_LATER` and the draft's `Goal gate` depend on `E3U_WD_FIRST`
+ * (`executionDag.dependsOn`), through `plans/propose` + `plans/apply`
+ * (`adoptS6BPlan` cannot carry the edges). No Task has started.
+ */
+export const E3U_WD_FIRST = 'e3u-wd-first';
+export const E3U_WD_LATER = 'e3u-wd-later';
+
+export async function openWDeps(): Promise<{ world: S6AHostWorld; goal: GoalRef }> {
+  const world = await openS6AHostWorld({ backend: 'memory' });
+  try {
+    const ws = s6aCardsWorkspace(world, S6A_SCOPE);
+    const goal = world.goals.first;
+    await governS6B(world, ws, world.goals);
+    const draft = {
+      ...ag2bPlanDraft([E3U_WD_FIRST, E3U_WD_LATER]), planId: 'e3u-wd-plan', goalId: goal.goalId,
+      assignments: [E3U_WD_FIRST, E3U_WD_LATER].map((taskId) => ({
+        taskId, role: S6A_WORK_ROLE.templateId, instruction: `E3U WD ${taskId}` })),
+      executionDag: { dependsOn: [E3U_WD_LATER, AG2B_GATE_TASK_ID].map((taskId) => ({ taskId, dependsOnId: E3U_WD_FIRST,
+        requires: { kind: 'output-contract' as const, label: 'E3U WD first output' } })) },
+    };
+    const goalRead = (await world.post('goals/read', plain(S6A_SCOPE, goal))).body as
+      { status?: string; value?: { goal: { revision: number } } };
+    if (goalRead.status !== 'ready' || goalRead.value === undefined) {
+      throw new Error(`E3N WD: the Goal is not readable: ${JSON.stringify(goalRead)}`);
+    }
+    const proposed = (await world.post('plans/propose', graphWrite(S6A_SCOPE, {
+      goalRef: goal, basedOn: null, draft, reason: { text: 'E3U WD', sources: [] },
+    }, 'e3u-wd-propose', [{ ref: goal, revision: goalRead.value.goal.revision }]))).body as
+      { status?: string; value?: { ref: unknown; revision: number } };
+    if (proposed.status !== 'committed' || proposed.value === undefined) {
+      throw new Error(`E3N WD: the Plan was not proposed: ${JSON.stringify(proposed)}`);
+    }
+    const applied = (await world.post('plans/apply', graphWrite(S6A_SCOPE, {
+      proposalRef: proposed.value.ref, expectedProposalRevision: proposed.value.revision, decisionRefs: [],
+    }, 'e3u-wd-apply'))).body as { status?: string };
+    if (applied.status !== 'committed') throw new Error(`E3N WD: the Plan was not adopted: ${JSON.stringify(applied)}`);
+    return { world, goal };
+  } catch (error) {
+    await world.close().catch(() => undefined);
+    throw error;
+  }
+}
+
+/**
  * T-A06's card title, written by hand from the Decide wording (E3-DECIDE, a
  * `goal_cause` card is named by its Task's stop word, else 需要你决定): the
  * interruption card's first Task pin is the gate, which has no stop.
@@ -268,3 +328,103 @@ export async function openWProgress(): Promise<{ world: S6AHostWorld; goal: Goal
 export const E3N_INTERRUPTED_TITLE = '需要你决定';
 /** T-A07's two cards of the budget world: the Goal's `no_adviser` card and the Run's `budget_exhausted` stop. */
 export const E3N_BUDGET_TITLES = ['需要你决定', '预算耗尽'];
+
+/* ------------------------------------------------- E3U Main package B worlds */
+
+/**
+ * The working-tree text of `src/module.ts` in WG and WW, written by hand. Its
+ * SHA-256 (the Kernel revision `files/read` gives as `digest`) is
+ * `E3U_MODULE_SHA`, worked out once from these bytes.
+ */
+export const E3U_MODULE_TEXT = '第一行\n第二行\n第三行\n';
+export const E3U_MODULE_SHA = '6fa7f1cf91d3fecd5e8f45f43e5b8c3c578f43be2d2e37a0395be2998e134066';
+/** WG's committed `src/module.ts`: against `E3U_MODULE_TEXT` git counts 旧的第二行 deleted, 第二行 and 第三行 added (+2 −1). */
+export const E3U_WG_COMMITTED = '第一行\n旧的第二行\n';
+
+/**
+ * WG (Main B sheet §0): W1, then the world's own workspace becomes a git
+ * repository whose one commit holds `E3U_WG_COMMITTED`, `README.md` ("旧") and
+ * the fixture's `tsconfig.json`; the working tree then gets `E3U_MODULE_TEXT`
+ * and `README.md` "新" (+1 −1). `files/list` is these three paths, README.md
+ * first, so `files/uncommitted` checks all three and the first listed and
+ * first changed file is never the `src/module.ts` a row opens (TESTS-1).
+ *
+ * Lead 11-12 item 4 adds two shapes after the commit: `manyFiles` writes that
+ * many more files under `zz-many/` (the listing passes 100; they sort after the three
+ * WG paths, so those stay in the first 100 checked), and `lockedDir`
+ * makes `src/locked/` unreadable (mode 000), so the Kernel's listing reports
+ * `partial` while it still lists only the three paths. A locked world must call
+ * `unlockWGit` before it closes. `oddFiles` (READS-8) commits `src/big.txt`
+ * and then writes it past the 1 MiB read limit (git cannot compare it:
+ * `unknown`), and adds the untracked binary `src/blob.bin` (`uncommitted`,
+ * `lines: null`).
+ */
+export async function openWGit(options: { manyFiles?: number; lockedDir?: true; oddFiles?: true } = {}): Promise<E3NWorld> {
+  const opened = await openW1();
+  try {
+    const file = join(opened.world.root, 'src/module.ts');
+    const readme = join(opened.world.root, 'README.md');
+    const big = join(opened.world.root, 'src/big.txt');
+    await writeFile(file, E3U_WG_COMMITTED);
+    await writeFile(readme, '旧\n');
+    if (options.oddFiles === true) await writeFile(big, 'small\n');
+    gitIn(opened.world.root, 'init', '-q', '-b', 'main');
+    gitIn(opened.world.root, 'add', '--', 'README.md', 'src/module.ts', 'tsconfig.json',
+      ...(options.oddFiles === true ? ['src/big.txt'] : []));
+    gitIn(opened.world.root, 'commit', '-q', '-m', 'E3U WG base');
+    await writeFile(file, E3U_MODULE_TEXT);
+    await writeFile(readme, '新\n');
+    if (options.oddFiles === true) {
+      await writeFile(big, 'x'.repeat(1024 * 1024 + 1));
+      await writeFile(join(opened.world.root, 'src/blob.bin'), Buffer.from([1, 0, 2]));
+    }
+    if (options.manyFiles !== undefined) {
+      await mkdir(join(opened.world.root, 'zz-many'), { recursive: true });
+      for (let n = 0; n < options.manyFiles; n += 1) {
+        await writeFile(join(opened.world.root, `zz-many/m${String(n).padStart(3, '0')}.ts`), `export const m${n} = ${n};\n`);
+      }
+    }
+    if (options.lockedDir === true) {
+      await mkdir(join(opened.world.root, 'src/locked'), { recursive: true });
+      await writeFile(join(opened.world.root, 'src/locked/hidden.ts'), 'export const hidden = 1;\n');
+      await chmod(join(opened.world.root, 'src/locked'), 0o000);
+    }
+    return opened;
+  } catch (error) {
+    await opened.world.close().catch(() => undefined);
+    throw error;
+  }
+}
+
+/** Gives `openWGit({ lockedDir: true })`'s locked folder its mode back, so the world can be removed. */
+export async function unlockWGit(opened: E3NWorld): Promise<void> {
+  await chmod(join(opened.world.root, 'src/locked'), 0o755);
+}
+
+/**
+ * WW (Main B sheet §0): W1 whose workspace grant also writes (the fixture's
+ * optional `workspaceGrants`, `writePrefixes: ['.']`), with `src/module.ts`
+ * holding `E3U_MODULE_TEXT`.
+ */
+export async function openWWritable(): Promise<E3NWorld> {
+  const opened = await openW1With({ backend: 'memory', workspaceGrants: { writePrefixes: ['.'] } });
+  try {
+    await writeFile(join(opened.world.root, 'src/module.ts'), E3U_MODULE_TEXT);
+    return opened;
+  } catch (error) {
+    await opened.world.close().catch(() => undefined);
+    throw error;
+  }
+}
+
+/**
+ * The `lines/list` rows' session ids in order, read through `post` before a
+ * page boots (a read after the boot goes through the page's fetch and enters
+ * its log). The rail draws them after the synthetic 秘书（主对话） row.
+ */
+export async function lineOrder(post: (route: string, body: unknown) => Promise<unknown>,
+  scope: CoreScope = S6A_SCOPE): Promise<string[]> {
+  const body = await post('lines/list', plain(scope, { workspace: scope })) as
+    { value?: { rows?: Array<{ key: { sessionId: string } }> } };
+  return (body.value?.rows ?? []).map((row) => row.key.sessionId);
+}

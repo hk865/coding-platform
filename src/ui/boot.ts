@@ -9,7 +9,8 @@ import { qualifyProjectPath, splitWorkspacePath } from '../contracts/workspace-p
 import { createAutoRefresh, type RefreshRead, type RefreshSnapshot, type RefreshSources } from './refresh.js';
 import { adaptNav, completionRevisionOf, goalHref, type LineKey, type NavData, type NavLineDetail } from './adapters/nav.js';
 import {
-  adaptMember, messageBodyKey, traceOf, type MemberData, type MemberSource, type MemberWriteBasis,
+  adaptMember, adaptMemberLine, messageBodyKey, taskOfLine, traceOf,
+  type MemberData, type MemberLine, type MemberSource, type MemberWriteBasis,
 } from './adapters/member.js';
 import { adaptChain, type ChainData, type ChainSource } from './adapters/chain.js';
 import { adaptDone, type DoneData, type DonePolicyRead, type DoneRoundRead, type DoneRunActivity, type DoneSource } from './adapters/done.js';
@@ -17,8 +18,14 @@ import {
   readLine, readSessionTrace, requeueVisible, submitRunControl, type LineReadValue,
 } from './adapters/line-shared.js';
 import {
-  adaptMain, requestRootKey, type MainData, type MainPageCursorV1, type MainPageV1, type MainTrackRow,
+  adaptMain, lvRecordOf, requestRootKey,
+  type MainData, type MainLineRecord, type MainPageCursorV1, type MainPageV1, type MainTrackRow,
 } from './adapters/main.js';
+import {
+  auxChangedRowsOf, auxFileListOf, auxFilePageOf, auxLeafCountsOf, auxTaskDetailOf, catalogArchTree, goalTaskTree,
+  goalTreeNodeOf,
+  type AuxDemand, type AuxFilePage, type AuxPanelData, type AuxTab, type AuxWorkspaceFile, type GoalsTaskNode,
+} from './adapters/aux-panel.js';
 import { adaptGoals, conflictSelectionOf, goalOrderOf, type GoalsData } from './adapters/goals.js';
 import {
   adaptDecide, budgetTokensOf, draftOf, pinsFor, taskTripleOf, type DecideCard, type DecideData, type DecideRow, type DecideStepKey,
@@ -30,7 +37,7 @@ import {
 import type { ArchitectureObservationStateV1 } from '../contracts/architecture-observation.js';
 import type { ControlIntentSnapshotV1 } from '../contracts/control-intent.js';
 import type { ContinuationBriefV1 } from '../contracts/continuation-brief.js';
-import type { GraphHoverReadV1, LineExecutionItemV1, LineMessageStateV1, WorkLineSectionPageV1 } from '../contracts/work-line.js';
+import type { GraphHoverReadV1, LineExecutionItemV1, LineMessageStateV1, WorkLineDetailV1, WorkLineSectionPageV1 } from '../contracts/work-line.js';
 import type { SessionMessageRef } from '../contracts/core/session-message.js';
 import type { QueryJobAnswerSnapshot } from '../contracts/query-job.js';
 import type { QueryExecutionRecord } from '../contracts/query-job.js';
@@ -40,10 +47,9 @@ import type { TaskExecutionRecord } from '../contracts/execution-read.js';
 import type { ArtifactRecord } from '../contracts/artifact.js';
 import type { RunRef } from '../contracts/dispatch.js';
 import type { TaskGraph, TaskRow } from '../contracts/task-graph.js';
-import type { SessionHistoryEntry } from '../contracts/session-activity.js';
 import type { UncommittedFileV1, UncommittedFilesV1 } from '../contracts/workspace-files.js';
 import type { MemberCopySource } from './adapters/member.js';
-import type { ArchitectureChangeScopeV1 } from '../contracts/architecture-search.js';
+import type { ArchitectureChangeScopeV1, ArchitectureWorkScopeV1 } from '../contracts/architecture-search.js';
 import type { NoteAnchorV1 } from '../contracts/note.js';
 import type { DecisionCardV1, DecisionQueueReadV1 } from './adapters/decide.js';
 import { guardNotConnected, notConnectedAttrs } from './not-connected.js';
@@ -51,7 +57,7 @@ import type { RequestReferenceInputV1 } from '../contracts/query-job.js';
 import type { QueryJobRef } from '../contracts/query-job.js';
 import {
   NO_PLAN_TEXT, adaptTaskMap, adaptTaskMapCalendar, adaptTaskMapDecisionCards, adaptTaskMapDetail, adaptTaskMapTime,
-  isFinishedGoalDisplayPhase, localShortAt, type GoalDisplayPhaseCode, type TaskMapQueueRead,
+  isFinishedGoalDisplayPhase, localShortAt, moduleNamesOf, type GoalDisplayPhaseCode, type TaskMapQueueRead,
   type TaskMapData, type TaskMapDetailTaskRead, type TaskMapDisplayRead, type TaskMapGoalRead,
   type TaskMapGraphRead, type TaskMapHoverRead, type TaskMapLineRead, type TaskMapNodeDetailData,
   type TaskMapParticipantRead, type TaskMapRiskRead, type TaskMapSummaryRead, type TaskMapCalendarRead, type TaskMapTimeData, type TaskMapTimelineRead,
@@ -68,6 +74,14 @@ const TOO_MANY_PAGES_TEXT = '这台主机同时打开的页面太多，这一页
  * scope. A failed reread never becomes the next write's basis (§2.10). */
 let latestNavScope: CoreScope | null = null;
 let latestSelectedGoalId: string | null = null;
+/** §2.7: the one line the four line actions read, set by `publish` from a
+ * successful Member or Main read only (READS-1); a failed reread keeps none. */
+let latestLine: { scope: CoreScope; line: MemberLine; write: MemberWriteBasis | null } | null = null;
+
+/** One Goal reference of the shown project: the one builder the line and right-panel readers share (READS-10 a). */
+function goalRefIn(projectId: string, goalId: string): { aggregateType: 'Goal'; projectId: string; goalId: string } {
+  return { aggregateType: 'Goal', projectId, goalId };
+}
 
 /** Ruling 4: the board tells boot which not-yet-read material it needs; the read
  * joins the same refresh loop. */
@@ -121,6 +135,10 @@ export type BoardReadDemand = TaskMapReadDemand & {
   mainPages?: number;
   /** Main only: the 轨迹 tab is open, so `sessions/history` joins the read. */
   mainTrack?: boolean;
+  /** Main B §2.7: the right panel's current tab and file, explicit `null` to
+   * withdraw; `detailTaskId` is in `TaskMapReadDemand`. */
+  auxTab?: AuxTab | null;
+  auxPath?: string | null;
   /** ArchOverview's page state: the search needle, the work-only switch, the
    * directory view and the selected node's anchor. Explicit values replace the
    * old demand, so closing one passes `''`, `false` or `null`. */
@@ -189,6 +207,8 @@ export type BoardActions = {
   askLine: (question: string) => Promise<void>;
   /** E3 Member §2.8: one `messages/send` to the line in the centre. */
   interveneLine: (text: string) => Promise<void>;
+  /** E3 Main B §2.5: one `files/save` CAS write; the page passes the digest it read. */
+  saveFile: (path: string, content: string, expectedRevision: string | null) => Promise<void>;
 };
 
 /**
@@ -253,6 +273,8 @@ export async function bootBoardPage(): Promise<void> {
   /* Ruling 3 "默认页": opening the board reads the DAG's today track and today
    * hour calendar, not only the six base reads. */
   const demand: BoardReadDemand = { track: true, win: 'today' };
+  /* Main B §2.1: the panel opens on 任务图, so its first read is `auxTab:'task'`. */
+  if (boardName === 'Main') demand.auxTab = 'task';
   if ((boardName === 'Member' || boardName === 'Chain')
     && lineProject !== null && lineProject !== '' && lineSession !== null && lineSession !== '') {
     demand.lineKey = { projectId: lineProject, sessionId: lineSession };
@@ -269,9 +291,7 @@ export async function bootBoardPage(): Promise<void> {
    * its source/pins/task/run from these, never from a route shape the page sends. */
   let latestDecide: DecideData | null = null;
   let latestDecideScope: CoreScope | null = null;
-  /** §2.12: the Member data of the last successful read; a failed reread is never
-   * the source of the next write's pins. */
-  let latestMember: MemberData | null = null;
+  /** §2.7: the one line the four line actions read, set by both readers. */
   /** Chain's last successful read; the write seams live beside the reader. */
   let latestChain: ChainData | null = null;
   const decideRowOf = (key: string): DecideRow | null => {
@@ -771,9 +791,9 @@ export async function bootBoardPage(): Promise<void> {
       return { root: requestRootKey((readRoot ?? requestRoot) as QueryJobRef), input: text, answer };
     },
     async controlLine(kind: 'pause' | 'resume' | 'cancel'): Promise<void> {
-      const data = latestMember;
+      const data = latestLine;
       const line = data?.line ?? null;
-      if (data === null || line === null) throw new Error(writeTextOf(new Error('no Member line')));
+      if (data === null || line === null) throw new Error(writeTextOf(new Error('no line')));
       const control = line.controls.find((entry) => entry.kind === kind && entry.availability === 'available') ?? null;
       if (control === null) throw new Error(writeTextOf(new Error('this control is not available')));
       try {
@@ -784,7 +804,7 @@ export async function bootBoardPage(): Promise<void> {
       await refresh.reread();
     },
     async requeueLine(): Promise<void> {
-      const data = latestMember;
+      const data = latestLine;
       const write = data?.write ?? null;
       if (data === null || write === null) throw new Error(writeTextOf(new Error('no requeue facts')));
       let value: unknown;
@@ -806,9 +826,7 @@ export async function bootBoardPage(): Promise<void> {
       } catch (error) {
         throw new Error(writeTextOf(error));
       }
-      const outcome = asRecord(value);
-      if (outcome.kind === 'refused') throw new Error(writeTextOf(new Error(asText(outcome.refusal))));
-      if (outcome.kind !== 'requeued') throw new Error(writeTextOf(new Error('tasks/requeue returned no outcome')));
+      requeuedOrThrow(value);
       await refresh.reread();
     },
     async controlChain(kind: 'pause' | 'resume' | 'cancel'): Promise<void> {
@@ -847,17 +865,13 @@ export async function bootBoardPage(): Promise<void> {
       } catch (error) {
         throw new Error(writeTextOf(error));
       }
-      /* §2.7: the outer `committed` only says the write was recorded; the
-         inner `refused` is a business result and is shown as its reason. */
-      const outcome = asRecord(value);
-      if (outcome.kind === 'refused') throw new Error(writeTextOf(new Error(asText(outcome.refusal))));
-      if (outcome.kind !== 'requeued') throw new Error(writeTextOf(new Error('tasks/requeue returned no outcome')));
+      requeuedOrThrow(value);
       await refresh.reread();
     },
     async askLine(question: string): Promise<void> {
-      const data = latestMember;
+      const data = latestLine;
       const line = data?.line ?? null;
-      if (data === null || line === null) throw new Error(writeTextOf(new Error('no Member line')));
+      if (data === null || line === null) throw new Error(writeTextOf(new Error('no line')));
       let reply: RouteReply;
       try {
         reply = await client.post('queries/ask', data.scope, {
@@ -873,9 +887,9 @@ export async function bootBoardPage(): Promise<void> {
       await refresh.reread();
     },
     async interveneLine(text: string): Promise<void> {
-      const data = latestMember;
+      const data = latestLine;
       const line = data?.line ?? null;
-      if (data === null || line === null) throw new Error(writeTextOf(new Error('no Member line')));
+      if (data === null || line === null) throw new Error(writeTextOf(new Error('no line')));
       let reply: RouteReply;
       try {
         reply = await client.write('messages/send', data.scope, {
@@ -891,6 +905,28 @@ export async function bootBoardPage(): Promise<void> {
       const result = asRecord(reply);
       if (result.sendStatus !== 'sent' && result.sendStatus !== 'awaiting_release') {
         throw new Error(writeTextOf(new Error('messages/send did not send')));
+      }
+      await refresh.reread();
+    },
+    async saveFile(path: string, content: string, expectedRevision: string | null): Promise<void> {
+      const scope = latestNavScope;
+      if (scope === null) throw new Error(writeTextOf(new Error('no navigation scope')));
+      /* §2.5: the plain `files/save` route; `digest` is the Kernel content
+         revision, so the expected value is the page's own last read. A
+         `source_stale` rejection is rethrown with its code so the page can
+         draw the conflict bar; any other failure is the generic write text
+         (READS-2), never the raw route and code. */
+      try {
+        const reply = await client.post('files/save', scope, { path, expectedRevision, content });
+        readyRouteValue<unknown>(reply, 'files/save');
+      } catch (error) {
+        /* The conflict bar's 仍然保存 needs the disk's new digest, so the page
+           re-reads the file before it draws the conflict. */
+        if (error instanceof RouteReadError && error.code === 'source_stale') {
+          await refresh.reread();
+          throw error;
+        }
+        throw new Error(writeTextOf(error));
       }
       await refresh.reread();
     },
@@ -926,8 +962,14 @@ export async function bootBoardPage(): Promise<void> {
           latestDecide = main.decisions;
           latestDecideScope = main.scope;
         }
-        if (boardName === 'Member') latestMember = snapshot.data as MemberData | null;
         if (boardName === 'Chain') latestChain = snapshot.data as ChainData | null;
+        if (boardName === 'Member') {
+          const member = snapshot.data as MemberData | null;
+          latestLine = member?.line ? { scope: member.scope, line: member.line, write: member.write } : null;
+        }
+        if (boardName === 'Main') {
+          latestLine = main?.line && main.scope ? { scope: main.scope, line: main.line.line, write: main.line.write } : null;
+        }
       }
       view.updateProps(pageProps(board.defaults, snapshot, restart, actions));
     },
@@ -1523,6 +1565,132 @@ export async function consultationQueryRefsForUi(messageRef: SessionMessageRef):
 }
 
 /**
+ * §2.2: the one line record read Member's page and Main's line view share. It
+ * reads the four `lines/page` sections, each shown message's `messages/view`
+ * and body, the current Run's `executions/read` + `controls/read` +
+ * `executions/brief`, the shown copies' Query/answer, and (only when the line
+ * serves another Goal) that Goal's `tasks/query`. `history`/`files`/`hover`/
+ * `write` stay the wrapper's.
+ */
+export async function readLineFacts(
+  client: ReturnType<typeof createHostClient>, scope: CoreScope, key: LineKey,
+  detail: WorkLineDetailV1, nav: NavData,
+): Promise<MemberSource> {
+  let executions: LineExecutionItemV1[] = [];
+  let messages: LineMessageStateV1[] = [];
+  const messageViews: SessionMessageReadV1[] = [];
+  const messageBodies: Record<string, MessageBody> = {};
+  const copies: MemberCopySource[] = [];
+  let execution: TaskExecutionRecord | null = null;
+  let controls: ControlIntentSnapshotV1 | null = null;
+  let brief: { brief: ContinuationBriefV1; digest: string } | null = null;
+  let taskGraph: TaskGraph | null = nav.tasks;
+  const pageOf = async (section: WorkLineSectionPageV1['section']): Promise<WorkLineSectionPageV1> =>
+    readyRouteValue<WorkLineSectionPageV1>(await client.post('lines/page', scope, {
+      workspace: scope, key, section, page: { limit: 100 },
+    }), 'lines/page');
+  const executionPage = await pageOf('executions');
+  executions = executionPage.section === 'executions' ? executionPage.items : [];
+  const messagePage = await pageOf('messages');
+  messages = messagePage.section === 'messages' ? messagePage.items : [];
+  const copyPage = await pageOf('copies');
+  const copyItems = copyPage.section === 'copies' ? copyPage.items : [];
+  await pageOf('participation');
+  for (const item of messages) {
+    const view = readyRouteValue<SessionMessageReadV1>(
+      await client.post('messages/view', scope, item.messageRef), 'messages/view');
+    messageViews.push(view);
+    for (const part of ['message', 'response'] as const) {
+      if (part === 'response' && view.message.response === null) continue;
+      try {
+        messageBodies[messageBodyKey(item.messageRef, part)] = readyRouteValue<MessageBody>(
+          await client.post('messages/body', scope, { messageRef: item.messageRef, part }), 'messages/body');
+      } catch (error) {
+        if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
+      }
+    }
+  }
+  for (const item of copyItems) {
+    const refs = await consultationQueryRefsForUi(item.messageRef);
+    let query: QueryExecutionRecord | null = null;
+    let answer: QueryJobAnswerSnapshot | null = null;
+    try {
+      query = readyRouteValue<QueryExecutionRecord>(
+        await client.post('queries/read', scope, refs.queryJobRef), 'queries/read');
+    } catch (error) {
+      if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
+    }
+    const answerRef = query?.job.job.answerRefs.at(-1) ?? null;
+    if (answerRef !== null) {
+      try {
+        answer = readyRouteValue<QueryJobAnswerSnapshot>(
+          await client.post('queries/answer', scope, answerRef), 'queries/answer');
+      } catch (error) {
+        if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
+      }
+    }
+    copies.push({ item, query, answer });
+  }
+  const executionItems = executions.filter((entry) => entry.kind === 'execution');
+  const live = executionItems.filter((entry) => entry.status === 'running' || entry.status === 'starting');
+  const ended = executionItems.filter((entry) => entry.status === 'ended');
+  const current = live.at(-1) ?? ended.at(-1) ?? null;
+  if (current !== null) {
+    execution = readyRouteValue<TaskExecutionRecord>(
+      await client.post('executions/read', scope, current.runRef), 'executions/read');
+  }
+  const intentRef = execution?.run.controlState?.intentRef ?? null;
+  if (intentRef !== null) {
+    controls = readyRouteValue<ControlIntentSnapshotV1>(
+      await client.post('controls/read', scope, intentRef), 'controls/read');
+  }
+  if (execution !== null && execution.run.requeueRef !== undefined) {
+    brief = readyRouteValue<{ brief: ContinuationBriefV1; digest: string } | null>(
+      await client.post('executions/brief', scope, { runRef: execution.run.ref }), 'executions/brief');
+  }
+  /* §2.4 step 6: a line may own a task of another Goal; its own graph is read
+     once, never the selected Goal's graph. */
+  const lineTask = taskOfLine(detail.row);
+  if (lineTask !== null && lineTask.goalId !== (nav.selectedGoalId ?? '')) {
+    try {
+      taskGraph = readyRouteValue<TaskGraph>(
+        await client.post('tasks/query', scope, { goalRef: goalRefIn(scope.projectId, lineTask.goalId) }), 'tasks/query');
+    } catch (error) {
+      if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
+      taskGraph = null;
+    }
+  }
+  /* The line's own Goal graph rides as `nav.tasks` too, as `readMember` gave
+     its adapter before the extraction (the selected Goal's when they match). */
+  return {
+    scope, nav: { ...nav, tasks: taskGraph }, line: detail, ownKey: key,
+    executions, messages, messageViews, messageBodies, copies, controls, brief,
+    history: null, files: null, hover: null, execution, taskGraph, write: null,
+  };
+}
+
+/**
+ * §2.2: the one requeue basis both pages use; it reads only the public Task
+ * row (`effectivePhase` + `failure.requeueActors`) and the shown Goal's
+ * revision. `null` when either is not loaded.
+ */
+export function writeBasisOf(
+  nav: NavData, line: MemberLine, execution: TaskExecutionRecord | null, taskGraph: TaskGraph | null,
+): MemberWriteBasis | null {
+  if (execution === null || line.taskRef === null) return null;
+  const taskRef = line.taskRef;
+  const taskRow = taskGraph?.tasks.find((row) => row.ref.projectId === taskRef.projectId
+    && row.ref.goalId === taskRef.goalId && row.ref.taskId === taskRef.taskId) ?? null;
+  const goalRow = taskRow === null ? null : nav.goals.find((goal) => goal.goalId === taskRow.ref.goalId) ?? null;
+  if (taskRow === null || goalRow === null || !requeueVisible(taskRow)) return null;
+  return {
+    taskRef: taskRow.ref, afterRunRef: execution.run.ref, runRevision: execution.run.revision,
+    goalRef: goalRefIn(taskRow.ref.projectId, goalRow.goalId),
+    goalRevision: goalRow.revision,
+  };
+}
+
+/**
  * E3 Member §2.4: one read for the member page. The chrome is `readNav`'s
  * (the selected line's `lines/read` included); this reader adds the line's
  * four first pages, the shown messages' view/body, the current Run's
@@ -1551,7 +1719,6 @@ export async function readMember(
   }
   if (nav === null || nav.scope === null) return { data: null, cursor };
   const scope = nav.scope;
-  const goalRefOf = (id: string) => ({ aggregateType: 'Goal' as const, projectId: scope.projectId, goalId: id });
   let key = requested;
   if (key === null) {
     key = nav.lines.find((row) => !row.synth && !row.archived)?.key ?? null;
@@ -1570,142 +1737,43 @@ export async function readMember(
       line = null;
     }
   }
-  let executions: LineExecutionItemV1[] = [];
-  let messages: LineMessageStateV1[] = [];
-  const messageViews: SessionMessageReadV1[] = [];
-  const messageBodies: Record<string, MessageBody> = {};
-  const copies: MemberCopySource[] = [];
-  let execution: TaskExecutionRecord | null = null;
-  let controls: ControlIntentSnapshotV1 | null = null;
-  let brief: { brief: ContinuationBriefV1; digest: string } | null = null;
-  let taskGraph: TaskGraph | null = nav.tasks;
+  let source: MemberSource;
   if (line !== null && line.kind === 'line' && key !== null) {
-    const pageOf = async (section: WorkLineSectionPageV1['section']): Promise<WorkLineSectionPageV1> =>
-      readyRouteValue<WorkLineSectionPageV1>(await client.post('lines/page', scope, {
-        workspace: scope, key, section, page: { limit: 100 },
-      }), 'lines/page');
-    const executionPage = await pageOf('executions');
-    executions = executionPage.section === 'executions' ? executionPage.items : [];
-    const messagePage = await pageOf('messages');
-    messages = messagePage.section === 'messages' ? messagePage.items : [];
-    const copyPage = await pageOf('copies');
-    const copyItems = copyPage.section === 'copies' ? copyPage.items : [];
-    await pageOf('participation');
-    for (const item of messages) {
-      const view = readyRouteValue<SessionMessageReadV1>(
-        await client.post('messages/view', scope, item.messageRef), 'messages/view');
-      messageViews.push(view);
-      for (const part of ['message', 'response'] as const) {
-        if (part === 'response' && view.message.response === null) continue;
-        try {
-          messageBodies[messageBodyKey(item.messageRef, part)] = readyRouteValue<MessageBody>(
-            await client.post('messages/body', scope, { messageRef: item.messageRef, part }), 'messages/body');
-        } catch (error) {
-          if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
-        }
-      }
-    }
-    for (const item of copyItems) {
-      const refs = await consultationQueryRefsForUi(item.messageRef);
-      let query: QueryExecutionRecord | null = null;
-      let answer: QueryJobAnswerSnapshot | null = null;
-      try {
-        query = readyRouteValue<QueryExecutionRecord>(
-          await client.post('queries/read', scope, refs.queryJobRef), 'queries/read');
-      } catch (error) {
-        if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
-      }
-      const answerRef = query?.job.job.answerRefs.at(-1) ?? null;
-      if (answerRef !== null) {
-        try {
-          answer = readyRouteValue<QueryJobAnswerSnapshot>(
-            await client.post('queries/answer', scope, answerRef), 'queries/answer');
-        } catch (error) {
-          if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
-        }
-      }
-      copies.push({ item, query, answer });
-    }
-    const executionItems = executions.filter((entry) => entry.kind === 'execution');
-    const live = executionItems.filter((entry) => entry.status === 'running' || entry.status === 'starting');
-    const ended = executionItems.filter((entry) => entry.status === 'ended');
-    const current = live.at(-1) ?? ended.at(-1) ?? null;
-    if (current !== null) {
-      execution = readyRouteValue<TaskExecutionRecord>(
-        await client.post('executions/read', scope, current.runRef), 'executions/read');
-    }
-    const intentRef = execution?.run.controlState?.intentRef ?? null;
-    if (intentRef !== null) {
-      controls = readyRouteValue<ControlIntentSnapshotV1>(
-        await client.post('controls/read', scope, intentRef), 'controls/read');
-    }
-    if (execution !== null && execution.run.requeueRef !== undefined) {
-      brief = readyRouteValue<{ brief: ContinuationBriefV1; digest: string } | null>(
-        await client.post('executions/brief', scope, { runRef: execution.run.ref }), 'executions/brief');
-    }
-    /* §2.4 step 6: a line may own a task of another Goal; its own graph is read
-       once, never the selected Goal's graph. */
-    const lineTask = line.row.responsibleNow[0]?.task ?? line.row.name.tasks[0] ?? line.row.groups.task ?? null;
-    if (lineTask !== null && lineTask.goalId !== (nav.selectedGoalId ?? '')) {
-      try {
-        taskGraph = readyRouteValue<TaskGraph>(
-          await client.post('tasks/query', scope, { goalRef: goalRefOf(lineTask.goalId) }), 'tasks/query');
-      } catch (error) {
-        if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
-        taskGraph = null;
-      }
-    }
+    source = await readLineFacts(client, scope, key, line, nav);
+    /* The page's own line, not the selected one (§2.4: the rail's `current`). */
+    source.ownKey = demand.ownKey ?? key;
+  } else {
+    /* A missing/branched line keeps the rail; the centre has no record. */
+    source = {
+      scope, nav, line, ownKey: demand.ownKey ?? key,
+      executions: [], messages: [], messageViews: [], messageBodies: {}, copies: [],
+      controls: null, brief: null, history: null, files: null, hover: null,
+      execution: null, taskGraph: nav.tasks, write: null,
+    };
   }
-  let history: SessionHistoryEntry[] | null = null;
   if (demand.traceOpen === true && key !== null) {
-    history = await readSessionTrace(client, scope, key);
+    source.history = await readSessionTrace(client, scope, key);
   }
-  let files: UncommittedFilesV1 | null = null;
-  let filesPartial = false;
   if (demand.changesOpen === true) {
-    const list = readyRouteValue<{ paths: string[]; partial: boolean }>(
-      await client.post('files/list', scope, {}), 'files/list');
-    filesPartial = list.partial === true;
-    const paths = list.paths.slice(0, 100);
-    /* §2.4 step 12: this route wants a WorkspaceRef, not the caller's CoreScope. */
-    files = readyRouteValue<UncommittedFilesV1>(
-      await client.post('files/uncommitted', scope, {
-        workspace: { aggregateType: 'Workspace', projectId: scope.projectId, workspaceId: scope.workspaceId },
-        paths,
-      }), 'files/uncommitted');
+    const page = await readUncommittedPage(client, scope);
+    source.files = page.files;
+    /* Member's 只列了部分 is only `files/list`'s own `partial` (lead 11-12 item 4). */
+    source.filesPartial = page.partial;
   }
-  let hover: GraphHoverReadV1 | null = null;
   if (nav.selectedGoalId !== null) {
     try {
-      hover = readyRouteValue<GraphHoverReadV1>(
-        await client.post('graph/hover', scope, { goalRef: goalRefOf(nav.selectedGoalId) }), 'graph/hover');
+      source.hover = readyRouteValue<GraphHoverReadV1>(
+        await client.post('graph/hover', scope, { goalRef: goalRefIn(scope.projectId, nav.selectedGoalId) }), 'graph/hover');
     } catch (error) {
       /* A Goal without an adopted Plan has no graph to hover; `readTaskMap`
-         already reads the same `unavailable` as empty (boot.ts:1226-1228). */
+         already reads the same `unavailable` as empty. */
       if (!(error instanceof RouteReadError) || error.code !== 'unavailable') throw error;
-      hover = null;
+      source.hover = null;
     }
   }
-  let write: MemberWriteBasis | null = null;
-  if (execution !== null && key !== null) {
-    const lineTask = line !== null && line.kind === 'line'
-      ? line.row.responsibleNow[0]?.task ?? line.row.name.tasks[0] ?? line.row.groups.task ?? null : null;
-    const taskRow = lineTask === null ? null
-      : taskGraph?.tasks.find((row) => row.ref.projectId === lineTask.projectId
-        && row.ref.goalId === lineTask.goalId && row.ref.taskId === lineTask.taskId) ?? null;
-    const goalRow = taskRow === null ? null : nav.goals.find((goal) => goal.goalId === taskRow.ref.goalId) ?? null;
-    if (taskRow !== null && goalRow !== null && requeueVisible(taskRow)) {
-      write = {
-        taskRef: taskRow.ref, afterRunRef: execution.run.ref, runRevision: execution.run.revision,
-        goalRef: goalRefOf(goalRow.goalId), goalRevision: goalRow.revision,
-      };
-    }
+  if (source.line !== null && source.line.kind === 'line') {
+    source.write = writeBasisOf(nav, adaptMemberLine(source, source.line), source.execution, source.taskGraph);
   }
-  const source: MemberSource = {
-    scope, nav: { ...nav, tasks: taskGraph }, line, ownKey: demand.ownKey ?? key,
-    executions, messages, messageViews, messageBodies, copies, controls, brief,
-    history, files, filesPartial, hover, write,
-  };
   return { data: adaptMember(source, key), cursor };
 }
 
@@ -1888,7 +1956,7 @@ export async function readChain(
   /* §8.3 A: the selected Goal's graph is `readNav`'s; a selected line may
      serve another Goal, whose graph is read once here. */
   const lastRun = runs.at(-1) ?? null;
-  const lineTask = line?.responsibleNow[0]?.task ?? line?.name.tasks[0] ?? line?.groups.task ?? null;
+  const lineTask = line === null ? null : taskOfLine(line);
   let tasks: unknown = nav.tasks;
   if (lineTask !== null && lineTask.goalId !== (nav.selectedGoalId ?? '')) {
     try {
@@ -1922,6 +1990,166 @@ export async function readChain(
     runs, histories, briefs, rounds, tasks, goalWaiting, controls,
   };
   return { data: adaptChain(source, { selected: key, ownKey, dens: '标准', theme: 'dark' }), cursor };
+}
+
+/** §2.4: one `files/read` of the working tree; the page's `maxBytes` limit. */
+async function readAuxFile(
+  client: ReturnType<typeof createHostClient>, scope: CoreScope, path: string,
+): Promise<AuxFilePage> {
+  return auxFilePageOf(readyRouteValue<AuxWorkspaceFile>(await client.post('files/read', scope, {
+    workspace: { aggregateType: 'Workspace', projectId: scope.projectId, workspaceId: scope.workspaceId },
+    path, maxBytes: 1_048_576, version: { kind: 'working_tree' },
+  }), 'files/read'));
+}
+
+/**
+ * §2.3/第三轮 Main 8, lead 11-12 ruling 1: the one `files/list` +
+ * `files/uncommitted` read Member's changes tab and Main's file/Diff tabs
+ * share. `paths` is the full listing; `partial` is `files/list`'s own
+ * truncation fact (Member's 只列了部分); `checkedFirst` is how many files the
+ * uncommitted read checked when that is not every file of the workspace (the
+ * listing passed 100, or the listing itself is partial), and `null` when it
+ * checked them all (lead 11-12 item 4). An empty listing checks nothing, so
+ * `files` is null (READS-7: the Host rejects an empty `paths`).
+ */
+async function readUncommittedPage(
+  client: ReturnType<typeof createHostClient>, scope: CoreScope,
+): Promise<{ files: UncommittedFilesV1 | null; checkedFirst: number | null; paths: string[]; partial: boolean }> {
+  const list = readyRouteValue<{ paths: string[]; partial: boolean }>(
+    await client.post('files/list', scope, { prefix: '' }), 'files/list');
+  const paths = list.paths;
+  const partial = list.partial === true;
+  const first = paths.slice(0, 100);
+  const files = first.length === 0 ? null : readyRouteValue<UncommittedFilesV1>(await client.post('files/uncommitted', scope, {
+    workspace: { aggregateType: 'Workspace', projectId: scope.projectId, workspaceId: scope.workspaceId },
+    paths: first,
+  }), 'files/uncommitted');
+  return { files, checkedFirst: partial || paths.length > first.length ? first.length : null, paths, partial };
+}
+
+/**
+ * §2.3: the one right-panel read. It reads only the tab it is given and never
+ * the navigation reads again: the task tree uses `nav.tasks`, the architecture
+ * tree uses `nav.tasks` + `architecture/read`, and `files/list` is read once
+ * per files/Diff tab. A `RouteReadError` becomes that tab's explanation; any
+ * other failure still fails the page (B-09).
+ */
+export async function readAuxPanel(
+  client: ReturnType<typeof createHostClient>, scope: CoreScope, nav: NavData, demand: AuxDemand & { auxTab: AuxTab },
+): Promise<AuxPanelData> {
+  const tab = demand.auxTab;
+  const empty: AuxPanelData = {
+    tab, task: null, arch: null, files: null, file: null, diff: null, error: null,
+  };
+  try {
+    if (tab === 'task') {
+      const goal = nav.selectedGoalId === null ? null
+        : nav.goals.find((row) => row.goalId === nav.selectedGoalId) ?? null;
+      const tree = goal === null ? null : goalTaskTree({ id: goal.goalId, name: goal.objective }, nav.tasks);
+      let moduleNames: Record<string, string> = {};
+      const taskModules: Record<string, string> = {};
+      if (goal !== null) {
+        try {
+          const hover = readyRouteValue<GraphHoverReadV1>(await client.post('graph/hover', scope, {
+            goalRef: goalRefIn(scope.projectId, goal.goalId),
+          }), 'graph/hover');
+          moduleNames = moduleNamesOf(hover);
+          /* lead 11-12 (T-B10): each task's own `tasks[].module`, named. */
+          for (const entry of Array.isArray(hover.tasks) ? hover.tasks : []) {
+            const row = asRecord(entry);
+            const name = moduleNames[asText(asRecord(row.module).moduleId)];
+            if (name !== undefined) taskModules[asText(asRecord(row.task).taskId)] = name;
+          }
+        } catch (error) {
+          /* A Goal without an adopted Plan has no graph to hover; `not_found`
+             and `unavailable` both mean the panel draws the tree it already has. */
+          if (!(error instanceof RouteReadError) || (error.code !== 'unavailable' && error.code !== 'not_found')) throw error;
+        }
+      }
+      let detail: TaskMapNodeDetailData | null = null;
+      if (demand.detailTaskId !== null && goal !== null && nav.tasks !== null) {
+        const node = goalTreeNodeOf(tree, demand.detailTaskId);
+        detail = await readNodeDetail(client, scope, goalRefIn(scope.projectId, goal.goalId),
+          nav.tasks, demand.detailTaskId, node?.st ?? '', '');
+      }
+      const det = detail !== null && tree !== null
+        ? auxTaskDetailOf(detail, tree, (id) => crumbPathOf(tree, id))
+        : null;
+      const counts = tree === null ? {} : auxLeafCountsOf(tree, 'task');
+      return { ...empty, task: { tree, counts, detail, detailFor: demand.detailTaskId, moduleNames, taskModules, det } };
+    }
+    if (tab === 'arch') {
+      let architecture: unknown = null;
+      try {
+        architecture = readyRouteValue<unknown>(await client.post('architecture/read', scope, {
+          selection: { kind: 'current' },
+        }), 'architecture/read');
+      } catch (error) {
+        /* `not_found` is "no adopted architecture": an empty tree, not a page error. */
+        if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
+      }
+      let work: ReadonlySet<string> | null = null;
+      if (demand.workOnly) {
+        const scopeRead = readyRouteValue<ArchitectureWorkScopeV1>(
+          await client.post('architecture/work-scope', scope, {}), 'architecture/work-scope');
+        work = new Set(scopeRead.files.map((file) => file.path));
+      }
+      const tree = catalogArchTree(architecture, scope.projectId, nav.tasks, work);
+      return { ...empty, arch: { tree, counts: tree === null ? {} : auxLeafCountsOf(tree, 'file'), work } };
+    }
+    if (tab === 'files') {
+      const page = await readUncommittedPage(client, scope);
+      let file: AuxFilePage | null = null;
+      if (demand.auxPath !== null) {
+        try {
+          file = await readAuxFile(client, scope, demand.auxPath);
+        } catch (error) {
+          /* The path is gone: an empty file page, not a tab error. */
+          if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
+        }
+      }
+      return {
+        ...empty, files: auxFileListOf(page.paths), file,
+        diff: { files: page.files, checkedFirst: page.checkedFirst, rows: auxChangedRowsOf(page.files) },
+      };
+    }
+    if (tab === 'file') {
+      if (demand.auxPath === null) return empty;
+      let file: AuxFilePage | null = null;
+      try {
+        file = await readAuxFile(client, scope, demand.auxPath);
+      } catch (error) {
+        if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
+      }
+      return { ...empty, file };
+    }
+    if (tab === 'diff') {
+      const page = await readUncommittedPage(client, scope);
+      return { ...empty, diff: { files: page.files, checkedFirst: page.checkedFirst, rows: auxChangedRowsOf(page.files) } };
+    }
+    /* 命令页 has no backend: no route, no command list (B-07). */
+    return empty;
+  } catch (error) {
+    if (error instanceof RouteReadError) {
+      /* READS-12: the tab shows the page text; the raw route, code and reason go to the log. */
+      logReadError(error);
+      return { ...empty, error: { code: error.code, text: pageTextOf(error) } };
+    }
+    throw error;
+  }
+}
+
+function crumbPathOf(tree: GoalsTaskNode, id: string): Array<{ id: string; name: string }> {
+  const walk = (node: GoalsTaskNode, path: Array<{ id: string; name: string }>): Array<{ id: string; name: string }> | null => {
+    const next = path.concat([{ id: node.id, name: node.name }]);
+    if (node.id === id) return next;
+    for (const kid of node.kids) {
+      const found = walk(kid, next);
+      if (found !== null) return found;
+    }
+    return null;
+  };
+  return walk(tree, []) ?? [];
 }
 
 /**
@@ -2007,8 +2235,35 @@ export async function readMain(
       }
     }
   }
+  /* §2.4 step 1: the selected line's record, through the same read and the
+     same projection Member uses. `branched` has no single record. */
+  let line: MainLineRecord | null = null;
+  if (demand.lineKey !== null && demand.lineKey !== undefined
+    && nav.detail !== null && nav.detail.kind === 'line') {
+    const source = await readLineFacts(client, scope, demand.lineKey, nav.detail, nav);
+    const memberLine = adaptMemberLine(source, nav.detail);
+    const write = writeBasisOf(nav, memberLine, source.execution, source.taskGraph);
+    line = {
+      line: memberLine,
+      rec: lvRecordOf({
+        executions: source.executions, messageViews: source.messageViews,
+        bodies: source.messageBodies, copies: source.copies, line: memberLine,
+      }),
+      rich: { reply: '', liveStep: null, page: memberLine.task !== null ? 'chain' : 'member' },
+      write,
+    };
+  }
+  /* §2.4 step 7: only the open tab is read; `null` means the panel is closed. */
+  const aux = demand.auxTab === null || demand.auxTab === undefined
+    ? null
+    : await readAuxPanel(client, scope, nav, {
+      auxTab: demand.auxTab,
+      auxPath: demand.auxPath ?? null,
+      detailTaskId: demand.detailTaskId ?? null,
+      workOnly: demand.workOnly === true,
+    });
   return {
-    data: adaptMain({ nav, pages, decisions, older: cursor, track }),
+    data: adaptMain({ nav, pages, decisions, older: cursor, track, line, aux }),
     cursor: navRead.cursor,
   };
 }
@@ -2411,7 +2666,7 @@ async function resolveDroppedDates(
 async function readNodeDetail(
   client: ReturnType<typeof createHostClient>, scope: CoreScope,
   goalRef: { aggregateType: 'Goal'; projectId: string; goalId: string },
-  graph: TaskMapGraphRead, taskId: string, state: string, mapWhy: string,
+  graph: { plan: { ref?: unknown }; tasks: readonly unknown[] }, taskId: string, state: string, mapWhy: string,
 ): Promise<TaskMapNodeDetailData | null> {
   const planRef = graph.plan.ref;
   const row = graph.tasks.map(asRecord).find((entry) => asText(asRecord(entry.ref).taskId) === taskId);
@@ -2516,6 +2771,19 @@ const WRITE_ERROR_TEXT: Record<string, string> = {
 function writeTextOf(error: unknown): string {
   const code = error instanceof RouteReadError ? error.code : '';
   return WRITE_ERROR_TEXT[code] ?? '写入失败。';
+}
+
+/** A35 (§2.6, §2.7; lead ruling 4): the outer `committed` of `tasks/requeue`
+ * only says the write was recorded; its inner `refused` is a business result,
+ * never a success, and the page shows the refusal's own reason. Shared by the
+ * line page (`requeueLine`) and Chain (`requeueChain`). */
+function requeuedOrThrow(value: unknown): void {
+  const outcome = asRecord(value);
+  if (outcome.kind === 'refused') {
+    const reason = asText(asRecord(outcome.refusal).reason);
+    throw new Error(reason === '' ? '重新入队被拒绝。' : '重新入队被拒绝：' + reason);
+  }
+  if (outcome.kind !== 'requeued') throw new Error(writeTextOf(new Error('tasks/requeue returned no outcome')));
 }
 
 /** Ruling item 6: the page text is chosen by the reply code, never the raw

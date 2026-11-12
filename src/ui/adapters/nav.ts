@@ -173,7 +173,7 @@ function navLineOf(entry: unknown, archived: boolean): NavLine {
   const sessionId = asText(key.sessionId);
   const status = asRecord(row.status);
   const view = lineStatusView(status);
-  const task = asText(asRecord((Array.isArray(row.responsibleNow) ? row.responsibleNow : [])[0]).task);
+  const task = asText(asRecord((Array.isArray(row.responsibleNow) ? row.responsibleNow : [])[0]).title);
   const nameRow = asRecord(row.name);
   const primary = asText(nameRow.primary);
   const name = nameRow.source === 'duty_only' ? DUTY_WORD[primary] ?? '未分组' : primary;

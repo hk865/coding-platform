@@ -377,6 +377,8 @@ export type S6AWorldOptions = {
   workBudget?: Partial<RuntimeBudget>;
   /** Cold start: omit the startup `workflow` option, so only a binding registered through a route later exists. */
   omitStartupWorkflow?: true;
+  /** Grants beyond `readPrefixes: ['.']` on the one workspace (E3U Main B's WW saves files); absent keeps the read-only grant. */
+  workspaceGrants?: { writePrefixes?: string[]; allowCommands?: boolean };
 };
 
 export type S6AReopenOptions = {
@@ -597,7 +599,9 @@ export async function openS6ARequestWorld(options: S6AWorldOptions): Promise<S6A
     return {
       storage: backend === 'sqlite' ? { kind: 'sqlite', directory: database } : { kind: 'memory' },
       actor: { ...actor },
-      workspaces: [{ scope: S6A_SCOPE, name: 'S6A request world', root, workspaceRevision: 1, readPrefixes: ['.'] }],
+      workspaces: [{ scope: S6A_SCOPE, name: 'S6A request world', root, workspaceRevision: 1, readPrefixes: ['.'],
+        ...(options.workspaceGrants?.writePrefixes === undefined ? {} : { writePrefixes: [...options.workspaceGrants.writePrefixes] }),
+        ...(options.workspaceGrants?.allowCommands === undefined ? {} : { allowCommands: options.workspaceGrants.allowCommands }) }],
       architectureSource: { provider: 'typescript', configPath: 'tsconfig.json' },
       kernelStores: { entries: [{ adapterId: 's6a-kernel', storeKey: 's6a-kernel-store', workspace: S6A_SCOPE,
         databasePath: join(database, 'kernel.sqlite') }] },

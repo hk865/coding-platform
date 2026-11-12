@@ -25,6 +25,7 @@ import { asRecord, asText } from '../values.js';
 import { localShortAt, taskState, taskWhyOf, PHASE_WORD } from './task-map.js';
 import { lineStatusView, dutyWordOf, lineHref, type LineKey, type NavData, type NavGoal, type NavInbox, type NavLine } from './nav.js';
 import { requeueVisible } from './line-shared.js';
+import { auxChangedRowsOf } from './aux-panel.js';
 
 /** One copies-section item, its deterministic Query and that Query's last answer. */
 export type MemberCopySource = {
@@ -59,6 +60,10 @@ export type MemberSource = {
   /** `files/list`'s own `partial` fact: the listing, not the uncommitted read, was truncated. */
   filesPartial?: boolean;
   hover: GraphHoverReadV1 | null;
+  /** The Run's own read; `null` when the line has no execution or it could not be read. */
+  execution: TaskExecutionRecord | null;
+  /** The graph of the Goal the line's task belongs to; `null` for no Plan. */
+  taskGraph: TaskGraph | null;
   write: MemberWriteBasis | null;
 };
 
@@ -82,6 +87,8 @@ export type MemberLine = {
   canIntervene: boolean;
   interveneReason: string | null;
   readOnly: boolean;
+  /** The TaskTriple the line is responsible for; the one `writeBasisOf` reads. */
+  taskRef: TaskTriple | null;
   items: MemberItem[];
   groups: MemberRecordGroup[];
   /** §2.2: the two whole-line links, encoded once by `lineHref`. */
@@ -132,8 +139,8 @@ export function messageBodyKey(ref: SessionMessageRef, part: 'message' | 'respon
   return ref.workspaceId + '/' + ref.messageId + '/' + part;
 }
 
-const RUN_STATUS_WORD: Record<string, string> = { starting: '启动中', running: '执行中', ended: '已结束' };
-const OUTCOME_WORD: Record<RunOutcome, string> = {
+export const RUN_STATUS_WORD: Record<string, string> = { starting: '启动中', running: '执行中', ended: '已结束' };
+export const OUTCOME_WORD: Record<RunOutcome, string> = {
   completed: '完成', failed: '失败', cancelled: '已取消', yielded: '已让出', crashed: '中断',
   budget_exhausted: '预算耗尽', outcome_unknown: '结果未知',
 };
@@ -157,7 +164,8 @@ function taskRowOf(graph: TaskGraph | null, task: TaskTriple): TaskRow | null {
     && row.ref.goalId === task.goalId && row.ref.taskId === task.taskId) ?? null;
 }
 
-function taskOfLine(row: LineRowV1): TaskTriple | null {
+/** The line's own task: the one rule `readLineFacts`, Chain's reader and this adapter use (READS-10 b). */
+export function taskOfLine(row: LineRowV1): TaskTriple | null {
   return row.responsibleNow[0]?.task ?? row.name.tasks[0] ?? row.groups.task ?? null;
 }
 
@@ -165,8 +173,8 @@ function taskOfLine(row: LineRowV1): TaskTriple | null {
  * map uses; without a TaskRow the line's own phase word is the closest fact. */
 function taskViewOf(lineRow: LineRowV1, graph: TaskGraph | null): { name: string; st: string; tip: string } | null {
   const brief = lineRow.responsibleNow[0];
-  const triple = brief?.task ?? lineRow.name.tasks[0] ?? lineRow.groups.task;
-  if (triple === undefined || triple === null) return null;
+  const triple = taskOfLine(lineRow);
+  if (triple === null) return null;
   const task = taskRowOf(graph, triple);
   const phase = brief?.phase ?? task?.effectivePhase ?? '';
   const verdict = asRecord(asRecord(asRecord(asRecord(task).failure).automation).verdict);
@@ -202,16 +210,21 @@ function dayOf(at: string): string {
   return at.slice(0, 5);
 }
 
+/** One execution's word, "状态 · 结果": the one spelling Member's rows and
+ * Main's line record use (READS-10 c). */
+export function runWordOf(item: Extract<LineExecutionItemV1, { kind: 'execution' }>): string {
+  const word = RUN_STATUS_WORD[item.status] ?? item.status;
+  return item.outcome === null ? word : word + ' · ' + (OUTCOME_WORD[item.outcome] ?? item.outcome);
+}
+
 /** §2.7: one execution row. The status and the outcome stay two facts; the
  * adapter never invents the word "完成". */
 function runItemOf(item: Extract<LineExecutionItemV1, { kind: 'execution' }>, title: string): MemberItem {
-  const word = RUN_STATUS_WORD[item.status] ?? item.status;
-  const outcome = item.outcome === null ? '' : ' · ' + (OUTCOME_WORD[item.outcome] ?? item.outcome);
   return {
     kind: 'run',
     runRef: item.runRef,
     head: title,
-    word: word + outcome,
+    word: runWordOf(item),
     at: item.startedAt === null ? '' : localShortAt(item.startedAt),
     checks: item.checks.map((check) => ({
       at: check.at === null ? '' : localShortAt(check.at),
@@ -253,7 +266,7 @@ export function adaptMember(source: MemberSource, selected: LineKey | null): Mem
   const selectedGoal = nav.selectedGoalId === null ? null
     : nav.goals.find((goal) => goal.goalId === nav.selectedGoalId) ?? null;
   const line = source.line !== null && source.line.kind === 'line'
-    ? buildLine(source, source.line, selected) : null;
+    ? adaptMemberLine(source, source.line) : null;
   const ownLine = ownKey === null ? null
     : [...nav.lines, ...nav.archived].find((row) => sameKey(ownKey, row.key)) ?? null;
   const changes = changesOf(source.files, source.filesPartial === true);
@@ -279,7 +292,8 @@ export function adaptMember(source: MemberSource, selected: LineKey | null): Mem
   };
 }
 
-function buildLine(source: MemberSource, detail: WorkLineDetailV1, _selected: LineKey | null): MemberLine {
+/** §2.2: the one line projection Member's page and Main's line view share. */
+export function adaptMemberLine(source: MemberSource, detail: WorkLineDetailV1): MemberLine {
   const row = detail.row;
   const key: LineKey = { projectId: row.key.projectId, sessionId: row.key.sessionId };
   const navLine = source.nav.lines.find((entry) => sameKey(entry.key, key));
@@ -338,6 +352,7 @@ function buildLine(source: MemberSource, detail: WorkLineDetailV1, _selected: Li
     canIntervene: row.status.readOnly !== true && intervene?.availability === 'available',
     interveneReason: intervene !== null && intervene.availability !== 'available' ? intervene.reason : null,
     readOnly: row.status.readOnly === true,
+    taskRef: taskOfLine(row),
     items,
     groups,
     pageMemberHref: lineHref('Member.dc.html', subGoalId, key),
@@ -472,11 +487,5 @@ function changesOf(files: UncommittedFilesV1 | null, partial: boolean): MemberCh
   if (files.repository === 'not_git') {
     return { repository: 'not_git', files: [], note: '这个工作区不是 git 工作区' };
   }
-  const rows = files.files.filter((file) => file.state !== 'clean').map((file) => ({
-    path: file.path,
-    added: file.state === 'uncommitted' && file.lines !== null ? file.lines.added : null,
-    deleted: file.state === 'uncommitted' && file.lines !== null ? file.lines.deleted : null,
-    state: file.state,
-  }));
-  return { repository: 'git', files: rows, note: partial ? '只列了部分' : '' };
+  return { repository: 'git', files: auxChangedRowsOf(files), note: partial ? '只列了部分' : '' };
 }

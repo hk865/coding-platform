@@ -1,14 +1,14 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { findButton, findClass } from './helpers/boot-page.js';
 import {
-  bootE3N, callsTo, countRoute, goalRowNamed, goalRows, lineRows, quietPage, textOf, waitFor, whyText,
+  bootE3N, callsTo, countRoute, goalRowNamed, goalRows, lineRows, mainHeadTitle, quietPage, textOf, waitFor, whyText,
 } from './helpers/E3N-page.js';
 import { click } from './helpers/E3N-interact.js';
 import { cancelGoal, openW1, openWProgress } from './helpers/E3N-world.js';
 import { inboxRow, rowMeta } from './helpers/E3D-page.js';
 import { openOldAnswerWorld } from './helpers/E3D-world.js';
 import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
-import { S6A_SCOPE, type S6ARequestWorld } from '../helpers/S6A-request-fixture.js';
+import { openS6ARequestWorld, S6A_SCOPE, type S6ARequestWorld } from '../helpers/S6A-request-fixture.js';
 import type { FakeElement } from './helpers/dom.js';
 
 /**
@@ -27,6 +27,23 @@ function lineNames(root: FakeElement): string[] {
 }
 
 describe('E3U Main goal bar and rail', () => {
+  it.each([
+    { entry: 'a project without a Goal', unavailable: undefined, title: '还没有目标' },
+    { entry: 'a first read that failed', unavailable: 'main/read', title: '' },
+  ])('LEAD-1 the head never names the sample goal: $entry', async ({ unavailable, title }) => {
+    const world = await openS6ARequestWorld({ backend: 'memory', defaultGoals: false });
+    worlds.push(world);
+    const { page, log } = await bootE3N(world, 'Main', { ...(unavailable === undefined ? {} : { unavailable }) });
+    try {
+      await quietPage(log);
+      /* 具名改坏: `Main.dc.html` 的 `headTitle` 落回 `base.headTitle`；“没有目标”一条红。
+         只要没选中目标就写“还没有目标”（不看这次读成没成功）；“读失败”一条红。 */
+      expect(mainHeadTitle(page.root)).toBe(title);
+    } finally {
+      await page.restore();
+    }
+  }, 120_000);
+
   it('T-A05 the goal bar counts 1/2 satisfied and one working line', async () => {
     const opened = await openWProgress();
     worlds.push(opened.world);

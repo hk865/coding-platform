@@ -1,6 +1,7 @@
 import { expect } from 'vitest';
 import { bootPage, findAllClass, findClass, findElement, type BootedPage, type PageFetch } from './boot-page.js';
 import { FakeElement } from './dom.js';
+import { click } from './E3N-interact.js';
 import type { S6ARequestWorld } from '../../helpers/S6A-request-fixture.js';
 
 /** The Host a page talks to: an S6A world, or a Host scenario's `h.host` (read on every call). */
@@ -176,6 +177,18 @@ export async function bootMainCard(h: { readonly host: E3NTarget }, search: stri
   return await bootE3N({ get base() { return h.host.base; }, get token() { return h.host.token; } }, 'Main', { search });
 }
 
+/** E3U Main B: Main on `search` in controlled mode, after its first reads settle. */
+export async function bootQuiet(world: E3NTarget, search: string): Promise<{ page: BootedPage; log: PageLog }> {
+  const booted = await bootE3N(world, 'Main', { search, mode: 'controlled' });
+  await quietPage(booted.log);
+  return booted;
+}
+
+/** Waits until `route` has `n` answered calls. */
+export function settledN(log: PageLog, route: string, n: number): Promise<void> {
+  return waitFor(() => callsTo(log, route).filter((call) => call.reply !== undefined).length === n);
+}
+
 export function countRoute(log: PageLog, route: string): number {
   return log.calls.filter((call) => call.route === route).length;
 }
@@ -346,4 +359,75 @@ export function clickable(root: FakeElement, text: string): FakeElement | undefi
   const found = [root, ...descendants(root)].filter((element) => (element.listeners.get('click')?.length ?? 0) > 0
     && element.textContent.includes(text));
   return found.sort((a, b) => a.textContent.length - b.textContent.length)[0];
+}
+
+/* ------------------------------------------- E3U Main B right-panel DOM reads */
+
+/** The right panel (`aside.panel`: 任务图、架构图、文件、命令、Diff and the pages they open). */
+export function auxPanel(root: FakeElement): FakeElement | undefined {
+  return findElement(root, (element) => element.tagName.toLowerCase() === 'aside' && hasClass(element, 'panel'));
+}
+
+/** A right-panel tab (`.pt-list button.nm[role=tab]`) by its exact name. */
+export function auxTab(root: FakeElement, name: string): FakeElement | undefined {
+  const list = findClass(root, 'pt-list');
+  return list === undefined ? undefined : descendants(list).find((element) => element.getAttribute('role') === 'tab'
+    && textOf(element) === name);
+}
+
+/**
+ * The name a comb square (`.cc`, the 树 view's 组合方格, S17) carries: the
+ * prototype's `taskTip`/`archTip` accessible name is `<name>，<state…>`.
+ */
+function combName(element: FakeElement): string {
+  const label = element.getAttribute('aria-label') ?? '';
+  const cut = label.indexOf('，');
+  return cut < 0 ? label : label.slice(0, cut);
+}
+
+const isComb = (element: FakeElement): boolean => element.tagName.toLowerCase() === 'button' && hasClass(element, 'cc');
+
+/**
+ * Every node name the right panel's tree draws (task or architecture), in
+ * document order: the named rows' `.tr-name`, and the comb squares a closed
+ * group hangs its children on (the 树 view draws a stage's tasks that way).
+ */
+export function treeNames(root: FakeElement): string[] {
+  const panel = auxPanel(root);
+  return panel === undefined ? [] : descendants(panel)
+    .filter((element) => hasClass(element, 'tr-name') || isComb(element))
+    .map((element) => (isComb(element) ? combName(element) : textOf(element)));
+}
+
+/** The tree button of `name`: a leaf `nb` or branch label `tr-lb` (both carry `.tr-name`), or a comb square `cc`. */
+export function treeNode(root: FakeElement, name: string): FakeElement | undefined {
+  const panel = auxPanel(root);
+  return panel === undefined ? undefined : descendants(panel).find((element) => (element.tagName.toLowerCase() === 'button'
+    && (hasClass(element, 'nb') || hasClass(element, 'tr-lb')) && textOf(findClass(element, 'tr-name')) === name)
+    || (isComb(element) && combName(element) === name));
+}
+
+/**
+ * Waits for the tree to draw `name`, opening collapsed branch labels one click
+ * at a time the way a person would (at most `clicks` labels). The tab's read
+ * lands after its click, so this polls for `timeoutMs` in 25 ms turns of the
+ * runner's clock (never `Date`: the S6A worlds fake it). Returns the button or
+ * undefined.
+ */
+export async function revealTreeNode(root: FakeElement, name: string, clicks = 6, timeoutMs = 10_000):
+  Promise<FakeElement | undefined> {
+  let opened = 0;
+  for (let turn = 0, count = Math.ceil(timeoutMs / 25); turn < count; turn += 1) {
+    const found = treeNode(root, name);
+    if (found !== undefined) return found;
+    const panel = auxPanel(root);
+    const closed = panel === undefined || opened >= clicks ? undefined : descendants(panel)
+      .find((element) => hasClass(element, 'tr-lb') && element.getAttribute('aria-expanded') === 'false');
+    if (closed !== undefined) {
+      click(closed);
+      opened += 1;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return treeNode(root, name);
 }

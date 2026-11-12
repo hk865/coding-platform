@@ -545,12 +545,17 @@ export function adaptTaskMap(
     owners: owners.byTask,
     goalOwner: owners.goal,
   };
+  return { goal: goalData, stages, tasks: kept, dag, moduleNames: moduleNamesOf(extra?.hover) };
+}
+
+/** Module id → name from one `graph/hover` read; TaskMap and Main's right panel name a Task's module by it. */
+export function moduleNamesOf(hover: TaskMapHoverRead | null | undefined): Record<string, string> {
   const moduleNames: Record<string, string> = {};
-  for (const entry of Array.isArray(extra?.hover?.modules) ? extra.hover.modules : []) {
+  for (const entry of Array.isArray(hover?.modules) ? hover.modules : []) {
     const row = asRecord(entry); const moduleId = asText(asRecord(row.module).moduleId);
     if (moduleId !== '' && asText(row.name) !== '') moduleNames[moduleId] = asText(row.name);
   }
-  return { goal: goalData, stages, tasks: kept, dag, moduleNames };
+  return moduleNames;
 }
 
 /** The historical state of every Task at one instant (design §6). The timeline

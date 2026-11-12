@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { findAllClass, findClass, findElement } from './helpers/boot-page.js';
+import { findAllClass, findButton, findClass, findElement } from './helpers/boot-page.js';
 import {
   answerTexts, bootE3N, callsTo, clickable, countRoute, descendants, hasClass, quietPage, textOf, thread, userTexts, waitFor,
 } from './helpers/E3N-page.js';
 import { click } from './helpers/E3N-interact.js';
 import { answerRequest, openW1, openWA, submitRequest } from './helpers/E3N-world.js';
-import { labelled, typeInto } from './helpers/E3D-page.js';
+import { card, cardButton, labelled, typeInto } from './helpers/E3D-page.js';
 import { plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { S6A_SCOPE, type S6ARequestWorld } from '../helpers/S6A-request-fixture.js';
 import type { FakeElement } from './helpers/dom.js';
@@ -13,8 +13,9 @@ import type { FakeElement } from './helpers/dom.js';
 /**
  * E3U T-A01–T-A04, T-A16 (test sheet e3main-a-tests §1.1, §1.2): the main
  * conversation reads `main/read` (A12), sends through `requests/submit` (A19),
- * shows a quote's lines (MF11), opens the raw records on 轨迹 (A15) and reads the
- * older page through the previous page's `next` (ruling 5, MF4). Real Host,
+ * shows a quote's lines (MF11), opens the raw records on 轨迹 (A15), reads the
+ * older page through the previous page's `next` (ruling 5, MF4) and keeps two
+ * equal asks apart by their request roots (T-A21, review S3). Real Host,
  * scripted model; every expected value is a literal of the row or a public read.
  */
 
@@ -172,6 +173,52 @@ describe('E3U Main thread', () => {
       await page.restore();
     }
   });
+
+  /* Main A review S3 (lead 11-12): a waiting bubble is claimed by its own request
+     root, never by an equal text. The stream is held, so a reread happens only
+     at the two frames the row sends; between them the first ask is a read row
+     and the second still a waiting bubble with the same words. */
+  it('T-A21 the same words asked twice on a card stay two bubbles, each claimed by its own row', async () => {
+    const opened = await openW1();
+    worlds.push(opened.world);
+    const { page, log } = await bootE3N(opened.world, 'Main', { search: GOAL, mode: 'controlled' });
+    const SAME = '同一句话';
+    const same = (): number => userTexts(page.root).filter((text) => text === SAME).length;
+    const answered = (route: string): number => callsTo(log, route).filter((call) => call.reply !== undefined).length;
+    const askOnCard = async (n: number): Promise<void> => {
+      const decide = (): FakeElement | undefined => findButton(findClass(page.root, 'goalbar') ?? page.root, '需要你决定');
+      await waitFor(() => decide() !== undefined);
+      click(decide()!);
+      await waitFor(() => cardButton(page.root, '问秘书') !== undefined);
+      click(cardButton(page.root, '问秘书')!);
+      await waitFor(() => card(page.root) === undefined && labelled(page.root, '发送') !== undefined);
+      typeInto(page.root, 'composer-input', SAME);
+      click(labelled(page.root, '发送')!);
+      await waitFor(() => answered('requests/submit') === n && answered('requests/read') === n);
+      await quietPage(log);
+    };
+    const reread = async (id: string): Promise<void> => {
+      const reads = answered('main/read');
+      log.openings.at(-1)!.enqueue(new TextEncoder().encode(`event: change\nid: ${id}\ndata: {}\n\n`));
+      await waitFor(() => answered('main/read') > reads);
+      await quietPage(log);
+    };
+    try {
+      await quietPage(log);
+      await askOnCard(1);
+      await reread('c0000000002');
+      expect(same()).toBe(1);
+      await askOnCard(2);
+      const roots = log.submits.map((reply) => JSON.stringify((reply as { requestRoot?: unknown }).requestRoot));
+      expect(new Set(roots).size).toBe(2);
+      /* 具名改坏: `src/ui/boards/Main.dc.html` 的认领改按文字比对（`roots` 换成读回行的文字集合）；这一句红（只剩一条）。 */
+      expect(same()).toBe(2);
+      await reread('c0000000003');
+      expect(same()).toBe(2);
+    } finally {
+      await page.restore();
+    }
+  }, 120_000);
 });
 
 /** The trace rows (`.lg-row` without the header `.lg-th`). */

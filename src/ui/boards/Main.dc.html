@@ -973,7 +973,7 @@ button.bq-ref:hover { color: var(--text); }
             </sc-if>
             <sc-if value="{{e.isRun}}" hint-placeholder-val="{{ true }}">
               <div class="lv-it">
-                <button class="{{e.cls}}" type="button" onClick="{{e.toggle}}" aria-expanded="{{e.open}}">
+                <button class="{{e.cls}}" type="button" onClick="{{e.toggle}}" aria-expanded="{{e.open}}" title="{{e.runTip}}" aria-disabled="{{e.runOff}}">
                   <svg class="ico sm chev" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"></path></svg>
                   <span class="{{e.headCls}}">{{e.head}}<sc-if value="{{e.hasWord}}" hint-placeholder-val="{{ true }}"><span class="lv-dot" aria-hidden="true">·</span><span class="{{e.wordCls}}">{{e.word}}</span></sc-if></span>
                   <span class="t">{{e.time}}</span>
@@ -1181,7 +1181,7 @@ button.bq-ref:hover { color: var(--text); }
           <button class="{{viewTreeCls}}" type="button" aria-pressed="{{isTree}}" onClick="{{showTree}}">树</button>
           <button class="{{viewOutlineCls}}" type="button" aria-pressed="{{isOutline}}" onClick="{{showOutline}}">大纲</button>
           <sc-if value="{{tpHasLanes}}" hint-placeholder-val="{{ true }}">
-            <button class="{{viewLanesCls}}" type="button" aria-pressed="{{isLanes}}" onClick="{{showLanes}}" title="轨道：每条工作线一行，时间从左到右；上面是按小时的活动日历">轨道</button>
+            <button class="{{viewLanesCls}}" type="button" aria-pressed="{{isLanes}}" aria-disabled="{{lanesOff}}" onClick="{{showLanes}}" title="{{lanesTitle}}">轨道</button>
           </sc-if>
         </div>
         <sc-if value="{{showSearch}}" hint-placeholder-val="{{ true }}">
@@ -1745,6 +1745,11 @@ class Component extends DCLogic {
       ptab: 'task', view: 'tree', aview: 'tree', ascope: 'work', sel: null, asel: null, q: '', aq: '', aconf: false,
       open: {}, aopen: {}, ofold: {}, drill: null, aroot: 'SYS', hover: null, relHover: null, legend: false, pins: [], extra: []
     });
+    /* §2.1/B-04: a wired page has no sample file page, Diff selection, command
+       state or expanded sample folders; the sample mount keeps them. */
+    if (this.props.readState !== undefined && this.props.readState !== null) {
+      Object.assign(this.state, { axPages: [], axDiff: null, axCmd: {}, axDirs: {} });
+    }
   }
 
   componentDidUpdate(prev) {
@@ -1802,12 +1807,17 @@ class Component extends DCLogic {
   }
   /* a goal's own state (rail, goal bar and the root square of its task map all use this) */
   goalSt(goal) {
+    /* SPEC-3: a wired page's goal is the selected one, in the goal bar's own display values */
+    if (this.dataMode()) { const d = this.props.data && this.props.data.selectedDisplay; return d ? d.st : 'pending'; }
     const s = this.state || {};
     if (goal === 'g1') return s.cancelled ? 'cancelled' : s.paused ? 'waiting' : 'running';
     if (goal === 'g2') return s.conflict === 'wait' ? 'future' : 'pending';
     return 'future';
   }
-  goalWord(goal) { return { running: '运行中', waiting: '已暂停，可继续', cancelled: '已取消', pending: '规划中', future: '等待中' }[this.goalSt(goal)]; }
+  goalWord(goal) {
+    if (this.dataMode()) { const d = this.props.data && this.props.data.selectedDisplay; return d ? d.word : '状态未读'; }
+    return { running: '运行中', waiting: '已暂停，可继续', cancelled: '已取消', pending: '规划中', future: '等待中' }[this.goalSt(goal)];
+  }
 
   /* ------------------------------------------------------------ shared fake data (BRIEF) */
   std40() {
@@ -2107,6 +2117,7 @@ class Component extends DCLogic {
 
   /* std = true: the 40-task model whatever the scale tweak (the 轨道 view: the 600 tasks are synthetic, their runs are not invented) */
   taskModel(goal, std) {
+    if (this.dataMode()) return this.auxTaskModel();
     const s = this.state || {};
     goal = goal || s.goal || 'g1';
     const big = goal === 'g1' && this.isBig() && !std;
@@ -2148,6 +2159,7 @@ class Component extends DCLogic {
   }
 
   archModel(goal) {
+    if (this.dataMode()) return this.auxArchModel();
     const s = this.state || {};
     goal = goal || s.goal || 'g1';
     const tm = this.taskModel(goal);
@@ -2495,6 +2507,8 @@ class Component extends DCLogic {
     const W = this.countWords();
     const parts = this.rank().filter((k) => n.cnt[k] && k !== 'none' && (map === 'arch' || k !== 'satisfied')).map((k) => W[k] + ' ' + this.fmt(n.cnt[k]));
     if (map === 'arch') return n.touched ? '改动 ' + this.fmt(n.touched) + ' / ' + this.fmt(n.leaves) + ' 个文件' + (parts.length ? ' · ' + parts.join(' · ') : '') : this.fmt(n.leaves) + ' 个文件，本目标未改动';
+    /* SPEC-12: no task is not "all satisfied"; the goal bar's own count */
+    if (!n.leaves) return '0/0 已满足';
     if (n.sat === n.leaves) return '全部已满足';
     return (n.sat ? n.sat + '/' + n.leaves + ' 已满足' + (parts.length ? ' · ' : '') : '') + parts.join(' · ');
   }
@@ -2509,6 +2523,8 @@ class Component extends DCLogic {
      decisions 25, 30: "秘书 · 待命，另有 3 条工作线工作中"; railLines() adds Main's own clock, the secretary after 采用); goal 2
      the secretary planning it, goal 3 nobody yet (approved) */
   goalAgent(goal) {
+    /* lead 11-12 item 12: a wired page names no 负责 until a read gives one */
+    if (this.dataMode()) return '—';
     if (goal === 'g1') return this.railLines().goalOwner;
     return goal === 'g2' ? '秘书 · 规划中' : '未分配';
   }
@@ -2525,14 +2541,17 @@ class Component extends DCLogic {
   }
   taskCard(goal, n) {
     const W = this.words(); const tree = this.taskModel(goal);
-    const c = this.cardBase(n, this.shortPath(tree.byId, n), '', n.sem);
-    if (!n.kids.length) {
-      return Object.assign(c, { sq: 'sq z10 s-' + n.st, word: W[n.st] + (n.gate ? '（验收）' : ''), tx: 'tx-' + n.st, why: n.why ? '：' + n.why : '',
-        agent: this.ownerOf(goal, n) });
-    }
+    /* Main B (lead 11-12, T-B10): a wired task's `graph/hover` module follows its 归属 */
+    const at = this.shortPath(tree.byId, n); const mod = this.dataMode() && n.module ? n.module : '';
+    const c = this.cardBase(n, mod ? (at ? at + ' · ' + mod : mod) : at, '', n.sem);
+    /* SPEC-12: a goal is its goal's state even with no task under it (a wired goal without a plan) */
     if (n.kind === 'goal') {
       const st = this.goalSt(goal);
       return Object.assign(c, { sq: 'sq z10 s-' + st, word: this.goalWord(goal), tx: 'tx-' + st, why: ' · ' + this.cardCount(n, 'task'), agent: this.goalAgent(goal) });
+    }
+    if (!n.kids.length) {
+      return Object.assign(c, { sq: 'sq z10 s-' + n.st, word: W[n.st] + (n.gate ? '（验收）' : ''), tx: 'tx-' + n.st, why: n.why ? '：' + n.why : '',
+        agent: this.ownerOf(goal, n) });
     }
     return Object.assign(c, { sq: 'sq z10 ' + this.taskSq(n, 'collapsed', goal), word: this.cardCount(n, 'task'), tx: 'tx-plain', why: '', agent: this.ownerOf(goal, n) });
   }
@@ -2557,6 +2576,8 @@ class Component extends DCLogic {
     return what + ' · 双击固定 · 右键新标签打开';
   }
   fileSem() {
+    /* SPEC-3: a wired page's 语义 is the catalog's responsibility only */
+    if (this.dataMode()) return {};
     return {
       'verification-machine.ts': '检查轮次的状态机：判定通过、未通过和检查不完整。',
       'task-machine.ts': '任务的状态机：领取、执行、失败、重新入队与完成。',
@@ -2617,6 +2638,7 @@ class Component extends DCLogic {
      "4 条工作线做过这里的任务，2 条在做"), the root the secretary and the other lines (goalAgent); goals 2 and 3 have no work
      lines yet and keep the approved words (秘书 · 规划中; 未分配, 等成员领取 while a task can be claimed) */
   ownerOf(goal, n) {
+    if (this.dataMode()) return '—';
     if (n.kind === 'goal') return this.goalAgent(goal);
     if (goal !== 'g1') return n.kids.length ? n.owner || '未分配' : '未分配' + (n.st === 'claimable' ? '，等成员领取' : '');
     const W = this.wlSrc();
@@ -2627,6 +2649,7 @@ class Component extends DCLogic {
      (wlAreaOwnerNow: "11 条工作线改过这里的文件，1 条在做" — the sample has no 模块维护 line; the approved row named the module's
      old executor; a role's line counts with the files of its tasks, review fix 2026-10-06). The same rule as Decide and Done */
   archOwner(n, mod) {
+    if (this.dataMode()) return '—';
     const R = this.railLines(); const word = (role) => (R.rows.filter((x) => x.role === role)[0] || { word: '待命' }).word;
     if (n.kind === 'system') return '架构参谋 · ' + word('advisor');
     const own = mod ? mod.owner : '';
@@ -2970,13 +2993,15 @@ class Component extends DCLogic {
     w(n);
     const known = taskIds.filter((t) => tm.byId[t]);
     const items = known.slice(0, 8).map((tid) => { const t = tm.byId[tid]; return { name: t.name, sq: 'sq z8 ' + this.sqAt(t.st), go: () => go.selTask(tid), over: noop, out: noop }; });
-    const rel = [{ k: '任务', items: items, files: [], lines: [], hasText: !items.length || known.length > 8, text: !items.length ? '本目标没有任务改动这里' : '另有 ' + (known.length - 8) + ' 个任务' }];
+    /* a wired 架构图 tab reads no task tree: tasks it cannot name draw no conclusion (—) */
+    const rel = [{ k: '任务', items: items, files: [], lines: [], hasText: !items.length || known.length > 8,
+      text: !items.length ? (this.dataMode() && taskIds.length ? '—' : '本目标没有任务改动这里') : '另有 ' + (known.length - 8) + ' 个任务' }];
     /* the module's observed import counts (semDeps), most first; three by name, the rest as one count (consistency pass:
-       the same row on every board; the full set is on 完整架构图) */
+       the same row on every board; the full set is on 完整架构图); a wired page with no imports read (catalogArchTree gives none) says — */
     const dk = mod && mod.deps ? Object.keys(mod.deps).sort((a, b) => mod.deps[b] - mod.deps[a]) : [];
     const more = dk.slice(3); const moreN = more.reduce((a, k) => a + mod.deps[k], 0);
     const deps = dk.slice(0, 3).map((k) => k + ' ' + this.fmt(mod.deps[k]) + ' 处').concat(more.length ? ['另 ' + more.length + ' 个模块共 ' + this.fmt(moreN) + ' 处'] : []);
-    if (n.kind !== 'system') rel.push({ k: '依赖', items: [], files: [], lines: [], hasText: true, text: deps.length ? mod.name + ' 依赖 ' + deps.join('，') : '没有引用其他模块' });
+    if (n.kind !== 'system') rel.push({ k: '依赖', items: [], files: [], lines: [], hasText: true, text: deps.length ? mod.name + ' 依赖 ' + deps.join('，') : this.dataMode() ? '—' : '没有引用其他模块' });
     const path = n.kind === 'file' || n.kind === 'dir' || n.kind === 'sub' ? n.path : n.kind === 'module' ? mod.path : '';
     if (path) rel.push({ k: '路径', items: [], files: [this.axFileItem(path)], lines: [], hasText: false, text: '' });
     const FILE_SEM = this.fileSem();
@@ -3025,6 +3050,79 @@ class Component extends DCLogic {
     };
   }
 
+  /* ------------------------------------------------------------ Main B data layer */
+  /* §2.1: a wired page has a `readState`; a page without a token keeps the
+     E3-1 sample mount. Only these two gates choose between the sample and the
+     route values. A wired page draws no sample while its first read is on its
+     way or failed (SPEC-2): every right-panel tab draws its empty state then. */
+  dataMode() {
+    return this.props.readState !== undefined && this.props.readState !== null;
+  }
+  auxData() {
+    const data = this.props.data || null;
+    return data && data.aux ? data.aux : null;
+  }
+  /* §2.2: the right panel's own route data, finished into Main's tree shape.
+     `finishTree` is the same aggregate rule the sample tree uses; the copy
+     keeps `props.data` immutable across renders. */
+  auxTaskModel() {
+    const aux = this.auxData();
+    const version = this.props.dataVersion || 0;
+    if (this._auxTm && this._auxTm.version === version) return this._auxTm.tree;
+    const raw = aux && aux.task && aux.task.tree ? JSON.parse(JSON.stringify(aux.task.tree)) : null;
+    const root = raw === null ? { id: 'G0', name: '', kind: 'goal', goal: '', kids: [] } : raw;
+    /* a childless stage or goal (a stage no task belongs to, a goal without a
+       plan) takes the prototype's neutral `none`, so no square is `s-undefined`
+       (lead 11-12 item 3, SPEC-12); a stage with tasks is aggregated by finishTree */
+    const neutral = (n) => { if (!n.kids || n.kids.length === 0) n.st = n.st || 'none'; (n.kids || []).forEach(neutral); };
+    neutral(root);
+    const tree = this.finishTree(root);
+    this.auxCounts(tree, aux && aux.task ? aux.task.counts : {});
+    tree.tasks = []; const w = (n) => { if (n.kind === 'task') tree.tasks.push(n); (n.kids || []).forEach(w); }; w(tree.root);
+    const mods = aux && aux.task && aux.task.taskModules ? aux.task.taskModules : {};
+    tree.tasks.forEach((t) => { t.next = []; t.att = t.att || 1; t.gate = !!t.gate; t.sem = t.sem || ''; t.why = t.why || ''; t.module = mods[t.id] || ''; });
+    tree.tasks.forEach((t) => (t.deps || []).forEach((d) => { if (tree.byId[d]) tree.byId[d].next.push(t.id); }));
+    Object.assign(tree, { key: 'aux' + version, goal: '', big: false });
+    this._auxTm = { version: version, tree: tree };
+    return tree;
+  }
+  auxArchModel() {
+    const aux = this.auxData();
+    const version = this.props.dataVersion || 0;
+    if (this._auxAm && this._auxAm.version === version) return this._auxAm.tree;
+    const raw = aux && aux.arch && aux.arch.tree ? JSON.parse(JSON.stringify(aux.arch.tree)) : null;
+    const root = raw === null ? { id: 'SYS', name: '', kind: 'system', kids: [] } : raw;
+    const counts = Object.assign({}, aux && aux.arch ? aux.arch.counts : {});
+    /* SPEC-20: the system root is the prototype's 'SYS' (an empty tree's is too) */
+    counts.SYS = counts[root.id]; root.id = 'SYS';
+    /* a module with no visible file in the current scope is still a node; give
+       it `none` (and no tasks) so it never draws `s-undefined` */
+    const neutral = (n) => { if (!n.kids || n.kids.length === 0) { n.st = n.st || 'none'; n.tasks = n.tasks || []; } (n.kids || []).forEach(neutral); };
+    neutral(root);
+    /* the module a card or a detail reads (`area`): a module's own, a file's nearest module (a module's detail threw without it) */
+    const areaOf = (n, mod) => { n.area = n.kind === 'module' ? n.id : mod; (n.kids || []).forEach((k) => areaOf(k, n.area)); };
+    root.kids.forEach((k) => areaOf(k, null));
+    /* SPEC-1: a file's state and tasks are catalogArchTree's, never re-attached here */
+    const tree = this.finishTree(root);
+    this.auxCounts(tree, counts);
+    const paths = [];
+    const walk = (n) => { if (n.kind === 'file' && n.path) paths.push(n.path); (n.kids || []).forEach(walk); };
+    walk(tree.root);
+    tree.work = paths;
+    Object.assign(tree, { key: 'aux' + version, goal: '', big: false });
+    this._auxAm = { version: version, tree: tree };
+    return tree;
+  }
+  /* ruling 2: the leaves and state counts are the adapter's (`auxLeafCountsOf`);
+     finishTree's own count of a childless node is replaced, and a node the
+     adapter did not count (the empty placeholder root) counts none */
+  auxCounts(tree, counts) {
+    Object.keys(tree.byId).forEach((id) => {
+      const c = counts[id] || { leaves: 0, cnt: {} };
+      Object.assign(tree.byId[id], { leaves: c.leaves, cnt: Object.assign({}, c.cnt) });
+    });
+  }
+
   /* ------------------------------------------------------------ navigation */
   /* E3-NAV §2.11: the one chrome override. The prototype's own render keeps the
      conversation, the plans and the decision card (the Main page package owns
@@ -3036,7 +3134,7 @@ class Component extends DCLogic {
     const base = this.sampleRenderVals();
     /* No read state: the E3-1 sample mount (a page without a token). A wired
        page keeps the chrome empty rather than falling back to the sample. */
-    if (this.props.readState === undefined || this.props.readState === null) return base;
+    if (!this.dataMode()) return base;
     const data = this.props.data && Array.isArray(this.props.data.goals) ? this.props.data : {
       goals: [], selectedGoalId: null, selectedGoalRevision: null, selectedDisplay: null,
       lines: [], archived: [], archivedText: '没有已归档的工作线', head: '工作中 0 · 待命 0',
@@ -3044,7 +3142,7 @@ class Component extends DCLogic {
       inbox: { decideN: 0, noticeN: 0, hasDecide: false, hasNotice: false, none: true }, detail: null, hasGoal: false,
       decisions: null, conversation: [], older: null, track: null, progress: { done: 0, total: 0 }
     };
-    return this.mainRenderVals(this.navRenderVals(base, data), data);
+    return this.auxRenderVals(this.mainRenderVals(this.navRenderVals(base, data), data), data);
   }
 
   navLineRow(L) {
@@ -3058,6 +3156,7 @@ class Component extends DCLogic {
   navRenderVals(base, data) {
     const s = this.state || {};
     const actions = this.props.actions || {};
+    const set = (p) => this.setState(p);
     /* A pick shows at once (the prototype's own `switchGoal`); the refresh
        loop's read then confirms it. */
     const goalId = s.navGoalId !== undefined ? s.navGoalId : data.selectedGoalId || null;
@@ -3107,26 +3206,103 @@ class Component extends DCLogic {
     const lvr = { rows: lvr0.rows.map((r, i) => wrap(r, lines[i])), archived: lvr0.archived.map((r, i) => wrap(r, arch[i])) };
     const openLine = s.line ? lines.concat(arch).filter((L) => L.id === s.line)[0] || null : null;
     let lv = base.lv;
+    const lineRead = data.line !== null && data.line !== undefined && openLine !== null
+      && data.line.line.key.projectId === openLine.key.projectId
+      && data.line.line.key.sessionId === openLine.key.sessionId ? data.line : null;
     if (openLine) {
       /* §2.6: the page link carries the Goal context plus the line's stable
-         project/session key; a task line is a Chain page, a role line a Member
-         page (the prototype's own PAGE split). */
-      const page = openLine.task !== null ? 'chain' : 'member';
-      lv = this.lvView(s, {
-        set: (p) => this.setState(this.lvAttach(p)),
-        line: openLine, rec: null, rich: { page: page, reply: '', liveStep: null },
-        goal: '', goalCtl: null, back: () => this.setState(this.lvLeave()),
+         project/session key; the adapter's own `lineHref` is the one encoding. */
+      const page = lineRead !== null ? lineRead.rich.page : openLine.task !== null ? 'chain' : 'member';
+      /* SPEC-4: `openLine` is already the rail's row; the read's projection gives
+         its read-only state, its task id (the view's id) and the task's name. */
+      const D0 = lineRead !== null ? lineRead.line : null;
+      const lineRow = D0 === null ? openLine : Object.assign({}, openLine, {
+        state: D0.readOnly ? 'archived' : openLine.state,
+        task: D0.taskRef ? D0.taskRef.taskId : null, short: D0.task ? D0.task.name : openLine.short });
+      /* SPEC-18: the line's 问一问 and 直接干预 carry no quote (A38 a); the
+         view is drawn without the main draft's quotes */
+      lv = this.lvView(Object.assign({}, s, { quotes: [] }), {
+        set: (p) => set(this.lvAttach(p)),
+        line: lineRow, rec: lineRead !== null ? lineRead.rec : null,
+        rich: { page: page, reply: '', liveStep: null },
+        goal: '', goalCtl: null, back: () => set(this.lvLeave()),
         backLabel: '回到主对话', backTip: '回到 秘书（主对话）',
         stamp: () => ({ t: '', patch: {} }),
-        togglePanel: () => this.setState((this.state || {}).panel === false ? { panel: true } : { panel: false }),
+        togglePanel: () => set((this.state || {}).panel === false ? { panel: true } : { panel: false }),
         showThink: true, full: false, autoOpen: false,
-        selTask: () => {}, hasTask: () => false, noTaskTip: '', taskSq: () => 'sq z8 s-pending',
+        selTask: () => {}, hasTask: () => false, noTaskTip: '',
+        taskSq: () => 'sq z8 ' + this.sqAt(D0 !== null && D0.task ? D0.task.st : 'pending'),
         rejects: () => '', decide: () => null
       });
-      const key = openLine.key;
-      const goalQ = goalId ? 'goal=' + encodeURIComponent(goalId) + '&' : '';
-      lv.memberHref = 'Member.dc.html?' + goalQ + 'lineProject=' + encodeURIComponent(key.projectId) + '&lineSession=' + encodeURIComponent(key.sessionId);
-      lv.chainHref = 'Chain.dc.html?' + goalQ + 'lineProject=' + encodeURIComponent(key.projectId) + '&lineSession=' + encodeURIComponent(key.sessionId);
+      /* ruling 16: only a line of the archived bucket says 已归档…超过一天; an
+         ended line elsewhere is read-only, with no time and no 已满足 */
+      if (lv.banner && lv.banner.has && !arch.some((L) => L.id === openLine.id)) {
+        lv.banner = { has: true, text: '只读：这条线已结束' };
+      }
+      /* SPEC-7, ruling 11 (B-6): a run's steps are not connected (A13), so its
+         row is drawn unconnected and opens nothing */
+      lv.items = (lv.items || []).map((it) => it.isRun ? Object.assign({}, it, {
+        cls: it.cls.replace(' is-open', '') + ' is-off', open: false, toggle: () => {}, steps: [], hasNote: false, note: '',
+        runTip: '还没接通', runOff: 'true' }) : it);
+      if (lineRead !== null) {
+        /* §2.2/B-03: the controls, the cancel confirmation and the two sends are
+           the shared actions; the view's own local simulation is overwritten
+           after it returns, as Decide does. */
+        const D = lineRead.line;
+        /* SPEC-9 (A35): a refused or failed action says why in the composer's
+           foot, no new element; the next action clears it */
+        const lvFailed = (e) => set({ lvErr: { line: openLine.id, text: String(e && e.message ? e.message : e) } });
+        const lvGuarded = (go) => () => { set({ lvErr: null }); go().catch(lvFailed); };
+        const err = s.lvErr && s.lvErr.line === openLine.id ? s.lvErr.text : '';
+        lv.acts = Object.assign({}, lv.acts, {
+          canPause: D.canPause, canResume: D.canResume, canCancel: D.canCancel, canRequeue: D.canRequeue,
+          pause: lvGuarded(() => actions.controlLine('pause')), resume: lvGuarded(() => actions.controlLine('resume')),
+          requeue: lvGuarded(() => actions.requeueLine())
+        });
+        /* SPEC-5 (A36): the confirm opens on the read's own cancel control, also
+           for a line paused at its safe point (no live run in the record) */
+        const confirmShow = s.lvConfirm === openLine.id && D.canCancel;
+        lv.confirm = Object.assign({}, lv.confirm, { show: confirmShow,
+          line: (D.status.word === '已暂停' ? '它已停在安全点，取消立即生效' : '它会在下一个安全点停下，然后取消生效')
+            + '：任务记为“已取消”，之后只有你能重新入队；改动和工作记录保留。',
+          go: lvGuarded(() => { set({ lvConfirm: null }); return actions.controlLine('cancel'); }) });
+        lv.cm = Object.assign({}, lv.cm, {
+          /* A37: a line lvView already ended (its 直接干预 is drawn off) reads off too */
+          show: !confirmShow, actOff: !D.canIntervene || !!lv.cm.actOff, foot: err || lv.cm.foot,
+          send: () => {
+            const st = this.state || {};
+            const mode = D.readOnly ? 'ask' : st.lvMode === 'act' ? 'act' : 'ask';
+            const dkey = openLine.id + '|' + mode;
+            const text = String((st.lvDrafts || {})[dkey] || '').trim();
+            if (!text) return;
+            /* SPEC-9: the draft is cleared once the send is answered, so a failed send keeps its words */
+            lvGuarded(() => (mode === 'ask' ? actions.askLine(text) : actions.interveneLine(text)).then(() => {
+              const patch = Object.assign({}, (this.state || {}).lvDrafts || {}); patch[dkey] = '';
+              set(this.lvAttach({ lvDrafts: patch }));
+            }))();
+          }
+        });
+        lv.facts = (lv.facts || []).map((fact) => fact.k === '尝试' ? Object.assign({}, fact, { v: D.attempt.text }) : fact);
+        /* SPEC-4: the head's state is the read's projection, not the view's local run */
+        lv.st = Object.assign({}, lv.st, { isLive: D.status.live, isAdv: D.status.advancing, isStill: D.status.still,
+          word: D.status.word, advText: D.status.advText, arrive: () => {} });
+        lv.dot = D.status.dot;
+        lv.sub = D.sub;
+        lv.memberHref = D.pageMemberHref;
+        lv.chainHref = D.pageChainHref;
+      } else {
+        const key = openLine.key;
+        const goalQ = goalId ? 'goal=' + encodeURIComponent(goalId) + '&' : '';
+        lv.memberHref = 'Member.dc.html?' + goalQ + 'lineProject=' + encodeURIComponent(key.projectId) + '&lineSession=' + encodeURIComponent(key.sessionId);
+        lv.chainHref = 'Chain.dc.html?' + goalQ + 'lineProject=' + encodeURIComponent(key.projectId) + '&lineSession=' + encodeURIComponent(key.sessionId);
+        /* SPEC-6: before its read lands, for a branched line and after a failed
+           read, the view simulates nothing: no control, no send, no attempt */
+        lv.sub = data.detail && data.detail.kind === 'branched' ? '这条工作线分成了几条，请从左栏选一条' : '';
+        lv.acts = Object.assign({}, lv.acts, { canPause: false, canResume: false, canCancel: false, canRequeue: false });
+        lv.confirm = Object.assign({}, lv.confirm, { show: false });
+        lv.cm = Object.assign({}, lv.cm, { show: true, send: () => {}, sendOff: true, sendCls: 'send is-off' });
+        lv.facts = (lv.facts || []).map((fact) => fact.k === '尝试' ? Object.assign({}, fact, { v: '—' }) : fact);
+      }
     }
     /* §2.3: the goal bar's why slot carries the stream text when it is down;
        §2.8's visibility: pause off only when PAUSED/CANCELLED/COMPLETED,
@@ -3137,8 +3313,8 @@ class Component extends DCLogic {
     const read = this.props.readState || null;
     const control = (kind) => { if (typeof actions.controlGoal === 'function') void actions.controlGoal(kind); };
     const gb = Object.assign({}, base.gb, {
-      sq: 'sq z10 s-' + (selected ? selected.st : 'pending'),
-      word: selected ? selected.word : '状态未读',
+      sq: 'sq z10 s-' + this.goalSt(),
+      word: this.goalWord(),
       why: read && read.stale && read.staleText ? String(read.staleText) : selected ? selected.why : '',
       whyTip: null,
       hasDecide: !!data.inbox.hasDecide, decideN: data.inbox.decideN,
@@ -3157,7 +3333,9 @@ class Component extends DCLogic {
       cancel: () => { this.setState({ confirmCancel: false }); control('cancel'); }
     });
     return Object.assign({}, base, { goalsHref: goalsHref, taskMapHref: taskMapHref,
-      headTitle: selectedGoal ? selectedGoal.objective : base.headTitle,
+      /* LEAD-1: never the sample's goal; DC4's empty sentence only when the read says the project has none */
+      headTitle: selectedGoal ? selectedGoal.objective
+        : this.props.data && Array.isArray(this.props.data.goals) && this.props.data.goals.length === 0 ? '还没有目标' : '',
       inbox: inbox, goals: goals, rail: rail, lvr: lvr, lv: lv, gb: gb });
   }
 
@@ -3397,6 +3575,92 @@ class Component extends DCLogic {
     });
   }
 
+  /* ------------------------------------------------------------ Main B data layer */
+  /* §2.1/§2.4: after the navigation and Main A layers, the right panel's
+     handlers send the explicit tab/folder/detail demand, and the public node
+     detail replaces the tree-only one. Values and bindings only; the
+     prototype's classes and layout stay. */
+  auxRenderVals(base, data) {
+    if (!this.dataMode()) return base;
+    const s = this.state || {};
+    const actions = this.props.actions || {};
+    const aux = data.aux || null;
+    const out = Object.assign({}, base);
+    const set = (p) => this.setState(p);
+    const openPanel = (this.state || {}).panel !== false;
+    out.togglePanel = () => {
+      set(openPanel ? { panel: false, axMax: false, axNew: false } : { panel: true });
+      if (typeof actions.readMore !== 'function') return;
+      if (openPanel) { actions.readMore({ auxTab: null }); return; }
+      /* READS-4: a node page reads the map it belongs to; any other key goes through axRead's null guard */
+      const st = this.state || {};
+      const x = (st.extra || []).filter((y) => y.key === st.ptab)[0];
+      this.axRead(x ? x.kind : (st.ptab || 'task'));
+    };
+    if (out.pt) {
+      /* ruling 6: a tab's demand is axDemand's, so 任务图 keeps the selected task's detail */
+      out.pt = Object.assign({}, out.pt, {
+        task: () => { set({ ptab: 'task', hover: null }); this.axRead('task'); },
+        arch: () => { set({ ptab: 'arch', hover: null }); this.axRead('arch'); }
+      });
+    }
+    /* SPEC-13, rulings 11 and 14: 轨道 has no read of its own yet, so it is drawn unconnected */
+    out.viewLanesCls = base.viewLanesCls + ' is-off';
+    out.showLanes = actions.notConnected || (() => {});
+    out.lanesTitle = '还没接通'; out.lanesOff = 'true';
+    if (out.scope && out.scope.show) {
+      out.scope = Object.assign({}, out.scope, {
+        toWork: () => { set({ ascope: 'work', hover: null }); if (typeof actions.readMore === 'function') actions.readMore({ auxTab: 'arch', auxPath: null, detailTaskId: null, workOnly: true }); },
+        toAll: () => { set({ ascope: 'all', hover: null }); if (typeof actions.readMore === 'function') actions.readMore({ auxTab: 'arch', auxPath: null, detailTaskId: null, workOnly: false }); }
+      });
+    }
+    /* §2.3: the detail comes from the one `graph/detail` projection, not from
+       the tree-only sample text; its crumbs are the tree's (0 requests). */
+    if (aux && aux.task && aux.task.det && aux.task.detailFor === s.sel && out.det) {
+      const det = aux.task.det;
+      const close = out.det.close;
+      out.det = Object.assign({}, out.det, det, {
+        cls: out.det.cls, canClose: out.det.canClose, pinned: out.det.pinned,
+        hasPins: out.det.hasPins, pins: out.det.pins, acts: out.det.acts,
+        close: () => { close(); if (typeof actions.readMore === 'function') actions.readMore({ detailTaskId: null }); }
+      });
+      /* SPEC-14: a related task opens its own detail and draws its dependency line, as the tree-only detail's do */
+      out.det.rel = (det.rel || []).map((group) => Object.assign({}, group, {
+        items: (group.items || []).map((it) => Object.assign({}, it, {
+          go: () => { set({ sel: it.id, hover: null, relHover: null }); this.axReadDetail(it.id); },
+          over: () => set({ relHover: it.id }), out: () => set({ relHover: null })
+        })),
+        files: (group.files || []).map((file) => this.axFileItem(file.full))
+      }));
+      out.det.crumbs = (out.det.crumbs || []).map((crumb) => Object.assign({}, crumb, {
+        go: () => {
+          set({ sel: crumb.id, hover: null });
+          if (typeof actions.readMore === 'function') actions.readMore({ auxTab: 'task', detailTaskId: crumb.id });
+        }
+      }));
+      /* SPEC-14: the head and relation squares go through tpDetail (a task that has not started is hollow) */
+      out.det = this.tpDetail(out.det, this.taskModel().byId[det.id], { lines: false });
+    }
+    /* ruling 13: the empty states sit in the search box's note; a search or an error note goes first */
+    if (out.tpIsTask && aux && aux.task && aux.task.tree && !aux.task.tree.kids.length && !out.qNote) {
+      out.qNote = '这个目标还没有采用的计划'; out.hasQNote = true;
+    }
+    if (out.scope && out.scope.show && aux && aux.arch && aux.arch.tree === null && !out.qNote) {
+      out.qNote = '还没有采纳的架构'; out.hasQNote = true;
+      out.scope = Object.assign({}, out.scope, { empty: false });
+    }
+    if (aux && aux.error && (aux.tab === 'task' || aux.tab === 'arch')) {
+      out.qNote = aux.error.text; out.hasQNote = true;
+    }
+    if (aux && aux.error && aux.tab === 'file' && out.ax && out.ax.fp) {
+      out.ax = Object.assign({}, out.ax, { fp: Object.assign({}, out.ax.fp, { state: aux.error.text }) });
+    }
+    /* READS-5/SPEC-17: the line head's panel button is the panel's own, so it
+       withdraws and restores the tab's read too */
+    if (out.lv && out.lv.show) out.lv = Object.assign({}, out.lv, { togglePanel: out.togglePanel });
+    return out;
+  }
+
   /* ------------------------------------------------------------ renderVals */
   sampleRenderVals() {
     const s = this.state || {};
@@ -3447,6 +3711,7 @@ class Component extends DCLogic {
         const tm = this.taskModel(cur);
         const keep = st.drill && tm.byId[st.drill] && this.under(tm.byId, id, st.drill);
         set(Object.assign({ ptab: 'task', sel: id, hover: null, relHover: null, panel: true, drill: keep ? st.drill : null }, view));
+        this.axReadDetail(id);
       },
       /* files opened from the conversation, a map's detail or a node page open in the auxiliary area (UI-WORKBENCH §1 第 11 条):
          a file as its own page tab, a folder as 文件 opened at it, a changed file's Diff */
@@ -3763,7 +4028,8 @@ class Component extends DCLogic {
     if (ptab !== 'task' && ptab !== 'arch' && !isAux(ptab) && !extra.some((x) => x.key === ptab)) ptab = 'task';
     const isTask = ptab === 'task'; const isArch = ptab === 'arch';
     const isMap = isTask || isArch;
-    const isLanes = isTask && s.view === 'lanes';
+    /* SPEC-13: a wired page has no 轨道 yet, so a 'lanes' view draws the tree */
+    const isLanes = isTask && s.view === 'lanes' && !this.dataMode();
     const ax = this.axView(Object.assign({}, s, { ptab: ptab }), { at: '14:15', extra: extra });
     /* a node page closes back to the map it came from (as approved); the other tabs close through ax. Same-name file
        pages ("app/main.ts" / "ui/main.ts") and the tabs' titles come from the snippet (consistency pass) */
@@ -3790,8 +4056,9 @@ class Component extends DCLogic {
             const picked = lines.slice(Math.max(0, sel.a - from), Math.max(0, sel.b - from + 1));
             const first = (picked.filter((x) => x.trim())[0] || '').trim();
             q = { id: 'q' + n, path: qPath, a: sel.a, b: sel.b, snip: first.length > 56 ? first.slice(0, 55) + '…' : first, snap: draft !== undefined,
+              snapText: draft !== undefined ? picked.join('\n') : null,
               text: picked.map((t, i) => String(sel.a + i).padStart(4, ' ') + '  ' + t).join('\n') };
-          } else q = { id: 'q' + n, path: qPath, a: null, b: null, snip: QF ? '共 ' + this.fmt(QF.total) + ' 行' : '', snap: draft !== undefined, text: '' };
+          } else q = { id: 'q' + n, path: qPath, a: null, b: null, snip: QF ? '共 ' + this.fmt(QF.total) + ' 行' : '', snap: draft !== undefined, snapText: null, text: '' };
           set({ quotes: (c.quotes || []).concat([q]), axQn: n, axSel: null });
         }
       });
@@ -3877,12 +4144,21 @@ class Component extends DCLogic {
     /* map rows get their handlers here; map = 'task' | 'arch' */
     const wire = (v, map) => {
       const openKey = map === 'task' ? 'open' : 'aopen'; const selKey = map === 'task' ? 'sel' : 'asel';
+      /* READS-11: only a task has a detail to read; a stage or goal row (or a deselect) only withdraws a task detail
+         that was read, so it never starts a page reread for nothing */
+      const wantDetail = (id) => {
+        const n = id === null ? null : this.taskModel().byId[id];
+        if (n && n.kind === 'task') { this.axReadDetail(id); return; }
+        const a = this.auxData();
+        if (a && a.task && a.task.detailFor !== null) this.axReadDetail(null);
+      };
       const pickNode = (r) => () => {
         const st = this.state || {};
-        if (!r.canOpen) { set({ [selKey]: st[selKey] === r.id ? null : r.id, hover: null, relHover: null }); return; }
+        if (!r.canOpen) { const id = st[selKey] === r.id ? null : r.id; set({ [selKey]: id, hover: null, relHover: null }); if (map === 'task') wantDetail(id); return; }
         if (!r.open) set({ [selKey]: r.id, [openKey]: Object.assign({}, st[openKey] || {}, { [r.id]: true }), hover: null, relHover: null });
         else if (st[selKey] === r.id) set({ [openKey]: Object.assign({}, st[openKey] || {}, { [r.id]: false }), hover: null });
         else set({ [selKey]: r.id, hover: null, relHover: null });
+        if (map === 'task') wantDetail(st[selKey] === r.id && r.open ? null : r.id);
       };
       return v.flat.rows.map((r) => {
         const out = Object.assign({}, r);
@@ -3897,8 +4173,8 @@ class Component extends DCLogic {
         out.hover = hoverIt(r.id);
         if (r.leaves) out.leaves = r.leaves.map((k) => Object.assign({}, k, {
           pick: k.isGroup
-            ? () => set({ [selKey]: k.id, [openKey]: Object.assign({}, (this.state || {})[openKey] || {}, { [r.id]: true }), hover: null, relHover: null })
-            : () => set({ [selKey]: (this.state || {})[selKey] === k.id ? null : k.id, hover: null, relHover: null }),
+            ? () => { set({ [selKey]: k.id, [openKey]: Object.assign({}, (this.state || {})[openKey] || {}, { [r.id]: true }), hover: null, relHover: null }); if (map === 'task') wantDetail(k.id); }
+            : () => { const id = (this.state || {})[selKey] === k.id ? null : k.id; set({ [selKey]: id, hover: null, relHover: null }); if (map === 'task') wantDetail(id); },
           pin: pinIt(map, k.id, k.isGroup ? [r.id] : []), tab: tabIt(map, k.id, k.node.name), hover: hoverIt(k.id)
         }));
         return out;
@@ -4054,6 +4330,7 @@ class Component extends DCLogic {
       tpv: tp ? tp.view : { cls: 'tp-view', x: 0, y: 0, down: noop, move: noop, up: noop, wheel: noop },
       tpb: tp ? tp.bar : { show: false, cls: 'tp-hint', text: '', tip: '', canBack: false, back: noop },
       viewLanesCls: 'seg-btn' + (isLanes ? ' is-on' : ''), showLanes: () => set({ view: 'lanes', hover: null, relHover: null }),
+      lanesTitle: '轨道：每条工作线一行，时间从左到右；上面是按小时的活动日历', lanesOff: 'false',
 
       pt: pt, isMap: isMap,
       isTree: !isOutlineNow && !isLanes, isOutline: isOutlineNow,
@@ -4231,6 +4508,7 @@ class Component extends DCLogic {
     return o;
   }
   archFileSem() {
+    if (this.dataMode()) return {};
     return {
       'verification-machine.ts': '检查轮次的状态机：判定通过、未通过和检查不完整。',
       'task-machine.ts': '任务的状态机：领取、执行、失败、重新入队与完成。',
@@ -4903,8 +5181,84 @@ class Component extends DCLogic {
     };
   }
 
+  /* §2.1: in data mode the right panel's workspace is the route's, never the
+     sample `axRepo()`; `files` holds only the one file page the read returned
+     (the page opens one file at a time). Ruling 2: the lines, the changed rows
+     and the tree come from `readAuxPanel` (aux-panel.ts); this only maps them
+     onto the prototype's shapes. The disk copy is the same text, so 比较 is
+     the page's own `axLineDiff` (B-06). */
+  auxRepo() {
+    const aux = this.auxData();
+    const version = this.props.dataVersion || 0;
+    if (this._auxR && this._auxR.version === version) return this._auxR.repo;
+    const files = {};
+    const F = aux && aux.file;
+    if (F) files[F.path] = { from: 1, total: F.lines.length, loaded: F.readAtText, lines: F.lines, eol: F.eol,
+      digest: F.digest, digestBasis: F.digestBasis, disk: { at: '', by: '', add: 0, del: 0, lines: F.lines } };
+    const changed = aux && aux.diff ? aux.diff.rows.map((f) => ({ path: f.path, add: f.added, del: f.deleted, by: '', hunks: [], note: '' })) : [];
+    const repo = { files: files, changed: changed, cmds: [] };
+    this._auxR = { version: version, repo: repo };
+    return repo;
+  }
+  /* the file tree of `files/list`'s paths (one listing; no second read) */
+  auxTree() {
+    const aux = this.auxData();
+    return aux && aux.files ? aux.files.tree : [];
+  }
+  auxPaths() {
+    const aux = this.auxData();
+    const version = this.props.dataVersion || 0;
+    if (this._auxP && this._auxP.version === version) return this._auxP.paths;
+    const out = aux && aux.files ? { files: new Set(aux.files.paths), dirs: new Set(aux.files.dirs), known: true }
+      : { files: new Set(), dirs: new Set(), known: false };
+    this._auxP = { version: version, paths: out };
+    return out;
+  }
+  /* 文件's note: the read's error, not_git, or the changed count (SPEC-23: with the
+     part it checked); nothing while the listing is not read (no "改动 0" it never read) */
+  auxFileNote(repo) {
+    const aux = this.auxData();
+    if (aux && aux.error) return aux.error.text;
+    if (!aux || !aux.diff) return '';
+    if (aux.diff.files && aux.diff.files.repository === 'not_git') return '不是 git 工作区';
+    return '工作区 · 改动 ' + repo.changed.length + ' 个文件' + this.auxCheckedNote();
+  }
+  /* S36: how many files the uncommitted read checked, when that is not all of them (文件 and Diff say it alike) */
+  auxCheckedNote() {
+    const aux = this.auxData();
+    return aux && aux.diff && typeof aux.diff.checkedFirst === 'number' ? ' · 只核对了前 ' + aux.diff.checkedFirst + ' 个文件' : '';
+  }
+  axRead(key) {
+    const actions = this.props.actions || {};
+    if (typeof actions.readMore !== 'function') return;
+    const demand = this.axDemand(key);
+    if (demand) actions.readMore(demand);
+  }
+  /* §2.4: a task node's detail is read on demand; closing it withdraws the demand. */
+  axReadDetail(id) {
+    if (!this.dataMode()) return;
+    const actions = this.props.actions || {};
+    if (typeof actions.readMore === 'function') actions.readMore({ auxTab: 'task', detailTaskId: id });
+  }
+  axDemand(key) {
+    if (key === 'task' || key === 'arch' || key === 'files' || key === 'diff') {
+      const st = this.state || {};
+      /* ruling 6: 任务图 keeps the selected task's detail */
+      return { auxTab: key, auxPath: null, detailTaskId: key === 'task' ? st.sel || null : null,
+        workOnly: key === 'arch' ? st.ascope !== 'all' : false };
+    }
+    if (key === 'cmd' || /^cmd:/.test(String(key))) {
+      return { auxTab: 'commands', auxPath: null, detailTaskId: null, workOnly: false };
+    }
+    if (String(key).indexOf('f:') === 0) {
+      return { auxTab: 'file', auxPath: String(key).slice(2), detailTaskId: null, workOnly: false };
+    }
+    return null;
+  }
+
   /* ------------------------------------------------------------ the shared fake workspace (real paths, short content) */
   axRepo() {
+    if (this.dataMode()) return this.auxRepo();
     if (this._axr) return this._axr;
     const TM = 'src/core/work-graph/state/task-machine.ts'; const AM = 'src/core/work-graph/state/attempt-machine.ts';
     const RC = 'src/core/work-graph/persistence/record-codecs.ts'; const SV = 'src/app/server.ts';
@@ -4997,6 +5351,7 @@ class Component extends DCLogic {
 
   /* the repository's folders and files (from semTreeData, arch-semantic.js), parsed once */
   axTree() {
+    if (this.dataMode()) return this.auxTree();
     if (this._axt) return this._axt;
     const str = this.semTreeData(); let i = 0;
     const parse = (base) => {
@@ -5018,6 +5373,7 @@ class Component extends DCLogic {
   /* the repository's real files and folders (the 文件 tree's data), for "can this path be opened" (axRepo() first: a board
      at another moment may add files to the tree there) */
   axPaths() {
+    if (this.dataMode()) return this.auxPaths();
     this.axRepo();
     if (this._axp) return this._axp;
     const files = new Set(); const dirs = new Set();
@@ -5030,6 +5386,17 @@ class Component extends DCLogic {
   /* a path in a map's detail (文件, 路径) and on node pages (markup: .d-fline): a file opens its page in the auxiliary area,
      a folder opens 文件 at it, a changed file also offers 看 Diff; a path not in the repository (a planned file) stays text */
   axFileItem(path) {
+    if (this.dataMode()) {
+      const P = this.axPaths();
+      const isFile = P.known ? P.files.has(path) : true;
+      const isDir = !isFile && P.dirs.has(path);
+      const changed = this.axRepo().changed.some((f) => f.path === path);
+      const a = String(path).split('/'); const noop = () => {};
+      return { full: path, parts: a.map((x, i) => (i < a.length - 1 ? x + '/' : x)), canOpen: isFile || isDir, cantOpen: !isFile && !isDir,
+        open: isFile ? () => this.axOpenFile(path) : isDir ? () => this.axRevealDir(path) : noop,
+        tip: isFile ? '打开文件：' + path : isDir ? '在“文件”里展开：' + path : path + '（仓库里还没有这个文件）',
+        hasDiff: changed, diff: changed ? () => this.axOpenDiff(path) : noop };
+    }
     const P = this.axPaths(); const isFile = P.files.has(path); const isDir = !isFile && P.dirs.has(path);
     const changed = isFile && this.axRepo().changed.some((f) => f.path === path);
     const a = String(path).split('/'); const noop = () => {};
@@ -5043,16 +5410,19 @@ class Component extends DCLogic {
     const st = this.state || {};
     const pages = (st.axPages || []).indexOf(path) >= 0 ? st.axPages : (st.axPages || []).concat([path]);
     this.setState({ axPages: pages, ptab: 'f:' + path, axSel: null, axNew: false, panel: true, hover: null });
+    if (this.dataMode()) this.axRead('f:' + path);
   }
   axOpenDiff(path) {
     const st = this.state || {};
     this.setState({ axTabs: (st.axTabs || []).indexOf('diff') >= 0 ? st.axTabs : (st.axTabs || []).concat(['diff']), ptab: 'diff', axDiff: path, axCmp: null, axNew: false, panel: true, hover: null });
+    if (this.dataMode()) this.axRead('diff');
   }
   axRevealDir(path) {
     const st = this.state || {};
     const d = Object.assign({}, st.axDirs || {}); const parts = String(path).split('/');
     parts.forEach((x, i) => { d[parts.slice(0, i + 1).join('/')] = true; });
     this.setState({ axTabs: (st.axTabs || []).indexOf('files') >= 0 ? st.axTabs : (st.axTabs || []).concat(['files']), ptab: 'files', axDirs: d, axNew: false, panel: true, hover: null });
+    if (this.dataMode()) this.axRead('files');
   }
 
   /* line-level diff of two short texts (longest common subsequence) → rows [sign, oldNo, newNo, text];
@@ -5078,7 +5448,8 @@ class Component extends DCLogic {
     o = o || {}; const at = o.at || '14:15';
     const repo = this.axRepo(); const ptab = s.ptab || 'task';
     const noop = () => {};
-    const go = (key) => set({ ptab: key, axNew: false, hover: null });
+    const actions = this.props.actions || {};
+    const go = (key) => { set({ ptab: key, axNew: false, hover: null }); if (this.dataMode()) this.axRead(key); };
     /* ---- tabs */
     const toolName = { files: '文件', cmd: '命令', diff: 'Diff' };
     /* a second (third …) 命令 page is 'cmd:2' (…): its own runs and output, named 命令 2, so several terminals tell apart */
@@ -5093,6 +5464,7 @@ class Component extends DCLogic {
       else patch.extra = (c.extra || []).filter((y) => y.key !== key);
       if ((c.ptab || 'task') === key) patch.ptab = 'task';
       set(patch);
+      if (this.dataMode() && patch.ptab === 'task') this.axRead('task');
     };
     /* file pages with the same name (src/app/main.ts, src/ui/main.ts) get the shortest parent that tells them apart, in
        front ("app/main.ts" / "ui/main.ts": under the strip's name cap the part that differs is the part that stays);
@@ -5122,13 +5494,13 @@ class Component extends DCLogic {
     const newItems = [['files', '文件'], ['cmd', '命令'], ['diff', 'Diff']].map((p) => {
       const open = (s.axTabs || []).indexOf(p[0]) >= 0;
       return { label: p[1], open: open, cls: 'menu-item' + (open ? ' is-on' : ''),
-        go: () => { const c = cur(); set({ axTabs: open ? c.axTabs : (c.axTabs || []).concat([p[0]]), ptab: p[0], axNew: false, panel: true }); } };
+        go: () => { const c = cur(); set({ axTabs: open ? c.axTabs : (c.axTabs || []).concat([p[0]]), ptab: p[0], axNew: false, panel: true }); if (this.dataMode()) this.axRead(p[0]); } };
     });
     /* with 命令 open, + also opens another 命令 page (the next free number) */
     if ((s.axTabs || []).indexOf('cmd') >= 0) {
       const used = (s.axTabs || []).map(cmdN); let nx = 2; while (used.indexOf(nx) >= 0) nx += 1;
       newItems.splice(2, 0, { label: '再开一个命令页（命令 ' + nx + '）', open: false, cls: 'menu-item',
-        go: () => { const c = cur(); set({ axTabs: (c.axTabs || []).concat(['cmd:' + nx]), ptab: 'cmd:' + nx, axNew: false, panel: true }); } });
+        go: () => { const c = cur(); set({ axTabs: (c.axTabs || []).concat(['cmd:' + nx]), ptab: 'cmd:' + nx, axNew: false, panel: true }); if (this.dataMode()) this.axRead('cmd:' + nx); } });
     }
     /* ---- dividers: pointer drag (captured on the handle) and keyboard arrows. The widths stay unset (railW / panelW
        null: the shell keeps the CSS widths of each window size, 232 / 480 and 208 / 420 at ≤ 1240px) until you drag a
@@ -5178,10 +5550,11 @@ class Component extends DCLogic {
             go: () => { const d = Object.assign({}, cur().axDirs || {}); if (d[n.path]) delete d[n.path]; else d[n.path] = true; set({ axDirs: d }); } });
           if (open) walk({ dirPath: n.path, items: n.kids }, depth + 1);
         } else {
-          const ch = changedBy[n.path];
+          /* SPEC-10: a changed file without git's counts (unknown, binary, too large) shows no numbers */
+          const ch = changedBy[n.path]; const num = !!ch && ch.add !== null;
           rows.push({ key: n.path, isDir: false, isFile: true, name: n.name, cls: 'frow d' + Math.min(depth, 9) + (ptab === 'f:' + n.path ? ' is-on' : ''), ex: null,
-            meta: ch ? '+' + ch.add + ' −' + ch.del : '', hasMeta: !!ch, addTxt: ch ? '+' + ch.add : '', delTxt: ch ? '−' + ch.del : '',
-            go: () => { const c = cur(); const pages = (c.axPages || []).indexOf(n.path) >= 0 ? c.axPages : (c.axPages || []).concat([n.path]); set({ axPages: pages, ptab: 'f:' + n.path, axSel: null }); } });
+            meta: num ? '+' + ch.add + ' −' + ch.del : '', hasMeta: num, addTxt: num ? '+' + ch.add : '', delTxt: num ? '−' + ch.del : '',
+            go: () => { const c = cur(); const pages = (c.axPages || []).indexOf(n.path) >= 0 ? c.axPages : (c.axPages || []).concat([n.path]); set({ axPages: pages, ptab: 'f:' + n.path, axSel: null }); if (this.dataMode()) this.axRead('f:' + n.path); } });
         }
       });
       if (list.items.length > shown) rows.push({ key: list.dirPath + ':more', isDir: false, isFile: false, isMore: true, name: '再显示 100 个（共 ' + list.items.length + ' 个）', cls: 'frow is-more d' + Math.min(depth, 9),
@@ -5212,9 +5585,28 @@ class Component extends DCLogic {
         codeRows.push({ fold: false, line: true, no: no, text: t, cls: 'fl' + (on ? ' is-sel' : ''), pick: pick(no), label: '选中第 ' + no + ' 行；按住 Shift 再点一行，选中一段' }); });
       if (F && to < F.total) codeRows.push({ fold: true, line: false, text: '第 ' + (to + 1) + '–' + F.total + ' 行，原型没有收录', cls: 'fl is-fold' });
       const savedAt = (s.axSaved || {})[path];
-      const conflict = s.axConflict === path && F && F.disk;
+      const saveOk = dirty && (!this.dataMode() || !!F);   /* READS-9 (7): data mode saves only a read file */
+      const conflict = this.dataMode() ? s.axConflict === path && !!F : s.axConflict === path && F && F.disk;
       const saveNow = () => {
         const c = cur(); const d = (c.axDraft || {})[path]; if (d === undefined) return;
+        if (this.dataMode()) {
+          /* READS-9 (7): a file the page has not read is never saved (no "create only" null) */
+          if (!F) return;
+          /* §2.5: the read's digest IS the Kernel content revision; a
+             `source_stale` rejection opens the conflict bar and keeps the draft.
+             SPEC-15: the editor drops the file's last newline, the save puts it back. */
+          const expected = F.digestBasis === 'raw_bytes' ? F.digest : null;
+          const text = F.eol && !d.endsWith('\n') ? d + '\n' : d;
+          const dr = Object.assign({}, c.axDraft || {}); delete dr[path];
+          const sv = Object.assign({}, c.axSaved || {}); sv[path] = at;
+          Promise.resolve(actions.saveFile(path, text, expected)).then(() => {
+            set({ axDraft: dr, axSaved: sv, axConflict: null });
+          }).catch((e) => {
+            if (e && e.code === 'source_stale') set({ axConflict: path });
+            else set({ err: String(e && e.message ? e.message : e) });
+          });
+          return;
+        }
         const t = Object.assign({}, c.axText || {}); t[path] = d.split('\n');
         const dr = Object.assign({}, c.axDraft || {}); delete dr[path];
         const sv = Object.assign({}, c.axSaved || {}); sv[path] = at;
@@ -5226,15 +5618,19 @@ class Component extends DCLogic {
       const snippet = (a, b) => { const k = Math.max(0, a - from); const t = (lines.slice(k, k + (b - a + 1)).filter((x) => x.trim())[0] || '').trim(); return t.length > 56 ? t.slice(0, 55) + '…' : t; };
       fp = {
         path: path, name: path.split('/').pop(), parts: path.split('/').map((x, k, a) => (k < a.length - 1 ? x + '/' : x)), known: !!F,
-        state: !F ? '原型没有收录这个文件的内容' : dirty ? '未保存的修改' : savedAt ? '已保存 ' + savedAt : reloaded ? '已重新载入 ' + at : '载入于 ' + F.loaded,
+        /* SPEC-15: in data mode 载入于 is the read's own time and 已保存/已重新载入 carry no sample clock */
+        state: !F ? (this.dataMode() ? '文件不在了' : '原型没有收录这个文件的内容') : dirty ? '未保存的修改'
+          : savedAt ? '已保存' + (this.dataMode() ? '' : ' ' + savedAt) : reloaded ? '已重新载入' + (this.dataMode() ? '' : ' ' + at) : '载入于 ' + F.loaded,
         stateCls: 'fp-state' + (dirty ? ' tx-waiting' : ''), rows: codeRows, editing: editing, viewing: !editing, draftText: lines.join('\n'),
         editLabel: editing ? '查看' : '编辑', toggleEdit: () => { const e = Object.assign({}, cur().axEdit || {}); if (e[path]) delete e[path]; else e[path] = true; set({ axEdit: e }); },
         onEdit: (e) => { const d = Object.assign({}, cur().axDraft || {}); d[path] = e && e.target ? e.target.value : lines.join('\n'); set({ axDraft: d }); },
         onSelect: (e) => { const t = e && e.target; if (!t || t.selectionStart === t.selectionEnd) return; const v = String(t.value);
           const a = from + v.slice(0, t.selectionStart).split('\n').length - 1; const b = from + v.slice(0, Math.max(t.selectionStart, t.selectionEnd - 1)).split('\n').length - 1;
           set({ axSel: { path: path, anchor: a, a: a, b: b } }); },
-        canSave: dirty, cantSave: !dirty, saveCls: 'btn btn-sm btn-line' + (dirty ? '' : ' is-off'),
-        save: () => { const c = cur(); if ((c.axDraft || {})[path] === undefined) return; if (F && F.disk && !(c.axReload || {})[path] && !(c.axSaved || {})[path]) set({ axConflict: path }); else saveNow(); },
+        canSave: saveOk, cantSave: !saveOk, saveCls: 'btn btn-sm btn-line' + (saveOk ? '' : ' is-off'),
+        save: () => { const c = cur(); if ((c.axDraft || {})[path] === undefined) return;
+          if (this.dataMode()) { if (c.axConflict === path) return; saveNow(); return; }
+          if (F && F.disk && !(c.axReload || {})[path] && !(c.axSaved || {})[path]) set({ axConflict: path }); else saveNow(); },
         hasSel: !!sel, selText: sel ? (sel.a === sel.b ? '已选第 ' + sel.a + ' 行' : '已选第 ' + sel.a + '–' + sel.b + ' 行') : '',
         barText: sel ? (sel.a === sel.b ? '已选第 ' + sel.a + ' 行' : '已选第 ' + sel.a + '–' + sel.b + ' 行') + (dirty ? '（未保存，引用的是草稿快照）' : '')
           : nQf ? '已引用到草稿（' + nQf + ' 条），还没有发送'
@@ -5245,8 +5641,11 @@ class Component extends DCLogic {
           const q = sel ? { id: 'q' + n, path: path, a: sel.a, b: sel.b, snip: snippet(sel.a, sel.b), snap: dirty } : { id: 'q' + n, path: path, a: null, b: null, snip: F ? snippet(from, to) : '', snap: dirty };
           set({ quotes: (c.quotes || []).concat([q]), axQn: n, axSel: null });
         },
-        conflict: !!conflict, conflictText: conflict ? '磁盘上的 ' + path.split('/').pop() + ' 在 ' + F.disk.at + ' 被 ' + F.disk.by + ' 改过（+' + F.disk.add + ' −' + F.disk.del + '），晚于你载入的版本（' + F.loaded + '）。' : '',
-        reload: () => { const c = cur(); const r = Object.assign({}, c.axReload || {}); r[path] = true; const dr = Object.assign({}, c.axDraft || {}); delete dr[path]; set({ axReload: r, axDraft: dr, axConflict: null }); },
+        conflict: !!conflict, conflictText: conflict ? (this.dataMode()
+          ? '磁盘上的 ' + path.split('/').pop() + ' 在你读取后又改过了，保存会覆盖它的改动。'
+          : '磁盘上的 ' + path.split('/').pop() + ' 在 ' + F.disk.at + ' 被 ' + F.disk.by + ' 改过（+' + F.disk.add + ' −' + F.disk.del + '），晚于你载入的版本（' + F.loaded + '）。') : '',
+        reload: () => { const c = cur(); const r = Object.assign({}, c.axReload || {}); r[path] = true; const dr = Object.assign({}, c.axDraft || {}); delete dr[path]; set({ axReload: r, axDraft: dr, axConflict: null });
+          if (this.dataMode()) this.axRead('f:' + path); },
         compare: () => set({ ptab: 'diff', axCmp: path, axTabs: (cur().axTabs || []).indexOf('diff') >= 0 ? cur().axTabs : (cur().axTabs || []).concat(['diff']) }),
         overwrite: () => saveNow(), dismiss: () => set({ axConflict: null })
       };
@@ -5268,7 +5667,7 @@ class Component extends DCLogic {
     });
     /* ---- diff: Git ↔ working tree, or (from a conflict) the disk ↔ your draft */
     const cmpPath = s.axCmp && repo.files[s.axCmp] && repo.files[s.axCmp].disk ? s.axCmp : null;
-    const dfiles = repo.changed.map((f) => ({ path: f.path, name: f.path.split('/').pop(), dir: f.path.split('/').slice(0, -1).join('/'), add: '+' + f.add, del: '−' + f.del,
+    const dfiles = repo.changed.map((f) => ({ path: f.path, name: f.path.split('/').pop(), dir: f.path.split('/').slice(0, -1).join('/'), add: f.add === null ? '' : '+' + f.add, del: f.del === null ? '' : '−' + f.del,
       cls: 'frow d0' + (!cmpPath && s.axDiff === f.path ? ' is-on' : ''), go: () => set({ axDiff: f.path, axCmp: null }) }));
     let drows = []; let dnote = ''; let dhead = ''; let dPath = null;
     if (cmpPath) {
@@ -5276,15 +5675,25 @@ class Component extends DCLogic {
       dhead = F.disk.by + ' ' + F.disk.at + ' 写到磁盘的版本 ↔ 你的草稿 · ' + cmpPath.split('/').pop() + ' 第 ' + F.from + ' 行起';
       drows = [{ hunk: true, line: false, text: '@@ 第 ' + F.from + ' 行起 · 磁盘 ↔ 草稿', cls: 'dl-hunk' }].concat(this.axLineDiff(F.disk.lines, mine, F.from).map((r) => ({ hunk: false, line: true, cls: 'dl-row' + (r[0] === '+' ? ' is-add' : r[0] === '-' ? ' is-del' : ''), sign: r[0] === ' ' ? '' : r[0] === '-' ? '−' : '+', o: r[1] === null ? '' : String(r[1]), n: r[2] === null ? '' : String(r[2]), text: r[3] })));
     } else {
-      const f = repo.changed.filter((x) => x.path === s.axDiff)[0] || repo.changed[0]; dPath = f.path;
-      dhead = 'Git（HEAD）↔ 工作区 · ' + f.path.split('/').pop() + ' · +' + f.add + ' −' + f.del + (f.by ? ' · ' + f.by : '');
-      f.hunks.forEach((h) => {
+      const f = repo.changed.filter((x) => x.path === s.axDiff)[0] || repo.changed[0] || null;
+      if (f) { dPath = f.path;
+        dhead = 'Git（HEAD）↔ 工作区 · ' + f.path.split('/').pop() + (f.add === null ? '' : ' · +' + f.add + ' −' + f.del) + (f.by ? ' · ' + f.by : '');
+      }
+      if (f) f.hunks.forEach((h) => {
         drows.push({ hunk: true, line: false, text: h.head, cls: 'dl-hunk' });
         let o2 = h.oldAt; let n2 = h.newAt;
         h.rows.forEach((r) => { const row = { hunk: false, line: true, cls: 'dl-row' + (r[0] === '+' ? ' is-add' : r[0] === '-' ? ' is-del' : ''), sign: r[0] === ' ' ? '' : r[0] === '-' ? '−' : '+', o: r[0] === '+' ? '' : String(o2), n: r[0] === '-' ? '' : String(n2), text: r[1] };
           if (r[0] !== '+') o2 += 1; if (r[0] !== '-') n2 += 1; drows.push(row); });
       });
-      if (!f.hunks.length) dnote = (f.note ? f.note + '；' : '') + '逐行内容在原型里没有收录。';
+      if (f && !f.hunks.length) dnote = (f.note ? f.note + '；' : '') + '逐行内容在原型里没有收录。';
+      if (this.dataMode() && ptab === 'diff') {
+        const aux = this.auxData();
+        /* READS-3/SPEC-16 (B-09): a failed Diff read writes its text here, never 还没接通 over an empty list */
+        dnote = aux && aux.error && aux.tab === 'diff' ? aux.error.text : '还没接通' + this.auxCheckedNote();
+        /* the per-line read has no backend (S23/S37, B-06): the line area is
+           only the note, never sample hunks or placeholder rows. */
+        drows = [];
+      }
     }
     /* ---- quotes in the composer */
     const quotes = (s.quotes || []).map((q) => ({ id: q.id, path: q.path, lines: q.a === null ? '整个文件' : q.a === q.b ? '第 ' + q.a + ' 行' : '第 ' + q.a + '–' + q.b + ' 行',
@@ -5298,11 +5707,16 @@ class Component extends DCLogic {
       tabs: tabs, isFiles: ptab === 'files', isCmd: isCmdTab, isDiff: ptab === 'diff', isFile: !!fp, isTool: ptab === 'files' || isCmdTab || ptab === 'diff' || !!fp,
       newOpen: !!s.axNew, toggleNew: () => set({ axNew: !cur().axNew }), newItems: newItems,
       maxLabel: s.axMax ? '还原右栏' : '放大右栏', isMax: !!s.axMax, notMax: !s.axMax, toggleMax: () => set({ axMax: !cur().axMax, panel: true }),
-      hide: () => set({ panel: false, axMax: false, axNew: false }),
-      fileRows: rows, fileNote: 'coding-platform · 分支 feat/reliability-and-structure · 改动 ' + repo.changed.length + ' 个文件',
+      hide: () => { set({ panel: false, axMax: false, axNew: false }); if (this.dataMode()) actions.readMore({ auxTab: null }); },
+      fileRows: rows, fileNote: this.dataMode() ? this.auxFileNote(repo)
+        : 'coding-platform · 分支 feat/reliability-and-structure · 改动 ' + repo.changed.length + ' 个文件',
       fp: fp || { rows: [], parts: [] },
-      cmds: cmds, cmdNote: '命令在 Host 的工作区里运行；这里不是终端，没有输入。',
-      dfiles: dfiles, drows: drows, dhead: dhead, dnote: dnote, hasDnote: !!dnote, isCmp: !!cmpPath, backToGit: () => set({ axCmp: null }),
+      cmds: cmds, cmdNote: this.dataMode()
+        ? ((this.auxData() && this.auxData().error) ? this.auxData().error.text : '还没接通')
+        : '命令在 Host 的工作区里运行；这里不是终端，没有输入。',
+      dfiles: dfiles, drows: drows, dhead: dhead, dnote: dnote, hasDnote: !!dnote, isCmp: !!cmpPath,
+      /* READS-6/SPEC-11 (S37): 比较 left the demand on the file page, so going back reads files/uncommitted again */
+      backToGit: () => { set({ axCmp: null }); if (this.dataMode()) this.axRead('diff'); },
       /* Diff's head: the file shown in Git ↔ 工作区 opens as its page (from Main's review) */
       dOpenShow: ptab === 'diff' && !!dPath, dOpen: () => { if (dPath) this.axOpenFile(dPath); }, dOpenTip: dPath ? '在文件页里打开 ' + dPath : '',
       quotes: quotes, hasQuotes: quotes.length > 0, quoteNote: '已引用到草稿，还没有发送',
@@ -7011,7 +7425,7 @@ class Component extends DCLogic {
     const pre = (e) => (!isExec && e.taskName ? e.taskName + '：' : '');
     const runItem = (k, o2) => {
       const open = openOf(k, o2.live || !!o.autoOpen);
-      return Object.assign({}, B, { isRun: true, open: open, toggle: toggle(k, open), cls: 'run lv-run' + (open ? ' is-open' : '') + (o2.live ? ' is-live' : ''),
+      return Object.assign({}, B, { isRun: true, open: open, toggle: toggle(k, open), cls: 'run lv-run' + (open ? ' is-open' : '') + (o2.live ? ' is-live' : ''), runTip: '', runOff: 'false',
         head: o2.head, headCls: 'lv-rt' + (o2.live ? ' live-tx' : ''), hasWord: !!o2.word, word: o2.word || '', wordCls: 'lv-w ' + (o2.tx || 'tx-plain'), time: o2.time,
         steps: this.lvSteps(o2.steps, o2.live, showThink, full), hasNote: !!o2.note, note: o2.note || '' });
     };
@@ -7025,10 +7439,15 @@ class Component extends DCLogic {
        it now — the bubble, its track 已排队 → 已送达 → 被拒绝 / 已生效, the reason and the line's reply — in time order */
     const acts = (R.acts || []).slice();
     const recAct = (a) => {
+      const S = a.stage === undefined ? 2 : a.stage;
       const words = ['已排队', '已送达', a.res === 'rejected' ? '被拒绝' : '已生效'];
-      return Object.assign({}, B, { isAct: true, text: a.text, t: a.time, track: words.map((w, j) => ({ word: w, sep: j > 0, cls: j === 2 ? 'on' : '' })),
-        canAdv: false, noAdv: true, advance: noop, dvCls: 'deliv' + (a.res === 'rejected' ? ' is-rejected' : ''), dvLabel: '消息状态：' + words[2],
-        note: a.res === 'rejected' ? '原因：' + a.why : a.why || '已生效：它按你说的调整了接下来的做法', hasReply: !!a.reply, reply: a.reply || '' });
+      const note = S === 0 ? '等下一个安全点送达' : S === 1 ? '已送达，等它处理'
+        : a.res === 'rejected' ? (a.why ? '原因：' + a.why : '被拒绝') : a.why || '已生效：它按你说的调整了接下来的做法';
+      return Object.assign({}, B, { isAct: true, text: a.text, t: a.time,
+        track: words.slice(0, S + 1).map((w, j) => ({ word: w, sep: j > 0, cls: j === S ? 'on' : '' })),
+        canAdv: false, noAdv: true, advance: noop, dvCls: 'deliv' + (S === 2 && a.res === 'rejected' ? ' is-rejected' : ''),
+        dvLabel: '消息状态：' + words[S],
+        note: note, hasReply: S === 2 && !!a.reply, reply: S === 2 ? a.reply || '' : '' });
     };
     const actsBefore = (start) => { while (acts.length && (start === null || acts[0].start < start)) { const a = acts.shift(); dayRow(a.day); items.push(recAct(a)); } };
     R.entries.forEach((e, i) => {
