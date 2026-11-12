@@ -81,7 +81,7 @@ import {
 } from './startup-reconcile.js';
 import { parseInitialPlanningResponseV2 } from '../core/work-graph/tasks/initial-plan.js';
 import { DEFAULT_TASK_AUTOMATION_POLICY, type TaskRequeueRef } from '../contracts/task-requeue.js';
-import type { VerificationRoundRef } from '../contracts/verification.js';
+import { isPlatformReservedCheckId, type VerificationRoundRef } from '../contracts/verification.js';
 import {
   decisionSourceKey, decisionSubjectGoalRef, type DecisionSourceV1, type NoticePositionV1,
 } from '../contracts/goal-decisions.js';
@@ -2145,6 +2145,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
     const check = value as Record<string, unknown>;
     return typeof check.checkId === 'string' && check.checkId.length > 0
+      && !isPlatformReservedCheckId(check.checkId)
       && (check.kind === 'static' || check.kind === 'dynamic')
       && typeof check.command === 'string' && check.command.length > 0
       && typeof check.cwd === 'string'

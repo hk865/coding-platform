@@ -409,6 +409,13 @@ function obligationIssues(value: unknown, path: string): string[] {
     if (!isEnum(requirement['requirementLevel'], REQUIREMENT_LEVELS)) issues.push(`${rpath}.requirementLevel must be required|optional`);
     if (!nonEmpty(requirement['kind'])) issues.push(`${rpath}.kind must be a non-empty string`);
     if (!nonEmpty(requirement['description'])) issues.push(`${rpath}.description must be a non-empty string`);
+    // B06: shape only, never the path itself; `plans/propose` and `propose_future_plan` reach this codec without
+    // the tool schema, and a non-array value would break the compiler when the round opens.
+    const requiredReadPaths = requirement['requiredReadPaths'];
+    if (requiredReadPaths !== undefined
+      && (!Array.isArray(requiredReadPaths) || !(requiredReadPaths as unknown[]).every(entry => typeof entry === 'string'))) {
+      issues.push(`${rpath}.requiredReadPaths must be an array of strings when present`);
+    }
   });
   return issues;
 }

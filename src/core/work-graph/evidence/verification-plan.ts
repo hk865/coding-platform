@@ -13,13 +13,13 @@
  * carries no required verification requirement is `invalid` — an empty required
  * set must never fold to a vacuous PASS.
  */
-import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../../contracts/plan.js';
+import type { AcceptanceObligation, PlanRevisionRef, PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type { TaskTriple } from '../../../contracts/dispatch.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import { compileVerificationCoverage } from '../../../contracts/verification.js';
 import type {
     ChangeScopeV1, CheckCapabilityV1, SemanticChangeClassification,
-    VerificationIssue, VerificationPlanV1,
+    VerificationCheckPlan, VerificationIssue, VerificationPlanV1,
 } from '../../../contracts/verification.js';
 
 export type VerificationPlanRejectionCode =
@@ -51,6 +51,34 @@ export type VerificationPlanCompileResult =
 
 function rejected(code: VerificationPlanRejectionCode, issues: VerificationIssue[]): VerificationPlanCompileResult {
     return { status: 'rejected', code, issues };
+}
+
+/**
+ * The witness check carries the deduplicated union, in first-seen order, of the
+ * `requiredReadPaths` of exactly the witness requirements it covers. It reads
+ * the check's own coverage, so it neither adds nor replaces the subject filter;
+ * command checks are returned as the same object.
+ */
+function attachWitnessPaths(
+    checks: readonly VerificationCheckPlan[],
+    obligations: readonly AcceptanceObligation[],
+): VerificationCheckPlan[] {
+    const byObligation = new Map(obligations.map(obligation => [obligation.obligationId, obligation] as const));
+    return checks.map(check => {
+        if (check.kind !== 'witness') return check;
+        const paths: string[] = [];
+        const seen = new Set<string>();
+        for (const coverage of check.coverage) {
+            const requirement = byObligation.get(coverage.obligationId)?.verificationRequirements
+                .find(candidate => candidate.requirementId === coverage.requirementId);
+            for (const path of requirement?.requiredReadPaths ?? []) {
+                if (seen.has(path)) continue;
+                seen.add(path);
+                paths.push(path);
+            }
+        }
+        return { ...check, requiredReadPaths: paths };
+    });
 }
 
 /**
@@ -95,7 +123,7 @@ export function compileVerificationPlan(input: VerificationPlanCompileInput): Ve
             changedFiles: [...input.changeScope.changedFiles], writeSummary: input.changeScope.writeSummary },
         semanticChange: input.semanticChange,
         risks: [],
-        checks: coverage.checks,
+        checks: attachWitnessPaths(coverage.checks, requiredObligations),
         ...(coverage.uncovered.length > 0 ? { uncovered: coverage.uncovered } : {}),
         ...(input.configurationDigest === undefined ? {} : { configurationDigest: input.configurationDigest }),
     };

@@ -1032,4 +1032,41 @@ describe('rejects: HOST settings workspace check approval (R6 cold-start)', () =
       await started.host.close().catch(() => { /* already closed */ });
     }
   });
+
+  // B06 R1 (book :774, §3.3; start rulings §8.1 R1, OQ-1; G1 start rulings 11-12 §2): the reserved id
+  // `platform:witness` is refused at both Host gates. The saved Answer and the request differ in each cell, so each
+  // cell pins the one reason its own gate gives; with that gate's predicate deleted, the request reaches the later
+  // check and the reason changes (cell a: `the approved checks do not match the saved Answer proposal`; cell b:
+  // `the saved-answer proposal checks are invalid`).
+  it('B06 R1 (a): refuses a checks/approve request naming platform:witness (invalid) and changes no setting', async () => {
+    const { started, opened: [granted] } = await approvalWorld('host-settings-checks-reserved-a', [true],
+      [{ kind: 'text', text: planAnswer([checkBody('c-ok', 'node --test ok')]) }]);
+    try {
+      if (granted === undefined) throw Error('missing workspace fixture');
+      const answer = await saveInitialPlanAnswer(started, granted.scope, 'reserved-a');
+      const before = await readSettingsSnapshot(started);
+      expect(await (await settingsPost(started.base, 'checks/approve', started.token, { scope: granted.scope,
+        answerRef: answer, checks: [checkBody('platform:witness', 'node --test witness')] })).json())
+        .toEqual({ status: 'rejected', code: 'invalid', reason: 'checks/approve requires an array of registered command checks' });
+      expect(await readSettingsSnapshot(started)).toEqual(before);
+    } finally {
+      await started.host.close().catch(() => { /* already closed */ });
+    }
+  });
+
+  it('B06 R1 (b): refuses a saved Answer whose setup proposes platform:witness (invalid) and changes no setting', async () => {
+    const { started, opened: [granted] } = await approvalWorld('host-settings-checks-reserved-b', [true],
+      [{ kind: 'text', text: planAnswer([checkBody('platform:witness', 'node --test witness')]) }]);
+    try {
+      if (granted === undefined) throw Error('missing workspace fixture');
+      const answer = await saveInitialPlanAnswer(started, granted.scope, 'reserved-b');
+      const before = await readSettingsSnapshot(started);
+      expect(await (await settingsPost(started.base, 'checks/approve', started.token, { scope: granted.scope,
+        answerRef: answer, checks: [checkBody('c-ok', 'node --test ok')] })).json())
+        .toEqual({ status: 'rejected', code: 'invalid', reason: 'the saved Answer setup checks are malformed' });
+      expect(await readSettingsSnapshot(started)).toEqual(before);
+    } finally {
+      await started.host.close().catch(() => { /* already closed */ });
+    }
+  });
 });

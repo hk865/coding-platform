@@ -169,6 +169,8 @@ export type VerificationRequirement = {
     /** Member of CompletionPolicy.content.requirementKinds (guard-enforced). */
     kind: string;
     description: string;
+    /** Witness only: workspace-relative source paths the report must have read. */
+    requiredReadPaths?: readonly string[];
 };
 export type AcceptanceObligation = {
     obligationId: string;

@@ -16,7 +16,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { QueryJobAnswerRef } from '../contracts/query-job.js';
-import type { RegisteredCommandCheck, TrustedCheckConfiguration } from '../contracts/verification.js';
+import { isPlatformReservedCheckId, type RegisteredCommandCheck, type TrustedCheckConfiguration } from '../contracts/verification.js';
 import type {
   ChecksConfigurationPinV1, ChecksConfirmationV1, ChecksSaveResultV1, ChecksSettingsSourceV1,
 } from '../contracts/initialization-adoption.js';
@@ -440,6 +440,7 @@ function validScope(value: unknown): value is CoreScope {
 
 function validRegisteredCheck(value: unknown): value is RegisteredCommandCheck {
   return isRecord(value) && nonEmpty(value['checkId'])
+    && !isPlatformReservedCheckId(value['checkId'])
     && (value['kind'] === 'static' || value['kind'] === 'dynamic')
     && nonEmpty(value['command']) && typeof value['cwd'] === 'string'
     && typeof value['timeoutMs'] === 'number' && Number.isSafeInteger(value['timeoutMs']) && value['timeoutMs'] > 0

@@ -336,6 +336,7 @@ function planSchema(texts: ToolTextV1['parameters']): z.ZodType {
     requirementLevel: z.enum(['required', 'optional']),
     kind: z.string().min(1),
     description: z.string().min(1),
+    requiredReadPaths: z.array(z.string()).optional(),
   }).strict();
   const obligationSchema = z.object({
     obligationId: z.string().min(1),

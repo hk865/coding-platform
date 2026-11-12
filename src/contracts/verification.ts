@@ -246,7 +246,7 @@ export type RoundSnapshot = {
 // VerificationPlan (pure compiler output shape; R3e.1 restoration)           //
 // ------------------------------------------------------------------------ //
 
-export type VerificationCheckKind = "static" | "dynamic" | "reviewer";
+export type VerificationCheckKind = "static" | "dynamic" | "reviewer" | "witness";
 
 export type VerificationCheckPlan = {
     checkId: string;
@@ -255,6 +255,8 @@ export type VerificationCheckPlan = {
     coverage: EvidenceCoverageV1[];
     satisfactionPath: "predicate" | "review-packet" | "no-change-fast-path";
     noChangeFastPath?: { diffClass: string; reason: string };
+    /** Witness checks only; absent on command checks so their digests are byte-identical. */
+    requiredReadPaths?: readonly string[];
 };
 
 export type RiskV1 = {
@@ -292,6 +294,14 @@ export type CheckCapabilityV1 = {
     coversKinds: string[];
     replayable: boolean;
 };
+
+/** The one reserved platform check id; no Host may register it as a command. */
+export const PLATFORM_WITNESS_CHECK_ID = "platform:witness";
+
+/** Whether a check id is the reserved platform witness id (the Host gates refuse it). */
+export function isPlatformReservedCheckId(checkId: string): boolean {
+    return checkId === PLATFORM_WITNESS_CHECK_ID;
+}
 
 /**
  * Coverage of the required verification requirements by the registered check
@@ -378,3 +388,56 @@ export function compileVerificationCoverage(input: {
     }
     return { checks: [...checks.values()], uncovered, emptyRequiredObligation };
 }
+
+// ------------------------------------------------------------------------ //
+// Witness check (B06): trivalent facts and the pure verdict                  //
+// ------------------------------------------------------------------------ //
+
+/** The subject Run's applicability to the witness check; the owner decides it before calling the facts port. */
+export type WitnessRunState =
+    | { state: 'applicable' }
+    | { state: 'not_applicable'; reason: string }
+    | { state: 'unknown'; reason: string };
+
+/** The final text the kernel can prove. `present.text` is the executor's raw text, never trimmed; empty or
+ *  all-whitespace text is `absent`, never `present`. */
+export type WitnessReport =
+    | { state: 'present'; text: string }
+    | { state: 'absent' }
+    | { state: 'unknown'; reason: string };
+
+/** The subject Turn's successful read set. `known` may be an empty array (known zero reads); `unknown` is
+ *  never an empty array. */
+export type WitnessReadSet =
+    | { state: 'known'; paths: readonly string[] }
+    | { state: 'unknown'; reason: string };
+
+export type WitnessPathVerdict = {
+    path: string;
+    state: 'present' | 'absent' | 'unknown';
+};
+
+/** What the facts port returns: the Runtime proves only these two; applicability/paths/source/effects are the
+ *  owner's. */
+export type WitnessFacts = {
+    report: WitnessReport;
+    reads: WitnessReadSet;
+};
+
+export type WitnessCheckInput = {
+    run: WitnessRunState;
+    report: WitnessReport;
+    reads: WitnessReadSet;
+    /** Already computed by the owner with `pathVerdictsOf`, in `requiredReadPaths` first-seen order. */
+    paths: readonly WitnessPathVerdict[];
+    /** The four non-null values of `RoundCheckSnapshot['sourceStatus']`. */
+    source: 'matched' | 'changed' | 'unavailable' | 'permission_changed';
+    effects: 'none' | 'changed' | 'unknown';
+};
+
+export type WitnessCheckResult = {
+    outcome: EvidenceOutcome;
+    incompleteCause?: 'source_not_matched' | null;
+    /** Only the `absent` paths, in input order; for the caller and tests, never persisted. */
+    missingPaths: readonly string[];
+};

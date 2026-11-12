@@ -1434,6 +1434,66 @@
       "name": "EvidencePort.recordReviewEvidence",
       "reason": "kept-for",
       "note": "kept for slice 9 of the orchestration design: S9 G2 lands the review booking owner (recordReviewEvidence) and the round commit identity; G3 is their only caller (wires the port at the composition root, calls record_review and the no-line notice); the group that wires them deletes these entries"
+    },
+    {
+      "file": "src/contracts/verification.ts",
+      "name": "WitnessRunState",
+      "reason": "kept-for",
+      "note": "kept for B06 (MVP-BEHAVIOR.md, the read-only witness check): G1 lands the witness contract and the pure verdict before G2 wires the owner (recordWitness builds WitnessCheckInput from the facts port and reads these types); the group that wires the owner deletes these entries"
+    },
+    {
+      "file": "src/contracts/verification.ts",
+      "name": "WitnessReport",
+      "reason": "kept-for",
+      "note": "kept for B06 (MVP-BEHAVIOR.md, the read-only witness check): G1 lands the witness contract and the pure verdict before G2 wires the owner (recordWitness builds WitnessCheckInput from the facts port and reads these types); the group that wires the owner deletes these entries"
+    },
+    {
+      "file": "src/contracts/verification.ts",
+      "name": "WitnessReadSet",
+      "reason": "kept-for",
+      "note": "kept for B06 (MVP-BEHAVIOR.md, the read-only witness check): G1 lands the witness contract and the pure verdict before G2 wires the owner (recordWitness builds WitnessCheckInput from the facts port and reads these types); the group that wires the owner deletes these entries"
+    },
+    {
+      "file": "src/contracts/verification.ts",
+      "name": "WitnessPathVerdict",
+      "reason": "kept-for",
+      "note": "kept for B06 (MVP-BEHAVIOR.md, the read-only witness check): G1 lands the witness contract and the pure verdict before G2 wires the owner (recordWitness builds WitnessCheckInput from the facts port and reads these types); the group that wires the owner deletes these entries"
+    },
+    {
+      "file": "src/contracts/verification.ts",
+      "name": "WitnessFacts",
+      "reason": "kept-for",
+      "note": "kept for B06 (MVP-BEHAVIOR.md, the read-only witness check): G1 lands the witness contract and the pure verdict before G2 wires the owner (recordWitness builds WitnessCheckInput from the facts port and reads these types); the group that wires the owner deletes these entries"
+    },
+    {
+      "file": "src/contracts/verification.ts",
+      "name": "WitnessCheckInput",
+      "reason": "kept-for",
+      "note": "kept for B06 (MVP-BEHAVIOR.md, the read-only witness check): G1 lands the witness contract and the pure verdict before G2 wires the owner (recordWitness builds WitnessCheckInput from the facts port and reads these types); the group that wires the owner deletes these entries"
+    },
+    {
+      "file": "src/contracts/verification.ts",
+      "name": "WitnessCheckResult",
+      "reason": "kept-for",
+      "note": "kept for B06 (MVP-BEHAVIOR.md, the read-only witness check): G1 lands the witness contract and the pure verdict before G2 wires the owner (recordWitness builds WitnessCheckInput from the facts port and reads these types); the group that wires the owner deletes these entries"
+    },
+    {
+      "file": "src/core/work-graph/evidence/witness-path-verdicts.ts",
+      "name": "pathVerdictsOf",
+      "reason": "kept-for",
+      "note": "kept for B06 (MVP-BEHAVIOR.md, the read-only witness check): G1 lands the witness contract and the pure verdict before G2 wires the owner (recordWitness calls effectsOf, pathVerdictsOf and runWitnessCheck when it records a witness check); the group that wires the owner deletes these entries"
+    },
+    {
+      "file": "src/core/work-graph/state/witness-check.ts",
+      "name": "effectsOf",
+      "reason": "kept-for",
+      "note": "kept for B06 (MVP-BEHAVIOR.md, the read-only witness check): G1 lands the witness contract and the pure verdict before G2 wires the owner (recordWitness calls effectsOf, pathVerdictsOf and runWitnessCheck when it records a witness check); the group that wires the owner deletes these entries"
+    },
+    {
+      "file": "src/core/work-graph/state/witness-check.ts",
+      "name": "runWitnessCheck",
+      "reason": "kept-for",
+      "note": "kept for B06 (MVP-BEHAVIOR.md, the read-only witness check): G1 lands the witness contract and the pure verdict before G2 wires the owner (recordWitness calls effectsOf, pathVerdictsOf and runWitnessCheck when it records a witness check); the group that wires the owner deletes these entries"
     }
   ]
 }

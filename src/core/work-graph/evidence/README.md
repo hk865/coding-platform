@@ -12,7 +12,8 @@
 ## 文件
 
 - `evidence-service.ts` — 唯一可信 Evidence/verification 服务：开启与读取轮次、检查执行与结果、finalize、后继轮与链头读取。 7C-1 的 `reverifyApprovedByCard` 从卡片批准走同一条后继轮提交，`lookupToolCommit` 只服务 `request_recheck` 的已提交查询。
-- `verification-plan.ts` — 确定性、内容寻址的 `VerificationPlan` 纯编译器；同 tuple 同 digest，不读 store。
+- `verification-plan.ts` — 确定性、内容寻址的 `VerificationPlan` 纯编译器；同 tuple 同 digest，不读 store。`platform:witness` 项在编译结果上带 `requiredReadPaths`（只从它覆盖的见证要求取路径，去重保首次出现序）；命令项原对象原样返回。
+- `witness-path-verdicts.ts` — 每条必须读取路径的三态 `pathVerdictsOf`：词法上不是单个字面源文件（不安全路径或带 `*`/`?` 的 glob）或读取集未知 → `unknown`，否则在成功读取的 Set 上精确判 `present`/`absent`；不 resolve、不 normalize、不做大小写折叠，不写第二套路径校验器（路径规则用 `workspace/path-validation.ts` 的 `isLiteralSourceFilePath`）。G2 的见证 owner 调用它。
 
 ## 可以复用的能力
 
@@ -27,7 +28,8 @@
 | `roundCommitIdentityOf` | `src/core/work-graph/evidence/evidence-service.ts:189` | S9-N6：按调用者算一次轮次写（只收开轮 `open`、检查结果 `record`）那次提交的 identity；这两个写自己也用它，`interrupt`、`abandon` 的 identity 由文件内私有的 `identityKeyOf` 算，字节相同 | G3 按 identity 读开轮/检查结束的提交，不拿轮的 `since`；不要另算 identity |
 | `reverifyRound` | `src/core/work-graph/evidence/evidence-service.ts:2247` | 在 finalized 非 PASS 链头上开后继轮，或提交一条策略拒绝；接受可选 `acknowledgement`，提交结果带 `proofReceipt` | 自动复核/返工；不要另开第二轮 |
 | `reverifyApprovedByCard`、`lookupToolCommit` | `src/core/work-graph/evidence/evidence-service.ts:2592`、`src/core/work-graph/evidence/evidence-service.ts:2592` | 卡片批准的返工复核入口（与 `reverifyRound` 同一后继轮提交）和 `request_recheck` 的只读已提交回执查询；后者从 Kernel 记录参数重建同一身份，不写第二份请求 | `request_recheck` 工具的重放读与卡片批准路径；不要另写回执查询或后继轮 |
-| `compileVerificationPlan` | `src/core/work-graph/evidence/verification-plan.ts:61` | 纯编译：每个必需要求绑定可覆盖的冻结能力，缺覆盖记 `uncovered`，空必需集 `invalid`，不接受调用方 digest/coverage/PASS；第 9 片先按 `taskRef.taskId` 过滤 obligation，审阅项只盖本 Task 的 pair | open/reverify 冻结检查计划 |
+| `compileVerificationPlan` | `src/core/work-graph/evidence/verification-plan.ts:89` | 纯编译：每个必需要求绑定可覆盖的冻结能力，缺覆盖记 `uncovered`，空必需集 `invalid`，不接受调用方 digest/coverage/PASS；第 9 片先按 `taskRef.taskId` 过滤 obligation，审阅项只盖本 Task 的 pair；见证项带 `requiredReadPaths` | open/reverify 冻结检查计划 |
+| `pathVerdictsOf` | `src/core/work-graph/evidence/witness-path-verdicts.ts:15` | 必须读取路径的三态判定（`present`/`absent`/`unknown`）：不安全路径、glob 与未知读取集都记 `unknown`，绝不判 `absent` | G2 的见证 owner 在 `recordWitness` 里算 `WitnessCheckInput.paths`；不要另写路径判定 |
 | `evidenceApplicabilityWithBasis`、`selectEffectiveEvidenceSet` | `src/core/work-graph/tasks/evidence-coverage.ts:76`、`src/core/work-graph/tasks/evidence-coverage.ts:76` | 证据适用性判定与有效证据的单一纯折叠 | finalize 与完成读取；不要在本层重算 applicability |
 | `sameRef` **正本** | `src/core/work-graph/state/ref-equality.ts:2` | 引用的结构判等；不是 `sameJson` 的等价物 | 证据 commit 组装；执行入口的 `sameJson as sameRef` 转出已删除，F 行副本直接用 `src/contracts/fingerprint.ts:7` 的 `sameJson` |
 | `mergeGuards`、`mapStoreFailure` | `src/core/work-graph/persistence/record-guards.ts:12`、`src/core/work-graph/tasks/execution-entry-service.ts:156` | 合并一个 commit 的读 guards、把执行写失败映射成 `CoreRejection` | 证据 commit 组装（M1-27、M1-30、M1-32） |

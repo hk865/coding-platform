@@ -23,7 +23,7 @@
 - `module-overlap-gate.ts` — `ModuleOverlapGateRef`：模块重叠闸门（记录 4）的 ref；值类型和唯一的字段表在 `core/work-graph/persistence/module-overlap-gate-codecs.ts`。
 - `pick-basis.ts` — `PickBasisV1`：推进结果的依据（`rank`、`incomplete`、`candidates`），只在返回值里，不存记录；`rank` 没有 `hint`。
 - `task-graph.ts` — 任务图读 DTO：`TaskRow`、`TaskGraph` 和它们带的可选规划/未知调用投影（唯一正本；WorkGraph 的 `model/plan-contracts.ts` 转出，界面从这里读）。
-- `plan.ts` — 计划/任务 DAG：`RuntimeTask`、`TaskInputRequirementV2`、`PlanRevisionSnapshot`、`planValidationError`、`revisionAssignments`、`PLANNED_FILES_MAX`；任务可带计划文件 `plannedFiles`（提示）。
+- `plan.ts` — 计划/任务 DAG：`RuntimeTask`、`TaskInputRequirementV2`、`PlanRevisionSnapshot`、`planValidationError`、`revisionAssignments`、`PLANNED_FILES_MAX`；任务可带计划文件 `plannedFiles`（提示）；`VerificationRequirement` 可带见证用的 `requiredReadPaths`（工作区相对的源文件路径）。
 - `plan-deviation.ts` — 偏差纯表（§7.5、§13.2.4）：`DeviationKindV1`（growth/lines/budget/stop）、`DeviationV1`（含改动文件与 `minTokenBudgetExclusive` 两个只读事实）、`DeviationInputV1`/`DeviationTaskFactsV1`（任务级聚合读数与触发依据）、`deviationsOfGoal`、`deviationRequestId`、`deviationText`、`lineOverrun` 与提醒描述 `taskRemindersOfGoal`/`TaskReminderV1`。Workflow 的选择和 WorkGraph 的卡来源共用这一份；不读 I/O。
 - `plan-loop-limits.ts` — 规划环的上限（§10.3）：`TaskSizeClassV1`/`PlanLoopLimitsV1`、按任务档位的提醒与两倍 token、任务行倍数和两个阶段预算；`DEFAULT_PLAN_LOOP_LIMITS` 是纯默认值，`GROWTH_UNIT_TOKENS`（64）与 `growthUnitsOf`（token ÷ 64，不取整）是 §10.5 的增长单位换算。生效值由 Host 设置层发布。
 - `plan-review.ts` — 计划审阅回答（§6.1.3、§6.2、§6.3.3）：固定的 verdict/finding/form 形状、`planReviewAnswerText`（工具写出的唯一 JSON 正文，`findings` 总是写出）与 `parsePlanReviewAnswer`（唯一严格解析：一个 JSON 对象、无多余成员、`fix` 至少一条意见）。候选环把解析不了的回答当 `terminal_invalid`。`PlanDiagnosisFindingV1.code` 只剩 `no_registered_check`（审阅要求由 `review-packet` 项覆盖）。
@@ -74,7 +74,7 @@
 - `reviewer-work.ts` — 独立审查聚合：`TaskReviewProtocolRef`、`ReviewWorkRef`、绑定与 `ReviewWorkSnapshot`。
 - `verification-context.ts` — 验证轮来源证明、来源端口、范围与材料身份。
 - `verification-import.ts` — `VerificationScope`：验证的目标范围。
-- `verification.ts` — 检查/验证轮/风险契约与 `CHANGE_SCOPE_MAX_FILES`、`ROUND_CHECK_INCOMPLETE_CAUSES` 等常量。
+- `verification.ts` — 检查/验证轮/风险契约与 `CHANGE_SCOPE_MAX_FILES`、`ROUND_CHECK_INCOMPLETE_CAUSES` 等常量；检查种类含见证 `witness`，保留 id 的唯一正本 `PLATFORM_WITNESS_CHECK_ID` 与判定 `isPlatformReservedCheckId`，计划的 `requiredReadPaths` 与七个见证三态类型（`WitnessRunState`、`WitnessReport`、`WitnessReadSet`、`WitnessPathVerdict`、`WitnessFacts`、`WitnessCheckInput`、`WitnessCheckResult`）。
 
 ### 材料与架构
 做架构目录/观察/源码快照、artifact、材料授权与路径归属的去这组。
@@ -225,8 +225,8 @@
 | `headerExtrasOf` | `src/contracts/note.ts:359` | link/flow 注记 header 的可选扩展片段（到/从锚点），供渲染用 | 渲染 link 或 flow 注记时；不要另写一份 header 拼接 |
 | `isSemanticRelation` | `src/contracts/note.ts:117` | 值是不是六种联系关系之一 | 写注记的 link 门和注记文件的解析都用它；不要另写一份关系表 |
 | `isLinkEvidenceRole` | `src/contracts/note.ts:132` | 值是不是七种证据角色之一 | 写注记的 link 门和注记文件的解析都用它；按关系的角色表在 `link-evidence.ts` |
-| `planValidationError` | `src/contracts/plan.ts:316` | 构造 `{path,code,message}` 计划校验错误。 | 计划校验累积错误时。 |
-| `revisionAssignments` | `src/contracts/plan.ts:322` | 取计划 assignment；显式空数组覆盖 origin。 | 读取已接受计划的分配。 |
+| `planValidationError` | `src/contracts/plan.ts:318` | 构造 `{path,code,message}` 计划校验错误。 | 计划校验累积错误时。 |
+| `revisionAssignments` | `src/contracts/plan.ts:324` | 取计划 assignment；显式空数组覆盖 origin。 | 读取已接受计划的分配。 |
 | `DEFAULT_PLAN_LOOP_LIMITS`、`GROWTH_UNIT_TOKENS`、`growthUnitsOf` | `src/contracts/plan-loop-limits.ts:31`、`src/contracts/plan-loop-limits.ts:28`、`src/contracts/plan-loop-limits.ts:31` | 规划环的纯默认上限（按任务档位的提醒/两倍 token、行倍数、两个阶段预算）与增长单位换算（token ÷ 64，不取整）。 | 计划环读阶段预算、显示增长单位；生效值由 Host 设置层发布，不要另写默认值。 |
 | `execReviewAnswerText`、`parseExecReviewAnswer` | `src/contracts/exec-review.ts:24`、`src/contracts/exec-review.ts:36` | 执行结果审阅回答的唯一正文构造与唯一严格解析（恰五个成员，`basis` ≤4096 字节，整段 ≤16 KiB）。 | `submit_exec_review` 写正文、短回复和之后的入账读回审阅结论；不要另写解析。 |
 | `MAX_ANSWER_BYTES` | `src/contracts/query-job.ts:79` | 16 KiB 回答上限的唯一正本。 | Query 观察、提交工具和执行审阅解析量回答大小时；不要另写常量。 |
@@ -264,8 +264,9 @@
 | `WORKFLOW_AUTOMATION_ACTOR`、`GOAL_FAN_OUT_ACTOR`、`SESSION_ARCHIVE_AUTOMATION_ACTOR`、`PLATFORM_AUTOMATION_ACTORS`、`REWORK_FAILURE_CLASSES`、`DEFAULT_AUTO_REWORK_LIMIT`、`MAX_AUTO_REWORK_LIMIT`、`DEFAULT_TASK_AUTOMATION_POLICY`、`TASK_REWORK_REASON_MAX_CHARS`、`TASK_REWORK_REFUSAL_CODES` | `src/contracts/task-requeue.ts:227` | 自动化 actor 闭集、返工失败分类、自动返工上限与默认策略。 | 归类 actor、校验返工与拒绝原因。 |
 | `UNKNOWN_CALL_APPROVED_METHODS_MAX_BYTES`、`UNKNOWN_CALL_REVIEW_T02_REASON` | `src/contracts/unknown-call-review.ts:195`、`src/contracts/unknown-call-review.ts:195` | 已批准方法文本上限与 T02 原因文本。 | 生成/展示审查记录时。 |
 | `CHANGE_SCOPE_MAX_FILES`、`ROUND_CHECK_INCOMPLETE_CAUSES`、`INTERRUPTED_CHECK_GAP_CODE`、`ROUND_CHAIN_MAX` | `src/contracts/verification.ts:159` | 变更范围上限、未完成原因闭集、中断缺口码与轮链上限。 | 验证轮校验。 |
-| `compileVerificationCoverage` | `src/contracts/verification.ts:324` | 必需义务覆盖的纯编译：按已注册检查能力的覆盖顺序给出检查计划与未覆盖项；第 9 片起 reviewer 要求无条件放进一个 `{checkId:'review-packet', kind:'reviewer', satisfiesKind:'reviewer', satisfactionPath:'review-packet'}` 项（按 pair 去重，永不进 uncovered）。 | 验证计划编译与计划候选诊断共用；不要另写覆盖规则。 |
-| `reviewPacketItemOf` | `src/contracts/verification.ts:314` | 第 9 片：取计划里唯一的 `review-packet` 项（Task 的审阅 pair）；没有审阅要求时为空。 | 状态机的 fold/VR-16、evidence 的审阅事实、轮次读的审阅显示都用它找审阅项；不要再写 `checks.find(satisfactionPath === 'review-packet')`。 |
+| `PLATFORM_WITNESS_CHECK_ID`、`isPlatformReservedCheckId` | `src/contracts/verification.ts:299`、`src/contracts/verification.ts:302` | 保留的平台见证检查 id（`platform:witness`）的唯一正本，以及它唯一的比较入口；Host 两道闸各调一次，别处不得再写这个字面量。 | 校验 Host 注册/提议的检查 id 时；不要另写字面量或第二份谓词。 |
+| `compileVerificationCoverage` | `src/contracts/verification.ts:334` | 必需义务覆盖的纯编译：按已注册检查能力的覆盖顺序给出检查计划与未覆盖项；第 9 片起 reviewer 要求无条件放进一个 `{checkId:'review-packet', kind:'reviewer', satisfiesKind:'reviewer', satisfactionPath:'review-packet'}` 项（按 pair 去重，永不进 uncovered）。 | 验证计划编译与计划候选诊断共用；不要另写覆盖规则。 |
+| `reviewPacketItemOf` | `src/contracts/verification.ts:324` | 第 9 片：取计划里唯一的 `review-packet` 项（Task 的审阅 pair）；没有审阅要求时为空。 | 状态机的 fold/VR-16、evidence 的审阅事实、轮次读的审阅显示都用它找审阅项；不要再写 `checks.find(satisfactionPath === 'review-packet')`。 |
 | `CopyInterventionStateV1`、`CopyInterventionCandidateV1` | `src/contracts/goal-copy-retraction.ts:11`、`src/contracts/goal-copy-retraction.ts:11` | 复制取消的候选状态闭集（`withdrawn`/`applied`/`rejected`/`copied`/`delivered`/`not_delivered`）与候选 DTO（消息 ref、版本、状态、可选/可撤回及各自原因）。 | 候选规则与 copy 端口引用候选类型时；不要另写候选形状。 |
 
 ## 内部用
