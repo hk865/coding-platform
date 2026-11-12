@@ -70,8 +70,8 @@
 - `goal-settings-machine.ts` — Goal 设置机器与启动准入、决策依据匹配、Goal 冲突事实（模块说法按模块比，文件只按同一路径比）。
 - `plan-machine.ts` — PlanProposal 机器与 PlanRevision 派生：candidate→accepted 与 Goal 指针同一提交；候选与提案事件带必填可空的 `sourceMessageRef`（干预消息，其他写者为 `null`）。
 - `architecture-proposal-machine.ts` — `ArchitectureProposal` 状态机：写入时 `pending`，之后只改 `state`（`pending → applied | rejected | stale`）与一次进入冻结批的 `batchRef`；内容（pin/ops/moves/reason/proposer/operation ref）不可变，`ARCHITECTURE_PROPOSAL_STATES` 是闭集，`newArchitectureProposalRecord`/`transitionArchitectureProposal` 只复制记录并改 revision/state/batchRef；无存储、时钟或 id。
-- `plan-candidate.ts` — 计划候选的纯决定与机械诊断（§6.1.3、§6.2）：`decidePlanCandidate` 按审阅/修复读与采用策略给出请求审阅、请求修复、采用、出卡或等待（首次匹配即返回，不读存储）；`diagnosePlanCandidate` 用验证计划编译器的同一份 `compileVerificationCoverage` 逐条报 `no_registered_check`/`reviewer_not_supported`，`checks: null` 是覆盖未知、永不采用，`checks: []` 是已配置但没有注册检查。
-- `verification-machine.ts` — VerificationRound / round-check / TaskEvidenceIndex 机器与链、折叠、重验证、证据索引。
+- `plan-candidate.ts` — 计划候选的纯决定与机械诊断（§6.1.3、§6.2）：`decidePlanCandidate` 按审阅/修复读与采用策略给出请求审阅、请求修复、采用、出卡或等待（首次匹配即返回，不读存储）；`diagnosePlanCandidate` 用验证计划编译器的同一份 `compileVerificationCoverage` 逐条报 `no_registered_check`（审阅类要求由 `review-packet` 项覆盖，第 9 片起不再报），`checks: null` 是覆盖未知、永不采用，`checks: []` 是已配置但没有注册检查。
+- `verification-machine.ts` — VerificationRound / round-check / TaskEvidenceIndex 机器与链、折叠、重验证、证据索引。第 9 片加 VR-16 `review_recorded`（`RoundEventHead`、`RoundEvent` 各一臂）：`roundOnReviewRecorded`（`src/core/work-graph/state/verification-machine.ts:1403`）恰四条 effect：`guard_round_unchanged`、`admit_verdict_evidence`（每个 pair 一条、同一个 ref）、`append_task_evidence_index`、`emit_event VerificationReviewEvidenceRecorded`，不写 Round；`pendingRoundChecks` 与 `foldSteps` 跳过 `satisfactionPath:'review-packet'` 项；`roundReviewerEvidenceProblem` 对任何个数回 null（审阅 ref 由 owner 读完事实后归属）。
 - `autonomy-rules.ts` — 自主规则的纯半边：`validateAutonomyRule`（唯一校验：先查 actions/scope 是数组、limits/limits.open 是对象，再查 actions 非空且都是 `RuleActionV1`（否则 `invalid/rule_action_fixed`）、scope 非空、每职责上限不超过项目 `open` 上限（否则 `invalid/rule_limit_over_cap`）、`expiresAt` 是 ISO 时间或 null）、`matchAutonomyRule`（active、未到期、动作在列、每个责任对象在规则 scope 和调用方责任上限内、工具与建成员授权、动作之后的计数不超过规则的每职责上限）、`nextAutonomyRuleSetRevision`；记录与 codec 在 contracts 和 sessions，三个写命令在 `tasks/autonomy-rule-service.ts`。
 - `role-capacity-episode.ts` — 容量 episode 的三个纯函数：`nextCapacityEpisode`（同一项目同一职责的下一个编号）、`capacityEpisodeCloses`（回到上限以下，或上限变了就关）、`closeCapacityEpisode`（revision 加一、写 `closedAt`）；记录格式是 contracts 的 `RoleCapacityEpisodeFormat`。
 - `decision-policy.ts` — 五层动作策略 `decisionActionPolicy`（`DecisionPolicyInputV1` 只在旧入参上做加法，结果是 `DecisionPolicyVerdictV1`）：总是问你的九个动作 → 同一动作已有待答卡 → 匹配到的自主规则（`automatic_notice`）→ 出厂默认（四个角色线动作与 `create_member`/`short_change_duty` 有一个受影响目标是每步问就出卡，否则人做直接做、别的调用方发通知；`module_maintainer` 照旧；其余旧动作照旧表）→ 越界出卡；另有用户消息准入、自动化确认原因、gate 覆盖与修复判定。
@@ -189,7 +189,7 @@
 | `coldStartOperationRef`、`newColdStartAction`、`coldStartPhaseProblem`、`advanceColdStartPhase`、`ColdStartActionV1` | `src/core/work-graph/state/cold-start.ts:36`、`:36`、`:43`、`:54`、`:16` | 纯：项目唯一冷启动操作的派生 ref、新动作、相位核对、一次推进一个相位 | 冷启动 owner、批窗口、探索轮的注记来源读都用这一份；不要另拼 `cold_start:` ref 或另写相位推进 |
 | `roleExplorationExecution`、`roleExplorationQuestion`、`hostSystemActionRequest`、`roleExplorationBindingOf` | `src/core/work-graph/state/role-exploration.ts:43`、`:27`、`:37`、`:43` | 纯：探索轮唯一的无目标执行臂、“请动手”问句、Host 系统 `action_request` 判定、探索轮可信绑定的核对 | 冷启动提交探索 Query 和发消息、规划来源和探索轮的注记来源核对 |
 | `sessionRoleFactsRef` | `src/core/work-graph/state/role-facts.ts:31` | Session 角色事实记录的 ref | 读或写 `SessionRoleFacts` 时用它；不要手写这个 refKey |
-| `decidePlanCandidate`、`diagnosePlanCandidate` | `src/core/work-graph/state/plan-candidate.ts:126`、`src/core/work-graph/state/plan-candidate.ts:126` | 计划候选的唯一决定表（请求审阅/请求修复/采用/出卡/等待，首次匹配即返回）与机械诊断（必需验证要求必须有已注册检查覆盖；`checks: null` 是覆盖未知、`checks: []` 是全部诊断） | 规划环的候选推进与出卡；不要另写决定顺序或覆盖规则 |
+| `decidePlanCandidate`、`diagnosePlanCandidate` | `src/core/work-graph/state/plan-candidate.ts:124`、`src/core/work-graph/state/plan-candidate.ts:124` | 计划候选的唯一决定表（请求审阅/请求修复/采用/出卡/等待，首次匹配即返回）与机械诊断（必需验证要求必须有已注册检查覆盖；`checks: null` 是覆盖未知、`checks: []` 是全部诊断） | 规划环的候选推进与出卡；不要另写决定顺序或覆盖规则 |
 | `transitionNoticeSettings` | `src/core/work-graph/state/notice-settings-machine.ts:45` | 通知已读位置迁移；无前进更新则不写记录 | 标记通知已读 |
 | `newCandidateProposal`、`CandidatePlanProposal` | `src/core/work-graph/state/plan-machine.ts:132`、`src/core/work-graph/state/plan-machine.ts:92` | 建候选计划提案；候选带 `catalogPin`（只在创建时写，不受保护，采用重核不比较），并在它之后写必填可空的 `sourceMessageRef`（干预消息，其他写者为 `null`） | 提交计划草案 |
 | `derivePlanProposalReadVerdict` | `src/core/work-graph/state/plan-machine.ts:197` | 提案的读取结论（含 Goal 状态） | 读计划提案 |
@@ -285,20 +285,21 @@
 | `admitUnknownCallReview` | `src/core/work-graph/state/unknown-call-review.ts:217` | 审查准入 | 开审前 |
 | `UNKNOWN_CALL_REVIEW_MAX_ROUNDS` | `src/core/work-graph/state/unknown-call-review.ts:39` | 审查最多轮数 | 校验轮数 |
 | `ARCHITECTURE_PROPOSAL_STATES`、`newArchitectureProposalRecord`、`transitionArchitectureProposal` | `src/core/work-graph/state/architecture-proposal-machine.ts:45`、`:34`、`:45` | 提案状态闭集与记录的唯一构造/迁移：进入批或到终态，只改 state/batchRef 与 revision，内容不可变 | 提案 owner 的写入、冻结与答复提交 |
-| `transitionRound` | `src/core/work-graph/state/verification-machine.ts:1352` | 验证轮主迁移（VR-01..15） | 轮生命周期写入 |
-| `transitionCheck` | `src/core/work-graph/state/verification-machine.ts:1603` | 单项检查迁移 | 检查开始/结果/中断 |
-| `buildOpenedRound` | `src/core/work-graph/state/verification-machine.ts:909` | 建已开启的轮 | 开轮提交 |
-| `buildSuccessorRound` | `src/core/work-graph/state/verification-machine.ts:629` | 建后继轮 | 重验证 |
-| `finalizeRoundOutcome` | `src/core/work-graph/state/verification-machine.ts:806` | 折叠检查并定轮结果 | 轮收尾 |
-| `foldVerdictChecks` | `src/core/work-graph/state/verification-machine.ts:786` | 按验证计划折叠检查判定 | 轮收尾/展示 |
-| `roundChainHead` | `src/core/work-graph/state/verification-machine.ts:477` | 一轮链的头（最新/最高轮次） | 链相关守卫 |
-| `roundTaskSignal` | `src/core/work-graph/state/verification-machine.ts:704` | 轮链给 Task 相位的信号 | Task 相位投影 |
-| `reverifyAdmissionProblem` | `src/core/work-graph/state/verification-machine.ts:1413` | 能否开重验证轮 | 重验证前 |
-| `reverifyExemption` | `src/core/work-graph/state/verification-machine.ts:550` | 重验证的豁免判定 | 自动重做计数 |
-| `roundWriteAdmission` | `src/core/work-graph/state/verification-machine.ts:1078` | 轮写入的通用准入 | 任何轮写入 |
-| `taskEvidenceIndexRefOf` | `src/core/work-graph/state/verification-machine.ts:1028` | 轮对应的证据索引 ref | 追加证据 |
-| `displayRoundStatus` | `src/core/work-graph/state/verification-machine.ts:430` | 展示用轮状态 | 读模型 |
-| `isFinalizedNonPass` | `src/core/work-graph/state/verification-machine.ts:102` | 已定稿且非 PASS | 失败事实/重验证 |
+| `transitionRound` | `src/core/work-graph/state/verification-machine.ts:1387` | 验证轮主迁移（VR-01..16）；`round_finalized` 的 ref 数 = admissions + reviewerEvidenceCount（命令 ref 在前、审阅 ref 在后） | 轮生命周期写入 |
+| `transitionCheck` | `src/core/work-graph/state/verification-machine.ts:1664` | 单项检查迁移 | 检查开始/结果/中断 |
+| `buildOpenedRound` | `src/core/work-graph/state/verification-machine.ts:935` | 建已开启的轮 | 开轮提交 |
+| `buildSuccessorRound` | `src/core/work-graph/state/verification-machine.ts:639` | 建后继轮 | 重验证 |
+| `finalizeRoundOutcome` | `src/core/work-graph/state/verification-machine.ts:821` | 折叠检查并定轮结果；第 9 片把 `RoundFoldFactsV1.review`（outcome/gaps/refs）当成一个不进 admissions 的候选，它的 gap 跟在检查 gap 后面 | 轮收尾 |
+| `foldVerdictChecks` | `src/core/work-graph/state/verification-machine.ts:798` | 按验证计划折叠检查判定 | 轮收尾/展示 |
+| `roundChainHead` | `src/core/work-graph/state/verification-machine.ts:487` | 一轮链的头（最新/最高轮次） | 链相关守卫 |
+| `roundTaskSignal` | `src/core/work-graph/state/verification-machine.ts:714` | 轮链给 Task 相位的信号 | Task 相位投影 |
+| `reverifyAdmissionProblem` | `src/core/work-graph/state/verification-machine.ts:1473` | 能否开重验证轮 | 重验证前 |
+| `reverifyExemption` | `src/core/work-graph/state/verification-machine.ts:560` | 重验证的豁免判定 | 自动重做计数 |
+| `roundWriteAdmission` | `src/core/work-graph/state/verification-machine.ts:1104` | 轮写入的通用准入；VR-16 `review_recorded`：无轮 invalid、已 finalize busy、非执行者 forbidden、pin 旧 revision_conflict | 任何轮写入 |
+| `roundSubjectRunProblem` | `src/core/work-graph/state/verification-machine.ts:1240` | VD-3：被审 Run 正式以 `completed` 结束且对账缺省或 `done` | 开轮守卫；VR-16 的终态读复用（不为 null 就记 INCONCLUSIVE） |
+| `taskEvidenceIndexRefOf` | `src/core/work-graph/state/verification-machine.ts:1054` | 轮对应的证据索引 ref | 追加证据 |
+| `displayRoundStatus` | `src/core/work-graph/state/verification-machine.ts:440` | 展示用轮状态 | 读模型 |
+| `isFinalizedNonPass` | `src/core/work-graph/state/verification-machine.ts:103` | 已定稿且非 PASS | 失败事实/重验证 |
 | `copyInterventionCandidateOf`、`CopyInterventionFactsV1` | `src/core/work-graph/state/copy-intervention.ts:16`、`src/core/work-graph/state/copy-intervention.ts:6` | 复制取消的纯候选规则与事实形状：按书的表序（先排除，再投递/未投递）判一条消息是否候选、可选/可撤回及原因；`null` 不是候选 | 分页读可复制干预时；不要另写状态判定 |
 
 ## 内部用

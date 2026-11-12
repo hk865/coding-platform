@@ -331,7 +331,7 @@ export async function createR3eEvidenceFixture(
             capture(root) { sourceCaptures += 1; return verificationSource.capture(root); },
         };
         const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(b2.base.records, workspaceHost),
-            records: b2.base.records, materials, executions,
+            records: b2.base.records, commitIdentities: b2.base.commitIdentities, materials, executions,
             workspaceHost, source: countedSource, configuration, now, newId,
         });
         const runner = createRegisteredCheckRunner({ evidence, workspaceHost, kernel, now });

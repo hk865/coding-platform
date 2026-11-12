@@ -653,7 +653,8 @@ async function createFixture(kind: 'memory' | 'sqlite', options: FixtureOptions 
   const evidenceIds = ['ra', 'ra-event', variant.roundBId, `${variant.roundBId}-event`];
   let evidenceSeq = 0;
   const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(rawRecords, workspaceHost),
-    records: rawRecords, materials: evidenceMaterials, executions: createRunStateReader({ records: rawRecords }),
+    records: rawRecords, commitIdentities: base.commitIdentities, materials: evidenceMaterials,
+    executions: createRunStateReader({ records: rawRecords }),
     workspaceHost, source: new VerificationWorkspaceReader(), configuration, now,
     newId: () => evidenceIds.shift() ?? `gr-evidence-${++evidenceSeq}`,
   });

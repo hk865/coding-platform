@@ -73,7 +73,8 @@ export function compileVerificationPlan(input: VerificationPlanCompileInput): Ve
     }
 
     const coverage = compileVerificationCoverage({
-        obligations: plan.obligations,
+        // Slice 9: only the obligations of this Task, so the one review item covers exactly this Task's pairs.
+        obligations: plan.obligations.filter(obligation => obligation.taskIds.includes(input.taskRef.taskId)),
         requirementKinds: input.policy.requirementKinds,
         checks: input.checkCapabilities,
     });

@@ -14,16 +14,18 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type { RunRef, RunSnapshot, TaskTriple } from '../../../contracts/dispatch.js';
-import type { EvidenceCoverageV1, EvidenceOutcome } from '../../../contracts/evidence.js';
+import type { EvidenceCoverageV1, EvidenceOutcome, EvidenceSnapshot } from '../../../contracts/evidence.js';
 import { canonicalOf, sameJson } from '../../../contracts/fingerprint.js';
 import type { PlanRevisionRef, PlanRevisionSnapshot, RuntimeTask } from '../../../contracts/plan.js';
 import type {
   CheckHostActor, RoundCheckIncompleteCause, RoundCheckSnapshot, RoundReverifyFactV1, RoundSnapshot,
   VerificationRoundRef,
 } from '../../../contracts/verification.js';
+import { reviewPacketItemOf } from '../../../contracts/verification.js';
 import { isRecord } from '../../../contracts/validation/common.js';
 import type { EvidencePort } from '../model/evidence-contracts.js';
 import { decodeRun } from '../persistence/run-record-codecs.js';
+import { decodeEvidenceSnapshot } from '../persistence/evidence-record-codecs.js';
 import { runRefProblem, taskTripleProblem } from '../persistence/rework-codecs.js';
 import { displayRoundStatus, type RoundDisplayStatus } from '../state/verification-machine.js';
 import { readBatch, readGoal, readPlan } from '../tasks/plan-readers.js';
@@ -245,16 +247,54 @@ function requirementStateOf(checks: readonly RoundCheckSnapshot[]): Verification
   return 'missing';
 }
 
-function deliveryOf(plan: PlanRevisionSnapshot, subject: TaskTriple, taskKind: 'work' | 'gate', round: RoundSnapshot):
-VerificationRoundReadV1['delivery'] {
+/**
+ * Slice 9 (lead ruling s9g2 #6): a requirement the round's `review-packet` item covers is answered by the booked
+ * review, not by a check: open → pending; finalized → the review Evidence's outcome (FAIL beats a gap on the pair),
+ * none booked → missing.
+ */
+function reviewStateOf(round: RoundSnapshot, coverage: EvidenceCoverageV1, reviews: readonly EvidenceSnapshot[]):
+VerificationRequirementState {
+  if (round.status === 'open') return 'pending';
+  const review = reviews.find((snapshot) => snapshot.evidence.coverage.some((entry) => sameJson(entry, coverage)));
+  if (review === undefined) return 'missing';
+  if (review.evidence.outcome === 'FAIL') return 'fail';
+  const gap = round.gaps.some((entry) => entry.coverage !== undefined && sameJson(entry.coverage, coverage));
+  return review.evidence.outcome === 'INCONCLUSIVE' || gap ? 'inconclusive' : 'pass';
+}
+
+/** The finalized round's booked review Evidence (its refs whose Evidence names no check); none for an open round. */
+async function readRoundReviews(records: Records, round: RoundSnapshot):
+Promise<{ ok: true; reviews: EvidenceSnapshot[] } | { ok: false; rejection: CoreRejection }> {
+  if (round.status === 'open' || reviewPacketItemOf(round.verificationPlan) === undefined) {
+    return { ok: true, reviews: [] };
+  }
+  const keys = round.evidenceRefs.map((ref) => canonicalOf(ref)).filter((key): key is string => key !== null);
+  const read = await readBatch(records, keys);
+  if (read.status !== 'ready') return { ok: false, rejection: rejected('unavailable', 'the round Evidence could not be read') };
+  const reviews: EvidenceSnapshot[] = [];
+  for (const key of keys) {
+    const record = read.batch.present.get(key);
+    const decoded = record === undefined ? null : decodeEvidenceSnapshot(record);
+    if (decoded === null || decoded.status !== 'decoded') return { ok: false, rejection: rejected('unavailable', 'a round Evidence is missing or damaged') };
+    if (decoded.value.evidence.source.checkId === null) reviews.push(decoded.value);
+  }
+  return { ok: true, reviews };
+}
+
+function deliveryOf(plan: PlanRevisionSnapshot, subject: TaskTriple, taskKind: 'work' | 'gate', round: RoundSnapshot,
+  reviews: readonly EvidenceSnapshot[]): VerificationRoundReadV1['delivery'] {
+  const reviewItem = reviewPacketItemOf(round.verificationPlan);
+  // Slice 9: a round belongs to one Task (`compileVerificationPlan` keeps its Task's obligations), so only those
+  // have requirements here; every other obligation stays listed with `appliesToSelectedTask: false`.
+  const applicable = plan.obligations.filter((obligation) => obligation.taskIds.includes(subject.taskId));
   const obligations = plan.obligations.map((obligation) => ({
     obligationId: obligation.obligationId,
     title: obligation.title,
     requirementLevel: obligation.requirementLevel,
     taskIds: [...obligation.taskIds],
-    appliesToSelectedTask: obligation.taskIds.includes(subject.taskId),
+    appliesToSelectedTask: applicable.includes(obligation),
   }));
-  const requirements = plan.obligations.flatMap((obligation) =>
+  const requirements = applicable.flatMap((obligation) =>
     obligation.verificationRequirements.map((requirement) => {
       const coverage = { obligationId: obligation.obligationId, requirementId: requirement.requirementId };
       const covering = round.checks.filter((check) => check.coverage.some((entry) => sameJson(entry, coverage)));
@@ -265,7 +305,8 @@ VerificationRoundReadV1['delivery'] {
         requirementLevel: requirement.requirementLevel,
         kind: requirement.kind,
         description: requirement.description,
-        state: requirementStateOf(covering),
+        state: reviewItem !== undefined && reviewItem.coverage.some((entry) => sameJson(entry, coverage))
+          ? reviewStateOf(round, coverage, reviews) : requirementStateOf(covering),
         checks: covering.map((check) => ({
           roundOrdinal: round.chain.ordinal,
           roundRef: round.ref,
@@ -278,7 +319,7 @@ VerificationRoundReadV1['delivery'] {
         })),
       };
     }));
-  const summary = { obligations: obligations.length, requirements: requirements.length, pass: 0, fail: 0,
+  const summary = { obligations: applicable.length, requirements: requirements.length, pass: 0, fail: 0,
     inconclusive: 0, pending: 0, missing: 0, rounds: 0 };
   for (const requirement of requirements) summary[requirement.state] += 1;
   return { planRef: plan.ref, taskRef: subject, taskKind, obligations, requirements, summary };
@@ -371,7 +412,9 @@ export function createVerificationRoundRead(deps: VerificationRoundReadDependenc
         return rejected('unavailable', 'the requested round is not in its indexed chain');
       }
 
-      const delivery = deliveryOf(plan, subject, taskKind, selected);
+      const reviews = await readRoundReviews(deps.records, selected);
+      if (!reviews.ok) return reviews.rejection;
+      const delivery = deliveryOf(plan, subject, taskKind, selected, reviews.reviews);
       return { status: 'ready', value: {
         roundRef: selected.ref,
         revision: selected.revision,

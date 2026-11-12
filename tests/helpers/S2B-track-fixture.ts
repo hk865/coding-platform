@@ -195,6 +195,7 @@ export async function openS2BTrackFixture(kind: S2BTrackFixtureKind = 'memory'):
   };
   const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(baseRecords),
     records: baseRecords,
+    commitIdentities: b2.base.commitIdentities,
     executions: runReads,
     materials: createMaterialService({ bodies: b2.bodies, authority: materialAuthority, now }),
     workspaceHost: {

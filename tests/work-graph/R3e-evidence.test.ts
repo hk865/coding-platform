@@ -279,6 +279,7 @@ it('freezes an open round configuration and resolves a fresh round from the curr
   let sequence = 0;
   const scoped = createEvidenceService({ knowledge: knowledgeLinesOver(fixture.records, fixture.workspaceHost),
     records: fixture.records,
+    commitIdentities: fixture.b2.base.commitIdentities,
     materials: fixture.materials,
     executions: createRunStateReader({ records: fixture.records }),
     workspaceHost: fixture.workspaceHost,

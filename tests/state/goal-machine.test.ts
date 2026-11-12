@@ -530,7 +530,7 @@ describe('GOAL-07/08 goal_completed guards (completion.ts:481-614)', () => {
       'required obligation ob-1 is not formally satisfied'] }, requiresReviewer: true });
     expectResult(transitionGoal(state, completeEvent(state), ctxFor(state, { completion: facts })),
       no('guard_failed', 'incomplete', 'Goal g-1 is not complete: required task t-build is not formally satisfied; '
-        + 'required obligation ob-1 is not formally satisfied; a required independent review requirement has no formal producer yet'));
+        + 'required obligation ob-1 is not formally satisfied; a required independent review is a hint, not a hard gate'));
   });
 
   it('goalCompletionProblem is the transition\'s refusal, so the owner can stop after each read', () => {

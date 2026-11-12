@@ -225,7 +225,7 @@ export async function openS2BTimelineFixture(kind: ClaimFixtureKind = 'memory'):
       cwd: '.', timeoutMs: 1000, taskIds: 'all' }],
   };
   const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(baseRecords),
-    records: baseRecords, executions: runReads, materials,
+    records: baseRecords, commitIdentities: b2.base.commitIdentities, executions: runReads, materials,
     workspaceHost: {
       async resolveRoot() { return { status: 'ready' as const, value: { root: b2.base.directory, workspaceRevision: 1 } }; },
       async authorize() { return { status: 'ready' as const, value: { subjectKey: 's2b-timeline-host',

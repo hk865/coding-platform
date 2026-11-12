@@ -38,11 +38,14 @@ import { messageOf } from '../../../contracts/error-message.js';
 import type {
     ToolCommitLookup, ToolCommitLookupInput, ToolCommitLookupResult,
 } from '../../../contracts/unknown-call-review.js';
-import type { ArtifactRef } from '../../../contracts/artifact.js';
+import { artifactBodyDigest, artifactBodySize, type ArtifactRef } from '../../../contracts/artifact.js';
 import type {
-    EffectivityAnchorV1, EvidenceOutcome, EvidenceRef, EvidenceSnapshot, EvidenceV1,
+    EffectivityAnchorV1, EvidenceCoverageV1, EvidenceOutcome, EvidenceRef, EvidenceSnapshot, EvidenceV1,
 } from '../../../contracts/evidence.js';
-import { EVIDENCE_SUMMARY_MAX_BYTES } from '../../../contracts/evidence.js';
+import { EVIDENCE_SUMMARY_MAX_BYTES, requirementKeyOf } from '../../../contracts/evidence.js';
+import { parseExecReviewAnswer, type ExecReviewVerdictV1 } from '../../../contracts/exec-review.js';
+import { systemRoundMessageRef, systemRoundRequestId } from '../../../contracts/plan-round.js';
+import { interventionPlanningQueryRefs } from '../../../contracts/query-job.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import {
     MAX_NEW_BASIS_INPUT_REFS, REPORT_CONTENT_TYPE, type NewBasisInputRefV1, type SourceStampV1,
@@ -58,6 +61,7 @@ import type {
     CheckCapabilityV1, CheckExecutionTicket, CheckProcessObservation, RoundCheckSnapshot, RoundSnapshot,
     TrustedCheckConfiguration, VerificationRoundRef,
 } from '../../../contracts/verification.js';
+import { reviewPacketItemOf } from '../../../contracts/verification.js';
 import type {
     VerificationRoundMaterialIdentity, VerificationRoundSourcePort, VerificationRoundSourceResult,
 } from '../../../contracts/verification-context.js';
@@ -67,8 +71,8 @@ import type { ReworkRequestRef } from '../../../contracts/rework-request.js';
 import { rejected, rejectedWithCurrent } from '../../../contracts/core/rejections.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type {
-    EncodedDomainEvent, EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreCommitReceipt,
-    UniqueClaimChange,
+    EncodedDomainEvent, EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordCommitIdentityPort, RecordGuard,
+    StoreCommitReceipt, UniqueClaimChange,
 } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { WorkspaceHostBindings } from '../../workspace/access.js';
@@ -77,6 +81,8 @@ import type { MaterialPort } from '../model/material-contracts.js';
 import { architectureBaselineDigest, readArchitectureBaselineSnapshot } from '../architecture/catalog-record-codecs.js';
 import { repairBindingDigest } from '../architecture/repair-ops.js';
 import { readAllHeads } from '../notes/note-base-reader.js';
+import { lookupCommittedReceiptByIdentity } from '../persistence/receipt-lookup.js';
+import { execReviewPacketOfRound, execReviewPacketOfText } from '../tasks/exec-review-packet.js';
 import { overlayFileKnowledge } from '../notes/note-knowledge.js';
 import type { KnowledgeLines } from '../model/line-knowledge.js';
 import { S4_NOTE_BY_STAGED_RUN_LOOKUP } from '../persistence/note-record-codecs.js';
@@ -114,7 +120,7 @@ import {
     checkEventAdmission, finalizeRoundOutcome, foldVerdictChecks, frozenBindingProblem, nextTaskEvidenceIndex, outcomeFor,
     reverifyAdmissionProblem, reverifyCapRefusal, reverifyExemption, reverifyFailureClass, successorAutoCount,
     roundActivityProblem, roundChainHead, roundGoalActivityProblem, roundOpenBasisProblem, roundOpenChainProblem,
-    roundOpenChecksProblem, roundOpenPointerProblem, roundOpenSubjectProblem, roundReviewerEvidenceProblem,
+    roundOpenChecksProblem, roundOpenPointerProblem, roundOpenSubjectProblem, roundSubjectRunProblem,
     roundSubjectActivityProblem, roundWriteAdmission, taskEvidenceIndexRefOf, transitionCheck, transitionRound,
     type CheckEvent, type RoundActivityFactsV1, type CheckVerdictDecisionV1, type RoundChainHeadV1, type RoundFoldFactsV1, type RoundGuardContext,
     type RoundOpenFactsV1, type RoundReverifyFactsV1, type RoundSubjectRelationV1, type RoundSuccessorV1, type SuccessorRoundBuildV1,
@@ -128,8 +134,8 @@ import {
     VERIFICATION_CHECK_INTERRUPTED_EVENT_TYPE, VERIFICATION_CHECK_RESULT_RECORDED_EVENT_TYPE,
     VERIFICATION_ROUND_BY_TASK_LOOKUP, VERIFICATION_ROUND_FINALIZED_EVENT_TYPE,
     VERIFICATION_ROUND_OPENED_EVENT_TYPE, VERIFICATION_ROUND_ORIGINAL_LOOKUP, VERIFICATION_ROUND_CHAIN_LOOKUP_LIMIT,
-    VERIFICATION_ROUND_REVERIFIED_EVENT_TYPE,
-    checkObservationProblem, decodeVerificationRoundSnapshot,
+    VERIFICATION_ROUND_REVERIFIED_EVENT_TYPE, VERIFICATION_REVIEW_EVIDENCE_RECORDED_EVENT_TYPE,
+    checkObservationProblem, decodeEvidenceSnapshot, decodeVerificationRoundSnapshot,
     encodeEvidenceSnapshot, encodeTaskEvidenceIndexSnapshot, encodeVerificationRoundEvent,
     encodeVerificationRoundSnapshot, verificationRoundEventFromEvent, decodeTaskEvidenceIndexSnapshot,
     type VerificationRoundEvent,
@@ -137,9 +143,10 @@ import {
 import {
     decodeNoticeOrigin, type NoticeOriginWireV1,
 } from '../persistence/decision-record-codecs.js';
-import type {
-    AbandonCheckInput, EvidencePort, FinalizedChecks, InterruptCheckInput,
-    OriginalVerificationQuery, ReverifyOutcomeV1, ReverifyRoundInput, RoundChainHeadQuery,
+import {
+    NO_ACCEPTED_ANSWER, type AbandonCheckInput, type EvidencePort, type FinalizedChecks, type InterruptCheckInput,
+    type OriginalVerificationQuery, type RecordReviewEvidenceInputV1, type ReverifyOutcomeV1, type ReverifyRoundInput,
+    type ReviewQueryReads, type ReviewSessionDuty, type RoundChainHeadQuery,
 } from '../model/evidence-contracts.js';
 import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
 import {
@@ -175,6 +182,34 @@ function digestOf(value: unknown): string { return sha256Hex(canonicalJson(value
 function identityKeyOf(prefix: string, actor: Pick<ActorRef, 'kind' | 'id'>, projectId: string, workspaceId: string,
     requestId: string): string {
     return prefix + sha256Hex(canonicalJson({ actor: { kind: actor.kind, id: actor.id }, projectId, workspaceId, requestId } as unknown as JsonValue));
+}
+/**
+ * S9-N6 (lead ruling s9g2 #7): the commit identity of one round write by its caller, so a reader (G3's no-line notice)
+ * reads the round's opening commit or a check's result commit by identity instead of taking the round's `since`.
+ */
+export function roundCommitIdentityOf(operation: 'open' | 'record', actor: Pick<ActorRef, 'kind' | 'id'>,
+    scope: { projectId: string; workspaceId: string }, requestId: string): string {
+    return identityKeyOf(`r3e-${operation}:`, actor, scope.projectId, scope.workspaceId, requestId);
+}
+/** Slice 9 VR-16: the booking identity `H(scope, roundRef, 'record_review')`; no actor, flow or request id, so any re-entry replays. */
+function reviewBookingIdentityOf(scope: { projectId: string; workspaceId: string }, roundRef: VerificationRoundRef): string {
+    return 'r3e-review:' + sha256Hex(canonicalJson({ projectId: scope.projectId, workspaceId: scope.workspaceId, roundRef,
+        operation: 'record_review' } as unknown as JsonValue));
+}
+/** The exec review report body (the reviewer's Markdown, slice 9). */
+const REVIEW_REPORT_CONTENT_TYPE = 'text/markdown; charset=utf-8';
+/** The sources a round's stored report (a check report or the review report) names: the plan revision and the policy. */
+function roundReportSources(round: RoundSnapshot): SourceRefV1[] {
+    return [
+        { kind: 'plan-revision', refId: round.adoptedPlanRef.planId, revision: String(round.verificationPlan.planRevision) },
+        { kind: 'governance', refId: round.verificationPlan.pinnedCompletionPolicy.ref.policyId,
+            revision: String(round.verificationPlan.pinnedCompletionPolicy.ref.revision),
+            digest: round.verificationPlan.pinnedCompletionPolicy.digest },
+    ];
+}
+/** The (obligation, requirement) pairs as a set (order and repeats are not part of equality). */
+function coverageKeys(coverage: readonly EvidenceCoverageV1[]): string {
+    return [...new Set(coverage.map(requirementKeyOf))].sort().join('\n');
 }
 function roundRefProblem(ref: unknown): string | null {
     if (!isRecord(ref) || ref['aggregateType'] !== 'VerificationRound' || !nonEmpty(ref['projectId'])
@@ -423,10 +458,14 @@ async function commitRoundWrite<T>(records: Records, signal: AbortSignal, write:
             case 'guard_reverify_read_set':
             case 'refuse_reverify':
                 throw new Error(`${effect.kind} belongs to a reverify write (commitReverify)`);
-            // Only VR-09 (`task_requeued`) decides it, and no operation of this service passes that event:
-            // the requeue owner translates it in its own commit (`tasks/requeue-service.ts`).
-            case 'guard_round_unchanged':
-                throw new Error(`${effect.kind} belongs to a requeue write (requeue-service)`);
+            // VR-09 (`task_requeued`) is translated in the requeue owner's own commit (`tasks/requeue-service.ts`);
+            // here only VR-16 (a review booking) decides it: the round joins the read set at its revision, unwritten.
+            case 'guard_round_unchanged': {
+                const roundKey = canonicalOf(write.round.ref);
+                if (roundKey === null) return invalid('the round ref is not canonical JSON');
+                readSet = [...readSet, { refKey: roundKey, expectedRevision: effect.revision }];
+                break;
+            }
             default: return unreachable(effect, 'verification effect');
         }
     }
@@ -875,6 +914,8 @@ export type AutomaticReverifyPolicyV1 = (input: {
  */
 export type EvidenceServiceDependencies = {
     records: GoalRecordTransactionPort & RecordLookupPort;
+    /** Slice 9 (VR-16): the identity-only receipt read of a review booking (the store object's member beside `records`). */
+    commitIdentities: Pick<RecordCommitIdentityPort, 'readCommitByIdentity'>;
     /** KLS-2b: a staged repair's ops come from its note file when a round binds it. */
     knowledge: KnowledgeLines;
     materials: MaterialPort;
@@ -905,6 +946,10 @@ export type EvidenceServiceDependencies = {
     delegatedWrites?: PlanDelegatedWriteDependencies;
     /** ND-9: a session-message new input is read through the mailbox owner; absent refuses one (`unsupported`). */
     messages?: Pick<SessionMailboxPort, 'readMessage'>;
+    /** Slice 9 VR-16: the review Query reads; absent makes `recordReviewEvidence` `unsupported`. */
+    queries?: ReviewQueryReads;
+    /** Slice 9 VR-16: the reviewer Session's duty read; absent makes `recordReviewEvidence` `unsupported`. */
+    sessionDuty?: ReviewSessionDuty;
     now(): string;
     newId(): string;
 };
@@ -927,12 +972,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
             subjectRunRef: round.subjectRunRef, subject: round.subject,
             observation: request.observation, sourceStatus, outcome, recordedAt: deps.now(),
         });
-        const sources: SourceRefV1[] = [
-            { kind: 'plan-revision', refId: round.adoptedPlanRef.planId, revision: String(round.verificationPlan.planRevision) },
-            { kind: 'governance', refId: round.verificationPlan.pinnedCompletionPolicy.ref.policyId,
-                revision: String(round.verificationPlan.pinnedCompletionPolicy.ref.revision),
-                digest: round.verificationPlan.pinnedCompletionPolicy.digest },
-        ];
+        const sources = roundReportSources(round);
         let stored;
         try {
             stored = await deps.materials.storeArtifact(ctx, { contentType: REPORT_CONTENT_TYPE, body, sources,
@@ -1109,7 +1149,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         let identity = '';
         let fingerprint = '';
         try {
-            identity = identityKeyOf('r3e-open:', actor, scope.projectId, scope.workspaceId, owned.requestId);
+            identity = roundCommitIdentityOf('open', actor, scope, owned.requestId);
             fingerprint = fingerprintOf({ kind: 'r3e-open', subjectRunRef: input.subjectRunRef, subject: input.subject,
                 planRef: input.planRef, ...(input.gateSubject === undefined ? {} : { gateSubject: input.gateSubject }),
                 expected: owned.expected });
@@ -1425,7 +1465,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         let identity = '';
         let fingerprint = '';
         try {
-            identity = identityKeyOf('r3e-record:', actor, scope.projectId, scope.workspaceId, owned.requestId);
+            identity = roundCommitIdentityOf('record', actor, scope, owned.requestId);
             fingerprint = fingerprintOf({ kind: 'r3e-record', roundRef: input.roundRef, checkId: input.checkId,
                 invocationId: input.invocationId, observation: input.observation, expected: owned.expected });
         } catch { return invalid('the record request is not canonicalizable JSON'); }
@@ -1556,6 +1596,195 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         return settleExecutingCheck(ctx, request, 'interrupt');
     }
 
+    type BookedReview = { status: 'none' }
+        | { status: 'booked'; replay: { status: 'committed'; value: { evidenceRef: EvidenceRef }; replayed: true; cursor: CommitCursor } }
+        | CoreRejection;
+
+    /** The round's booking receipt read by identity only (VR-16), replayed to its original `{evidenceRef}`. */
+    async function bookedReviewOf(scope: { projectId: string; workspaceId: string }, roundRef: VerificationRoundRef):
+    Promise<BookedReview> {
+        const identity = reviewBookingIdentityOf(scope, roundRef);
+        const found = await lookupCommittedReceiptByIdentity(deps.commitIdentities, identity);
+        if (found.status === 'missing') return { status: 'none' };
+        if (found.status !== 'found') return found.status === 'invalid' ? invalid(found.reason) : unavailable(found.reason);
+        const replayed = await replayEvent(records, found.receipt, identity, found.fingerprint,
+            VERIFICATION_REVIEW_EVIDENCE_RECORDED_EVENT_TYPE);
+        if (replayed.status !== 'committed') return replayed;
+        return { status: 'booked', replay: { ...replayed, value: replayed.value as { evidenceRef: EvidenceRef } } };
+    }
+
+    /**
+     * Slice 9 F2/F3: the finalize's review fact. No ref: each `review-packet` pair is `reviewer_missing`. A ref must be
+     * exactly the round's booked review (`forbidden` otherwise) and its Evidence this round's; then the review is
+     * judged like a check verdict, and a stale review is a fold gap (`reviewer_stale`), never a refusal.
+     */
+    async function reviewFoldFacts(
+        scope: { projectId: string; workspaceId: string },
+        round: RoundSnapshot,
+        supplied: readonly EvidenceRef[],
+        judged: Omit<Parameters<typeof evidenceApplicabilityWithBasis>[0], 'evidence'> | null,
+        sourceCurrent: boolean,
+    ): Promise<{ status: 'ready'; value: RoundFoldFactsV1['review'] } | CoreRejection> {
+        const pairs = reviewPacketItemOf(round.verificationPlan)?.coverage ?? [];
+        const perPair = (code: 'reviewer_missing' | 'reviewer_stale', message: string): RoundSnapshot['gaps'] =>
+            pairs.map(coverage => ({ code, message: `${message} (${coverage.requirementId})`, coverage: { ...coverage } }));
+        if (supplied.length === 0) {
+            return { status: 'ready', value: { outcome: null, refs: [],
+                gaps: perPair('reviewer_missing', 'no review was booked for this required review') } };
+        }
+        const booked = await bookedReviewOf(scope, round.ref);
+        if (booked.status === 'rejected') return booked;
+        if (booked.status === 'none' || supplied.length !== 1 || !sameRef(supplied[0], booked.replay.value.evidenceRef)) {
+            return forbidden('the reviewer evidence is not this round\'s booked review');
+        }
+        const ref = booked.replay.value.evidenceRef;
+        const key = canonicalOf(ref);
+        if (key === null) return invalid('the review Evidence ref is not canonical JSON');
+        const read = await readBatch(records, [key]);
+        if (read.status !== 'ready') return mapRejected(read);
+        const record = read.batch.present.get(key);
+        const decoded = record === undefined ? null : decodeEvidenceSnapshot(record);
+        if (decoded === null || decoded.status !== 'decoded') return invalid('the booked review Evidence is missing or damaged');
+        const evidence = decoded.value.evidence;
+        if (evidence.source.runRef !== null || evidence.source.checkId !== null) return invalid('the booked review Evidence names a Run or a check');
+        if (!sameRef(evidence.subject, round.subject) || coverageKeys(evidence.coverage) !== coverageKeys(pairs)) {
+            return forbidden('the booked review Evidence is about another Task or other requirements');
+        }
+        if (!sameRef(evidence.verificationPlanRef, { planId: round.verificationPlan.planId, planDigest: round.verificationPlan.planDigest })
+            || !sameRef(evidence.anchor, anchorOf(round))) {
+            return invalid('the booked review Evidence was not made under this round\'s plan');
+        }
+        const decision = judged === null ? null : evidenceApplicabilityWithBasis({ evidence, ...judged });
+        if (decision !== null && decision.applicability === 'OUT_OF_SCOPE') {
+            const first = pairs[0];
+            return { status: 'ready', value: { outcome: null, refs: [ref], gaps: [{ code: `evidence_${decision.basis}`,
+                message: `review: ${decision.reason}`, ...(first === undefined ? {} : { coverage: { ...first } }) }] } };
+        }
+        if (!sourceCurrent || decision?.applicability === 'STALE') {
+            return { status: 'ready', value: { outcome: null, refs: [ref],
+                gaps: perPair('reviewer_stale', 'the booked review no longer matches the current source or plan') } };
+        }
+        return { status: 'ready', value: { outcome: decision === null ? null : evidence.outcome, gaps: [], refs: [ref] } };
+    }
+
+    /**
+     * Slice 9 VR-16 readAcceptedAnswer: the round's system message (`execreview:<roundId>`), its intervention-planning
+     * Query, the Session that answered it and its parsed answer. A Query not created or not ended is `incomplete` (the
+     * caller waits); an ended Query without a parsing answer is `invalid` `NO_ACCEPTED_ANSWER`.
+     */
+    async function readAcceptedAnswer(ctx: CoreCallContext, scope: { projectId: string; workspaceId: string }, round: RoundSnapshot):
+    Promise<{ status: 'accepted'; verdict: ExecReviewVerdictV1; basis: string; report: string; sessionId: string } | CoreRejection> {
+        const queries: ReviewQueryReads | undefined = deps.queries;
+        const sessionDuty: ReviewSessionDuty | undefined = deps.sessionDuty;
+        if (queries === undefined || sessionDuty === undefined) return unsupported('the review Query and duty reads are not wired');
+        const goalRef: GoalRef = { aggregateType: 'Goal', projectId: round.ref.projectId, goalId: round.ref.goalId };
+        const requestId = systemRoundRequestId({ kind: 'exec_review', goalRef, roundRef: round.ref });
+        if (requestId.status !== 'ready') return requestId;
+        const messageRef = systemRoundMessageRef(scope, requestId.value);
+        if (messageRef.status !== 'ready') return messageRef;
+        const read = await queries.readQueryJob(ctx, interventionPlanningQueryRefs(messageRef.value).queryJobRef);
+        if (read.status === 'not_found') return incomplete('the review Query has not been created; the review waits');
+        if (read.status !== 'ready') return mapRead(read);
+        const job = read.value.job.job;
+        if (job.status === 'pending' || job.status === 'running') return incomplete('the review Query has not ended; the review waits');
+        const execution = job.intent.execution;
+        const packet = execReviewPacketOfText(job.intent.question);
+        const frozen = execReviewPacketOfRound(round);
+        if (execution.kind !== 'intervention_planning' || execution.answerShape !== 'exec_review'
+            || !sameRef(execution.sourceMessageRef, messageRef.value) || job.goalId !== round.ref.goalId
+            || packet.status !== 'ready' || frozen.status !== 'ready'
+            || canonicalJson(packet.value.packet as unknown as JsonValue) !== canonicalJson(frozen.value as unknown as JsonValue)) {
+            return invalid('the review Query does not carry this round\'s frozen review packet');
+        }
+        const answerRef = job.answerRefs.at(-1);
+        if (answerRef === undefined) return invalid(NO_ACCEPTED_ANSWER);
+        const sessionRef = read.value.run.run.executionState?.sessionRef;
+        if (sessionRef === undefined) return unavailable('the answered review Query names no entering Session');
+        // Lead ruling s9g2 #5: a review line is found by project, so its Session may live in another workspace.
+        const session = await sessionDuty.readSession(ctx, sessionRef, 'project');
+        if (session.status !== 'ready') return unavailable('the reviewer Session could not be read');
+        const duty = await sessionDuty.dutyOfRole(ctx, session.value.record.role);
+        if (duty.status !== 'ready' || duty.value === 'unknown') return unavailable('the reviewer Session duty could not be read');
+        if (duty.value !== 'reviewer') return forbidden(`the Session that answered the review has duty ${duty.value}, not reviewer`);
+        const stored = await queries.readQueryAnswer(ctx, answerRef);
+        if (stored.status !== 'ready') return mapRead(stored);
+        const parsed = parseExecReviewAnswer(stored.value.answer.answer);
+        if (parsed.status !== 'parsed') return invalid(NO_ACCEPTED_ANSWER);
+        return { status: 'accepted', verdict: parsed.verdict, basis: parsed.basis, report: parsed.report, sessionId: sessionRef.sessionId };
+    }
+
+    /**
+     * Slice 9 VR-16, `replay(id) ?? (readTerminal → readAcceptedAnswer → validateReport → bookOnce)`: one review
+     * Evidence for the open round's `review-packet` item, booked once. A receipt hit replays `{evidenceRef}` and reads
+     * nothing else. The subject Run or the Query not yet ended is `incomplete` and writes nothing.
+     */
+    async function recordReviewEvidence(ctx: CoreCallContext, request: GraphWrite<RecordReviewEvidenceInputV1>):
+    Promise<WriteResult<{ evidenceRef: EvidenceRef }>> {
+        const ownedCtx = bindTrustedContext(ctx);
+        if (!ownedCtx.ok) return ownedCtx.rejection;
+        const { ctx: trusted, scope, actor, signal } = ownedCtx;
+        const owned = isolateWrite(request);
+        if (!owned.ok) return owned.rejection;
+        const roundRef = owned.input.roundRef;
+        const refProblem = roundRefProblem(roundRef);
+        if (refProblem !== null) return invalid(refProblem);
+        if (roundRef.projectId !== scope.projectId || roundRef.workspaceId !== scope.workspaceId) {
+            return forbidden('the round ref is outside the trusted Host scope');
+        }
+        const booked = await bookedReviewOf(scope, roundRef);
+        if (booked.status === 'booked') return booked.replay;
+        if (booked.status === 'rejected') return booked;
+        const loaded = await readRoundRecord(records, roundRef);
+        if (!loaded.ok) return loaded.rejection;
+        const round = loaded.round;
+        const guardCtx = roundCtx(round.executor, actor, round.revision);
+        const admitted = refusalOf(roundWriteAdmission(round, { kind: 'review_recorded' }, guardCtx), round);
+        if (admitted !== null) return admitted;
+        // readTerminal: VD-3's rule, its refusal code not propagated; an abnormal end books INCONCLUSIVE.
+        const execution = await deps.executions.readExecution(trusted, round.subjectRunRef);
+        if (execution.status !== 'ready') return mapRead(execution);
+        if (execution.value.run.status !== 'ended') return incomplete('the subject Run has not ended; the review waits');
+        const terminalOutcome: EvidenceOutcome | null = roundSubjectRunProblem(execution.value.run) === null ? null : 'INCONCLUSIVE';
+        const answer = await readAcceptedAnswer(trusted, scope, round);
+        if (answer.status === 'rejected') return answer;
+        // validateReport: the parser held the sizes; the report is stored as Markdown and checked before the commit.
+        let stored;
+        try {
+            stored = await deps.materials.storeArtifact(trusted, { contentType: REVIEW_REPORT_CONTENT_TYPE, body: answer.report,
+                sources: roundReportSources(round), origin: { kind: 'platform_operation', projectId: scope.projectId,
+                    workspaceId: scope.workspaceId, requestId: owned.requestId, actor: round.executor } });
+        } catch (error) {
+            return unavailable(`the review report could not be stored: ${messageOf(error)}`);
+        }
+        if (stored.status !== 'stored') return unavailable(`the review report was rejected: ${stored.reason}`);
+        if (stored.ref.digest !== artifactBodyDigest(answer.report) || stored.ref.sizeBytes !== artifactBodySize(answer.report)) {
+            return unavailable('the stored review report does not match its body');
+        }
+        // bookOnce: one Evidence over the item's pairs, the index appended once, the round guarded as read.
+        const evidenceRef: EvidenceRef = { aggregateType: 'Evidence', projectId: round.ref.projectId, evidenceId: deps.newId() };
+        const decided = transitionRound(round, { kind: 'review_recorded', evidenceRef }, guardCtx);
+        if (!decided.ok) return refusalOf(decided, round);
+        const admittedAt = deps.now();
+        const evidence: EvidenceSnapshot = { ref: evidenceRef, revision: 1, schemaVersion: 1, admittedAt, evidence: {
+            schemaVersion: 1, evidenceId: evidenceRef.evidenceId, kind: 'verdict',
+            outcome: terminalOutcome ?? (answer.verdict === 'pass' ? 'PASS' : 'FAIL'),
+            source: { actor: { kind: 'system', id: answer.sessionId }, runRef: null, checkId: null }, subject: { ...round.subject },
+            coverage: (effectOf(decided.effects, 'admit_verdict_evidence')?.admissions ?? []).map(admission => ({ ...admission.coverage })),
+            anchor: anchorOf(round),
+            verificationPlanRef: { planId: round.verificationPlan.planId, planDigest: round.verificationPlan.planDigest },
+            summary: { text: answer.basis, artifactRef: stored.ref } } };
+        const indexRead = await readIndex(records, round);
+        if (!indexRead.ok) return indexRead.rejection;
+        const identity = reviewBookingIdentityOf(scope, roundRef);
+        const fingerprint = fingerprintOf({ kind: 'r3e-review', roundRef });
+        const value = { evidenceRef };
+        return await commitRoundWrite(records, signal, { identity, fingerprint, effects: decided.effects, round,
+            evidence: [evidence], index: nextTaskEvidenceIndex(indexRead.index, [evidenceRef.evidenceId]),
+            event: { eventId: deps.newId(), eventType: VERIFICATION_REVIEW_EVIDENCE_RECORDED_EVENT_TYPE, schemaVersion: 1,
+                occurredAt: admittedAt, identityKey: identity, roundRef: round.ref, actor, fingerprint, result: value },
+            value, cancelled: 'the review booking was cancelled before commit' });
+    }
+
     async function finalizeChecks(ctx: CoreCallContext, request: GraphWrite<{
         roundRef: VerificationRoundRef; reviewerEvidence?: readonly EvidenceRef[];
     }>): Promise<WriteResult<FinalizedChecks>> {
@@ -1567,10 +1796,9 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         const input = owned.input;
         const refProblem = roundRefProblem(input.roundRef);
         if (refProblem !== null) return invalid(refProblem);
-        // VR-07's first guard step, where it stood before: ahead of the scope check and the receipt lookup.
-        const reviewerEvidenceCount = input.reviewerEvidence === undefined ? 0 : input.reviewerEvidence.length;
-        const reviewerProblem = refusalOf(roundReviewerEvidenceProblem(reviewerEvidenceCount));
-        if (reviewerProblem !== null) return reviewerProblem;
+        // Slice 9: any count passes here (`roundReviewerEvidenceProblem`); the refs are attributed after the reads.
+        const reviewerEvidence = input.reviewerEvidence ?? [];
+        const reviewerEvidenceCount = reviewerEvidence.length;
         if (input.roundRef.projectId !== scope.projectId || input.roundRef.workspaceId !== scope.workspaceId) {
             return forbidden('the round ref is outside the trusted Host scope');
         }
@@ -1578,7 +1806,9 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         let fingerprint = '';
         try {
             identity = identityKeyOf('r3e-finalize:', actor, scope.projectId, scope.workspaceId, owned.requestId);
-            fingerprint = fingerprintOf({ kind: 'r3e-finalize', roundRef: input.roundRef, expected: owned.expected });
+            // An empty list is the omitted member, so today's bytes and receipts are unchanged.
+            fingerprint = fingerprintOf({ kind: 'r3e-finalize', roundRef: input.roundRef, expected: owned.expected,
+                ...(reviewerEvidenceCount === 0 ? {} : { reviewerEvidence }) });
         } catch { return invalid('the finalize request is not canonicalizable JSON'); }
         const lookup = await lookupReceipt(records, identity, fingerprint);
         if (lookup.status === 'failed') return lookup.rejection;
@@ -1593,7 +1823,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         const loaded = await readRoundRecord(records, input.roundRef);
         if (!loaded.ok) return loaded.rejection;
         const round = loaded.round;
-        // VR-07 before any read (reviewer evidence was refused above): open round, executor, then the pin.
+        // VR-07 before any read: open round, executor, then the pin.
         const guardCtx = roundCtx(round.executor, actor, checked.revision);
         const admitted = refusalOf(roundWriteAdmission(round, { kind: 'round_finalized', reviewerEvidenceCount }, guardCtx), round);
         if (admitted !== null) return admitted;
@@ -1661,6 +1891,10 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
 
         // One candidate verdict (one id) and its applicability per check the
         // fold judges, in the machine's order (VR-07 `foldVerdictChecks`).
+        const judged = evidencePlan === null || adoptedPlan === null ? null : { evidencePlan, adoptedPlan,
+            currentAnchor: { schemaVersion: 1, planRef: adoptedPlan.ref, planRevision: adoptedPlan.planRevision,
+                workspaceRevision: currentWorkspaceRevision, pinnedCompletionPolicy: adoptedPlan.effectiveCompletionPolicy,
+                pinnedArchitectureBaseline: adoptedPlan.effectiveArchitectureBaseline } satisfies EffectivityAnchorV1 };
         const verdicts = new Map<string, EvidenceV1>();
         const decisions: Record<string, CheckVerdictDecisionV1> = {};
         for (const check of foldVerdictChecks(round)) {
@@ -1672,22 +1906,18 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
                 summary: { text: boundedSummary(`check ${check.checkId} ${check.outcome ?? 'INCONCLUSIVE'}`), artifactRef: check.reportRef },
             };
             verdicts.set(check.checkId, evidence);
-            if (evidencePlan !== null && adoptedPlan !== null) {
-                const currentAnchor: EffectivityAnchorV1 = { schemaVersion: 1, planRef: adoptedPlan.ref,
-                    planRevision: adoptedPlan.planRevision, workspaceRevision: currentWorkspaceRevision,
-                    pinnedCompletionPolicy: adoptedPlan.effectiveCompletionPolicy,
-                    pinnedArchitectureBaseline: adoptedPlan.effectiveArchitectureBaseline };
-                decisions[check.checkId] = evidenceApplicabilityWithBasis({ evidence, adoptedPlan, evidencePlan, currentAnchor });
-            }
+            if (judged !== null) decisions[check.checkId] = evidenceApplicabilityWithBasis({ evidence, ...judged });
         }
-        const fold: RoundFoldFactsV1 = { decisions: evidencePlan !== null && adoptedPlan !== null ? decisions : null,
-            sourceCurrent, contextGaps };
+        const review = await reviewFoldFacts(scope, round, reviewerEvidence, judged, sourceCurrent);
+        if (review.status === 'rejected') return review;
+        const fold: RoundFoldFactsV1 = { decisions: judged !== null ? decisions : null, sourceCurrent, contextGaps,
+            review: review.value };
         // The machine mints no ids: one Evidence ref per admission of the fold,
-        // after the clock as before; a refused fold mints none.
+        // after the clock as before; a refused fold mints none. The booked review refs follow.
         const folded = finalizeRoundOutcome({ ...fold, round });
         const admittedAt = folded.status === 'folded' ? deps.now() : '';
-        const evidenceRefs: EvidenceRef[] = folded.status !== 'folded' ? [] : folded.admissions.map(() => ({
-            aggregateType: 'Evidence', projectId: round.ref.projectId, evidenceId: deps.newId() }));
+        const evidenceRefs: EvidenceRef[] = folded.status !== 'folded' ? [] : [...folded.admissions.map((): EvidenceRef => ({
+            aggregateType: 'Evidence', projectId: round.ref.projectId, evidenceId: deps.newId() })), ...review.value.refs];
         const decided = transitionRound(round, { kind: 'round_finalized', reviewerEvidenceCount, fold, evidenceRefs }, guardCtx);
         if (!decided.ok) return refusalOf(decided, round);
         const finalizedRound = decided.next;
@@ -2406,7 +2636,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
     };
 
     return { openVerification, readVerification, queryOriginalVerification, queryRoundChainHead, beginCheck, recordCheckResult,
-        abandonCheck, interruptCheck, finalizeChecks, reverifyRound, reverifyApprovedByCard, lookupToolCommit };
+        abandonCheck, interruptCheck, finalizeChecks, recordReviewEvidence, reverifyRound, reverifyApprovedByCard, lookupToolCommit };
 }
 
 /** UI1 (`verification/round`): the chain read the round view reuses, so the 32-row limit,

@@ -117,7 +117,7 @@ const BRIEF_BODY = `[continuation-brief v1 sha256:<brief-digest>]
 
 ### 检查
 - 轮次 <round-id>（第 1 轮）未通过的检查：无
-- 缺口：source_changed、uncovered_requirement
+- 缺口：source_changed
 
 ### 重新入队
 - 原因（人工）：Continue PC work

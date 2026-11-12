@@ -81,7 +81,7 @@
 做 Task/Goal 完成判定、证据折与候选资格的去这组。
 
 - `completion.ts` — `completeTaskFromHost`/`completeGoalFromHost` 正式完成入口（receipt → 证据折 → 状态机 → 一 commit）。
-- `completion-policy.ts` — Task/Goal 完成判定的纯规则缝：只消费已折好的 effective evidence 与 canonical task facts。
+- `completion-policy.ts` — Task/Goal 完成判定的纯规则缝：只消费已折好的 effective evidence 与 canonical task facts。第 9 片起没有 reviewer 的硬项（`reviewerMissing` 已删），审阅要求和别的键一样由入账的审阅 Evidence 覆盖；`evaluateGoalCompletion` 的 `requiresReviewer` 只作提示。
 - `eligibility.ts` — queryReadyTasks 与认领准入共用的纯 Task 资格规则。
 - `evidence-coverage.ts` — 有效证据的单一纯折叠与适用性判定。
 - `task-phase-facts.ts` — 完成 Task 的 phase 投影输入，由调用方给已读事实。
@@ -199,7 +199,7 @@
 | `removedTaskProblem` | `plan-validation.ts:363` | 候选物理删掉来源计划任务时的拒绝原因；`deriveFuturePlanDelta` 和 propose 共用 | `plan-service.ts` 的两条 propose 路径 |
 | `unchangedTerminalTaskIds` | `plan-validation.ts:446` | 来源计划里原样带下去的已终结任务：用 canonical Task closure（与 `module_in_use` 同一非 open 集合）减去本次 changed/disposition-only，无法派生 delta 时一个也不豁免 | propose 与 adoption 的 module fact 豁免；不要退回只看 disposition |
 | `unknownModuleTasksOf`、`unknownModuleRejection`、`UnknownModuleTaskV1` | `plan-validation.ts:680`、`plan-validation.ts:694`、`plan-validation.ts:675` | L10：每个 module 作用域任务的 `moduleRef` 必须是 `catalog.modules[].ref.moduleId`；按草稿任务顺序列出全部未知项（`{taskId, moduleId}`），并由它们生成唯一拒绝 `invalid` / `unknown_module: <taskId>=<moduleId>, …`（每任务一条，不合并 module id） | 采用草稿前按当前 catalog 校验 module 引用；不要另写遍历或拒绝文案 |
-| `evaluateTaskCompletion`、`evaluateGoalCompletion` | `completion-policy.ts:178`、`completion-policy.ts:178` | Task/Goal 完成判定的纯规则 | 完成服务与状态机前置判断 |
+| `evaluateTaskCompletion`、`evaluateGoalCompletion` | `completion-policy.ts:172`、`completion-policy.ts:172` | Task/Goal 完成判定的纯规则 | 完成服务与状态机前置判断 |
 | `evidenceBindingFor`、`selectEffectiveEvidenceSet`、`evidenceApplicabilityWithBasis` | `evidence-coverage.ts:153`、`evidence-coverage.ts:153`、`evidence-coverage.ts:153` | 证据绑定、有效证据折叠与适用性判定 | 完成、证据读；不要重算 applicability |
 | `goalDecisionBasis` | `goal-basis.ts:14` | 给 Goal 内容套上已存设置默认值 | 读模型与来源事实需要同一 basis |
 | `parseInitialPlanningResponseV2` | `src/contracts/initial-planning-parse.ts:18`（`initial-plan.ts` 再导出） | 初始 Plan 响应 v2 的纯解析 | 读初始 Plan 答案；不要另写 JSON 解析 |

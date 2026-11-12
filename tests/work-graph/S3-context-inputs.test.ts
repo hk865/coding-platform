@@ -599,7 +599,8 @@ async function createInputFixture(
       signal: new AbortController().signal };
     const evidenceMaterials = createMaterialService({ bodies: rawBodies, authority: baseAuthority, now: () => AT });
     let evidenceSeq = 0;
-    const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(backend.records, workspaceHost), records: backend.records, materials: evidenceMaterials,
+    const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(backend.records, workspaceHost),
+      records: backend.records, commitIdentities: backend.commitIdentities, materials: evidenceMaterials,
       executions: createRunStateReader({ records: backend.records }), workspaceHost,
       source: new VerificationWorkspaceReader(), configuration, now: () => AT,
       newId: () => `s3-evidence-${++evidenceSeq}` });

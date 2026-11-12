@@ -401,7 +401,7 @@ type EvidenceOwner = ReturnType<typeof createEvidenceService>;
 function evidenceWithRestart(fixture: R3eEvidenceFixture): EvidenceOwner {
   let sequence = 0;
   return createEvidenceService({ knowledge: knowledgeLinesOver(fixture.records, fixture.workspaceHost),
-    records: fixture.records, materials: fixture.materials,
+    records: fixture.records, commitIdentities: fixture.b2.base.commitIdentities, materials: fixture.materials,
     executions: createRunStateReader({ records: fixture.records }),
     workspaceHost: fixture.workspaceHost, source: new VerificationWorkspaceReader(),
     configuration: fixture.configuration,

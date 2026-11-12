@@ -55,7 +55,8 @@ function executed(exitCode: number): CheckProcessObservation {
 /** An evidence owner over the fixture's ledger with the successor-round dependencies. */
 function reverifier(fixture: R3eEvidenceFixture): EvidencePort {
   let sequence = 0;
-  return createEvidenceService({ knowledge: knowledgeLinesOver(fixture.records, fixture.workspaceHost), records: fixture.records, materials: fixture.materials,
+  return createEvidenceService({ knowledge: knowledgeLinesOver(fixture.records, fixture.workspaceHost),
+    records: fixture.records, commitIdentities: fixture.b2.base.commitIdentities, materials: fixture.materials,
     executions: createRunStateReader({ records: fixture.records }), workspaceHost: fixture.workspaceHost,
     source: new VerificationWorkspaceReader(),
     configurationFor: scope => scope.projectId === fixture.scope.projectId && scope.workspaceId === fixture.scope.workspaceId

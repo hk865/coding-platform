@@ -23,7 +23,6 @@ function obligationOf(
 }
 
 const uncoveredRows = [
-  { name: 'reviewer requirement is unsupported', kind: 'reviewer', code: 'reviewer_not_supported' },
   { name: 'dynamic requirement has no check', kind: 'dynamic', code: 'no_registered_check' },
 ] as const;
 

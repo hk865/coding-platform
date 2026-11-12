@@ -236,7 +236,8 @@ export async function openDutyMaintenanceFixture(
     };
     const materials = createMaterialService({ bodies: b2.bodies,
       authority: createMaterialRecordReaders(records).authority, now: () => T0 });
-    const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(records, workspaceHost), records, materials, executions, workspaceHost,
+    const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(records, workspaceHost), records,
+      commitIdentities: base.commitIdentities, materials, executions, workspaceHost,
       source: new VerificationWorkspaceReader(), now: () => T0, newId: id,
       configuration: { configurationRevision: 'wp1-cu-checks', workspace: base.workspaceRef, executor: actor,
         permissionRevision: 'wp1-cu-permission', sourceAccess: 'verification_workspace', processAccess: 'all_except_denied',

@@ -1410,6 +1410,30 @@
       "name": "execReviewPacketText",
       "reason": "kept-for",
       "note": "kept for slice 9 of the orchestration design: S9 G1 lands the exec review packet header and its parse is wired now; G3 sends execReviewPacketText(execReviewPacketOfRound(round)) and G2's readAcceptedAnswer compares against execReviewPacketOfRound; the group that wires the build and the text deletes these entries"
+    },
+    {
+      "file": "src/core/work-graph/evidence/evidence-service.ts",
+      "name": "REVIEW_REPORT_CONTENT_TYPE",
+      "reason": "kept-for",
+      "note": "kept for slice 9 of the orchestration design: S9 G2 lands the review booking owner (recordReviewEvidence) and the round commit identity; G3 is their only caller (wires the port at the composition root, calls record_review and the no-line notice); the group that wires them deletes these entries"
+    },
+    {
+      "file": "src/core/work-graph/model/evidence-contracts.ts",
+      "name": "RecordReviewEvidenceInputV1",
+      "reason": "kept-for",
+      "note": "kept for slice 9 of the orchestration design: S9 G2 lands the review booking owner (recordReviewEvidence) and the round commit identity; G3 is their only caller (wires the port at the composition root, calls record_review and the no-line notice); the group that wires them deletes these entries"
+    },
+    {
+      "file": "src/core/work-graph/model/evidence-contracts.ts",
+      "name": "NO_ACCEPTED_ANSWER",
+      "reason": "kept-for",
+      "note": "kept for slice 9 of the orchestration design: S9 G2 lands the review booking owner (recordReviewEvidence) and the round commit identity; G3 is their only caller (wires the port at the composition root, calls record_review and the no-line notice); the group that wires them deletes these entries"
+    },
+    {
+      "file": "src/core/work-graph/model/evidence-contracts.ts",
+      "name": "EvidencePort.recordReviewEvidence",
+      "reason": "kept-for",
+      "note": "kept for slice 9 of the orchestration design: S9 G2 lands the review booking owner (recordReviewEvidence) and the round commit identity; G3 is their only caller (wires the port at the composition root, calls record_review and the no-line notice); the group that wires them deletes these entries"
     }
   ]
 }

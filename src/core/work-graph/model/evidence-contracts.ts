@@ -11,7 +11,12 @@
  * `evidence-service.ts`, beside `createEvidenceService` (task D X2, decision 40).
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+import type { RoleConfigurationRef } from '../../../contracts/core/identity.js';
 import type { EvidenceOutcome, EvidenceRef, EvidenceSnapshot } from '../../../contracts/evidence.js';
+import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
+import type {
+    QueryJobAnswerRef, QueryJobAnswerSnapshot, QueryJobRef, QueryJobSnapshot, QueryRunSnapshot,
+} from '../../../contracts/query-job.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { EffectWriteResultV1, SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { RunRef, TaskTriple } from '../../../contracts/dispatch.js';
@@ -25,7 +30,36 @@ import type {
     VerificationRoundRef,
 } from '../../../contracts/verification.js';
 import type { ApprovedReworkApplyV1, ReworkOwnerResultV1 } from './claim-contracts.js';
+import type { SessionDirectoryPort } from './session-contracts.js';
 import type { GraphWrite } from './task-contracts.js';
+
+/** Slice 9 VR-16: the booking names only the round; the owner reads the answer, duty, terminal and report itself. */
+export type RecordReviewEvidenceInputV1 = { roundRef: VerificationRoundRef };
+
+/**
+ * Slice 9: the review Query reads the evidence owner needs, the same shape as `Pick<QueryJobPort,
+ * 'readQueryJob' | 'readQueryAnswer'>` (`evidence/` may not import `queries/`, `module-target.json`).
+ */
+export type ReviewQueryReads = {
+    readQueryJob(ctx: CoreCallContext, ref: QueryJobRef):
+        Promise<ReadResult<{ job: QueryJobSnapshot; run: QueryRunSnapshot }>>;
+    readQueryAnswer(ctx: CoreCallContext, ref: QueryJobAnswerRef): Promise<ReadResult<QueryJobAnswerSnapshot>>;
+};
+
+/**
+ * Slice 9: the reviewer Session's duty read, the shape of `DutyRecipientDependencies` (`sessions/duty-recipient.ts`,
+ * which `evidence/` may not import). The owner reads the Session at project scope (lead ruling s9g2 #5).
+ */
+export type ReviewSessionDuty = {
+    readSession: SessionDirectoryPort['readSession'];
+    dutyOfRole: (ctx: CoreCallContext, role: RoleConfigurationRef) => Promise<ReadResult<PlatformDutyV1 | 'unknown'>>;
+};
+
+/**
+ * The `invalid` reason of `recordReviewEvidence` when the review Query ended without an answer that parses: nothing
+ * is booked and the Workflow finalizes without a review ref (the fold writes `reviewer_missing`).
+ */
+export const NO_ACCEPTED_ANSWER = 'no_accepted_answer';
 
 /** Result of finalizing one frozen round: the persisted snapshot plus the
  * Evidence actually admitted in the same commit. */
@@ -203,4 +237,13 @@ export interface EvidencePort {
         ctx: CoreCallContext,
         request: GraphWrite<{ roundRef: VerificationRoundRef; reviewerEvidence?: readonly EvidenceRef[] }>,
     ): Promise<WriteResult<FinalizedChecks>>;
+    /**
+     * Slice 9 VR-16: book the round's one review Evidence from the reviewer's answered exec review Query, once per
+     * round (identity `H(scope, roundRef, 'record_review')`; a repeat replays the receipt). The round stays open; the
+     * finalize names the returned ref. Optional on the port: a caller without it answers `unsupported`.
+     */
+    recordReviewEvidence?(
+        ctx: CoreCallContext,
+        request: GraphWrite<RecordReviewEvidenceInputV1>,
+    ): Promise<WriteResult<{ evidenceRef: EvidenceRef }>>;
 }

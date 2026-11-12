@@ -64,7 +64,7 @@ import type {
   RoundCheckIncompleteCause, RoundCheckSnapshot, RoundSnapshot, TrustedCheckConfiguration, VerificationCheckPlan,
   VerificationPlanV1, VerificationRoundRef,
 } from '../../../contracts/verification.js';
-import { INTERRUPTED_CHECK_GAP_CODE, ROUND_CHAIN_MAX } from '../../../contracts/verification.js';
+import { INTERRUPTED_CHECK_GAP_CODE, ROUND_CHAIN_MAX, reviewPacketItemOf } from '../../../contracts/verification.js';
 import type {
   VerificationRoundMaterialIdentity, VerificationRoundSourceProof,
 } from '../../../contracts/verification-context.js';
@@ -91,7 +91,8 @@ export type VerificationRoundEventType =
   | 'VerificationCheckInterrupted'
   | 'VerificationCheckAbandoned'
   | 'VerificationRoundFinalized'
-  | 'VerificationRoundReverified';
+  | 'VerificationRoundReverified'
+  | 'VerificationReviewEvidenceRecorded';
 
 /** The round's stored chain ordinal (§9.1). */
 export function roundOrdinalOf(round: Pick<RoundSnapshot, 'chain'>): number {
@@ -246,6 +247,12 @@ export type RoundFoldFactsV1 = {
   sourceCurrent: boolean;
   /** `evidence_plan_unavailable`, `goal_unavailable`, `adopted_plan_unavailable`, `source_changed`, `source_unavailable`. */
   contextGaps: readonly RoundGapV1[];
+  /**
+   * Slice 9: the booked review of the `review-packet` item as the owner judged it. `outcome` is null when there is
+   * no applicable review (missing, stale, out of scope); `gaps` are its per-pair `reviewer_missing`/`reviewer_stale`
+   * or `evidence_<basis>` gaps; `refs` are the review refs the finalize names after the command refs.
+   */
+  review: { outcome: EvidenceOutcome | null; gaps: readonly RoundGapV1[]; refs: readonly EvidenceRef[] };
 };
 
 /**
@@ -329,7 +336,9 @@ export type RoundEvent =
     successor: RoundSuccessorV1 | null;
   }
   /** VR-09 (新增, step 5.4): the round side of a requeue of the chain head. */
-  | { kind: 'task_requeued'; actorClass: ReworkActorClass };
+  | { kind: 'task_requeued'; actorClass: ReworkActorClass }
+  /** VR-16 (slice 9): one booked review Evidence of the open round's `review-packet` item; the round is not written. */
+  | { kind: 'review_recorded'; evidenceRef: EvidenceRef };
 
 /** The current Host values compared against the round's frozen binding (`evidence-service.ts:767-777`). */
 export type FrozenBindingObservationV1 = { permissionRevision: string; workspaceRoot: string; sourceDigest: string };
@@ -360,7 +369,8 @@ export type CheckEventHead =
 /** The part of a round event that the pre-IO admission reads. */
 export type RoundEventHead =
   | { kind: 'round_opened' }
-  | { kind: 'round_finalized'; reviewerEvidenceCount: number };
+  | { kind: 'round_finalized'; reviewerEvidenceCount: number }
+  | { kind: 'review_recorded' };
 
 /** One verdict Evidence@1 of VR-07: the owner copies the check's candidate verdict with this ref and coverage. */
 export type VerdictAdmissionV1 = { ref: EvidenceRef; checkId: string; coverage: EvidenceCoverageV1 };
@@ -368,7 +378,7 @@ export type VerdictAdmissionV1 = { ref: EvidenceRef; checkId: string; coverage: 
 /**
  * Same-commit intents the owner translates:
  * - `guard_round`: the round CAS (`null` = the key must not exist), writing `next`;
- * - `guard_round_unchanged`: the round as read, not written (VR-09);
+ * - `guard_round_unchanged`: the round as read, not written (VR-09, VR-16);
  * - `guard_open_read_set`: Goal, adopted Plan, Workspace, subject Run, pinned
  *   policy and baseline as read (`evidence-service.ts:635-642`);
  * - `guard_finalize_read_set`: Goal, the Plans the fold judged against and the
@@ -759,6 +769,8 @@ type FoldStepV1 =
 function foldSteps(round: Pick<RoundSnapshot, 'checks' | 'verificationPlan'>): FoldStepV1[] {
   const steps: FoldStepV1[] = [];
   for (const planCheck of round.verificationPlan.checks) {
+    // Slice 9: the review is folded from the owner's review fact, never from a check snapshot.
+    if (planCheck.satisfactionPath === 'review-packet') continue;
     const check = round.checks.find((candidate) => candidate.checkId === planCheck.checkId);
     if (check === undefined) {
       steps.push({ kind: 'missing', planCheck });
@@ -801,13 +813,16 @@ export function foldVerdictChecks(round: Pick<RoundSnapshot, 'checks' | 'verific
  *   requirement has an applicable INCONCLUSIVE blocker or no applicable PASS;
  *   otherwise PASS, so PASS ⇒ `gaps = []` (VD-4);
  * - admissions: the applicable PASS coverage per requirement, then every
- *   blocker, in `selectEffectiveEvidenceSet` order (`evidence-coverage.ts:76-121`).
+ *   blocker, in `selectEffectiveEvidenceSet` order (`evidence-coverage.ts:76-121`);
+ * - slice 9: the review fact's gaps follow the check gaps, and an applicable
+ *   review is one more candidate over the `review-packet` coverage that covers,
+ *   blocks or fails like a check but is never an admission (it is booked already).
  */
 export function finalizeRoundOutcome(input: RoundFoldInputV1): RoundFoldResultV1 {
   const { round } = input;
   const gaps: RoundGapV1[] = [];
   const candidates: { checkId: string; outcome: EvidenceOutcome; coverage: readonly EvidenceCoverageV1[];
-    applicability: EvidenceApplicability }[] = [];
+    applicability: EvidenceApplicability; command: boolean }[] = [];
   for (const step of foldSteps(round)) {
     const first = step.planCheck.coverage[0];
     const firstCoverage = first === undefined ? {} : { coverage: { ...first } };
@@ -841,18 +856,26 @@ export function finalizeRoundOutcome(input: RoundFoldInputV1): RoundFoldResultV1
       }
     }
     if (!input.sourceCurrent) applicability = 'STALE';
-    candidates.push({ checkId: check.checkId, outcome: check.outcome ?? 'INCONCLUSIVE', coverage: check.coverage, applicability });
+    candidates.push({ checkId: check.checkId, outcome: check.outcome ?? 'INCONCLUSIVE', coverage: check.coverage, applicability,
+      command: true });
+  }
+  gaps.push(...input.review.gaps.map((gap) => ({ ...gap })));
+  const reviewItem = reviewPacketItemOf(round.verificationPlan);
+  if (reviewItem !== undefined && input.review.outcome !== null) {
+    candidates.push({ checkId: reviewItem.checkId, outcome: input.review.outcome, coverage: reviewItem.coverage,
+      applicability: 'APPLICABLE', command: false });
   }
   gaps.push(...uncoveredRequirementGaps(round.verificationPlan));
   gaps.push(...input.contextGaps.map((gap) => ({ ...gap })));
 
-  const covering = new Map<string, FoldAdmissionV1>();
-  const blocking = new Map<string, FoldAdmissionV1[]>();
+  // A review candidate covers or blocks its keys with a null admission: it mints no Evidence.
+  const covering = new Map<string, FoldAdmissionV1 | null>();
+  const blocking = new Map<string, (FoldAdmissionV1 | null)[]>();
   for (const candidate of candidates) {
     if (candidate.applicability !== 'APPLICABLE') continue;
     for (const entry of candidate.coverage) {
       const key = requirementKeyOf(entry);
-      const admission = { checkId: candidate.checkId,
+      const admission = !candidate.command ? null : { checkId: candidate.checkId,
         coverage: { obligationId: entry.obligationId, requirementId: entry.requirementId } };
       if (candidate.outcome === 'PASS') {
         if (!covering.has(key)) covering.set(key, admission);
@@ -874,7 +897,8 @@ export function finalizeRoundOutcome(input: RoundFoldInputV1): RoundFoldResultV1
     if ((blocking.get(key)?.length ?? 0) > 0) blocked = true;
     if (!covering.has(key)) missing = true;
   }
-  const admissions = [...covering.values(), ...[...blocking.values()].flat()];
+  const admissions = [...covering.values(), ...[...blocking.values()].flat()]
+    .filter((admission): admission is FoldAdmissionV1 => admission !== null);
   const failed = candidates.some((candidate) => candidate.applicability === 'APPLICABLE' && candidate.outcome === 'FAIL');
   const outcome: EvidenceOutcome = failed ? 'FAIL' : gaps.length > 0 || blocked || missing ? 'INCONCLUSIVE' : 'PASS';
   return { status: 'folded', outcome, gaps, admissions };
@@ -891,6 +915,8 @@ export function pendingRoundChecks(
 ): { ok: true; checks: RoundCheckSnapshot[] } | { ok: false; checkId: string } {
   const checks: RoundCheckSnapshot[] = [];
   for (const planCheck of verificationPlan.checks) {
+    // Slice 9: the review item is answered by a review Query, not by a registered command check.
+    if (planCheck.satisfactionPath === 'review-packet') continue;
     const definition = configuration.checks.find((candidate) => candidate.checkId === planCheck.checkId);
     if (definition === undefined) return { ok: false, checkId: planCheck.checkId };
     checks.push({ checkId: planCheck.checkId, definition, coverage: planCheck.coverage.map((entry) => ({ ...entry })),
@@ -1070,10 +1096,10 @@ function pinIsStale(state: RoundSnapshot, ctx: RoundGuardContext): boolean {
 /**
  * Pre-IO guards of the round-level writes, in today's order: `round_opened`
  * (`evidence-service.ts:500-502`; the round key must be absent) and
- * `round_finalized` (`:937-938`): the reviewer evidence before anything else
- * (`roundReviewerEvidenceProblem`, which the owner also runs on its own at
- * `:913-916`, ahead of the scope check and the receipt lookup), then open,
- * executor and the pin.
+ * `round_finalized` (`:937-938`): the reviewer evidence count first
+ * (`roundReviewerEvidenceProblem`, which admits any count since slice 9; the
+ * owner attributes the refs after its reads), then open, executor and the pin;
+ * `review_recorded` (VR-16): an existing open round, the executor, the pin.
  */
 export function roundWriteAdmission(state: RoundSnapshot | null, head: RoundEventHead, ctx: RoundGuardContext): Rejected | null {
   switch (head.kind) {
@@ -1094,14 +1120,23 @@ export function roundWriteAdmission(state: RoundSnapshot | null, head: RoundEven
       if (pinIsStale(state, ctx)) return staleRound();
       return null;
     }
+    // VR-16: the round must exist and be open; the booker is the round executor and the pin is the round as read.
+    case 'review_recorded':
+      if (state === null) return reject('illegal', 'invalid', 'review_recorded needs an existing round');
+      if (state.status === 'finalized') return reject('illegal', 'busy', 'the round is finalized; no review may be booked');
+      if (!ctx.callerIsExecutor) return reject('guard_failed', 'forbidden', 'the review booker is not the round executor');
+      if (pinIsStale(state, ctx)) return staleRound();
+      return null;
     default: return unreachable(head, 'round event head');
   }
 }
 
-/** VR-07's first guard: reviewer evidence is not finalized in R3e.1 (needs no round). */
-export function roundReviewerEvidenceProblem(reviewerEvidenceCount: number): Rejected | null {
-  return reviewerEvidenceCount > 0
-    ? reject('guard_failed', 'unsupported', 'reviewer evidence finalization is not implemented in R3e.1') : null;
+/**
+ * VR-07's first guard. Slice 9 books the reviewer evidence before the finalize, so any count is admitted here; the
+ * owner attributes the refs after its reads (one ref, exactly the round's booked review).
+ */
+export function roundReviewerEvidenceProblem(_reviewerEvidenceCount: number): Rejected | null {
+  return null;
 }
 
 /**
@@ -1201,8 +1236,8 @@ function roundRelationProblem(relation: RoundSubjectRelationV1, subject: TaskTri
   return null;
 }
 
-/** VD-3: the subject Run formally ended `completed` and its reconciliation is absent or `done`. */
-function roundSubjectRunProblem(run: Pick<RunSnapshot, 'status' | 'outcome' | 'reconciliation'>): Rejected | null {
+/** VD-3: the subject Run formally ended `completed` and its reconciliation is absent or `done` (also VR-16's terminal read). */
+export function roundSubjectRunProblem(run: Pick<RunSnapshot, 'status' | 'outcome' | 'reconciliation'>): Rejected | null {
   if (run.status !== 'ended') return reject('guard_failed', 'forbidden', 'the subject Run has not formally ended');
   if (run.outcome !== 'completed') {
     return reject('guard_failed', 'forbidden', `the subject Run ended ${run.outcome ?? 'without an outcome'}, not completed`);
@@ -1355,8 +1390,33 @@ export function transitionRound(state: RoundSnapshot | null, event: RoundEvent, 
     case 'round_finalized': return roundOnFinalized(state, event, ctx);
     case 'round_reverified': return roundOnReverified(state, event, ctx);
     case 'task_requeued': return roundOnTaskRequeued(state);
+    case 'review_recorded': return roundOnReviewRecorded(state, event, ctx);
     default: return unreachable(event, 'round event');
   }
+}
+
+/**
+ * VR-16 (slice 9): one review Evidence for the open round's `review-packet` item, one admission per covered pair
+ * under the same ref, appended to the TaskEvidenceIndex. The round is guarded as read and not written: it stays
+ * open at the same revision until the finalize folds the review.
+ */
+function roundOnReviewRecorded(
+  state: RoundSnapshot | null,
+  event: Extract<RoundEvent, { kind: 'review_recorded' }>,
+  ctx: RoundGuardContext,
+): RoundTransition {
+  const admission = roundWriteAdmission(state, event, ctx);
+  if (admission !== null) return admission;
+  const round = state as RoundSnapshot;
+  const review = reviewPacketItemOf(round.verificationPlan);
+  if (review === undefined) return reject('guard_failed', 'invalid', 'the round has no review-packet item');
+  return accept(round, [
+    { kind: 'guard_round_unchanged', revision: round.revision },
+    { kind: 'admit_verdict_evidence', admissions: review.coverage.map((coverage) => ({ ref: event.evidenceRef,
+      checkId: review.checkId, coverage: { obligationId: coverage.obligationId, requirementId: coverage.requirementId } })) },
+    { kind: 'append_task_evidence_index' },
+    { kind: 'emit_event', eventType: 'VerificationReviewEvidenceRecorded' },
+  ]);
 }
 
 /**
@@ -1581,9 +1641,10 @@ function roundOnFinalized(
   const round = state as RoundSnapshot;
   const fold = finalizeRoundOutcome({ ...event.fold, round });
   if (fold.status === 'incomplete') return reject('guard_failed', 'incomplete', fold.detail);
-  if (event.evidenceRefs.length !== fold.admissions.length) {
-    return reject('illegal', 'invalid',
-      `the finalize names ${event.evidenceRefs.length} evidence refs for ${fold.admissions.length} admissions`);
+  // Slice 9: the command refs, one per admission, then the booked review refs.
+  if (event.evidenceRefs.length !== fold.admissions.length + event.reviewerEvidenceCount) {
+    return reject('illegal', 'invalid', `the finalize names ${event.evidenceRefs.length} evidence refs for `
+      + `${fold.admissions.length} admissions and ${event.reviewerEvidenceCount} reviews`);
   }
   const admissions: VerdictAdmissionV1[] = fold.admissions.map((admission, index) => ({
     ref: event.evidenceRefs[index]!, checkId: admission.checkId, coverage: admission.coverage }));

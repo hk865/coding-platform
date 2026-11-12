@@ -48,6 +48,7 @@ type RoundView = {
       outcome: string | null; counts: Record<string, number>;
       failingCheckIds: string[] }[] };
   delivery: {
+    obligations: { obligationId: string; appliesToSelectedTask: boolean }[];
     requirements: { obligationId: string; requirementId: string; state: string;
       checks: { checkId: string; outcome: string | null; reportRef: ArtifactRef | null }[] }[];
     summary: { obligations: number; requirements: number; pass: number; fail: number; inconclusive: number;
@@ -415,7 +416,10 @@ describe('verification/round read model', () => {
   }, 90_000);
 
   // Mutation: match coverage by checkId prefix -> the per-requirement checks length/state below.
-  it.each(KINDS)('returns the six Done requirements matched by coverage (%s)', async kind => {
+  // Slice 9 (lead ruling 甲): a round belongs to one Task, so the gate's delivery has only the gate's obligation;
+  // the fixture's own obligation (the work Task's) stays listed with `appliesToSelectedTask: false`, never `missing`.
+  // Mutation: build the requirements from every Plan obligation -> six rows, the sixth `missing`; the ids are red.
+  it.each(KINDS)('returns the gate\'s five Done requirements matched by coverage; another Task\'s is not missing (%s)', async kind => {
     const { fixture } = await world(kind, 6);
     const plan = await adoptSixRequirementGate(fixture);
     const gateSubject = { ...fixture.subject, taskId: SIX_GATE_TASK };
@@ -428,13 +432,17 @@ describe('verification/round read model', () => {
       taskRef: { projectId: fixture.scope.projectId, goalId: fixture.goalRef.goalId, taskId: SIX_GATE_TASK },
     });
     const requirements = body.value?.delivery.requirements ?? [];
-    expect(requirements).toHaveLength(6);
+    expect(requirements.map(requirement => requirement.requirementId))
+      .toEqual(Array.from({ length: 5 }, (_, index) => `r3e-requirement-${index + 1}`));
     for (const requirement of requirements) {
       expect(requirement.checks, requirement.requirementId).toHaveLength(6);
       expect(requirement.checks.every(check => check.outcome === 'PASS')).toBe(true);
       expect(requirement.state).toBe('pass');
     }
-    expect(body.value?.delivery.summary).toMatchObject({ requirements: 6, pass: 6, fail: 0,
+    expect(body.value?.delivery.obligations.map(({ obligationId, appliesToSelectedTask }) =>
+      ({ obligationId, appliesToSelectedTask }))).toEqual([{ obligationId: 'r3e-obligation', appliesToSelectedTask: false },
+      { obligationId: 'r3e-six', appliesToSelectedTask: true }]);
+    expect(body.value?.delivery.summary).toMatchObject({ obligations: 1, requirements: 5, pass: 5, fail: 0,
       inconclusive: 0, pending: 0, missing: 0, rounds: 1 });
     expect(finalized.outcome).toBe('PASS');
   }, 90_000);

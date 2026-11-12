@@ -327,7 +327,8 @@ export function openReverifyChain(f: S5DecisionFixture, policy: TaskAutomationPo
     async authorize() { return { status: 'ready' as const, value: { subjectKey: 's2a-notice-host',
       permissionRevision: 's2a-notice-permission', allowsRead: () => true } }; },
   };
-  const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(f.records, workspaceHost), records: f.records, executions: reads, materials, workspaceHost, configuration,
+  const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(f.records, workspaceHost), records: f.records,
+    commitIdentities: f.b2.base.commitIdentities, executions: reads, materials, workspaceHost, configuration,
     automationPolicy: () => policy,
     source: { async capture() { return { status: 'ready' as const, sourceDigest: sha256Hex(`s2a-source-${source.revision}`),
       sourceProof: { kind: 'current-workspace-only' as const, runBaselineKnown: false },

@@ -313,7 +313,8 @@ async function setup(kind: ClaimFixtureKind): Promise<Fixture> {
     };
     const materials = createMaterialService({ bodies: b2.bodies,
       authority: createMaterialRecordReaders(records).authority, now });
-    const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(records, workspaceHost), records, materials, executions, workspaceHost,
+    const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(records, workspaceHost), records,
+      commitIdentities: base.commitIdentities, materials, executions, workspaceHost,
       source: new VerificationWorkspaceReader(), configuration, now, newId });
     const runner = createRegisteredCheckRunner({ evidence, workspaceHost, kernel, now });
 

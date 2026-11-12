@@ -167,7 +167,8 @@ const ACTIVE: RoundActivityFactsV1 = { goalDesiredState: 'active', subjectDispos
 const OPEN_FACTS: RoundOpenFactsV1 = { activity: ACTIVE, planIsActive: true, taskBasisResolved: true,
   relation: { kind: 'work', runTaskIsSubject: true }, subjectRun: endedRun, subjectRunRequeued: false, chain: { kind: 'none' } };
 const APPLICABLE = { applicability: 'APPLICABLE', basis: 'same-plan', reason: 'the evidence Plan is the adopted Plan' } as const;
-const FOLD_OK: RoundFoldFactsV1 = { decisions: { lint: APPLICABLE, unit: APPLICABLE }, sourceCurrent: true, contextGaps: [] };
+const FOLD_OK: RoundFoldFactsV1 = { decisions: { lint: APPLICABLE, unit: APPLICABLE }, sourceCurrent: true, contextGaps: [],
+  review: { outcome: null, gaps: [], refs: [] } };
 
 const executed = (over: Partial<Extract<CheckProcessObservation, { kind: 'executed' }>> = {}): CheckProcessObservation => ({
   kind: 'executed', startedAt: AT, finishedAt: AT, exitCode: 0, signal: null, timedOut: false, cancelled: false,
@@ -244,6 +245,7 @@ const ROUND_EVENTS = {
   // VR-14 (5.9): the state is the requested predecessor and the chain's head; the successor is built.
   round_reverified: (state: RoundSnapshot | null): RoundEvent => reverifyEvent(state),
   task_requeued: (): RoundEvent => ({ kind: 'task_requeued', actorClass: 'human' }),
+  review_recorded: (): RoundEvent => ({ kind: 'review_recorded', evidenceRef: evidence('e-r') }),
 } satisfies Record<RoundEvent['kind'], (state: RoundSnapshot | null) => RoundEvent>;
 type RoundEventLabel = keyof typeof ROUND_EVENTS;
 
@@ -295,6 +297,9 @@ const ROUND_TABLE: Record<RoundEventLabel, () => Record<RoundStateLabel, Expect>
   // finalize_first (busy); a clean PASS has nothing to requeue.
   task_requeued: () => r(no('illegal', 'not_found'), GB, GB, GB, GB, II, keep(requeuedEffects(FINAL_FAIL)),
     keep(requeuedEffects(FINAL_INCONCLUSIVE))),
+  // VR-16 (slice 9): these rounds' plan has no `review-packet` item, so an open round refuses the booking; a finalized
+  // round is busy. The open round with the item is E1's table (`S9-vr16-pure.test.ts`).
+  review_recorded: () => r(II, ...Array.from({ length: 4 }, () => no('guard_failed', 'invalid')), IB, IB, IB),
 };
 
 describe('transitionRound: every (state, event) combination', () => {
@@ -543,13 +548,11 @@ describe('VR-07 guards', () => {
     ctx: Partial<RoundGuardContext> = {}) =>
     transitionRound(state, { ...(finalizeEvent(state) as Extract<RoundEvent, { kind: 'round_finalized' }>), ...over }, ctxOf(state, ctx));
 
-  it('refuses reviewer evidence before anything else (`roundReviewerEvidenceProblem`)', () => {
+  it('S9: reviewer evidence is no longer refused up front; the round guards decide (`roundReviewerEvidenceProblem`)', () => {
     expect(finalize(FINAL_PASS, { reviewerEvidenceCount: 1 }, { callerIsExecutor: false }))
-      .toMatchObject({ ok: false, reason: 'guard_failed', code: 'unsupported' });
-    // The same guard as a step the owner runs before the scope check and the receipt lookup.
-    expect(roundReviewerEvidenceProblem(0)).toBeNull();
-    expect(roundReviewerEvidenceProblem(2)).toEqual({ ok: false, reason: 'guard_failed', code: 'unsupported',
-      detail: 'reviewer evidence finalization is not implemented in R3e.1' });
+      .toMatchObject({ ok: false, reason: 'illegal', code: 'busy' });
+    // The pre-IO step admits any count; attribution happens after the owner's reads.
+    expect([0, 1, 2].map(roundReviewerEvidenceProblem)).toEqual([null, null, null]);
   });
 
   it('then finalized (busy), executor (forbidden) and the pin (revision_conflict)', () => {
@@ -906,6 +909,39 @@ describe('finalizeRoundOutcome (the D-2 fold)', () => {
       { code: 'uncovered_requirement', message: 'no registered check covers required requirement r9', coverage: cov('r9', 'ob-2') },
       context,
     ] });
+  });
+
+  // Slice 9 G2 (M3, M4): the `review-packet` item has no check snapshot; the booked review is one more candidate
+  // that never becomes an admission, and without it the review pairs are missing.
+  describe('S9: the review fact', () => {
+    const REVIEW_COVERAGE = [cov('r-rev'), cov('r-rev', 'ob-2')];
+    const PLAN_R: VerificationPlanV1 = { ...PLAN2, checks: [...PLAN2.checks, { checkId: 'review-packet', kind: 'reviewer',
+      satisfiesKind: 'reviewer', coverage: REVIEW_COVERAGE, satisfactionPath: 'review-packet' }] };
+    const COMMAND = [{ checkId: 'lint', coverage: cov('r1') }, { checkId: 'unit', coverage: cov('r2') }];
+    const missingGaps: RoundGapV1[] = REVIEW_COVERAGE.map((coverage) => ({ code: 'reviewer_missing', message: 'no review', coverage }));
+    it.each([
+      { review: { outcome: 'PASS', gaps: [], refs: [evidence('e-r')] }, outcome: 'PASS', gaps: [] },
+      { review: { outcome: 'FAIL', gaps: [], refs: [evidence('e-r')] }, outcome: 'FAIL', gaps: [] },
+      { review: { outcome: 'INCONCLUSIVE', gaps: [], refs: [evidence('e-r')] }, outcome: 'INCONCLUSIVE', gaps: [] },
+      { review: { outcome: null, gaps: missingGaps, refs: [] }, outcome: 'INCONCLUSIVE', gaps: missingGaps },
+      { review: { outcome: null, gaps: [], refs: [] }, outcome: 'INCONCLUSIVE', gaps: [] },
+    ] as const)('review $review.outcome with $gaps.length gaps → $outcome, admissions only the commands', ({ review, outcome, gaps }) => {
+      expect(fold(OPEN_SETTLED.checks, { review }, PLAN_R)).toEqual({ status: 'folded', outcome, gaps, admissions: COMMAND });
+    });
+
+    it('the review item opens no check; a finalize names the command refs, then the review ref', () => {
+      expect(pendingRoundChecks(PLAN_R, CONFIG)).toEqual({ ok: true, checks: [LINT, UNIT] });
+      const state: RoundSnapshot = { ...OPEN_SETTLED, verificationPlan: PLAN_R };
+      const finalizeWith = (evidenceRefs: EvidenceRef[]): RoundEvent => ({ kind: 'round_finalized', reviewerEvidenceCount: 1,
+        fold: { ...FOLD_OK, review: { outcome: 'PASS', gaps: [], refs: [evidence('e-r')] } }, evidenceRefs });
+      const decided = transitionRound(state, finalizeWith([evidence('e-1'), evidence('e-2'), evidence('e-r')]), ctxOf(state));
+      expect(decided).toMatchObject({ ok: true, next: { status: 'finalized', outcome: 'PASS', gaps: [],
+        evidenceRefs: [evidence('e-1'), evidence('e-2'), evidence('e-r')] } });
+      expect(decided.ok && decided.effects.find((effect) => effect.kind === 'admit_verdict_evidence')).toEqual({
+        kind: 'admit_verdict_evidence', admissions: [{ ref: evidence('e-1'), ...COMMAND[0] }, { ref: evidence('e-2'), ...COMMAND[1] }] });
+      expect(transitionRound(state, finalizeWith([evidence('e-1'), evidence('e-2')]), ctxOf(state)))
+        .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid' });
+    });
   });
 
   it('a stale source or an unreadable Plan admits nothing', () => {

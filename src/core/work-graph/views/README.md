@@ -27,7 +27,7 @@
 
 做单轮正式检查、轮次链和 Done 交付/验收聚合读的去这组。
 
-- `verification-round-read.ts` — `verification/round` 的读口 `createVerificationRoundRead`（`VerificationRoundReadPort`）：输入三选一（`roundRef`，或 `taskRef`，或 `taskRef`+`subjectRunRef`，或只有 `subjectRunRef`），只给 work 任务的 `taskRef` 是 `invalid`；最多三次存储读（锚点、锚定 Plan、一次 evidence 的 `readSubjectChain`），checks、gaps、链摘要和 delivery 全在内存组装；链头/序号/前驱与 display status 用 `state/verification-machine.ts` 的 `roundChainHead`/`displayRoundStatus`，33 行上限和 `incomplete` 句子只有 evidence 一份；`checks` 按 `verificationPlan` 的顺序全量返回，`reportRef` 原样、不打开报告正文（点开走 `materials/open`）；`delivery` 由 adopted Plan 的 obligations/verificationRequirements 按 selected 轮的 coverage 投影，state 按 FAIL → INCONCLUSIVE → pending/executing → PASS → missing 判。
+- `verification-round-read.ts` — `verification/round` 的读口 `createVerificationRoundRead`（`VerificationRoundReadPort`）：输入三选一（`roundRef`，或 `taskRef`，或 `taskRef`+`subjectRunRef`，或只有 `subjectRunRef`），只给 work 任务的 `taskRef` 是 `invalid`；最多三次存储读（锚点、锚定 Plan、一次 evidence 的 `readSubjectChain`），checks、gaps、链摘要和 delivery 全在内存组装；链头/序号/前驱与 display status 用 `state/verification-machine.ts` 的 `roundChainHead`/`displayRoundStatus`，33 行上限和 `incomplete` 句子只有 evidence 一份；`checks` 按 `verificationPlan` 的顺序全量返回，`reportRef` 原样、不打开报告正文（点开走 `materials/open`）；`delivery` 由 adopted Plan 的 obligations/verificationRequirements 按 selected 轮的 coverage 投影（第 9 片：一轮只属于一个 Task，`requirements` 和 `summary` 只算适用于本轮 Task 的 obligation，其余 obligation 仍列在 `obligations` 里、`appliesToSelectedTask: false`，不显示成 missing），state 按 FAIL → INCONCLUSIVE → pending/executing → PASS → missing 判。第 9 片：`review-packet` 项覆盖的要求按已入账的审阅 Evidence 显示（open 为 pending；FAIL 为 fail；该 pair 有 gap 或 INCONCLUSIVE 为 inconclusive；PASS 为 pass；没有为 missing），已 finalize 且有审阅项的轮为此多读一次轮的 Evidence。
 
 ### 可消费 Session
 

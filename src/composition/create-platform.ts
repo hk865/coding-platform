@@ -2253,7 +2253,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       try { options.onArchitectureCaptureTrigger?.({ kind, projectId }); } catch { /* the caller's result is unchanged */ }
     };
     const evidenceOwner = createEvidenceService({
-      records: backend.records, knowledge: knowledgeLines, materials: rawMaterials, executions: executionReader,
+      records: backend.records, commitIdentities: rawBackend.commitIdentities, knowledge: knowledgeLines,
+      materials: rawMaterials, executions: executionReader,
       workspaceHost: options.workspace, source: verificationWorkspaceReader,
       ...(options.checks === undefined ? {} : { configuration: options.checks }),
       configurationFor: currentCheckConfiguration,

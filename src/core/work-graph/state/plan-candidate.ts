@@ -3,9 +3,8 @@
  * §6.1.3).
  *
  * Diagnosis's one rule: every REQUIRED verification requirement must have a registered
- * check that covers it. Reviewer requirements are not supported before the
- * reviewer check exists, so they report `reviewer_not_supported`; every other
- * uncovered required requirement reports `no_registered_check`. Coverage is
+ * check that covers it; reviewer requirements are covered by the review item
+ * (slice 9), so every uncovered required requirement reports `no_registered_check`. Coverage is
  * compiled by the same pure function the VerificationPlan compiler uses.
  *
  * `checks: null` means the registered coverage is unknown: it is not an empty
@@ -120,7 +119,6 @@ export function decidePlanCandidate(facts: PlanCandidateFactsV1): PlanCandidateD
 }
 
 const NO_REGISTERED_CHECK_MESSAGE = '没有已注册的检查能覆盖这条必需验证要求。';
-const REVIEWER_NOT_SUPPORTED_MESSAGE = '审阅类验证要求目前没有受支持的检查。';
 
 /** Read-only facts only: no storage, no clock, no tools, no module lookup. */
 export function diagnosePlanCandidate(input: {
@@ -143,7 +141,7 @@ export function diagnosePlanCandidate(input: {
     obligationId: entry.obligationId,
     requirementId: entry.requirementId,
     kind: entry.kind,
-    code: entry.kind === 'reviewer' ? 'reviewer_not_supported' : 'no_registered_check',
-    message: entry.kind === 'reviewer' ? REVIEWER_NOT_SUPPORTED_MESSAGE : NO_REGISTERED_CHECK_MESSAGE,
+    code: 'no_registered_check',
+    message: NO_REGISTERED_CHECK_MESSAGE,
   }));
 }

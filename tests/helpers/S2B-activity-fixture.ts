@@ -259,6 +259,7 @@ export async function openS2BActivityFixture(
   };
   const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(baseRecords),
     records: baseRecords,
+    commitIdentities: b2.base.commitIdentities,
     executions: createRunStateReader({ records: baseRecords }),
     materials: createMaterialService({ bodies: b2.bodies, authority: materialAuthority, now }),
     workspaceHost: {

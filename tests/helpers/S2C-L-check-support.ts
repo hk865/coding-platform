@@ -128,7 +128,7 @@ export function createLineCheckSupport(input: {
   };
 
   const evidence: EvidencePort = createEvidenceService({ knowledge: knowledgeLinesOver(records, workspaceHost),
-    records, materials, executions, workspaceHost,
+    records, commitIdentities: base.commitIdentities, materials, executions, workspaceHost,
     source: new VerificationWorkspaceReader(), configuration, now: () => AT, newId,
   });
 

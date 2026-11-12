@@ -125,7 +125,9 @@ function evidenceOver(fixture: R3eEvidenceFixture, tag: string, overrides: {
   records?: R3eEvidenceFixture['records']; source?: VerificationRoundSourcePort; minted?: string[];
 } = {}): EvidencePort {
   let sequence = 0;
-  return createEvidenceService({ knowledge: knowledgeLinesOver(fixture.records, fixture.workspaceHost), records: overrides.records ?? fixture.records, materials: fixture.materials,
+  return createEvidenceService({ knowledge: knowledgeLinesOver(fixture.records, fixture.workspaceHost),
+    records: overrides.records ?? fixture.records, commitIdentities: fixture.b2.base.commitIdentities,
+    materials: fixture.materials,
     executions: createRunStateReader({ records: fixture.records }),
     workspaceHost: fixture.workspaceHost, source: overrides.source ?? new VerificationWorkspaceReader(),
     configuration: fixture.configuration, now: () => B2_AT,

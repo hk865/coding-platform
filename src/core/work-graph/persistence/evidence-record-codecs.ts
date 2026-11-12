@@ -22,7 +22,7 @@ import type {
     DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
 } from '../../record-store/ports.js';
 import type { RecordLookupIndex } from '../../record-store/lookup-ports.js';
-import type { EvidenceSnapshot, TaskEvidenceIndexSnapshot } from '../../../contracts/evidence.js';
+import type { EvidenceRef, EvidenceSnapshot, TaskEvidenceIndexSnapshot } from '../../../contracts/evidence.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import { canonicalOf } from '../../../contracts/fingerprint.js';
@@ -61,6 +61,8 @@ export const VERIFICATION_ROUND_FINALIZED_EVENT_TYPE = 'VerificationRoundFinaliz
 export const VERIFICATION_CHECK_INTERRUPTED_EVENT_TYPE = 'VerificationCheckInterrupted' as const;
 export const VERIFICATION_CHECK_ABANDONED_EVENT_TYPE = 'VerificationCheckAbandoned' as const;
 export const VERIFICATION_ROUND_REVERIFIED_EVENT_TYPE = 'VerificationRoundReverified' as const;
+/** Slice 9 VR-16: the receipt of one booked review Evidence (`recordReviewEvidence`); its result is `{evidenceRef}`. */
+export const VERIFICATION_REVIEW_EVIDENCE_RECORDED_EVENT_TYPE = 'VerificationReviewEvidenceRecorded' as const;
 export const EVIDENCE_EVENT_SCHEMA_VERSION = 1 as const;
 
 /** Why an executing check was interrupted (written as its `incompleteCause`). */
@@ -116,7 +118,9 @@ export type VerificationRoundEvent =
     })
     /** VR-14: `roundRef` and `result` are the new successor round (chain ordinal ≥ 2). */
     | (EvidenceEventBase & { eventType: typeof VERIFICATION_ROUND_REVERIFIED_EVENT_TYPE; result: RoundSnapshot;
-        acknowledgement?: SessionMessageRef; proof?: DecisionChangeProofV1 });
+        acknowledgement?: SessionMessageRef; proof?: DecisionChangeProofV1 })
+    /** VR-16: `roundRef` is the open round the review was booked for; the round itself is not written. */
+    | (EvidenceEventBase & { eventType: typeof VERIFICATION_REVIEW_EVIDENCE_RECORDED_EVENT_TYPE; result: { evidenceRef: EvidenceRef } });
 
 export const VERIFICATION_ROUND_EVENT_TYPES: readonly VerificationRoundEvent['eventType'][] = [
     VERIFICATION_ROUND_OPENED_EVENT_TYPE,
@@ -126,6 +130,7 @@ export const VERIFICATION_ROUND_EVENT_TYPES: readonly VerificationRoundEvent['ev
     VERIFICATION_CHECK_INTERRUPTED_EVENT_TYPE,
     VERIFICATION_CHECK_ABANDONED_EVENT_TYPE,
     VERIFICATION_ROUND_REVERIFIED_EVENT_TYPE,
+    VERIFICATION_REVIEW_EVIDENCE_RECORDED_EVENT_TYPE,
 ];
 
 // -------------------------------------------------------------------------- //
@@ -595,6 +600,8 @@ function a2RoundEventProblem(body: UnknownRecord): string | null {
             }
             return null;
         }
+        case VERIFICATION_REVIEW_EVIDENCE_RECORDED_EVENT_TYPE:
+            return refProblem((body['result'] as UnknownRecord)['evidenceRef'], 'Evidence', ['projectId', 'evidenceId']);
         default:
             return null;
     }

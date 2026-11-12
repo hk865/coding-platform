@@ -310,6 +310,11 @@ export type VerificationCoverageV1 = {
     emptyRequiredObligation: string | null;
 };
 
+/** Slice 9: the plan's one `review-packet` item (its reviewer pairs); none when the Task has no reviewer requirement. */
+export function reviewPacketItemOf(plan: Pick<VerificationPlanV1, "checks">): VerificationCheckPlan | undefined {
+    return plan.checks.find(check => check.satisfactionPath === "review-packet");
+}
+
 /**
  * Compile the required-obligation coverage. Inputs are already-resolved facts:
  * the policy's requirement kinds and the read-only registered check
@@ -323,7 +328,10 @@ export function compileVerificationCoverage(input: {
     /** Read-only registered check capabilities. */
     checks: readonly CheckCapabilityV1[];
 }): VerificationCoverageV1 {
-    const checks = new Map<string, VerificationCheckPlan>();
+    // The review item has its own key: a trusted check may also be named `review-packet` (registration only asks for
+    // a non-empty id), and a command must never merge with the review item.
+    const reviewKey = Symbol("review-packet");
+    const checks = new Map<string | symbol, VerificationCheckPlan>();
     const uncovered: { obligationId: string; requirementId: string; kind: VerificationCheckKind }[] = [];
     let emptyRequiredObligation: string | null = null;
     const knownKinds = new Set(input.requirementKinds);
@@ -336,6 +344,20 @@ export function compileVerificationCoverage(input: {
             continue;
         }
         for (const requirement of requiredRequirements) {
+            const coverage: EvidenceCoverageV1 = { obligationId: obligation.obligationId, requirementId: requirement.requirementId };
+            // Slice 9: every reviewer requirement is answered by the one `review-packet` item (the exec review Query),
+            // whatever the policy kinds and the registered checks; it is never uncovered.
+            if (requirement.kind === "reviewer") {
+                const review = checks.get(reviewKey);
+                if (review === undefined) {
+                    checks.set(reviewKey, { checkId: "review-packet", kind: "reviewer", satisfiesKind: "reviewer",
+                        coverage: [coverage], satisfactionPath: "review-packet" });
+                } else if (!review.coverage.some(entry => entry.obligationId === coverage.obligationId
+                    && entry.requirementId === coverage.requirementId)) {
+                    review.coverage.push(coverage);
+                }
+                continue;
+            }
             const covering = input.checks
                 .filter(capability => capability.coversKinds.includes(requirement.kind));
             if (covering.length === 0 || !knownKinds.has(requirement.kind)) {
@@ -343,7 +365,6 @@ export function compileVerificationCoverage(input: {
                     kind: requirement.kind as VerificationCheckKind });
                 continue;
             }
-            const coverage: EvidenceCoverageV1 = { obligationId: obligation.obligationId, requirementId: requirement.requirementId };
             for (const capability of covering) {
                 const existing = checks.get(capability.checkId);
                 if (existing === undefined) {

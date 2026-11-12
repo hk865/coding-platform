@@ -32,7 +32,7 @@ export type PlanDiagnosisFindingV1 = {
   obligationId: string;
   requirementId: string;
   kind: VerificationCheckKind;
-  code: 'no_registered_check' | 'reviewer_not_supported';
+  code: 'no_registered_check';
   /** One plain sentence for the reviewer and the person; no references. */
   message: string;
 };

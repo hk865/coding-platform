@@ -54,6 +54,7 @@ export async function openCalendarReverifyFixture(kind: 'memory' | 'sqlite'): Pr
   };
   const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(records),
     records,
+    commitIdentities: f.b2.base.commitIdentities,
     executions: createRunStateReader({ records }),
     materials: createMaterialService({ bodies: f.b2.bodies,
       authority: createMaterialRecordReaders(records).authority, now }),

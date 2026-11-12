@@ -4,9 +4,8 @@
  * `evaluateTaskCompletion` consumes the single R3e effective-evidence fold
  * (`EffectiveEvidenceSet`) already computed by the completion service; it never
  * recomputes applicability, reviewer coverage or source status itself. A
- * required reviewer requirement has no formal producer yet, so it holds the
- * Task; when no adopted requirement asks for a reviewer this seam adds no
- * prerequisite. Its verdict is the one TASK-14/15/24 judge
+ * reviewer requirement is covered like any other key by its booked review
+ * Evidence (slice 9); there is no reviewer prerequisite. Its verdict is the one TASK-14/15/24 judge
  * (`state/task-machine.ts` `TaskCompletionVerdictV1`).
  *
  * `evaluateGoalCompletion` consumes only the selected Plan plus the canonical
@@ -31,7 +30,7 @@ import { runUnresolvedBlocker } from '../state/run-machine.js';
 import type { TaskCompletionVerdictV1 } from '../state/task-machine.js';
 import type { CanonicalTaskFacts, CanonicalTaskState } from './plan-readers.js';
 
-type RequiredRequirement = { obligationId: string; requirementId: string; kind: string };
+type RequiredRequirement = { obligationId: string; requirementId: string };
 
 /** The adopted required verification requirements of one Task, keyed by the
  * composite `obligationId + requirementId` identity (never a bare requirementId). */
@@ -48,7 +47,7 @@ function requiredRequirementsOf(plan: PlanRevisionSnapshot, taskId: string): {
     for (const requirement of obligation.verificationRequirements) {
       if (requirement.requirementLevel !== 'required') continue;
       const key = requirementKeyOf({ obligationId: obligation.obligationId, requirementId: requirement.requirementId });
-      required.set(key, { obligationId: obligation.obligationId, requirementId: requirement.requirementId, kind: requirement.kind });
+      required.set(key, { obligationId: obligation.obligationId, requirementId: requirement.requirementId });
     }
   }
   return { required, requiredObligations };
@@ -97,12 +96,6 @@ export function evaluateTaskCompletion(input: {
       evidenceIds: [lease.holderRunId] });
   }
 
-  const reviewerMissing = [...required.values()].some(entry => entry.kind === 'reviewer');
-  if (reviewerMissing) {
-    causes.push({ code: 'missing_evidence',
-      message: 'a required independent review requirement has no formal producer yet' });
-  }
-
   const hasGapEvidence = effectiveSet.staleEvidenceIds.length > 0 || effectiveSet.outOfScopeEvidenceIds.length > 0;
   const missingKeys: string[] = [];
   const staleKeys: string[] = [];
@@ -113,7 +106,7 @@ export function evaluateTaskCompletion(input: {
     else missingKeys.push(key);
   }
 
-  const hardNotSatisfied = task.disposition !== 'active' || runUnresolved || leaseActive || reviewerMissing;
+  const hardNotSatisfied = task.disposition !== 'active' || runUnresolved || leaseActive;
   const allCovered = required.size > 0 && requiredObligations.size > 0
     && [...required.keys()].every(key => effectiveSet.coverageByRequirement[key] !== undefined);
 

@@ -500,7 +500,7 @@ export function goalCompletionProblem(
   // :548-555
   if (!facts.evaluation.completed) {
     const reasons = [...facts.evaluation.reasons];
-    if (facts.requiresReviewer) reasons.push('a required independent review requirement has no formal producer yet');
+    if (facts.requiresReviewer) reasons.push('a required independent review is a hint, not a hard gate');
     return reject('guard_failed', 'incomplete', `Goal ${goal.ref.goalId} is not complete: ${reasons.join('; ')}`);
   }
   return null;

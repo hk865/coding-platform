@@ -310,9 +310,8 @@ export async function gateHead(f: S5DecisionFixture, owners: BOwners) {
   }));
   expect(opened.value).toMatchObject({ status: 'open', revision: 1, checks: [],
     chain: { ordinal: 1, autoCount: 0, predecessorRoundRef: null } });
+  // Slice 9 G2: a round compiles only its Task's obligations, so the work obligation PB1 is not this gate's gap.
   expect(opened.value.gaps).toEqual([
-    { code: 'uncovered_requirement', message: 'no registered check covers required requirement PB1-check',
-      coverage: { obligationId: 'PB1-obligation', requirementId: 'PB1-check' } },
     { code: 'uncovered_requirement', message: 'no registered check covers required requirement s5r2-b-stage-check',
       coverage: { obligationId: 's5r2-b-stage-obligation', requirementId: 's5r2-b-stage-check' } },
   ]);

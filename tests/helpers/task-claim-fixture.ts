@@ -22,7 +22,8 @@ import type { RoleBindingRefV1, RunRef, RunSnapshot, TaskBudgetV1, TaskTriple } 
 import type { GoalRef, ProjectSnapshot, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot } from '../../src/contracts/plan.js';
 import type {
-  EncodedEventSchema, EncodedRecord, GoalRecordTransactionPort, RecordBackendSchemas, RecordGuard, StoreCommitReceipt,
+  EncodedEventSchema, EncodedRecord, GoalRecordTransactionPort, RecordBackendSchemas, RecordCommitIdentityPort, RecordGuard,
+  StoreCommitReceipt,
 } from '../../src/core/record-store/ports.js';
 import * as inMemoryRecordStore from '../../src/core/record-store/in-memory-record-store.js';
 import * as sqliteRecordStore from '../../src/core/record-store/sqlite-record-store.js';
@@ -114,6 +115,8 @@ export type TaskClaimFixture = {
   directory: string;
   ledgerPath: string;
   records: Records;
+  /** Slice 9 G2: the real backend's identity-only receipt read, beside `records` (an evidence owner needs it). */
+  commitIdentities: Pick<RecordCommitIdentityPort, 'readCommitByIdentity'>;
   spy: RecordSpy;
   materialsSpy: MaterialSpy;
   service: TaskClaimPort;
@@ -214,6 +217,12 @@ const realSqliteRecordBackend = sqliteRecordStore.createSqliteRecordBackend;
 /** Platform builds run one at a time: the backend-factory seam below is a process-wide module spy. */
 let claimPlatformQueue: Promise<unknown> = Promise.resolve();
 
+/** One built platform plus the identity port of the record backend it built (the platform publishes `records` only). */
+type ClaimPlatform = {
+  platform: Awaited<ReturnType<typeof createTargetPlatform>>;
+  commitIdentities: RecordCommitIdentityPort;
+};
+
 /**
  * The ONE real platform of this fixture. The base registration is the
  * composition root's own; `extra` is merged at the backend factory seam so a
@@ -221,23 +230,35 @@ let claimPlatformQueue: Promise<unknown> = Promise.resolve();
  */
 function openClaimPlatform(kind: ClaimFixtureKind, directory: string, workspace: WorkspaceHostBindings,
   now: () => string, kernelStores: Parameters<typeof createKernelStoreRegistry>[0],
-  extra: RecordBackendSchemas): Promise<Awaited<ReturnType<typeof createTargetPlatform>>> {
-  const build = async (): Promise<Awaited<ReturnType<typeof createTargetPlatform>>> => {
+  extra: RecordBackendSchemas): Promise<ClaimPlatform> {
+  const build = async (): Promise<ClaimPlatform> => {
     // Loaded here, not at module scope: the composition root imports modules a
     // test may mock, and a static edge would close an import cycle with the
     // mock factory (the S2B activity-backfill gate does exactly that).
     const { createTargetPlatform } = await import('../../src/composition/create-platform.js');
+    let captured: RecordCommitIdentityPort | undefined;
+    const withIdentities = (platform: Awaited<ReturnType<typeof createTargetPlatform>>): ClaimPlatform => {
+      if (captured === undefined) throw new Error('fixture platform did not build a record backend');
+      return { platform, commitIdentities: captured };
+    };
     if (kind === 'memory') {
-      const spy = vi.spyOn(inMemoryRecordStore, 'createInMemoryRecordBackend').mockImplementation(
-        (options) => realInMemoryRecordBackend({ ...options, schemas: mergePlatformSchemas(options.schemas, extra) }));
+      const spy = vi.spyOn(inMemoryRecordStore, 'createInMemoryRecordBackend').mockImplementation((options) => {
+        const backend = realInMemoryRecordBackend({ ...options, schemas: mergePlatformSchemas(options.schemas, extra) });
+        captured = backend.commitIdentities;
+        return backend;
+      });
       try {
-        return await createTargetPlatform({ storage: { kind: 'memory' }, workspace, now, kernelStores });
+        return withIdentities(await createTargetPlatform({ storage: { kind: 'memory' }, workspace, now, kernelStores }));
       } finally { spy.mockRestore(); }
     }
-    const spy = vi.spyOn(sqliteRecordStore, 'createSqliteRecordBackend').mockImplementation(
-      (options) => realSqliteRecordBackend({ ...options, schemas: mergePlatformSchemas(options.schemas, extra) }));
+    const spy = vi.spyOn(sqliteRecordStore, 'createSqliteRecordBackend').mockImplementation((options) => {
+      const backend = realSqliteRecordBackend({ ...options, schemas: mergePlatformSchemas(options.schemas, extra) });
+      captured = backend.commitIdentities;
+      return backend;
+    });
     try {
-      return await createTargetPlatform({ storage: { kind: 'sqlite', directory }, workspace, now, kernelStores });
+      return withIdentities(
+        await createTargetPlatform({ storage: { kind: 'sqlite', directory }, workspace, now, kernelStores }));
     } finally { spy.mockRestore(); }
   };
   const run = claimPlatformQueue.then(build, build);
@@ -289,7 +310,8 @@ export async function createTaskClaimFixture<A = unknown>(kind: ClaimFixtureKind
   const extraSchemas: RecordBackendSchemas = { records: additionalSchemas.records,
     events: [...additionalSchemas.events, TRUSTED_SCOPE_SEEDED_EVENT],
     lookups: additionalSchemas.lookups ?? [] };
-  const platform = await openClaimPlatform(kind, directory, workspaceHost, now, kernelStoreOptions, extraSchemas);
+  const { platform, commitIdentities } =
+    await openClaimPlatform(kind, directory, workspaceHost, now, kernelStoreOptions, extraSchemas);
   // This fixture keeps its artifact bodies in memory (B2-execution's store), so
   // the composition root's empty ledger-side artifacts file must not exist: the
   // §11 invariant reader treats its presence as "requeue manifests live here".
@@ -469,7 +491,8 @@ export async function createTaskClaimFixture<A = unknown>(kind: ClaimFixtureKind
 
   const secondaryPlatforms: Array<Awaited<ReturnType<typeof createTargetPlatform>>> = [];
   async function openSecondary(): Promise<ClaimConnection> {
-    const secondary = await openClaimPlatform(kind, directory, workspaceHost, now, kernelStoreOptions, extraSchemas);
+    const secondary = (await openClaimPlatform(kind, directory, workspaceHost, now, kernelStoreOptions, extraSchemas))
+      .platform;
     secondaryPlatforms.push(secondary);
     const secondarySpy = emptySpy();
     const secondaryService = makeService(wrapRecords(secondary.disconnect.records, secondarySpy));
@@ -477,7 +500,7 @@ export async function createTaskClaimFixture<A = unknown>(kind: ClaimFixtureKind
   }
 
   const fixture: TaskClaimFixture = {
-    kind, directory, ledgerPath, records: backendRecords, spy, materialsSpy, service, ctx, scope,
+    kind, directory, ledgerPath, records: backendRecords, commitIdentities, spy, materialsSpy, service, ctx, scope,
     projectRef, workspaceRef, goalRef, planRef, plan, tasks,
     sessions: { first: firstSession, second: secondSession }, roleBinding, budget,
     goals: goalsService, plans, sessionsPort, roleService, makeService, knowledgeRoots, knowledge,
