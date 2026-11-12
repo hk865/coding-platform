@@ -100,7 +100,7 @@ async function memoryPlatformOver(fixture: R3eEvidenceFixture, records = fixture
 async function platformFor(fixture: R3eEvidenceFixture, records = fixture.records): Promise<Platform> {
   if (fixture.kind === 'memory') return await memoryPlatformOver(fixture, records);
   await fixture.b2.base.closeBackend();
-  const platform = await createTargetPlatform({ storage: { kind: 'sqlite', directory: fixture.b2.base.directory },
+  const platform = await createTargetPlatform({ storage: { kind: 'sqlite', directory: fixture.b2.base.storeDirectory },
     workspace: fixture.workspaceHost, checks: fixture.configuration, now: () => B2_AT });
   cleanups.push(() => platform.close());
   return platform;
@@ -150,7 +150,7 @@ const plainBody = (scope: { projectId: string; workspaceId: string }, input: unk
 
 async function openRoundReadHost(fixture: R3eEvidenceFixture): Promise<{ host: LocalWorkbenchHost; base: string; token: string }> {
   await fixture.b2.base.closeBackend();
-  await linkHostStore(fixture.scope.projectId, fixture.workspaceRoot, fixture.b2.base.directory);
+  await linkHostStore(fixture.scope.projectId, fixture.workspaceRoot, fixture.b2.base.storeDirectory);
   const publicDir = await publicDirectory();
   const host = await createLocalWorkbenchHost({
     storage: { kind: 'sqlite', directory: fixture.b2.base.directory }, actor: R3E_HOST, publicDir, now: () => B2_AT,

@@ -40,7 +40,7 @@ async function prepared(): Promise<{
   const planRef = futurePlan.ref;
   await fixture.b2.base.closeBackend();
   const options: TargetPlatformOptions = {
-    storage: { kind: 'sqlite', directory: fixture.b2.base.directory },
+    storage: { kind: 'sqlite', directory: fixture.b2.base.storeDirectory },
     workspace: fixture.workspaceHost,
     checks: fixture.configuration,
     now: () => B2_AT,

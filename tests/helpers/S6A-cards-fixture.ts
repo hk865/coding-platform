@@ -568,6 +568,8 @@ export type S6ANoticesWorld = {
   readonly governance: S6AGovernance;
   /** The adopted Plans: goal 1 with `ag2b-work` and `S6A_CARDS_SECOND_TASK_ID`, goal 2 with `ag2b-work`. */
   readonly plans: { first: PlanRevisionSnapshot; second: PlanRevisionSnapshot };
+  /** The two adoptions' commit cursors, as `plans/apply` returned them. */
+  readonly adoptionCursors: { first: CommitCursor; second: CommitCursor };
   /** The Work Session every rework runs on. */
   readonly worker: S6ASession;
   /** One automatic rework of a task that was never reworked (see the header). */
@@ -589,22 +591,25 @@ export async function openS6ANoticesWorld(options: S6AHostWorldOptions): Promise
   try {
     const main = s6aCardsWorkspace(world, S6A_SCOPE);
     const governance = await ensureProjectPointers(world);
-    const adopt = async (goal: GoalRef, workIds: readonly string[], planId: string): Promise<PlanRevisionSnapshot> => {
+    const adopt = async (goal: GoalRef, workIds: readonly string[], planId: string):
+    Promise<{ plan: PlanRevisionSnapshot; cursor: CommitCursor }> => {
       const proposed = asRecord(committedBody(await main.post('plans/propose', graphWrite(S6A_SCOPE, {
         goalRef: goal, basedOn: null, draft: { ...ag2bPlanDraft(workIds), planId, goalId: goal.goalId },
         reason: { text: `S6A cards plan ${planId}`, sources: [] },
       }, `s6a-cards-${planId}-propose`, [])), `the Plan ${planId}`)['value']);
-      committedBody(await main.post('plans/apply', graphWrite(S6A_SCOPE, {
+      const applied = committedBody(await main.post('plans/apply', graphWrite(S6A_SCOPE, {
         proposalRef: proposed['ref'], expectedProposalRevision: proposed['revision'], decisionRefs: [],
       }, `s6a-cards-${planId}-apply`, [])), `the adoption of ${planId}`);
       const plan = await main.activePlan(goal);
       if (plan === null) throw new Error(`S6A cards: ${goal.goalId} has no adopted Plan after ${planId}`);
-      return plan;
+      const cursor = applied['cursor'];
+      if (typeof cursor !== 'string') throw new Error(`S6A cards: plans/apply returned no cursor: ${JSON.stringify(applied)}`);
+      return { plan, cursor: cursor as CommitCursor };
     };
-    const plans = {
-      first: await adopt(world.goals.first, [AG2B_WORK_TASK_ID, S6A_CARDS_SECOND_TASK_ID], 's6a-cards-plan-goal-1'),
-      second: await adopt(world.goals.second, [AG2B_WORK_TASK_ID], 's6a-cards-plan-goal-2'),
-    };
+    const first = await adopt(world.goals.first, [AG2B_WORK_TASK_ID, S6A_CARDS_SECOND_TASK_ID], 's6a-cards-plan-goal-1');
+    const second = await adopt(world.goals.second, [AG2B_WORK_TASK_ID], 's6a-cards-plan-goal-2');
+    const plans = { first: first.plan, second: second.plan };
+    const adoptionCursors = { first: first.cursor, second: second.cursor };
     await world.settleDetached();
     await world.setResumeOnStartup(false);
     // A-25/A-09: the hinted worker line must be the key-1 holder for each reworked Task, so it is created through
@@ -648,7 +653,7 @@ export async function openS6ANoticesWorld(options: S6AHostWorldOptions): Promise
 
     let seeded = false;
     const notices: S6ANoticesWorld = {
-      world, main, governance, plans, worker, rework,
+      world, main, governance, plans, adoptionCursors, worker, rework,
       async seedReworkNotices() {
         if (seeded) throw new Error('S6A cards: the rework notices are seeded once per world');
         seeded = true;

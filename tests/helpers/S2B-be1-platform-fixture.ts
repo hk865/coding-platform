@@ -272,7 +272,9 @@ export async function createS2BBe1Platform(options: S2BBe1PlatformOptions): Prom
   const workspaceDir = join(f.directory, 'workspace');
   await mkdir(workspaceDir, { recursive: true });
   // KLS-2: the workspace root moved here keeps its knowledge files (the claim fixture adopted the catalog in its directory).
-  await cp(join(f.directory, '.workbench'), join(workspaceDir, '.workbench'), { recursive: true });
+  await cp(join(f.directory, '.workbench'), join(workspaceDir, '.workbench'), { recursive: true,
+    // not `local/`: the claim fixture's project store stays where it is
+    filter: source => source !== join(f.directory, '.workbench', 'local') });
   const workspaceHost: WorkspaceHostBindings = {
     async resolveRoot(scope) {
       return scope.projectId === f.scope.projectId && scope.workspaceId === f.scope.workspaceId
@@ -292,7 +294,7 @@ export async function createS2BBe1Platform(options: S2BBe1PlatformOptions): Prom
   const directory = f.directory;
   await f.closeBackend();
   const platform = await createTargetPlatform({
-    storage: { kind: 'sqlite', directory }, workspace: workspaceHost,
+    storage: { kind: 'sqlite', directory: f.storeDirectory }, workspace: workspaceHost,
     now: () => new Date().toISOString(),
     kernelStores: { entries: [{ adapterId: 'r4c-claim-kernel', storeKey: 'r4c-claim-kernel-store',
       workspace: f.scope, databasePath: join(directory, 'kernel.sqlite') }] },

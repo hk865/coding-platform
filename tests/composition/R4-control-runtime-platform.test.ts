@@ -104,7 +104,7 @@ async function open(options: Parameters<typeof createB2RuntimeFixture>[0] = {}) 
   fixtures.push(fixture);
   await fixture.claimFixture.closeBackend();
   const platformOptions = {
-    storage: { kind: 'sqlite' as const, directory: fixture.directory },
+    storage: { kind: 'sqlite' as const, directory: fixture.claimFixture.storeDirectory },
     workspace: fixture.deps.workspaceHost,
     now: () => B2_AT,
     kernelStores: { entries: [{

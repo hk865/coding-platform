@@ -25,7 +25,7 @@ afterEach(async()=>{for(const fixture of fixtures.splice(0))await fixture.close(
 async function open(options:Parameters<typeof createB2RuntimeFixture>[0]={}){
   const fixture=await createB2RuntimeFixture({...options,kind:'sqlite'});fixtures.push(fixture);
   await fixture.claimFixture.closeBackend();
-  const platformOptions={storage:{kind:'sqlite' as const,directory:fixture.directory},workspace:fixture.deps.workspaceHost,now:()=>B2_AT,
+  const platformOptions={storage:{kind:'sqlite' as const,directory:fixture.claimFixture.storeDirectory},workspace:fixture.deps.workspaceHost,now:()=>B2_AT,
     kernelStores:{entries:[{adapterId:'r4c-claim-kernel',storeKey:'r4c-claim-kernel-store',workspace:fixture.scope,databasePath:join(fixture.directory,'kernel.sqlite')}]},runtime:fixture.host};
   return {fixture,platformOptions,platform:await createTargetPlatform(platformOptions)};
 }

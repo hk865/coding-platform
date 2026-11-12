@@ -127,7 +127,7 @@ it('RL-34 a saved setting reaches the registered check', async () => {
   const fixture = await createR3eEvidenceFixture('sqlite');
   fixtures.push(fixture);
   await fixture.b2.base.closeBackend();
-  const platform = await createTargetPlatform({ storage: { kind: 'sqlite', directory: fixture.b2.base.directory },
+  const platform = await createTargetPlatform({ storage: { kind: 'sqlite', directory: fixture.b2.base.storeDirectory },
     workspace: fixture.workspaceHost, checks: fixture.configuration, resourceCaps: caps.source, now: () => B2_AT });
   fixtures.push({ close: () => platform.close() });
   const opened = await platform.evidence.openVerification(fixture.ctx, fixture.openRequest());

@@ -156,20 +156,22 @@ export function createInMemoryRecordBackend(options: InMemoryRecordBackendOption
 
   const appendEvents = (events: readonly { eventId: string; json: string }[]): {
     eventIds: string[];
+    /** Every event's cursor, in order (a binding may name one by index). */
+    cursors: CommitCursor[];
     commitCursor: CommitCursor;
   } => {
     const eventIds: string[] = [];
-    let lastCursor: CommitCursor | null = null;
+    const cursors: CommitCursor[] = [];
     for (const event of events) {
       state.cursorSeq += 1;
       const cursor = makeCommitCursor(state.cursorSeq);
       state.eventLog.push({ cursor, event: JSON.parse(event.json) as Record<string, unknown> });
       eventIds.push(event.eventId);
-      lastCursor = cursor;
+      cursors.push(cursor);
     }
     // Historical append contract: an empty event list produced a null cursor;
     // the store rejects empty event lists before reaching this point.
-    return { eventIds, commitCursor: lastCursor as CommitCursor };
+    return { eventIds, cursors, commitCursor: cursors[cursors.length - 1] as CommitCursor };
   };
 
   const upsertSnapshot = (refKey: string, json: string): void => {
@@ -326,13 +328,13 @@ export function createInMemoryRecordBackend(options: InMemoryRecordBackendOption
       const written = appendEvents(
         planned.events.map((decoded) => ({ eventId: decoded.event.eventId, json: decoded.event.json })),
       );
-      // Bind the REAL last-event cursor and run the final registered schema
+      // Bind the REAL event cursors and run the final registered schema
       // validation before any snapshot is written; a rejection here rolls the
       // already-appended events back.
       const boundRecords = bindPreparedRecords(
         planned.records,
         planned.commitCursorBindings,
-        written.commitCursor,
+        written.cursors,
         registry,
       );
       if (boundRecords.status === "invalid") {

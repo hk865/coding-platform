@@ -108,7 +108,7 @@ export async function observeStore(base: TaskClaimFixture) {
   const receipts = new Map<string, string>();
   const check = async () => {
     if (base.kind === 'sqlite' && !seeding) {
-      const world = await readInvariantWorld(invariantStoreOf(base.directory), base.scope.projectId);
+      const world = await readInvariantWorld(invariantStoreOf(base.storeDirectory), base.scope.projectId);
       // Owners may recover a thrown commit response by replaying its receipt.
       // A soft assertion records the failure without masquerading as a lost response.
       expect.soft(checkAllInvariants(world, previous)).toEqual([]);

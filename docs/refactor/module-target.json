@@ -50,9 +50,11 @@
           "id": "knowledge",
           "path": "knowledge/",
           "dependencies": [
-            "model"
+            "model",
+            "persistence",
+            "state"
           ],
-          "note": "知识文件的写入顺序（KLS-2，kls-design §2.2.4）：architecture 和 notes 的写点都经它；它不 import architecture/ 和 notes/，否则成环。"
+          "note": "知识文件的写入顺序（KLS-2，kls-design §2.2.4）：architecture 和 notes 的写点都经它；它不 import architecture/ 和 notes/，否则成环，要用那两层的规则（携带事件、路径种类、重建文件）由组合根经 KnowledgeWriteDeps 注入。写日志和完成事件的 codec 在 persistence/，所以依赖 persistence；state 留给对账和通知的纯规则。"
         },
         {
           "id": "configuration",

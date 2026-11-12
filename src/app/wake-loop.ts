@@ -61,12 +61,13 @@ export const MESSAGE_RELEASE_QUEUE = 'message_release';
  * NoteVersion feed the brief; PlanProposal/Goal end a request's processing, which the routing set and the
  * handoff archive condition read; GoalPhase (a formal completion) and ProjectRoleLimits (a raised cap) wake the
  * Goal adviser queue drain; an ArchitectureProposal write, freeze or approval wakes the cold start's
- * `coarse_split` and `proposals`. Static, not conditional: a pass without a pending operation costs one
- * indexed read.
+ * `coarse_split` and `proposals`; KnowledgeWrite's completion commit, after the files landed, wakes a pass
+ * that read them mid-landing (the write's own commit woke it earlier). Static, not conditional: a pass
+ * without a pending operation costs one indexed read.
  */
 export const LIFECYCLE_WAKE_AGGREGATE_TYPES: readonly string[] = Object.freeze([
-  'QueryJob', 'QueryRun', 'Session', 'CoreOperation', 'SessionActivity', 'PlanProposal', 'Goal',
-  'NoteHead', 'NoteVersion', 'CurrentPointer', 'GoalPhase', 'ProjectRoleLimits', 'ArchitectureProposal',
+  'QueryJob', 'QueryRun', 'Session', 'CoreOperation', 'SessionActivity', 'PlanProposal', 'Goal', 'NoteHead',
+  'NoteVersion', 'CurrentPointer', 'GoalPhase', 'ProjectRoleLimits', 'ArchitectureProposal', 'KnowledgeWrite',
 ]);
 
 /**

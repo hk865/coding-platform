@@ -13,7 +13,7 @@
  * id or dangling reference makes the whole read invalid: never half a catalog.
  */
 import type { ModuleRef } from '../../../contracts/core/identity.js';
-import { KNOWLEDGE_DIRECTORY, type KnowledgeConflictV1 } from '../../../contracts/knowledge.js';
+import { ARCHITECTURE_FILE_PATH, type KnowledgeConflictV1 } from '../../../contracts/knowledge.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import { isSafeProjectPath } from '../../../contracts/workspace-path.js';
 import { messageOf } from '../../../contracts/error-message.js';
@@ -26,7 +26,6 @@ import type { KnowledgeArchitecture, KnowledgeBaselineV1, KnowledgeLineScope } f
 import type { AdoptedArchitecture } from './catalog-contracts.js';
 import { readArchitectureBaselineContent, validateAdoptedArchitecture } from './catalog-record-codecs.js';
 
-export const ARCHITECTURE_FILE_PATH = `${KNOWLEDGE_DIRECTORY}/architecture.json`;
 
 export type ModuleFileV1 = {
   id: string; name: string; responsibility: string; paths: string[];

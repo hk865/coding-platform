@@ -258,7 +258,7 @@ async function openAdmissionWorld(kind: 'memory' | 'sqlite', input: {
     world = await openK3ReviewCardWorld('sqlite');
     directory = world.fixture.base.directory;
     revision = world.fixture.workspace.revision;
-    platform = await build({ kind: 'sqlite', directory }, join(directory, 's5-kernel.sqlite'));
+    platform = await build({ kind: 'sqlite', directory: world.fixture.base.storeDirectory }, join(directory, 's5-kernel.sqlite'));
   }
   worlds.push(world);
   directory = world.fixture.base.directory;

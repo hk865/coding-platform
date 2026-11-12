@@ -42,8 +42,8 @@ import { S2B_PLAN_REVISION_BY_GOAL_LOOKUP, decodePlanRevisionSnapshot } from '..
 import { headsByAnchorKey, readAllHeads, type ReadFailureCode } from './note-base-reader.js';
 import { renderUnderstandingBody } from './note-rendering.js';
 import { mapStoreFailure } from './store-failures.js';
-import { isKnowledgeAnchor, noteKnowledgeOf } from './note-file.js';
-import { noteFileFactsOf, overlayFileKnowledge, rewrittenKnowledge } from './note-knowledge.js';
+import { isKnowledgeAnchor, noteFileKnowledgeOf, noteKnowledgeOf } from './note-file.js';
+import { noteFileFactsOf, overlayFileKnowledge } from './note-knowledge.js';
 import { projectModuleIdOfFile, rawModuleId } from '../../../contracts/workspace-module-id.js';
 import { messageOf } from '../../../contracts/error-message.js';
 import type { KnowledgeFileChange, KnowledgeLines, LineKnowledge, NoteKnowledgeV1 } from '../model/line-knowledge.js';
@@ -173,7 +173,7 @@ type NoteFileHead = Parameters<typeof noteKnowledgeOf>[0] & Pick<NoteHeadSnapsho
  * the line it is on now (a person may have moved its primary anchor, ruling
  * D4); a new note goes into the line of its anchor's workspace (a module id's,
  * or a stored path's). A rewrite keeps the existing file as its base
- * (`rewrittenKnowledge`). Unchanged bytes give no change.
+ * (`noteFileKnowledgeOf`, which a recovery's rebuild uses too). Unchanged bytes give no change.
  */
 export async function noteFileWritesOf(heads: readonly NoteFileHead[], lines: readonly LineKnowledge[]):
 Promise<StoreResult<KnowledgeWritePlan[]>> {
@@ -202,9 +202,7 @@ Promise<StoreResult<KnowledgeWritePlan[]>> {
     if (line === undefined) {
       return { status: 'rejected', code: 'unavailable', reason: `the workspace ${workspaceId} of the note ${head.noteId} has no line` };
     }
-    const knowledge = noteKnowledgeOf(head);
-    const written = await line.writeNote(existing === undefined ? knowledge : rewrittenKnowledge(knowledge, existing.knowledge),
-      head.noteId);
+    const written = await line.writeNote(noteFileKnowledgeOf(head, existing?.knowledge ?? null), head.noteId);
     if (written.status !== 'ready') return written;
     changes.set(line, [...(changes.get(line) ?? []), ...written.value]);
   }

@@ -45,6 +45,7 @@ import {
   knowledgeCommit, knowledgeFilesNotWritten, writeKnowledge, type KnowledgePrepared,
   type KnowledgeWritePlan,
 } from '../knowledge/knowledge-write.js';
+import { KNOWLEDGE_WRITE_UNCONFIRMED, pendingKnowledgeWrites } from '../knowledge/write-log.js';
 import type {
   KnowledgeArchitecture, KnowledgeBaselineV1, KnowledgeCaller, KnowledgeLineScope, KnowledgeLines, LineKnowledge,
 } from '../model/line-knowledge.js';
@@ -400,7 +401,9 @@ export type CurrentCatalogWindow =
  * With `knowledge`, the catalog and the baseline's knowledge fields come from
  * the line's files: the records keep the identity, the
  * digest, the source binding and the guards. A file that cannot be read is the
- * read's failure, never the record instead.
+ * read's failure, never the record instead. 2c-1d: an architecture write
+ * pending on a line it reads is refused (`有未确认的知识写`, no waiting); never
+ * this pointer with older files.
  */
 export async function readCurrentCatalogWindow(records: Pick<GoalRecordTransactionPort, 'readMany'>,
   projectId: string, knowledge?: KnowledgeRead): Promise<CurrentCatalogWindow> {
@@ -444,6 +447,16 @@ export async function readCurrentCatalogWindow(records: Pick<GoalRecordTransacti
   if (knowledge === undefined) return { status: 'ready', baseline, catalog, guards, activeRevision: pointer.revision };
   const lines = await knowledge.lines.project(knowledge.caller);
   if (lines.status !== 'ready') return mapStoreFailure(lines);
+  // 2c-1d (split ruling §7, lead 11-12): an architecture or module write `pending` on a line read here may have left
+  // its files older than this pointer: refuse. Only the lines read count (each workspace's current line: a crash left
+  // on another branch does not stop this checkout); a note's log does not; an `unconfirmed` log is not pending (the
+  // file rules). A window that read here sees any later write move the pointer (its logs and the move commit together),
+  // so the pointer read has no check of its own.
+  const pending = await pendingKnowledgeWrites(knowledge.lines.write.records, projectId, lines.value);
+  if (pending.status !== 'ready') return mapStoreFailure(pending);
+  if (pending.value.some(log => log.kind === 'architecture' || log.kind === 'module')) {
+    return unavailable(KNOWLEDGE_WRITE_UNCONFIRMED);
+  }
   // A8: every workspace's files, merged into the project view; any line that cannot be read fails the read.
   const parts: { scope: KnowledgeLineScope; architecture: KnowledgeArchitecture }[] = [];
   for (const line of lines.value) {

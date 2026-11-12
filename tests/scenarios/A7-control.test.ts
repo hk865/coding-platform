@@ -117,7 +117,7 @@ it('D-7: controls on a claimed Run apply at once and a cancel ends the Run and i
   await fixture.closeBackend();
   const inv = { database: fixture.directory, projectId: fixture.ctx.projectId };
   await assertInvariantsAt(inv, 'D-7 claimed');
-  const options = hostOptions(fixture.directory);
+  const options = hostOptions(fixture.storeDirectory);
   let platform = await createTargetPlatform(options);
   cleanups.push(() => platform.close().catch(() => undefined));
   const before = await platform.executions.readExecution(fixture.ctx, runRef);
@@ -195,7 +195,7 @@ it('D-8 and CD-4 with the Runtime: a cancel supersedes the queued pause; the nat
   await fixture.claimFixture.closeBackend();
   const inv = { database: fixture.directory, projectId: fixture.ctx.projectId };
   platform = await createTargetPlatform({
-    storage: { kind: 'sqlite', directory: fixture.directory }, workspace: fixture.deps.workspaceHost, now: () => B2_AT,
+    storage: { kind: 'sqlite', directory: fixture.claimFixture.storeDirectory }, workspace: fixture.deps.workspaceHost, now: () => B2_AT,
     kernelStores: { entries: [{ adapterId: 'r4c-claim-kernel', storeKey: 'r4c-claim-kernel-store',
       workspace: fixture.scope, databasePath: join(fixture.directory, 'kernel.sqlite') }] },
     runtime: fixture.host,

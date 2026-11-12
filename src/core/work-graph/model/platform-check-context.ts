@@ -19,3 +19,19 @@ export function platformCheckContext(ctx: CoreCallContext, actor: { kind: 'syste
     signal: ctx.signal,
   };
 }
+
+/**
+ * The context the platform acts in as one of its own fixed Host system identities (`actor`) on the caller's project,
+ * workspace and signal, whoever the caller is (a member's creation, a knowledge conflict's request to an adviser).
+ * A write the mailbox or a receipt keys by its sender is then the same write whichever caller made it.
+ */
+export function hostSystemContext(ctx: CoreCallContext, actor: { kind: 'system'; id: string }): CoreCallContext {
+  return {
+    ...ctx,
+    principal: { kind: 'host', actor: { ...actor } },
+    materialReader: {
+      kind: 'host', projectId: ctx.projectId, actor: { ...actor },
+      ...(ctx.workspaceId === undefined ? {} : { workspaceId: ctx.workspaceId }),
+    },
+  };
+}

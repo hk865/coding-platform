@@ -41,7 +41,7 @@ it('persists a Run interval and reads that exact original interval after a platf
     }
   } finally { await store.close(); }
   await fixture.closeBackend();
-  const options = { storage: { kind: 'sqlite' as const, directory: fixture.directory },
+  const options = { storage: { kind: 'sqlite' as const, directory: fixture.storeDirectory },
     workspace: { async resolveRoot() { return { status: 'rejected' as const, code: 'forbidden' as const, reason: 'history needs no source mount' }; },
       async authorize() { return { status: 'rejected' as const, code: 'forbidden' as const, reason: 'no source grant' }; } },
     kernelStores: { entries: [{ adapterId: mapping.adapterId, storeKey: 'r4c-claim-kernel-store',

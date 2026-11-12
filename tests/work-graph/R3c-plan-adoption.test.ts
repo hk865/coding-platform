@@ -10,6 +10,7 @@ import { GOAL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/recor
 import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
 import { PLAN_GOVERNANCE_RECORD_SCHEMAS, PLAN_STATE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-record-codecs.js';
+import { KNOWLEDGE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/knowledge-record-codecs.js';
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
 import { materialRecordSchemas } from '../../src/core/work-graph/materials/record-readers.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
@@ -45,11 +46,14 @@ const schemas: RecordBackendSchemas = {
   records: [...GOAL_RECORD_SCHEMAS.records, ...PLAN_GOVERNANCE_RECORD_SCHEMAS.records,
     ...PLAN_RECORD_SCHEMAS.records, ...PLAN_STATE_RECORD_SCHEMAS.records,
     ...ARCHITECTURE_CATALOG_SCHEMAS.records,
+    ...KNOWLEDGE_RECORD_SCHEMAS.records,
     ...materialRecordSchemas().records.filter(record => record.aggregateType === 'Run')],
   events: [...GOAL_RECORD_SCHEMAS.events, ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events,
     ...PLAN_RECORD_SCHEMAS.events, ...PLAN_STATE_RECORD_SCHEMAS.events,
+    ...KNOWLEDGE_RECORD_SCHEMAS.events,
     ...ARCHITECTURE_CATALOG_SCHEMAS.events, ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events],
   lookups: [...(PLAN_RECORD_SCHEMAS.lookups ?? []), ...(PLAN_STATE_RECORD_SCHEMAS.lookups ?? []),
+    ...(KNOWLEDGE_RECORD_SCHEMAS.lookups ?? []),
     ...(ARCHITECTURE_CATALOG_SCHEMAS.lookups ?? [])],
 };
 

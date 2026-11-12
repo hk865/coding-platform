@@ -71,14 +71,16 @@ function configuredHostFactory(original: HostFactory): HostFactory {
 
 const FAIL_FLAG = '.s8c-repair-check-fails';
 
-/** The A3 commit counter around the platform's own observed `records.commit`. */
-export type RepairCommits = { reset(): void; count(): number; identities(): readonly string[] };
+/** The A3 commit counter around the platform's own observed `records.commit`: `count()` is every commit,
+ *  `businessCount()` leaves out a knowledge write's completion commit. */
+export type RepairCommits = { reset(): void; count(): number; businessCount(): number; identities(): readonly string[] };
 
-let commits: { count: number; identities: string[] } = { count: 0, identities: [] };
+let commits: { count: number; business: number; identities: string[] } = { count: 0, business: 0, identities: [] };
 
 export const repairCommits: RepairCommits = {
-  reset: () => { commits = { count: 0, identities: [] }; },
+  reset: () => { commits = { count: 0, business: 0, identities: [] }; },
   count: () => commits.count,
+  businessCount: () => commits.business,
   identities: () => [...commits.identities],
 };
 
@@ -401,6 +403,8 @@ export async function openS8CRepairWorld(options: { label: string; tasks?: reado
     const counting = { ...observed.records, commit: async (input: PreparedCommit) => {
       const prepared = dropActivity ? withoutRunActivity(input) : input;
       commits.count += 1; commits.identities.push(prepared.identityKey);
+      // A knowledge write's second commit only marks its landed write logs completed; it is not the activation's.
+      if (!prepared.identityKey.startsWith('knowledge-complete:')) commits.business += 1;
       return await realCommit(prepared);
     } } as typeof observed.records;
     captured = counting as unknown as GoalRecordTransactionPort & RecordLookupPort;

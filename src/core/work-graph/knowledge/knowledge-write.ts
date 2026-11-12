@@ -1,20 +1,26 @@
 /**
- * The ONE order of a knowledge write: take every line of
- * the project, enter the write queue (the project, then its folders), let the
- * service read the current knowledge, plan, validate and compute the file
- * changes inside `prepare`, commit the records, write the files, and index the
- * landed files last. The files are the knowledge and the committed event is the
- * write log, so a replayed receipt touches no file, and a file that could not
- * be written after a committed record is reported as such, never as success.
+ * The ONE order of a knowledge write: take every line of the project, enter the
+ * write queue (the project, then its folders), take every checkout's cross-Host
+ * lease, let the service read the current knowledge, plan, validate and compute
+ * the file changes inside `prepare`, commit the records with one write log per
+ * file change, write the files, mark the landed logs completed, index the landed
+ * files, and release the leases last. The files are the knowledge; a replayed
+ * receipt touches no file, and a file that could not be written after a
+ * committed record is reported as such, never as success.
  */
+import { rejected } from '../../../contracts/core/rejections.js';
 import { messageOf } from '../../../contracts/error-message.js';
 import type {
   CommitCursorBinding, EncodedDomainEvent, EncodedRecord, PreparedCommit, RecordGuard, StoreCommitReceipt, StoreFailure,
   StoreResult,
 } from '../../record-store/ports.js';
 import {
-  lineRefKey, type KnowledgeCaller, type KnowledgeFileChange, type KnowledgeLines, type KnowledgeWriteDeps, type LineKnowledge,
+  lineRefKey, type KnowledgeCaller, type KnowledgeFileChange, type KnowledgeLines, type KnowledgeWriteDeps,
+  type KnowledgeWriteLease, type LineKnowledge, type LineRef,
 } from '../model/line-knowledge.js';
+import {
+  completeLandedWrites, KNOWLEDGE_WRITE_UNCONFIRMED, pendingKnowledgeWrites, writeLogExtras,
+} from './write-log.js';
 
 export type KnowledgeWritePlan = { line: LineKnowledge; changes: readonly KnowledgeFileChange[] };
 /** What joins the same `records.commit`. */
@@ -33,13 +39,11 @@ export type KnowledgePrepared<X> =
       commit: (extrasOf: KnowledgeExtrasOf) => Promise<StoreCommitReceipt> };
 export type KnowledgeWriteOutcome<X> =
   | { kind: 'exit'; value: X }
-  /** The lines could not be taken, or the commit was refused. */
+  /** The lines could not be taken, a changed line has a pending write log (2c-1d), or the commit was refused. */
   | { kind: 'rejected'; failure: StoreFailure }
   | { kind: 'committed'; receipt: Extract<StoreCommitReceipt, { status: 'committed' }>;
       /** null: a replay, no file touched; ready: every file written; rejected: the records committed and a file was not written (the reason names it). */
       files: StoreResult<void> | null };
-
-const NO_EXTRAS: KnowledgeCommitExtras = { records: [], guards: [], commitCursorBindings: [] };
 
 function withKnowledgeExtras(prepared: PreparedCommit, extras: KnowledgeCommitExtras): PreparedCommit {
   const bindings = [...(prepared.commitCursorBindings ?? []), ...extras.commitCursorBindings];
@@ -79,36 +83,92 @@ export async function writeKnowledge<X>(knowledge: KnowledgeLines, caller: Knowl
   const lines = await knowledge.project(caller);
   if (lines.status !== 'ready') return { kind: 'rejected', failure: lines };
   const folders = lines.value.map(line => line.line.folder);
-  // The queue holds the whole read-plan-commit-write-index span; it does not replace the records' CAS.
-  return knowledge.write.queue.run(caller.projectId, folders, async (): Promise<KnowledgeWriteOutcome<X>> => {
-    const prepared = await prepare(lines.value);
-    if (prepared.kind === 'exit') return prepared;
-    const receipt = await prepared.commit(() => NO_EXTRAS);
-    if (receipt.status !== 'committed') return { kind: 'rejected', failure: receipt };
-    if (receipt.replayed) return { kind: 'committed', receipt, files: null };
-    const landed: KnowledgeWritePlan[] = [];
-    let files: StoreResult<void> = { status: 'ready', value: undefined };
-    for (const plan of prepared.plans) {
-      const changes: KnowledgeFileChange[] = [];
-      landed.push({ line: plan.line, changes });
-      for (const change of plan.changes) {
-        const applied = await plan.line.applyChange(change);
-        if (applied.status !== 'ready') { files = applied; break; }
-        changes.push(change);
-      }
-      if (files.status !== 'ready') break;
-    }
-    indexLanded(knowledge.write, caller.projectId, landed);
-    return { kind: 'committed', receipt, files };
+  const write = knowledge.write;
+  // The queue holds the whole read-plan-commit-write-index span; it does not replace the records' CAS. The leases
+  // cover the same span against another Host on the same checkout.
+  return write.queue.run(caller.projectId, folders, async (): Promise<KnowledgeWriteOutcome<X>> => {
+    const leased = await withKnowledgeLeases(write, lines.value, () => writeLeased(write, caller.projectId, lines.value, prepare));
+    return leased.status === 'ready' ? leased.value : { kind: 'rejected', failure: leased };
   });
+}
+
+/** Inside the queue and the leases: prepare, commit with the write logs, land the files, complete, index. */
+async function writeLeased<X>(write: KnowledgeWriteDeps, projectId: string, lines: readonly LineKnowledge[],
+  prepare: (lines: readonly LineKnowledge[]) => Promise<KnowledgePrepared<X>>): Promise<KnowledgeWriteOutcome<X>> {
+  const prepared = await prepare(lines);
+  if (prepared.kind === 'exit') return prepared;
+  // 2c-1d: a line with a pending write log may hold files older than its records; a write planned on them would
+  // drop that write's effect. An `unconfirmed` log does not refuse (it was handed to the person; the file rules).
+  for (const plan of prepared.plans) {
+    if (plan.changes.length === 0) continue;
+    const pending = await pendingKnowledgeWrites(write.records, projectId, [plan.line]);
+    if (pending.status !== 'ready') return { kind: 'rejected', failure: pending };
+    if (pending.value.length > 0) return { kind: 'rejected', failure: rejected('unavailable', KNOWLEDGE_WRITE_UNCONFIRMED) };
+  }
+  let logs = new Map<KnowledgeFileChange, string>();
+  const receipt = await prepared.commit(events => {
+    const extras = writeLogExtras(write, projectId, prepared.plans, events);
+    logs = extras.logs;
+    return extras;
+  });
+  if (receipt.status !== 'committed') return { kind: 'rejected', failure: receipt };
+  if (receipt.replayed) return { kind: 'committed', receipt, files: null };
+  if (write.hold !== null) await write.hold('committed');
+  const landed: KnowledgeWritePlan[] = [];
+  let files: StoreResult<void> = { status: 'ready', value: undefined };
+  for (const plan of prepared.plans) {
+    const changes: KnowledgeFileChange[] = [];
+    landed.push({ line: plan.line, changes });
+    for (const change of plan.changes) {
+      const applied = await plan.line.applyChange(change);
+      if (applied.status !== 'ready') { files = applied; break; }
+      changes.push(change);
+    }
+    if (files.status !== 'ready') break;
+  }
+  if (write.hold !== null) await write.hold('applied');
+  // A log whose file did not land stays `pending`; a failed completion changes nothing here (the reconciliation
+  // completes a log whose file is its written bytes).
+  await completeLandedWrites(write, projectId, landed.flatMap(plan => plan.changes.map(change => logs.get(change)!)));
+  indexLanded(write, projectId, landed);
+  return { kind: 'committed', receipt, files };
+}
+
+/**
+ * [2C1-04]: inside the write queue, every checkout's cross-Host lease, one per folder in sorted order. A lease held
+ * by another Host, or a lease directory that cannot be made, releases what was taken and answers `unavailable`:
+ * `work` does not run and nothing is committed; no wait, no retry. The leases are released last, a failed release
+ * swallowed. Writes, reconciliations and recoveries take them the same way.
+ */
+export async function withKnowledgeLeases<T>(write: KnowledgeWriteDeps, lines: readonly LineKnowledge[],
+  work: () => Promise<T>): Promise<StoreResult<T>> {
+  const byFolder = new Map<string, LineRef>();
+  for (const { line } of lines) if (!byFolder.has(line.folder)) byFolder.set(line.folder, line);
+  const held: KnowledgeWriteLease[] = [];
+  try {
+    for (const folder of [...byFolder.keys()].sort()) {
+      let lease: KnowledgeWriteLease;
+      try {
+        lease = await write.acquireLease(byFolder.get(folder)!);
+      } catch (error) {
+        return rejected('unavailable', `租约目录建不了：${messageOf(error)}`);
+      }
+      if (lease.lease !== 'owned') return rejected('unavailable', `另一个 Host 正在写这个检出：${folder}`);
+      held.push(lease);
+    }
+    return { status: 'ready', value: await work() };
+  } finally {
+    for (const lease of held) await lease.release().catch(() => undefined);
+  }
 }
 
 /**
  * The index is a cache and is updated last: every landed file is indexed in one transaction and a note file's
  * new blob is confirmed (no "needs verification" row). A throw here leaves the write's answer as it is and is not
- * reported as indexed; the next reconciliation rebuilds the file's rows from the file.
+ * reported as indexed; the next reconciliation rebuilds the file's rows from the file. A recovery indexes the file
+ * it wrote here too (errata 2c1#6).
  */
-function indexLanded(write: KnowledgeWriteDeps, projectId: string, landed: readonly KnowledgeWritePlan[]): void {
+export function indexLanded(write: KnowledgeWriteDeps, projectId: string, landed: readonly KnowledgeWritePlan[]): void {
   if (landed.every(plan => plan.changes.length === 0)) return;
   try {
     write.indexOf(projectId).transaction(tx => {

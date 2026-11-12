@@ -18,6 +18,7 @@ import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.
 import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { SESSION_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-record-codecs.js';
+import { KNOWLEDGE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/knowledge-record-codecs.js';
 import { PLAN_GOVERNANCE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
 import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
@@ -54,12 +55,15 @@ const creation = (requestId: string, kernelStore = { adapterId: 'workspace-kerne
 const schemas: RecordBackendSchemas = {
   records: [...GOAL_RECORD_SCHEMAS.records, ...PLAN_GOVERNANCE_RECORD_SCHEMAS.records,
     ...PLAN_RECORD_SCHEMAS.records, ...SESSION_RECORD_SCHEMAS.records, ...ARCHITECTURE_CATALOG_SCHEMAS.records,
+    ...KNOWLEDGE_RECORD_SCHEMAS.records,
     sessionRoleFactsCodec.registration, projectRoleLimitsCodec.registration],
   events: [...GOAL_RECORD_SCHEMAS.events, ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events,
     ...PLAN_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events,
     ...ARCHITECTURE_CATALOG_SCHEMAS.events, ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events,
+    ...KNOWLEDGE_RECORD_SCHEMAS.events,
     projectRoleLimitsChangedCodec.registration],
   lookups: [...(PLAN_RECORD_SCHEMAS.lookups ?? []), ...(SESSION_RECORD_SCHEMAS.lookups ?? []),
+    ...(KNOWLEDGE_RECORD_SCHEMAS.lookups ?? []),
     ...(ARCHITECTURE_CATALOG_SCHEMAS.lookups ?? [])],
 };
 const directories: string[] = [];

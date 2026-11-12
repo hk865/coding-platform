@@ -423,7 +423,7 @@ export async function openK3ReviewCardWorld(
     platformPromise ??= (async () => {
       if (kind === 'sqlite') {
         return await createTargetPlatform({ ...platformOptions,
-          storage: { kind: 'sqlite', directory: fixture.base.directory } });
+          storage: { kind: 'sqlite', directory: fixture.base.storeDirectory } });
       }
       return await openMemoryPlatform(records, fixture.bodies, platformOptions);
     })();

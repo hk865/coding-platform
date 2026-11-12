@@ -13,6 +13,7 @@ import { GOAL_BY_CONTINUED_FROM_INDEX, PLAN_GOVERNANCE_RECORD_SCHEMAS, PLAN_STAT
 import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
 import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
+import { KNOWLEDGE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/knowledge-record-codecs.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { ProjectSnapshot, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
@@ -27,11 +28,12 @@ const actor = { kind: 'human' as const, id: 'r3c-host' };
 const ctx: CoreCallContext = { projectId, workspaceId, principal: { kind: 'host', actor },
   materialReader: { kind: 'host', projectId, workspaceId, actor }, signal: new AbortController().signal };
 const schemas: RecordBackendSchemas = { records: [...GOAL_RECORD_SCHEMAS.records, ...PLAN_RECORD_SCHEMAS.records,
-    ...PLAN_GOVERNANCE_RECORD_SCHEMAS.records],
+    ...PLAN_GOVERNANCE_RECORD_SCHEMAS.records, ...KNOWLEDGE_RECORD_SCHEMAS.records],
   events: [...GOAL_RECORD_SCHEMAS.events, ...PLAN_RECORD_SCHEMAS.events,
-    ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events],
+    ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events, ...KNOWLEDGE_RECORD_SCHEMAS.events],
   lookups: [...PLAN_RECORD_SCHEMAS.lookups,
-    ...(PLAN_STATE_RECORD_SCHEMAS.lookups ?? []).filter(index => index.name === GOAL_BY_CONTINUED_FROM_INDEX)] };
+    ...(PLAN_STATE_RECORD_SCHEMAS.lookups ?? []).filter(index => index.name === GOAL_BY_CONTINUED_FROM_INDEX),
+    ...(KNOWLEDGE_RECORD_SCHEMAS.lookups ?? [])] };
 const dirs: string[] = [];
 afterEach(async () => { for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true }); });
 

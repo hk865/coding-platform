@@ -59,6 +59,7 @@ import type { RoleLineDutyV1 } from '../../src/contracts/role-lines.js';
 import type { SessionDirectoryPort } from '../../src/core/work-graph/model/session-contracts.js';
 import type { SessionDutyReadPort } from '../../src/core/work-graph/model/work-line-contracts.js';
 import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-record-codecs.js';
+import { KNOWLEDGE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/knowledge-record-codecs.js';
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
 import type {
   AdoptedArchitecture, AdoptInitialArchitectureInput, ArchitectureCatalogPort, ArchitectureRevision,
@@ -257,6 +258,7 @@ export async function createGraphSessionFixture(kind: GraphFixtureKind = 'memory
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.records,
       ...SESSION_RECORD_SCHEMAS.records,
       ...ARCHITECTURE_CATALOG_SCHEMAS.records,
+      ...KNOWLEDGE_RECORD_SCHEMAS.records,
       ...SESSION_LIFECYCLE_RECORD_SCHEMAS.records,
       ...PLAN_STATE_RECORD_SCHEMAS.records,
       ...TASK_CLAIM_RECORD_SCHEMAS.records,
@@ -273,6 +275,7 @@ export async function createGraphSessionFixture(kind: GraphFixtureKind = 'memory
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events,
       ...SESSION_RECORD_SCHEMAS.events,
       ...ARCHITECTURE_CATALOG_SCHEMAS.events,
+      ...KNOWLEDGE_RECORD_SCHEMAS.events,
       ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events,
       ...TASK_CLAIM_RECORD_SCHEMAS.events,
       ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.events,
@@ -291,6 +294,7 @@ export async function createGraphSessionFixture(kind: GraphFixtureKind = 'memory
       ...(ROLE_RECORD_SCHEMAS.lookups ?? []),
       ...(ROLE_LINE_RECORD_SCHEMAS.lookups ?? []),
       ...(UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.lookups ?? []),
+      ...(KNOWLEDGE_RECORD_SCHEMAS.lookups ?? []),
     ],
   };
   let failWrite = false;

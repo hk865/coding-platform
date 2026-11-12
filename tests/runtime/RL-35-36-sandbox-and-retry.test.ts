@@ -58,7 +58,7 @@ async function checkPlatform(): Promise<{ fixture: R3eEvidenceFixture; platform:
   const fixture = await createR3eEvidenceFixture('sqlite');
   fixtures.push(fixture);
   await fixture.b2.base.closeBackend();
-  const platform = await createTargetPlatform({ storage: { kind: 'sqlite', directory: fixture.b2.base.directory },
+  const platform = await createTargetPlatform({ storage: { kind: 'sqlite', directory: fixture.b2.base.storeDirectory },
     workspace: fixture.workspaceHost, checks: fixture.configuration, now: () => B2_AT });
   fixtures.push({ close: () => platform.close() });
   return { fixture, platform };

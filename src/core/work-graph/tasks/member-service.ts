@@ -72,6 +72,7 @@ import { planGuard } from './entry-plan-reader.js';
 import { writeAnswer } from '../sessions/session-handoff-service.js';
 import { readOwnerRecord } from './owner-record-read.js';
 import { workspaceOf } from './request-service.js';
+import { hostSystemContext } from '../model/platform-check-context.js';
 
 export type { MemberCallerV1 };
 
@@ -225,16 +226,7 @@ function memberScopeProblem(ctx: CoreCallContext): CoreRejection | null {
   return null;
 }
 
-function systemContext(ctx: CoreCallContext): CoreCallContext {
-  return {
-    ...ctx,
-    principal: { kind: 'host', actor: { ...MEMBER_SYSTEM_ACTOR } },
-    materialReader: {
-      kind: 'host', projectId: ctx.projectId, actor: { ...MEMBER_SYSTEM_ACTOR },
-      ...(ctx.workspaceId === undefined ? {} : { workspaceId: ctx.workspaceId }),
-    },
-  };
-}
+const systemContext = (ctx: CoreCallContext): CoreCallContext => hostSystemContext(ctx, MEMBER_SYSTEM_ACTOR);
 
 function memberOperationId(identityKey: string): string {
   return `member-${identityKey.slice(`${REQUEST_OPERATION}:`.length)}`;

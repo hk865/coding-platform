@@ -16,6 +16,7 @@
  *    successful write or an empty body.
  */
 import { DatabaseSync } from 'node:sqlite';
+import { messageOf } from '../../contracts/error-message.js';
 import type { RawArtifactStorePort } from './body-ports.js';
 import { RawArtifactBodyStore, type ArtifactBodyRows } from './body-store.js';
 
@@ -100,5 +101,35 @@ export function openSqliteFile(path: string): DatabaseSync {
       if (!isBusy || remaining <= 0) throw error;
       Atomics.wait(pause, 0, 0, Math.min(10, remaining));
     }
+  }
+}
+
+/**
+ * A project-store file opened with `openSqliteFile` and its DDL run; `path` null opens `:memory:`, so a memory store
+ * runs the same code. A file that cannot be opened throws `<what> <file> cannot be opened: <cause>`, with its path.
+ */
+export function openSqliteWithSchema(what: string, path: string | null, schema: string): DatabaseSync {
+  const file = path ?? ':memory:';
+  let db: DatabaseSync | undefined;
+  try {
+    db = openSqliteFile(file);
+    db.exec(schema);
+    return db;
+  } catch (error) {
+    try { db?.close(); } catch { /* preserve the initialization error */ }
+    throw new Error(`${what} ${file} cannot be opened: ${messageOf(error)}`);
+  }
+}
+
+/** `body` inside one `BEGIN IMMEDIATE` ... `COMMIT`; a throw rolls the whole of it back and is rethrown. */
+export function inImmediateTransaction<T>(db: DatabaseSync, body: () => T): T {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const value = body();
+    db.exec('COMMIT');
+    return value;
+  } catch (error) {
+    try { db.exec('ROLLBACK'); } catch { /* no live transaction left to roll back */ }
+    throw error;
   }
 }

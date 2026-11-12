@@ -75,7 +75,7 @@ describe('S8C G3 R1/R9 activation and post-state', () => {
     stagedRevision = await w.readCatalog();
     repairCommits.reset();
     activated = await activate(w, staged);
-    activationCommits = repairCommits.count();
+    activationCommits = repairCommits.businessCount();
   });
 
   it('R1: one commit accepts the note and revises the catalog once', async () => {
@@ -271,7 +271,7 @@ describe('S8C G3 R4 two repairs and replay', () => {
     expect(results).toHaveLength(2);
     expect(results[0]).toMatchObject({ status: 'activated', noteId: larger.noteId });
     expect(results[1]).toMatchObject({ status: 'source_stale', reason: 'catalog_changed' });
-    expect(repairCommits.count()).toBe(1);
+    expect(repairCommits.businessCount()).toBe(1);
     expect((await w.readNote(smaller.noteId))['storedState']).toBe('staged');
     const revision = await w.readCatalog();
 

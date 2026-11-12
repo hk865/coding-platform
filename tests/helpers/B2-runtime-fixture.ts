@@ -232,7 +232,7 @@ export async function createB2RuntimeFixture(options: {
   const eventId = () => `b2-runtime-event-${++seq}`;
 
   let records=claimFixture.records;
-  let bodies=kind==='sqlite'?createSqliteRawArtifactStore(join(claimFixture.directory,'artifacts.sqlite')):new RawArtifactBodyStore();
+  let bodies=kind==='sqlite'?createSqliteRawArtifactStore(join(claimFixture.storeDirectory,'artifacts.sqlite')):new RawArtifactBodyStore();
   const scripted=createScriptedModel(options.scriptedReplies??[{kind:'text',text:'B2 scripted answer'}],options.beforeReply);
   const allowedRuns=new Set([refKey(claim.runRef)]);
   const card=await claimFixture.sessionsPort.readSession(claimFixture.ctx,claim.sessionRef);
@@ -327,7 +327,7 @@ export async function createB2RuntimeFixture(options: {
       if(kind!=='sqlite')throw Error('SQLite reopen only');
       await claimFixture.closeBackend();if('close' in bodies)await bodies.close();
       secondary=await claimFixture.reopenService();records=secondary.records;
-      bodies=createSqliteRawArtifactStore(join(claimFixture.directory,'artifacts.sqlite'));
+      bodies=createSqliteRawArtifactStore(join(claimFixture.storeDirectory,'artifacts.sqlite'));
       fixture.records=records;
       fixture.deps=buildDeps();fixture.entry=entry;fixture.modelRequests=modelRequests;fixture.runtime=createAgentRuntime(fixture.deps);
     },

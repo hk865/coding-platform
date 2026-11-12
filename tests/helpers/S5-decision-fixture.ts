@@ -335,8 +335,10 @@ export type S5Base = {
   scope: WorkspaceScope;
   projectRef: ProjectRef;
   workspaceRef: WorkspaceRef;
-  /** The ledger directory (TaskClaimFixture directory; kept across reopen). */
+  /** The TaskClaimFixture directory (its workspace root and Kernel stores; kept across reopen). */
   directory: string;
+  /** The TaskClaimFixture's SQLite store directory (kept across reopen). */
+  storeDirectory: string;
 };
 
 type S5GoalSeed = {
@@ -553,7 +555,8 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
       ...snapshotTypes.map(aggregateType => ({ name: snapshotIndex(aggregateType), aggregateType, paths: ['ref.aggregateType'] }))],
   });
   const directory = b2.base.directory;
-  const base: S5Base = { scope: WORKSPACE_SCOPE, projectRef: PROJECT, workspaceRef: WORKSPACE, directory };
+  const base: S5Base = { scope: WORKSPACE_SCOPE, projectRef: PROJECT, workspaceRef: WORKSPACE, directory,
+    storeDirectory: b2.base.storeDirectory };
 
   let activeRecords: S5Records = b2.base.records;
   const counts: S5RecordCounts = { commits: 0, lookupCommits: 0, eventAt: 0, lookups: 0 };
@@ -582,7 +585,7 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
   const knowledge = knowledgeLinesOfRoots(b2.base.knowledgeRoots, records);
   const allocations = createS5Allocations();
   const { allocationCounts, newId, now } = allocations;
-  const bodyPath = join(directory, 'artifacts.sqlite');
+  const bodyPath = join(base.storeDirectory, 'artifacts.sqlite');
   let bodies: RawArtifactStorePort;
   let closeBodies: () => Promise<void>;
   if (kind === 'sqlite') {

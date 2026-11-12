@@ -93,7 +93,7 @@ export async function createArchiveServiceFixture(kind: ClaimFixtureKind) {
   async function invariants() {
     // The supplied invariant reader supports SQLite only.
     if (kind === 'sqlite') {
-      const world = await readInvariantWorld(invariantStoreOf(base.directory), base.scope.projectId);
+      const world = await readInvariantWorld(invariantStoreOf(base.storeDirectory), base.scope.projectId);
       expect(checkAllInvariants(world, previous)).toEqual([]);
       previous = world;
     }

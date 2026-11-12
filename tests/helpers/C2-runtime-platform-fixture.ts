@@ -181,7 +181,7 @@ export async function createC2RuntimePlatform(options: C2RuntimePlatformOptions 
   const directory = f.directory;
   await f.closeBackend();
   const platform = await createTargetPlatform({
-    storage: { kind: 'sqlite', directory }, workspace: workspaceHost, now: () => B2_AT,
+    storage: { kind: 'sqlite', directory: f.storeDirectory }, workspace: workspaceHost, now: () => B2_AT,
     kernelStores: { entries: [{ adapterId: 'r4c-claim-kernel', storeKey: 'r4c-claim-kernel-store',
       workspace: f.scope, databasePath: join(directory, 'kernel.sqlite') }] },
     runtime: host,

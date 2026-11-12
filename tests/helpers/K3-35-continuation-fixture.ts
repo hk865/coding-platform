@@ -367,7 +367,8 @@ export async function openRealRunHarness(
   // environment setup (the K3 §5.1 "git workspace"), not a platform fact.
   if (options.gitWorkspace === true) {
     await initGitWorkspace(directory);
-    // The fixture's SQLite ledger/body/Kernel stores live in the work-tree root.
+    // The fixture's Kernel stores live in the work-tree root (its SQLite ledger and bodies are under
+    // `.workbench/local/`, which the capture skips).
     // They are not workspace content, and every commit changes them; a real
     // store is outside the tree. Ignore them (like the scenario's denied file)
     // so the run-start baseline and the RUN-25 capture compare the same files.
@@ -583,7 +584,7 @@ export async function openRealRunHarness(
   let platformHost: Promise<PlatformHost> | undefined;
   const hostPlatform = (): Promise<PlatformHost> => {
     platformHost ??= world.kind === 'sqlite'
-      ? createTargetPlatform({ ...platformOptions, storage: { kind: 'sqlite', directory } })
+      ? createTargetPlatform({ ...platformOptions, storage: { kind: 'sqlite', directory: world.fixture.base.storeDirectory } })
       : openMemoryPlatform(world.records, world.fixture.bodies, platformOptions);
     return platformHost;
   };

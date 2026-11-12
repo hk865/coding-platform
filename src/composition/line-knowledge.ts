@@ -11,23 +11,25 @@
  * with the paths, never an empty catalog or no notes.
  */
 import { randomBytes } from 'node:crypto';
-import { mkdir, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, open, readdir, readFile, realpath, rename, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { rejected } from '../contracts/core/rejections.js';
 import { messageOf } from '../contracts/error-message.js';
-import { KNOWLEDGE_DIRECTORY } from '../contracts/knowledge.js';
+import { sha256Hex } from '../contracts/fingerprint.js';
+import { ARCHITECTURE_FILE_PATH, KNOWLEDGE_DIRECTORY } from '../contracts/knowledge.js';
 import type { GoalRecordTransactionPort, StoreResult } from '../core/record-store/ports.js';
 import type { WorkspaceHostBindings } from '../core/workspace/access.js';
 import {
-  gitBlobId, identifyCheckout, readCheckoutBranch, type CheckoutProbe,
+  gitBlobId, identifyCheckout, readCheckoutBranch, readKnowledgeGitState, type CheckoutProbe,
 } from '../core/workspace/workspace-change-capture.js';
 import {
-  ARCHITECTURE_FILE_PATH, architectureFilesOf, architectureOfFiles, moduleFileIdOf,
+  architectureFilesOf, architectureOfFiles, moduleFileIdOf,
 } from '../core/work-graph/architecture/architecture-file.js';
 import type {
-  KnowledgeCaller, KnowledgeFileChange, KnowledgeLineScope, KnowledgeLines, KnowledgeWriteDeps, LineKnowledge,
-  LineNoteFileV1, LineNoteV1, LineRef,
+  KnowledgeCaller, KnowledgeDiskFileV1, KnowledgeFileChange, KnowledgeLineScope, KnowledgeLines, KnowledgeWriteDeps,
+  KnowledgeWriteLease, LineKnowledge, LineNoteFileV1, LineNoteV1, LineRef,
 } from '../core/work-graph/model/line-knowledge.js';
+import { knowledgeFileKindOf } from '../core/work-graph/notes/knowledge-files.js';
 import { noteFileBytes, noteIdFromFilePath, noteOfFileBytes } from '../core/work-graph/notes/note-file.js';
 import { decodeNoteHeadSnapshot, noteHeadRefKey } from '../core/work-graph/persistence/note-record-codecs.js';
 
@@ -40,6 +42,13 @@ export type LineKnowledgeDeps = { records: Pick<GoalRecordTransactionPort, 'read
 
 const MODULES_DIRECTORY = `${KNOWLEDGE_DIRECTORY}/modules`;
 const NOTES_DIRECTORY = `${KNOWLEDGE_DIRECTORY}/notes`;
+const LOCAL_DIRECTORY = `${KNOWLEDGE_DIRECTORY}/local`;
+
+/** The files the platform reads as knowledge: the index file, a module file, a note file. */
+function isKnowledgeFile(path: string): boolean {
+  return path === ARCHITECTURE_FILE_PATH || noteIdFromFilePath(path) !== null
+    || (path.startsWith(`${MODULES_DIRECTORY}/`) && path.endsWith('.json') && !path.slice(MODULES_DIRECTORY.length + 1).includes('/'));
+}
 
 function unavailable(reason: string): StoreResult<never> { return rejected('unavailable', reason); }
 function ready<T>(value: T): StoreResult<T> { return { status: 'ready', value }; }
@@ -239,23 +248,66 @@ export async function openLineKnowledge(projectId: string, line: LineRef, scope:
     return ready([{ path, before: before.value, after: bytes.value }]);
   }
 
+  /**
+   * [2C1-06]: a write goes to a temporary file in the same directory (0600, synced) and is renamed over the target,
+   * so a reader or a crash sees the old bytes or the new ones, never a part; a delete unlinks (already gone is done).
+   */
   async function applyChange(change: KnowledgeFileChange): Promise<StoreResult<void>> {
     const target = absolute(change.path);
+    const temporary = `${target}.tmp-${randomBytes(8).toString('hex')}`;
     try {
       if (change.after === null) {
         await rm(target, { force: true });
       } else {
         await mkdir(dirname(target), { recursive: true });
-        await writeFile(target, change.after);
+        const file = await open(temporary, 'wx', 0o600);
+        try {
+          await file.writeFile(change.after);
+          await file.sync();
+        } finally {
+          await file.close();
+        }
+        await rename(temporary, target);
       }
       return ready(undefined);
     } catch (error) {
+      await rm(temporary, { force: true }).catch(() => undefined);
       return unavailable(`${change.path} could not be written: ${messageOf(error)}`);
     }
   }
 
+  async function readKnowledgeFiles(): ReturnType<LineKnowledge['readKnowledgeFiles']> {
+    const paths: string[] = [];
+    const temporaries: string[] = [];
+    const pending = [KNOWLEDGE_DIRECTORY];
+    while (pending.length > 0) {
+      const directory = pending.pop()!;
+      const inner = await entriesOf(directory, 'directory');
+      if (inner.status !== 'ready') return inner;
+      pending.push(...inner.value.map(name => `${directory}/${name}`).filter(path => path !== LOCAL_DIRECTORY));
+      const names = await entriesOf(directory, 'file');
+      if (names.status !== 'ready') return names;
+      for (const name of names.value) {
+        const path = `${directory}/${name}`;
+        if (name.includes('.tmp-')) temporaries.push(path);
+        else if (isKnowledgeFile(path)) paths.push(path);
+      }
+    }
+    // Git only says what is committed; without it (not git, or a failure) nothing is.
+    const git = line.branch === '' ? null : await readKnowledgeGitState(line.folder);
+    const files: KnowledgeDiskFileV1[] = [];
+    for (const path of paths.sort()) {
+      const bytes = await bytesAt(path);
+      if (bytes.status !== 'ready') return bytes;
+      if (bytes.value === null) continue;
+      files.push({ path, kind: knowledgeFileKindOf(path), bytes: bytes.value, blobSha: gitBlobId(bytes.value, objectFormat),
+        committed: git !== null && git.staged.has(path) && !git.listed.has(path), headBlob: git?.head.get(path) ?? null });
+    }
+    return ready({ files, temporaries: temporaries.sort() });
+  }
+
   return ready({ projectId, line, scope, objectFormat,
-    readArchitecture, readNoteFiles, readNotesById, writeModule, writeNote, applyChange });
+    readArchitecture, readNoteFiles, readNotesById, writeModule, writeNote, applyChange, readKnowledgeFiles });
 }
 
 /**
@@ -296,6 +348,29 @@ export function createKnowledgeLines(source: KnowledgeWorkspaceSource, deps: Lin
       return ready(lines);
     },
     write,
+  };
+}
+
+/** A platform built without a Host: no other Host writes its checkouts. */
+const OWNED_IN_PROCESS: KnowledgeWriteLease = {
+  lease: 'owned', reason: 'a platform built without a Host has no other Host', release: async () => undefined,
+};
+
+/**
+ * [2C1-05]: the cross-Host lease of a line's checkout, its directory from the line alone: a git checkout's under the
+ * repository's common git directory (`<repoKey>/workbench/leases/<key>/`), any other folder's under its own
+ * `.workbench/local/leases/<key>/`, `<key>` the first 16 hex digits of the folder's sha256. Through a Host the
+ * directory is made first and a failure rejects; a platform built without a Host is always `owned` and makes none.
+ */
+export function knowledgeLeaseOf(acquire: ((directory: string) => Promise<KnowledgeWriteLease>) | undefined):
+  (line: LineRef) => Promise<KnowledgeWriteLease> {
+  if (acquire === undefined) return async () => OWNED_IN_PROCESS;
+  return async line => {
+    const key = sha256Hex(line.folder).slice(0, 16);
+    const directory = line.branch === '' ? join(line.folder, KNOWLEDGE_DIRECTORY, 'local', 'leases', key)
+      : join(line.repoKey, 'workbench', 'leases', key);
+    await mkdir(directory, { recursive: true });
+    return acquire(directory);
   };
 }
 

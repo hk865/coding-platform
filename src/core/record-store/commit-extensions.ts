@@ -7,7 +7,7 @@
  * transaction and rewrite registered cursor fields.
  *
  * No backend may guess the next cursor: {@link bindCommitCursor} receives the
- * real last-event cursor the caller obtained inside its write transaction, and
+ * real event cursors the caller obtained inside its write transaction, and
  * the caller runs the final registered record schema validation afterwards. On
  * any failure after the first write the backend rolls its transaction back.
  */
@@ -124,16 +124,18 @@ export function ledgerHorizonMatches(expected: CommitCursor | null, observed: Co
 }
 
 /**
- * Bind only registered top-level null fields in guarded written records to the
- * final event cursor. This validates the binding mechanically (shape, duplicate
- * target, registered whitelist, null placeholder) and returns fresh records.
- * The caller then runs the final registered record schema validation and must
- * roll the transaction back on any `invalid` result.
+ * Bind only registered null fields in guarded written records to the cursor of
+ * the bound event: `cursors` are this commit's event cursors in order, a
+ * binding's `eventIndex` names one (absent: the last). This validates the
+ * binding mechanically (shape, duplicate target, registered whitelist, null
+ * placeholder, event index) and returns fresh records. The caller then runs the
+ * final registered record schema validation and must roll the transaction back
+ * on any `invalid` result.
  */
 export function bindCommitCursor(
   records: readonly EncodedRecord[],
   bindings: readonly CommitCursorBinding[],
-  cursor: CommitCursor,
+  cursors: readonly CommitCursor[],
   allowedFields: (schemaId: string) => readonly BoundCursorField[],
 ): DecodeResult<readonly EncodedRecord[]> {
   if (!Array.isArray(records)) return { status: "invalid", reason: "records must be an array" };
@@ -153,7 +155,7 @@ export function bindCommitCursor(
   }
 
   const seen = new Set<string>();
-  const fieldsByRefKey = new Map<string, BoundCursorField[]>();
+  const fieldsByRefKey = new Map<string, { field: BoundCursorField; cursor: CommitCursor }[]>();
   for (const raw of bindings) {
     if (!isObject(raw)) return { status: "invalid", reason: "every CommitCursorBinding must be an object" };
     const refKey = raw["refKey"];
@@ -186,8 +188,13 @@ export function bindCommitCursor(
     if (!hasNullCursorPlaceholder(parsed.value, cursorField)) {
       return { status: "invalid", reason: `record ${refKey} commit cursor field ${cursorField} is not a null placeholder` };
     }
+    const eventIndex = raw["eventIndex"] ?? cursors.length - 1;
+    const cursor = typeof eventIndex === "number" ? cursors[eventIndex] : undefined;
+    if (cursor === undefined) {
+      return { status: "invalid", reason: `commit cursor binding ${refKey}.${cursorField} names no event of this commit` };
+    }
     const fields = fieldsByRefKey.get(refKey) ?? [];
-    fields.push(cursorField);
+    fields.push({ field: cursorField, cursor });
     fieldsByRefKey.set(refKey, fields);
   }
 
@@ -200,7 +207,7 @@ export function bindCommitCursor(
     }
     const parsed = parseRecordObject(record.json);
     if (parsed.status === "invalid") return parsed;
-    for (const field of fields) fillCommitCursor(parsed.value, field, cursor);
+    for (const { field, cursor } of fields) fillCommitCursor(parsed.value, field, cursor);
     bound.push({ ...record, json: JSON.stringify(parsed.value) });
   }
   return { status: "decoded", value: bound };

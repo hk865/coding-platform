@@ -247,7 +247,7 @@ async function open(kind: ClaimFixtureKind, withCompletion = false): Promise<Ope
 
   async function invariantsHold(label: string): Promise<void> {
     if (base.kind !== 'sqlite') return;
-    const world = await readInvariantWorld(invariantStoreOf(base.directory), base.scope.projectId);
+    const world = await readInvariantWorld(invariantStoreOf(base.storeDirectory), base.scope.projectId);
     expect(checkAllInvariants(world), `${label}: invariant violations`).toEqual([]);
   }
 

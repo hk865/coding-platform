@@ -130,14 +130,15 @@ describe.each(BACKENDS)('main/read notices (%s)', backend => {
     const [n1, n2, n3] = reworkNotices(await world.seedReworkNotices());
     const { first, second } = world.world.goals;
     // One adopted PlanRevision per Goal: goal 1's page shows its one adoption
-    // before the folds; goal 2 has its own separate adoption item.
+    // before the folds; goal 2 has its own separate adoption item. An item's
+    // position is its adoption's commit, the cursor `plans/apply` returned.
     const adoption1 = planAdoptionLine(first, {
-      planId: 's6a-cards-plan-goal-1', cursor: 'c0000000014',
+      planId: 's6a-cards-plan-goal-1', cursor: world.adoptionCursors.first,
       summary: '已采用 · 计划 v1 · 改 3 个任务（ag2b-work、s6a-cards-work-2、ag2b-gate） · 影响 无 · 尚未审阅',
       proposalId: 'plan-proposal-ef93b8e18e0aa8a7a3787556cddf7d90',
     });
     const adoption2 = planAdoptionLine(second, {
-      planId: 's6a-cards-plan-goal-2', cursor: 'c0000000016',
+      planId: 's6a-cards-plan-goal-2', cursor: world.adoptionCursors.second,
       summary: '已采用 · 计划 v1 · 改 2 个任务（ag2b-work、ag2b-gate） · 影响 无 · 尚未审阅',
       proposalId: 'plan-proposal-d1e41ce0b79b767cb45fa7f11ca6153d',
     });

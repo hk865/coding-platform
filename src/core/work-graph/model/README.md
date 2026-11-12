@@ -19,7 +19,7 @@
 - `execution-history-contracts.ts` — `RunExecutionHistory` 写入端口与输入/结果。
 - `execution-read-contracts.ts` — `TaskExecutionRecord` 精确读取与按 Goal/Task 的执行分页；`TaskExecutionRecord` 的正本在 `contracts/execution-read.ts`，这里转出。
 - `plan-loop-readings.ts` — 三个 Run 读数（纯函数，只读已记录的 `RunActivityFactsV1`，不补算）：`runUsageOf`（累计 input+output，不扣缓存；unknown 保留原因）、`runGrowthOf`（第一次输入不计，看不到末段时不补）、`lineReadingOf`（counted 的 `changedLines`，缺失不是完整零）。阶段/超线读数（`stageReadingOf`/`stageOverLine`/`lineOverrun`）不在 R3。
-- `platform-check-context.ts` — 平台替 Agent 做只读核对时的调用上下文（`platformCheckContext`）。
+- `platform-check-context.ts` — 平台替 Agent 做只读核对时的调用上下文（`platformCheckContext`）；平台以自己固定的 Host 系统身份行事的上下文（`hostSystemContext`：成员创建、知识冲突给参谋的请求）。
 - `query-activity-plan.ts` — Query 活动写入的纯计划：`queryActivityRefOf`、`QueryActivityRecordContent`、`planQueryActivityWrite`（替换规则调用 `state/activity-replacement.ts`）与 `queryActivitySourceOf`（记录里的目标和两个 Session）。
 - `task-contracts.ts` — `GoalTaskPort`（创建/完成/控制 Goal）与 `GraphWrite` 正本。
 - `task-index.ts` — plan-local 的正反邻接构造和两种环检测，纯算法、无 Store 语义。
@@ -64,7 +64,8 @@
 - `context-input-contracts.ts` — `TaskContextInputPort`：任务输入选择与分页读取。
 - `graph-context-contracts.ts` — 图上下文、任务卡、节点卡的读端口与 DTO；`look`/`find` 的 `goalRef` 可为 `null`（项目分支，不借任何 Goal 的 universe）；extensions 另有空目标的请求类型（只读项目理解和 norms，整份上下文读取仍要求 Goal）。
 - `kernel-command-read-contracts.ts` — Kernel 原始命令与 workspace 文件读取的窄端口类型。
-- `line-knowledge.ts` — 代码知识文件的端口：一条线（`LineRef`：仓库身份、工作区根的 realpath、分支）的 `LineKnowledge`（读架构文件、按 id 读注记文件（只读文件的 `readNoteFiles`，加一次记录 `readMany` 带 head 的 `readNotesById`）、提交前算改动、提交后写一处改动）和服务拿到的 `KnowledgeLines`（项目工作区列表、一条线、项目全部线）；文件里的知识形状 `KnowledgeArchitecture`、`NoteKnowledgeV1`、`KnowledgeAnchorV1` 等；`lineRefKey` 是线的键（工作区和分支）。实现在组合根，服务只经它读写。
+- `line-knowledge.ts` — 代码知识文件的端口：一条线（`LineRef`：仓库身份、工作区根的 realpath、分支）的 `LineKnowledge`（读架构文件、按 id 读注记文件（只读文件的 `readNoteFiles`，加一次记录 `readMany` 带 head 的 `readNotesById`）、提交前算改动、提交后写一处改动、对账读的完整清单 `readKnowledgeFiles`（每个文件的种类、字节、blob、是否已提交、HEAD 的 blob，`KnowledgeDiskFileV1`；加平台留下的临时文件））和服务拿到的 `KnowledgeLines`（项目工作区列表、一条线、项目全部线）；文件里的知识形状 `KnowledgeArchitecture`、`NoteKnowledgeV1`、`KnowledgeAnchorV1` 等；`lineRefKey` 是线的键（工作区和分支），`lineRefWorkspaceId` 从键取回工作区。`KnowledgeWriteDeps` 是一次知识写用的依赖：写队列、项目索引和索引器、项目库的记录（补完成、对账读、恢复读事件）、`files`（`notes/knowledge-files.ts` 的携带事件、写日志文件规则和按事件重建文件 `knowledgeFileOfEvent`）、检出租约 `acquireLease`（`KnowledgeWriteLease`）、测试缝 `hold`（`KnowledgeWriteHoldPoint`：`committed`、`applied`，生产为 null）、`newId`、`now`、本项目的快照库 `openSnapshots(projectId)`（memory 每项目一个常开、`close` 不关；SQLite 每次开、用完关）、项目通知 `notify` 和冲突判定 `conflictsOf`。实现在组合根，服务只经它读写。
+- `knowledge-ops.ts` — `KnowledgeOpsPort`：`platform.knowledge` 的端口，`reconcile(ctx, workspaceId, trigger)` 对一个工作区当前检出的线对账一次；Host 的触发调它。`recover(ctx, {noticeId, itemNo})` 把本项目一条通知的一个恢复项写回，`recoveryItems(ctx, {noticeId})` 读它的恢复项，是两条路由 `knowledge/recover`、`knowledge/recovery-items` 的端口。实现在 `knowledge/ops.ts`。
 - `material-contracts.ts` — `MaterialPort`：artifact 存储与按引用打开。
 - `note-contracts.ts` — 注记/记忆的写入、读取、检查、决定应用端口，上限常量与 `recordNoteRequestOf`；`NoteScopeV1` 的正本在 `contracts/note.ts`，这里只再导出。
 - `work-line-contracts.ts` — 工作线、节点详情、悬停读取与线 pin 写入端口。
@@ -72,8 +73,10 @@
 ## 可以复用的能力
 | 名字 | 文件:行 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
-| `lineRefKey` | `src/core/work-graph/model/line-knowledge.ts:23` | 线的键：`canonicalJson([workspaceId, branch])` | 索引、快照、写入记录、钉版本按线分时；不要另拼 |
-| `LineKnowledge`、`KnowledgeLines` | `src/core/work-graph/model/line-knowledge.ts:92`、`src/core/work-graph/model/line-knowledge.ts:131` | 一条线的知识文件读写端口；服务在依赖里拿 `KnowledgeLines`（必填），由组合根注入 | 架构和注记服务读写知识文件；不要直接碰磁盘 |
+| `lineRefKey` | `src/core/work-graph/model/line-knowledge.ts:28` | 线的键：`canonicalJson([workspaceId, branch])` | 索引、快照、写入记录、钉版本按线分时；不要另拼 |
+| `lineRefWorkspaceId` | `src/core/work-graph/model/line-knowledge.ts:32` | 从线的键取回工作区 | 恢复按恢复项的 `lineRef` 找线；不要另解析 |
+| `LineKnowledge`、`KnowledgeLines` | `src/core/work-graph/model/line-knowledge.ts:117`、`src/core/work-graph/model/line-knowledge.ts:209` | 一条线的知识文件读写端口；服务在依赖里拿 `KnowledgeLines`（必填），由组合根注入 | 架构和注记服务读写知识文件；不要直接碰磁盘 |
+| `KnowledgeWriteDeps`、`KnowledgeFileRules`、`KnowledgeWriteLease`、`KnowledgeWriteHoldPoint` | `src/core/work-graph/model/line-knowledge.ts:174`、`:161`、`:156`、`:159` | 知识写的依赖（`KnowledgeLines.write`）和它的三个形状 | 组合根和 `tests/helpers/KLS2-knowledge-lines.ts` 造它；写入顺序、对账和恢复经它拿记录、租约和上层的文件规则 |
 | `GraphWrite` **正本** | `src/core/work-graph/model/task-contracts.ts:28` | 写请求信封 `{input, meta}`。`session-contracts.ts:18`、`src/core/work-graph/architecture/contracts.ts:16` 只是转出，不是副本 | 所有 GraphWrite 端口的请求参数 |
 | `TaskClaimPort` | `src/core/work-graph/model/claim-contracts.ts:155` | 认领、重新入队、审查认领的写入口；`ClaimTaskInput`/`RequeueTaskInput` 各有可选 `acknowledgement`，写结果带可选 `proofReceipt` | Task claim owner 注入时 |
 | `SessionDirectoryPort` | `src/core/work-graph/model/session-contracts.ts:143` | Session 创建、读取与分页目录；`findSessions` 给 `projectId` + `workspaceId` 读一个工作区，只给 `projectId` 时读整个项目的 active Session（无 target/role、不含归档） | Session 目录消费者 |
@@ -159,6 +162,7 @@
 | `toolCommitRequestId` | `src/core/work-graph/model/tool-commit-arguments.ts:68` | 由 origin/toolName/kernelCallId 派生稳定的工具 commit request id | 工具 handler 与 lookup 需要同一 id |
 | `agentActorOf` | `src/core/work-graph/model/tool-commit-arguments.ts:85` | 由 SessionRef/RunRef 构造唯一的 agent actor | 委派写入身份 |
 | `platformCheckContext` | `src/core/work-graph/model/platform-check-context.ts:10` | 平台替 Agent 做只读核对的调用上下文：Host 调用者原样返回；Run/QueryRun 换成给定的固定内部 system 身份，保留 projectId、workspaceId、signal | 只用于只认 Host 身份的核对读（结构提案的 catalog 试算和职责读、注记的工作区读 `noteCheckWorkspace`、委派写准入的 WG11 读、模块维护者请求读调用者的 Run）；写入、准入和存下的作者仍用调用者的上下文 |
+| `hostSystemContext` | `src/core/work-graph/model/platform-check-context.ts:28` | 平台以自己固定的 Host 系统身份（给定 actor）行事的上下文，保留调用者的 projectId、workspaceId、signal | mailbox 和回执按发信人认一次写时（成员创建、知识冲突给参谋的 `action_request`）；不要再抄一份 systemContext |
 | `sendSessionMessageRequest` | `src/core/work-graph/model/tool-commit-arguments.ts:94` | `send_session_message` 参数 → mailbox 请求 | 工具 handler 构造请求 |
 | `ackSessionMessageRequest` | `src/core/work-graph/model/tool-commit-arguments.ts:112` | `ack_session_message` 参数 → 带 revision pin 的请求 | ack 工具 |
 | `respondSessionMessageRequest` | `src/core/work-graph/model/tool-commit-arguments.ts:121` | `respond_session_message` 参数 → 带 revision pin 的请求 | respond 工具 |

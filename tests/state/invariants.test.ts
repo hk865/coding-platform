@@ -399,7 +399,7 @@ describe('the C2 composition fixture (createC2RuntimePlatform)', () => {
     const fx = await createC2RuntimePlatform({ toolNames: ['read'], allowSourceRead: true,
       scriptedReplies: [{ kind: 'text', text: 'C2 invariant run' }] });
     try {
-      const store = invariantStoreOf(fx.directory);
+      const store = invariantStoreOf(fx.fixture.storeDirectory);
       const claimed = await readInvariantWorld(store, fx.scope.projectId);
       expect(claimed.runs).toMatchObject([{ status: 'starting' }]);
       expect(report(checkAllInvariants(claimed))).toBe('');

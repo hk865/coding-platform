@@ -61,7 +61,7 @@ async function claimedRun(): Promise<{ fixture: TaskClaimFixture; runRef: { aggr
   const claimed = await fixture.service.claimTask(fixture.ctx, await fixture.buildRequest());
   expect(claimed.status).toBe('committed');
   if (claimed.status !== 'committed') throw Error('real claim failed');
-  const execution = await createTargetPlatform(hostOptions(fixture.directory));
+  const execution = await createTargetPlatform(hostOptions(fixture.storeDirectory));
   try {
     const read = await execution.executions.readExecution(fixture.ctx, claimed.value.runRef);
     if (read.status !== 'ready') throw Error('real Run read failed');
@@ -72,7 +72,7 @@ async function claimedRun(): Promise<{ fixture: TaskClaimFixture; runRef: { aggr
 
 it('submits and replays a durable control request on a real formal Run without a Runtime Host', async () => {
   const { fixture, runRef, runRevision } = await claimedRun();
-  const options = hostOptions(fixture.directory);
+  const options = hostOptions(fixture.storeDirectory);
   let platform = await createTargetPlatform(options);
   try {
     const request = { input: { runRef, kind: 'cancel' as const, reason: 'host operator stop' },
@@ -107,7 +107,7 @@ it('submits and replays a durable control request on a real formal Run without a
 
 it('close waits for a control read suspended in the real RecordStore, then blocks new calls', async () => {
   const { fixture, runRef, runRevision } = await claimedRun();
-  const options = hostOptions(fixture.directory);
+  const options = hostOptions(fixture.storeDirectory);
   let release: (() => void) | undefined;
   let platform = await createTargetPlatform(options);
   try {

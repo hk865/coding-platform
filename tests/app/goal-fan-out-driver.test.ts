@@ -48,7 +48,7 @@ async function setup(): Promise<{ fixture: TaskClaimFixture; platform: Platform;
   if (a.status !== 'committed' || b.status !== 'committed') throw new Error(`claims: ${JSON.stringify([a, b])}`);
   await fixture.closeBackend();
   const platform = await createTargetPlatform({
-    storage: { kind: 'sqlite', directory: fixture.directory },
+    storage: { kind: 'sqlite', directory: fixture.storeDirectory },
     workspace: {
       async resolveRoot() { return { status: 'rejected' as const, code: 'forbidden' as const, reason: 'no workspace root needed' }; },
       async authorize() { return { status: 'rejected' as const, code: 'forbidden' as const, reason: 'no source grant needed' }; },

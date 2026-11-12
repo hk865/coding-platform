@@ -282,7 +282,9 @@ export async function createR3eEvidenceFixture(
         const workspaceRoot = await mkdtemp(join(tmpdir(), `next-r3e-${kind}-`));
         await mkdir(join(workspaceRoot, 'src'));
         // KLS-2: the workspace root moved here keeps its knowledge files (the catalog was adopted in the claim root).
-        await cp(join(b2.base.directory, '.workbench'), join(workspaceRoot, '.workbench'), { recursive: true });
+        await cp(join(b2.base.directory, '.workbench'), join(workspaceRoot, '.workbench'), { recursive: true,
+          // not `local/`: the claim fixture's project store stays where it is
+          filter: source => source !== join(b2.base.directory, '.workbench', 'local') });
         await writeFile(join(workspaceRoot, 'src', 'input.txt'), 'r3e verification source v1\n');
 
         const hostState: R3eHostState = { permissionRevision: R3E_PERMISSION_REVISION, allowSource: true, root: workspaceRoot };

@@ -24,9 +24,11 @@ import {
   lineRefKey, type KnowledgeAnchorV1, type LineKnowledge, type LineNoteFileV1, type LineNoteV1,
   type NoteKnowledgeV1,
 } from '../model/line-knowledge.js';
-import { ARCHITECTURE_FILE_PATH, architectureFileOf, moduleFileOf } from '../architecture/architecture-file.js';
+import { architectureFileOf, moduleFileOf } from '../architecture/architecture-file.js';
 import type { KnowledgeRead } from '../architecture/catalog-service.js';
 import type { DecisionSourceAttempt } from '../model/decision-contracts.js';
+import { pendingKnowledgeWrites } from '../knowledge/write-log.js';
+import { knowledgeFileKindOf } from './knowledge-files.js';
 import { anchorKeyOf, topicKeyOf } from './note-anchors.js';
 import { isKnowledgeAnchor, noteIdFromFilePath, noteKnowledgeOf, noteOfFileBytes } from './note-file.js';
 
@@ -56,7 +58,7 @@ export function indexKnowledgeFile(tx: KnowledgeIndexTx, line: LineKnowledge, pa
   bytes: Uint8Array | null): DecodeResult<{ kind: KnowledgeFileKind; blobSha: string | null }> {
   const lineRef = lineRefKey(line.scope, line.line);
   const noteId = noteIdFromFilePath(path);
-  const kind: KnowledgeFileKind = noteId !== null ? 'note' : path === ARCHITECTURE_FILE_PATH ? 'architecture' : 'module';
+  const kind = knowledgeFileKindOf(path);
   const drop = (): void => {
     tx.deleteFile(lineRef, path);
     if (noteId !== null) tx.clearNoteRows(lineRef, noteId);
@@ -173,28 +175,6 @@ function linkOverlay(recorded: LinkPayloadV1 | undefined, file: NonNullable<Note
 }
 
 /**
- * A platform rewrite of a note that has a file keeps the file as its base (ruling 8 F-20 甲). The overlay shows
- * every knowledge field from the file except the file and basis paths the record has no digest for, so a written
- * head differs from the file only where the command changed a field, or where it lacks those paths: when that is
- * all a list lacks, the file's list stays as it is.
- */
-export function rewrittenKnowledge(written: NoteKnowledgeV1, file: NoteKnowledgeV1): NoteKnowledgeV1 {
-  return { ...written,
-    facts: onlyDropped(written.facts, file.facts, fact => fact.kind === 'file') ? file.facts : written.facts,
-    basisFiles: onlyDropped(written.basisFiles, file.basisFiles, () => true) ? file.basisFiles : written.basisFiles };
-}
-
-/** `written` is `file` in order with only `droppable` entries left out. */
-function onlyDropped<T>(written: readonly T[], file: readonly T[], droppable: (entry: T) => boolean): boolean {
-  let at = 0;
-  for (const entry of file) {
-    if (at < written.length && sameJson(written[at], entry)) at += 1;
-    else if (!droppable(entry)) return false;
-  }
-  return at === written.length;
-}
-
-/**
  * Where an overlaid head's knowledge came from: its line, its file's blob (the "needs verification" row's key)
  * and whether a file or basis path has no recorded digest (Q4: the note reads `unchecked`). Kept per head
  * object, so a read hands the head on and asks here instead of threading the file through every reader.
@@ -211,18 +191,38 @@ export function headWithFile(head: NoteHeadSnapshot, line: LineKnowledge, note: 
   return overlaid.head;
 }
 
-/** The record heads with each knowledge-anchored head's file knowledge over it (found by id on every line). */
-export async function overlayFileKnowledge(heads: readonly NoteHeadSnapshot[], read: KnowledgeRead):
-Promise<StoreResult<NoteHeadSnapshot[]>> {
+/**
+ * The record heads with each knowledge-anchored head's file knowledge over it (found by id on every line). A file
+ * missing or bad makes the read unavailable; with `leave_out` (2c-1d: the decision queue's waiting notes) that head
+ * is left out and the others are read.
+ */
+export async function overlayFileKnowledge(heads: readonly NoteHeadSnapshot[], read: KnowledgeRead,
+  unreadable: 'unavailable' | 'leave_out' = 'unavailable'): Promise<StoreResult<NoteHeadSnapshot[]>> {
   const wanted = heads.filter(head => isKnowledgeAnchor(head.anchor)).map(head => head.noteId);
   if (wanted.length === 0) return { status: 'ready', value: [...heads] };
-  const found = await notesAcrossLines(read, wanted);
+  let found = await notesAcrossLines(read, wanted);
+  if (found.status !== 'ready' && unreadable === 'leave_out') {
+    // One bad file fails the batch: each note is read alone, and one that cannot be read is left out. Lines that
+    // cannot be listed are the read's failure, never every note left out.
+    const lines = await read.lines.project(read.caller);
+    if (lines.status !== 'ready') return lines;
+    const each = new Map<string, { line: LineKnowledge; note: LineNoteFileV1 }>();
+    for (const noteId of wanted) {
+      const one = await notesAcrossLines(read, [noteId]);
+      if (one.status === 'ready') for (const [id, entry] of one.value) each.set(id, entry);
+    }
+    found = { status: 'ready', value: each };
+  }
   if (found.status !== 'ready') return found;
-  const missing = wanted.filter(noteId => !found.value.has(noteId));
-  if (missing.length > 0) return rejected('unavailable', `the note file of ${missing.join(', ')} is missing on every line`);
-  return { status: 'ready', value: heads.map(head => {
-    const entry = found.value.get(head.noteId);
-    return entry === undefined ? head : headWithFile(head, entry.line, entry.note);
+  const files = found.value;
+  const missing = wanted.filter(noteId => !files.has(noteId));
+  if (missing.length > 0 && unreadable === 'unavailable') {
+    return rejected('unavailable', `the note file of ${missing.join(', ')} is missing on every line`);
+  }
+  return { status: 'ready', value: heads.flatMap(head => {
+    const entry = files.get(head.noteId);
+    if (entry !== undefined) return [headWithFile(head, entry.line, entry.note)];
+    return isKnowledgeAnchor(head.anchor) ? [] : [head];
   }) };
 }
 
@@ -313,32 +313,60 @@ export async function indexedHeads(read: KnowledgeRead,
   return notes.status !== 'ready' ? notes : { status: 'ready', value: notes.value.heads };
 }
 
+/** What `prepareNoteFiles` keeps for one window attempt under one key. */
+type PreparedNotes = {
+  /** The filed heads overlaid with their files, by note id. */
+  heads: Map<string, NoteHeadSnapshot>;
+  /** 2c-1d: the filed heads left out (`leave_out`: the file could not be read), by note id, with their version. */
+  leftOut: Map<string, number>;
+  /** 2c-1d: a write of one of these notes' files was pending before the files were read; the window moves. */
+  writing: boolean;
+};
+
 /**
  * R-窗 (ruling 9), before a ledger read window is fixed: `heads` overlaid with their files, the filed ones kept in
- * the window attempt's cache under `key`; the overlaid heads are returned too.
+ * the window attempt's cache under `key`; the overlaid heads are returned too. 2c-1d (lead 11-12 ①): a `pending`
+ * write of one of these notes' own files, on a line read here (each workspace's current line), is checked before the
+ * files are read, so a write landing during the read cannot pass; other writes do not count. `unreadable` as
+ * `overlayFileKnowledge`'s.
  */
 export async function prepareNoteFiles(attempt: DecisionSourceAttempt, key: string, heads: readonly NoteHeadSnapshot[],
-  read: KnowledgeRead): Promise<StoreResult<NoteHeadSnapshot[]>> {
-  const overlaid = await overlayFileKnowledge(heads, read);
+  read: KnowledgeRead, unreadable: 'unavailable' | 'leave_out' = 'unavailable'): Promise<StoreResult<NoteHeadSnapshot[]>> {
+  const filed = new Set(heads.filter(head => isKnowledgeAnchor(head.anchor)).map(head => head.noteId));
+  const lines = filed.size > 0 ? await read.lines.project(read.caller) : null;
+  if (lines !== null && lines.status !== 'ready') return lines;
+  const pending = lines === null ? null
+    : await pendingKnowledgeWrites(read.lines.write.records, read.caller.projectId, lines.value);
+  if (pending !== null && pending.status !== 'ready') return pending;
+  const overlaid = await overlayFileKnowledge(heads, read, unreadable);
   if (overlaid.status !== 'ready') return overlaid;
-  const prepared = (attempt.cache.get(key) as Map<string, NoteHeadSnapshot> | undefined) ?? new Map();
-  for (const head of overlaid.value) if (isKnowledgeAnchor(head.anchor)) prepared.set(head.noteId, head);
+  const prepared = (attempt.cache.get(key) as PreparedNotes | undefined)
+    ?? { heads: new Map(), leftOut: new Map(), writing: false };
+  if (pending?.value.some(log => filed.has(noteIdFromFilePath(log.path) ?? '')) === true) prepared.writing = true;
+  for (const head of overlaid.value) if (isKnowledgeAnchor(head.anchor)) prepared.heads.set(head.noteId, head);
+  const shown = new Set(overlaid.value.map(head => head.noteId));
+  for (const head of heads) {
+    if (isKnowledgeAnchor(head.anchor) && !shown.has(head.noteId)) prepared.leftOut.set(head.noteId, head.version);
+  }
   attempt.cache.set(key, prepared);
   return overlaid;
 }
 
 /**
  * Inside the window: the record heads with the knowledge `prepareNoteFiles` read, no file read. `moved` when a filed
- * head was not prepared or its version moved since; `undefined` when nothing was prepared under `key` (a read outside
- * a window overlays the files itself).
+ * head was not prepared or its version moved since, or when a knowledge write was pending as the files were read;
+ * `undefined` when nothing was prepared under `key` (a read outside a window overlays the files itself).
  */
 export function preparedHeads(attempt: DecisionSourceAttempt | undefined, key: string,
   heads: readonly NoteHeadSnapshot[]): NoteHeadSnapshot[] | 'moved' | undefined {
-  const prepared = attempt?.cache.get(key) as Map<string, NoteHeadSnapshot> | undefined;
+  const prepared = attempt?.cache.get(key) as PreparedNotes | undefined;
   if (prepared === undefined) return undefined;
+  if (prepared.writing) return 'moved';
   const shown: NoteHeadSnapshot[] = [];
   for (const head of heads) {
-    const before = isKnowledgeAnchor(head.anchor) ? prepared.get(head.noteId) : head;
+    // 2c-1d: a head left out before the window stays out while its version stays.
+    if (prepared.leftOut.get(head.noteId) === head.version) continue;
+    const before = isKnowledgeAnchor(head.anchor) ? prepared.heads.get(head.noteId) : head;
     if (before === undefined || before.version !== head.version) return 'moved';
     shown.push(before);
   }

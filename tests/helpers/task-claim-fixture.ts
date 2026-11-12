@@ -62,9 +62,10 @@ import type { ClaimTaskInput, TaskClaimPort } from '../../src/core/work-graph/mo
 import type { GoalTaskPort, GraphWrite } from '../../src/core/work-graph/model/task-contracts.js';
 import type { PlanTaskPort } from '../../src/core/work-graph/model/plan-contracts.js';
 import type { SessionDirectoryPort } from '../../src/core/work-graph/model/session-contracts.js';
-import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
+import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
 import { knowledgeLinesOfRoots } from './KLS2-knowledge-lines.js';
 import type { KnowledgeLines } from '../../src/core/work-graph/model/line-knowledge.js';
+import { rememberStoreDirectory } from './KLS1B-host-store.js';
 
 const AT = '2026-09-24T00:00:00.000Z';
 export const CLAIM_FIXTURE_AT = AT;
@@ -112,7 +113,10 @@ export type ClaimFixtureOptions<A = unknown> = {
 
 export type TaskClaimFixture = {
   kind: ClaimFixtureKind;
+  /** The workspace root; the fixture's Kernel store (`kernel.sqlite`) is here too. */
   directory: string;
+  /** The SQLite store directory, `<directory>/.workbench/local/projects/<first 16 hex of sha256(projectId)>`. */
+  storeDirectory: string;
   ledgerPath: string;
   records: Records;
   /** Slice 9 G2: the real backend's identity-only receipt read, beside `records` (an evidence owner needs it). */
@@ -273,9 +277,13 @@ export async function createTaskClaimFixture<A = unknown>(kind: ClaimFixtureKind
   additionalSchemas: RecordBackendSchemas = { records: [], events: [] },
   options: ClaimFixtureOptions<A> = {}): Promise<TaskClaimFixture & { audit?: A }> {
   const directory = await mkdtemp(join(tmpdir(), `next-r4c-claim-${kind}-`));
-  const ledgerPath = join(directory, 'ledger.sqlite');
 
   const projectId = 'r4c-claim-project';
+  // The SQLite store sits where production's workspace-local rule puts it (src/composition/project-store-location.ts:60);
+  // the workspace root and `kernel.sqlite` stay in `directory`. `storeDirOf(directory)` finds the store.
+  const storeDirectory = rememberStoreDirectory(directory,
+    join(directory, '.workbench', 'local', 'projects', sha256Hex(projectId).slice(0, 16)));
+  const ledgerPath = join(storeDirectory, 'ledger.sqlite');
   const workspaceId = 'r4c-claim-workspace';
   const scope: WorkspaceScope = { projectId, workspaceId };
   const projectRef: ProjectSnapshot['ref'] = { aggregateType: 'Project', projectId };
@@ -311,11 +319,11 @@ export async function createTaskClaimFixture<A = unknown>(kind: ClaimFixtureKind
     events: [...additionalSchemas.events, TRUSTED_SCOPE_SEEDED_EVENT],
     lookups: additionalSchemas.lookups ?? [] };
   const { platform, commitIdentities } =
-    await openClaimPlatform(kind, directory, workspaceHost, now, kernelStoreOptions, extraSchemas);
+    await openClaimPlatform(kind, storeDirectory, workspaceHost, now, kernelStoreOptions, extraSchemas);
   // This fixture keeps its artifact bodies in memory (B2-execution's store), so
   // the composition root's empty ledger-side artifacts file must not exist: the
   // §11 invariant reader treats its presence as "requeue manifests live here".
-  await rm(join(directory, 'artifacts.sqlite'), { force: true });
+  await rm(join(storeDirectory, 'artifacts.sqlite'), { force: true });
   const backendRecords = platform.disconnect.records;
   const audit = options.audit?.(backendRecords);
 
@@ -491,8 +499,8 @@ export async function createTaskClaimFixture<A = unknown>(kind: ClaimFixtureKind
 
   const secondaryPlatforms: Array<Awaited<ReturnType<typeof createTargetPlatform>>> = [];
   async function openSecondary(): Promise<ClaimConnection> {
-    const secondary = (await openClaimPlatform(kind, directory, workspaceHost, now, kernelStoreOptions, extraSchemas))
-      .platform;
+    const secondary = (await openClaimPlatform(kind, storeDirectory, workspaceHost, now, kernelStoreOptions,
+      extraSchemas)).platform;
     secondaryPlatforms.push(secondary);
     const secondarySpy = emptySpy();
     const secondaryService = makeService(wrapRecords(secondary.disconnect.records, secondarySpy));
@@ -500,7 +508,8 @@ export async function createTaskClaimFixture<A = unknown>(kind: ClaimFixtureKind
   }
 
   const fixture: TaskClaimFixture = {
-    kind, directory, ledgerPath, records: backendRecords, commitIdentities, spy, materialsSpy, service, ctx, scope,
+    kind, directory, storeDirectory, ledgerPath, records: backendRecords, commitIdentities, spy, materialsSpy, service,
+    ctx, scope,
     projectRef, workspaceRef, goalRef, planRef, plan, tasks,
     sessions: { first: firstSession, second: secondSession }, roleBinding, budget,
     goals: goalsService, plans, sessionsPort, roleService, makeService, knowledgeRoots, knowledge,
@@ -649,7 +658,7 @@ export type RealTaskPreparationOptions = {
   requestId?: string;
   graphContext?: ContextAssemblerDependencies['graphContext'];
   taskInputs?: ContextAssemblerDependencies['taskInputs'];
-  /** The ledger directory; needed only to map the Session's Kernel store for a requeue Run. */
+  /** The fixture's `directory` (where its `kernel.sqlite` is); needed only to map the Session's Kernel store for a requeue Run. */
   directory?: string;
   /** The Workspace scope of that Kernel mapping. */
   scope?: { projectId: string; workspaceId: string };

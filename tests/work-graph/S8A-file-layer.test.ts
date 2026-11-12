@@ -26,6 +26,7 @@ import type { RawArtifactStorePort } from '../../src/core/record-store/body-port
 import { createObservedArchitecture } from '../../src/core/work-graph/architecture/architecture-service.js';
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
 import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-record-codecs.js';
+import { KNOWLEDGE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/knowledge-record-codecs.js';
 import {
   OBSERVED_ARCHITECTURE_RECORD_SCHEMAS,
 } from '../../src/core/work-graph/architecture/architecture-record-codecs.js';
@@ -90,10 +91,13 @@ async function fixture(
   cleanups.push(() => handle.close());
   const schemas: RecordBackendSchemas = {
     records: [...GOAL_RECORD_SCHEMAS.records, ...PLAN_GOVERNANCE_RECORD_SCHEMAS.records,
+      ...KNOWLEDGE_RECORD_SCHEMAS.records,
       ...OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.records, ...ARCHITECTURE_CATALOG_SCHEMAS.records],
     events: [...GOAL_RECORD_SCHEMAS.events, ...OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.events,
+      ...KNOWLEDGE_RECORD_SCHEMAS.events,
       ...ARCHITECTURE_CATALOG_SCHEMAS.events, ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events],
-    lookups: [...(OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.lookups ?? []), ...(ARCHITECTURE_CATALOG_SCHEMAS.lookups ?? [])],
+    lookups: [...(OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.lookups ?? []), ...(ARCHITECTURE_CATALOG_SCHEMAS.lookups ?? []),
+      ...(KNOWLEDGE_RECORD_SCHEMAS.lookups ?? [])],
   };
   const backend = createInMemoryRecordBackend({ schemas });
   const bodies: RawArtifactStorePort = new RawArtifactBodyStore();

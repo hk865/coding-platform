@@ -13,6 +13,7 @@
  * the file frame of the line's workspace. Pure.
  */
 import { messageOf } from '../../../contracts/error-message.js';
+import { sameJson } from '../../../contracts/fingerprint.js';
 import { KNOWLEDGE_DIRECTORY } from '../../../contracts/knowledge.js';
 import {
   NOTE_KINDS, isLinkEvidenceRole, isSemanticRelation, payloadKindProblem, type LinkEndRequestV1, type LinkPayloadV1, type NoteAnchorV1,
@@ -82,6 +83,38 @@ export function noteKnowledgeOf(head: NoteBodyV1 & Pick<NoteHeadSnapshot, 'sourc
     ...(head.flow === undefined ? {} : { flow: { steps: head.flow.steps.map(step => ({ link: step.link })) } }),
     ...(head.repair === undefined ? {} : { repair: { ops: head.repair.ops } }),
   };
+}
+
+/**
+ * [2C1-02], split ruling 3: a note file's knowledge from a written head, the one rule of a note write
+ * (`noteFileWritesOf`) and of a recovery's rebuild (`knowledgeFileOfEvent`): the head's own knowledge, or, when the
+ * note has a file, that file as the base (`rewrittenKnowledge`).
+ */
+export function noteFileKnowledgeOf(head: Parameters<typeof noteKnowledgeOf>[0], base: NoteKnowledgeV1 | null): NoteKnowledgeV1 {
+  const knowledge = noteKnowledgeOf(head);
+  return base === null ? knowledge : rewrittenKnowledge(knowledge, base);
+}
+
+/**
+ * A platform rewrite of a note that has a file keeps the file as its base (ruling 8 F-20 甲). The overlay shows
+ * every knowledge field from the file except the file and basis paths the record has no digest for, so a written
+ * head differs from the file only where the command changed a field, or where it lacks those paths: when that is
+ * all a list lacks, the file's list stays as it is.
+ */
+function rewrittenKnowledge(written: NoteKnowledgeV1, file: NoteKnowledgeV1): NoteKnowledgeV1 {
+  return { ...written,
+    facts: onlyDropped(written.facts, file.facts, fact => fact.kind === 'file') ? file.facts : written.facts,
+    basisFiles: onlyDropped(written.basisFiles, file.basisFiles, () => true) ? file.basisFiles : written.basisFiles };
+}
+
+/** `written` is `file` in order with only `droppable` entries left out. */
+function onlyDropped<T>(written: readonly T[], file: readonly T[], droppable: (entry: T) => boolean): boolean {
+  let at = 0;
+  for (const entry of file) {
+    if (at < written.length && sameJson(written[at], entry)) at += 1;
+    else if (!droppable(entry)) return false;
+  }
+  return at === written.length;
 }
 
 /** The same knowledge with every module id and path passed through the given frame change. */

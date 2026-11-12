@@ -23,6 +23,7 @@ import { createProjectBootstrapServices } from '../../src/core/work-graph/config
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
 import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-record-codecs.js';
+import { KNOWLEDGE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/knowledge-record-codecs.js';
 import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
 import { makeCommitCursor } from '../../src/contracts/ledger.js';
 
@@ -50,11 +51,14 @@ const sessionCreation = (requestId: string, sessionRole: RoleConfigurationRef = 
 });
 const schemas: RecordBackendSchemas = {
   records: [...GOAL_RECORD_SCHEMAS.records, ...PLAN_GOVERNANCE_RECORD_SCHEMAS.records,
+    ...KNOWLEDGE_RECORD_SCHEMAS.records,
     ...SESSION_RECORD_SCHEMAS.records, ...ARCHITECTURE_CATALOG_SCHEMAS.records, ...ROLE_LINE_RECORD_SCHEMAS.records],
   events: [...GOAL_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events,
+    ...KNOWLEDGE_RECORD_SCHEMAS.events,
     ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events, ...ARCHITECTURE_CATALOG_SCHEMAS.events,
     { eventType: 'TrustedScopeSeeded', schemaVersion: 1, validate: event => ({ status: 'decoded', value: event }) }],
-  lookups: [...(SESSION_RECORD_SCHEMAS.lookups ?? []), ...(ARCHITECTURE_CATALOG_SCHEMAS.lookups ?? [])],
+  lookups: [...(SESSION_RECORD_SCHEMAS.lookups ?? []), ...(ARCHITECTURE_CATALOG_SCHEMAS.lookups ?? []),
+    ...(KNOWLEDGE_RECORD_SCHEMAS.lookups ?? [])],
 };
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });

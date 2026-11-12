@@ -814,7 +814,7 @@ export async function createWP2Platform(options: WP2PlatformOptions = {}): Promi
   await f.closeBackend();
   const notices: RecordCommitNotice[] = [];
   const platformOptions: Parameters<typeof createTargetPlatform>[0] = {
-    storage: { kind: 'sqlite', directory }, workspace: workspaceHost, now: platformClock(options),
+    storage: { kind: 'sqlite', directory: f.storeDirectory }, workspace: workspaceHost, now: platformClock(options),
     operatorActor: { kind: 'human', id: 'r4c-claim-operator' },
     ...(options.ownedHost === true ? { hostInstance: { hostInstanceId: 'wp2-host', lease: 'owned' as const } } : {}),
     commitObserver: { started: () => undefined, committed: notice => { notices.push(notice); options.onCommit?.(notice); } },

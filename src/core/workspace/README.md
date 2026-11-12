@@ -36,7 +36,7 @@
 - `text-source-snapshot.ts` — 严格文本捕获：每个选中文件必须是可读 UTF-8、无 NUL。
 - `continuation-diff-reads.ts` — continuation 单文件 diff 两侧的 1 MiB 有界只读字节。
 - `workspace-baseline-artifact.ts` — 从 prepared manifest bundle / capture Artifact 读 baseline 与完整变更。
-- `workspace-change-capture.ts` — run 起始 baseline 与结算 change capture 共用的只读遍历（不进工作区根的 `.workbench/`，和 HEAD 比较时两边也都不比它：知识文件由平台写、单独提交，不算 Run 的源码改动）。其中只读 git 辅助（gitTopLevel、readHead、readTree、gitBlobId、pickObjectFormat）也给 uncommitted-files.ts 用；`gitCommonDir` 经同一个只读 git 执行口给组合层定项目库的位置。
+- `workspace-change-capture.ts` — run 起始 baseline 与结算 change capture 共用的只读遍历（不进工作区根的 `.workbench/`，和 HEAD 比较时两边也都不比它：知识文件由平台写、单独提交，不算 Run 的源码改动）。其中只读 git 辅助（gitTopLevel、readHead、readTree、gitBlobId、pickObjectFormat）也给 uncommitted-files.ts 用；`gitCommonDir` 经同一个只读 git 执行口给组合层定项目库的位置；`readKnowledgeGitState` 经同一个执行口给知识对账读 `.workbench/` 的三份 git 状态（`status --porcelain=v1 --untracked-files=all`、`ls-files -s`、`ls-tree -r HEAD`）。
 - `knowledge-exclude.ts` — KLS-2“架构图和注记只留在本机，不进 git”：`applyKnowledgeExclude` 在仓库共用的 `<git-common-dir>/info/exclude` 里加上或删掉带标记的两行（标记行加 `.workbench/`），已是要的状态就不动文件，其余行逐字节保留（按字节读改、不解码，不是 UTF-8 的字节也不变）、用户自己写的 `.workbench/` 行不动；新内容整份写进同目录的临时文件再换名，写失败时原文件不动；`ensureKnowledgeDirectory` 建 `<root>/.workbench/`（已有就不动，根不在不建也不报），Host 启动和打开工作区、Work Run 启动、工作台命令起命令前都调这一个。这两样是本层仅有的写：一个是 git 自己的本地忽略文件，一个是平台自己的知识目录，都不是工作区内容；不碰 `.gitignore`、git 配置和索引。
 - `uncommitted-files.ts` — 任务图的“未提交”读：给定路径此刻相对 HEAD 的状态和 git 口径的加减行，只读、不存。
 - `candidate-workspace-reader.ts` — candidate 范围快照、摘要与 git entry（含符号链接/特殊文件规则）；不收工作区根的 `.workbench/`（平台的知识文件，和观测、Run 变更捕获用同一个 `withinKnowledgeDirectory`）。
@@ -61,12 +61,13 @@
 | `compareGitWorkspaceTrees` | `src/core/workspace/git-read.ts:537` | 比较两个完整 commit 的文本树 | Git↔Git 来源比较时 |
 | `compareGitWorkingTree` | `src/core/workspace/git-read.ts:617` | 比较 Git commit 与工作树的普通文本和 mode | Git↔working tree 比较时 |
 | `duplicateCandidates` | `src/core/workspace/duplicate-candidates.ts:66` | 在一次比较的 after 材料上列出新的重复定义与字面量候选，带两处位置与 coverage | 比较请求带 `duplicates: true` 时；由 capture/git 两臂调用，不要另建索引 |
-| `readWorkspaceBaseline` | `src/core/workspace/workspace-change-capture.ts:292` | 一次只读遍历得到 run 起始 baseline | 执行前冻结工作区基线时 |
-| `captureWorkspaceChange` | `src/core/workspace/workspace-change-capture.ts:339` | 同一次遍历得到结算变更、notVisible 与样本 | 执行结束后取变更时；不要另走目录遍历 |
+| `readWorkspaceBaseline` | `src/core/workspace/workspace-change-capture.ts:339` | 一次只读遍历得到 run 起始 baseline | 执行前冻结工作区基线时 |
+| `captureWorkspaceChange` | `src/core/workspace/workspace-change-capture.ts:386` | 同一次遍历得到结算变更、notVisible 与样本 | 执行结束后取变更时；不要另走目录遍历 |
 | `gitCommonDir` | `src/core/workspace/workspace-change-capture.ts:104` | 仓库的 common git 目录（所有工作树共用）：`git rev-parse --git-common-dir` 经同一个只读 git 执行口，相对输出按根解析再 realpath；不在工作树里、没有 git 或命令失败为 null | 组合层定项目库位置（`projectStoreLocation`）时；不要另起 git 进程 |
 | `ensureKnowledgeDirectory` | `src/core/workspace/knowledge-exclude.ts:89` | 建 `<root>/.workbench/`；已有就不动，根不在既不建也不报（交给调用方自己的打开去报） | 命令要把知识目录挂成只读之前（Work Run 启动、工作台命令）和 Host 登记工作区时；不要另写 mkdir |
 | `applyKnowledgeExclude` | `src/core/workspace/knowledge-exclude.ts:56` | 打开或关闭一个检出的“只留在本机”：在 `<git-common-dir>/info/exclude` 按字节加上或删掉标记块（写临时文件再换名），回 `{ path, changed }`，读写失败回 `unavailable`、原文件不动 | Host 设置路由 `knowledge-local`；不要另写忽略文件的读写 |
 | `uncommittedFilesOf` | `src/core/workspace/uncommitted-files.ts:36` | 给定路径相对当前 HEAD 的 clean/uncommitted/unknown 和加减行 | 要按文件看未提交改动时；不要另跑 git diff/status |
+| `readKnowledgeGitState` | `src/core/workspace/workspace-change-capture.ts:178` | 一个检出 `.workbench/` 的 git 状态：status 列出的路径（改了、暂存、未跟踪，改名两边都算）、索引 stage 0 的 blob、HEAD 的 blob，路径都相对检出根；任一条失败回 null（调用方当全部未提交） | 知识对账判“已提交”（在 `ls-files -s` 里且不在 status 里）和 HEAD 的 blob；不要另起 git |
 | `identifyCheckout`、`readCheckoutBranch` | `src/core/workspace/workspace-change-capture.ts:130`、`src/core/workspace/workspace-change-capture.ts:121` | 一个检出的身份：`folder` 是根的 realpath（根不在时抛错，组合层接住回 `unavailable`）；不在 git 里是 `not_git`；在 git 里给仓库身份（common git 目录）、分支（`symbolic-ref`，detached 或失败是 `HEAD`，刚 `git init` 的空仓库也拿得到分支名）和对象格式（`show-object-format`，失败按 sha1）；不读第一个提交；`readCheckoutBranch` 只读分支 | 组合根解析一条知识线（`src/composition/line-knowledge.ts`）；分支每次重读，人随时可能切 |
 | `readWorkspaceBaselineFromBundle` | `src/core/workspace/workspace-baseline-artifact.ts:34` | 读 prepared manifest 内的 baseline，坏/缺都降级为 null | 需要 run 起始快照且不能因坏 Artifact 失败时 |
 | `readWorkspaceCaptureChanges` | `src/core/workspace/workspace-baseline-artifact.ts:60` | 读 `WorkspaceCaptureV1` 背后的完整变更记录 | 需要变更全量分类、而不是样本时 |

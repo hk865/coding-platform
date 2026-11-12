@@ -617,7 +617,18 @@ export function planPreparedCommit(
       if (!hasNullCursorPlaceholder(target.parsed, cursorField)) {
         return { status: "invalid", reason: `record ${refKey} commit cursor field ${cursorField} is not a null placeholder` };
       }
-      commitCursorBindings.push({ refKey, field: cursorField });
+      const eventIndex = raw["eventIndex"];
+      if (eventIndex === undefined) {
+        commitCursorBindings.push({ refKey, field: cursorField });
+        boundRecordKeys.add(refKey);
+        continue;
+      }
+      const listedEvents: unknown = prepared["events"];
+      const eventCount = Array.isArray(listedEvents) ? listedEvents.length : 0;
+      if (typeof eventIndex !== "number" || !Number.isSafeInteger(eventIndex) || eventIndex < 0 || eventIndex >= eventCount) {
+        return { status: "invalid", reason: `commit cursor binding ${refKey}.${cursorField} eventIndex must be an integer in [0, ${eventCount})` };
+      }
+      commitCursorBindings.push({ refKey, field: cursorField, eventIndex });
       boundRecordKeys.add(refKey);
     }
   }
@@ -691,13 +702,14 @@ export function planPreparedCommit(
 /**
  * In-transaction cursor binding plus final registered schema validation. Only
  * the records named by `bindings` are re-decoded and re-validated after their
- * registered null cursor field is filled with the real last-event cursor;
- * unbound records keep the full out-of-transaction validation they already had.
+ * registered null cursor field is filled with the real cursor of the bound
+ * event (`cursors` holds this commit's event cursors in order); unbound records
+ * keep the full out-of-transaction validation they already had.
  */
 export function bindPreparedRecords(
   records: readonly DecodedRecordEnvelope[],
   bindings: readonly CommitCursorBinding[],
-  cursor: CommitCursor,
+  cursors: readonly CommitCursor[],
   registry: RecordSchemaRegistry,
 ): DecodeResult<readonly DecodedRecordEnvelope[]> {
   if (bindings.length === 0) return { status: "decoded", value: records };
@@ -706,7 +718,7 @@ export function bindPreparedRecords(
   const bound = bindCommitCursor(
     records.map((entry) => entry.record),
     bindings,
-    cursor,
+    cursors,
     allowedFields,
   );
   if (bound.status === "invalid") return bound;

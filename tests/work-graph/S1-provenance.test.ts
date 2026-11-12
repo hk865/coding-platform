@@ -84,7 +84,7 @@ async function open(kind: ClaimFixtureKind): Promise<Opened> {
       // The invariant world read snapshots the real SQLite ledger; the
       // in-memory backend has no ledger file to read.
       if (base.kind !== 'sqlite') return;
-      const world = await readInvariantWorld(invariantStoreOf(base.directory), p);
+      const world = await readInvariantWorld(invariantStoreOf(base.storeDirectory), p);
       const violations = checkAllInvariants(world);
       expect(violations, violations.map(entry => `${entry.invariant} ${entry.message}`).join('\n')).toEqual([]);
     },

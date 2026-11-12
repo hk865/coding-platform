@@ -115,7 +115,7 @@ function committed<T>(result: WriteResult<T>): T {
  */
 async function invariantsHold(f: Opened, label: string): Promise<void> {
   if (f.base.kind !== 'sqlite') return;
-  const world = await readInvariantWorld(invariantStoreOf(f.base.directory), f.base.scope.projectId);
+  const world = await readInvariantWorld(invariantStoreOf(f.base.storeDirectory), f.base.scope.projectId);
   expect(checkAllInvariants(world), `${label}: invariant violations`).toEqual([]);
 }
 

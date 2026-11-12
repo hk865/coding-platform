@@ -38,6 +38,7 @@ import type {
 } from '../core/work-graph/configuration/project-bootstrap-contracts.js';
 import type { SessionDirectoryPort, RoleLineAllocationReadPort } from '../core/work-graph/model/session-contracts.js';
 import type { RoleLimitsPort } from '../core/work-graph/sessions/role-limits-service.js';
+import type { KnowledgeOpsPort } from '../core/work-graph/model/knowledge-ops.js';
 import type {
   RoleLineChangeScopeCommandV1, RoleLineOpenCommandV1, RoleLineOperationsPort,
 } from '../core/work-graph/sessions/role-line-operations.js';
@@ -117,6 +118,7 @@ import {
   type ArchitectureCoreRouteDto,
   type ExplorationCoreRouteDto,
   type K3CoreRouteDto,
+  type KnowledgeCoreRouteDto,
   type MaintainerCoreRouteDto,
   type MessagesCoreRouteDto,
   type OverlapCoreRouteDto,
@@ -408,6 +410,9 @@ export type CoreRouteBindings = {
   readGoalCopyDraft: GoalCopyPort['readDraft'];
   confirmGoalCopy: GoalCopyPort['confirm'];
   adoptInitialization: InitializationAdoptionHostPort['adopt'];
+  // KLS-2c: a knowledge notice's recovery items and the person's recovery of one; the owner checks the input.
+  recoverKnowledge: KnowledgeOpsPort['recover'];
+  readKnowledgeRecoveryItems: KnowledgeOpsPort['recoveryItems'];
 };
 
 /** A.2 step 5.6 (§12.1 step 7, §12.8): this Host's instance lease and its start-up reconcile report. */
@@ -552,6 +557,8 @@ export type CoreRoutePlatform = {
   /** UI1: the verification round read owner; internal like the other owner groups, so a narrow platform
    * without it answers `unsupported`. */
   verification?: VerificationRoundReadPort;
+  /** KLS-2c: the knowledge operations; internal like the other owner groups, so a narrow platform answers `unsupported`. */
+  knowledge?: Pick<KnowledgeOpsPort, 'recover' | 'recoveryItems'>;
 };
 
 /** `executions/resolve-unknown` input (RUN-22): the unknown Run and the operator's reason. */
@@ -591,7 +598,7 @@ export const CORE_ROUTE_SPECS: Record<
   | keyof OverlapCoreRouteDto
   | keyof RequestCommandCoreRouteDto | keyof SecretaryLifecycleCoreRouteDto | keyof WaitsCoreRouteDto
   | keyof RoleLineCoreRouteDto | keyof MaintainerCoreRouteDto | keyof WorkspaceFilesCoreRouteDto
-  | keyof VerificationCoreRouteDto | keyof ExplorationCoreRouteDto,
+  | keyof VerificationCoreRouteDto | keyof ExplorationCoreRouteDto | keyof KnowledgeCoreRouteDto,
   CoreRouteSpec
 > = {
   'controls/submit': { kind: 'graph_write', binding: 'submitControl', owner: 'controls.submitControl' },
@@ -739,6 +746,8 @@ export const CORE_ROUTE_SPECS: Record<
   'goals/copy-draft': { kind: 'plain', binding: 'readGoalCopyDraft', owner: 'goals.readGoalCopyDraft' },
   'goals/copy-confirm': { kind: 'plain', binding: 'confirmGoalCopy', owner: 'goals.confirmGoalCopy' },
   'initialization/adopt': { kind: 'plain', binding: 'adoptInitialization', owner: 'initialization.adopt' },
+  'knowledge/recover': { kind: 'plain', binding: 'recoverKnowledge', owner: 'knowledge.recover' },
+  'knowledge/recovery-items': { kind: 'plain', binding: 'readKnowledgeRecoveryItems', owner: 'knowledge.recoveryItems' },
   'plans/request-candidate': { kind: 'plain', binding: 'readRequestCandidate', owner: 'requestCandidates.readRequestCandidate' },
   'plans/abandon': { kind: 'graph_write', binding: 'abandonPlanProposal', owner: 'requestCandidates.abandonPlanProposal' },
   'decisions/queue': { kind: 'plain', binding: 'queryDecisionQueue', owner: 'decisions.queryDecisionQueue' },
@@ -1526,6 +1535,12 @@ export function createPlatformCoreRouteBindings(
     adoptInitialization: initialization === undefined
       ? unsupported('the Host does not publish initialization adoption')
       : personEntry(initialization.adopt.bind(initialization)),
+    // Only the person's "恢复" writes back (kls-design §2.2.4): person-only BEFORE the owner; the items read stays open.
+    recoverKnowledge: platform.knowledge === undefined ? unsupported('the platform does not publish knowledge.recover')
+      : personEntry(platform.knowledge.recover.bind(platform.knowledge)),
+    readKnowledgeRecoveryItems: platform.knowledge === undefined
+      ? unsupported('the platform does not publish knowledge.recoveryItems')
+      : platform.knowledge.recoveryItems.bind(platform.knowledge),
   };
 }
 
@@ -1835,6 +1850,8 @@ export async function dispatchCoreRoute(
       case 'goals/copy-draft': return bindings.readGoalCopyDraft(ctx, plain.input as never);
       case 'goals/copy-confirm': return bindings.confirmGoalCopy(ctx, plain.input as never);
       case 'initialization/adopt': return bindings.adoptInitialization(ctx, plain.input as never);
+      case 'knowledge/recover': return bindings.recoverKnowledge(ctx, plain.input as never);
+      case 'knowledge/recovery-items': return bindings.readKnowledgeRecoveryItems(ctx, plain.input as never);
     }
   })();
   // A GraphWrite rejection is a failed command: preserve its exact body but let

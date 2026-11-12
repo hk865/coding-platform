@@ -81,10 +81,11 @@ describe('WK-drain', () => {
     await vi.waitFor(() => expect(drains.length).toBe(1));
     drains.length = 0;
 
-    // The frozen registration cursor 10; the world is already at 14, so the next commit is 15.
+    // The frozen registration cursor 10; the world is already at 15 (its initial architecture adoption's completion
+    // commit, [2C1-07], is one of them), so the next commit is 16.
     registerGoalWaits(fixture);
     const commit = await commitGoalWait(fixture);
-    expect(commit.cursor).toBe('c0000000015');
+    expect(commit.cursor).toBe('c0000000016');
     loop.committed(observed.notices.find(candidate => candidate.cursor === commit.cursor)!);
 
     // The loop's `more` starts the next bounded drain with no new commit or heartbeat, so both pages

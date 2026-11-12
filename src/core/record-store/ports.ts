@@ -91,11 +91,11 @@ export type UniqueClaimChange = {
 
 export type CommitCursorBinding = {
   refKey: string;
-  /**
-   * The closed set of bindable cursor fields (spec §2.3): the top-level names
-   * and the two nested array element paths.
-   */
+  /** The closed set of bindable cursor fields (spec §2.3): the top-level names and two nested array element paths. */
   field: BoundCursorField;
+  /** The index (from 0) of this commit's event whose cursor fills the field; absent: the last event. Not an integer
+   *  in [0, events.length) is `invalid`. A knowledge write binds each write log to its file's carrying event. */
+  eventIndex?: number;
 };
 
 /** The one copy of the bindable cursor field set, used by the binder and the schema registration. */
@@ -124,7 +124,7 @@ export type PreparedCommit = {
   events: readonly EncodedDomainEvent[];
   /** CAS on the read-through cursor, including null for an empty ledger. */
   ledgerHorizon?: CommitCursor | null;
-  /** Fill registered, top-level null cursor fields from this commit's last event. */
+  /** Fill registered null cursor fields from the cursor of this commit's event at `eventIndex` (absent: the last event). */
   commitCursorBindings?: readonly CommitCursorBinding[];
 };
 

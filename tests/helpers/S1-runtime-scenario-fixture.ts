@@ -183,7 +183,7 @@ export async function openS1RuntimeFixture(options: {
     SESSION_ACTIVITY_SCHEMAS];
   const base = await createTaskClaimFixture('sqlite', { records: bundles.flatMap(b => b.records),
     events: bundles.flatMap(b => b.events), lookups: bundles.flatMap(b => b.lookups ?? []) });
-  const bodies = createSqliteRawArtifactStore(join(base.directory, 'artifacts.sqlite'));
+  const bodies = createSqliteRawArtifactStore(join(base.storeDirectory, 'artifacts.sqlite'));
   const checked = await checkedRecords(base.records, base.directory, base.scope.projectId);
   const records = checked.records;
   let sequence = 0;

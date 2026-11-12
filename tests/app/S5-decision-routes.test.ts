@@ -171,7 +171,7 @@ it('RT06 decisions/notices/seen with a mismatched display token is invalid and c
   const sourceRoot = join(f.base.directory, 'rt06-source');
   await mkdir(sourceRoot);
   await writeFile(join(sourceRoot, 'source.txt'), 'RT06 real requeue source\n');
-  const composed = await createTargetPlatform({ storage: { kind: 'sqlite', directory: f.base.directory }, now: () => T,
+  const composed = await createTargetPlatform({ storage: { kind: 'sqlite', directory: f.base.storeDirectory }, now: () => T,
     workspace: {
       async resolveRoot(scope) {
         return scope.projectId === WORKSPACE_SCOPE.projectId && scope.workspaceId === WORKSPACE_SCOPE.workspaceId

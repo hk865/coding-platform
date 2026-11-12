@@ -19,7 +19,7 @@ async function openFixture() {
   cleanups.push(() => f.close());
   await f.closeBackend();
   const options: TargetPlatformOptions = {
-    storage: { kind: 'sqlite', directory: f.directory }, now: () => CLAIM_FIXTURE_AT,
+    storage: { kind: 'sqlite', directory: f.storeDirectory }, now: () => CLAIM_FIXTURE_AT,
     kernelStores: { entries: [{ adapterId: 'r4c-claim-kernel', storeKey: 'r4c-claim-kernel-store',
       workspace: f.scope, databasePath: join(f.directory, 'kernel.sqlite') }] },
     workspace: {

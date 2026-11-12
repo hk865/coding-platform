@@ -69,7 +69,7 @@ async function setup(): Promise<{ fixture: TaskClaimFixture; platform: Platform;
   // A claim of the second Task, built (pins read) while the Goal is active and sent later.
   const secondClaim = await fixture.buildRequest({ input: { taskId: fixture.tasks.second.taskId, sessionRef: fixture.sessions.second } });
   await fixture.closeBackend();
-  return { fixture, platform: await openPlatform(fixture.directory), secondClaim };
+  return { fixture, platform: await openPlatform(fixture.storeDirectory), secondClaim };
 }
 
 function hostContext(fixture: TaskClaimFixture, actor: Extract<ActorRef, { kind: 'human' | 'system' }>): CoreCallContext {
@@ -107,7 +107,7 @@ describe('setGoalControl (GOAL-04…06)', () => {
     let platform: Platform | null = null;
     if (kind === 'sqlite') {
       await fixture.closeBackend();
-      platform = await openPlatform(fixture.directory);
+      platform = await openPlatform(fixture.storeDirectory);
       control = platform.goals;
       plans = platform.plans;
     }
@@ -144,7 +144,7 @@ describe('setGoalControl (GOAL-04…06)', () => {
       replayed: true, value: resumed.value, cursor: resumed.cursor });
     if (platform !== null) {
       await platform.close();
-      platform = await openPlatform(fixture.directory);
+      platform = await openPlatform(fixture.storeDirectory);
       control = platform.goals;
       plans = platform.plans;
       expect(await control.setGoalControl(fixture.ctx, pause)).toMatchObject({ status: 'committed', replayed: true,

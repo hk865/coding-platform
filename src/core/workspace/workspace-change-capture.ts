@@ -160,6 +160,53 @@ export async function readHead(root: string): Promise<string | null> {
   }
 }
 
+/** Git's view of a checkout's knowledge directory; every path relative to the checkout root. */
+export type KnowledgeGitState = {
+  /** `git status --porcelain=v1 --untracked-files=all`: changed, staged and untracked paths (a rename's both sides). */
+  listed: ReadonlySet<string>;
+  /** `git ls-files -s`: the index's stage-0 blobs. */
+  staged: ReadonlyMap<string, string>;
+  /** `git ls-tree -r HEAD`: HEAD's blobs. */
+  head: ReadonlyMap<string, string>;
+};
+
+/**
+ * KLS-2 [2C1-11]: the three narrow reads a knowledge reconciliation needs of `.workbench/`, through the one `git()`.
+ * Null when any of them fails (no HEAD yet included): the caller then has nothing committed. Status paths are the
+ * repository's, so the root's prefix is taken off.
+ */
+export async function readKnowledgeGitState(root: string): Promise<KnowledgeGitState | null> {
+  try {
+    const prefix = (await git(root, ['rev-parse', '--show-prefix'])).trim();
+    const local = (path: string): string => path.startsWith(prefix) ? path.slice(prefix.length) : path;
+    const listed = new Set<string>();
+    const status = (await git(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--', '.workbench']))
+      .split('\0');
+    for (let at = 0; at < status.length; at += 1) {
+      const entry = status[at]!;
+      if (entry.length < 4) continue;
+      listed.add(local(entry.slice(3)));
+      if (entry[0] === 'R' || entry[0] === 'C') listed.add(local(status[(at += 1)] ?? ''));
+    }
+    const blobs = (output: string, pick: (meta: string[]) => string | null): Map<string, string> => {
+      const found = new Map<string, string>();
+      for (const entry of output.split('\0')) {
+        const tab = entry.indexOf('\t');
+        const blob = tab < 0 ? null : pick(entry.slice(0, tab).split(' '));
+        if (blob !== null) found.set(entry.slice(tab + 1), blob);
+      }
+      return found;
+    };
+    const staged = blobs(await git(root, ['ls-files', '-s', '-z', '--', '.workbench']),
+      ([, blob, stage]) => stage === '0' ? blob ?? null : null);
+    const head = blobs(await git(root, ['ls-tree', '-r', '-z', 'HEAD', '--', '.workbench']),
+      ([, type, blob]) => type === 'blob' ? blob ?? null : null);
+    return { listed, staged, head };
+  } catch {
+    return null;
+  }
+}
+
 /** The ignored untracked names from the repository's own rules, names only.
  * A failure here is fail-closed: without the name list the traversal could
  * read a git-ignored path, so the whole capture becomes `read_failed`. */

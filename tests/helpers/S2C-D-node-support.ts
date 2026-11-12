@@ -54,6 +54,7 @@ import { MODEL_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/mo
 import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
 import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-record-codecs.js';
+import { KNOWLEDGE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/knowledge-record-codecs.js';
 import { TASK_CLAIM_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/claim-record-codecs.js';
 import { UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/unknown-call-review-codecs.js';
 import { ROLE_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/role-record-codecs.js';
@@ -197,6 +198,7 @@ function schemas(extra: RecordBackendSchemas = { records: [], events: [] }): Rec
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.records, ...SESSION_RECORD_SCHEMAS.records,
       ...SESSION_LIFECYCLE_RECORD_SCHEMAS.records, ...SESSION_ANOMALY_RECORD_SCHEMAS.records,
       ...ARCHITECTURE_CATALOG_SCHEMAS.records, ...TASK_CLAIM_RECORD_SCHEMAS.records, ...ROLE_RECORD_SCHEMAS.records,
+      ...KNOWLEDGE_RECORD_SCHEMAS.records,
       ...ROLE_LINE_RECORD_SCHEMAS.records,
       ...QUERY_JOB_RECORD_SCHEMAS.records, ...CONTROL_RECORD_SCHEMAS.records, ...COMPLETION_RECORD_SCHEMAS.records,
       ...MODEL_REQUEST_RECORD_SCHEMAS.records, ...SESSION_MESSAGE_RECORD_SCHEMAS.records,
@@ -205,6 +207,7 @@ function schemas(extra: RecordBackendSchemas = { records: [], events: [] }): Rec
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events,
       ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events, ...SESSION_ANOMALY_RECORD_SCHEMAS.events,
       ...ARCHITECTURE_CATALOG_SCHEMAS.events, ...TASK_CLAIM_RECORD_SCHEMAS.events, ...ROLE_RECORD_SCHEMAS.events,
+      ...KNOWLEDGE_RECORD_SCHEMAS.events,
       ...QUERY_JOB_RECORD_SCHEMAS.events, ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events,
       ...CONTROL_RECORD_SCHEMAS.events, ...COMPLETION_RECORD_SCHEMAS.events,
       ...MODEL_REQUEST_RECORD_SCHEMAS.events, ...SESSION_MESSAGE_RECORD_SCHEMAS.events,
@@ -217,6 +220,7 @@ function schemas(extra: RecordBackendSchemas = { records: [], events: [] }): Rec
       ...PLAN_STATE_RECORD_SCHEMAS.lookups ?? [], ...PLAN_GOVERNANCE_RECORD_SCHEMAS.lookups ?? [],
       ...SESSION_LIFECYCLE_RECORD_SCHEMAS.lookups ?? [], ...SESSION_ANOMALY_RECORD_SCHEMAS.lookups ?? [],
       ...ARCHITECTURE_CATALOG_SCHEMAS.lookups ?? [], ...TASK_CLAIM_RECORD_SCHEMAS.lookups ?? [],
+      ...(KNOWLEDGE_RECORD_SCHEMAS.lookups ?? []),
       ...ROLE_RECORD_SCHEMAS.lookups ?? [], ...QUERY_JOB_RECORD_SCHEMAS.lookups ?? [],
       ...CONTROL_RECORD_SCHEMAS.lookups ?? [], ...COMPLETION_RECORD_SCHEMAS.lookups ?? [],
       ...MODEL_REQUEST_RECORD_SCHEMAS.lookups ?? [], ...SESSION_MESSAGE_RECORD_SCHEMAS.lookups ?? [],

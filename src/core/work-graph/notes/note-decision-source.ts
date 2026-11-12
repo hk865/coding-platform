@@ -131,12 +131,13 @@ export function createNoteDecisionSource(deps: NoteDecisionSourceDeps): NoteDeci
    * [2B-19]: the heads with each filed note's file knowledge over them; inside a queue window, the knowledge
    * prepared before it (a head that moved since is the window's move, never a file read).
    */
-  async function overlaid(ctx: CoreCallContext, heads: readonly NoteHeadSnapshot[], attempt?: DecisionSourceAttempt):
+  async function overlaid(ctx: CoreCallContext, heads: readonly NoteHeadSnapshot[], attempt?: DecisionSourceAttempt,
+    unreadable?: 'leave_out'):
   Promise<{ ok: true; heads: NoteHeadSnapshot[] } | { ok: false; code: 'unavailable' | 'source_stale'; reason: string }> {
     const prepared = preparedHeads(attempt, REVIEW_FILES, heads);
     if (prepared === 'moved') return { ok: false, code: 'source_stale', reason: DECISION_WINDOW_MOVED_REASON };
     if (prepared !== undefined) return { ok: true, heads: prepared };
-    const read = await overlayFileKnowledge(heads, { lines: deps.knowledge, caller: ctx });
+    const read = await overlayFileKnowledge(heads, { lines: deps.knowledge, caller: ctx }, unreadable);
     return read.status === 'ready' ? { ok: true, heads: read.value } : { ok: false, code: 'unavailable', reason: read.reason };
   }
   /** [2B-19]: the batched target heads, overlaid, by noteId. */
@@ -151,8 +152,9 @@ export function createNoteDecisionSource(deps: NoteDecisionSourceDeps): NoteDeci
   async function cardFor(ctx: CoreCallContext, head: NoteHeadSnapshot, planWindow: NotePlanWindowFactsV1 | null):
   Promise<{ ok: true; card: NoteDecisionCardFactsV1 | null; closedReason: NoteDecisionClosedReasonV1 | null }
   | { ok: false; reason: string }> {
+    // 2c-1d: a target with no head (a person's edit can name one) is left out of the card (`cardFactsOf`).
     const targetBatch = await readHeadBatch(deps.records, ctx.projectId, actualDispositionTargets(head),
-      { requireAll: true });
+      { requireAll: false });
     if (!targetBatch.ok) return { ok: false, reason: targetBatch.reason };
     const targetRead = await overlaidTargets(ctx, targetBatch.value);
     if (!targetRead.ok) return { ok: false, reason: targetRead.reason };
@@ -183,7 +185,8 @@ export function createNoteDecisionSource(deps: NoteDecisionSourceDeps): NoteDeci
     const listed = await readAllHeads(deps.records, S4_NOTE_BY_REVIEW_STATUS_LOOKUP,
       [ctx.projectId, bucketGoalId, 'pending_review']);
     if (!listed.ok) return rejected('unavailable', listed.reason);
-    const page = await overlaid(ctx, listed.heads, attempt);
+    // 2c-1d: a waiting note whose file is missing or bad gives no card; the others stay.
+    const page = await overlaid(ctx, listed.heads, attempt, 'leave_out');
     if (!page.ok) return rejected(page.code, page.reason);
     if (page.heads.length === 0) return ready([]);
 
@@ -191,7 +194,8 @@ export function createNoteDecisionSource(deps: NoteDecisionSourceDeps): NoteDeci
     // every card of the bucket (RW-12a / §11.7).
     const targetIds = new Set<string>();
     for (const head of page.heads) for (const noteId of actualDispositionTargets(head)) targetIds.add(noteId);
-    const targetBatch = await readHeadBatch(deps.records, ctx.projectId, [...targetIds], { requireAll: true });
+    // 2c-1d: a target with no head is left out, as in `prepareNoteDecisions`; the other cards stay.
+    const targetBatch = await readHeadBatch(deps.records, ctx.projectId, [...targetIds], { requireAll: false });
     if (!targetBatch.ok) return rejected('unavailable', targetBatch.reason);
     const targetRead = await overlaidTargets(ctx, targetBatch.value, attempt);
     if (!targetRead.ok) return rejected(targetRead.code, targetRead.reason);
@@ -230,7 +234,7 @@ export function createNoteDecisionSource(deps: NoteDecisionSourceDeps): NoteDeci
       }
       // The targets are the ones the subjects' files name (a person may have edited them), as the window reads them.
       const read = { lines: deps.knowledge, caller: ctx };
-      const subjects = await prepareNoteFiles(input.attempt, REVIEW_FILES, heads, read);
+      const subjects = await prepareNoteFiles(input.attempt, REVIEW_FILES, heads, read, 'leave_out');
       if (subjects.status !== 'ready') return rejected('unavailable', subjects.reason);
       const targetIds = [...new Set(subjects.value.flatMap(head => actualDispositionTargets(head)))];
       const targets = await readHeadBatch(deps.records, ctx.projectId, targetIds, { requireAll: false });

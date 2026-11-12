@@ -151,7 +151,7 @@ describe('S2B Group B — Host backfill wiring (BE3)', () => {
     const directory = f.b2.base.directory;
     await f.b2.base.closeBackend();
     // A live peer holds the local lock: this Host serves reads and owner writes only.
-    await acquireHostInstanceLease({ directory, now: () => at(0) });
+    await acquireHostInstanceLease({ directory: f.b2.base.storeDirectory, now: () => at(0) });
 
     const scope: WorkspaceScope = { projectId: f.b2.base.scope.projectId, workspaceId: f.b2.base.scope.workspaceId };
     await linkHostStore(scope.projectId, directory, directory);

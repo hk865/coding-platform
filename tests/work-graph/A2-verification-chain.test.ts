@@ -428,7 +428,7 @@ async function workflowOver(fixture: R3eEvidenceFixture, checks: RegisteredCheck
   // backend (A4), SQLite opens the same ledger directory.
   const platform = fixture.kind === 'memory'
     ? await openMemoryPlatform(fixture.records as never, fixture.b2.bodies, platformOptions)
-    : await createTargetPlatform({ ...platformOptions, storage: { kind: 'sqlite', directory: base.directory } });
+    : await createTargetPlatform({ ...platformOptions, storage: { kind: 'sqlite', directory: base.storeDirectory } });
   const runtime: RuntimeExecutionPort = platform.runtime;
   return createWorkflow({ tasks: base.goals, plans: base.plans, sessions: base.sessionsPort, claims: base.service,
     executions: createRunStateReader({ records: fixture.records }), runtime, evidence: fixture.evidence, checks,

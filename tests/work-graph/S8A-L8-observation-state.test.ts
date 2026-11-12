@@ -44,6 +44,7 @@ import type { ArchitectureCatalogPort } from '../../src/core/work-graph/architec
 import { OBSERVED_ARCHITECTURE_RECORD_SCHEMAS } from '../../src/core/work-graph/architecture/architecture-record-codecs.js';
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
 import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-record-codecs.js';
+import { KNOWLEDGE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/knowledge-record-codecs.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
 import { GOAL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/record-codecs.js';
@@ -129,10 +130,13 @@ async function fixture(kind: 'memory' | 'sqlite', options: FixtureOptions = {}) 
 
   const schemas: RecordBackendSchemas = {
     records: [...GOAL_RECORD_SCHEMAS.records, ...PLAN_GOVERNANCE_RECORD_SCHEMAS.records,
+      ...KNOWLEDGE_RECORD_SCHEMAS.records,
       ...OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.records, ...ARCHITECTURE_CATALOG_SCHEMAS.records],
     events: [...GOAL_RECORD_SCHEMAS.events, ...OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.events,
+      ...KNOWLEDGE_RECORD_SCHEMAS.events,
       ...ARCHITECTURE_CATALOG_SCHEMAS.events, ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events],
     lookups: [...(OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.lookups ?? []),
+      ...(KNOWLEDGE_RECORD_SCHEMAS.lookups ?? []),
       ...(ARCHITECTURE_CATALOG_SCHEMAS.lookups ?? [])],
   };
   const backend = kind === 'memory' ? createInMemoryRecordBackend({ schemas })

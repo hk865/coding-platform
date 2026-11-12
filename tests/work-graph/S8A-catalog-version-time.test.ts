@@ -52,11 +52,12 @@ describe.each(['memory', 'sqlite'] as const)('S8A catalog version time over real
     expect(page.value.items.map(item => item.revision)).toEqual([2, 1]);
     const newest = page.value.items[0]!;
     expect(newest.revision).toBe(2);
-    // The revision stamps the injected fixture clock: the bound event time is
-    // nine seconds after S4A_AT.
+    // The revision stamps the injected fixture clock (one second per read): the
+    // bound event time is ten seconds after S4A_AT, one of them the completion
+    // event of the fixture's initial adoption write ([2C1-07] `occurredAt`).
     const at = newest.at;
     if (typeof at !== 'string') throw new Error('the newest catalog version has no bound time');
-    expect(at).toBe(new Date(Date.parse(S4A_AT) + 9000).toISOString());
+    expect(at).toBe(new Date(Date.parse(S4A_AT) + 10000).toISOString());
     expect(newest.reason).toBe('s8a bound reason');
     expect(newest.reasonLabel).toBe('s8a bound reason');
     // The cursor stays opaque: the public item never carries it.

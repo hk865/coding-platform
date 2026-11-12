@@ -7,7 +7,8 @@ import type { AdoptedArchitecture } from '../../../contracts/architecture-catalo
 import { rawModuleId } from '../../../contracts/workspace-module-id.js';
 import type { DecodeResult } from '../../record-store/ports.js';
 import type { KnowledgeArchitecture, KnowledgeBaselineV1, KnowledgeLineScope } from '../model/line-knowledge.js';
-import { ARCHITECTURE_FILE_PATH, inModuleIdOrder } from './architecture-file.js';
+import { ARCHITECTURE_FILE_PATH } from '../../../contracts/knowledge.js';
+import { inModuleIdOrder } from './architecture-file.js';
 import { validateAdoptedArchitecture } from './catalog-record-codecs.js';
 
 /**

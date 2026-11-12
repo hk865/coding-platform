@@ -6,13 +6,12 @@
  * the shared `scanEntries`, ascending by noteId; there is no FTS5. This file
  * imports no WorkGraph module.
  */
-import type { DatabaseSync, StatementSync } from 'node:sqlite';
+import type { StatementSync } from 'node:sqlite';
 import type {
   KnowledgeDerivedRows, KnowledgeEdgeKind, KnowledgeFileKind, KnowledgeFileRow, KnowledgeIndex, KnowledgeIndexTx,
   KnowledgeNoteState,
 } from './knowledge-index-ports.js';
-import { messageOf } from '../../contracts/error-message.js';
-import { openSqliteFile } from './sqlite-body-store.js';
+import { inImmediateTransaction, openSqliteWithSchema } from './sqlite-body-store.js';
 import { compareRefKeysFast, scanEntries } from './text-scan.js';
 
 const SCHEMA = `
@@ -38,15 +37,7 @@ type Row = Record<string, unknown>;
  * path (ruling 8 F-02/03: the composition root does not keep a failed open, and a read answers `unavailable` with it).
  */
 export function createKnowledgeIndex(projectId: string, path: string | null): KnowledgeIndex {
-  const file = path ?? ':memory:';
-  let db: DatabaseSync | undefined;
-  try {
-    db = openSqliteFile(file);
-    db.exec(SCHEMA);
-  } catch (error) {
-    try { db?.close(); } catch { /* preserve the initialization error */ }
-    throw new Error(`the knowledge index ${file} cannot be opened: ${messageOf(error)}`);
-  }
+  const db = openSqliteWithSchema('the knowledge index', path, SCHEMA);
   const statements = new Map<string, StatementSync>();
   const sql = (text: string): StatementSync => {
     let statement = statements.get(text);
@@ -140,15 +131,7 @@ export function createKnowledgeIndex(projectId: string, path: string | null): Kn
   return {
     projectId,
     transaction<T>(body: (tx: KnowledgeIndexTx) => T): T {
-      db.exec('BEGIN IMMEDIATE');
-      try {
-        const value = body(tx);
-        db.exec('COMMIT');
-        return value;
-      } catch (error) {
-        try { db.exec('ROLLBACK'); } catch { /* no live transaction left to roll back */ }
-        throw error;
-      }
+      return inImmediateTransaction(db, () => body(tx));
     },
     listFiles: lineRef => (sql(`${FILE_ROWS} ORDER BY f.path`).all(projectId, lineRef) as Row[]).map(fileRowOf),
     readFile(lineRef, path) {

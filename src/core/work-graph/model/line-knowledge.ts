@@ -5,13 +5,18 @@
  * themselves; the composition root implements both interfaces.
  */
 import type { AdoptedArchitecture, ModuleContainment } from '../../../contracts/architecture-catalog.js';
+import type { WriteResult } from '../../../contracts/core/results.js';
 import { canonicalJson } from '../../../contracts/fingerprint.js';
+import type { KnowledgeConflictV1 } from '../../../contracts/knowledge.js';
 import type {
   CatalogRepairOpV1, FlowPayloadV1, LinkEvidenceRoleV1, LinkPayloadV1, NoteFactV1, NoteHeadSnapshot, NoteKind,
   NoteSectionsV1, NoteSourceV1, SemanticRelationV1, SymbolRequestV1,
 } from '../../../contracts/note.js';
-import type { DecodeResult, StoreResult } from '../../record-store/ports.js';
+import type { NotifyProjectInputV1, ProjectNoticeV1 } from '../../../contracts/role-lines.js';
+import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
+import type { DecodeResult, EncodedDomainEvent, GoalRecordTransactionPort, StoreResult } from '../../record-store/ports.js';
 import type { KnowledgeFileKind, KnowledgeIndex, KnowledgeIndexTx } from '../../record-store/knowledge-index-ports.js';
+import type { KnowledgeSnapshots } from '../../record-store/knowledge-snapshot-ports.js';
 
 /** git: realpath(git rev-parse --git-common-dir); not git: realpath(the workspace root). */
 export type RepoKey = string;
@@ -22,6 +27,10 @@ export type KnowledgeLineScope = { workspaceId: string; mainWorkspaceId: string 
 /** The line key of the index, snapshots, write log and pins: the workspace and the branch. */
 export function lineRefKey(scope: KnowledgeLineScope, line: LineRef): string {
   return canonicalJson([scope.workspaceId, line.branch]);
+}
+/** The workspace of a line key (`lineRefKey`). */
+export function lineRefWorkspaceId(lineRef: string): string {
+  return (JSON.parse(lineRef) as [string, string])[0];
 }
 
 /** The baseline fields (only in the main workspace's `architecture.json`). */
@@ -79,6 +88,22 @@ export type LineNoteFileV1 = {
 /** One note read back: the file plus this project's runtime state (`null` when it has none). */
 export type LineNoteV1 = LineNoteFileV1 & { head: NoteHeadSnapshot | null };
 
+/** One knowledge file on disk as a reconciliation finds it. */
+export type KnowledgeDiskFileV1 = {
+  /** Relative to the line's folder, starting with `.workbench/`. */
+  path: string;
+  /** By its path (`knowledgeFileKindOf`). */
+  kind: KnowledgeFileKind;
+  bytes: Uint8Array;
+  /** The bytes' git blob id in this line's object format. */
+  blobSha: string;
+  /** Clean and tracked in git; false when untracked, ignored, changed or staged, and always false when the folder is
+   *  not git or git fails. */
+  committed: boolean;
+  /** The path's blob in HEAD; null when HEAD has none, the folder is not git or git fails. */
+  headBlob: string | null;
+};
+
 /** One file change computed before the commit. */
 export type KnowledgeFileChange = {
   /** Relative to the line's folder, starting with `.workbench/`. */
@@ -106,6 +131,13 @@ export interface LineKnowledge {
   writeNote(input: NoteKnowledgeV1, noteId: string): Promise<StoreResult<KnowledgeFileChange[]>>;
   /** After the commit: apply one change (write or delete). */
   applyChange(change: KnowledgeFileChange): Promise<StoreResult<void>>;
+  /**
+   * [2C1-11]: the line's knowledge files (`architecture.json`, `modules/*.json`, the note files; never `local/` or a
+   * `*.tmp-*`), by path, each with its bytes, blob and git state; and the platform's leftover temporary files.
+   * Unavailable when a directory or a file cannot be read (a file that reads but does not parse is not a failure
+   * here: the index reports it).
+   */
+  readKnowledgeFiles(): Promise<StoreResult<{ files: KnowledgeDiskFileV1[]; temporaries: string[] }>>;
 }
 
 /** The caller a service holds; `CoreCallContext` is structurally one. */
@@ -120,12 +152,58 @@ export type KnowledgeWriteQueue = {
  */
 export type KnowledgeFileIndexer = (tx: KnowledgeIndexTx, line: LineKnowledge, path: string, bytes: Uint8Array | null) =>
   DecodeResult<{ kind: KnowledgeFileKind; blobSha: string | null }>;
+/** The cross-Host lease of one checkout (`HostInstanceLease` is structurally one). */
+export type KnowledgeWriteLease = { lease: 'owned' | 'held_by_other'; reason: string; release(): Promise<void> };
+/** The test seam's two named points: `committed` = the records committed, no file written yet; `applied` = every file
+ *  landed, the completion not yet committed. */
+export type KnowledgeWriteHoldPoint = 'committed' | 'applied';
+/** The knowledge-file rules above `knowledge/` (`notes/knowledge-files.ts`), handed in by the composition root. */
+export type KnowledgeFileRules = {
+  /** The index in `events` of the event that carries this file's content; throws when none does (a programming error). */
+  carrierEventIndex(events: readonly EncodedDomainEvent[], path: string): number;
+  /** A write log's kind and, for a module file, the module (project view) its bytes name. */
+  writeLogFileOf(scope: KnowledgeLineScope, path: string, bytes: Uint8Array): { kind: KnowledgeFileKind; moduleId: string | null };
+  /**
+   * [2C1-02]: a logged file (`target.moduleId` is the log's) rebuilt from the event that carries it, on the current
+   * file (`current`, null when there is none); null deletes. Only a recovery calls it ([2C1-21]).
+   */
+  knowledgeFileOfEvent(event: EncodedDomainEvent, scope: KnowledgeLineScope, target: { path: string; moduleId: string | null },
+    current: Uint8Array | null): DecodeResult<Uint8Array | null>;
+};
 /** The dependencies one knowledge write uses. */
 export type KnowledgeWriteDeps = {
   readonly queue: KnowledgeWriteQueue;
   /** The project's index (one per project: a platform built without a Host may serve several). */
   readonly indexOf: (projectId: string) => KnowledgeIndex;
   readonly indexFile: KnowledgeFileIndexer;
+  /**
+   * The project store's records: the write logs' completion, the reconciliation's reads, the recovery's event read
+   * and 2c-1d's in-flight checks (`pendingKnowledgeWrites`).
+   */
+  readonly records: Pick<GoalRecordTransactionPort, 'readMany' | 'commit' | 'eventAt'> & RecordLookupPort;
+  readonly files: KnowledgeFileRules;
+  /**
+   * The checkout's cross-Host lease (its directory follows from the line). A platform built without a Host is always
+   * `owned`; through a Host the lease directory is made first, and when it cannot be made the promise rejects (the
+   * caller answers `unavailable`, never "another Host is writing").
+   */
+  acquireLease(line: LineRef): Promise<KnowledgeWriteLease>;
+  /** Test seam; null in production. */
+  readonly hold: ((point: KnowledgeWriteHoldPoint) => Promise<void>) | null;
+  /** A write log id: 16 random bytes as hex. */
+  newId(): string;
+  now(): string;
+  /** The project notice (`notifyProject` over this store's records). */
+  readonly notify: (input: NotifyProjectInputV1) => Promise<WriteResult<ProjectNoticeV1>>;
+  /**
+   * The project's knowledge snapshots and recovery items. A memory store keeps one per project open with the
+   * platform (its `close` keeps it open); a SQLite store opens the project store's file on each call, and the caller
+   * closes it when done.
+   */
+  openSnapshots(projectId: string): KnowledgeSnapshots;
+  /** The semantic conflicts of one line's module files (`knowledgeConflictsOf`, pure). */
+  readonly conflictsOf: (modules: readonly { path: string; bytes: Uint8Array }[], scope: KnowledgeLineScope) =>
+    readonly KnowledgeConflictV1[];
 };
 /** The one knowledge entry a service gets (injected by the composition root, required in the service's dependencies). */
 export interface KnowledgeLines {

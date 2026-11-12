@@ -317,7 +317,8 @@ export const ProjectRoleLimitsChangedFormat = defineEvent({ name: 'ProjectRoleLi
     actor: ActorRefField, revision: f.integer({ min: 1 }),
     /** `DecisionChangeProofV1 | undefined`; the one validator is `decisionChangeProofProblem`. */
     proof: f.optional(f.json()) } });
-export const PROJECT_NOTICE_KINDS = ['module_maintainer_assigned', 'automatic_adjustment'] as const;   // :268, `7D2 appends`
+export const PROJECT_NOTICE_KINDS = ['module_maintainer_assigned', 'automatic_adjustment',
+  'knowledge_write_unconfirmed', 'knowledge_reverted', 'knowledge_conflict'] as const;   // :268, `7D2 appends`
 export type ProjectNoticeKindV1 = (typeof PROJECT_NOTICE_KINDS)[number];
 // :270, the one widened writer input; `DecisionSubjectV1` is the existing goal/project union, not a new type.
 export type NotifyProjectInputV1 = { projectRef: ProjectScope; subject?: DecisionSubjectV1;

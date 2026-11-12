@@ -159,7 +159,7 @@ describe('S4B M-15 a satisfied task stays live', () => {
       // note holder sit over those records (the R3e completion-platform pattern).
       await fixture.b2.base.closeBackend();
       platform = await createTargetPlatform({
-        storage: { kind: 'sqlite', directory: fixture.b2.base.directory },
+        storage: { kind: 'sqlite', directory: fixture.b2.base.storeDirectory },
         workspace: fixture.workspaceHost, checks: fixture.configuration, now: () => B2_AT });
       const ctx = fixture.ctx;
       const wrote = await platform.notes.writeNote(ctx, { commandId: 's4b-m15-satisfied-write',

@@ -17,6 +17,7 @@ import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { RoleConfigurationRef, SessionRef } from '../contracts/core/identity.js';
 import type { SessionWorkLink } from '../contracts/core/session.js';
 import type { GraphWrite } from '../core/work-graph/model/task-contracts.js';
+import type { KnowledgeOpsPort } from '../core/work-graph/model/knowledge-ops.js';
 import type { AssignMaintainerInputV1 } from '../core/work-graph/model/module-maintainer-contracts.js';
 // The two secretary lifecycle commands' own input and result shapes: the accept inputs and the progress the Workflow
 // reads back after driving it. Derived from the frozen contracts and ports, never restated here.
@@ -382,7 +383,9 @@ export type CoreRouteSuffix =
   | 'goals/confirm-draft'
   | 'goals/copy-draft'
   | 'goals/copy-confirm'
-  | 'initialization/adopt';
+  | 'initialization/adopt'
+  // KLS-2c: a knowledge notice's recovery items and the person's recovery of one.
+  | 'knowledge/recover' | 'knowledge/recovery-items';
 
 type SecondArgument<M> = M extends (ctx: CoreCallContext, argument: infer A) => unknown ? A : never;
 type MethodResult<M> = M extends (ctx: CoreCallContext, argument: never) => infer R ? Awaited<R> : never;
@@ -596,6 +599,16 @@ export type GoalsCopyConfirmBody = PlainBody<GoalCopyPort['confirm']>;
 export type GoalsCopyConfirmResponse = RouteResponse<GoalCopyPort['confirm']>;
 export type InitializationAdoptBody = PlainBody<InitializationAdoptionHostPort['adopt']>;
 export type InitializationAdoptResponse = RouteResponse<InitializationAdoptionHostPort['adopt']>;
+// KLS-2c: the two knowledge recovery routes; their shapes are `KnowledgeOpsPort`'s (`contracts/knowledge.ts`).
+export type KnowledgeRecoverBody = PlainBody<KnowledgeOpsPort['recover']>;
+export type KnowledgeRecoverResponse = RouteResponse<KnowledgeOpsPort['recover']>;
+export type KnowledgeRecoveryItemsBody = PlainBody<KnowledgeOpsPort['recoveryItems']>;
+export type KnowledgeRecoveryItemsResponse = RouteResponse<KnowledgeOpsPort['recoveryItems']>;
+/** The typed assembly of the knowledge suffixes; `CORE_ROUTE_SPECS`'s annotation names it. */
+export type KnowledgeCoreRouteDto = {
+  'knowledge/recover': { body: KnowledgeRecoverBody; response: KnowledgeRecoverResponse };
+  'knowledge/recovery-items': { body: KnowledgeRecoveryItemsBody; response: KnowledgeRecoveryItemsResponse };
+};
 export type PlansRequestCandidateBody = PlainBody<RequestCandidatePort['readRequestCandidate']>;
 export type PlansRequestCandidateResponse = RouteResponse<RequestCandidatePort['readRequestCandidate']>;
 export type PlansAbandonBody = GraphWriteBody<RequestCandidatePort['abandonPlanProposal']>;

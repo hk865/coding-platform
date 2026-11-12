@@ -60,8 +60,10 @@ export const xws2pProjectPath = (workspaceId: string, path: string): string =>
 export const xws2pModuleId = (workspaceId: string, moduleId: string): string =>
   `/@ws:${encodeURIComponent(workspaceId)}/${encodeURIComponent(moduleId)}`;
 
-export async function openXWS2PWorld(): Promise<XWS2PWorld> {
-  const world = await openS6AHostWorld({ backend: 'memory' });
+/** `extraHostOptions` go to the Host as is (e.g. a short heartbeat and idle threshold for the knowledge reconcile). */
+export async function openXWS2PWorld(options: { extraHostOptions?: Record<string, unknown> } = {}): Promise<XWS2PWorld> {
+  const world = await openS6AHostWorld({ backend: 'memory',
+    ...(options.extraHostOptions === undefined ? {} : { extraHostOptions: options.extraHostOptions }) });
   let removeSecond: () => Promise<void> = async () => undefined;
   try {
     await ensureProjectPointers(world);
@@ -102,6 +104,22 @@ export async function openXWS2PWorld(): Promise<XWS2PWorld> {
 export async function addXWS2PSecondModule(world: XWS2PWorld, input: {
   readonly moduleId: string; readonly name: string; readonly summary: string;
 }): Promise<unknown> {
+  // The raw route body: the row asserts `committed`, so a refused setup is the
+  // row's own first red, never a thrown fixture error.
+  return await reviseXWS2PFromSecond(world, [
+    // The ids are the caller's frame (the second workspace): the main workspace's module carries its prefix.
+    { op: 'set_module_name', moduleId: xws2pModuleId(world.main.scope.workspaceId, 's6a-core'), name: 'first-mod' },
+    { op: 'add_module', module: {
+      ref: { projectId: world.second.scope.projectId, moduleId: input.moduleId },
+      name: input.name, responsibility: input.summary,
+      paths: [xws2pProjectPath(world.second.scope.workspaceId, 'src')], interfaces: [],
+    } },
+  ], `xws2p-${input.moduleId}`, 'XWS2P second workspace module');
+}
+
+/** One `architecture/revise` over the second workspace's trusted context against the current read; the raw answer. */
+export async function reviseXWS2PFromSecond(world: XWS2PWorld, ops: unknown[], requestId: string,
+  reason: string): Promise<unknown> {
   const current = readyValue<ArchitectureRevision>((await world.world.dispatch('architecture/read', world.main.ctx,
     plain(world.main.scope, { selection: { kind: 'current' } }))), 'the current architecture');
   const registration = readyValue<{ project: { revision: number }; workspace: { revision: number } }>(
@@ -109,26 +127,11 @@ export async function addXWS2PSecondModule(world: XWS2PWorld, input: {
       plain(world.second.scope, world.second.scope))), 'the second workspace registration');
   const pin: ArchitectureCatalogPinV1 = { catalogRef: current.catalog.ref,
     baseline: { ref: current.baseline.ref, digest: current.baseline.contentDigest } };
-  const committed = await world.world.dispatch('architecture/revise', world.second.ctx,
-    graphWrite(world.second.scope, {
-      expected: pin,
-      ops: [
-        // The ids are the caller's frame (the second workspace): the main workspace's module carries its prefix.
-        { op: 'set_module_name', moduleId: xws2pModuleId(world.main.scope.workspaceId, 's6a-core'), name: 'first-mod' },
-        { op: 'add_module', module: {
-          ref: { projectId: world.second.scope.projectId, moduleId: input.moduleId },
-          name: input.name, responsibility: input.summary,
-          paths: [xws2pProjectPath(world.second.scope.workspaceId, 'src')], interfaces: [],
-        } },
-      ],
-      responsibilityMoves: [], reason: 'XWS2P second workspace module',
-    }, `xws2p-${input.moduleId}`, [
+  return await world.world.dispatch('architecture/revise', world.second.ctx,
+    graphWrite(world.second.scope, { expected: pin, ops, responsibilityMoves: [], reason }, requestId, [
       { ref: { aggregateType: 'Project', projectId: world.second.scope.projectId }, revision: registration.project.revision },
       { ref: { aggregateType: 'Workspace', ...world.second.scope }, revision: registration.workspace.revision },
     ]));
-  // The raw route body: the row asserts `committed`, so a refused setup is the
-  // row's own first red, never a thrown fixture error.
-  return committed;
 }
 
 /** The project's current catalog through `architecture/read`. */

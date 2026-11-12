@@ -196,7 +196,7 @@ import type { PlanServiceDependencies } from '../core/work-graph/tasks/plan-serv
 import { createPlanAdoptionStop } from './plan-adoption-stop.js';
 import { PLAN_RECORD_SCHEMAS } from '../core/work-graph/persistence/plan-record-codecs.js';
 import { DECISION_RECORD_SCHEMAS } from '../core/work-graph/persistence/decision-record-codecs.js';
-import { PLAN_STATE_RECORD_SCHEMAS, PLAN_GOVERNANCE_RECORD_SCHEMAS, GOAL_BY_WORKSPACE_INDEX, createPlanReaders, createSessionResponsibilityBasisReader, createNoteRunTaskResolver, readCanonicalTaskFacts, readGoal, readGoalPhase, readGoalPlanWindow, readGoalsByProject, readGoalRunsForCount, readOpenResponsibilityLines, readTaskClosure, taskClosureOf, type PlanReaders, type TaskClosureV1 } from '../core/work-graph/tasks/plan-readers.js';
+import { PLAN_STATE_RECORD_SCHEMAS, PLAN_GOVERNANCE_RECORD_SCHEMAS, GOAL_BY_WORKSPACE_INDEX, createPlanReaders, createSessionResponsibilityBasisReader, createNoteRunTaskResolver, readCanonicalTaskFacts, readEffectiveRegionAdviser, readGoal, readGoalPhase, readGoalPlanWindow, readGoalsByProject, readGoalRunsForCount, readOpenResponsibilityLines, readTaskClosure, taskClosureOf, type PlanReaders, type TaskClosureV1 } from '../core/work-graph/tasks/plan-readers.js';
 import { createSessionDirectory } from '../core/work-graph/sessions/session-directory.js'; import { createDutyRecipient } from '../core/work-graph/sessions/duty-recipient.js';
 import { createConsumableSessions, type ConsumableSessionsPort }
   from '../core/work-graph/views/consumable-sessions.js';
@@ -270,11 +270,20 @@ import { createRepairActivationService } from '../core/work-graph/notes/activate
 import { createArchitectureProposalService } from '../core/work-graph/architecture/proposal-service.js';
 import { ARCHITECTURE_PROPOSAL_SCHEMAS } from '../core/work-graph/architecture/proposal-record-codecs.js';
 import type { CatalogRevisionDependencies } from '../core/work-graph/architecture/revision-planner.js';
-import { createKnowledgeLines } from './line-knowledge.js';
+import { createKnowledgeLines, knowledgeLeaseOf } from './line-knowledge.js';
 import { createKnowledgeIndex } from '../core/record-store/sqlite-knowledge-index.js';
+import { openKnowledgeSnapshots } from '../core/record-store/sqlite-knowledge-snapshots.js';
+import type { KnowledgeSnapshots } from '../core/record-store/knowledge-snapshot-ports.js';
+import { createKnowledgeOps } from '../core/work-graph/knowledge/ops.js';
+import { hostSystemContext } from '../core/work-graph/model/platform-check-context.js';
+import type { KnowledgeOpsPort } from '../core/work-graph/model/knowledge-ops.js';
 import type { KnowledgeIndex } from '../core/record-store/knowledge-index-ports.js';
 import { createKnowledgeWriteQueue, type KnowledgeWriteQueue } from '../core/work-graph/knowledge/write-queue.js';
 import { indexKnowledgeFile, overlayFileKnowledge } from '../core/work-graph/notes/note-knowledge.js';
+import { knowledgeFileRules } from '../core/work-graph/notes/knowledge-files.js';
+import { knowledgeConflictsOf } from '../core/work-graph/architecture/architecture-file.js';
+import { KNOWLEDGE_RECORD_SCHEMAS } from '../core/work-graph/persistence/knowledge-record-codecs.js';
+import type { KnowledgeWriteHoldPoint, KnowledgeWriteLease } from '../core/work-graph/model/line-knowledge.js';
 import type { CatalogPlanFactsV1 } from '../core/work-graph/model/catalog-revision-ports.js';
 import type { SessionRecord, SessionWorkLink } from '../contracts/core/session.js';
 import { SESSION_ACTIVITY_SCHEMAS, createSessionActivityReader } from '../core/work-graph/sessions/session-activity.js';
@@ -450,6 +459,13 @@ export type TargetPlatformOptions = {
   knowledgeWriteQueue?: KnowledgeWriteQueue;
   /** Test seam (a fault wrapped around the real index); production leaves it out and uses `createKnowledgeIndex`. */
   knowledgeIndexFactory?: (projectId: string, path: string | null) => KnowledgeIndex;
+  /**
+   * The Host's cross-Host checkout lease over a lease directory (`acquireHostInstanceLease`); the platform makes the
+   * directory first. A platform built without a Host leaves it out: its leases are always owned and make no directory.
+   */
+  acquireKnowledgeLease?: (directory: string) => Promise<KnowledgeWriteLease>;
+  /** Test seam (a write stops at a named point, e.g. a crash row); production leaves it out. */
+  knowledgeWriteHold?: (point: KnowledgeWriteHoldPoint) => Promise<void>;
   now?: () => string;
   /** Trusted source route; defaults to TypeScript at tsconfig.json. No language inference.
    * `configPath: null` captures with no project configuration. */
@@ -1087,7 +1103,7 @@ export function platformRecordSchemas() {
       ...MODULE_OVERLAP_GATE_SCHEMAS.records,
       ...REWORK_REQUEST_RECORD_SCHEMAS.records,
       ...INITIALIZATION_ADOPTION_SCHEMAS.records, ...HANDOFF_BRIEF_RECORD_SCHEMAS.records,
-      ...ROLE_LINE_RECORD_SCHEMAS.records, ...ROLE_LINE_ORCHESTRATION_SCHEMAS.records],
+      ...ROLE_LINE_RECORD_SCHEMAS.records, ...ROLE_LINE_ORCHESTRATION_SCHEMAS.records, ...KNOWLEDGE_RECORD_SCHEMAS.records],
     events: [...materialsSchema.events, ...PLAN_RECORD_SCHEMAS.events, ...PLAN_STATE_RECORD_SCHEMAS.events,
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events, ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events,
       ...ROLE_RECORD_SCHEMAS.events, ...OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.events, ...ARCHITECTURE_CATALOG_SCHEMAS.events,
@@ -1106,7 +1122,7 @@ export function platformRecordSchemas() {
       ...MODULE_OVERLAP_GATE_SCHEMAS.events,
       ...REWORK_REQUEST_RECORD_SCHEMAS.events,
       ...INITIALIZATION_ADOPTION_SCHEMAS.events, ...HANDOFF_BRIEF_RECORD_SCHEMAS.events,
-      ...ROLE_LINE_RECORD_SCHEMAS.events, ...ROLE_LINE_ORCHESTRATION_SCHEMAS.events],
+      ...ROLE_LINE_RECORD_SCHEMAS.events, ...ROLE_LINE_ORCHESTRATION_SCHEMAS.events, ...KNOWLEDGE_RECORD_SCHEMAS.events],
     lookups: [...materialsSchema.lookups ?? [], ...PLAN_RECORD_SCHEMAS.lookups ?? [], ...PLAN_STATE_RECORD_SCHEMAS.lookups ?? [],
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.lookups ?? [], ...SESSION_RECORD_SCHEMAS.lookups ?? [],
       ...SESSION_LIFECYCLE_RECORD_SCHEMAS.lookups ?? [], ...ROLE_RECORD_SCHEMAS.lookups ?? [],
@@ -1125,7 +1141,8 @@ export function platformRecordSchemas() {
       ...MODULE_OVERLAP_GATE_SCHEMAS.lookups ?? [],
       ...REWORK_REQUEST_RECORD_SCHEMAS.lookups ?? [],
       ...GOAL_COPY_RECORD_SCHEMAS.lookups ?? [], ...INITIALIZATION_ADOPTION_SCHEMAS.lookups ?? [],
-      ...HANDOFF_BRIEF_RECORD_SCHEMAS.lookups ?? [], ...ROLE_LINE_RECORD_SCHEMAS.lookups ?? [], ...ROLE_LINE_ORCHESTRATION_SCHEMAS.lookups ?? []],
+      ...HANDOFF_BRIEF_RECORD_SCHEMAS.lookups ?? [], ...ROLE_LINE_RECORD_SCHEMAS.lookups ?? [], ...ROLE_LINE_ORCHESTRATION_SCHEMAS.lookups ?? [],
+      ...KNOWLEDGE_RECORD_SCHEMAS.lookups ?? []],
   };
 }
 
@@ -1167,9 +1184,14 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
   let closeBodies: (() => Promise<void>) | undefined;
   // KLS-2b: the knowledge index, one per project in this store (`index.sqlite`; a memory store opens `:memory:`).
   const knowledgeIndexes = new Map<string, KnowledgeIndex>();
+  // KLS-2c: a memory store keeps one knowledge snapshot store per project open with the platform; a SQLite store
+  // opens `knowledge-snapshots.sqlite` on each use and the user closes it.
+  const memorySnapshots = new Map<string, KnowledgeSnapshots>();
   const closeKnowledgeIndexes = (): void => {
     for (const index of knowledgeIndexes.values()) index.close();
     knowledgeIndexes.clear();
+    for (const snapshots of memorySnapshots.values()) snapshots.close();
+    memorySnapshots.clear();
   };
   try {
     // Task E: the optional Host observer sees every commit of the ONE records
@@ -1195,6 +1217,23 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
         return index;
       },
       indexFile: indexKnowledgeFile,
+      openSnapshots: projectId => {
+        if (files !== null) return openKnowledgeSnapshots(files.snapshots);
+        let kept = memorySnapshots.get(projectId);
+        if (kept === undefined) {
+          kept = openKnowledgeSnapshots(null);
+          memorySnapshots.set(projectId, kept);
+        }
+        return { ...kept, close: () => undefined };
+      },
+      records: backend.records,
+      files: knowledgeFileRules,
+      acquireLease: knowledgeLeaseOf(options.acquireKnowledgeLease),
+      hold: options.knowledgeWriteHold ?? null,
+      newId: () => randomBytes(16).toString('hex'),
+      now,
+      notify: input => notifyProject({ records: backend.records, now }, input),
+      conflictsOf: knowledgeConflictsOf,
     });
     // §6.4.3: the Host's rooted probe; a missing one is an explicit
     // `unavailable`, never "no settings directory".
@@ -2455,9 +2494,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
         // and starts the same split operation; both instances are read when a tool call runs.
         roleSplit: {
           async requestSplit(ctx, input) {
-            const owned: CoreCallContext = { ...ctx, principal: { kind: 'host', actor: { ...ROLE_SPLIT_ACTOR } },
-              materialReader: { kind: 'host', projectId: ctx.projectId, actor: { ...ROLE_SPLIT_ACTOR },
-                ...(ctx.workspaceId === undefined ? {} : { workspaceId: ctx.workspaceId }) } };
+            const owned = hostSystemContext(ctx, ROLE_SPLIT_ACTOR);
             const facts = await maintenance.readSplitFacts(owned, input.caller.session);   // the page's own read
             if (facts.status === 'rejected') return facts;
             if (facts.status !== 'ready') return rejected('unavailable', 'the split facts are not readable');
@@ -2897,7 +2934,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     // start; memory only, never persisted and never cleaned (there is no forget entry).
     const endedAt = new Map<string, string>();
     let idleSince: string | null = null;
-    function countInFlight<T>(ref: unknown, call: () => Promise<T>): Promise<T> {
+    function countInFlight<T>(ref: unknown, call: () => Promise<T>, ended?: () => void): Promise<T> {
       // A public start route's body is not type-checked: a non-record ref never counts and is
       // forwarded unchanged, so the execution owner still answers its own `invalid`.
       if (!isRecord(ref)) return call();
@@ -2910,11 +2947,16 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
           inFlight.delete(key);
           endedAt.set(key, now());
           if (inFlight.size === 0) idleSince = now();
+          ended?.();
         }
       });
     }
+    // KLS-2c [2C1-24]: when a Work Run's count reaches zero, its workspace's knowledge is reconciled, not awaited and
+    // outside the Run's result. A failure is dropped (the platform has no log port; the next idle round comes again).
     const countedStartRun: typeof runtime.port.startRun = (ctx, request) =>
-      countInFlight(request?.prepared?.claim?.runRef, () => runtime.port.startRun(ctx, request));
+      countInFlight(request?.prepared?.claim?.runRef, () => runtime.port.startRun(ctx, request), () => {
+        if (ctx.workspaceId !== undefined) void knowledge.reconcile(ctx, ctx.workspaceId, 'run_end').catch(() => undefined);
+      });
     const countedStartQuery = (...args: Parameters<NonNullable<typeof runtime.port.startQuery>>) =>
       countInFlight(args[1]?.prepared?.queryRunRef, () => runtime.port.startQuery!(...args));
     const runtimePort = {
@@ -4671,6 +4713,31 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     };
     // The whole-workspace Goal list reads the same records; no second index or reader.
     const rawGoalList = createGoalListReadModel({ records: backend.records });
+    const knowledgeOps = createKnowledgeOps(knowledgeLines, {
+      // [2C1-17], split ruling 2: by the last catalog the records adopted, read once a round (a conflict keeps the file
+      // read unavailable); an effective region adviser counts.
+      async regionAdvisersOf(ctx, projectId, moduleIds) {
+        const window = await readCurrentCatalogWindow(backend.records, projectId);
+        if (window.status !== 'ready' && window.status !== 'not_found') return window;
+        const catalog = window.status === 'ready' ? window.catalog.catalog : null;
+        const advisers = new Map<string, SessionRef | null>();
+        for (const moduleId of moduleIds) {
+          const adviser = await readEffectiveRegionAdviser(backend.records, ctx,
+            { projectId, moduleRef: { projectId, moduleId }, catalog }, sessionDutyResolver);
+          if (adviser.status !== 'ready') return adviser;
+          advisers.set(moduleId, adviser.value);
+        }
+        return { status: 'ready', value: advisers };
+      },
+      sendMessage: (ctx, request) => mailbox.sendMessage(ctx, request),
+    });
+    // KLS-2c: the Host's knowledge reconciliations and the person's recoveries; internal like `notes` (the
+    // `reconcile` key is the Run's).
+    const knowledge: KnowledgeOpsPort = {
+      reconcile: (...args) => trackedCall(() => knowledgeOps.reconcile(...args), unavailable),
+      recover: (...args) => trackedCall(() => knowledgeOps.recover(...args), unavailable),
+      recoveryItems: (...args) => trackedCall(() => knowledgeOps.recoveryItems(...args), unavailable),
+    };
     const platform = {
       goals, plans, claims, executions, sessions, materials, messages, messageRelease, controls, evidence, checks, roles, architecture, projects, completionPolicies,
       messageExpiry: messageExpiryPort,
@@ -4687,7 +4754,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       runActivity, activity, timeline,
       // Slice 4A P2: the note write/read owner; 4C's routes bind to it. It stays
       // non-enumerable like the other internal owner groups.
-      notes,
+      notes, knowledge,
       // The one repair activation owner the Host's triggers and the answer row
       // use. Internal and never drained through `trackedCall`; the Host reads it
       // by property.
@@ -4874,7 +4941,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     for (const key of ['sessionFacts', 'planReaders', 'responsibilities', 'sessionAnomalies', 'graphContext', 'taskInputs',
       'goalSettings', 'workspaceDecisionSettings', 'decisionMessages', 'decisions', 'requestCandidates',
       'runActivity', 'activity', 'timeline',
-      'workLines', 'workLineConversation', 'nodeDetail', 'lineSettings', 'notes', 'trackDetached',
+      'workLines', 'workLineConversation', 'nodeDetail', 'lineSettings', 'notes', 'knowledge', 'trackDetached',
       'repairs', 'readArchitectureProposal', 'overlapGates',
       'requestIntake', 'requestRounds', 'requestFacts', 'secretaryProfiles', 'mainSurface', 'memberCreations', 'sessionHandoff',
       'reworkNotices', 'recipients', 'roleLimits', 'roleLineAllocation', 'projectNoticeWriter', 'autonomyRules',

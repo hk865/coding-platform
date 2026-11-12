@@ -148,8 +148,10 @@ it('requires explicit resume and accepts queued steering in the original paused 
     await mkdir(workRoot);
     await writeFile(join(workRoot, 'b2-read.txt'), 'controlled workspace file');
     // KLS-2: the moved root keeps the knowledge files the claim world adopted in its own root (the current catalog read).
-    await cp(join(fixture.directory, '.workbench'), join(workRoot, '.workbench'), { recursive: true });
-    platform = await createTargetPlatform({ storage: { kind: 'sqlite', directory: fixture.directory },
+    await cp(join(fixture.directory, '.workbench'), join(workRoot, '.workbench'), { recursive: true,
+      // not `local/`: the claim fixture's project store stays where it is
+      filter: source => source !== join(fixture.directory, '.workbench', 'local') });
+    platform = await createTargetPlatform({ storage: { kind: 'sqlite', directory: fixture.claimFixture.storeDirectory },
       workspace: { ...fixture.deps.workspaceHost, async resolveRoot() { return { status: 'ready' as const, value: { root: workRoot, workspaceRevision: 1 } }; } }, now: () => B2_AT, runtime: fixture.host,
       kernelStores: { entries: [{ adapterId: 'r4c-claim-kernel', storeKey: 'r4c-claim-kernel-store', workspace: fixture.scope, databasePath: join(fixture.directory, 'kernel.sqlite') }] },
     });

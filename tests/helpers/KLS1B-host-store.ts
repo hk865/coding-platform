@@ -38,6 +38,13 @@ export async function rememberHostStore(database: string, projectId: string, roo
   return directory;
 }
 
+/** A fixture whose own platform keeps its store in `store` (production's place under `database`, not `database` itself)
+ * registers it, so the readers that take `storeDirOf(database)` find it. Returns `store`. */
+export function rememberStoreDirectory(database: string, store: string): string {
+  hostStores.set(resolve(database), store);
+  return store;
+}
+
 /** The directory holding the ledger, the artifacts and the lock for `database`: a Host's project store, else itself. */
 export function storeDirOf(database: string): string {
   return hostStores.get(resolve(database)) ?? database;

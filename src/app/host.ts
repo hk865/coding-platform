@@ -209,6 +209,9 @@ export type LocalWorkbenchHostOptions = {
   /** L8 (book §3): the platform's existing trusted observation fault seam,
    * forwarded unchanged; a test holds a capture to prove queue behavior. */
   lightScan?: TargetPlatformOptions['lightScan'];
+  /** The platform's knowledge write test seam, forwarded unchanged to every project's platform; production leaves it
+   * out (a crash test stops a write at a named point in a child Host). */
+  knowledgeWriteHold?: TargetPlatformOptions['knowledgeWriteHold'];
   kernelStores?: TargetPlatformOptions['kernelStores'];
   /** Serializable trusted runtime configuration. It is converted, before the
    * first await, into the existing `RuntimeHostBindings` port; it is mutually
@@ -845,12 +848,14 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       .finally(() => { pendingTaskbookExports.delete(job); });
     pendingTaskbookExports.add(job);
   }
-  /** The one adoption wrapper (§6.4.3): a committed result starts one export; the result is returned unchanged. */
-  function adoptAndExport<A extends unknown[], R extends { status: string }>(
+  /** The one adoption wrapper (§6.4.3): the project's knowledge is reconciled first; a committed result starts one
+   *  export; the result is returned unchanged. */
+  function adoptAndExport<A extends [CoreCallContext, ...unknown[]], R extends { status: string }>(
     adopt: (...args: A) => Promise<R>,
     adoptedPlan: (result: R, args: A) => AdoptedPlanExport | null | Promise<AdoptedPlanExport | null>,
   ): (...args: A) => Promise<R> {
     return async (...args: A) => {
+      await reconcileBeforeAdopt(args[0].projectId);
       const result = await adopt(...args);
       if (result.status === 'committed') {
         const exported = await adoptedPlan(result, args);
@@ -858,6 +863,19 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       }
       return result;
     };
+  }
+  /**
+   * KLS-2c [2C1-24], split ruling 5: before every adoption each workspace of the project reconciles its knowledge as
+   * the Host's system actor, so an adoption under a conflict comes with its notice. A failure does not touch the
+   * adoption (the Host has no log port; the next idle round comes again).
+   */
+  async function reconcileBeforeAdopt(projectId: string): Promise<void> {
+    const platform = platformFor(projectId);
+    if (platform === null) return;
+    for (const { scope } of workspaces.filter(workspace => workspace.scope.projectId === projectId)) {
+      try { await platform.knowledge.reconcile(hostScopeContext(scope, HOST_RECONCILE_ACTOR), scope.workspaceId, 'before_adopt'); }
+      catch { /* the adoption goes on */ }
+    }
   }
   const explicitKernelEntries = options.kernelStores?.entries ?? [];
   /** Each opened project's main workspace (its first at open): the head of its knowledge workspace list, which its
@@ -881,6 +899,9 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       workspace: projectBindings(input.projectId),
       knowledgeWorkspaces: knowledgeListOf(input.projectId, input.workspaces[0]!.workspaceId),
       knowledgeWriteQueue,
+      // A checkout's knowledge is written by one Host at a time, across processes ([2C1-05]).
+      acquireKnowledgeLease: directory => acquireHostInstanceLease({ directory, now: options.now ?? (() => new Date().toISOString()) }),
+      ...(options.knowledgeWriteHold === undefined ? {} : { knowledgeWriteHold: options.knowledgeWriteHold }),
       commitObserver: commitObserverFor(input.projectId),
       hostInstance: { hostInstanceId: input.lease.hostInstanceId, lease: input.lease.lease, takeover: input.lease.takeover },
       hostClosing: hostClosing.signal,
@@ -2308,6 +2329,13 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   /** The workspaces of the projects this Host holds the lease of (U1), in start order. */
   const ownedScopes = (): CoreScope[] => workspaces.filter(workspace => ownedProject(workspace.scope.projectId))
     .map(workspace => ({ projectId: workspace.scope.projectId, workspaceId: workspace.scope.workspaceId }));
+  // KLS-2c [2C1-24]: every served workspace's knowledge is reconciled before any start-up step that may write
+  // knowledge (the Run start-up reconcile's repair activations, the redrive), so a write a crash left pending is
+  // seen before a newer write changes its file. A failure does not stop the start; the next idle round comes again.
+  for (const scope of ownedScopes()) {
+    try { await projectPlatform(scope.projectId).knowledge.reconcile(reconcileContext(scope), scope.workspaceId, 'startup'); }
+    catch { /* the next idle round reconciles */ }
+  }
   // Slice 2B L7: with its project's lease, every served workspace records its
   // start-of-recording epoch BEFORE the start-up reconcile, so a Run that ends
   // after this instant and has no tally reads `not_recorded` (an error) rather
@@ -2432,6 +2460,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     const project = projects.get(scope.projectId);
     const report = project?.report.report ?? null;
     if (project === undefined || report === null) return;
+    try { await project.runtime.platform.knowledge.reconcile(reconcileContext(scope), scope.workspaceId, 'startup'); }
+    catch { /* the next idle round reconciles */ }
     const recorded = await project.runtime.platform.runActivity.ensureActivityRecording(hostScopeContext(scope, actor), {
       input: { workspace: { projectId: scope.projectId, workspaceId: scope.workspaceId } },
       meta: { requestId: `host-activity-recording:${scopeKey(scope)}`, expected: [] },
@@ -2670,6 +2700,9 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   const linkBatchBacklogGapMs = options.linkBatchBacklogGapMs ?? NOTE_LINK_BACKLOG_GAP_MS;
   const nowIso = options.now ?? (() => new Date().toISOString());
   const clockMs = (): number => Date.parse(nowIso());
+  /** The Host is idle for a project: no Run or Query call in flight, and none for `linkBatchIdleMs`. */
+  const runtimeIdle = (platform: ProjectPlatform, now: number): boolean => platform.runtimeInFlight.count() === 0
+    && now - Date.parse(platform.runtimeInFlight.idleSince()) >= linkBatchIdleMs;
 
   /**
    * §11.5/§11.7: the per-workspace reminder memory. It lasts for the life of
@@ -3202,8 +3235,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     const queued = platform.notes.doubtfulLinks(scope, Math.max(NOTE_LINK_VERIFY_MAX, linkBatchBacklog));
     if (queued.length === 0) return;
     const now = clockMs();
-    const idle = platform.runtimeInFlight.count() === 0
-      && now - Date.parse(platform.runtimeInFlight.idleSince()) >= linkBatchIdleMs;
+    const idle = runtimeIdle(platform, now);
     const backlog = queued.length >= linkBatchBacklog
       && now - (lastLinkBatch.get(scopeKey(scope)) ?? linkBatchFrom) >= linkBatchBacklogGapMs;
     if (!idle && !backlog) return;
@@ -3274,6 +3306,16 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
           .then(async () => { await projectPlatform(workspace.scope.projectId).workflow.maintainSessions?.(
             hostContext(workspace.scope), { workspace: workspace.scope, after: null }); })
           .catch(() => { /* original facts remain retryable */ })
+          // KLS-2c [2C1-24]: when idle, the workspace's knowledge reconciliation rides its consume job (so the consume
+          // barrier covers it), git or not; it holds the workspace's next consume until done.
+          .then(async () => {
+            try {
+              const platform = projectPlatform(workspace.scope.projectId);
+              if (!runtimeIdle(platform, clockMs())) return;
+              await platform.knowledge.reconcile({ ...reconcileContext(workspace.scope), signal: attentionAbort.signal },
+                workspace.scope.workspaceId, 'idle');
+            } catch { /* the next idle heartbeat reconciles again */ }
+          })
           .finally(() => inputJobs.delete(key))
           .finally(() => { for (const resolve of consumeBarrierWaiters.splice(0)) resolve(); });
         inputJobs.set(key, job);

@@ -223,17 +223,21 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
 
   const appendEvents = (events: readonly { eventId: string; json: string }[]): {
     eventIds: string[];
+    /** Every event's cursor, in order (a binding may name one by index). */
+    cursors: CommitCursor[];
     commitCursor: CommitCursor;
   } => {
     const statement = getStatement(INSERT_EVENT_SQL);
     const eventIds: string[] = [];
+    const cursors: CommitCursor[] = [];
     let lastSeq = 0;
     for (const event of events) {
       const result = statement.run(event.json);
       lastSeq = Number(result.lastInsertRowid);
       eventIds.push(event.eventId);
+      cursors.push(makeCommitCursor(lastSeq));
     }
-    return { eventIds, commitCursor: makeCommitCursor(lastSeq) };
+    return { eventIds, cursors, commitCursor: makeCommitCursor(lastSeq) };
   };
 
   const upsertSnapshot = (refKey: string, json: string): void => {
@@ -461,7 +465,7 @@ export function createSqliteRecordBackend(options: SqliteRecordBackendOptions): 
     //    events, never over a gap another writer left (R8).
     const previousMax = readThrough();
     const written = appendEvents(planned.events.map((decoded) => ({ eventId: decoded.event.eventId, json: decoded.event.json })));
-    const boundRecords = bindPreparedRecords(planned.records, planned.commitCursorBindings, written.commitCursor, registry);
+    const boundRecords = bindPreparedRecords(planned.records, planned.commitCursorBindings, written.cursors, registry);
     if (boundRecords.status === "invalid") {
       throw new RejectedInsideTransaction(invalidFailure(boundRecords.reason));
     }

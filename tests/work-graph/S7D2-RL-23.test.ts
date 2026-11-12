@@ -34,6 +34,7 @@ import {
   openS7D2ColdStartWorld, regionQueryRefs, startLinesOperationRef,
   type S7D2ColdStartWorld, type S7D2Exploration,
 } from '../helpers/S7D2-coldstart-world.js';
+import { holdGate, type KLS2CHoldPoint } from '../helpers/KLS2C-knowledge-host.js';
 import { coldStartOperationRef } from '../../src/core/work-graph/state/cold-start.js';
 import type { RoleScopeV1 } from '../../src/contracts/role-lines.js';
 import type { OperationRef } from '../../src/contracts/core/operations.js';
@@ -268,6 +269,43 @@ describe('RL-23: the cold start and the exploration round', () => {
     expect(adviserLines).toHaveLength(3);
     expect((await cold.host.readRequest(candidate.requestRoot)).rounds
       .filter(round => round.input === COLDSTART_ROUTE_QUESTION)).toHaveLength(1);
+  }, 300_000);
+
+  /*
+   * The coarse split's approval is a knowledge write: its commit wakes the cold start before its files land. A
+   * `regions` pass that reads the old files cannot open `src` (not in the current formal catalog, a permanent refusal)
+   * and parks; only the write's completion commit, after the files landed, wakes the lifecycle queue again. The Host's
+   * knowledge write seam holds that one write at `committed`, so the pass reads the old files whatever the file system's
+   * speed. Named mutation: drop `'KnowledgeWrite'` from `LIFECYCLE_WAKE_AGGREGATE_TYPES` (`src/app/wake-loop.ts`) ->
+   * nothing wakes the cold start after the release, `waitForExplorations(2)` times out, red.
+   */
+  it('RL-23a (memory): a region the cold start could not open on the old files opens once the coarse split lands', async () => {
+    let gate: ReturnType<typeof holdGate> | null = null;
+    const cold = await openS7D2ColdStartWorld({ backend: 'memory',
+      extraHostOptions: { knowledgeWriteHold: (point: KLS2CHoldPoint) => gate?.hold(point) ?? Promise.resolve() } });
+    worlds.push(cold);
+    await cold.initialize();
+    await cold.waitForPhase('route');
+    await cold.submitContinuation('split', 'rl23w-route-split');
+    await cold.waitForPhase('coarse_split');
+    const holders = await cold.adviserHolders();
+    await cold.setAdviserOpen(holders + 1, 'rl23w-limits-one');
+    await cold.waitFor('the coarse card', async () => (await cold.proposalCards()).length === 1);
+    // Armed after every earlier knowledge write returned: only the approval's write stops at `committed`.
+    gate = holdGate('committed');
+    const approving = cold.approve((await cold.proposalCards())[0]!, 'rl23w-approve-coarse');
+    await gate.reached;
+    // The approval's commit moved the cold start to `regions`; on the old files no region line opened.
+    const held = await cold.waitForPhase('regions');
+    expect(held.pendingRegions ?? []).toEqual([]);
+    expect((held.explorations ?? []).map(entry => entry.segment)).toEqual(['coarse_split']);
+    gate.release();
+    expect(await approving).toMatchObject({ status: 'ready', value: { answer: { status: 'committed' } } });
+    // The files landed and nothing else is written: `src` opens at the one free seat, `docs` waits for a seat.
+    const row = await cold.waitForExplorations(2);
+    expect((row.explorations ?? []).map(entry => entry.segment)).toEqual(['coarse_split', 'region']);
+    expect(row.pendingRegions).toEqual([{ projectId: P, moduleId: 'docs' }]);
+    expect((await explorationOf(cold, 'region', 'src')).operationRef).toEqual(coldStartOperationRef(P));
   }, 300_000);
 
   it("RL-23b (memory): the exploration round's tool table, notes, create_member and the proposal arm", async () => {

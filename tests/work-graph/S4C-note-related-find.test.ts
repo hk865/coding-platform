@@ -16,7 +16,7 @@ import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { NoteDraftV1 } from '../../src/contracts/note.js';
 import type { MemoryFindRequest } from '../../src/core/work-graph/model/note-contracts.js';
 import { createS4ANoteFixture, S4A_AT, type S4ANoteFixture, type S4ANoteFixtureKind, type S4ANoteLimits } from '../helpers/S4A-note-fixture.js';
-import { capturedKnowledgeIndexes, fileNoteWithoutRecord } from '../helpers/KLS2-knowledge-lines.js';
+import { fileNoteWithoutRecord } from '../helpers/KLS2-knowledge-lines.js';
 
 const KINDS: readonly S4ANoteFixtureKind[] = ['memory', 'sqlite'];
 const GOAL = 's4c-related-find-goal';
@@ -213,18 +213,16 @@ describe('S4C segment-1 partial survives onto segment 2 (RW-6)', () => {
 
 describe('S4C related find over a filed note with no record head (F-27 甲, [2B-16])', () => {
   it('F-27 memory: a filed note with no record head anchored in the related scope is in the related segment, not the project segment', async () => {
-    // The platform's own index of this project, shared with the test world (the platform's index seam).
-    const indexes = capturedKnowledgeIndexes();
-    const f = await createS4ANoteFixture('memory', { knowledgeIndexFactory: indexes.factory });
+    const f = await createS4ANoteFixture('memory');
     try {
-      // A person puts a note file on module A into the line's knowledge folder; the platform's indexer takes it in.
+      // A person puts a note file on module A into the line's knowledge folder; the platform's reconciliation takes it in.
       const noteId = 'f27-filed-note';
       expect(await fileNoteWithoutRecord({ root: f.root, caller: f.ctx(), workspaceId: f.scope.workspaceId,
-        index: indexes.indexOf(f.scope.projectId), noteId, note: { kind: 'pitfall',
+        knowledge: f.platform.knowledge, noteId, note: { kind: 'pitfall',
           source: { kind: 'user', principalId: 's4a-operator' }, topic: 'f27marker filed', conclusion: 'a filed conclusion',
           body: 'filed body', anchor: { kind: 'module', moduleId: 'A' }, extraAnchors: [], structural: false, facts: [],
           basisFiles: [], replaces: [], contradicts: [], coexistWith: [] } }))
-        .toMatchObject({ status: 'decoded', value: { kind: 'note' } });
+        .toMatchObject({ status: 'ready', value: { changed: 1, issues: [] } });
 
       const base = { v: 1 as const, op: 'find' as const, related: { kind: 'module' as const, moduleId: 'A' },
         limit: 20, cursor: null };
@@ -240,16 +238,15 @@ describe('S4C related find over a filed note with no record head (F-27 甲, [2B-
   });
 
   it('F-38 memory: a find with no terms by anchor or by path prefix lists the filed notes with no record head after every head, by note id', async () => {
-    const indexes = capturedKnowledgeIndexes();
-    const f = await createS4ANoteFixture('memory', { knowledgeIndexFactory: indexes.factory });
+    const f = await createS4ANoteFixture('memory');
     try {
       const filed = async (noteId: string, anchor: NoteDraftV1['anchor']) => {
         const indexed = await fileNoteWithoutRecord({ root: f.root, caller: f.ctx(), workspaceId: f.scope.workspaceId,
-          index: indexes.indexOf(f.scope.projectId), noteId, note: { kind: 'pitfall',
+          knowledge: f.platform.knowledge, noteId, note: { kind: 'pitfall',
             source: { kind: 'user', principalId: 's4a-operator' }, topic: `${noteId} topic`, conclusion: 'filed',
             body: 'filed body', anchor, extraAnchors: [], structural: false, facts: [], basisFiles: [], replaces: [],
             contradicts: [], coexistWith: [] } as Parameters<typeof fileNoteWithoutRecord>[0]['note'] });
-        if (indexed.status !== 'decoded') throw new Error(`F-38 index: ${JSON.stringify(indexed)}`);
+        if (indexed.status !== 'ready' || indexed.value.changed !== 1 || indexed.value.issues.length > 0) throw new Error(`F-38 index: ${JSON.stringify(indexed)}`);
       };
       // Filed in this order so the note id order differs from it.
       await filed('f38-filed-b', { kind: 'module', moduleId: 'A' });
@@ -275,13 +272,12 @@ describe('S4C related find over a filed note with no record head (F-27 甲, [2B-
   });
 
   it('CR6 memory: a find with terms on an anchor or a path prefix keeps the filed notes with no record head; one on a removed module is still found', async () => {
-    const indexes = capturedKnowledgeIndexes();
-    const f = await createS4ANoteFixture('memory', { knowledgeIndexFactory: indexes.factory });
+    const f = await createS4ANoteFixture('memory');
     try {
-      await filedWithoutRecord(f, indexes, 'cr6-on-a', { kind: 'module', moduleId: 'A' }, 'cr6marker on A');
-      await filedWithoutRecord(f, indexes, 'cr6-on-file', { kind: 'file', path: 'src/a/one/x.ts' }, 'cr6marker on a file');
+      await filedWithoutRecord(f, 'cr6-on-a', { kind: 'module', moduleId: 'A' }, 'cr6marker on A');
+      await filedWithoutRecord(f, 'cr6-on-file', { kind: 'file', path: 'src/a/one/x.ts' }, 'cr6marker on a file');
       // `Z` is in no adopted catalog: the module of this note is gone.
-      await filedWithoutRecord(f, indexes, 'cr6-on-z', { kind: 'module', moduleId: 'Z' }, 'cr6 on Z');
+      await filedWithoutRecord(f, 'cr6-on-z', { kind: 'module', moduleId: 'Z' }, 'cr6 on Z');
       const ids = async (request: Omit<MemoryFindRequest, 'v' | 'op' | 'limit' | 'cursor'>) => {
         const found = await f.platform.notes.memoryFind(f.ctx(), { v: 1, op: 'find', limit: 20, cursor: null, ...request });
         return found.status === 'ready' ? found.value.items.map(item => item.noteId) : found;
@@ -297,13 +293,12 @@ describe('S4C related find over a filed note with no record head (F-27 甲, [2B-
   });
 
   it('CR7 memory: a filed note with no record head has its anchors checked like a head\'s: on a removed module it is retired', async () => {
-    const indexes = capturedKnowledgeIndexes();
-    const f = await createS4ANoteFixture('memory', { knowledgeIndexFactory: indexes.factory });
+    const f = await createS4ANoteFixture('memory');
     try {
-      await filedWithoutRecord(f, indexes, 'cr7-on-a', { kind: 'module', moduleId: 'A' }, 'cr7 on A');
-      await filedWithoutRecord(f, indexes, 'cr7-on-z', { kind: 'module', moduleId: 'Z' }, 'cr7 on Z');
+      await filedWithoutRecord(f, 'cr7-on-a', { kind: 'module', moduleId: 'A' }, 'cr7 on A');
+      await filedWithoutRecord(f, 'cr7-on-z', { kind: 'module', moduleId: 'Z' }, 'cr7 on Z');
       // A link from the removed module `Z` to `A`.
-      await filedWithoutRecord(f, indexes, 'cr7-link', { kind: 'module', moduleId: 'Z' }, 'cr7 link', { kind: 'link',
+      await filedWithoutRecord(f, 'cr7-link', { kind: 'module', moduleId: 'Z' }, 'cr7 link', { kind: 'link',
         extraAnchors: [{ kind: 'module', moduleId: 'A' }], link: { relation: 'data',
           ends: { from: { kind: 'module', moduleId: 'Z' }, to: { kind: 'module', moduleId: 'A' }, via: null },
           key: { kind: 'literal', text: 'cr7.json' }, evidence: [{ role: 'emit', at: { path: 'src/a/x.ts' } }] } });
@@ -332,13 +327,13 @@ describe('S4C related find over a filed note with no record head (F-27 甲, [2B-
 });
 
 /** A person's note file with no record head, taken into the platform's index (the named F3 exception). */
-async function filedWithoutRecord(f: S4ANoteFixture, indexes: ReturnType<typeof capturedKnowledgeIndexes>, noteId: string,
+async function filedWithoutRecord(f: S4ANoteFixture, noteId: string,
   anchor: NoteDraftV1['anchor'], topic: string, extra: Partial<Parameters<typeof fileNoteWithoutRecord>[0]['note']> = {}):
 Promise<void> {
   const indexed = await fileNoteWithoutRecord({ root: f.root, caller: f.ctx(), workspaceId: f.scope.workspaceId,
-    index: indexes.indexOf(f.scope.projectId), noteId, note: { kind: 'pitfall',
+    knowledge: f.platform.knowledge, noteId, note: { kind: 'pitfall',
       source: { kind: 'user', principalId: 's4a-operator' }, topic, conclusion: 'filed', body: 'filed body', anchor,
       extraAnchors: [], structural: false, facts: [], basisFiles: [], replaces: [], contradicts: [], coexistWith: [],
       ...extra } as Parameters<typeof fileNoteWithoutRecord>[0]['note'] });
-  if (indexed.status !== 'decoded') throw new Error(`${noteId} index: ${JSON.stringify(indexed)}`);
+  if (indexed.status !== 'ready' || indexed.value.changed !== 1 || indexed.value.issues.length > 0) throw new Error(`${noteId} index: ${JSON.stringify(indexed)}`);
 }

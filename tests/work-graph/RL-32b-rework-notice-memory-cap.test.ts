@@ -72,7 +72,7 @@ async function noticeAfterSystemReverify(resourceCaps: object): Promise<{
   const fixture = await createR3eEvidenceFixture('sqlite');
   cleanups.push(() => fixture.close());
   await fixture.b2.base.closeBackend();
-  const platform = await createTargetPlatform({ storage: { kind: 'sqlite', directory: fixture.b2.base.directory },
+  const platform = await createTargetPlatform({ storage: { kind: 'sqlite', directory: fixture.b2.base.storeDirectory },
     workspace: fixture.workspaceHost, checks: fixture.configuration, now: () => B2_AT });
   cleanups.push(() => platform.close());
 
@@ -142,7 +142,7 @@ async function noticeAfterSystemRequeue(resourceCaps: object): Promise<{ notice:
   const fixture = await createR3eEvidenceFixture('sqlite');
   cleanups.push(() => fixture.close());
   await fixture.b2.base.closeBackend();
-  const platform = await createTargetPlatform({ storage: { kind: 'sqlite', directory: fixture.b2.base.directory },
+  const platform = await createTargetPlatform({ storage: { kind: 'sqlite', directory: fixture.b2.base.storeDirectory },
     workspace: fixture.workspaceHost, checks: fixture.configuration, now: () => B2_AT });
   cleanups.push(() => platform.close());
 
@@ -199,7 +199,7 @@ async function noticeAfterTwoCheckReverify(): Promise<{ notice: NoticeItemV1 }> 
     resourceCaps: { ...CAP_HIT, memoryMaxBytes: command === fixture.passCheck.command ? 6144 * MIB : 512 * MIB },
     effects: { sideEffect: 'none', changedPaths: [], workspaceRevision: 'rl32b-rev', artifactRefs: [] } });
   await fixture.b2.base.closeBackend();
-  const platform = await createTargetPlatform({ storage: { kind: 'sqlite', directory: fixture.b2.base.directory },
+  const platform = await createTargetPlatform({ storage: { kind: 'sqlite', directory: fixture.b2.base.storeDirectory },
     workspace: fixture.workspaceHost, checks: fixture.configuration, now: () => B2_AT });
   cleanups.push(() => platform.close());
 
@@ -268,7 +268,7 @@ async function requeueTriggerReadFailure(): Promise<ReadResult<DecisionQueueRead
   const fixture = await createR3eEvidenceFixture('sqlite');
   cleanups.push(() => fixture.close());
   await fixture.b2.base.closeBackend();
-  const platform = await createTargetPlatform({ storage: { kind: 'sqlite', directory: fixture.b2.base.directory },
+  const platform = await createTargetPlatform({ storage: { kind: 'sqlite', directory: fixture.b2.base.storeDirectory },
     workspace: fixture.workspaceHost, checks: fixture.configuration, now: () => B2_AT });
   cleanups.push(() => platform.close());
 
