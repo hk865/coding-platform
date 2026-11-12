@@ -134,7 +134,7 @@ export function forwardPage(world: Pick<E3NTarget, 'base'>, log: PageLog, mode: 
   };
 }
 
-export async function bootE3N(world: E3NTarget, name: 'Main' | 'TaskMap' | 'Goals' | 'ArchOverview' | 'Decide' | 'Member' | 'Chain' | 'Done', options: {
+export async function bootE3N(world: E3NTarget, name: 'Main' | 'TaskMap' | 'Goals' | 'ArchOverview' | 'Decide' | 'Member' | 'Chain' | 'Done' | 'Plan', options: {
   search?: string; mode?: ChangeMode; token?: string | (() => string | null); source?: string;
   gate?: boolean; unavailable?: string; failOnce?: string; before?: Record<string, (log: PageLog) => Promise<void>>;
 } = {}): Promise<{ page: BootedPage; log: PageLog }> {

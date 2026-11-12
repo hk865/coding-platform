@@ -189,7 +189,7 @@ const WORST_ORDER = ['decide', 'failed', 'blocked', 'running', 'verifying', 'wai
   'claimable', 'pending', 'future', 'deferred', 'cancelled', 'satisfied', 'none'];
 
 /** B3: the two `GoalAutonomyV1` values in the prototype's own words (`Goals.dc.html:3037`). */
-const AUTONOMY_TEXT: Record<GoalAutonomyV1, string> = {
+export const AUTONOMY_TEXT: Record<GoalAutonomyV1, string> = {
   after_plan_confirmation: '方案确认后自动',
   every_step: '每一步都等你确认',
 };
@@ -233,7 +233,7 @@ function taskStateOf(row: Record<string, unknown>): string | null {
   return phase === '' ? null : phase;
 }
 
-function taskStageOf(definition: Record<string, unknown>): string {
+export function taskStageOf(definition: Record<string, unknown>): string {
   const declared = asText(definition.stageId);
   if (declared !== '') return declared;
   const scope = asRecord(definition.scope);

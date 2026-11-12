@@ -125,6 +125,9 @@ export type DecideRow = {
   time: string | null;
   state: string;
   goalId: string | null;
+  /** The conflict card's composer quote, in `goals/list.order` (later first);
+   * the card header `label` when either Goal has no ordinal (§2.6/READS-4). */
+  askRef: string;
   noticeWindow: { displayToken: string | null;
     seenThrough: Partial<Record<NoticeCategoryV1, NoticePositionV1>> } | null;
   /** The card's presentable facts; null on a notice row. */
@@ -564,10 +567,17 @@ export function adaptDecide(source: DecideSource, ui: DecideUi): DecideData {
         : card.source.kind === 'rework_request'
           ? '返工请求'
           : (nameOf(goalId) || '项目') + ' · ' + (KIND_WORD[card.source.kind] ?? '需要你决定');
+    /* READS-4/lead 4: the conflict quote names the later Goal first, as
+       `goals/list.order` puts it; a missing ordinal uses the card header. */
+    const ordered = conflict ? conflictGoalIds.slice().sort((a, b) => orderOf(a) - orderOf(b)) : [];
+    const earlierOrdinal = ordered[0] === undefined ? null : ordinalOf(ordered[0]);
+    const laterOrdinal = ordered[1] === undefined ? null : ordinalOf(ordered[1]);
+    const askRef = conflict && earlierOrdinal !== null && laterOrdinal !== null
+      ? '目标 ' + String(laterOrdinal) + ' 与目标 ' + String(earlierOrdinal) + ' 冲突'
+      : label;
     const state = conflict
       ? (() => {
-        const ids = conflictGoalIds.slice().sort((a, b) => orderOf(a) - orderOf(b));
-        const first = ids[0];
+        const first = ordered[0];
         return first === undefined ? 'pending' : stateOfGoal(first);
       })()
       : taskRow !== null ? (stateOfTask(taskRow) ?? 'cancelled') : stateOfGoal(goalId ?? '');
@@ -590,7 +600,7 @@ export function adaptDecide(source: DecideSource, ui: DecideUi): DecideData {
     });
     rows.push({
       key: card.cardKey, level, card, notice: null, label, sub, time, state,
-      goalId, noticeWindow: window, view,
+      goalId, askRef, noticeWindow: window, view,
     });
   };
   const pushNotice = (notice: NoticeItemV1, window: DecideRow['noticeWindow']): void => {
@@ -600,7 +610,7 @@ export function adaptDecide(source: DecideSource, ui: DecideUi): DecideData {
     const sub = nameOf(goalId) + ' · ' + (CATEGORY_WORD[notice.category] ?? notice.category);
     rows.push({
       key: notice.itemKey, level: 'notice', card: null, notice, label: notice.summary, sub, time,
-      state: 'waiting', goalId, noticeWindow: window, view: null,
+      state: 'waiting', goalId, askRef: notice.summary, noticeWindow: window, view: null,
     });
   };
 

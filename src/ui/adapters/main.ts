@@ -29,6 +29,12 @@ export type MainLogRow = {
   /** The request root, only for the page to drop a local pending bubble it has
    * already read back; never drawn. */
   root: string;
+  /** The round this row belongs to; Main's plan card 采用 uses it for
+   * `selectIdea`. Not drawn. */
+  round: QueryJobRef | null;
+  /** Whether this round is still the request's last answered round; the plan
+   * card's 采用 is live only then (same rule as `plan.ts`). */
+  selectable: boolean;
   isSys: boolean; isUser: boolean; isAgent: boolean; isRun: boolean;
   /** Empty for a run row; the fixed words live in the template. */
   text: string;
@@ -89,8 +95,10 @@ export type MainData = NavData & {
   aux: AuxPanelData | null;
 };
 
-/** One read round, the fields §2.4 draws (`RequestRoundViewV1`). */
-type MainRoundRead = {
+/** One read round, the fields §2.4 draws (`RequestRoundViewV1`). The plan page
+ * extends this shape beside it; `ref` is the round's own identity. */
+export type MainRoundRead = {
+  ref: QueryJobRef;
   input: string;
   references: RequestReferenceV1[];
   answer: string | null;
@@ -102,7 +110,7 @@ type MainRoundRead = {
 };
 
 /** One request root of a page (`RequestCoreViewV1`). */
-type MainRequestRead = {
+export type MainRequestRead = {
   requestRoot: QueryJobRef;
   owner: SessionRef | null;
   rounds: MainRoundRead[];
@@ -131,15 +139,25 @@ function quoteOf(reference: RequestReferenceV1): MainQuote {
   };
 }
 
+/** §2.8: the last round of one request that has an answer; `selectable` (and
+ * Plan's `askRound`) is this round, never a copy of the search. */
+export function lastAnsweredRoundOf(
+  request: { rounds: readonly { ref: QueryJobRef; answer: string | null }[] },
+): QueryJobRef | null {
+  return [...request.rounds].reverse().find((round) => round.answer !== null)?.ref ?? null;
+}
+
 function logRowOf(
   root: string,
   fields: Pick<MainLogRow, 'text'>
-  & Partial<Pick<MainLogRow, 'isUser' | 'isAgent' | 'isRun' | 'quotes' | 'ideas'>>,
+  & Partial<Pick<MainLogRow, 'isUser' | 'isAgent' | 'isRun' | 'quotes' | 'ideas' | 'round' | 'selectable'>>,
 ): MainLogRow {
   const quotes = fields.quotes ?? [];
   const ideas = fields.ideas ?? [];
   return {
     root,
+    round: fields.round ?? null,
+    selectable: fields.selectable === true,
     isSys: false,
     isUser: fields.isUser === true,
     isAgent: fields.isAgent === true,
@@ -172,13 +190,19 @@ function conversationOf(pages: readonly MainPageV1[]): MainLogRow[] {
   const rows: MainLogRow[] = [];
   for (const request of requests.reverse()) {
     const root = requestRootKey(request.requestRoot);
+    const lastAnswered = lastAnsweredRoundOf(request);
     for (const round of request.rounds) {
-      rows.push(logRowOf(root, { text: round.input, isUser: true, quotes: round.references.map(quoteOf) }));
-      if (round.session !== null) rows.push(logRowOf(root, { text: '', isRun: true }));
+      const selectable = lastAnswered !== null && lastAnswered.queryJobId === round.ref.queryJobId;
+      rows.push(logRowOf(root, {
+        text: round.input, isUser: true, round: round.ref, selectable, quotes: round.references.map(quoteOf),
+      }));
+      if (round.session !== null) rows.push(logRowOf(root, { text: '', isRun: true, round: round.ref, selectable }));
       if (round.answer !== null) {
         rows.push(logRowOf(root, {
           text: round.answer,
           isAgent: true,
+          round: round.ref,
+          selectable,
           ideas: round.ideas.map((idea) => ({ title: idea.title, detail: idea.detail })),
         }));
       } else if (round.status === 'ended' && round.closeMessage !== null) {
@@ -187,6 +211,8 @@ function conversationOf(pages: readonly MainPageV1[]): MainLogRow[] {
         rows.push(logRowOf(root, {
           text: round.closeCode === null ? round.closeMessage : round.closeCode + ': ' + round.closeMessage,
           isAgent: true,
+          round: round.ref,
+          selectable,
         }));
       }
     }

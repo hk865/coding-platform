@@ -40,7 +40,7 @@ describe('E32-5 board token', () => {
 
     /* E3-NAV §4.3: the second working copy goes through the same static-page
        injection; TaskMap keeps its row. */
-    for (const name of ['ArchOverview', 'Chain', 'Decide', 'Done', 'Goals', 'Main', 'Member', 'TaskMap']) {
+    for (const name of ['ArchOverview', 'Chain', 'Decide', 'Done', 'Goals', 'Main', 'Member', 'Plan', 'TaskMap']) {
       const board = await fetch(`${origin}/workbench/${name}.dc.html`);
       expect(board.status).toBe(200);
       expect(await board.text()).toContain(`<meta name="platform-token" content="${TOKEN}">`);

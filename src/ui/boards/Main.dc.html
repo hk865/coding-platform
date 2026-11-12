@@ -3421,8 +3421,8 @@ class Component extends DCLogic {
     };
     const track = (data.track || []).map((row) => ({ at: row.at, type: row.type, id: row.id, summary: row.summary }));
 
-    /* MF6(4): the newest answer's ideas become one plan card; adopting and iterating
-       are not connected in Main A. */
+    /* MF6(4): the newest answer's ideas become one plan card; 采用 goes through
+       requests/select-idea, iterating stays unconnected. */
     const ideaRow = (data.conversation || []).slice().reverse()
       .find((row) => row.hasIdeas && Array.isArray(row.ideas) && row.ideas.length > 0) || null;
     let plans = [];
@@ -3439,7 +3439,17 @@ class Component extends DCLogic {
         isRound2: false, title: '方案', scope: '', stText: '还没接通', hasDelta: false, delta: [], opts: opts, canAct: true,
         showLine: false, lineOpen: false, lineAct: '', lineText: '', toggleLine: () => {}, showCard: true,
         iterate: nc, iterateCls: 'btn is-off', iterateTip: '还没接通', iterateOff: 'true',
-        adopt: nc, adoptCls: 'btn btn-primary is-off', adoptTip: '还没接通', adoptOff: 'true', adoptLabel: '采用方案 ' + pick,
+        adopt: () => {
+          /* Only the request's last answered round may be adopted; once the
+             selection's follow-up is answered, that round is the follow-up
+             (same rule as `plan.ts`). */
+          if (ideaRow.selectable !== true) return;
+          if (typeof actions.selectIdea !== 'function') return;
+          Promise.resolve(actions.selectIdea(ideaRow.round, ids.indexOf(pick)))
+            .catch((e) => set({ err: msg(e) }));
+        },
+        adoptCls: 'btn btn-primary' + (ideaRow.selectable === true ? '' : ' is-off'),
+        adoptTip: '', adoptOff: ideaRow.selectable === true ? 'false' : 'true', adoptLabel: '采用方案 ' + pick,
         think: '', reply: ''
       }];
     }

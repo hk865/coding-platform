@@ -22,6 +22,10 @@ import {
   type MainData, type MainLineRecord, type MainPageCursorV1, type MainPageV1, type MainTrackRow,
 } from './adapters/main.js';
 import {
+  adaptPlan, candidateReadOf, ideasRoundOf, versionRowsOf,
+  type MainPageRead, type PlanCandidateRead, type PlanData, type PlanProposalRef, type PlanVersionRow,
+} from './adapters/plan.js';
+import {
   auxChangedRowsOf, auxFileListOf, auxFilePageOf, auxLeafCountsOf, auxTaskDetailOf, catalogArchTree, goalTaskTree,
   goalTreeNodeOf,
   type AuxDemand, type AuxFilePage, type AuxPanelData, type AuxTab, type AuxWorkspaceFile, type GoalsTaskNode,
@@ -177,6 +181,7 @@ export type BoardActions = {
    * it to its own log. `null` only when the submit reply carried no `requestRoot`. */
   askSecretary: (text: string,
     reference: RequestReferenceInputV1 | readonly RequestReferenceInputV1[] | null,
+    options?: { continues?: QueryJobRef | null },
   ) => Promise<{ root: string; input: string; answer: string | null } | null>;
   /** D18/D30: one `decisions/answer` with the card's own source and pins. */
   answerCard: (cardKey: string, optionId: string) => Promise<void>;
@@ -195,6 +200,16 @@ export type BoardActions = {
   /** D31/D43/D44: the card's question; returns the user's text, this round's root
    * key and answer. */
   askCard: (cardKey: string, text: string) => Promise<{ root: string; input: string; answer: string | null } | null>;
+  /** E3 Plan A §2.3: one `goals/confirm-draft` for the shown draft round. */
+  confirmGoalDraft: (round: QueryJobRef, index: number) => Promise<void>;
+  /** E3 Plan A §2.3: one `requests/select-idea` for the shown ideas round. */
+  selectIdea: (round: QueryJobRef, index: number) => Promise<void>;
+  /** E3 Plan A §2.3: one `plans/apply` pinned to the shown candidate and Goal. */
+  adoptPlan: (proposalRef: PlanProposalRef, revision: number) => Promise<void>;
+  /** E3 Plan A §2.3: one `requests/ask` with `regenerate` for the shown plan. */
+  askPlanChange: (text: string,
+    target: { round: QueryJobRef; proposalRef: PlanProposalRef; revision: number })
+    => Promise<{ root: string; input: string; answer: string | null } | null>;
   /** E3 Member §2.12: one published control of the line in the centre. */
   controlLine: (kind: 'pause' | 'resume' | 'cancel') => Promise<void>;
   /** E3 Member §2.12: one `tasks/requeue` from the facts of the last successful read. */
@@ -335,6 +350,66 @@ export async function bootBoardPage(): Promise<void> {
     }
     await refresh.reread();
   }
+  /**
+   * E3 Plan A §2.3: one `requests/ask` (or, for a card without a request, one
+   * `requests/submit`) plus the one `requests/read` that finds this round's
+   * answer. Card questions and plan changes share it; Main's `askCard` keeps
+   * its replies unchanged.
+   */
+  async function askAndRead(
+    scope: CoreScope, round: QueryJobRef | null, requestRoot: QueryJobRef | null,
+    cardRefs: ReadonlyArray<{ ref: unknown; revision: number }>,
+    regenerate: boolean, text: string, fallbackGoalId: string | null,
+  ): Promise<{ root: string; input: string; answer: string | null } | null> {
+    const commandId = crypto.randomUUID();
+    let askRoot: unknown = null;
+    let target: unknown;
+    try {
+      if (round !== null) {
+        const reply = await client.post('requests/ask', scope, {
+          commandId, round, cardRefs, regenerate, text,
+        });
+        if (reply.status !== 'queued') {
+          throw new RouteReadError('requests/ask', reply.code || reply.status || 'no status', reply.reason ?? '');
+        }
+        askRoot = round;
+        target = asRecord(reply).followupRound;
+      } else {
+        const reply = await client.post('requests/submit', scope, {
+          commandId, goalId: fallbackGoalId, text, continues: null, recipient: null, references: [],
+        });
+        if (reply.status !== 'queued') {
+          throw new RouteReadError('requests/submit', reply.code || reply.status || 'no status', reply.reason ?? '');
+        }
+        askRoot = asRecord(reply).requestRoot;
+        target = asRecord(reply).round;
+      }
+    } catch (error) {
+      throw new Error(writeTextOf(error));
+    }
+    let answer: string | null = null;
+    let readRoot: unknown = null;
+    const readInput = requestRoot ?? askRoot;
+    try {
+      const read = readyRouteValue<unknown>(
+        await client.post('requests/read', scope, { requestRoot: readInput }), 'requests/read',
+      );
+      const echoed = asRecord(read).requestRoot;
+      if (echoed !== null && echoed !== undefined) readRoot = echoed;
+      const rounds = asRecord(read).rounds;
+      const targetId = asText(asRecord(target).queryJobId);
+      if (Array.isArray(rounds) && targetId !== '') {
+        const hit = rounds.map((entry) => asRecord(entry))
+          .find((entry) => asText(asRecord(entry.ref).queryJobId) === targetId);
+        if (hit !== undefined) answer = asText(hit.answer) || null;
+      }
+    } catch {
+      /* The send stands; a failed read only means this round has no answer yet. */
+      answer = null;
+    }
+    return { root: requestRootKey((readRoot ?? readInput) as QueryJobRef), input: text, answer };
+  }
+
   const actions: BoardActions = {
     readMore(next: BoardReadDemand): void {
       /* Explicit fields replace the old demand, including `false`/`null`, so a
@@ -439,6 +514,74 @@ export async function bootBoardPage(): Promise<void> {
       }
       await refresh.reread();
     },
+    async confirmGoalDraft(round: QueryJobRef, index: number): Promise<void> {
+      const scope = latestNavScope;
+      if (scope === null) throw new Error(writeTextOf(new Error('no navigation scope')));
+      try {
+        committedRouteValue(await client.post('goals/confirm-draft', scope, {
+          commandId: crypto.randomUUID(), round, index,
+        }), 'goals/confirm-draft');
+      } catch (error) {
+        throw new Error(writeTextOf(error));
+      }
+      /* §2.7: the view stays where it is; the reread finds the confirmed row. */
+      await refresh.reread();
+    },
+    async selectIdea(round: QueryJobRef, index: number): Promise<void> {
+      const scope = latestNavScope;
+      if (scope === null) throw new Error(writeTextOf(new Error('no navigation scope')));
+      try {
+        const reply = await client.post('requests/select-idea', scope, {
+          commandId: crypto.randomUUID(), round, index,
+        });
+        if (reply.status !== 'queued') {
+          throw new RouteReadError('requests/select-idea',
+            reply.code || reply.status || 'no status', reply.reason ?? '');
+        }
+      } catch (error) {
+        throw new Error(writeTextOf(error));
+      }
+      await refresh.reread();
+    },
+    async adoptPlan(proposalRef: PlanProposalRef, revision: number): Promise<void> {
+      const data = latest;
+      const scope = latestNavScope;
+      if (data === null || scope === null || data.selectedGoalId === null
+        || data.selectedGoalRevision === null) {
+        throw new Error(writeTextOf(new Error('plans/apply needs the shown Goal')));
+      }
+      const goalRef = { aggregateType: 'Goal' as const, projectId: scope.projectId, goalId: data.selectedGoalId };
+      try {
+        committedRouteValue(await client.write('plans/apply', scope, {
+          input: { proposalRef, expectedProposalRevision: revision, decisionRefs: [] },
+          meta: {
+            requestId: crypto.randomUUID(),
+            expected: [{ ref: goalRef, revision: data.selectedGoalRevision }],
+          },
+        }), 'plans/apply');
+      } catch (error) {
+        /* §2.3: a revision conflict is shown and the page rereads; `busy` keeps
+           its one-click retry text and does not reread. */
+        if (error instanceof RouteReadError && error.code === 'revision_conflict') {
+          await refresh.reread();
+        }
+        throw new Error(writeTextOf(error));
+      }
+      await refresh.reread();
+    },
+    async askPlanChange(text: string,
+      target: { round: QueryJobRef; proposalRef: PlanProposalRef; revision: number }):
+      Promise<{ root: string; input: string; answer: string | null } | null> {
+      const scope = latestNavScope;
+      const plan = (latest as PlanData | null)?.plan ?? null;
+      if (scope === null || plan === null) throw new Error(writeTextOf(new Error('no navigation scope')));
+      /* `target.round` is the request's last answered round; `requests/read`
+         needs the request root the page read, not that round. */
+      const result = await askAndRead(scope, target.round, plan.requestRoot,
+        [{ ref: target.proposalRef, revision: target.revision }], true, text, null);
+      await refresh.reread();
+      return result;
+    },
     async answerConflict(cardKey: string, optionId: 'wait' | 'order' | 'parallel'): Promise<void> {
       const data = latestGoals;
       const scope = latestGoalsScope;
@@ -503,18 +646,22 @@ export async function bootBoardPage(): Promise<void> {
     async askSecretary(
       text: string,
       reference: RequestReferenceInputV1 | readonly RequestReferenceInputV1[] | null,
+      options: { continues?: QueryJobRef | null } = {},
     ): Promise<{ root: string; input: string; answer: string | null } | null> {
       const scope = latestNavScope;
       if (scope === null) throw new Error(writeTextOf(new Error('no navigation scope')));
       const references: RequestReferenceInputV1[] = reference === null ? []
         : Array.isArray(reference) ? [...reference] : [reference as RequestReferenceInputV1];
+      /* A request that continues a goal-card draft's request is Goal-less: the
+         Host takes its Goal from the continued round (qc 11). */
+      const continues = options.continues ?? null;
       let reply: RouteReply;
       try {
         reply = await client.post('requests/submit', scope, {
           commandId: crypto.randomUUID(),
-          goalId: latestSelectedGoalId,
+          goalId: continues === null ? latestSelectedGoalId : null,
           text,
-          continues: null,
+          continues,
           recipient: null,
           references,
         });
@@ -741,54 +888,9 @@ export async function bootBoardPage(): Promise<void> {
       const card = decideCardOf(cardKey);
       const scope = latestDecideScope;
       if (card === null || scope === null) throw new Error(writeTextOf(new Error('the shown card is gone')));
-      const commandId = crypto.randomUUID();
-      let requestRoot: unknown;
-      let target: unknown;
-      try {
-        if (card.requestRef !== null) {
-          const reply = await client.post('requests/ask', scope, {
-            commandId, round: card.requestRef, cardRefs: card.source.pins, regenerate: false, text,
-          });
-          if (reply.status !== 'queued') {
-            throw new RouteReadError('requests/ask', reply.code || reply.status || 'no status', reply.reason ?? '');
-          }
-          requestRoot = card.requestRef;
-          target = asRecord(reply).followupRound;
-        } else {
-          const goalId = card.subject.kind === 'goal' ? card.subject.goalRef.goalId
-            : latestDecide?.nav.selectedGoalId ?? null;
-          const reply = await client.post('requests/submit', scope, {
-            commandId, goalId, text, continues: null, recipient: null, references: [],
-          });
-          if (reply.status !== 'queued') {
-            throw new RouteReadError('requests/submit', reply.code || reply.status || 'no status', reply.reason ?? '');
-          }
-          requestRoot = asRecord(reply).requestRoot;
-          target = asRecord(reply).round;
-        }
-      } catch (error) {
-        throw new Error(writeTextOf(error));
-      }
-      let answer: string | null = null;
-      let readRoot: unknown = null;
-      try {
-        const read = readyRouteValue<unknown>(
-          await client.post('requests/read', scope, { requestRoot }), 'requests/read',
-        );
-        const echoed = asRecord(read).requestRoot;
-        if (echoed !== null && echoed !== undefined) readRoot = echoed;
-        const rounds = asRecord(read).rounds;
-        const targetId = asText(asRecord(target).queryJobId);
-        if (Array.isArray(rounds) && targetId !== '') {
-          const hit = rounds.map((entry) => asRecord(entry))
-            .find((entry) => asText(asRecord(entry.ref).queryJobId) === targetId);
-          if (hit !== undefined) answer = asText(hit.answer) || null;
-        }
-      } catch {
-        /* The send stands; a failed read only means this round has no answer yet. */
-        answer = null;
-      }
-      return { root: requestRootKey((readRoot ?? requestRoot) as QueryJobRef), input: text, answer };
+      const goalId = card.subject.kind === 'goal' ? card.subject.goalRef.goalId
+        : latestDecide?.nav.selectedGoalId ?? null;
+      return askAndRead(scope, card.requestRef, card.requestRef, card.source.pins, false, text, goalId);
     },
     async controlLine(kind: 'pause' | 'resume' | 'cancel'): Promise<void> {
       const data = latestLine;
@@ -958,7 +1060,7 @@ export async function bootBoardPage(): Promise<void> {
         /* MainData is flat `NavData &` extras, so the card writes use this
            read's queue exactly like Decide's own. */
         const main = snapshot.data as MainData | null;
-        if (boardName === 'Main' && main?.decisions) {
+        if ((boardName === 'Main' || boardName === 'Plan') && main?.decisions) {
           latestDecide = main.decisions;
           latestDecideScope = main.scope;
         }
@@ -1233,6 +1335,7 @@ type BoardReader<T> = (
 const BOARD_READERS: Record<string, BoardReader<unknown>> = {
   TaskMap: readTaskMap as BoardReader<unknown>,
   Main: readMain,
+  Plan: readPlan as BoardReader<unknown>,
   Goals: readGoals,
   ArchOverview: readArchOverview as BoardReader<unknown>,
   Decide: readDecide as BoardReader<unknown>,
@@ -2159,23 +2262,30 @@ function crumbPathOf(tree: GoalsTaskNode, id: string): Array<{ id: string; name:
  * `readDecisionQueue`, and the 轨迹 tab adds the one `sessions/history` read.
  * A failed queue read hides the cards only; every other failure fails the read.
  */
-export async function readMain(
-  client: ReturnType<typeof createHostClient>, goalId: string | null,
-  demand: BoardReadDemand = {},
-): Promise<RefreshRead<MainData>> {
-  const navRead = await readNav(client, goalId, demand);
-  if (navRead.data === null) return { data: null, cursor: navRead.cursor };
-  const nav = navRead.data;
+/**
+ * §2.3 steps 2–5: the one centre read Main and Plan share. The conversation
+ * follows `mainPages` (a missing Goal keeps the pages read so far), the cards
+ * are the shared queue (a failed queue read hides them only), the Workspace pin
+ * is read only when a 请知悉 row is drawn (and only when the caller asks for
+ * notice tokens), and the 轨迹 tab adds the one `sessions/history` read.
+ */
+export async function readMainThread(
+  client: ReturnType<typeof createHostClient>, nav: NavData, demand: BoardReadDemand,
+  options: { noticeTokens?: boolean } = {},
+): Promise<{
+  pages: MainPageRead[]; decisions: DecideData | null;
+  older: MainPageCursorV1 | null; track: MainTrackRow[] | null;
+}> {
   const scope = nav.scope;
-  if (scope === null) return { data: null, cursor: navRead.cursor };
+  if (scope === null) return { pages: [], decisions: null, older: null, track: null };
   /* §2.3 step 2: first page at `cursor: null`, then each page's `next`; a
      missing Goal (only with a Goal selected) keeps the pages read so far. */
   let cursor: MainPageCursorV1 | null = null;
-  const pages: MainPageV1[] = [];
+  const pages: MainPageRead[] = [];
   const want = Math.max(1, demand.mainPages ?? 1);
   for (let index = 0; index < want; index += 1) {
     try {
-      const page: MainPageV1 = readyRouteValue<MainPageV1>(await client.post('main/read', scope, {
+      const page: MainPageRead = readyRouteValue<MainPageRead>(await client.post('main/read', scope, {
         goalId: nav.selectedGoalId, cursor,
       }), 'main/read');
       pages.push(page);
@@ -2195,8 +2305,9 @@ export async function readMain(
     decisions = null;
   }
   /* §2.3 step 4: the Workspace pin is read once, and only when a 请知悉 row is
-     drawn (Decide D8). */
-  if (decisions !== null
+     drawn (Decide D8). Plan passes `noticeTokens:false`: it draws no notice
+     card and does not read the pin (qc 2). */
+  if (options.noticeTokens !== false && decisions !== null
     && decisions.sections.some((section) => section.level === 'notice' && section.rows.length > 0)) {
     const registration = readyRouteValue<{ workspace: { ref: unknown; revision: number } }>(
       await client.post('workspaces/registration', scope, scope), 'workspaces/registration',
@@ -2235,6 +2346,26 @@ export async function readMain(
       }
     }
   }
+  return { pages, decisions, older: cursor, track };
+}
+
+/**
+ * §2.3: the Main read. The chrome is `readNav`'s one read (so `lines/list`,
+ * `bootstrap` and the selected Goal's `tasks/query` are not read twice); the
+ * centre is the shared `readMainThread`. A failed queue read hides the cards
+ * only; every other failure fails the read.
+ */
+export async function readMain(
+  client: ReturnType<typeof createHostClient>, goalId: string | null,
+  demand: BoardReadDemand = {},
+): Promise<RefreshRead<MainData>> {
+  const navRead = await readNav(client, goalId, demand);
+  if (navRead.data === null) return { data: null, cursor: navRead.cursor };
+  const nav = navRead.data;
+  const scope = nav.scope;
+  if (scope === null) return { data: null, cursor: navRead.cursor };
+  const thread = await readMainThread(client, nav, demand);
+  const { pages, decisions, older: cursor, track } = thread;
   /* §2.4 step 1: the selected line's record, through the same read and the
      same projection Member uses. `branched` has no single record. */
   let line: MainLineRecord | null = null;
@@ -2264,6 +2395,66 @@ export async function readMain(
     });
   return {
     data: adaptMain({ nav, pages, decisions, older: cursor, track, line, aux }),
+    cursor: navRead.cursor,
+  };
+}
+
+/**
+ * E3 Plan A §2.2: the Plan read. The chrome is `readNav`'s one read; the centre
+ * is the shared `readMainThread` (its first page only, no notice tokens); the
+ * candidate is `plans/request-candidate` of the newest ideas round, and the
+ * adopted versions are `plans/versions`. The conversion is `adaptPlan`; the
+ * page never parses a proposal.
+ */
+export async function readPlan(
+  client: ReturnType<typeof createHostClient>, goalId: string | null,
+  demand: BoardReadDemand = {},
+): Promise<RefreshRead<PlanData>> {
+  const navRead = await readNav(client, goalId, demand);
+  if (navRead.data === null) return { data: null, cursor: navRead.cursor };
+  const nav = navRead.data;
+  const scope = nav.scope;
+  if (scope === null) return { data: null, cursor: navRead.cursor };
+  /* Ruling 2: Plan A reads the first page only; no "更早" entry is drawn. */
+  const thread = await readMainThread(client, nav, { ...demand, mainPages: 1 }, { noticeTokens: false });
+  /* §2.2 step 3: the newest round with ideas names the request whose candidate
+     the page reads; no request, no candidate, or an empty `candidate` means
+     "not read" (`cand: null`). */
+  const found = ideasRoundOf(thread.pages);
+  let cand: PlanCandidateRead | null = null;
+  if (nav.selectedGoalId !== null && found !== null && found.request.candidate !== null) {
+    const goalRef = { aggregateType: 'Goal' as const, projectId: scope.projectId, goalId: nav.selectedGoalId };
+    try {
+      const read = readyRouteValue<unknown>(await client.post('plans/request-candidate', scope, {
+        goalRef, requestRef: found.request.requestRoot,
+      }), 'plans/request-candidate');
+      cand = candidateReadOf(read);
+    } catch (error) {
+      /* `not_found` is "this request has no candidate"; any other failure only
+         turns the plan card unconnected (M8), never the whole page. */
+      cand = { head: null, status: 'closed', impact: { marks: [] },
+        error: !(error instanceof RouteReadError && error.code === 'not_found') };
+    }
+  }
+  /* §2.2 step 4: the adopted versions; `not_found` is the empty page and any
+     other failure fails this read. */
+  let versions: PlanVersionRow[] = [];
+  if (nav.selectedGoalId !== null) {
+    try {
+      versions = versionRowsOf(readyRouteValue<{
+        items: { revision: number; at: string | null; reasonLabel: string }[];
+      }>(await client.post('plans/versions', scope, {
+        goalId: nav.selectedGoalId, limit: 50, cursor: null,
+      }), 'plans/versions'));
+    } catch (error) {
+      if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
+    }
+  }
+  return {
+    data: adaptPlan({
+      main: adaptMain({ nav, ...thread }),
+      pages: thread.pages, cand, versions,
+    }),
     cursor: navRead.cursor,
   };
 }
@@ -2763,6 +2954,7 @@ export async function pinTaskMapLine(
 
 const WRITE_ERROR_TEXT: Record<string, string> = {
   revision_conflict: '这条工作线的版本已变化，请重读后再试。',
+  'busy:stopping_affected_work': '有工作还在停下，等停下后再点一次。',
   unavailable: '暂时写不了，可以重试。',
   forbidden: '这次写入没有被允许。',
   invalid: '这次写入的输入无效。',
@@ -2770,7 +2962,8 @@ const WRITE_ERROR_TEXT: Record<string, string> = {
 
 function writeTextOf(error: unknown): string {
   const code = error instanceof RouteReadError ? error.code : '';
-  return WRITE_ERROR_TEXT[code] ?? '写入失败。';
+  const reason = error instanceof RouteReadError ? error.reason : '';
+  return WRITE_ERROR_TEXT[code + ':' + reason] ?? WRITE_ERROR_TEXT[code] ?? '写入失败。';
 }
 
 /** A35 (§2.6, §2.7; lead ruling 4): the outer `committed` of `tasks/requeue`

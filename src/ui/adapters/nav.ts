@@ -13,7 +13,7 @@
 
 import type { TaskGraph } from '../../contracts/task-graph.js';
 import { asRecord, asText } from '../values.js';
-import { goalDisplayState, type GoalDisplayPhaseCode } from './task-map.js';
+import { goalDisplayState, isFinishedGoalDisplayPhase, type GoalDisplayPhaseCode } from './task-map.js';
 import type { LineReadValue } from './line-shared.js';
 
 /** The eleven line own states (`LineOwnStateV1`) in the boards' words. One
@@ -311,6 +311,22 @@ export function adaptNav(
     hasGoal: selectedGoalId !== null,
     phaseRevision: reads.phase === undefined ? null : completionRevisionOf(reads.phase),
     scope,
+  };
+}
+
+/** §2.9: the Goal bar's four controls, the same rule the prototype draws inline
+ * (`Main.dc.html:3145-3148`): a finished Goal has none, a paused one only
+ * resumes, and a cancelled one can be requeued (a copy, never a revive). */
+export function goalControlsOf(display: NavDisplay | null): {
+  canPause: boolean; canResume: boolean; canCancel: boolean; canRequeue: boolean;
+} {
+  const phase = display === null ? null : display.phase;
+  const finished = phase !== null && isFinishedGoalDisplayPhase(phase as GoalDisplayPhaseCode);
+  return {
+    canPause: display !== null && !finished && phase !== 'PAUSED',
+    canResume: phase === 'PAUSED',
+    canCancel: display !== null && !finished,
+    canRequeue: phase === 'CANCELLED',
   };
 }
 
