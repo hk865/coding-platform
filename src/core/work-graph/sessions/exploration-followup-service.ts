@@ -192,7 +192,7 @@ export function createExplorationFollowUpService(deps: ExplorationFollowUpDeps):
     const { projectId } = at.input;
     const pin = at.action.baseCatalogPin;
     if (pin === null) return rejected('invalid', 'the follow-up operation has no base pin');
-    const window = await readCurrentCatalogWindow(deps.records, projectId);
+    const window = await readCurrentCatalogWindow(deps.records, projectId, { lines: deps.knowledge, caller: at.ctx });
     if (window.status !== 'ready') return window;
     const lines = await deps.regionLines.readOpenRegionLines(at.ctx, { projectId });
     if (lines.status !== 'ready') return lines;
@@ -327,7 +327,7 @@ export function createExplorationFollowUpService(deps: ExplorationFollowUpDeps):
       ? `repropose:${input.sourceBatchRef?.batchId ?? input.requestId}`
       : `deepen:${input.requestId}`;
     const window = input.baseCatalogPin === undefined
-      ? await readCurrentCatalogWindow(deps.records, input.projectId) : null;
+      ? await readCurrentCatalogWindow(deps.records, input.projectId, { lines: deps.knowledge, caller: ctx }) : null;
     if (window !== null && window.status !== 'ready') {
       return window.status === 'rejected' ? window
         : rejected('invalid', 'the project has no current architecture window');
@@ -361,7 +361,7 @@ export function createExplorationFollowUpService(deps: ExplorationFollowUpDeps):
     if (initialization.value === null || !initialization.value.completed) {
       return rejected('invalid', 'initialization is not complete');
     }
-    const window = await readCurrentCatalogWindow(deps.records, projectId);
+    const window = await readCurrentCatalogWindow(deps.records, projectId, { lines: deps.knowledge, caller: ctx });
     if (window.status !== 'ready') {
       return window.status === 'rejected' ? window
         : rejected('invalid', 'the project has no current architecture window');

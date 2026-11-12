@@ -10,7 +10,6 @@
  * This file performs no I/O: it only checks pure encoding, identity, version and
  * plan structure, and it computes no digest and starts no transaction.
  */
-import { architectureCatalogPinShape, type ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import { defineShape, f } from '../../../contracts/data-format.js';
@@ -19,6 +18,7 @@ import { SessionMessageRefShape } from '../../../contracts/data-format-refs.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { RoleBindingRefV1, RunRef } from '../../../contracts/dispatch.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { KnowledgePinShape } from '../../../contracts/knowledge.js';
 import {
   invalid, isNonNeg, isPos, isRecord, isSha256Hex, nonEmpty, parseTaggedObject,
   type UnknownRecord,
@@ -774,10 +774,10 @@ export function candidateRequestRef(proposal: PlanProposal): QueryJobRef | null 
   return proposal.requestRef ?? null;
 }
 
-/** L10: the candidate's catalog pin as an R1 fragment of this hand-written codec: exact keys, `null` allowed, absent
- * refused (a present key holding `undefined` is invalid). */
+/** L10, L3 ([2C2-04]): the candidate's knowledge pin as an R1 fragment of this hand-written codec: exact keys, `null`
+ * allowed, absent refused (a present key holding `undefined` is invalid). The pin names no project. */
 const planProposalCatalogPinShape = defineShape({ name: 'PlanProposalCatalogPinV1',
-  fields: { catalogPin: f.nullable(f.ref(architectureCatalogPinShape)) } });
+  fields: { catalogPin: f.nullable(f.ref(KnowledgePinShape)) } });
 
 function proposalValueIssues(value: unknown, expectedRef: PlanProposalRef | null): string[] {
   if (!isRecord(value)) return ['PlanProposal must be an object'];
@@ -845,9 +845,6 @@ function proposalValueIssues(value: unknown, expectedRef: PlanProposalRef | null
     const catalogPin = value['catalogPin'];
     const pinProblem = checkShape(planProposalCatalogPinShape, { catalogPin }, 'stored');
     if (pinProblem !== null) issues.push(pinProblem);
-    else if (catalogPin !== null && (catalogPin as ArchitectureCatalogPinV1).catalogRef.projectId !== ref.projectId) {
-      issues.push('candidate_v2.catalogPin must name a catalog of this project');
-    }
     const sourceMessage = value['sourceMessageRef'];
     if (sourceMessage !== null && sessionMessageRefFromValue(sourceMessage) === null) {
       issues.push('candidate_v2.sourceMessageRef must be null or a complete SessionMessageRef');

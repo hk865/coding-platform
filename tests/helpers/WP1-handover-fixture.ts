@@ -199,7 +199,7 @@ async function createHandoverWorkflow(b2: B2ExecutionFixture, options: HandoverW
     configuration: options.configuration });
   const knowledge = knowledgeLinesFor({ root: base.directory, projectId: base.scope.projectId,
     workspaceId: base.scope.workspaceId, records });
-  const responsibilities = createSessionResponsibilityService({ records, lookups: records,
+  const responsibilities = createSessionResponsibilityService({ records, lookups: records, knowledge,
     basis: createSessionResponsibilityBasisReader(records, knowledge), now, duty: sessionDuty });
   const sessionLifecycle = createSessionLifecycleService({ records,
     knowledge, lookups: records, sessionFacts, duty: sessionDuty });

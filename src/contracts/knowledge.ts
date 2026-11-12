@@ -2,6 +2,7 @@
  * The code-knowledge files under `<workspace root>/.workbench/`: the shapes that
  * cross the WorkGraph, the composition root and the pages.
  */
+import { defineShape, f, type ShapeRule } from './data-format.js';
 
 /** The knowledge directory, relative to a workspace root. */
 export const KNOWLEDGE_DIRECTORY = '.workbench';
@@ -48,3 +49,58 @@ export type ReconcileResult = {
 export type KnowledgeRecoveryItemV1 = { itemNo: number; kind: 'write_unconfirmed' | 'reverted'; path: string };
 /** What a recovery wrote: the file and its blob now; `blobSha` is null when the recovery deleted the file. */
 export type KnowledgeRecoverResult = { path: string; blobSha: string | null };
+
+/**
+ * Git's view of one line's knowledge directory (`local/` left out). `dirty` counts places: an untracked file is
+ * one, any other entry one for each of its index and work-tree sides that changed; `files` counts paths (a rename's
+ * new path).
+ */
+export type KnowledgeLineStatusV1 = { branch: string; head: string | null; dirty: number; files: number };
+/** What the prompt and the confirmation of "commit the architecture and notes" read. */
+export type KnowledgeCommitStatus = { branch: string; dirty: number; files: number; localOnly: boolean };
+/** One commit of the knowledge directory: the full commit id, its branch and the files it took. */
+export type KnowledgeCommitResult = { commit: string; branch: string; files: number };
+/** L3: one module's smallest fields in a pin (project view); `contains` and `dependsOn` keep only the ids they name. */
+export type KnowledgePinModuleV1 = {
+  moduleId: string; paths: readonly string[]; responsibility: string;
+  contains: readonly string[]; dependsOn: readonly { to: string; reason: string }[];
+};
+/** L3: one line's pin, from its working-tree bytes. */
+export type KnowledgeLinePinV1 = {
+  /** `lineRefKey`. */
+  lineRef: string;
+  /** sha256 of the sorted `<path>\0<gitBlobId>\n` lines of `architecture.json` and `modules/*.json` only. */
+  contentHash: string;
+  /** Null when the folder is not git (or has no commit yet). */
+  head: string | null;
+  /** One of those files is not committed (an ignored untracked one too); always true when not git. */
+  dirty: boolean;
+  /** Null when clean; when dirty, the modules on this line the plan uses. */
+  modules: readonly KnowledgePinModuleV1[] | null;
+};
+/** L3: a plan record's pin, every line it uses sorted by `lineRef`, each once; never read back (third round). */
+export type KnowledgePinV1 = { lines: readonly KnowledgeLinePinV1[] };
+
+const knowledgePinModuleField = f.object({
+  moduleId: f.string(), paths: f.array(f.string()), responsibility: f.string(),
+  contains: f.array(f.string()), dependsOn: f.array(f.object({ to: f.string(), reason: f.string() })),
+});
+/** A clean line carries no modules and a dirty one its list; runs after the fields hold. */
+const modulesFollowDirty: ShapeRule = value => {
+  const { dirty, modules } = value as KnowledgeLinePinV1;
+  return dirty === (modules !== null) ? null : 'KnowledgeLinePinV1.modules must be null exactly when the line is clean';
+};
+const knowledgeLinePinShape = defineShape({ name: 'KnowledgeLinePinV1', fields: {
+  lineRef: f.string(), contentHash: f.sha256(), head: f.nullable(f.string()), dirty: f.boolean(),
+  modules: f.nullable(f.array(knowledgePinModuleField)),
+}, rules: [modulesFollowDirty] });
+/** Strictly ascending `lineRef`, so each line is there once. */
+const linesInOrder: ShapeRule = value => {
+  const { lines } = value as KnowledgePinV1;
+  return lines.every((line, index) => index === 0 || lines[index - 1]!.lineRef < line.lineRef) ? null
+    : 'KnowledgePinV1.lines must be sorted by lineRef, each line once';
+};
+/** [2C2-04]: the plan record's pin; the old `{catalogRef, baseline}` and a single line's fields are refused (79-1). */
+export const KnowledgePinShape = defineShape({ name: 'KnowledgePinV1', fields: {
+  lines: f.array(f.ref(knowledgeLinePinShape), { min: 1 }),
+}, rules: [linesInOrder] });

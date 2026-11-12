@@ -380,7 +380,8 @@ export type S5DecisionFixture = {
   workspace: WorkspaceSnapshot;
   goals: { A: S5GoalSeed; B: S5GoalSeed; C: S5GoalSeed };
   plans: { A1: PlanRevisionSnapshot; B1: PlanRevisionSnapshot; C1: PlanRevisionSnapshot };
-  /** The adopted catalog's pin, from the public current-revision read after the adoption: a seeded candidate's pin. */
+  /** The adopted catalog's pin, from the public current-revision read after the adoption: the `expected` pin of a
+   *  catalog revision (WP2's paged context row). */
   catalogPin: ArchitectureCatalogPinV1;
   /** KLS-2: the knowledge lines every service of this world takes (one temporary root for P/W). */
   knowledge: KnowledgeLines;

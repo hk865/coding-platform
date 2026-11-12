@@ -48,6 +48,7 @@ import type { SessionCard, SessionDirectoryPort } from '../model/session-contrac
 import type { SessionFactsPort } from '../model/session-facts-contracts.js';
 import type { HandoffProgressV1 } from '../model/session-handoff-contracts.js';
 import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
+import type { KnowledgeLines } from '../model/line-knowledge.js';
 import { lookupAll } from '../persistence/lookup-all.js';
 import { catalogForWorkspace } from '../../../contracts/workspace-catalog.js';
 import { messageConsumptionProblem, messageFactsOfRecord } from '../state/message-machine.js';
@@ -141,8 +142,10 @@ export type RoleLineMaintenanceDeps = {
     startHandoff(ctx: CoreCallContext, input: { source: SessionRef; basis: SecretaryHandoffBasisV1 }):
       Promise<ReadResult<HandoffProgressV1>>;
   };
-  /** The one store: messages, operations, role-line records and the catalog. */
+  /** The one store: messages, operations, role-line records and the catalog's pointer. */
   records: MaintenanceRecords;
+  /** The knowledge files the current catalog is read from ([2C2-12]). */
+  knowledge: KnowledgeLines;
   /** The project's main workspace; absent treats the observed line's workspace as main. */
   mainWorkspaceOf?: (projectId: string) => Promise<ReadResult<string | null>>;
   /** The store's one commit-order event page (O1a). */
@@ -313,8 +316,8 @@ export function createRoleLineMaintenance(deps: RoleLineMaintenanceDeps): RoleLi
   }
 
   /** The current catalog; `not_found` is a lawful "none adopted". */
-  async function catalogOf(projectId: string): Promise<ReadResult<AdoptedArchitecture | null>> {
-    const window = await readCurrentCatalogWindow(deps.records, projectId);
+  async function catalogOf(ctx: CoreCallContext, projectId: string): Promise<ReadResult<AdoptedArchitecture | null>> {
+    const window = await readCurrentCatalogWindow(deps.records, projectId, { lines: deps.knowledge, caller: ctx });
     if (window.status === 'ready') return ready(window.catalog.catalog);
     if (window.status === 'not_found') return ready(null);
     return rejected(window.code, window.reason);
@@ -346,7 +349,7 @@ export function createRoleLineMaintenance(deps: RoleLineMaintenanceDeps): RoleLi
     }
     const record = card.value.record;
     const line = { session: plainSessionRef(record.ref), duty: counted, scopes: lineScopesOf(card.value.links) };
-    const catalog = await catalogOf(record.ref.projectId);
+    const catalog = await catalogOf(ctx, record.ref.projectId);
     if (catalog.status !== 'ready') return catalog;
     const regions = line.scopes.flatMap((scope) => scope.kind === 'region' ? [scope.moduleRef] : []);
     // The observation files are the line's workspace-relative paths: project

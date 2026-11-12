@@ -9,6 +9,7 @@ import type { AdoptedArchitecture, ArchitectureCatalogPinV1 } from '../../src/co
 import { architectureCatalogPinShape } from '../../src/contracts/architecture-catalog.js';
 import type { CoreRejection } from '../../src/contracts/core/results.js';
 import type { InferShape } from '../../src/contracts/data-format.js';
+import type { KnowledgePinV1 } from '../../src/contracts/knowledge.js';
 import type { PlanWriteProvenanceV1 } from '../../src/contracts/delegated-write.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft, PlanRevisionRef, PlanValidationError, RuntimeTask } from '../../src/contracts/plan.js';
@@ -129,13 +130,10 @@ const REASON: PlanChangeReason = { text: 'add the module task', sources: [] };
 const OPERATOR = { kind: 'human', id: 'operator' } as const;
 const T = '2026-10-08T00:00:00.000Z';
 
-const pin: ArchitectureCatalogPinV1 = {
-  catalogRef: { aggregateType: 'ArchitectureCatalog', projectId: PROJECT, baselineId: 'b1', revision: 1 },
-  baseline: { ref: { aggregateType: 'ArchitectureBaselineRevision', projectId: PROJECT, baselineId: 'b1', revision: 1 },
-    digest: '0123456789abcdef'.repeat(4) },
-};
-const pin2: ArchitectureCatalogPinV1 = { ...pin,
-  catalogRef: { ...pin.catalogRef, revision: 2 }, baseline: { ref: { ...pin.baseline.ref, revision: 2 }, digest: 'fedcba9876543210'.repeat(4) } };
+// The candidate's knowledge pin (L3): two that differ only in the content hash.
+const pin: KnowledgePinV1 = { lines: [{ lineRef: JSON.stringify(['w1', '']), contentHash: '0123456789abcdef'.repeat(4),
+  head: null, dirty: false, modules: null }] };
+const pin2: KnowledgePinV1 = { lines: [{ ...pin.lines[0]!, contentHash: 'fedcba9876543210'.repeat(4) }] };
 const UNKNOWN_MODULE: CoreRejection = { status: 'rejected', code: 'invalid', reason: 'unknown_module: t1=m9' };
 const ISSUE: PlanValidationError = { path: 'tasks[0]', code: 'missing_task_assignment', message: 'no assignment' };
 

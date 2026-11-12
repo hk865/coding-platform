@@ -74,6 +74,8 @@ export type S4ANoteScopeFixture = {
     Promise<unknown>;
   write(ctx: CoreCallContext, draft: NoteDraftV1, goalId: string | null,
     options?: { commandId?: string; expectedPointerRevision?: number | null }): Promise<WriteNoteResult>;
+  /** KLS-2: the Host gets a separate empty root for a workspace a row registers later; the knowledge list follows. */
+  addWorkspaceRoot(workspaceId: string): Promise<string>;
   close(): Promise<void>;
 };
 
@@ -120,10 +122,13 @@ export async function createS4ANoteScopeFixture(kind: S4ANoteScopeFixtureKind,
   let clock = 0;
   const now = () => new Date(Date.parse(S4A_SCOPE_AT) + (++clock) * 1000).toISOString();
   const hostActor = { kind: 'human' as const, id: 's4a-scope-operator' };
+  // KLS-2: the Host's workspace roots of the project, the main workspace first; the knowledge list is this table.
+  const roots = new Map<string, string>([[WORKSPACE, root]]);
   const bindings: WorkspaceHostBindings = {
     async resolveRoot(requested) {
-      return requested.projectId === PROJECT && requested.workspaceId === WORKSPACE
-        ? { status: 'ready', value: { root, workspaceRevision: 1 } }
+      const known = requested.projectId === PROJECT ? roots.get(requested.workspaceId) : undefined;
+      return known !== undefined
+        ? { status: 'ready', value: { root: known, workspaceRevision: 1 } }
         : { status: 'rejected', code: 'not_found', reason: 'the workspace is not registered' };
     },
     async authorize() {
@@ -133,8 +138,8 @@ export async function createS4ANoteScopeFixture(kind: S4ANoteScopeFixtureKind,
   const platform = await createTargetPlatform({
     storage: kind === 'memory' ? { kind: 'memory' } : { kind: 'sqlite', directory: join(directory, 'storage') },
     workspace: bindings,
-    // KLS-2: the Host's workspace list is the one root it resolves.
-    knowledgeWorkspaces: projectId => projectId === PROJECT ? [WORKSPACE] : [],
+    // KLS-2: the Host's workspace list is the roots it resolves.
+    knowledgeWorkspaces: projectId => projectId === PROJECT ? [...roots.keys()] : [],
     now,
     kernelStores: { entries: [{ adapterId: 's4a-kernel', storeKey: 's4a-kernel-store', workspace: scope,
       databasePath: join(directory, 'kernel.sqlite') }] },
@@ -321,6 +326,11 @@ export async function createS4ANoteScopeFixture(kind: S4ANoteScopeFixtureKind,
     async write(callCtx, draftNote, goalId, opts = {}) {
       return platform.notes.writeNote(callCtx, { commandId: opts.commandId ?? `s4a-scope-${suffixCounter++}`,
         note: draftNote, expectedPointerRevision: opts.expectedPointerRevision ?? null, goalId });
+    },
+    async addWorkspaceRoot(workspaceId) {
+      const added = await mkdtemp(join(directory, 'workspace-'));
+      roots.set(workspaceId, added);
+      return added;
     },
     async close() {
       await platform.close();

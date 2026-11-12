@@ -14,7 +14,7 @@
  * becomes a finding. The candidate's catalog pin is review-input fact only;
  * module existence is not checked here.
  */
-import type { ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
+import type { KnowledgePinV1 } from '../../../contracts/knowledge.js';
 import type { PlanRevisionDraft, PlanRevisionRef } from '../../../contracts/plan.js';
 import type { PlanDiagnosisFindingV1, PlanReviewReadV1 } from '../../../contracts/plan-review.js';
 import type { PlanFixReadV1 } from '../../../contracts/plan-round.js';
@@ -124,8 +124,8 @@ const NO_REGISTERED_CHECK_MESSAGE = '没有已注册的检查能覆盖这条必�
 export function diagnosePlanCandidate(input: {
   /** The candidate draft's obligations and their verification requirements. */
   candidate: Pick<PlanRevisionDraft, 'obligations'>;
-  /** The catalog the candidate was checked against; a review-input fact only. */
-  catalogPin: ArchitectureCatalogPinV1 | null;
+  /** The knowledge files the candidate was checked against; a review-input fact only. */
+  catalogPin: KnowledgePinV1 | null;
   /** The resolved policy's requirement kinds. */
   requirementKinds: readonly string[];
   /** Registered check capabilities; `null` means the coverage is unknown. */

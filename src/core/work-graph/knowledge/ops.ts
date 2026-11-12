@@ -2,7 +2,8 @@
  * The platform's knowledge operations (`platform.knowledge`): only the project's `KnowledgeLines` reach a line and
  * only its write dependencies reach the queue, the leases, the index and the snapshots. A conflict a reconciliation
  * finds asks the modules' region advisers here, whichever trigger reconciled (a recovery's included). The person's
- * recoveries and the read of a notice's recovery items are here too.
+ * recoveries and the read of a notice's recovery items are here too, the git status and commit of a line's
+ * knowledge directory, and R6's mark of a checkout another project already had.
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
@@ -14,9 +15,10 @@ import { utf8ByteLength } from '../../../contracts/utf8.js';
 import { isPos, isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type { SessionMessageCommandPort } from '../model/communication-contracts.js';
 import type { KnowledgeOpsPort } from '../model/knowledge-ops.js';
-import type { KnowledgeLines, LineKnowledge } from '../model/line-knowledge.js';
+import { lineRefKey, type KnowledgeLines, type LineKnowledge } from '../model/line-knowledge.js';
 import { hostSystemContext } from '../model/platform-check-context.js';
 import { storeFailureToRejection } from '../persistence/read-result-failures.js';
+import { withKnowledgeLeases } from './knowledge-write.js';
 import { conflictNoticeOf, reconcileKnowledgeLine } from './reconcile.js';
 import { recoverKnowledgeItem, recoveryItemsOf } from './recover.js';
 
@@ -40,7 +42,12 @@ const CONFLICT_REASONS: Record<KnowledgeConflictV1['kind'], string> = {
 const REQUEST_INSTRUCTION = '请核对这些文件，用 propose_architecture_revision 提一份架构修订来解决。平台不会自动合并，也不会改这些文件。';
 const omittedPaths = (count: number): string => `（还有 ${count} 条路径没列出）`;
 
-export function createKnowledgeOps(lines: KnowledgeLines, asks: KnowledgeConflictAsks): KnowledgeOpsPort {
+/**
+ * `localOnly`: the person's "architecture and notes stay local" of a checkout (`LineRef.repoKey`), the Host's setting; a
+ * platform built without a Host says false.
+ */
+export function createKnowledgeOps(lines: KnowledgeLines, asks: KnowledgeConflictAsks,
+  localOnly: (repoKey: string) => boolean): KnowledgeOpsPort {
   const reconcile: KnowledgeOpsPort['reconcile'] = async (ctx, workspaceId, trigger) => {
     const line = await lines.line(ctx, workspaceId);
     if (line.status !== 'ready') return storeFailureToRejection(line);
@@ -62,6 +69,59 @@ export function createKnowledgeOps(lines: KnowledgeLines, asks: KnowledgeConflic
     async recoveryItems(ctx, input) {
       if (!isRecord(input) || !nonEmpty(input.noticeId)) return rejected('invalid', 'input must be { noticeId: a non-empty string }');
       return recoveryItemsOf(lines.write, ctx.projectId, input.noticeId);
+    },
+    // [2C2-08]: the line only through the project's lines, so a workspace not registered in it is refused there.
+    async status(ctx, workspaceId) {
+      const line = await lines.line(ctx, workspaceId);
+      if (line.status !== 'ready') return storeFailureToRejection(line);
+      const status = await line.value.status();
+      if (status.status !== 'ready') return storeFailureToRejection(status);
+      const { branch, dirty, files } = status.value;
+      return { status: 'ready', value: { branch, dirty, files, localOnly: localOnly(line.value.line.repoKey) } };
+    },
+    // [2C2-07], [2C2-08]: in the write queue and the checkout's lease, like any knowledge write; the route hands the
+    // input over as it came, so the message is checked here.
+    async commit(ctx, input) {
+      const invalid = rejected('invalid', 'input must be { message?: a string or null }');
+      if (!isRecord(input) || !nonEmpty(input.workspaceId)) return invalid;
+      const message: unknown = input.message;
+      if (message !== undefined && message !== null && typeof message !== 'string') return invalid;
+      const line = await lines.line(ctx, input.workspaceId);
+      if (line.status !== 'ready') return storeFailureToRejection(line);
+      if (localOnly(line.value.line.repoKey)) return rejected('forbidden', '架构图和注记设置为只留在本机');
+      const write = lines.write;
+      const committed = await write.queue.run(ctx.projectId, [line.value.line.folder], async () => {
+        const leased = await withKnowledgeLeases(write, [line.value], () => line.value.commit(message ?? null));
+        return leased.status === 'ready' ? leased.value : leased;
+      });
+      if (committed.status !== 'ready') return storeFailureToRejection(committed);
+      // After the queue and the lease are let go (the reconciliation takes its own): the index takes the committed
+      // files and their snapshots go. Its failure leaves the commit as it is.
+      await reconcile(ctx, input.workspaceId, 'after_commit').catch(() => undefined);
+      return committed;
+    },
+    // [2C2-11]: in the write queue, since the writes index the same line.
+    async markJoinedCheckout(ctx, workspaceId) {
+      const line = await lines.line(ctx, workspaceId);
+      if (line.status !== 'ready') return storeFailureToRejection(line);
+      const lineRef = lineRefKey(line.value.scope, line.value.line);
+      const write = lines.write;
+      return write.queue.run(ctx.projectId, [line.value.line.folder], async () => {
+        try {
+          const index = write.indexOf(ctx.projectId);
+          const marked = index.transaction(tx => {
+            const notes = index.listFiles(lineRef).filter(file => file.kind === 'note');
+            for (const note of notes) {
+              tx.setNoteState(lineRef, note.blobSha,
+                { verifyState: 'needs_verification', verifyReason: 'joined_existing_checkout' });
+            }
+            return notes.length;
+          });
+          return { status: 'ready' as const, value: { marked } };
+        } catch (error) {
+          return storeFailureToRejection(error);
+        }
+      });
     },
   };
 }

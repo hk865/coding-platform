@@ -16,7 +16,7 @@ import type { VersionPin } from '../../../contracts/core/identity.js';
 import { decisionSourceKey, type DecisionObjectV1, type DecisionOptionV1,
   type DecisionSourceV1 } from '../../../contracts/goal-decisions.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
-import type { ReadResult } from '../../../contracts/core/results.js';
+import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import { messageOf } from '../../../contracts/error-message.js';
 import { canonicalKey, canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import { checkShape } from '../../../contracts/validation/data-format.js';
@@ -32,7 +32,7 @@ import {
   type ArchitectureProposalRecordV1,
 } from '../architecture/proposal-record-codecs.js';
 import { readProjectBatches } from '../architecture/proposal-service.js';
-import { readCurrentCatalogWindow, type CurrentCatalogWindow } from '../architecture/catalog-service.js';
+import { readCatalogPointerRevision } from '../architecture/catalog-service.js';
 import { STRUCTURAL_PROPOSAL_OPTIONS } from '../communication/decision-source-facts.js';
 
 /** The batch, its members and the active pointer revision read once for one projection. */
@@ -98,9 +98,18 @@ function isOpen(facts: { members: readonly ArchitectureProposalRecordV1[] }): bo
   return facts.members.some(member => member.state === 'pending');
 }
 
-function windowRejection(window: Exclude<CurrentCatalogWindow, { status: 'ready' }>) {
-  return window.status === 'rejected' ? window
-    : { status: 'rejected' as const, code: 'unavailable' as const, reason: 'the current architecture catalog is not readable' };
+/**
+ * The active pointer's revision a card pins (2c-2b ruling 3(b)): only the pointer record is read, never a knowledge
+ * file, so the read-back gate does not take the structural cards away while a conflict stands (the cards that repair
+ * it among them). A project with no adopted catalog is unavailable, as before.
+ */
+async function pinnedPointerRevision(deps: StructuralProposalSourceDependencies, projectId: string):
+  Promise<{ status: 'ready'; value: number } | CoreRejection> {
+  const pointer = await readCatalogPointerRevision(deps.records, projectId);
+  if (pointer.status !== 'ready') return pointer;
+  return pointer.value === null
+    ? { status: 'rejected', code: 'unavailable', reason: 'the current architecture catalog is not readable' }
+    : { status: 'ready', value: pointer.value };
 }
 
 function pinsOf(facts: StructuralProposalCardFactsV1): VersionPin[] {
@@ -245,11 +254,11 @@ export function createStructuralProposalSource(
       const batches = await readProjectBatches(deps.records, projectId);
       if (batches.status !== 'ready') return batches;
       if (batches.value.length === 0) return { status: 'ready', value: [] };
-      const window = await readCurrentCatalogWindow(deps.records, projectId);
-      if (window.status !== 'ready') return windowRejection(window);
+      const active = await pinnedPointerRevision(deps, projectId);
+      if (active.status !== 'ready') return active;
       const items: StructuralProposalCardFactsV1[] = [];
       for (const batch of batches.value) {
-        const facts = await readFacts(deps, ctx, batch, window.activeRevision);
+        const facts = await readFacts(deps, ctx, batch, active.value);
         if (facts.status !== 'ready') return facts;
         if (isOpen(facts.value)) items.push(facts.value);
       }
@@ -267,9 +276,9 @@ export function createStructuralProposalSource(
       const batch = await readBatchByRef(deps, ref);
       if (batch.status !== 'ready') return batch;
       if (batch.value === null) return { status: 'ready', value: null };
-      const window = await readCurrentCatalogWindow(deps.records, projectId);
-      if (window.status !== 'ready') return windowRejection(window);
-      const facts = await readFacts(deps, ctx, batch.value, window.activeRevision);
+      const active = await pinnedPointerRevision(deps, projectId);
+      if (active.status !== 'ready') return active;
+      const facts = await readFacts(deps, ctx, batch.value, active.value);
       if (facts.status !== 'ready') return facts;
       if (!isOpen(facts.value)) return { status: 'ready', value: { closed: 'source_resolved', openedAt: null } };
       return { status: 'ready', value: { item: facts.value } };

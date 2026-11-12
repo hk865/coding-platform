@@ -56,13 +56,16 @@ async function drained(q: S7D2QueueWorld, g7: GoalRef, done: (lines: string[]) =
 describe('O5b-R3: a cap raise and a goal completion each wake the lifecycle drain', () => {
   /*
    * Named mutation (X-20; v4 :6760): drop `'ProjectRoleLimits'` from `LIFECYCLE_WAKE_AGGREGATE_TYPES`
-   * (`src/app/wake-loop.ts:66–:69`) -> the second `toContain` is red (R3-a's bounded poll may also time out; the row
+   * (`src/app/wake-loop.ts:69–:72`) -> the second `toContain` is red (R3-a's bounded poll may also time out; the row
    * does not rely on it). Drop `'GoalPhase'` -> the first `toContain` is red (the completion commit writes only
-   * `GoalPhase`; the `'Goal'` string already in the list does not stand for it).
+   * `GoalPhase`; the `'Goal'` string already in the list does not stand for it). Drop `'KnowledgeWrite'` -> the third
+   * `toContain` is red (KLS-2c-2: in a pass where something else progressed, an exploration the gate refused is skipped
+   * and the loop stops without a back-off; only the write's completion commit brings it back once the files land).
    */
   it('R3-0: the lifecycle wake list carries GoalPhase and ProjectRoleLimits', () => {
     expect(LIFECYCLE_WAKE_AGGREGATE_TYPES).toContain('GoalPhase');
     expect(LIFECYCLE_WAKE_AGGREGATE_TYPES).toContain('ProjectRoleLimits');
+    expect(LIFECYCLE_WAKE_AGGREGATE_TYPES).toContain('KnowledgeWrite');
   });
 
   it('R3-a (memory): raising the open cap assigns the queued G7 to one new line', async () => {

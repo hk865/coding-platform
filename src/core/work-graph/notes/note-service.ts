@@ -53,7 +53,7 @@ import {
 import type { ArchitectureCatalogPort } from '../architecture/catalog-contracts.js';
 import type { CurrentCatalogWindow } from '../architecture/catalog-service.js';
 import {
-  catalogModuleFactsOf, KNOWLEDGE_WRITE_UNCONFIRMED, opsInProjectView, readCatalogPointerRevision,
+  catalogGateRefused, catalogModuleFactsOf, opsInProjectView, readCatalogPointerRevision,
   readCurrentCatalogWindow, readRevisionByRef,
 } from '../architecture/catalog-service.js';
 import {
@@ -1462,8 +1462,9 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     for (const { goalId, window } of planWindows) {
       call.planWindows.set(`${ctx.projectId}\u0000${goalId}`, Promise.resolve(window));
     }
+    // stk16: the window prepared for the queue was refused by the read-back gate (a write in flight fails the queue).
     const facts = await reasonFactsOf(call, ctx, heads,
-      attempt !== undefined && catalogRefused(await call.catalogWindows.get(ctx.projectId)));
+      attempt !== undefined && catalogGateRefused(await call.catalogWindows.get(ctx.projectId)));
     if (!facts.ok) return { status: 'rejected', code: facts.rejection.code, reason: facts.rejection.reason };
     return { status: 'ready', value: facts.value };
   }
@@ -1505,11 +1506,6 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     windows.set(ctx.projectId, Promise.resolve(window));
     attempt.cache.set(ATTEMPT_CATALOG_POINTER_KEY, window);
     return { status: 'ready', value: undefined };
-  }
-  /** stk16: the window prepared for the queue was refused by the read-back gate (a write in flight fails the queue). */
-  function catalogRefused(window: CurrentCatalogWindow | undefined): boolean {
-    return window !== undefined && window.status === 'rejected' && window.code === 'unavailable'
-      && window.reason !== KNOWLEDGE_WRITE_UNCONFIRMED;
   }
   function attemptCatalogWindowsOf(attempt: DecisionSourceAttempt): AttemptCatalogWindows {
     const cached = attempt.cache.get(ATTEMPT_CATALOG_WINDOWS_KEY);

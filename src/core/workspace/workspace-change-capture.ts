@@ -9,11 +9,13 @@
  * (`WorkspaceBaselineV1`) and the settlement capture
  * (`WorkspaceChangeCaptureV1`).
  *
- * Git is invoked read-only with optional locks and fsmonitor disabled; no
- * repository filter, hook or external diff runs. Blob identities are computed
- * by the platform from raw bytes, never by `git hash-object` or `git diff`.
- * The task map's uncommitted read (uncommitted-files.ts) reuses the read-only
- * git helpers below.
+ * Git is invoked with optional locks and fsmonitor disabled; every read is
+ * read-only and runs no repository filter, hook or external diff. Blob
+ * identities are computed by the platform from raw bytes, never by
+ * `git hash-object` or `git diff`. The task map's uncommitted read
+ * (uncommitted-files.ts) reuses the read-only git helpers below. The one git
+ * write is `commitKnowledgeFiles` (the person's commit of `.workbench/`
+ * only), which runs the repository's own hooks and filters.
  */
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -76,11 +78,17 @@ function detailOf(error: unknown): string {
   return message.length > MAX_DETAIL ? message.slice(0, MAX_DETAIL) : message;
 }
 
-async function git(root: string, args: readonly string[]): Promise<string> {
+/** Every git call's timeout but the knowledge commit's. */
+const GIT_TIMEOUT_MS = 15_000;
+/** The knowledge commit's two commands: the repository's hooks run inside them, so they wait longer; past it git is
+ *  killed and that is a failure. */
+const KNOWLEDGE_COMMIT_TIMEOUT_MS = 120_000;
+
+async function git(root: string, args: readonly string[], timeout: number = GIT_TIMEOUT_MS): Promise<string> {
   const result = await execute(
     'git',
     ['--no-optional-locks', '-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false', '-C', root, ...args],
-    { timeout: 15_000, maxBuffer: 32 * 1024 * 1024, windowsHide: true,
+    { timeout, maxBuffer: 32 * 1024 * 1024, windowsHide: true,
       env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } },
   );
   return result.stdout;
@@ -170,23 +178,37 @@ export type KnowledgeGitState = {
   head: ReadonlyMap<string, string>;
 };
 
+/** One `git status --porcelain=v1 -z` entry of the knowledge directory: its two status letters, its path and, for a
+ *  rename or copy, the path it came from (`-z` puts the new path first); paths relative to the root. */
+type KnowledgeStatusEntry = { xy: string; path: string; from: string | null };
+
+/** Every changed, staged and untracked file of `.workbench/` (an untracked folder file by file). Status paths are the
+ *  repository's, so the root's prefix is taken off. Throws when git fails. */
+async function knowledgeStatusEntries(root: string): Promise<KnowledgeStatusEntry[]> {
+  const prefix = (await git(root, ['rev-parse', '--show-prefix'])).trim();
+  const local = (path: string): string => path.startsWith(prefix) ? path.slice(prefix.length) : path;
+  const fields = (await git(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--', KNOWLEDGE_DIRECTORY]))
+    .split('\0');
+  const entries: KnowledgeStatusEntry[] = [];
+  for (let at = 0; at < fields.length; at += 1) {
+    const entry = fields[at]!;
+    if (entry.length < 4) continue;
+    const moved = entry[0] === 'R' || entry[0] === 'C';
+    entries.push({ xy: entry.slice(0, 2), path: local(entry.slice(3)), from: moved ? local(fields[(at += 1)] ?? '') : null });
+  }
+  return entries;
+}
+
 /**
  * KLS-2 [2C1-11]: the three narrow reads a knowledge reconciliation needs of `.workbench/`, through the one `git()`.
- * Null when any of them fails (no HEAD yet included): the caller then has nothing committed. Status paths are the
- * repository's, so the root's prefix is taken off.
+ * Null when any of them fails (no HEAD yet included): the caller then has nothing committed.
  */
 export async function readKnowledgeGitState(root: string): Promise<KnowledgeGitState | null> {
   try {
-    const prefix = (await git(root, ['rev-parse', '--show-prefix'])).trim();
-    const local = (path: string): string => path.startsWith(prefix) ? path.slice(prefix.length) : path;
     const listed = new Set<string>();
-    const status = (await git(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--', '.workbench']))
-      .split('\0');
-    for (let at = 0; at < status.length; at += 1) {
-      const entry = status[at]!;
-      if (entry.length < 4) continue;
-      listed.add(local(entry.slice(3)));
-      if (entry[0] === 'R' || entry[0] === 'C') listed.add(local(status[(at += 1)] ?? ''));
+    for (const entry of await knowledgeStatusEntries(root)) {
+      listed.add(entry.path);
+      if (entry.from !== null) listed.add(entry.from);
     }
     const blobs = (output: string, pick: (meta: string[]) => string | null): Map<string, string> => {
       const found = new Map<string, string>();
@@ -205,6 +227,54 @@ export async function readKnowledgeGitState(root: string): Promise<KnowledgeGitS
   } catch {
     return null;
   }
+}
+
+const KNOWLEDGE_LOCAL_PREFIX = `${KNOWLEDGE_DIRECTORY}/local/`;
+
+/**
+ * [2C2-06]: the knowledge directory's uncommitted places and paths, `local/` left out. An untracked file is one
+ * place; any other entry is one place for each of its index and work-tree sides that changed; a rename counts its new
+ * path. Throws when git fails.
+ */
+export async function readKnowledgeChanges(root: string): Promise<{ dirty: number; files: number }> {
+  let dirty = 0;
+  const paths = new Set<string>();
+  for (const { xy, path } of await knowledgeStatusEntries(root)) {
+    if (path.startsWith(KNOWLEDGE_LOCAL_PREFIX)) continue;
+    dirty += xy === '??' ? 1 : (xy[0] === ' ' ? 0 : 1) + (xy[1] === ' ' ? 0 : 1);
+    paths.add(path);
+  }
+  return { dirty, files: paths.size };
+}
+
+/** The knowledge directory without `local/`, as one pathspec. */
+const KNOWLEDGE_PATHSPEC = ['--', `${KNOWLEDGE_DIRECTORY}/`, `:(exclude)${KNOWLEDGE_DIRECTORY}/local`];
+
+/** What a failed git command said: its stderr as it is; git says "nothing to commit" on stdout, so then its last line. */
+function gitFailureOf(error: unknown): string {
+  const { stderr, stdout } = error as { stderr?: unknown; stdout?: unknown };
+  if (typeof stderr === 'string' && stderr.trim() !== '') return stderr.trim();
+  const last = typeof stdout === 'string' ? stdout.trim().split('\n').at(-1) ?? '' : '';
+  return last === '' ? detailOf(error) : last;
+}
+
+/**
+ * [2C2-07]: the platform's one git write. `git add`, then `git commit -m <message>`, both limited to
+ * `.workbench/` (`local/` left out), so code the person staged is neither committed nor unstaged. The repository's
+ * hooks run, inside the 120-second timeout of these two commands; a failure (a hook, no user name, the index lock,
+ * nothing to commit, the timeout) comes back in git's own words, with no retry, no configuration change and no
+ * `--amend`. `commit` is HEAD's full id afterwards.
+ */
+export async function commitKnowledgeFiles(root: string, message: string):
+  Promise<{ status: 'committed'; commit: string } | { status: 'failed'; reason: string }> {
+  try {
+    await git(root, ['add', ...KNOWLEDGE_PATHSPEC], KNOWLEDGE_COMMIT_TIMEOUT_MS);
+    await git(root, ['commit', '-m', message, ...KNOWLEDGE_PATHSPEC], KNOWLEDGE_COMMIT_TIMEOUT_MS);
+  } catch (error) {
+    return { status: 'failed', reason: gitFailureOf(error) };
+  }
+  const commit = await readHead(root);
+  return commit === null ? { status: 'failed', reason: 'git commit left no HEAD' } : { status: 'committed', commit };
 }
 
 /** The ignored untracked names from the repository's own rules, names only.

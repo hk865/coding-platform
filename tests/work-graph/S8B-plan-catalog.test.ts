@@ -1,10 +1,12 @@
 /**
  * The module rule and the catalog pin through the plan owner's public entries (L10), and the initialization answer's
- * containment and root module (L11). Every state comes from tests/helpers/S8B-catalog-steps.ts's public steps; an
- * expected pin is built from the public current-revision read (`world.pin()`), never written by hand.
+ * containment and root module (L11). Every state comes from tests/helpers/S8B-catalog-steps.ts's public steps. A
+ * candidate's knowledge pin (L3, [2C2-01]) is written by hand: the S8B worlds are not git, so a line is `head: null`,
+ * `dirty: true` and carries its used modules; the content hash's algorithm is K26's, so only its form is asserted here.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ArchitectureCatalogPinV1, ModuleDefinition } from '../../src/contracts/architecture-catalog.js';
+import type { KnowledgePinModuleV1, KnowledgePinV1 } from '../../src/contracts/knowledge.js';
 import { parseInitialPlanningResponseV2 } from '../../src/contracts/initial-planning-parse.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
@@ -86,6 +88,14 @@ function withIntent(moduleRef: string): (draft: W2PlanDraftV2) => W2PlanDraftV2 
       scope: { kind: 'module', stageId: 'agent', moduleRef } }] });
 }
 const unknownModule = (reason: string) => ({ status: 'rejected', code: 'invalid', reason });
+/** The one-line pin of a candidate proposed in `workspaceId` that uses `modules` (not git: no head, dirty). */
+const linePin = (workspaceId: string, modules: ModuleDefinition[]): KnowledgePinV1 => ({ lines: [{
+  lineRef: JSON.stringify([workspaceId, '']), contentHash: expect.stringMatching(/^[0-9a-f]{64}$/), head: null, dirty: true,
+  modules: modules.map((module): KnowledgePinModuleV1 => ({ moduleId: module.ref.moduleId, paths: module.paths,
+    responsibility: module.responsibility, contains: [], dependsOn: [] })) }] });
+/** The Agent world's one module (tests/helpers/task-claim-fixture.ts's bootstrap module). */
+const agentModule = (projectId: string): ModuleDefinition => ({ ref: { projectId, moduleId: R4C_MODULE },
+  name: 'R4c claim work', responsibility: 'Fixture workspace', paths: ['src/r4c-claim-work'], interfaces: [] });
 
 type Entry = 'host' | 'replacement' | 'answer' | 'agent';
 /** Proposes a draft whose one work task names `module` through `entry`: the result, the pin the candidate must carry
@@ -96,15 +106,16 @@ async function proposeThrough(entry: Entry, catalog: boolean, module: string) {
     const goal = () => world.plans.queryGoal(world.ctx, world.goalRef);
     const before = await goal();
     const result = await world.proposeAsWorkRun(world.futureDraft('s8b-agent-plan', withIntent(module)), world.planRef);
-    return { result, pin: await world.pin(), unchanged: async () => expect(await goal()).toEqual(before) };
+    return { result, pin: linePin(world.scope.workspaceId, [agentModule(world.scope.projectId)]),
+      unchanged: async () => expect(await goal()).toEqual(before) };
   }
   const world = await catalogWorld();
   const goal = await world.goal('s8b-goal');
   const projectId = world.scope.projectId;
-  let pin: ArchitectureCatalogPinV1 | null = null;
+  let pin: KnowledgePinV1 | null = null;
   if (catalog) {
     await world.adopt([catalogModule(projectId, 'core')]);
-    pin = await world.pin();
+    pin = linePin(world.scope.workspaceId, [catalogModule(projectId, 'core')]);
   }
   const detail = () => world.platform.plans.queryGoal(world.ctx, goal);
   if (entry === 'answer') {
@@ -153,14 +164,13 @@ describe('B01-propose: every propose entry pins the active catalog and refuses a
     const world = await catalogWorld(backend);
     const goal = await world.goal('s8b-goal');
     await world.adopt([catalogModule(world.scope.projectId, 'core')]);
-    const pin = await world.pin();
     const first = await world.propose({ goal, draft: scopedDraft(goal, ['core']) });
     await world.addModule(catalogModule(world.scope.projectId, 'extra'));
     expect((await world.pin()).catalogRef.revision).toBe(2);
     const catalogReads = vi.spyOn(catalogService, 'readCurrentCatalogWindow');
     const replay = await world.platform.plans.proposePlan(world.ctx, first.request);
     expect(replay).toEqual({ ...first.result, replayed: true });
-    expect(committed(replay).catalogPin).toEqual(pin);
+    expect(committed(replay).catalogPin).toEqual(committed(first.result).catalogPin);
     expect(catalogReads).not.toHaveBeenCalled();
   });
 });
@@ -196,7 +206,8 @@ describe('B01-adopt-initial: the catalog governance selects judges a module task
       expect(await world.platform.plans.queryGoal(world.ctx, goal)).toEqual(before);
       return;
     }
-    expect(candidate.catalogPin).toEqual(early ? null : proposedPin);
+    expect(candidate.catalogPin).toEqual(early ? null : linePin(world.scope.workspaceId,
+      scopes.flatMap(scope => scope === null ? [] : [catalogModule(world.scope.projectId, scope)])));
     expect(proposedPin.baseline.ref.revision).toBe(1);
     expect(governed.baseline.ref.revision).toBe(revise ? 2 : 1);
     expect(committed(adopted).effectiveArchitectureBaseline).toEqual(governed.baseline);
@@ -301,27 +312,29 @@ it('B05a-root: a single root module is adopted as given, and a plan on it propos
   const proposed = (await world.proposeFromAnswer(answerRef)).result;
   if (proposed.status !== 'committed') throw new Error(JSON.stringify(proposed));
   const candidate = proposed.value;
-  expect(candidate.catalogPin).toEqual(await world.pin());
+  expect(candidate.catalogPin).toEqual(linePin(world.scope.workspaceId, [root]));
   await world.governance();
   expect((await world.apply(candidate)).result).toMatchObject({ status: 'committed' });
 });
 
-describe('the candidate pin in the PlanProposal codec (OQ9 a)', () => {
-  const pinOf = (projectId: string) => ({
-    catalogRef: { aggregateType: 'ArchitectureCatalog' as const, projectId, baselineId: 'b', revision: 1 },
-    baseline: { ref: { aggregateType: 'ArchitectureBaselineRevision' as const, projectId, baselineId: 'b', revision: 1 },
-      digest: 'a'.repeat(64) } });
+describe('the candidate pin in the PlanProposal codec (OQ9 a; [2C2-04] the knowledge pin, the old pin refused)', () => {
+  const knowledgePin: KnowledgePinV1 = { lines: [{ lineRef: JSON.stringify(['w', '']), contentHash: 'a'.repeat(64),
+    head: null, dirty: true, modules: [] }] };
+  const oldPin: ArchitectureCatalogPinV1 = {
+    catalogRef: { aggregateType: 'ArchitectureCatalog' as const, projectId: 'p', baselineId: 'b', revision: 1 },
+    baseline: { ref: { aggregateType: 'ArchitectureBaselineRevision' as const, projectId: 'p', baselineId: 'b', revision: 1 },
+      digest: 'a'.repeat(64) } };
   const goalRef = { aggregateType: 'Goal' as const, projectId: 'p', goalId: 'g' };
-  const candidateWithPin = (catalogPin: ArchitectureCatalogPinV1 | null | undefined) => ({ kind: 'candidate_v2' as const,
+  const candidateWithPin = (catalogPin: unknown) => ({ kind: 'candidate_v2' as const,
     ref: { aggregateType: 'PlanProposal' as const, projectId: 'p', workspaceId: 'w', proposalId: 'c' }, revision: 1,
     schemaVersion: 2 as const, goalRef, basedOn: null, draft: scopedDraft(goalRef, ['core']),
     reason: { text: 'codec', sources: [] }, status: 'candidate' as const, issues: [], catalogPin,
     sourceMessageRef: null }) as PlanProposal;
   it.each([
-    { name: 'a pin of this project', pin: pinOf('p'), problem: null },
+    { name: 'a knowledge pin', pin: knowledgePin, problem: null },
     { name: 'no active catalog (null)', pin: null, problem: null },
     { name: 'an absent pin', pin: undefined, problem: 'PlanProposalCatalogPinV1.catalogPin is invalid' },
-    { name: 'a pin of another project', pin: pinOf('q'), problem: 'candidate_v2.catalogPin must name a catalog of this project' },
+    { name: 'the old catalog pin (not migrated)', pin: oldPin, problem: 'PlanProposalCatalogPinV1.catalogPin.lines is missing' },
   ])('$name', ({ pin, problem }) => {
     expect(decodePlanProposalRecord(encodePlanProposal(candidateWithPin(pin)))).toEqual(problem === null
       ? { status: 'decoded', value: candidateWithPin(pin) } : { status: 'invalid', reason: `PlanProposal is invalid: ${problem}` });

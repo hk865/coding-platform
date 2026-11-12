@@ -405,6 +405,10 @@ describe('RL-13 D: a crash in the split', () => {
     const held = freezeS7D2SplitAfter('created');
     const run = startSplit(handle, task, 's7d2-rl13-d6');
     await held.reached;
+    // The old Host's other driver of the split may read L1 before the person's change: wait until its commit is kept
+    // at the freeze, so after stopMatching() only drivers that read L1 without `src` can land (one that read it before
+    // and committed after would end the split `revision_conflict`, the source pin's answer; seen under load).
+    await held.parked;
     expect((await handle.changeScope({ session: handle.regionAdviser, scope: [], requestId: 's7d2-rl13-d6-drop-src' }))
       .result).toMatchObject({ status: 'committed' });
     held.stopMatching();

@@ -4,6 +4,8 @@
  * the terminal history a draft carries forward unchanged; a new, changed or
  * re-enabled module task is still checked; an adopted plan and its original
  * `plans/apply` command read and replay unchanged after a real module delete.
+ * KLS-2c-2b G7 (merge ruling 4): the candidate's knowledge pin is narrowed to the
+ * Tasks the module fact checked, so the exempt history's module is not pinned.
  */
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { PlanRevisionDraft, PlanRevisionRef, RuntimeTask } from '../../src/contracts/plan.js';
@@ -88,6 +90,18 @@ describe('S8C R6 plan history after a module delete', () => {
     expect(committed((await world.apply(candidate)).result).tasks
       .find(task => task.taskId === 'work-0')?.disposition).toBe('cancelled');
   });
+
+  it('G7 (KLS-2c-2b): the candidate pins only the checked Tasks\' modules, not the exempt terminal history\'s',
+    async () => {
+      const world = await openWorld();
+      const { goal, plan } = await history(world);
+      const onSrc: RuntimeTask = { ...work('work-1'), scope: { kind: 'module', stageId: 'build', moduleRef: 'src' } };
+      const candidate = committed((await world.propose({ goal, basedOn: plan.ref,
+        draft: planOf(goal.goalId, 3, [work('work-0', 'cancelled'), onSrc, GATE]) })).result);
+      // The one line is dirty (not git), so it lists the modules the plan uses (L3).
+      // 具名改坏 G7「窗里不按检查过的任务收窄」→ 豁免的 work-0 挂的 `docs` 也钉进去，红在这一句。
+      expect(candidate.catalogPin?.lines.map(line => line.modules?.map(module => module.moduleId))).toEqual([['src']]);
+    });
 
   it('still refuses a new, changed or re-enabled module task', async () => {
     const world = await openWorld();

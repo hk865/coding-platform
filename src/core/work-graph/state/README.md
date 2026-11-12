@@ -192,7 +192,7 @@
 | `sessionRoleFactsRef` | `src/core/work-graph/state/role-facts.ts:31` | Session 角色事实记录的 ref | 读或写 `SessionRoleFacts` 时用它；不要手写这个 refKey |
 | `decidePlanCandidate`、`diagnosePlanCandidate` | `src/core/work-graph/state/plan-candidate.ts:124`、`src/core/work-graph/state/plan-candidate.ts:124` | 计划候选的唯一决定表（请求审阅/请求修复/采用/出卡/等待，首次匹配即返回）与机械诊断（必需验证要求必须有已注册检查覆盖；`checks: null` 是覆盖未知、`checks: []` 是全部诊断） | 规划环的候选推进与出卡；不要另写决定顺序或覆盖规则 |
 | `transitionNoticeSettings` | `src/core/work-graph/state/notice-settings-machine.ts:45` | 通知已读位置迁移；无前进更新则不写记录 | 标记通知已读 |
-| `newCandidateProposal`、`CandidatePlanProposal` | `src/core/work-graph/state/plan-machine.ts:132`、`src/core/work-graph/state/plan-machine.ts:92` | 建候选计划提案；候选带 `catalogPin`（只在创建时写，不受保护，采用重核不比较），并在它之后写必填可空的 `sourceMessageRef`（干预消息，其他写者为 `null`） | 提交计划草案 |
+| `newCandidateProposal`、`CandidatePlanProposal` | `src/core/work-graph/state/plan-machine.ts:132`、`src/core/work-graph/state/plan-machine.ts:92` | 建候选计划提案；候选带 `catalogPin`（`KnowledgePinV1`，L3；只在创建时写，不受保护，采用重核不比较），并在它之后写必填可空的 `sourceMessageRef`（干预消息，其他写者为 `null`） | 提交计划草案 |
 | `derivePlanProposalReadVerdict` | `src/core/work-graph/state/plan-machine.ts:197` | 提案的读取结论（含 Goal 状态） | 读计划提案 |
 | `derivePlanRevisionStatus` | `src/core/work-graph/state/plan-machine.ts:219` | adopted/superseded 派生，不落库 | 读计划修订 |
 | `planRevisionTargetOf` | `src/core/work-graph/state/plan-machine.ts:231` | 由提案与草稿算目标修订 ref | 采纳提案前 |

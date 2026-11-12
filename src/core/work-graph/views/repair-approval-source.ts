@@ -15,7 +15,7 @@
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ModuleRef, VersionPin } from '../../../contracts/core/identity.js';
 import { rejected } from '../../../contracts/core/rejections.js';
-import type { ReadResult } from '../../../contracts/core/results.js';
+import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import { catalogForWorkspace } from '../../../contracts/workspace-catalog.js';
@@ -25,7 +25,9 @@ import { renderNoteHeader, type NoteHeadSnapshot } from '../../../contracts/note
 import type { RoundSnapshot } from '../../../contracts/verification.js';
 import { isRecord } from '../../../contracts/validation/common.js';
 import type { ObservedArchitecturePort } from '../architecture/contracts.js';
-import { readCurrentCatalogWindow } from '../architecture/catalog-service.js';
+import {
+  catalogGateRefused, readCatalogPointerRevision, readCurrentCatalogWindow, type CurrentCatalogWindow,
+} from '../architecture/catalog-service.js';
 import { repairNeedsCard } from '../architecture/repair-ops.js';
 import { REPAIR_APPROVAL_OPTIONS } from '../communication/decision-source-facts.js';
 import {
@@ -134,6 +136,30 @@ function settledPass(round: RoundSnapshot | null): boolean {
 
 const UNKNOWN_RUN = 'repair-approval:run:';
 const UNKNOWN_ROUND = 'repair-approval:round:';
+/** R-窗 (121-93): the current catalog a queue attempt's footprints read, read with the files before the window. */
+const REPAIR_CATALOG = 'repair.approvalCatalog';
+type PreparedCatalog = { window: CurrentCatalogWindow; pointerChecked: boolean };
+
+/**
+ * [2C2-12]: the footprint's current catalog, from the knowledge files. In a queue window it is the one `prepareWindow`
+ * read before the window, its pointer checked once (a pointer that moved since is the window's move); elsewhere (the
+ * single card) it is read now.
+ */
+async function footprintCatalog(deps: RepairApprovalSourceDependencies, ctx: CoreCallContext, projectId: string,
+  cache: Map<string, unknown> | undefined): Promise<CurrentCatalogWindow> {
+  const prepared = cache?.get(REPAIR_CATALOG) as PreparedCatalog | undefined;
+  if (prepared === undefined) return readCurrentCatalogWindow(deps.records, projectId, { lines: deps.knowledge, caller: ctx });
+  const { window } = prepared;
+  if (!prepared.pointerChecked && (window.status === 'ready' || window.status === 'not_found')) {
+    const pointer = await readCatalogPointerRevision(deps.records, projectId);
+    if (pointer.status !== 'ready') return pointer;
+    if (pointer.value !== (window.status === 'ready' ? window.activeRevision : null)) {
+      return rejected('source_stale', DECISION_WINDOW_MOVED_REASON);
+    }
+    prepared.pointerChecked = true;
+  }
+  return window;
+}
 
 function cached<T>(cache: Map<string, unknown> | undefined, key: string,
   read: () => Promise<T>): Promise<T> {
@@ -158,7 +184,11 @@ async function readStagedRun(records: DecisionReadRecordsPort, head: NoteHeadSna
   return { status: 'ready' as const, value: decoded.value };
 }
 
-type FootprintFacts = { footprintUnknown: boolean };
+/**
+ * `catalogRefused`: the footprint's current catalog the read-back gate refused (`unavailable` for any reason but a
+ * write in flight, which stays the read's own failure; a read its caller cancelled is answered whole), with its answer.
+ */
+type FootprintFacts = { footprintUnknown: boolean } | { catalogRefused: CoreRejection };
 
 /** The footprint reads happen only behind a settled PASS, and only then. */
 async function readFootprintFacts(
@@ -212,10 +242,11 @@ async function readFootprintFacts(
     run.value.workspaceSnapshot.workspaceId);
   if (!observation.ok) return observation.rejection;
 
-  const window = await readCurrentCatalogWindow(deps.records, run.value.ref.projectId);
+  const window = await footprintCatalog(deps, ctx, run.value.ref.projectId, cache);
   if (window.status !== 'ready') {
-    return window.status === 'not_found'
-      ? rejected('not_found', 'the project has no current architecture catalog') : window;
+    if (window.status === 'not_found') return rejected('not_found', 'the project has no current architecture catalog');
+    return catalogGateRefused(window) && ctx.signal?.aborted !== true
+      ? { status: 'ready', value: { catalogRefused: window } } : window;
   }
   const runWorkspaceId = run.value.workspaceSnapshot.workspaceId;
   // The activity's changed files and the observation are the Run workspace's
@@ -287,11 +318,19 @@ Promise<ReadResult<'every_step' | 'after_plan_confirmation'>> {
 
 /** R-窗 (ruling 9): where a queue attempt keeps the staged repair heads overlaid before the window. */
 const REPAIR_FILES = 'repair.approvalFiles';
+/** Set in a queue attempt whose footprint catalog the read-back gate refused. */
+const REPAIR_GATE_REFUSED = 'repair.approvalGateRefused';
 
+/**
+ * 2c-2 merge (lead ruling 3, as 121-105 isolates the conflict and note cards): when a staged repair's footprint meets
+ * a catalog the read-back gate refused, the queue attempt shows no repair card and says `repair_approval` is
+ * `not_available`; the other cards and the notices are read. A write in flight still fails the whole queue, and the
+ * single-card read keeps the refusal.
+ */
 export function createRepairApprovalSource(
   deps: RepairApprovalSourceDependencies,
 ): DecisionCardSourcePort {
-  return createCollectionCardSource<NoteHeadSnapshot>({
+  const base = createCollectionCardSource<NoteHeadSnapshot>({
     kind: 'repair_approval',
     serves: ['goal'],
     async prepareWindow(ctx, { goals, attempt }) {
@@ -302,7 +341,13 @@ export function createRepairApprovalSource(
         heads.push(...page.heads);
       }
       const prepared = await prepareNoteFiles(attempt, REPAIR_FILES, heads, { lines: deps.knowledge, caller: ctx });
-      return prepared.status === 'ready' ? { status: 'ready', value: undefined } : mapStoreFailure(prepared);
+      if (prepared.status !== 'ready') return mapStoreFailure(prepared);
+      // A staged repair's footprint reads the current catalog in the window; its files are read here, before it.
+      if (heads.length > 0 && !attempt.cache.has(REPAIR_CATALOG)) {
+        const window = await readCurrentCatalogWindow(deps.records, ctx.projectId, { lines: deps.knowledge, caller: ctx });
+        attempt.cache.set(REPAIR_CATALOG, { window, pointerChecked: false } satisfies PreparedCatalog);
+      }
+      return { status: 'ready', value: undefined };
     },
     async readCollection(ctx, { subject, attempt }) {
       if (subject.kind !== 'goal') return { status: 'ready', value: [] };
@@ -323,6 +368,11 @@ export function createRepairApprovalSource(
         if (head.kind !== 'repair' || head.stagedRunKey === null) continue;
         const facts = await readFootprintFacts(deps, ctx, head, attempt?.cache);
         if (facts.status !== 'ready') return facts;
+        if ('catalogRefused' in facts.value) {
+          if (attempt === undefined) return facts.value.catalogRefused;
+          attempt.cache.set(REPAIR_GATE_REFUSED, true);
+          return { status: 'ready', value: [] };
+        }
         if (needsCard(head, autonomy.value, facts.value.footprintUnknown)) notes.push(head);
       }
       return { status: 'ready', value: notes };
@@ -352,10 +402,19 @@ export function createRepairApprovalSource(
       if (autonomy.status !== 'ready') return autonomy;
       const facts = await readFootprintFacts(deps, ctx, note, undefined);
       if (facts.status !== 'ready') return facts;
+      if ('catalogRefused' in facts.value) return facts.value.catalogRefused;
       if (!needsCard(note, autonomy.value, facts.value.footprintUnknown)) {
         return { status: 'ready', value: null };
       }
       return { status: 'ready', value: { item: note } };
     },
   });
+  return {
+    ...base,
+    async readPage(ctx, input) {
+      const result = await base.readPage(ctx, input);
+      if (result.status !== 'ready' || input.page.attempt?.cache.get(REPAIR_GATE_REFUSED) !== true) return result;
+      return { status: 'ready', value: { ...result.value, availability: 'not_available', items: [], nextCursor: null } };
+    },
+  };
 }

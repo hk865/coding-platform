@@ -44,7 +44,7 @@ export type ExplorationControlViewV1 = {
 export type ExplorationCancelPort = (runs: readonly QueryRunRef[]) => void;
 
 export type ExplorationControlDeps = Pick<ColdStartServiceDeps,
-  'records' | 'queries' | 'proposals' | 'sessions' | 'now'> & {
+  'records' | 'queries' | 'proposals' | 'sessions' | 'knowledge' | 'now'> & {
   /** The executor itself; the control passes its delayed `read`/`decide` and the shared commit shape. */
   write: typeof executeWriteCommand;
   /** R-03: abort the rounds registered next to the Host's cold-start stage table, after the hold commit. */
@@ -207,7 +207,7 @@ export function createExplorationControl(deps: ExplorationControlDeps): {
         modules.set(source.region.moduleId, { ...source.region });
       }
       // R-18: the follow-up's base pin is the window at its birth, not the rejected batch's older pin.
-      const window = await readCurrentCatalogWindow(deps.records, input.projectId);
+      const window = await readCurrentCatalogWindow(deps.records, input.projectId, { lines: deps.knowledge, caller: ctx });
       if (window.status !== 'ready') {
         return window.status === 'rejected' ? window
           : rejected('invalid', 'the project has no current architecture window');

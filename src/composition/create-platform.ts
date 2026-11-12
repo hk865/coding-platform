@@ -397,7 +397,8 @@ import { createConsultationFactsReader } from '../core/work-graph/queries/platfo
 import { createObservedArchitecture } from '../core/work-graph/architecture/architecture-service.js';
 import { OBSERVED_ARCHITECTURE_RECORD_SCHEMAS } from '../core/work-graph/architecture/architecture-record-codecs.js';
 import {
-  createArchitectureCatalogService, readCatalogAdopted, readCurrentCatalogWindow,
+  createArchitectureCatalogService, readCatalogAdopted, readCatalogPointerRevision, readCurrentCatalogWindow,
+  readRecordedCatalogWindow,
 } from '../core/work-graph/architecture/catalog-service.js';
 import { createArchitectureWorkScopeReader, type ArchitectureWorkScopePort } from '../core/work-graph/views/architecture-work-scope-reader.js';
 import { createArchitectureChangeScopeReader, type ArchitectureChangeScopePort } from '../core/work-graph/views/architecture-change-scope-reader.js';
@@ -470,6 +471,11 @@ export type TargetPlatformOptions = {
   acquireKnowledgeLease?: (directory: string) => Promise<KnowledgeWriteLease>;
   /** Test seam (a write stops at a named point, e.g. a crash row); production leaves it out. */
   knowledgeWriteHold?: (point: KnowledgeWriteHoldPoint) => Promise<void>;
+  /**
+   * Whether a checkout (its `repoKey`) keeps its architecture and notes local, out of git: the Host reads its
+   * settings' `knowledgeLocalOnly`. A platform built without a Host leaves it out: never local.
+   */
+  knowledgeLocalOnly?: (repoKey: string) => boolean;
   now?: () => string;
   /** Trusted source route; defaults to TypeScript at tsconfig.json. No language inference.
    * `configPath: null` captures with no project configuration. */
@@ -1306,7 +1312,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     const sessionResponsibility = createSessionResponsibilityService({
       records: backend.records, lookups: backend.records,
       // The trusted Task basis stays in `tasks` and arrives through the narrow port.
-      basis: responsibilityBasis, duty: sessionDutyResolver, now,
+      basis: responsibilityBasis, duty: sessionDutyResolver, knowledge: knowledgeLines, now,
     });
     const sessionAnomalies = createSessionAnomalyService({
       records: backend.records, lookups: backend.records, sessionFacts, now,
@@ -1597,8 +1603,11 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       },
       responsibility: {
         async readFacts(records, ctx, scope, moves: readonly ResponsibilityMoveV1[]) {
-          const window = await readCurrentCatalogWindow(records, scope.projectId);
-          if (window.status !== 'ready') return window;
+          // 2c-2b: the ledger half of a revision reads no file (121-93; `finishCatalogRevision`, after the draft read
+          // the files): only the pointer's revision is pinned, as the structural card source does (ruling 3(b)).
+          const pointer = await readCatalogPointerRevision(records, scope.projectId);
+          if (pointer.status !== 'ready') return pointer;
+          if (pointer.value === null) return { status: 'not_found' };
           // The delete rule is project-wide: every open responsible link to a
           // module of this project must move, whichever workspace owns the
           // line. This is the same project/target index `regionClaims` reads;
@@ -1690,7 +1699,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
               guards.push({ refKey: linkKey, expectedRevision: destinationLink.value.revision });
             }
           }
-          return { status: 'ready', value: { sessions, links, guards, activeRevision: window.activeRevision } };
+          return { status: 'ready', value: { sessions, links, guards, activeRevision: pointer.value } };
         },
         contribution(input) {
           const projectId = input.projectId;
@@ -2165,7 +2174,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
           const counts = { holders: seat.value.allocation?.holders.length ?? 0,
             reservations: seat.value.allocation?.reservations.length ?? 0, open: openLimitOf(seat.value.limits, input.duty) };
           // the current catalog; `not_found` is a lawful "none adopted"
-          const window = await readCurrentCatalogWindow(backend.records, ctx.projectId);
+          const window = await readCurrentCatalogWindow(backend.records, ctx.projectId, { lines: knowledgeLines, caller: ctx });
           if (window.status !== 'ready' && window.status !== 'not_found') return window;
           const catalog = window.status === 'ready' ? window.catalog.catalog : null;
           const matchedRule = matchAutonomyRule({ action: input.action, tool: null, objects: input.objects,
@@ -3599,7 +3608,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       directory: sessionDirectory, lifecycle: sessionLifecycle, duty: sessionDutyResolver,
       splits: roleLineOperations,
       handoff: { startHandoff: (ctx, input) => rawWorkflow.sessionHandoff!.startHandoff(ctx, input) },
-      records: backend.records, eventPage: rawBackend.eventPage, observed,
+      records: backend.records, knowledge: knowledgeLines, eventPage: rawBackend.eventPage, observed,
       mainWorkspaceOf: mainWorkspaceOf,
       readGoal, readGoalPhase, readGoalsByProject,
       roleLineInputBasis: (records, scope, session, window, tasks) => unlessCompactsNext(lifecycleReadContext(scope),
@@ -4597,7 +4606,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     // 7D2 C1/XA: the one dependencies object the cold start and a later workspace's join share; the join builds the
     // same shared exploration phases over the same owners, never a second copy.
     const coldStartDeps: ColdStartServiceDeps = {
-      records: backend.records, sessions: sessionDirectory, queries: queryJobs,
+      records: backend.records, knowledge: knowledgeLines, sessions: sessionDirectory, queries: queryJobs,
       requests: { readFacts: (ctx, input) => rawRequestFacts.readFacts(ctx, input) },
       route: {
         // L-10: the route question is one system round on the initial request (one receipt per operationId); the
@@ -4642,7 +4651,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     // aborts the rounds registered in the one `coldStartRounds` table above; its repropose creates the follow-up
     // through the same birth the deepen route uses.
     const explorationFollowUp = createExplorationFollowUpService(coldStartDeps);
-    const explorationControl = createExplorationControl({ records: backend.records, queries: queryJobs,
+    const explorationControl = createExplorationControl({ records: backend.records, knowledge: knowledgeLines, queries: queryJobs,
       proposals: architectureProposals, sessions: sessionDirectory, now, write: executeWriteCommand,
       cancel: cancelRegisteredRounds });
     // O5b (v4 :6442–:6445): the ONE `role-lines/read` owner over the same line list, effective-scope read (BK-15's
@@ -4720,9 +4729,9 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     const rawGoalList = createGoalListReadModel({ records: backend.records });
     const knowledgeOps = createKnowledgeOps(knowledgeLines, {
       // [2C1-17], split ruling 2: by the last catalog the records adopted, read once a round (a conflict keeps the file
-      // read unavailable); an effective region adviser counts.
+      // read unavailable), through the one record-only read (2c-2b ruling 3(a)); an effective region adviser counts.
       async regionAdvisersOf(ctx, projectId, moduleIds) {
-        const window = await readCurrentCatalogWindow(backend.records, projectId);
+        const window = await readRecordedCatalogWindow(backend.records, projectId);
         if (window.status !== 'ready' && window.status !== 'not_found') return window;
         const catalog = window.status === 'ready' ? window.catalog.catalog : null;
         const advisers = new Map<string, SessionRef | null>();
@@ -4737,13 +4746,16 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       sendMessage: (ctx, request) => mailbox.sendMessage(ctx, request),
       // b2 Astra 2: the knowledge-conflict sender is an ordinary 16 KiB sender (`sessionMessageTextBound`).
       maxTextBytes: SESSION_MESSAGE_MAX_TEXT_BYTES,
-    });
-    // KLS-2c: the Host's knowledge reconciliations and the person's recoveries; internal like `notes` (the
-    // `reconcile` key is the Run's).
+    }, options.knowledgeLocalOnly ?? (() => false));
+    // KLS-2c: the Host's knowledge reconciliations, the person's recoveries, the git status and commit of the knowledge
+    // directory and R6's mark of a joined checkout; internal like `notes` (the `reconcile` key is the Run's).
     const knowledge: KnowledgeOpsPort = {
       reconcile: (...args) => trackedCall(() => knowledgeOps.reconcile(...args), unavailable),
       recover: (...args) => trackedCall(() => knowledgeOps.recover(...args), unavailable),
       recoveryItems: (...args) => trackedCall(() => knowledgeOps.recoveryItems(...args), unavailable),
+      status: (...args) => trackedCall(() => knowledgeOps.status(...args), unavailable),
+      commit: (...args) => trackedCall(() => knowledgeOps.commit(...args), unavailable),
+      markJoinedCheckout: (...args) => trackedCall(() => knowledgeOps.markJoinedCheckout(...args), unavailable),
     };
     const platform = {
       goals, plans, claims, executions, sessions, materials, messages, messageRelease, controls, evidence, checks, roles, architecture, projects, completionPolicies,

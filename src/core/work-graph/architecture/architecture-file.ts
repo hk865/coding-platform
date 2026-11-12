@@ -7,8 +7,9 @@
  * `dependsOn`). Paths and every reference to another workspace are written in
  * the file frame (the file's workspace is the main one). An edge belongs to the
  * workspace of its `from`/`parent`, so a cross-workspace edge sits in that
- * workspace's `architecture.json`; the baseline fields sit only in the main
- * workspace's. A read-back validates the raw catalog with the catalog's own
+ * workspace's `architecture.json`; the baseline fields are written only in the
+ * main workspace's, and a second workspace's read leaves them out (the same
+ * checkout may be another project's main workspace). A read-back validates the raw catalog with the catalog's own
  * validator before it turns into the project view, and any bad file, duplicate
  * id or dangling reference makes the whole read invalid: never half a catalog.
  */
@@ -134,8 +135,10 @@ export function architectureFileOf(bytes: Uint8Array, main: boolean): Architectu
   const where = ARCHITECTURE_FILE_PATH;
   const value = jsonObjectOf(bytes);
   if (value === null) return `${where}: the architecture file is not a JSON object`;
-  if (!keysAre(value, ['modules', 'crossWorkspace'], main ? ['baseline'] : [])) {
-    return `${where}: the architecture file carries exactly modules, crossWorkspace${main ? ' and an optional baseline' : ''}`;
+  // R6: one checkout may be one project's main workspace and another's second, so any file may carry a baseline; only
+  // the main workspace's read takes it (a second workspace's project has its own main one's).
+  if (!keysAre(value, ['modules', 'crossWorkspace'], ['baseline'])) {
+    return `${where}: the architecture file carries exactly modules, crossWorkspace and an optional baseline`;
   }
   const modules = stringList(value['modules']);
   if (modules === null) return `${where}: modules must be non-empty module ids`;
@@ -159,7 +162,7 @@ export function architectureFileOf(bytes: Uint8Array, main: boolean): Architectu
     }
     contains.push({ parent: entry['parent'], child: entry['child'] });
   }
-  if (value['baseline'] === undefined) return { modules, crossWorkspace: { dependsOn, contains } };
+  if (value['baseline'] === undefined || !main) return { modules, crossWorkspace: { dependsOn, contains } };
   const baseline = baselineOf(value['baseline']);
   if (baseline === null) {
     return `${where}: the baseline carries exactly description, constraints and optional forbid_dependency rules`;
@@ -231,10 +234,14 @@ export function knowledgeConflictsOf(modules: readonly { path: string; bytes: Ui
  * modules (`moduleId` is the raw id written in the file) and its
  * `architecture.json`. `invalid` when a reference cannot be written in the
  * file frame, or a module or interface path is not one the read-back takes
- * (`isCatalogPath`, stack review 3).
+ * (`isCatalogPath`, stack review 3). `current` is the line's `architecture.json`
+ * now (null when none): R6, a second workspace's file may be another project's
+ * main one, so the baseline it carries is written back as it is, never read
+ * or changed.
  */
 export function architectureFilesOf(project: AdoptedArchitecture, baseline: KnowledgeBaselineV1,
-  scope: KnowledgeLineScope): DecodeResult<{ architecture: Uint8Array; modules: readonly { moduleId: string; bytes: Uint8Array }[] }> {
+  scope: KnowledgeLineScope, current: Uint8Array | null = null):
+  DecodeResult<{ architecture: Uint8Array; modules: readonly { moduleId: string; bytes: Uint8Array }[] }> {
   const { workspaceId, mainWorkspaceId } = scope;
   try {
     const own = (id: string): boolean => (rawModuleId(id).workspaceId ?? mainWorkspaceId) === workspaceId;
@@ -281,7 +288,9 @@ export function architectureFilesOf(project: AdoptedArchitecture, baseline: Know
           ...rule, fromModule: frameId(rule.fromModule), toModule: frameId(rule.toModule) })) }),
       } } : {}),
     };
-    return { status: 'decoded', value: { architecture: encoder.encode(prettyJson(architecture)), modules: files } };
+    const kept = workspaceId === mainWorkspaceId || current === null ? undefined : jsonObjectOf(current)?.['baseline'];
+    return { status: 'decoded', value: { modules: files,
+      architecture: encoder.encode(prettyJson(kept === undefined ? architecture : { ...architecture, baseline: kept })) } };
   } catch (error) {
     return { status: 'invalid', reason: `the catalog cannot be written in the file frame: ${messageOf(error)}` };
   }

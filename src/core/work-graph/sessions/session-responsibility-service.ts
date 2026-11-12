@@ -42,6 +42,7 @@ import type {
   ResponsibilityBasisV1, SessionResponsibilityBasisPort,
 } from '../model/session-facts-contracts.js';
 import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
+import type { KnowledgeLines } from '../model/line-knowledge.js';
 import { readCurrentCatalogWindow } from '../architecture/catalog-service.js';
 import {
   SESSION_BY_WORKSPACE_LIFECYCLE_LOOKUP,
@@ -123,6 +124,8 @@ export type SessionResponsibilityStores = {
   lookups: RecordLookupPort;
   basis: SessionResponsibilityBasisPort;
   duty: SessionDutyReadPort;
+  /** The knowledge files a module destination's catalog is read from ([2C2-12]). */
+  knowledge: KnowledgeLines;
   now(): string;
 };
 
@@ -288,7 +291,7 @@ export async function moveProjectScope(
 
 export function createSessionResponsibilityService(stores: SessionResponsibilityStores):
   SessionResponsibilityPort & SessionResponsibilityReceiptReadPort {
-  const { records, basis, duty, now } = stores;
+  const { records, basis, duty, knowledge, now } = stores;
 
   function linkAt(recordsIn: readonly { refKey: string; json: string }[], key: string): SessionWorkLink | null | CoreRejection {
     const found = recordsIn.find((entry) => entry.refKey === key);
@@ -1135,7 +1138,7 @@ export function createSessionResponsibilityService(stores: SessionResponsibility
     // passes the explicit none arm (L3.12).
     let catalog: ReanchorCatalogFactsV1 = { state: 'none', revision: 0 };
     if (open.some((target) => target.kind === 'module')) {
-      const window = await readCurrentCatalogWindow(records, scope.projectId);
+      const window = await readCurrentCatalogWindow(records, scope.projectId, { lines: knowledge, caller: ctx });
       if (window.status === 'not_found') {
         catalog = { state: 'none', revision: 0 };
       } else if (window.status !== 'ready') {

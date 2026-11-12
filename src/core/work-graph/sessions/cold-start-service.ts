@@ -29,6 +29,7 @@ import type {
   RoleLineOperationV1, SessionCard, SessionCreateActionV1, SessionDirectoryPort, SessionOperationRecordOf,
 } from '../model/session-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
+import type { KnowledgeLines } from '../model/line-knowledge.js';
 import {
   advanceColdStartPhase, coldStartOperationRef, coldStartPhaseProblem, newColdStartAction, type ColdStartActionV1,
 } from '../state/cold-start.js';
@@ -112,6 +113,8 @@ export type ColdStartServiceDeps = {
   regionLines: { readOpenRegionLines(ctx: CoreCallContext, input: { projectId: string }):
     Promise<ReadResult<readonly { session: SessionRef; link: SessionWorkLink; duty: RoleLineDutyV1 }[]>> };
   stages: ColdStartStagePort;
+  /** The knowledge files the current catalog is read from ([2C2-12]). */
+  knowledge: KnowledgeLines;
   now(): string;
 };
 
@@ -539,7 +542,7 @@ export function createRoleExplorationPhases(deps: ColdStartServiceDeps): {
     }
     if (end.value.kind === 'running') return stopExploration(at);
     // d31: the round ending is not the approval either; 8C's apply moves the adopted pin past the route's pin.
-    const window = await readCurrentCatalogWindow(deps.records, at.input.projectId);
+    const window = await readCurrentCatalogWindow(deps.records, at.input.projectId, { lines: deps.knowledge, caller: ctx });
     if (window.status !== 'ready') return window;
     if (sameJson(catalogPinOf(window), action.baseCatalogPin)) return stopExploration(at);
     // R-10: depth 1 stops after the coarse split; the pin just moved with the approval.
@@ -551,7 +554,7 @@ export function createRoleExplorationPhases(deps: ColdStartServiceDeps): {
     call: RoleExplorationCallV1): Promise<DriveResultV1> {
     const action = at.action;
     const { projectId } = at.input;
-    const window = await readCurrentCatalogWindow(deps.records, projectId);
+    const window = await readCurrentCatalogWindow(deps.records, projectId, { lines: deps.knowledge, caller: ctx });
     if (window.status !== 'ready') return window;
     if (action.route === 'map') {
       const mapped = action.plannedRounds === undefined
@@ -736,7 +739,7 @@ export function createColdStartService(deps: ColdStartServiceDeps): ColdStartSer
     const requestRoot = job.value.job.job.requestRoot!;   // the candidate is read from a request root
     const chosen = await routeOf(at.ctx, requestRoot);
     if (chosen !== null) {
-      const window = await readCurrentCatalogWindow(deps.records, at.input.projectId);
+      const window = await readCurrentCatalogWindow(deps.records, at.input.projectId, { lines: deps.knowledge, caller: at.ctx });
       if (window.status !== 'ready') return window;
       return write(at, advanceColdStartPhase(at.action, { route: chosen, baseCatalogPin: catalogPinOf(window) }));
     }
@@ -754,7 +757,7 @@ export function createColdStartService(deps: ColdStartServiceDeps): ColdStartSer
 
   async function regionsPhase(at: AtV1): Promise<DriveResultV1> {
     const { projectId } = at.input;
-    const window = await readCurrentCatalogWindow(deps.records, projectId);
+    const window = await readCurrentCatalogWindow(deps.records, projectId, { lines: deps.knowledge, caller: at.ctx });
     if (window.status !== 'ready') return window;
     const explored = new Set(at.action.explorations.filter((entry) => entry.segment === 'region')
       .map((entry) => entry.queryRunRef.queryJobId));

@@ -385,7 +385,9 @@ export type CoreRouteSuffix =
   | 'goals/copy-confirm'
   | 'initialization/adopt'
   // KLS-2c: a knowledge notice's recovery items and the person's recovery of one.
-  | 'knowledge/recover' | 'knowledge/recovery-items';
+  | 'knowledge/recover' | 'knowledge/recovery-items'
+  // The knowledge directory's git status and the person's commit of it (kls-design §2.2.11).
+  | 'knowledge/status' | 'knowledge/commit';
 
 type SecondArgument<M> = M extends (ctx: CoreCallContext, argument: infer A) => unknown ? A : never;
 type MethodResult<M> = M extends (ctx: CoreCallContext, argument: never) => infer R ? Awaited<R> : never;
@@ -604,10 +606,18 @@ export type KnowledgeRecoverBody = PlainBody<KnowledgeOpsPort['recover']>;
 export type KnowledgeRecoverResponse = RouteResponse<KnowledgeOpsPort['recover']>;
 export type KnowledgeRecoveryItemsBody = PlainBody<KnowledgeOpsPort['recoveryItems']>;
 export type KnowledgeRecoveryItemsResponse = RouteResponse<KnowledgeOpsPort['recoveryItems']>;
+/** The knowledge status: the workspace is the scope's; a plain route still carries `input`, which status does not read. */
+export type KnowledgeStatusBody = { scope: CoreScope; input: Record<string, never> };
+export type KnowledgeStatusResponse = RouteResponse<KnowledgeOpsPort['status']>;
+/** The knowledge commit's input is the message only (the workspace is the scope's). */
+export type KnowledgeCommitBody = { scope: CoreScope; input: { message?: string | null } };
+export type KnowledgeCommitResponse = RouteResponse<KnowledgeOpsPort['commit']>;
 /** The typed assembly of the knowledge suffixes; `CORE_ROUTE_SPECS`'s annotation names it. */
 export type KnowledgeCoreRouteDto = {
   'knowledge/recover': { body: KnowledgeRecoverBody; response: KnowledgeRecoverResponse };
   'knowledge/recovery-items': { body: KnowledgeRecoveryItemsBody; response: KnowledgeRecoveryItemsResponse };
+  'knowledge/status': { body: KnowledgeStatusBody; response: KnowledgeStatusResponse };
+  'knowledge/commit': { body: KnowledgeCommitBody; response: KnowledgeCommitResponse };
 };
 export type PlansRequestCandidateBody = PlainBody<RequestCandidatePort['readRequestCandidate']>;
 export type PlansRequestCandidateResponse = RouteResponse<RequestCandidatePort['readRequestCandidate']>;

@@ -6,6 +6,7 @@
  * W2 Session/claim/entry/end steps. `W2` and its static CompletionPolicy are
  * registered by the shared factory through the public bootstrap owner.
  */
+import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { artifactBodyDigest } from '../../src/contracts/artifact.js';
 import { canonicalJson } from '../../src/contracts/fingerprint.js';
@@ -187,10 +188,14 @@ export async function w2ClaimStack(f: S5DecisionFixture): Promise<ManyTaskWorldC
 
 /**
  * One real W2 Goal -> Plan -> Session -> claim -> enter -> crash -> system
- * requeue world through the shared factory, with the W2 claim stack.
+ * requeue world through the shared factory, with the W2 claim stack. W2 gets its
+ * own empty knowledge root first, listed after the main workspace's, so the
+ * plan's pin finds the W2 Goal's line.
  */
 export async function openW2World(f: S5DecisionFixture, taskIds: readonly string[],
   options: { goalId?: string; planId?: string; optionalTaskIds?: readonly string[] } = {}): Promise<W2World> {
+  f.b2.base.knowledgeRoots.set(JSON.stringify([PROJECT_ID, W2_WORKSPACE_ID]),
+    mkdtempSync(join(f.base.directory, 's2a-w2-knowledge-')));
   return openManyTaskWorld(f, taskIds, { ...options, goalId: options.goalId ?? 'S2A-W2',
     planId: options.planId ?? 'PS2A-W2', scope: W2_SCOPE, ctx: w2Context(f), claim: await w2ClaimStack(f) });
 }

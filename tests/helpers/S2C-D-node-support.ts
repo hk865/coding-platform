@@ -625,6 +625,7 @@ export async function openNodeFixture(kind: ClaimFixtureKind, options: NodeFixtu
     const archive = createSessionArchiveService({
       sessionLifecycle: lifecycle, sessionFacts: createSessionFactsService({ records: backend.records }),
       responsibilities: createSessionResponsibilityService({ records: backend.records, lookups: backend.records,
+        knowledge: knowledgeLinesOver(backend.records),
         basis: createSessionResponsibilityBasisReader(backend.records, knowledgeLinesOver(backend.records)), now, duty: unknownSessionDuty }),
       sessionAnomalies: anomalies, controls: steps.controls, plans, executions, sessions, messages: mailbox,
       claims: { ...claims, requeueTask: requeues.requeueTask, readTaskRequeue: requeues.readTaskRequeue },

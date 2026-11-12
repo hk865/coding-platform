@@ -255,6 +255,8 @@ async function createSecondWorkspaceGoal(f: S4C2NoteCardFixture): Promise<{
     materialReader: { kind: 'host', projectId: f.scope.projectId, workspaceId: W2,
       actor: { kind: 'human', id: 's4a-scope-operator' } } };
   const workspaceRef = { aggregateType: 'Workspace' as const, projectId: f.scope.projectId, workspaceId: W2 };
+  // KLS-2: the Host has a root for W2 too (empty: nothing of W2's knowledge exists yet), listed after the main one.
+  await f.addWorkspaceRoot(W2);
   const registered = await f.platform.projects.registerWorkspace(hostCtx, {
     meta: { requestId: 'tw-w2-register', expected: [
       { ref: f.projectRef, revision: 1 }, { ref: workspaceRef, revision: 0 }] },

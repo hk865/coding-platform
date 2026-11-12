@@ -138,7 +138,8 @@ async function open(kind: 'memory' | 'sqlite'): Promise<Opened> {
   const now = () => clock;
   const sessionFacts = createSessionFactsService({ records });
   const basis = createSessionResponsibilityBasisReader(records, knowledgeLinesOver(records));
-  const responsibilities = createSessionResponsibilityService({ records, lookups: records, basis, duty: unknownSessionDuty, now });
+  const responsibilities = createSessionResponsibilityService({ records, lookups: records, basis, duty: unknownSessionDuty, now,
+    knowledge: knowledgeLinesOver(records) });
   const lifecycle = createSessionLifecycleService({ records,
     knowledge: knowledgeLinesOver(records), lookups: records, sessionFacts, duty: unknownSessionDuty });
   const S = base.sessions.first;
@@ -387,6 +388,7 @@ describe.each(['memory', 'sqlite'] as const)('the Session responsibility owner (
     const service = createSessionResponsibilityService({
       records: barrier.records, lookups: barrier.records,
       basis: createSessionResponsibilityBasisReader(barrier.records, knowledgeLinesOver(barrier.records)), duty: unknownSessionDuty, now: () => t0,
+      knowledge: knowledgeLinesOver(barrier.records),
     });
     const countsBefore = await f.audit.counts();
     const [toD, toE] = await Promise.all([

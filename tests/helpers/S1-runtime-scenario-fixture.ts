@@ -252,7 +252,7 @@ export async function openS1RuntimeFixture(options: {
   const sessionFacts = createSessionFactsService({ records });
   const lifecycle = createSessionLifecycleService({ records,
     knowledge: knowledgeLinesOver(records), lookups: records, sessionFacts, duty: unknownSessionDuty });
-  const responsibilities = createSessionResponsibilityService({ records, lookups: records,
+  const responsibilities = createSessionResponsibilityService({ records, lookups: records, knowledge: knowledgeLinesOver(records),
     basis: createSessionResponsibilityBasisReader(records, knowledgeLinesOver(records)), now, duty: unknownSessionDuty });
   const anomalies = createSessionAnomalyService({ records, lookups: records, sessionFacts, now });
   const health = createSessionHealthService({ records, hostInstance, now, eventId: newId });

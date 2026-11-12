@@ -413,6 +413,10 @@ export type CoreRouteBindings = {
   // KLS-2c: a knowledge notice's recovery items and the person's recovery of one; the owner checks the input.
   recoverKnowledge: KnowledgeOpsPort['recover'];
   readKnowledgeRecoveryItems: KnowledgeOpsPort['recoveryItems'];
+  // The knowledge directory's status on the scope's workspace (the input carries nothing), and the person's
+  // commit of it (the input carries the message only).
+  readKnowledgeStatus: (ctx: CoreCallContext, input: unknown) => ReturnType<KnowledgeOpsPort['status']>;
+  commitKnowledge: (ctx: CoreCallContext, input: unknown) => ReturnType<KnowledgeOpsPort['commit']>;
 };
 
 /** A.2 step 5.6 (§12.1 step 7, §12.8): this Host's instance lease and its start-up reconcile report. */
@@ -558,7 +562,7 @@ export type CoreRoutePlatform = {
    * without it answers `unsupported`. */
   verification?: VerificationRoundReadPort;
   /** KLS-2c: the knowledge operations; internal like the other owner groups, so a narrow platform answers `unsupported`. */
-  knowledge?: Pick<KnowledgeOpsPort, 'recover' | 'recoveryItems'>;
+  knowledge?: Pick<KnowledgeOpsPort, 'recover' | 'recoveryItems' | 'status' | 'commit'>;
 };
 
 /** `executions/resolve-unknown` input (RUN-22): the unknown Run and the operator's reason. */
@@ -748,6 +752,8 @@ export const CORE_ROUTE_SPECS: Record<
   'initialization/adopt': { kind: 'plain', binding: 'adoptInitialization', owner: 'initialization.adopt' },
   'knowledge/recover': { kind: 'plain', binding: 'recoverKnowledge', owner: 'knowledge.recover' },
   'knowledge/recovery-items': { kind: 'plain', binding: 'readKnowledgeRecoveryItems', owner: 'knowledge.recoveryItems' },
+  'knowledge/status': { kind: 'plain', binding: 'readKnowledgeStatus', owner: 'knowledge.status' },
+  'knowledge/commit': { kind: 'plain', binding: 'commitKnowledge', owner: 'knowledge.commit' },
   'plans/request-candidate': { kind: 'plain', binding: 'readRequestCandidate', owner: 'requestCandidates.readRequestCandidate' },
   'plans/abandon': { kind: 'graph_write', binding: 'abandonPlanProposal', owner: 'requestCandidates.abandonPlanProposal' },
   'decisions/queue': { kind: 'plain', binding: 'queryDecisionQueue', owner: 'decisions.queryDecisionQueue' },
@@ -1541,6 +1547,12 @@ export function createPlatformCoreRouteBindings(
     readKnowledgeRecoveryItems: platform.knowledge === undefined
       ? unsupported('the platform does not publish knowledge.recoveryItems')
       : platform.knowledge.recoveryItems.bind(platform.knowledge),
+    // [2C2-08]: the workspace only from the scope, never from the input or a path; only the person commits.
+    readKnowledgeStatus: platform.knowledge === undefined ? unsupported('the platform does not publish knowledge.status')
+      : ctx => platform.knowledge!.status(ctx, ctx.workspaceId ?? ''),
+    commitKnowledge: platform.knowledge === undefined ? unsupported('the platform does not publish knowledge.commit')
+      : personEntry((ctx, input: unknown) => platform.knowledge!.commit(ctx,
+        (isPlainObject(input) ? { ...input, workspaceId: ctx.workspaceId ?? '' } : input) as never)),
   };
 }
 
@@ -1852,6 +1864,8 @@ export async function dispatchCoreRoute(
       case 'initialization/adopt': return bindings.adoptInitialization(ctx, plain.input as never);
       case 'knowledge/recover': return bindings.recoverKnowledge(ctx, plain.input as never);
       case 'knowledge/recovery-items': return bindings.readKnowledgeRecoveryItems(ctx, plain.input as never);
+      case 'knowledge/status': return bindings.readKnowledgeStatus(ctx, plain.input);
+      case 'knowledge/commit': return bindings.commitKnowledge(ctx, plain.input);
     }
   })();
   // A GraphWrite rejection is a failed command: preserve its exact body but let

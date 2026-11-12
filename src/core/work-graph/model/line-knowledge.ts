@@ -7,7 +7,9 @@
 import type { AdoptedArchitecture, ModuleContainment } from '../../../contracts/architecture-catalog.js';
 import type { CoreRejection, WriteResult } from '../../../contracts/core/results.js';
 import { canonicalJson } from '../../../contracts/fingerprint.js';
-import type { KnowledgeConflictV1 } from '../../../contracts/knowledge.js';
+import type {
+  KnowledgeCommitResult, KnowledgeConflictV1, KnowledgeLinePinV1, KnowledgeLineStatusV1,
+} from '../../../contracts/knowledge.js';
 import type {
   CatalogRepairOpV1, FlowPayloadV1, LinkEvidenceRoleV1, LinkPayloadV1, NoteFactV1, NoteHeadSnapshot, NoteKind,
   NoteSectionsV1, NoteSourceV1, SemanticRelationV1, SymbolRequestV1,
@@ -148,6 +150,19 @@ export interface LineKnowledge {
    * reconciliation judges one state of the files (stk16: a person's edit landing mid-round made a second notice).
    */
   architectureOfDisk(files: readonly KnowledgeDiskFileV1[]): StoreResult<KnowledgeArchitecture>;
+  /** [2C2-06]: git's view of this line's knowledge directory now; a folder that is not git is `unsupported`. */
+  status(): Promise<StoreResult<KnowledgeLineStatusV1>>;
+  /**
+   * [2C2-07]: commits only `.workbench/`; a null or empty message is the default, which counts the files. The
+   * caller holds the write queue and this line's lease; git's refusal comes back `unavailable` in git's words.
+   */
+  commit(message: string | null): Promise<StoreResult<KnowledgeCommitResult>>;
+  /**
+   * L3 ([2C2-01]): this line's pin from its working-tree bytes, read once with git: the content hash of
+   * `architecture.json` and `modules/*.json`, HEAD, and whether those files are all committed; when they are not (or
+   * the folder is not git), the smallest fields of `usedModules` (project view, all on this line) from its own files.
+   */
+  pin(usedModules: readonly string[]): Promise<StoreResult<KnowledgeLinePinV1>>;
 }
 
 /** The caller a service holds; `CoreCallContext` is structurally one. */

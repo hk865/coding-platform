@@ -232,6 +232,7 @@ export async function openLineFixture(kind: ClaimFixtureKind): Promise<LineFixtu
   const anomalies = createSessionAnomalyService({ records: base.records, lookups: base.records,
     sessionFacts, now: () => new Date().toISOString() });
   const responsibility = createSessionResponsibilityService({ records: base.records, lookups: base.records,
+    knowledge: knowledgeLinesFor({ root: base.directory, ...base.scope, records: base.records }),
     basis: createSessionResponsibilityBasisReader(base.records,
       knowledgeLinesFor({ root: base.directory, ...base.scope, records: base.records })), now: () => new Date().toISOString(), duty: sessionDuty });
   const lineSettings = createLineSettingsService({ records: base.records,

@@ -61,9 +61,10 @@ export const MESSAGE_RELEASE_QUEUE = 'message_release';
  * NoteVersion feed the brief; PlanProposal/Goal end a request's processing, which the routing set and the
  * handoff archive condition read; GoalPhase (a formal completion) and ProjectRoleLimits (a raised cap) wake the
  * Goal adviser queue drain; an ArchitectureProposal write, freeze or approval wakes the cold start's
- * `coarse_split` and `proposals`; KnowledgeWrite's completion commit, after the files landed, wakes a pass
- * that read them mid-landing (the write's own commit woke it earlier). Static, not conditional: a pass
- * without a pending operation costs one indexed read.
+ * `coarse_split` and `proposals`; KnowledgeWrite's completion commit, after the files landed, brings back an
+ * exploration the gate refused while they were landing: in a pass where something else progressed it was
+ * skipped and the loop stopped without a back-off, so nothing else retries it. Static, not conditional: a
+ * pass without a pending operation costs one indexed read.
  */
 export const LIFECYCLE_WAKE_AGGREGATE_TYPES: readonly string[] = Object.freeze([
   'QueryJob', 'QueryRun', 'Session', 'CoreOperation', 'SessionActivity', 'PlanProposal', 'Goal', 'NoteHead',
@@ -104,11 +105,6 @@ export interface WakeLoop {
   committed(notice: RecordCommitNotice): void;
   start(workspaces: WorkspaceScope[], input: { resumeOnStartup: boolean }): Promise<void>;
   addWorkspace(scope: WorkspaceScope): Promise<void>;
-  /**
-   * Test observation (the Host's `lifecycleIdle`): resolves once no pass of the pair runs, is due or waits out a
-   * back-off (no chain), at once when there is none. It changes nothing; production never calls it.
-   */
-  idle(scope: WorkspaceScope, queueKey: string): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -183,8 +179,6 @@ type QueueState = {
   failures: number;
   /** When the pending back-off ends; 0 when no back-off is pending. */
   retryAt: number;
-  /** `idle` observers, settled when the chain ends with nothing more scheduled. */
-  idleWaiters: (() => void)[];
 };
 
 /** The aggregate types that may carry a request or a Session into a pass. */
@@ -259,7 +253,7 @@ export function createWakeLoop(deps: WakeLoopDependencies): WakeLoop {
     const existing = queues.get(key);
     if (existing !== undefined) return existing;
     const created: QueueState = {
-      workspaceKey, queueKey, continuation: null, dirty: false, chain: null, failures: 0, retryAt: 0, idleWaiters: [],
+      workspaceKey, queueKey, continuation: null, dirty: false, chain: null, failures: 0, retryAt: 0,
     };
     queues.set(key, created);
     return created;
@@ -292,7 +286,6 @@ export function createWakeLoop(deps: WakeLoopDependencies): WakeLoop {
       chains.delete(chain);
       entry.chain = null;
       if (entry.dirty && !closed && driving(entry)) schedule(entry);
-      if (entry.chain === null) for (const settle of entry.idleWaiters.splice(0)) settle();
     });
     entry.chain = chain;
     chains.add(chain);
@@ -437,12 +430,6 @@ export function createWakeLoop(deps: WakeLoopDependencies): WakeLoop {
       await rebuildWorkspace(workspace);
       if (!workspace.armed) return;
       for (const queueKey of handlers.keys()) wake(scope, queueKey, 'start');
-    },
-
-    idle(scope, queueKey) {
-      const entry = queues.get(queueKeyOf(workspaceKeyOf(scope), queueKey));
-      if (entry === undefined || entry.chain === null) return Promise.resolve();
-      return new Promise<void>(resolve => { entry.idleWaiters.push(resolve); });
     },
 
     async close() {

@@ -96,6 +96,7 @@ describe('G2-reanchor-action', () => {
       const owner = createSessionResponsibilityService({
         records: s6b2Backend(captured).records,
         lookups: s6b2Backend(captured).records,
+        knowledge: knowledgeLinesFor({ root: world.root, ...S6A_SCOPE, records: s6b2Backend(captured).records }),
         basis: createSessionResponsibilityBasisReader(s6b2Backend(captured).records,
           knowledgeLinesFor({ root: world.root, ...S6A_SCOPE, records: s6b2Backend(captured).records })),
         duty: s6b2Duty,

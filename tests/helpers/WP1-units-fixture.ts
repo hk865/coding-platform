@@ -215,7 +215,7 @@ export async function openDutyMaintenanceFixture(
     const facts = createSessionFactsService({ records });
     const lifecycle = createSessionLifecycleService({ records,
       knowledge: knowledgeLinesOver(records), lookups: records, sessionFacts: facts, duty: unknownSessionDuty });
-    const responsibilities = createSessionResponsibilityService({ records, lookups: records,
+    const responsibilities = createSessionResponsibilityService({ records, lookups: records, knowledge: knowledgeLinesOver(records),
       basis: createSessionResponsibilityBasisReader(records, knowledgeLinesOver(records)), now: () => T0, duty: unknownSessionDuty });
     const executions = createRunStateReader({ records });
     // Stable real source capture, outside the changing Kernel/ledger files.

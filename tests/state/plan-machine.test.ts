@@ -9,7 +9,6 @@
  * Pure: no RecordStore, no Kernel.
  */
 import { describe, expect, it } from 'vitest';
-import type { ArchitectureCatalogPinV1 } from '../../src/contracts/architecture-catalog.js';
 import type { ActorRef } from '../../src/contracts/command-event.js';
 import type { ControlIntentSnapshotV1 } from '../../src/contracts/control-intent.js';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
@@ -19,6 +18,7 @@ import type {
   RoleBindingRefV1, RunRef, RunSnapshot, RuntimeEventV1, TaskLeaseSnapshot,
 } from '../../src/contracts/dispatch.js';
 import type { InitialPlanOrigin } from '../../src/contracts/initial-planning.js';
+import type { KnowledgePinV1 } from '../../src/contracts/knowledge.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft, PlanRevisionRef, PlanValidationError, RuntimeTask } from '../../src/contracts/plan.js';
 import type { TaskReductionSnapshot } from '../../src/contracts/reduction.js';
@@ -72,11 +72,8 @@ const P0 = planRef('plan-0');
 const P1 = planRef('plan-1');
 const P2 = planRef('plan-2');
 const PROPOSAL_REF: PlanProposalRef = { aggregateType: 'PlanProposal', projectId: PROJECT, workspaceId: WORKSPACE, proposalId: 'proposal-1' };
-const PIN: ArchitectureCatalogPinV1 = {
-  catalogRef: { aggregateType: 'ArchitectureCatalog', projectId: PROJECT, baselineId: 'baseline-1', revision: 1 },
-  baseline: { ref: { aggregateType: 'ArchitectureBaselineRevision', projectId: PROJECT, baselineId: 'baseline-1', revision: 1 },
-    digest: '0123456789abcdef'.repeat(4) },
-};
+const PIN: KnowledgePinV1 = { lines: [{ lineRef: JSON.stringify([WORKSPACE, '']),
+  contentHash: '0123456789abcdef'.repeat(4), head: null, dirty: false, modules: null }] };
 const REASON: PlanChangeReason = { text: 'add the docs task', sources: [] };
 const ROLE: RoleBindingRefV1 = {
   schemaVersion: 1, bindingId: 'binding-1', templateId: 'worker', templateRevision: 'r1', bindingVersion: 1, policyRevision: 'policy-1',
@@ -106,7 +103,7 @@ const FUTURE_DRAFT = draftOf({ planId: 'plan-2', planRevision: 2 });
 const SOURCE: PlanSourceFacts = { ref: P1, goalRef: GOAL, planId: 'plan-1', planRevision: 1 };
 
 function candidate(input: { basedOn: PlanRevisionRef | null; draft: PlanRevisionDraft;
-  catalogPin: ArchitectureCatalogPinV1 | null; submittedBy?: PlanWriteProvenanceV1 | null; reason?: PlanChangeReason }): CandidatePlanProposal {
+  catalogPin: KnowledgePinV1 | null; submittedBy?: PlanWriteProvenanceV1 | null; reason?: PlanChangeReason }): CandidatePlanProposal {
   return newCandidateProposal({ ref: PROPOSAL_REF, goalRef: GOAL, basedOn: input.basedOn, draft: input.draft,
     reason: input.reason ?? REASON, issues: [], catalogPin: input.catalogPin, submittedBy: input.submittedBy ?? null,
     sourceMessageRef: null });

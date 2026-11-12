@@ -80,6 +80,8 @@ import { parseRepairOps } from './repair-ops.js';
 export { ARCHITECTURE_CATALOG_SCHEMAS } from './catalog-record-codecs.js';
 /** 2c-1d's refusal of a read that meets a write in flight; the decision queue tells it from the read-back gate (stk16). */
 export { KNOWLEDGE_WRITE_UNCONFIRMED } from '../knowledge/write-log.js';
+/** L3: a plan's knowledge pin, read before a proposal window and narrowed inside it (tasks may not import knowledge). */
+export { planPinOf, readPlanPin, type PlanPinRead } from '../knowledge/pin.js';
 
 /** Records only: the catalog shares the baseline/active transaction and needs no
  * second store, body or index. */
@@ -394,21 +396,23 @@ export type CurrentCatalogWindow =
   | Rejection;
 
 /**
- * The ONE current-pointer read: it resolves the active baseline revision, reads
- * the pointer together with the baseline and catalog it names in a second
- * window, re-verifies the pointer (so a concurrent activation cannot mix
- * versions) and returns both the decoded revision and the exact guards a CAS
- * caller must join. `readCurrentRevision` and `readCatalogModuleFacts` share it.
+ * The ONE record-only architecture read: it resolves the active baseline
+ * revision, reads the pointer together with the baseline and catalog it names in
+ * a second window, re-verifies the pointer (so a concurrent activation cannot mix
+ * versions) and returns the decoded revision as the records last adopted it and
+ * the exact guards a CAS caller must join. It reads no knowledge file, so the
+ * read-back gate never refuses it. `readCurrentCatalogWindow` reads it first.
  *
- * With `knowledge`, the catalog and the baseline's knowledge fields come from
- * the line's files: the records keep the identity, the
- * digest, the source binding and the guards. A file that cannot be read is the
- * read's failure, never the record instead. 2c-1d: an architecture write
- * pending on a line it reads is refused (`有未确认的知识写`, no waiting); never
- * this pointer with older files.
+ * KLS-2c-2b (ruling 3(a)): after the step-2 close this is the one named
+ * exception to "knowledge is read from the files" (A2). It has exactly four
+ * uses: the region adviser of a knowledge conflict (the composition root's
+ * `regionAdvisersOf`, while a conflict keeps the file read unavailable), the
+ * "written by the platform" verdict of a knowledge file (KC-1), KC-2's third
+ * recovery source and KC-3's base. Every other read of the current architecture
+ * is `readCurrentCatalogWindow`.
  */
-export async function readCurrentCatalogWindow(records: Pick<GoalRecordTransactionPort, 'readMany'>,
-  projectId: string, knowledge?: KnowledgeRead): Promise<CurrentCatalogWindow> {
+export async function readRecordedCatalogWindow(records: Pick<GoalRecordTransactionPort, 'readMany'>,
+  projectId: string): Promise<CurrentCatalogWindow> {
   const activeKey = activeRefKey(projectId);
   const pointerRead = await records.readMany([activeKey]);
   if (pointerRead.status !== 'ready') return mapStoreFailure(pointerRead);
@@ -446,7 +450,23 @@ export async function readCurrentCatalogWindow(records: Pick<GoalRecordTransacti
     { refKey: activeKey, expectedRevision: pointer.revision },
     { refKey: catalogKey, expectedRevision: catalogRecord.revision },
   ];
-  if (knowledge === undefined) return { status: 'ready', baseline, catalog, guards, activeRevision: pointer.revision };
+  return { status: 'ready', baseline, catalog, guards, activeRevision: pointer.revision };
+}
+
+/**
+ * The current architecture: `readRecordedCatalogWindow`'s pointer, identity and
+ * guards, with the catalog and the baseline's knowledge fields from the lines'
+ * files: the records keep the identity, the digest, the source binding and the
+ * guards. A file that cannot be read is the read's failure, never the record
+ * instead ([2C2-13]: `knowledge` is required, there is no record branch). 2c-1d:
+ * an architecture write pending on a line it reads is refused (`有未确认的知识写`,
+ * no waiting); never this pointer with older files.
+ */
+export async function readCurrentCatalogWindow(records: Pick<GoalRecordTransactionPort, 'readMany'>,
+  projectId: string, knowledge: KnowledgeRead): Promise<CurrentCatalogWindow> {
+  const recorded = await readRecordedCatalogWindow(records, projectId);
+  if (recorded.status !== 'ready') return recorded;
+  const { baseline, catalog, guards, activeRevision } = recorded;
   const lines = await knowledge.lines.project(knowledge.caller);
   if (lines.status !== 'ready') return mapStoreFailure(lines);
   // 2c-1d (split ruling §7, lead 11-12): an architecture or module write `pending` on a line read here may have left
@@ -470,7 +490,7 @@ export async function readCurrentCatalogWindow(records: Pick<GoalRecordTransacti
   if (merged.status !== 'decoded') return unavailable(merged.reason);
   const { sourceBinding } = baseline.content;
   return {
-    status: 'ready', guards, activeRevision: pointer.revision,
+    status: 'ready', guards, activeRevision,
     baseline: { ...baseline, content: { schemaVersion: 1, ...merged.value.baseline,
       ...(sourceBinding === undefined ? {} : { sourceBinding }) } },
     catalog: { ...catalog, catalog: merged.value.catalog },
@@ -991,4 +1011,15 @@ export function catalogModuleFactsOf(window: CurrentCatalogWindow, moduleId: str
   const module = window.catalog.catalog.modules.find(entry => entry.ref.moduleId === moduleId);
   if (module === undefined) return { status: 'not_found' };
   return { status: 'ready', value: { module, guards: window.guards } };
+}
+
+/**
+ * stk16: a current-architecture read the 2a-1 read-back gate refused the files of: `unavailable` for any reason but
+ * 2c-1d's write in flight, which stays the read's own failure. `prefix` is what the caller put before the read's
+ * reason (the goal conflicts' read says `architecture catalog: `). A caller that answers a cancelled read whole
+ * checks that itself.
+ */
+export function catalogGateRefused(read: ReadResult<unknown> | CurrentCatalogWindow | undefined, prefix = ''): boolean {
+  return read?.status === 'rejected' && read.code === 'unavailable'
+    && read.reason !== `${prefix}${KNOWLEDGE_WRITE_UNCONFIRMED}`;
 }

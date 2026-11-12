@@ -12,7 +12,7 @@
  * their named transition. Independent Host recording/read behaviour already exists.
  */
 import { describe, expect, it } from 'vitest';
-import type { ArchitectureCatalogPinV1 } from '../../src/contracts/architecture-catalog.js';
+import type { KnowledgePinV1 } from '../../src/contracts/knowledge.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft, PlanRevisionRef } from '../../src/contracts/plan.js';
 import type { QueryJobRef } from '../../src/contracts/query-job.js';
@@ -59,11 +59,8 @@ const Q1 = queryJobRef('Q1');
 const Q2 = queryJobRef('Q2');
 
 const REASON: PlanChangeReason = { text: 'the first user request candidate', sources: [] };
-const PIN: ArchitectureCatalogPinV1 = {
-  catalogRef: { aggregateType: 'ArchitectureCatalog', projectId: PROJECT, baselineId: 'baseline-1', revision: 1 },
-  baseline: { ref: { aggregateType: 'ArchitectureBaselineRevision', projectId: PROJECT, baselineId: 'baseline-1', revision: 1 },
-    digest: '0123456789abcdef'.repeat(4) },
-};
+const PIN: KnowledgePinV1 = { lines: [{ lineRef: JSON.stringify(['w1', '']),
+  contentHash: '0123456789abcdef'.repeat(4), head: null, dirty: false, modules: null }] };
 
 function draftOf(planId: string, planRevision: number): PlanRevisionDraft {
   return {

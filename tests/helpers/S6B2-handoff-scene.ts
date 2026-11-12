@@ -213,7 +213,7 @@ export function s6b2Facts(world: S6B2WorldValue, captured: S6B2Captured,
 
 export function s6b2Transfers(world: S6B2WorldValue, captured: S6B2Captured,
   records: S6B2Backend['records'] = s6b2Backend(captured).records) {
-  return createSessionResponsibilityService({ records, lookups: records,
+  return createSessionResponsibilityService({ records, lookups: records, knowledge: knowledgeLinesOver(records),
     basis: createSessionResponsibilityBasisReader(records, knowledgeLinesOver(records)), now: () => world.clock.now(), duty: unknownSessionDuty });
 }
 

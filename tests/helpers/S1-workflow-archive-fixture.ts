@@ -726,7 +726,7 @@ export async function workflowForFixture(b2: B2ExecutionFixture, options: {
       roleBinding: base.roleBinding, budget: base.budget }] },
     sessionLifecycle: createSessionLifecycleService({ records,
       knowledge: knowledgeLinesOver(records), lookups: records, sessionFacts, duty: unknownSessionDuty }), sessionFacts,
-    responsibilities: createSessionResponsibilityService({ records, lookups: records,
+    responsibilities: createSessionResponsibilityService({ records, lookups: records, knowledge: knowledgeLinesOver(records),
       basis: createSessionResponsibilityBasisReader(records, knowledgeLinesOver(records)), now, duty: unknownSessionDuty }),
     sessionAnomalies: createSessionAnomalyService({ records, lookups: records, sessionFacts, now }), controls,
     archivePolicy: options.archivePolicy ?? DEFAULT_SESSION_ARCHIVE_POLICY,

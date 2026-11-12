@@ -14,7 +14,7 @@
  * phase stays `coarse_split`, red.
  * Named mutation for 23b: the exploration flag is passed only to the start side, not the preparation side → the
  * round's model request never arrives, step 1 red.
- * Named mutation for 23c: the region open takes a new line instead of trying `reuseStandby` → the `docs` entry's
+ * Named mutation for 23c: the region open takes a new line instead of trying `reuseStandby` → the `src` entry's
  * `sessionRef` is a new line and the adviser line count grows by one more, red.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -211,7 +211,8 @@ describe('RL-23: the cold start and the exploration round', () => {
     const pin2 = await cold.pin();
     expect(pin2.catalogRef.revision).toBeGreaterThan(pin1.catalogRef.revision);
 
-    // Step 7: the top-level modules are `src` and `docs`; only `src` opens at one free seat; `docs` is pending.
+    // Step 7: the top-level modules are `docs` and `src`; the cold start reads the catalog from the knowledge files
+    // (2c-2b), in module-id order (G1), so only `docs` opens at one free seat and `src` is pending.
     const catalog = valueOf<{ catalog: { catalog: { modules: { ref: { moduleId: string } }[];
       containment?: { parentOf: { parent: { moduleId: string }; child: { moduleId: string } }[] } } } }>(
       (await cold.host.post('architecture/read', { scope: S6A_SCOPE,
@@ -223,29 +224,29 @@ describe('RL-23: the cold start and the exploration round', () => {
     expect(adopted.modules.filter(module => !childIds.has(module.ref.moduleId)).map(module => module.ref.moduleId))
       .toEqual(['docs', 'src']);
     await cold.waitForExplorations(2);
-    const afterSrc = await cold.coldStart();
-    expect(afterSrc.actionPhase).toBe('regions');
-    expect(afterSrc.pendingRegions).toEqual([{ projectId, moduleId: 'docs' }]);
-    expect((afterSrc.explorations ?? []).map(entry => entry.segment)).toEqual(['coarse_split', 'region']);
-    const srcEntry = await explorationOf(cold, 'region', 'src');
-    expect(srcEntry.operationRef).toEqual(coldStartOperationRef(projectId));
-    const srcLine = await cold.lineOf(srcEntry.sessionRef, 'rl23a-src');
-    const srcCard = await cold.host.readSession(srcLine.ref);
-    expect(srcCard.roleFacts?.openedBy).toBe('cold_start');
-    expect(srcCard.roleFacts?.originOperation).toEqual(coldStartOperationRef(projectId));
-    const srcInbox = await cold.inbox(srcLine);
-    expect(srcInbox).toHaveLength(1);
-    expect(await readBody(cold.host, srcInbox[0]!.ref, 'message')).toBe(coldStartRegionQuestion('src'));
-    // One more seat: `docs` opens and the phase reaches `proposals` on the pin the coarse split was applied on.
+    const afterDocs = await cold.coldStart();
+    expect(afterDocs.actionPhase).toBe('regions');
+    expect(afterDocs.pendingRegions).toEqual([{ projectId, moduleId: 'src' }]);
+    expect((afterDocs.explorations ?? []).map(entry => entry.segment)).toEqual(['coarse_split', 'region']);
+    const docsEntry = await explorationOf(cold, 'region', 'docs');
+    expect(docsEntry.operationRef).toEqual(coldStartOperationRef(projectId));
+    const docsLine = await cold.lineOf(docsEntry.sessionRef, 'rl23a-docs');
+    const docsCard = await cold.host.readSession(docsLine.ref);
+    expect(docsCard.roleFacts?.openedBy).toBe('cold_start');
+    expect(docsCard.roleFacts?.originOperation).toEqual(coldStartOperationRef(projectId));
+    const docsInbox = await cold.inbox(docsLine);
+    expect(docsInbox).toHaveLength(1);
+    expect(await readBody(cold.host, docsInbox[0]!.ref, 'message')).toBe(coldStartRegionQuestion('docs'));
+    // One more seat: `src` opens and the phase reaches `proposals` on the pin the coarse split was applied on.
     const proposals = holdColdStartPhase('proposals', 'RL-23a: after the proposals phase commit');
     await cold.setAdviserOpen(holders + 2, 'rl23a-limits-two');
     const three = await cold.waitForExplorations(3);
     expect((three.explorations ?? []).map(entry => entry.segment)).toEqual(['coarse_split', 'region', 'region']);
-    const docsEntry = await explorationOf(cold, 'region', 'docs');
-    const docsLine = await cold.lineOf(docsEntry.sessionRef, 'rl23a-docs');
-    const docsInbox = await cold.inbox(docsLine);
-    expect(docsInbox).toHaveLength(1);
-    expect(await readBody(cold.host, docsInbox[0]!.ref, 'message')).toBe(coldStartRegionQuestion('docs'));
+    const srcEntry = await explorationOf(cold, 'region', 'src');
+    const srcLine = await cold.lineOf(srcEntry.sessionRef, 'rl23a-src');
+    const srcInbox = await cold.inbox(srcLine);
+    expect(srcInbox).toHaveLength(1);
+    expect(await readBody(cold.host, srcInbox[0]!.ref, 'message')).toBe(coldStartRegionQuestion('src'));
     await proposals.reached;
     await cold.scriptRegions(moduleId => [{ kind: 'text', text: `RL-23a: region ${moduleId} explored` }]);
     proposals.release();
@@ -272,13 +273,14 @@ describe('RL-23: the cold start and the exploration round', () => {
   }, 300_000);
 
   /*
-   * The coarse split's approval is a knowledge write: its commit wakes the cold start before its files land. A
-   * `regions` pass that reads before they land opens no region line (both wait in `pendingRegions`) and the queue
-   * parks; only the write's completion commit, after the files landed, wakes the lifecycle queue again. The Host's
-   * knowledge write seam holds that one write at `committed`; the row lets it land only once the lifecycle queue has no
-   * pass running, due or backing off (`lifecycleIdle`, d Astra 3), so that pass has read the held write and returned
-   * whatever the speed. Named mutation: drop `'KnowledgeWrite'` from `LIFECYCLE_WAKE_AGGREGATE_TYPES`
-   * (`src/app/wake-loop.ts`) -> nothing wakes the cold start after the release, `waitForExplorations(2)` times out, red.
+   * The coarse split's approval is a knowledge write: its commit wakes the cold start before its files land. While the
+   * write is in flight the cold start's read of the current architecture is refused (2c-1d: a read that meets a write
+   * in flight; 2c-2b: the cold start reads the knowledge files), so no region line opens on the old files and the
+   * refused pass backs off and runs again (the wake loop's back-off). The Host's knowledge write seam holds that one
+   * write at `committed`; the row lets it land and looks at the real outcome (no fixed wait): the regions open in
+   * module-id order (G1), `docs` at the one free seat, `src` waiting for a seat.
+   * Named mutation: the cold start reads the recorded catalog (the read before 2c-2b) -> the adoption order opens
+   * `src` first and `docs` waits, red at `pendingRegions`.
    */
   it('RL-23a (memory): a region the cold start could not open on the old files opens once the coarse split lands', async () => {
     let gate: ReturnType<typeof holdGate> | null = null;
@@ -296,19 +298,15 @@ describe('RL-23: the cold start and the exploration round', () => {
     gate = holdGate('committed');
     const approving = cold.approve((await cold.proposalCards())[0]!, 'rl23w-approve-coarse');
     await gate.reached;
-    // The approval's commit woke the lifecycle queue: once it is idle, the passes it ran moved the cold start to
-    // `regions` and read the held write; no region line opened and both regions wait.
-    await cold.host.lifecycleIdle(S6A_SCOPE);
-    const held = await cold.coldStart();
-    expect([held.actionPhase, held.pendingRegions, (held.explorations ?? []).map(entry => entry.segment)]).toEqual(
-      ['regions', [{ projectId: P, moduleId: 'src' }, { projectId: P, moduleId: 'docs' }], ['coarse_split']]);
+    // Whenever a pass ran meanwhile, it read the write in flight: no region line is open while the write is held.
+    expect(((await cold.coldStart()).explorations ?? []).map(entry => entry.segment)).toEqual(['coarse_split']);
     gate.release();
     expect(await approving).toMatchObject({ status: 'ready', value: { answer: { status: 'committed' } } });
-    // The files landed and nothing else is written: `src` opens at the one free seat, `docs` waits for a seat.
+    // The files landed and nothing else is written: `docs` opens at the one free seat, `src` waits for a seat.
     const row = await cold.waitForExplorations(2);
     expect((row.explorations ?? []).map(entry => entry.segment)).toEqual(['coarse_split', 'region']);
-    expect(row.pendingRegions).toEqual([{ projectId: P, moduleId: 'docs' }]);
-    expect((await explorationOf(cold, 'region', 'src')).operationRef).toEqual(coldStartOperationRef(P));
+    expect(row.pendingRegions).toEqual([{ projectId: P, moduleId: 'src' }]);
+    expect((await explorationOf(cold, 'region', 'docs')).operationRef).toEqual(coldStartOperationRef(P));
   }, 300_000);
 
   it("RL-23b (memory): the exploration round's tool table, notes, create_member and the proposal arm", async () => {
@@ -401,18 +399,19 @@ describe('RL-23: the cold start and the exploration round', () => {
     await cold.waitForPhase('route');
     await cold.submitContinuation('split', 'rl23c-route-split');
     await cold.waitForPhase('coarse_split');
-    // The adviser cap has room for `src` and for the standby line the person opens.
+    // The adviser cap has room for `docs` (the region the cold start opens first, G1) and for the standby line the
+    // person opens.
     const holders = await cold.adviserHolders();
     await cold.setAdviserOpen(holders + 2, 'rl23c-limits');
-    // Stop the `src` region open right before its commit, so the person can open a standby line meanwhile.
-    const srcOpen = commitBarrier.hold(regionOpenCommit('src'), 'RL-23c: before the src region create');
+    // Stop the `docs` region open right before its commit, so the person can open a standby line meanwhile.
+    const docsOpen = commitBarrier.hold(regionOpenCommit('docs'), 'RL-23c: before the docs region create');
     await cold.waitFor('the coarse card', async () => (await cold.proposalCards()).length === 1);
     const adviserCountBefore = (await cold.host.listSessions()).filter(card =>
       card.record.role.kind === 'legacy_template'
       && card.record.role.templateId === PL_ADVISER_ROLE.templateId).length;
     const noticesBefore = (await cold.main.readNotices({ categories: ['project_notice'] })).notices.length;
     await cold.approve((await cold.proposalCards())[0]!, 'rl23c-approve-coarse');
-    await srcOpen.reached;
+    await docsOpen.reached;
     // The Goal already has an adviser and no Goal waits in the queue: the standby line cannot be taken by the Goal.
     const queue = await cold.host.post('goals/adviser-queue', plain(S6A_SCOPE, { workspace: S6A_SCOPE }));
     const queueValue = valueOf<{ entries: readonly { goalRef: { goalId: string } }[] }>(queue.body,
@@ -424,34 +423,34 @@ describe('RL-23: the cold start and the exploration round', () => {
       && card.links.some(link => link.until === null && link.ref.relation === 'responsible'
         && link.ref.target.kind === 'goal' && link.ref.target.ref.goalId === goal.goalId));
     expect(goalAdvisers).not.toHaveLength(0);
-    // A standby adviser: opened on `docs`, then its scope emptied (an empty scope is legal).
+    // A standby adviser: opened on `src`, then its scope emptied (an empty scope is legal).
     const openedLine = await openS7D2Line(cold.host, { duty: 'adviser',
-      scope: [{ kind: 'region', moduleRef: { projectId: P, moduleId: 'docs' } }], requestId: 'rl23c-standby' });
+      scope: [{ kind: 'region', moduleRef: { projectId: P, moduleId: 'src' } }], requestId: 'rl23c-standby' });
     const lx = await cold.lineOf(valueOf<{ session: { projectId: string; sessionId: string } }>(
       openedLine.result, 'committed', 'the standby line').session, 'rl23c-standby');
     const emptied = await changeS7D2Scope(cold.host, { session: lx, scope: [], requestId: 'rl23c-standby-empty' });
     valueOf(emptied.result, 'committed', 'the standby scope change');
-    srcOpen.release();
-    // Now `docs` advances: the cold start reuses Lx instead of opening a line.
+    docsOpen.release();
+    // Now `src` advances: the cold start reuses Lx instead of opening a line.
     await cold.waitForExplorations(3);
-    const docsEntry = await explorationOf(cold, 'region', 'docs');
-    expect(docsEntry.sessionRef.sessionId).toBe(lx.ref.sessionId);
+    const srcEntry = await explorationOf(cold, 'region', 'src');
+    expect(srcEntry.sessionRef.sessionId).toBe(lx.ref.sessionId);
     const adviserLines = (await cold.host.listSessions()).filter(card =>
       card.record.role.kind === 'legacy_template' && card.record.role.templateId === PL_ADVISER_ROLE.templateId);
     expect(adviserLines).toHaveLength(adviserCountBefore + 2);
     expect((await cold.cards()).filter(card => card.source.kind === 'role_line_change')).toEqual([]);
     const noticesAfter = (await cold.main.readNotices({ categories: ['project_notice'] })).notices;
     expect(noticesAfter.length).toBe(noticesBefore + 1);
-    // Lx holds the open `docs` module link and its one “please act” message; the entry names Lx's own operation.
+    // Lx holds the open `src` module link and its one “please act” message; the entry names Lx's own operation.
     const lxCard = await cold.host.readSession(lx.ref);
     expect(lxCard.links.filter(link => link.until === null && link.ref.relation === 'responsible'
-      && link.ref.target.kind === 'module' && link.ref.target.ref.moduleId === 'docs')).toHaveLength(1);
+      && link.ref.target.kind === 'module' && link.ref.target.ref.moduleId === 'src')).toHaveLength(1);
     expect(await cold.inbox(lx)).toHaveLength(1);
-    expect(docsEntry.operationRef).toEqual(lxCard.roleFacts?.originOperation);
-    expect(docsEntry.operationRef).not.toEqual(coldStartOperationRef(P));
-    // The held `src` create went through after its release: `src` has its line too.
-    const srcEntry = await explorationOf(cold, 'region', 'src');
-    expect(srcEntry.sessionRef.sessionId).not.toBe(lx.ref.sessionId);
+    expect(srcEntry.operationRef).toEqual(lxCard.roleFacts?.originOperation);
+    expect(srcEntry.operationRef).not.toEqual(coldStartOperationRef(P));
+    // The held `docs` create went through after its release: `docs` has its line too.
+    const docsEntry = await explorationOf(cold, 'region', 'docs');
+    expect(docsEntry.sessionRef.sessionId).not.toBe(lx.ref.sessionId);
     void goal;
   }, 300_000);
 

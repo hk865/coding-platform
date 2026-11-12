@@ -735,7 +735,11 @@ export function holdS7D2SplitStep(state: 'planned' | 'admitted' | 'created' | 'l
 }
 
 /** `freezeS7D2SplitAfter`'s handle: `stopMatching()` before the crash; `release()` lets every held commit go. */
-export type S7D2SplitFreeze = CommitHold & { stopMatching(): void };
+export type S7D2SplitFreeze = CommitHold & {
+  stopMatching(): void;
+  /** Resolves once a later commit of the operation is kept (the old Host's other driver is parked at the freeze). */
+  readonly parked: Promise<unknown>;
+};
 
 /**
  * O2b-RW1 (lead 11-04): the RL-13 D stop that also stops the split there. The first commit that writes the
@@ -776,6 +780,7 @@ export function freezeS7D2SplitAfter(state: 'planned' | 'admitted' | 'created' |
   arm();
   return {
     reached: first.reached,
+    parked: later[0]!.reached,
     stopMatching() { matching = false; },
     release() {
       matching = false;

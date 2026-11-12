@@ -16,18 +16,20 @@ import { dirname, join } from 'node:path';
 import { rejected } from '../contracts/core/rejections.js';
 import { messageOf } from '../contracts/error-message.js';
 import { sha256Hex } from '../contracts/fingerprint.js';
-import { ARCHITECTURE_FILE_PATH, KNOWLEDGE_DIRECTORY } from '../contracts/knowledge.js';
+import { ARCHITECTURE_FILE_PATH, KNOWLEDGE_DIRECTORY, type KnowledgePinModuleV1 } from '../contracts/knowledge.js';
 import type { GoalRecordTransactionPort, StoreResult } from '../core/record-store/ports.js';
 import type { WorkspaceHostBindings } from '../core/workspace/access.js';
 import {
-  gitBlobId, identifyCheckout, readCheckoutBranch, readKnowledgeGitState, type CheckoutProbe,
+  commitKnowledgeFiles, gitBlobId, identifyCheckout, readCheckoutBranch, readHead, readKnowledgeChanges,
+  readKnowledgeGitState, type CheckoutProbe,
 } from '../core/workspace/workspace-change-capture.js';
 import {
   architectureFilesOf, architectureOfFiles, moduleFileIdOf,
 } from '../core/work-graph/architecture/architecture-file.js';
-import type {
-  KnowledgeArchitecture, KnowledgeCaller, KnowledgeDiskFileV1, KnowledgeFileChange, KnowledgeLineScope, KnowledgeLines,
-  KnowledgeWriteDeps, KnowledgeWriteLease, LineKnowledge, LineNoteFileV1, LineNoteV1, LineRef,
+import {
+  lineRefKey, type KnowledgeArchitecture, type KnowledgeCaller, type KnowledgeDiskFileV1, type KnowledgeFileChange,
+  type KnowledgeLineScope, type KnowledgeLines, type KnowledgeWriteDeps, type KnowledgeWriteLease, type LineKnowledge,
+  type LineNoteFileV1, type LineNoteV1, type LineRef,
 } from '../core/work-graph/model/line-knowledge.js';
 import { knowledgeFileKindOf } from '../core/work-graph/notes/knowledge-files.js';
 import { noteFileBytes, noteIdFromFilePath, noteOfFileBytes } from '../core/work-graph/notes/note-file.js';
@@ -44,10 +46,26 @@ const MODULES_DIRECTORY = `${KNOWLEDGE_DIRECTORY}/modules`;
 const NOTES_DIRECTORY = `${KNOWLEDGE_DIRECTORY}/notes`;
 const LOCAL_DIRECTORY = `${KNOWLEDGE_DIRECTORY}/local`;
 
-/** The files the platform reads as knowledge: the index file, a module file, a note file. */
-function isKnowledgeFile(path: string): boolean {
-  return path === ARCHITECTURE_FILE_PATH || noteIdFromFilePath(path) !== null
+/** The architecture files: the index file and a module file. */
+function isArchitectureFile(path: string): boolean {
+  return path === ARCHITECTURE_FILE_PATH
     || (path.startsWith(`${MODULES_DIRECTORY}/`) && path.endsWith('.json') && !path.slice(MODULES_DIRECTORY.length + 1).includes('/'));
+}
+/** The files the platform reads as knowledge: the architecture files and a note file. */
+function isKnowledgeFile(path: string): boolean {
+  return isArchitectureFile(path) || noteIdFromFilePath(path) !== null;
+}
+
+/** [2C2-01]: the smallest fields of the used modules a line's graph has, by id; `contains` and `dependsOn` keep ids only. */
+function pinModulesOf(graph: KnowledgeArchitecture, used: readonly string[]): KnowledgePinModuleV1[] {
+  const parentOf = [...(graph.catalog.containment?.parentOf ?? []), ...graph.crossWorkspace.parentOf];
+  const dependencies = [...graph.catalog.dependencies, ...graph.crossWorkspace.dependencies];
+  return graph.catalog.modules.filter(module => used.includes(module.ref.moduleId)).map(module => {
+    const id = module.ref.moduleId;
+    return { moduleId: id, paths: module.paths, responsibility: module.responsibility,
+      contains: parentOf.filter(edge => edge.parent.moduleId === id).map(edge => edge.child.moduleId),
+      dependsOn: dependencies.filter(edge => edge.from.moduleId === id).map(edge => ({ to: edge.to.moduleId, reason: edge.reason })) };
+  });
 }
 
 function unavailable(reason: string): StoreResult<never> { return rejected('unavailable', reason); }
@@ -219,7 +237,9 @@ export async function openLineKnowledge(projectId: string, line: LineRef, scope:
 
   async function writeModule(input: Parameters<LineKnowledge['writeModule']>[0],
     baseline: Parameters<LineKnowledge['writeModule']>[1]): Promise<StoreResult<KnowledgeFileChange[]>> {
-    const files = architectureFilesOf(input, baseline, scope);
+    const index = await bytesAt(ARCHITECTURE_FILE_PATH);
+    if (index.status !== 'ready') return index;
+    const files = architectureFilesOf(input, baseline, scope, index.value);
     if (files.status !== 'decoded') return rejected('invalid', files.reason);
     const existing = await moduleFiles();
     if (existing.status !== 'ready') return existing;
@@ -241,8 +261,6 @@ export async function openLineKnowledge(projectId: string, line: LineRef, scope:
       changes.push({ path: old?.path ?? `${MODULES_DIRECTORY}/${randomBytes(16).toString('hex')}.json`,
         before: old?.bytes ?? null, after: module.bytes });
     }
-    const index = await bytesAt(ARCHITECTURE_FILE_PATH);
-    if (index.status !== 'ready') return index;
     if (index.value === null || !sameBytes(index.value, files.value.architecture)) {
       changes.push({ path: ARCHITECTURE_FILE_PATH, before: index.value, after: files.value.architecture });
     }
@@ -319,8 +337,50 @@ export async function openLineKnowledge(projectId: string, line: LineRef, scope:
     return ready({ files, temporaries: temporaries.sort() });
   }
 
-  return ready({ projectId, line, scope, objectFormat,
-    readArchitecture, readNoteFiles, readNotesById, writeModule, writeNote, applyChange, readKnowledgeFiles,
+  /** [2C2-06]: the branch the line was taken on, HEAD now and git's count of the knowledge directory. */
+  async function status(): ReturnType<LineKnowledge['status']> {
+    if (line.branch === '') return rejected('unsupported', `${line.folder} is not a git checkout`);
+    try {
+      return ready({ branch: line.branch, head: await readHead(line.folder), ...await readKnowledgeChanges(line.folder) });
+    } catch (error) {
+      return unavailable(`git status of ${KNOWLEDGE_DIRECTORY}/ failed in ${line.folder}: ${messageOf(error)}`);
+    }
+  }
+  /** [2C2-07]: the default message counts the files `status` saw just before. */
+  async function commitFiles(message: string | null): ReturnType<LineKnowledge['commit']> {
+    const before = await status();
+    if (before.status !== 'ready') return before;
+    const { files } = before.value;
+    const done = await commitKnowledgeFiles(line.folder,
+      message === null || message === '' ? `更新架构图和注记（${files} 个文件）` : message);
+    if (done.status !== 'committed') return unavailable(done.reason);
+    return ready({ commit: done.commit, branch: line.branch, files });
+  }
+
+  /**
+   * [2C2-01]: the hash takes the architecture files' blobs, sorted by path; dirty is git's `listed` naming one of them
+   * (a change, a staging, a deletion, an untracked file) or one on disk the index does not stage (an ignored one).
+   */
+  async function pin(usedModules: readonly string[]): ReturnType<LineKnowledge['pin']> {
+    const index = await bytesAt(ARCHITECTURE_FILE_PATH);
+    if (index.status !== 'ready') return index;
+    const modules = await moduleFiles();
+    if (modules.status !== 'ready') return modules;
+    const files = [...(index.value === null ? [] : [{ path: ARCHITECTURE_FILE_PATH, bytes: index.value }]), ...modules.value]
+      .sort((left, right) => left.path < right.path ? -1 : 1);
+    const contentHash = sha256Hex(files.map(file => `${file.path}\0${gitBlobId(file.bytes, objectFormat)}\n`).join(''));
+    const git = line.branch === '' ? null : await readKnowledgeGitState(line.folder);
+    const head = line.branch === '' ? null : await readHead(line.folder);
+    const dirty = git === null || [...git.listed].some(isArchitectureFile) || files.some(file => !git.staged.has(file.path));
+    const lineRef = lineRefKey(scope, line);
+    if (!dirty) return ready({ lineRef, contentHash, head, dirty, modules: null });
+    const graph = architectureOf(index.value, modules.value);
+    return graph.status === 'ready' ? ready({ lineRef, contentHash, head, dirty, modules: pinModulesOf(graph.value, usedModules) })
+      : graph;
+  }
+
+  return ready({ projectId, line, scope, objectFormat, status, commit: commitFiles,
+    readArchitecture, readNoteFiles, readNotesById, writeModule, writeNote, applyChange, readKnowledgeFiles, pin,
     architectureOfDisk: files => architectureOf(files.find(file => file.path === ARCHITECTURE_FILE_PATH)?.bytes ?? null,
       files.filter(file => file.kind === 'module')) });
 }

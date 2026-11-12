@@ -283,11 +283,6 @@ export type LocalWorkbenchHost = {
   readonly consumeStatus: readonly HostConsumeSkipV1[];
   /** Resolves after the next real `consumeIdle` pass settles; it observes that pass and changes nothing. */
   consumeBarrier(): Promise<void>;
-  /**
-   * Resolves once the workspace's lifecycle queue has no pass running, due or waiting out a back-off (the wake loop's
-   * `idle`); like `consumeBarrier` it observes and changes nothing (RL-23a, d Astra 3).
-   */
-  lifecycleIdle(scope: WorkspaceScope): Promise<void>;
 };
 
 /**
@@ -907,6 +902,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       // A checkout's knowledge is written by one Host at a time, across processes ([2C1-05]).
       acquireKnowledgeLease: directory => acquireHostInstanceLease({ directory, now: options.now ?? (() => new Date().toISOString()) }),
       ...(options.knowledgeWriteHold === undefined ? {} : { knowledgeWriteHold: options.knowledgeWriteHold }),
+      // The knowledge "kept local" is by checkout, read live from the last settings snapshot pushed to the Host.
+      knowledgeLocalOnly: repoKey => lastSnapshot?.knowledgeLocalOnly[repoKey] === true,
       commitObserver: commitObserverFor(input.projectId),
       hostInstance: { hostInstanceId: input.lease.hostInstanceId, lease: input.lease.lease, takeover: input.lease.takeover },
       hostClosing: hostClosing.signal,
@@ -2075,6 +2072,17 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       if (await canonicalExisting(workspace.root) === canonical)
         return { status: 'ready', value: { scope: { ...workspace.scope } } };
     }
+    // R6 [2C2-10]: a root another project already has is joined, never copied: the projects share its `.workbench/`,
+    // and this one reads that line's notes as needing verification. A restore is no join (it joined when first opened).
+    let sharedWith = false;
+    if (requestedProjectId !== undefined && !isRestore) {
+      for (const workspace of workspaces) {
+        if (workspace.scope.projectId !== requestedProjectId && await canonicalExisting(workspace.root) === canonical) {
+          sharedWith = true;
+          break;
+        }
+      }
+    }
     const projectId = requestedProjectId ?? randomBytes(16).toString('hex');
     const workspaceId = request.workspaceId ?? randomBytes(16).toString('hex');
     const scope: CoreScope = { projectId, workspaceId };
@@ -2155,6 +2163,11 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       // L8: the settings path's registration step, after the root is bound,
       // and only when this call performed a non-replayed registration.
       if (registeredNow) captureWorkspaceRegistration(scope);
+      // R6 [2C2-10]: the shared files into this project's index, then its notes marked; neither changes the open.
+      if (sharedWith) {
+        try { await platform.knowledge.reconcile(ctx, workspaceId, 'joined'); } catch { /* the next round indexes */ }
+        try { await platform.knowledge.markJoinedCheckout(ctx, workspaceId); } catch { /* the open stands */ }
+      }
       return { status: 'ready', value: { scope: { ...scope } } };
     } catch {
       return { status: 'rejected', code: 'unavailable', reason: 'the workspace could not be opened' };
@@ -3590,9 +3603,6 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     get consumeStatus(): readonly HostConsumeSkipV1[] { return lastConsumeSkips; },
     consumeBarrier(): Promise<void> {
       return new Promise<void>(resolve => { consumeBarrierWaiters.push(() => resolve()); });
-    },
-    lifecycleIdle(scope: WorkspaceScope): Promise<void> {
-      return wakeLoop.idle(scope, LIFECYCLE_QUEUE);
     },
     listen(port?: number): Promise<WorkbenchAddress> {
       if (closePromise !== undefined) return Promise.reject(new Error('the workbench Host is closed'));

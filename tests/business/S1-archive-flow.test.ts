@@ -215,6 +215,7 @@ async function open(kind: 'memory' | 'sqlite', options: OpenOptions = {}): Promi
   // The trusted basis is the REAL reader, never a fake.
   createSessionResponsibilityService({
     records, lookups: records, basis: createSessionResponsibilityBasisReader(records, knowledgeLinesOver(records)), duty: unknownSessionDuty, now,
+    knowledge: knowledgeLinesOver(records),
   });
   const sessionAnomalies = createSessionAnomalyService({ records, lookups: records, sessionFacts, now });
   const sessionLifecycle = createSessionLifecycleService({ records,

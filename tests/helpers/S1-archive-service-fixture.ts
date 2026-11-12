@@ -139,7 +139,7 @@ export async function createArchiveServiceFixture(kind: ClaimFixtureKind) {
   const lifecycleOn = (port = records) => createSessionLifecycleService({ records: port,
     knowledge: knowledgeLinesOver(port), lookups: port, sessionFacts, duty: unknownSessionDuty });
   const lifecycle = lifecycleOn();
-  const responsibilities = createSessionResponsibilityService({ records, lookups: records,
+  const responsibilities = createSessionResponsibilityService({ records, lookups: records, knowledge: knowledgeLinesOver(records),
     basis: createSessionResponsibilityBasisReader(records, knowledgeLinesOver(records)), now, duty: unknownSessionDuty });
   const anomalies = createSessionAnomalyService({ records, lookups: records, sessionFacts, now });
   const controlsOn = (port = records) => createRunControlService({ records: port,

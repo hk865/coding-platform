@@ -65,7 +65,7 @@ export function createWorkspaceJoinService(deps: ColdStartServiceDeps): Workspac
    *  modules an open region line already covers. C1 keeps its own set; this skip rule lives only here. */
   async function joinRegionModules(ctx: CoreCallContext, projectId: string, workspaceId: string,
     mainWorkspaceId: string | null): Promise<ReadResult<readonly ModuleRef[]>> {
-    const window = await readCurrentCatalogWindow(deps.records, projectId);
+    const window = await readCurrentCatalogWindow(deps.records, projectId, { lines: deps.knowledge, caller: ctx });
     if (window.status !== 'ready') return window;
     const catalog = catalogForWorkspace(window.catalog.catalog, workspaceId, mainWorkspaceId);
     const lines = await deps.regionLines.readOpenRegionLines(ctx, { projectId });
@@ -95,7 +95,7 @@ export function createWorkspaceJoinService(deps: ColdStartServiceDeps): Workspac
     // The first drive pins the project's current catalog and does not advance; a project without a current catalog
     // waits for its cold start's adoption (a person may join before the first cold start runs).
     if (action.baseCatalogPin === null) {
-      const window = await readCurrentCatalogWindow(deps.records, input.projectId);
+      const window = await readCurrentCatalogWindow(deps.records, input.projectId, { lines: deps.knowledge, caller: ctx });
       if (window.status === 'not_found') {
         return { status: 'ready', value: { phase: at.action.phase, revision: at.op.revision, completed: false } };
       }

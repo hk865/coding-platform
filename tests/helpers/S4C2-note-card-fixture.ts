@@ -101,6 +101,8 @@ export type S4C2NoteCardFixture = {
   cancelGoal(goalRef?: GoalRef): ReturnType<S4ANoteScopeFixture['platform']['goals']['setGoalControl']>;
   /** The public `memoryHistory` of one note (it carries each version's relations). */
   history(noteId: string): Promise<MemoryHistoryResultV1>;
+  /** The scope fixture's separate empty root for a workspace a row registers later. */
+  addWorkspaceRoot: S4ANoteScopeFixture['addWorkspaceRoot'];
   close(): Promise<void>;
 };
 
@@ -406,6 +408,7 @@ export async function createS4C2NoteCardFixture(kind: S4C2NoteCardFixtureKind): 
       });
       if (marked.status !== 'committed') throw new Error(`S4C2 mark seen failed: ${JSON.stringify(marked)}`);
     },
+    addWorkspaceRoot: f.addWorkspaceRoot,
     async close() { await f.close(); },
   };
 }

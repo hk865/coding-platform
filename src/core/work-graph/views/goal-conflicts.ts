@@ -20,7 +20,7 @@ import { decisionSourceKey,
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import type { ArchitectureCatalogPort } from '../architecture/catalog-contracts.js';
-import { KNOWLEDGE_WRITE_UNCONFIRMED, readCatalogPointerRevision } from '../architecture/catalog-service.js';
+import { catalogGateRefused, readCatalogPointerRevision } from '../architecture/catalog-service.js';
 import type {
   ConflictArchitectureRead,
   DecisionCardV1,
@@ -500,12 +500,11 @@ async function readCurrentCatalog(deps: GoalConflictAssemblerDependencies, ctx: 
 }
 
 /**
- * stk16 (lead 11-12, investigation §3 A): a conflicts' architecture read that failed `unavailable` for any reason but
- * 2c-1d's write in flight (which still fails the whole queue): the 2a-1 read-back gate refusing the files.
+ * stk16 (lead 11-12, investigation §3 A): a conflicts' architecture read the 2a-1 read-back gate refused (2c-1d's
+ * write in flight still fails the whole queue); `catalogGateRefused` with this read's reason prefix.
  */
 export function conflictArchitectureRefused(read: ReadResult<unknown>): boolean {
-  return read.status === 'rejected' && read.code === 'unavailable'
-    && read.reason !== `architecture catalog: ${KNOWLEDGE_WRITE_UNCONFIRMED}`;
+  return catalogGateRefused(read, 'architecture catalog: ');
 }
 
 /** R-window: the catalog pointer revision first, then the architecture it (or a later pointer) names. */

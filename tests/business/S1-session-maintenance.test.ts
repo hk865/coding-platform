@@ -218,6 +218,7 @@ async function open(kind: 'memory' | 'sqlite'): Promise<Opened> {
   // ':83–91' correction: the trusted basis is the real reader, never a fake.
   const responsibilities = createSessionResponsibilityService({
     records, lookups: records, basis: createSessionResponsibilityBasisReader(records, knowledgeLinesOver(records)), now,duty: unknownSessionDuty,
+    knowledge: knowledgeLinesOver(records),
   
   });
   const sessionAnomalies = createSessionAnomalyService({ records, lookups: records, sessionFacts, now });

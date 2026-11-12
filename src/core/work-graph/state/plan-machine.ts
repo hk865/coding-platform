@@ -36,10 +36,10 @@
  * The `plan-service.ts`, `plan-commit-compiler.ts` and `plan-readers.ts` line
  * references below cite the pre-step-3 worktree (2026-10-02, as the spec does).
  */
-import type { ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
 import type { ArtifactRef } from '../../../contracts/artifact.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';
+import type { KnowledgePinV1 } from '../../../contracts/knowledge.js';
 import type { SessionRef, VersionPin } from '../../../contracts/core/identity.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { CoreError, CoreRejection } from '../../../contracts/core/results.js';
@@ -100,9 +100,9 @@ export type CandidatePlanProposal = {
   goalRef: GoalRef; basedOn: PlanRevisionRef | null; draft: PlanRevisionDraft;
   reason: PlanChangeReason; status: 'candidate' | 'accepted' | 'rejected' | 'not_adopted';
   issues: PlanValidationError[];
-  /** L10 (8B §3.1): the active catalog this candidate was checked against at propose; `null` = none was active.
-   * Creation-only and not protected; the adoption re-check does not compare it. */
-  catalogPin: ArchitectureCatalogPinV1 | null;
+  /** L10 (8B §3.1), L3: the knowledge files this candidate was checked against at propose; `null` = no catalog was
+   * active. Creation-only and not protected; the adoption re-check does not compare it. */
+  catalogPin: KnowledgePinV1 | null;
   /** Slice 5: first user-initiated request this candidate belongs to; absent = independent. */
   requestRef?: QueryJobRef | null;
   /** Slice 5: the exact non-adoption fact, when this candidate was not adopted. */
@@ -132,7 +132,7 @@ export function newCandidateProposal(input: {
   draft: PlanRevisionDraft;
   reason: PlanChangeReason;
   issues: PlanValidationError[];
-  catalogPin: ArchitectureCatalogPinV1 | null;
+  catalogPin: KnowledgePinV1 | null;
   submittedBy: PlanWriteProvenanceV1 | null;
   sourceMessageRef: SessionMessageRef | null;
 }): CandidatePlanProposal {
@@ -261,7 +261,7 @@ export type PlanProposalEvent =
     draft: PlanRevisionDraft;
     reason: PlanChangeReason;
     issues: PlanValidationError[];
-    catalogPin: ArchitectureCatalogPinV1 | null;
+    catalogPin: KnowledgePinV1 | null;
     submittedBy: PlanWriteProvenanceV1 | null;
     /** The intervention message this candidate was proposed from; required, `null` for every other writer. */
     sourceMessageRef: SessionMessageRef | null;
@@ -298,7 +298,7 @@ export type PlanProposalEvent =
     draft: PlanRevisionDraft;
     reason: PlanChangeReason;
     issues: PlanValidationError[];
-    catalogPin: ArchitectureCatalogPinV1 | null;
+    catalogPin: KnowledgePinV1 | null;
     submittedBy: PlanWriteProvenanceV1 | null;
     /** The intervention message this candidate was proposed from; required, `null` for every other writer. */
     sourceMessageRef: SessionMessageRef | null;
@@ -827,7 +827,7 @@ export type PlanProposalReadFacts = {
 };
 
 type RecordedGuardEvent = Omit<Extract<PlanProposalEvent, { type: 'proposal_recorded' }>, 'issues' | 'catalogPin'>
-  & { catalogPin?: ArchitectureCatalogPinV1 | null };
+  & { catalogPin?: KnowledgePinV1 | null };
 type AcceptedEvent = Extract<PlanProposalEvent, { type: 'proposal_accepted' }>;
 
 /**
