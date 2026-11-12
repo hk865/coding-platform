@@ -60,6 +60,11 @@ export type ReviewSessionDuty = {
  * is booked and the Workflow finalizes without a review ref (the fold writes `reviewer_missing`).
  */
 export const NO_ACCEPTED_ANSWER = 'no_accepted_answer';
+/** Slice 9: the one "has the review Query ended" judgment of the booking owner and the Workflow's review read. A
+ *  QueryRun and its QueryJob settle in one commit, so a job no longer `pending`/`running` has ended, answered or not. */
+export function reviewQueryEnded(job: Pick<QueryJobSnapshot['job'], 'status'>): boolean {
+    return job.status !== 'pending' && job.status !== 'running';
+}
 
 /** Result of finalizing one frozen round: the persisted snapshot plus the
  * Evidence actually admitted in the same commit. */

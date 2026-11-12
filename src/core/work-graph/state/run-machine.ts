@@ -784,6 +784,8 @@ export type RunGuardContext = {
   /** K3: the other L23 streak values written into the created record. */
   priorUnknownProcess?: boolean;
   streakResetRunRef?: RunRef | null;
+  /** K3 layering ② narrow: written into the record only when true. */
+  priorAdvised?: boolean;
   /** The rework actor class of the caller (§1.3): `human` = operator. */
   actor: 'human' | 'system';
   /** RUN-01 only. */
@@ -2450,7 +2452,7 @@ function onReconcileUnknownAutoCleanup(
     inventory: candidate.draft.inventory, inventoryProblem: candidate.draft.inventoryProblem,
     items: candidate.draft.items, itemsOmitted: candidate.draft.itemsOmitted, workspace: candidate.draft.workspace,
     streak: { priorAutoCleanup: ctx.priorAutoCleanup === true, priorUnknownProcess: ctx.priorUnknownProcess === true,
-      resetRunRef: ctx.streakResetRunRef ?? null },
+      resetRunRef: ctx.streakResetRunRef ?? null, ...(ctx.priorAdvised === true ? { priorAdvised: true as const } : {}) },
     createdAt: event.recordedAt,
   });
   if (!built.ok) return built;

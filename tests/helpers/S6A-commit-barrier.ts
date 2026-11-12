@@ -294,3 +294,18 @@ export async function sqliteBarrierModule(importOriginal: () => Promise<unknown>
     createSqliteRecordBackend: (options: Parameters<SqliteModule['createSqliteRecordBackend']>[0]) =>
       withBarrier(actual.createSqliteRecordBackend(options)) };
 }
+
+/**
+ * Appended (slice 9 G3 merge): `inMemoryBarrierModule` whose `records.lookup` also fails by index name under
+ * `failReads`, the way `lookupOrdered` does; the Session directory reads its indexes through `lookup`.
+ */
+export async function inMemoryLookupBarrierModule(importOriginal: () => Promise<unknown>): Promise<InMemoryModule> {
+  const barrier = await inMemoryBarrierModule(importOriginal);
+  return { ...barrier,
+    createInMemoryRecordBackend: (options: Parameters<InMemoryModule['createInMemoryRecordBackend']>[0]) => {
+      const backend = barrier.createInMemoryRecordBackend(options);
+      const real = backend.records;
+      return { ...backend, records: { ...real, lookup: (request: Parameters<typeof real.lookup>[0]) =>
+        commitBarrier.read([request.index], () => real.lookup(request)) } };
+    } };
+}

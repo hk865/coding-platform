@@ -23,7 +23,7 @@ import {
 import type { RoleLineDutyV1, RoleScopeV1 } from '../../../contracts/role-lines.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import { readOwnerRecord } from '../persistence/owner-record-read.js';
-import type { SessionMailboxPort } from '../model/communication-contracts.js';
+import type { SessionMailboxPort, SessionMessageCommandPort } from '../model/communication-contracts.js';
 import { latestAnsweredRound, type SecretaryProfilePort } from '../model/request-contracts.js';
 import type {
   RoleLineOperationV1, SessionCard, SessionCreateActionV1, SessionDirectoryPort, SessionOperationRecordOf,
@@ -57,6 +57,8 @@ import type { ArchitectureProposalService, ProposalBatchWindowPort } from '../ar
 import type { RoleLineLineV1, RoleLineOperationsPort } from './role-line-operations.js';
 import { readMainWorkspace } from './role-line-operations.js';import { roleLineStepSession, writeRoleLineOperation } from './role-line-operation-write.js';
 import { decodeSessionOperationRecord, operationRefKey, plainSessionRefToAggregate } from './session-record-codecs.js';
+import { sessionMessageRefKey } from './message-record-codecs.js';
+import { handoffContextOf } from './session-handoff-service.js';
 
 /** L-10: the route question appended to the initial request as one system round; the secretary answers one word. */
 export const COLD_START_ROUTE_QUESTION = 'Cold start: decide how the project map is made. Answer with exactly one word: '
@@ -104,7 +106,8 @@ export type ColdStartServiceDeps = {
   proposals: Pick<ArchitectureProposalService,
     'readPendingArchitectureProposals' | 'freezeArchitectureProposalBatch' | 'readFrozenArchitectureBatches'
     | 'readArchitectureProposal'>;
-  messages: Pick<SessionMailboxPort, 'sendMessage'>;
+  /** The round's “please act”: sent when the round opens, read and withdrawn by its own sender when the round ends. */
+  messages: Pick<SessionMailboxPort, 'sendMessage' | 'readMessage'> & Pick<SessionMessageCommandPort, 'withdrawMessage'>;
   lines: Pick<RoleLineOperationsPort, 'openRegionLine'>;
   /** L-9: one standby adviser line for a region (the Workflow chooser's `reuseStandby`). */
   standby: { reuseStandby(ctx: CoreCallContext, input: { commandId: string; duty: 'adviser'; scope: RoleScopeV1[];
@@ -436,6 +439,28 @@ function reopenRoundIds(group: readonly ColdStartExplorationQueryRefV1[]): { que
   return { queryJobId: `${first.queryJobId}:${n}`, runId: `${first.runId}:${n}` };
 }
 
+/**
+ * An ended round's Host system “please act” is withdrawn by its own sender (a Host system sender may withdraw its
+ * own message), so it never heads its line's queue as an input nobody consumes. The exploration Answer cannot be its
+ * reply: `respondFromQueryAnswer` binds only an intervention or consultation Query to a message. The message lives
+ * in the line's workspace; a later round of the same group keeps it as its binding (`roleExplorationBindingOf` reads
+ * only its shape). A refused withdrawal (the line runs something else now) is returned and the next pass retries.
+ */
+async function endedRound(deps: ColdStartServiceDeps, at: RoleExplorationAtV1,
+  entry: ColdStartExplorationQueryRefV1): Promise<ReadResult<EndingV1>> {
+  const ref = entry.messageRef;
+  const lineCtx = ref.workspaceId === at.ctx.workspaceId || at.ctx.principal.kind !== 'host'
+    ? at.ctx : handoffContextOf({ ...at.ctx, workspaceId: ref.workspaceId }, at.ctx.principal);
+  const message = await deps.messages.readMessage(lineCtx, ref);
+  if (message.status !== 'ready') return message;
+  if (message.value.withdrawnAt === null) {
+    const withdrawn = await deps.messages.withdrawMessage(lineCtx, { input: { messageRef: { ...ref } },
+      meta: { requestId: `exploration-settle:${sessionMessageRefKey(ref)}`, expected: [] } });
+    if (withdrawn.status !== 'committed') return withdrawn;
+  }
+  return { status: 'ready', value: { kind: 'ended' } };
+}
+
 export async function endingOf(deps: ColdStartServiceDeps, at: RoleExplorationAtV1,
   group: readonly ColdStartExplorationQueryRefV1[]): Promise<ReadResult<EndingV1>> {
   const entry = group.at(-1)!;
@@ -447,7 +472,7 @@ export async function endingOf(deps: ColdStartServiceDeps, at: RoleExplorationAt
   // R-04: a stopped round was never to end; a `repropose` mark reopens even an answered round. The order matters:
   // a plain answered round is done, but an answered round carrying a reason is the person's “try again”.
   const reproposed = entry.reopen !== undefined && entry.reopen.reason !== null;
-  if (job.status === 'answered' && !reproposed) return { status: 'ready', value: { kind: 'ended' } };
+  if (job.status === 'answered' && !reproposed) return endedRound(deps, at, entry);
   if ((job.status === 'answered' || job.status === 'closed')
     && (reproposed || entry.reopen !== undefined || job.closeReason?.code === 'not_entered')) {
     const card = await deps.sessions.readSession(at.ctx, entry.sessionRef, 'project');
@@ -464,7 +489,7 @@ export async function endingOf(deps: ColdStartServiceDeps, at: RoleExplorationAt
     if (reopened.status !== 'ready') return reopened;
     return { status: 'ready', value: { kind: 'reopen', entry: reopened.value } };
   }
-  if (job.status === 'closed') return { status: 'ready', value: { kind: 'ended' } };
+  if (job.status === 'closed') return endedRound(deps, at, entry);
   const run = read.value.run;
   if (run.run.executionState === undefined) {
     const card = await deps.sessions.readSession(at.ctx, entry.sessionRef, 'project');

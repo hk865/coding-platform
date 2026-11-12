@@ -118,7 +118,8 @@
 - `platform-duty.ts` — `PlatformDutyV1`：五种平台职责；`PLATFORM_DUTIES` 是它唯一的运行时列表。
 - `resource-caps.ts` — 资源上限：`MIB`、`RESOURCE_CAP_*`、`defaultResourceCapSettings`、报告与不可用原因。
 - `role-spec.ts` — 角色规格 revision/pin/权限/预算/命令与摘要、指纹、`projectRoleSpecActiveRefFor`、`roleSpecRevisionFromBinding`。
-- `unknown-call-review.ts` — `UnknownCallReview` 聚合与工作区捕获。
+- `unknown-call-review.ts` — `UnknownCallReview` 聚合与工作区捕获；分两层后的状态 `awaiting_advice`、可选的 `advice`/`escalation` 两字段、处置来源 `adviser`、streak 的可选 `priorAdvised`，以及升层原因闭集 `UNKNOWN_CALL_ESCALATION_CAUSES`。
+- `unknown-call-advice.ts` — 参谋对一份结果未知记录的答复（处置阶段四选一、批准阶段三选一，上报带种类，每份带理由和给人的一句大白话）：形状 `UnknownCallAdviceV1`、平台按冻结证据包写的 `UnknownCallAdviceSubjectV1`、唯一正文 `unknownCallAdviceAnswerText`、唯一严格解析 `parseUnknownCallAdviceAnswer`、记录和 `escalateReview` 共用的形状检查 `unknownCallAdviceProblem`，T02 用的 `unknownCallAdviceGoalBasisDigest`，以及两个阶段各自的选项闭集 `UNKNOWN_CALL_ADVICE_CHOICES`。照 `exec-review.ts` 写。
 - `utf8.ts` — `utf8ByteLength`/`truncateUtf8`：按 UTF-8 字节计长与安全截断。
 
 ## 可以复用的能力
@@ -230,6 +231,7 @@
 | `revisionAssignments` | `src/contracts/plan.ts:324` | 取计划 assignment；显式空数组覆盖 origin。 | 读取已接受计划的分配。 |
 | `DEFAULT_PLAN_LOOP_LIMITS`、`GROWTH_UNIT_TOKENS`、`growthUnitsOf` | `src/contracts/plan-loop-limits.ts:31`、`src/contracts/plan-loop-limits.ts:28`、`src/contracts/plan-loop-limits.ts:31` | 规划环的纯默认上限（按任务档位的提醒/两倍 token、行倍数、两个阶段预算）与增长单位换算（token ÷ 64，不取整）。 | 计划环读阶段预算、显示增长单位；生效值由 Host 设置层发布，不要另写默认值。 |
 | `execReviewAnswerText`、`parseExecReviewAnswer` | `src/contracts/exec-review.ts:24`、`src/contracts/exec-review.ts:36` | 执行结果审阅回答的唯一正文构造与唯一严格解析（恰五个成员，`basis` ≤4096 字节，整段 ≤16 KiB）。 | `submit_exec_review` 写正文、短回复和之后的入账读回审阅结论；不要另写解析。 |
+| `unknownCallAdviceAnswerText`、`parseUnknownCallAdviceAnswer`、`unknownCallAdviceProblem`、`unknownCallAdviceGoalBasisDigest` | `src/contracts/unknown-call-advice.ts:89`、`src/contracts/unknown-call-advice.ts:103`、`src/contracts/unknown-call-advice.ts:68`、`src/contracts/unknown-call-advice.ts:63` | 参谋答复的唯一正文、唯一严格解析、advice 的唯一形状检查与目标内容摘要。 | 参谋提交工具写正文、owner 读回落实、记录 codec 和 `escalateReview` 查形状；不要另写解析。 |
 | `MAX_ANSWER_BYTES` | `src/contracts/query-job.ts:79` | 16 KiB 回答上限的唯一正本。 | Query 观察、提交工具和执行审阅解析量回答大小时；不要另写常量。 |
 | `planReviewAnswerText`、`parsePlanReviewAnswer` | `src/contracts/plan-review.ts:58`、`src/contracts/plan-review.ts:58` | 审阅回答的唯一正文构造（一个 JSON 对象，`findings` 总是写出）与唯一严格解析（无多余成员，`fix` 至少一条意见）。 | `submit_plan_review` 写正文、候选环读回审阅结论；不要另写解析。 |
 | `SYSTEM_ROUND_ACTOR`、`systemRoundContext`、`systemRoundRequestId`、`hostMessageId`、`systemRoundMessageRef`、`systemRoundOfText`、`planResumeOriginalQueryOfText`、`planningReplyTextOf` | `src/contracts/plan-round.ts:230`、`src/contracts/plan-round.ts:230`、`src/contracts/plan-round.ts:230`、`src/contracts/plan-round.ts:230`、`src/contracts/plan-round.ts:230`、`src/contracts/plan-round.ts:230`、`src/contracts/plan-round.ts:230`、`src/contracts/plan-round.ts:230` | 系统轮的固定发送方、Host 上下文、每种的 request id 与消息身份、正文首行读回，以及按冻结回答形状取短回复。 | Workflow、Host、AgentRuntime、WorkGraph 共用；发送、细化选择与 Query 创建留在各自的包。 |
@@ -263,7 +265,7 @@
 | `RUN_ACTIVITY_RULE_VERSION`、`ACTIVITY_QUARTER_CAP`、`RUN_CHANGED_FILES_CAP`、`RUN_USAGE_REQUESTS_CAP`、`ACTIVITY_RECENT_WINDOW_DAYS`、`ACTIVITY_READ_RECORD_CAP`、`RUN_ACTIVITY_MAX_PAGES`、`FILE_EDIT_TOOL_NAMES`、`ACTIVITY_AUTO_RETRY_REASONS` | `src/contracts/run-activity.ts:32` | 活动读数的规则版本、各项上限与自动重试原因。 | 计算/读取 Run 活动。 |
 | `DEFAULT_RUNTIME_BUDGET`、`MAX_RESPONSE_TOKENS` | `src/contracts/runtime-budget.ts:19`、`src/contracts/runtime-budget.ts:21` | 默认预算与单次响应 token 上限。 | 归一预算时。 |
 | `WORKFLOW_AUTOMATION_ACTOR`、`GOAL_FAN_OUT_ACTOR`、`SESSION_ARCHIVE_AUTOMATION_ACTOR`、`PLATFORM_AUTOMATION_ACTORS`、`REWORK_FAILURE_CLASSES`、`DEFAULT_AUTO_REWORK_LIMIT`、`MAX_AUTO_REWORK_LIMIT`、`DEFAULT_TASK_AUTOMATION_POLICY`、`TASK_REWORK_REASON_MAX_CHARS`、`TASK_REWORK_REFUSAL_CODES` | `src/contracts/task-requeue.ts:227` | 自动化 actor 闭集、返工失败分类、自动返工上限与默认策略。 | 归类 actor、校验返工与拒绝原因。 |
-| `UNKNOWN_CALL_APPROVED_METHODS_MAX_BYTES`、`UNKNOWN_CALL_REVIEW_T02_REASON` | `src/contracts/unknown-call-review.ts:195`、`src/contracts/unknown-call-review.ts:195` | 已批准方法文本上限与 T02 原因文本。 | 生成/展示审查记录时。 |
+| `UNKNOWN_CALL_APPROVED_METHODS_MAX_BYTES`、`UNKNOWN_CALL_REVIEW_T02_REASON` | `src/contracts/unknown-call-review.ts:209`、`src/contracts/unknown-call-review.ts:209` | 已批准方法文本上限与 T02 原因文本。 | 生成/展示审查记录时。 |
 | `CHANGE_SCOPE_MAX_FILES`、`ROUND_CHECK_INCOMPLETE_CAUSES`、`INTERRUPTED_CHECK_GAP_CODE`、`ROUND_CHAIN_MAX` | `src/contracts/verification.ts:159` | 变更范围上限、未完成原因闭集、中断缺口码与轮链上限。 | 验证轮校验。 |
 | `PLATFORM_WITNESS_CHECK_ID`、`isPlatformReservedCheckId` | `src/contracts/verification.ts:299`、`src/contracts/verification.ts:302` | 保留的平台见证检查 id（`platform:witness`）的唯一正本，以及它唯一的比较入口；Host 两道闸各调一次，别处不得再写这个字面量。 | 校验 Host 注册/提议的检查 id 时；不要另写字面量或第二份谓词。 |
 | `compileVerificationCoverage` | `src/contracts/verification.ts:334` | 必需义务覆盖的纯编译：按已注册检查能力的覆盖顺序给出检查计划与未覆盖项；第 9 片起 reviewer 要求无条件放进一个 `{checkId:'review-packet', kind:'reviewer', satisfiesKind:'reviewer', satisfactionPath:'review-packet'}` 项（按 pair 去重，永不进 uncovered）。 | 验证计划编译与计划候选诊断共用；不要另写覆盖规则。 |

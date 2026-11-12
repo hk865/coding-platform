@@ -16,8 +16,12 @@ import type {
 } from '../../../contracts/goal-decisions.js';
 import { decisionSourceKey } from '../../../contracts/goal-decisions.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
-import type { UnknownCallReviewV1 } from '../../../contracts/unknown-call-review.js';
+import type {
+  UnknownCallDispositionV1, UnknownCallEscalationCauseV1, UnknownCallReviewV1,
+} from '../../../contracts/unknown-call-review.js';
+import type { UnknownCallAdviceEscalationKindV1 } from '../../../contracts/unknown-call-advice.js';
 import { approvedMethodLinesZh } from '../../../contracts/continuation-brief.js';
+import { unknownCallReviewSaferMethodOpen } from '../state/unknown-call-review.js';
 import { goalDecisionBasis } from './goal-basis.js';
 
 /** D7/L18: the fixed labels (spec line 66, the user's own words). */
@@ -37,6 +41,54 @@ export const UNKNOWN_CALL_APPROVAL_OPTION_LABELS = {
   approve: '同意',
   decline: '不同意',
 } as const;
+
+/**
+ * K3 layering, the second layer: the person's card keeps the four technical
+ * ids and their labels except `handle_myself`, which reads "pause this Task";
+ * `follow_suggestion` comes first when the adviser's suggestion can be taken.
+ */
+export const UNKNOWN_CALL_REVIEW_SECOND_LAYER_LABELS = {
+  handle_myself: '先暂停这项任务',
+  follow_suggestion: '照建议（推荐）',
+} as const;
+
+/** K3 layering: one fixed plain sentence per escalation cause (the card's first line; K3L-4 reuses it). */
+export function unknownCallEscalationPlainLine(cause: UnknownCallEscalationCauseV1): string {
+  switch (cause) {
+    case 'no_adviser': return '任务中断时有一步操作不知道做完没有，没有参谋可以帮着判断，要你来定怎么继续。';
+    case 'adviser_failed': return '任务中断时有一步操作不知道做完没有，参谋没能给出判断，要你来定怎么继续。';
+    case 'adviser_escalated': return '任务中断时有一步操作不知道做完没有，参谋认为这件事要你来定。';
+    case 'second_consecutive': return '这项任务在同一步连续第二次中断，要你来定怎么继续。';
+    case 'advised_failed_again': return '照参谋定的处理接着做以后，这项任务又中断了，要你来定怎么继续。';
+  }
+}
+
+const ESCALATION_KIND_WORDS: Readonly<Record<UnknownCallAdviceEscalationKindV1, string>> = {
+  requirement: '需求', product_tradeoff: '产品取舍', architecture: '架构选择',
+};
+
+/**
+ * K3 layering: the technical choice "follow the suggestion" stands for, or
+ * null. Only on a disposition card, only before any person disposition, and
+ * only when that choice is itself on the card (`applyDisposition` maps the
+ * option through this same function).
+ */
+export function unknownCallReviewSuggestedChoice(
+  record: UnknownCallReviewV1,
+): Exclude<UnknownCallDispositionV1['choice'], 'handle_myself'> | null {
+  const suggestion = record.escalation?.suggestion ?? null;
+  if (record.status !== 'needs_decision' || suggestion === null || suggestion.phase !== 'disposition') return null;
+  if (record.disposition !== null && record.disposition.source !== 'adviser') return null;
+  switch (suggestion.choice) {
+    case 'rerun_as_is':
+    case 'skip_as_done':
+      return suggestion.choice;
+    case 'safer_method':
+      return unknownCallReviewSaferMethodOpen(record) ? 'safer_method' : null;
+    default:
+      return null;
+  }
+}
 
 /** L18/D7: the mixed card's fixed line. */
 export const UNKNOWN_CALL_REVIEW_MIXED_LINE =
@@ -109,14 +161,17 @@ export function unknownCallReviewOptions(record: UnknownCallReviewV1): DecisionO
     ];
   }
   if (record.status !== 'needs_decision') return [];
-  const options: DecisionOptionV1[] = [{ id: 'rerun_as_is', label: UNKNOWN_CALL_REVIEW_OPTION_LABELS.rerun_as_is, effect: 'apply' }];
-  const proposalTargets = record.proposalTargets ?? [];
-  const freeSlots = 8 - record.rounds.length;
-  if (proposalTargets.length > 0 && freeSlots >= 2) {
+  const options: DecisionOptionV1[] = [];
+  if (unknownCallReviewSuggestedChoice(record) !== null) {
+    options.push({ id: 'follow_suggestion', label: UNKNOWN_CALL_REVIEW_SECOND_LAYER_LABELS.follow_suggestion, effect: 'apply' });
+  }
+  options.push({ id: 'rerun_as_is', label: UNKNOWN_CALL_REVIEW_OPTION_LABELS.rerun_as_is, effect: 'apply' });
+  if (unknownCallReviewSaferMethodOpen(record)) {
     options.push({ id: 'safer_method', label: UNKNOWN_CALL_REVIEW_OPTION_LABELS.safer_method, effect: 'apply' });
   }
   options.push({ id: 'skip_as_done', label: UNKNOWN_CALL_REVIEW_OPTION_LABELS.skip_as_done, effect: 'apply' },
-    { id: 'handle_myself', label: UNKNOWN_CALL_REVIEW_OPTION_LABELS.handle_myself, effect: 'apply' });
+    { id: 'handle_myself', label: record.escalation === undefined ? UNKNOWN_CALL_REVIEW_OPTION_LABELS.handle_myself
+      : UNKNOWN_CALL_REVIEW_SECOND_LAYER_LABELS.handle_myself, effect: 'apply' });
   return options;
 }
 
@@ -128,10 +183,19 @@ export function unknownCallReviewIsMixed(record: UnknownCallReviewV1): boolean {
     && item.observed.verdict === 'undetermined' && targets.has(item.callId));
 }
 
+/** K3 layering: the adviser's suggestion line, or null when the record carries none. */
+function suggestionLine(record: UnknownCallReviewV1): string | null {
+  const suggestion = record.escalation?.suggestion ?? null;
+  if (suggestion === null) return null;
+  return suggestion.escalationKind === null ? `参谋的建议：${suggestion.plain}`
+    : `参谋说（${ESCALATION_KIND_WORDS[suggestion.escalationKind]}）：${suggestion.plain}`;
+}
+
 export function unknownCallReviewSummary(record: UnknownCallReviewV1): string {
   const base = `核对记录 ${record.runRef.runId.slice(0, 8)}：需要你决定`;
+  const suggestion = suggestionLine(record);
   if (record.status === 'awaiting_approval') {
-    const lines = [base];
+    const lines = suggestion === null ? [base] : [base, suggestion];
     // Lead answer 2: each proposable item's ORIGINAL command in alias order,
     // its newlines written as `\n` plus two spaces exactly like the approved
     // methods; then the one pure approved-method block the continuation will
@@ -147,7 +211,11 @@ export function unknownCallReviewSummary(record: UnknownCallReviewV1): string {
     if (unknownCallReviewIsMixed(record)) lines.push(UNKNOWN_CALL_REVIEW_MIXED_LINE);
     return lines.join('\n');
   }
-  return unknownCallReviewIsMixed(record) ? `${base}\n${UNKNOWN_CALL_REVIEW_MIXED_LINE}` : base;
+  // The second layer opens with the cause's plain sentence, then the adviser's suggestion.
+  const lines = record.escalation === undefined ? [base]
+    : [unknownCallEscalationPlainLine(record.escalation.cause), ...(suggestion === null ? [] : [suggestion])];
+  if (unknownCallReviewIsMixed(record)) lines.push(UNKNOWN_CALL_REVIEW_MIXED_LINE);
+  return lines.join('\n');
 }
 
 function workspaceOf(record: UnknownCallReviewV1): { projectId: string; workspaceId: string } {

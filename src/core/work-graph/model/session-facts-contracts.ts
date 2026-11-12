@@ -100,6 +100,14 @@ export interface SessionFactsPort {
   readWait(ctx: CoreCallContext, input: { messageRef: SessionMessageRef }):
     Promise<ReadResult<SessionWaitV1>>;
 }
+/**
+ * Window 3 (slice 9 §3.7): whether a line's inbox still holds a source message the Host must close out now — its
+ * deterministic intervention Query ended and the source has no reply and is not withdrawn (the consumable view's
+ * settlement offer; implementation `views/consumable-sessions.ts`). The archive's final guard reads it.
+ */
+export interface SessionSettlementDuePort {
+  readSettlementDue(ctx: CoreCallContext, session: SessionRecord): Promise<ReadResult<boolean>>;
+}
 
 // ------------------------------------------------------------------------ //
 // Responsibility basis port (implementation: tasks/plan-readers.ts)         //

@@ -98,6 +98,11 @@ export type WorkflowCalls = {
   open_checks: EvidencePort['openVerification'];
   run_check: RegisteredCheckRunner['runRegisteredCheck'];
   finalize_checks: EvidencePort['finalizeChecks'];
+  /**
+   * Slice 9 VR-16: book the one exec review verdict of an open round. The request is only `{roundRef}`; the owner
+   * reads the answer, the subject Run and the report itself. Its absence is `unsupported`.
+   */
+  record_review: NonNullable<EvidencePort['recordReviewEvidence']>;
   complete_task: GoalTaskPort['completeTask'];
   complete_goal: GoalTaskPort['completeGoal'];
   /**

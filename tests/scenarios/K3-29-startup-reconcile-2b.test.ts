@@ -38,7 +38,7 @@ import {
 } from '../../src/core/work-graph/tasks/unknown-call-review-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import {
-  claimK3ReviewRound, createK3PendingReview, endK3RunUnfinished, openK3ReviewCardWorld,
+  claimK3ReviewRound, createK3PendingReview, endK3RunUnfinished, openK3ReviewCardWorld, settleK3Review,
   type K3ReviewCardWorld,
 } from '../helpers/K3-proposal-round.js';
 import { openRealRunHarness } from '../helpers/K3-35-continuation-fixture.js';
@@ -293,5 +293,18 @@ describe('K3-29 step 6b (c) over real records', () => {
       async input => await world.reviews.listReviews(world.fixture.ctx, input as never));
     expect(report.reviews).toHaveLength(1);
     expect(report.redriveGoals).toEqual([]);
+  });
+
+  // K3L-1 V8 mutation: start-up kind 1 leaves out awaiting_advice; red today: :306 (redriveGoals is [])
+  it('K3L-1 V8 (memory): a record waiting for advice hands its active Goal the record Task', async () => {
+    const world = await openK3ReviewCardWorld('memory');
+    worlds.push(world);
+    await settleK3Review(world, await pendingRecord(world, 'k3-20-a', 'v8'),
+      { cause: 'review_unavailable', adviserAvailable: true });
+    const { report } = await reconcile(world, await goalSnapshots(world),
+      async input => await world.reviews.listReviews(world.fixture.ctx, input as never));
+    expect(report.redriveGoals).toEqual([{
+      goalRef: { aggregateType: 'Goal', projectId: WORKSPACE_SCOPE.projectId, goalId: GOAL_B.goalId },
+      scope: { ...WORKSPACE_SCOPE }, taskIds: ['k3-20-a'] }]);
   });
 });

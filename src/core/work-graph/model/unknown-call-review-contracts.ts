@@ -11,8 +11,9 @@ import type { RunRef } from '../../../contracts/dispatch.js';
 import type { DecisionSelectionV1, DecisionSourceV1 } from '../../../contracts/goal-decisions.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type {
-  CrashSuspicionV1, UnknownCallReviewRef, UnknownCallReviewStatusV1, UnknownCallReviewV1,
+  CrashSuspicionV1, UnknownCallEscalationCauseV1, UnknownCallReviewRef, UnknownCallReviewStatusV1, UnknownCallReviewV1,
 } from '../../../contracts/unknown-call-review.js';
+import type { UnknownCallAdvicePhaseV1, UnknownCallAdviceV1 } from '../../../contracts/unknown-call-advice.js';
 import type { GraphWrite } from './task-contracts.js';
 
 export interface UnknownCallReviewReadPort {
@@ -92,10 +93,33 @@ export interface UnknownCallReviewPort {
    * "unfinished" from "stopped by you" via `reworkFenceOf` (L15), and reads
    * the preparing manifest of the round that wrote a conclusion for `display`
    * (D6, L16). M3: settlement is a must-write class, always admitted.
+   * K3 layering: `adviserAvailable` is the Workflow's finding (not re-checked);
+   * absent means no adviser, and an adviser-layer record reaches the person
+   * with `escalation: no_adviser`.
    */
   settleReview(
     ctx: CoreCallContext,
-    request: GraphWrite<{ reviewRef: UnknownCallReviewRef; cause: 'round_ended' | 'review_unavailable' }>,
+    request: GraphWrite<{
+      reviewRef: UnknownCallReviewRef; cause: 'round_ended' | 'review_unavailable'; adviserAvailable?: boolean;
+    }>,
+  ): Promise<WriteResult<UnknownCallReviewV1>>;
+  /**
+   * K3 layering: applies the adviser's answer to an `awaiting_advice` record.
+   * `requestId` is the adviser round's system-round request id; the answer is
+   * read from that round's Query and must come from an adviser Session, for
+   * this record's current revision and phase and the Goal's current content
+   * (T02). The identity is (record, requestId, phase).
+   */
+  applyAdviserAnswer(
+    ctx: CoreCallContext,
+    request: GraphWrite<{ reviewRef: UnknownCallReviewRef; requestId: string; phase: UnknownCallAdvicePhaseV1 }>,
+  ): Promise<WriteResult<UnknownCallReviewV1>>;
+  /** K3 layering: the Workflow puts an `awaiting_advice` record in front of the person (identity: record@revision, cause). */
+  escalateReview(
+    ctx: CoreCallContext,
+    request: GraphWrite<{
+      reviewRef: UnknownCallReviewRef; cause: UnknownCallEscalationCauseV1; suggestion: UnknownCallAdviceV1 | null;
+    }>,
   ): Promise<WriteResult<UnknownCallReviewV1>>;
   /** Identity is derived from the answer message (L19); the same identity+fingerprint replays. */
   applyDisposition(

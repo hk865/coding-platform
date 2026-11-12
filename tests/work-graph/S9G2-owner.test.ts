@@ -2,10 +2,8 @@
  * Slice 9 G2 owner rows (lead ruling s9g2 #2): what the evidence owner decides about a review before the
  * Workflow (G3) calls it. Every prior state is reached through the R3e fixture's public owner steps.
  *
- * - The finalize fingerprint (F1): an empty `reviewerEvidence` is the omitted member, byte for byte, so it hits
- *   the same receipt. Receipt replay is storage, so the row runs on both backends (RULES S3).
- * - The finalize attribution (F2): a ref that is not this round's booked review is refused after the reads;
- *   nothing is written.
+ * - The finalize fingerprint (`[]` is the omitted member) and attribution (a ref not booked is `forbidden`) are G3's
+ *   W5 and E4 (lead ruling s9g3, after the test writer's hand-back, (d)).
  * - The booking order (S1) as far as this tree reaches: an owner without the two review read ports answers
  *   `unsupported` after the terminal read. A finalized round's `busy` is E1's row (`tests/state/S9-vr16-pure.test.ts`).
  *   The answered exec review Query itself comes from G3's send chain, so the booking, its replay and the fold of a
@@ -14,7 +12,6 @@
  *   inside the owner. Proved at the type level by one `@ts-expect-error` (typecheck fails if the export widens).
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import type { EvidenceRef } from '../../src/contracts/evidence.js';
 import type { RoundSnapshot } from '../../src/contracts/verification.js';
 import { roundCommitIdentityOf } from '../../src/core/work-graph/evidence/evidence-service.js';
 import { createR3eEvidenceFixture, type R3eEvidenceFixture } from '../helpers/R3e-evidence-fixture.js';
@@ -23,40 +20,13 @@ const fixtures: R3eEvidenceFixture[] = [];
 afterEach(async () => { for (const fixture of fixtures.splice(0)) await fixture.close(); });
 
 /** An open round on the fixture's ended work Run (its checks still pending). */
-async function openRound(kind: 'memory' | 'sqlite' = 'memory'): Promise<{ fixture: R3eEvidenceFixture; round: RoundSnapshot }> {
-  const fixture = await createR3eEvidenceFixture(kind);
+async function openRound(): Promise<{ fixture: R3eEvidenceFixture; round: RoundSnapshot }> {
+  const fixture = await createR3eEvidenceFixture('memory');
   fixtures.push(fixture);
   const opened = await fixture.evidence.openVerification(fixture.ctx, fixture.openRequest());
   if (opened.status !== 'committed') throw new Error(`the round did not open: ${JSON.stringify(opened)}`);
   return { fixture, round: opened.value };
 }
-
-const evidenceRef = (fixture: R3eEvidenceFixture, evidenceId: string): EvidenceRef =>
-  ({ aggregateType: 'Evidence', projectId: fixture.subject.projectId, evidenceId });
-
-describe.each(['memory', 'sqlite'] as const)('F1 finalize fingerprint (%s)', (kind) => {
-  it('an empty reviewerEvidence is the omitted member: the same request replays the same result', async () => {
-    const { fixture, round } = await openRound(kind);
-    const request = fixture.finalizeRequest(round);
-    const first = await fixture.evidence.finalizeChecks(fixture.ctx, request);
-    expect(first).toMatchObject({ status: 'committed', replayed: false });
-    const again = await fixture.evidence.finalizeChecks(fixture.ctx,
-      { ...request, input: { ...request.input, reviewerEvidence: [] } });
-    expect(again).toEqual({ ...first, replayed: true });
-  });
-});
-
-describe('rejects: F2 a finalize ref that is not the round\'s booked review', () => {
-  // Before slice 9 the same request was refused up front as `unsupported`; now the refs are attributed after the reads.
-  it('a ref with no booking → forbidden, the round unchanged', async () => {
-    const { fixture, round } = await openRound();
-    const request = fixture.finalizeRequest(round);
-    const refused = await fixture.evidence.finalizeChecks(fixture.ctx,
-      { ...request, input: { ...request.input, reviewerEvidence: [evidenceRef(fixture, 's9g2-not-booked')] } });
-    expect(refused).toMatchObject({ status: 'rejected', code: 'forbidden' });
-    expect(await fixture.evidence.readVerification(fixture.ctx, round.ref)).toEqual({ status: 'ready', value: round });
-  });
-});
 
 describe('rejects: S1 the booking before G3 wires the review reads', () => {
   it('an owner without the review read ports is unsupported', async () => {

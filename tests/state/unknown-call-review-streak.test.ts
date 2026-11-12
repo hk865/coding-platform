@@ -2,7 +2,7 @@
  * K3-32 (R5): the L23 "consecutive" algorithm `streakOf` (U5). The eleven
  * examples of L23 (1, 2, 3, 3b, 3c, 4–9) are written out with literal expected
  * flags; the review records are minimal stubs because only `runRef` and the
- * items' kinds are read.
+ * items' kinds are read (and, for K3L-1's `priorAdvised`, the disposition's source).
  */
 import { describe, expect, it } from 'vitest';
 import type { RunReconciliationV1, RunRef, RunSnapshot } from '../../src/contracts/dispatch.js';
@@ -144,5 +144,15 @@ describe('K3-32 consecutive algorithm', () => {
       { runId: 'a', reconciliation: RUN25 },
       { runId: 'b', from: { runId: 'a' }, reconciliation: CLEAN_INTERRUPT },
     ], 'b', [reviewOf('a', ['platform'])])).toMatchObject({ priorAutoCleanup: true, priorUnknownProcess: false });
+  });
+
+  // K3L-1 ② narrow. Named mutation: `priorAdvised` looks at any earlier adviser-disposed Run on the chain -> C red.
+  it('K3L-1 priorAdvised: only R\'s direct predecessor counts (A adviser-disposed, B by the card -> C false)', () => {
+    const disposed = (runId: string, source: 'adviser' | 'card') =>
+      ({ ...reviewOf(runId, ['process']), disposition: { source } }) as unknown as UnknownCallReviewV1;
+    const chain = [{ runId: 'a' }, { runId: 'b', from: { runId: 'a' } }, { runId: 'c', from: { runId: 'b' } }];
+    const reviews = [disposed('a', 'adviser'), disposed('b', 'card')];
+    expect(streak(chain, 'b', reviews).priorAdvised).toBe(true);
+    expect(streak(chain, 'c', reviews).priorAdvised).toBe(false);
   });
 });

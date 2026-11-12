@@ -117,6 +117,12 @@ export type SessionGuardContext = {
   archive?: SessionArchiveGuardV1;
   /** Slice 1 §3.5: only the new dispatch admission reads it. */
   dispatch?: SessionDispatchGuardV1;
+  /**
+   * Only for `session_archived` (window 3, slice 9 §3.7): whether the line still holds an ended Query's source the Host
+   * must close out now (`SessionSettlementDuePort`); `'not_read'` refuses like an unread wait. Absent only where the
+   * composition has no settlement read (a narrow owner double); the platform's archive owner always passes it.
+   */
+  settlementDue?: boolean | 'not_read' | undefined;
 };
 
 /** Slice 1 §3.5: the facts an archive row needs, all read by the owner. */
@@ -937,6 +943,15 @@ function archived(state: ActiveState, ctx: SessionGuardContext): SessionTransiti
   if (ctx.archive !== undefined && ctx.archive.wait === 'waiting' && !ctx.archive.retired) {
     return reject('guard_failed', 'busy',
       'archive_wait_disposal_required: the Session is still waiting for a continuation reply');
+  }
+  // Window 3: an archived line is never offered again, so an ended Query's open source would stay open forever; the
+  // archive waits for the Host's close-out (the consumable view offers it on an archive-requested line).
+  if (ctx.settlementDue === 'not_read') {
+    return reject('guard_failed', 'incomplete', 'the Session settlement facts were not read before archiving');
+  }
+  if (ctx.settlementDue === true) {
+    return reject('guard_failed', 'busy',
+      'archive_settlement_pending: an ended Query\'s source message on this line is not closed out yet');
   }
   if (stalePin(state, ctx)) return reject('stale', 'revision_conflict', 'the Session changed since the caller read it');
   const clearRequest = state.archiveRequest !== undefined && state.archiveRequest !== null;

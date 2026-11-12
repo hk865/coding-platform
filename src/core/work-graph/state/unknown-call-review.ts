@@ -18,11 +18,13 @@ import type {
   UnknownCallBlockedCommandV1,
   UnknownCallDecisionReasonV1,
   UnknownCallDispositionV1,
+  UnknownCallEscalationCauseV1,
   UnknownCallInventoryProblemV1,
   UnknownCallObservationV1,
   UnknownCallReviewItemV1,
   UnknownCallReviewV1,
 } from '../../../contracts/unknown-call-review.js';
+import type { UnknownCallAdvicePhaseV1, UnknownCallAdviceV1 } from '../../../contracts/unknown-call-advice.js';
 import { UNKNOWN_CALL_APPROVED_METHODS_MAX_BYTES } from '../../../contracts/unknown-call-review.js';
 import { approvedMethodLinesZh } from '../../../contracts/continuation-brief.js';
 import { accept, reject, unreachable, type Rejected, type Transition } from './transition.js';
@@ -75,7 +77,7 @@ export type UnknownCallReviewCreationTruncationV1 = {
 export type UnknownCallReviewChangeV1 =
   | 'created' | 'round_claimed' | 'conclusion_recorded' | 'proposal_recorded'
   | 'round_unfinished' | 'settled' | 'disposition_applied' | 'approval_applied'
-  | 'hold_applied' | 'hold_released';
+  | 'hold_applied' | 'hold_released' | 'adviser_answer_applied' | 'escalated';
 
 export type UnknownCallReviewEffectV1 =
   | { kind: 'write_review'; review: UnknownCallReviewV1 }
@@ -122,7 +124,11 @@ export type UnknownCallReviewEventV1 =
       approvedMethods: UnknownCallApprovedMethodV1[] | null;
     }
   | { kind: 'hold_applied'; answeredRevision: number; text: string | null }
-  | { kind: 'hold_released' };
+  | { kind: 'hold_released' }
+  /** K3 layering: the adviser's parsed answer to the record's `advice.phase`. */
+  | { kind: 'adviser_answer_applied'; answer: UnknownCallAdviceV1 }
+  /** K3 layering: the Workflow puts an `awaiting_advice` record in front of the person. */
+  | { kind: 'escalated'; cause: UnknownCallEscalationCauseV1; suggestion: UnknownCallAdviceV1 | null };
 
 /**
  * The service supplies every guard fact the table needs; the machine reads no
@@ -153,7 +159,74 @@ export type UnknownCallReviewContextV1 = {
   blockedCommands?: readonly UnknownCallBlockedCommandV1[];
   /** UCR-15: the original Run is still the Task's selected Run (D3). */
   originalRunSelected: boolean;
+  /**
+   * K3 layering: the Workflow found an adviser for this record at settlement
+   * (passed in, not re-checked by the owner). Absent reads false.
+   */
+  adviserAvailable?: boolean;
 };
+
+// ------------------------------------------------------------------------ //
+// Layering (user decision 11-12, lead rulings 2-6)                           //
+// ------------------------------------------------------------------------ //
+
+export type UnknownCallReviewRouteV1 =
+  | { to: 'adviser' }
+  | { to: 'adviser_then_person'; cause: 'second_consecutive' | 'advised_failed_again' }
+  | { to: 'person'; cause: UnknownCallEscalationCauseV1 }
+  | { to: 'person'; cause: null; escalation: 'clear' | 'keep' };
+
+/**
+ * Where an undecided record goes, first rule wins:
+ * 1. every step confirmed -> the person, today's card (④);
+ * 2. stopped by the person or inventory incomplete -> the person, today's card
+ *    (L15: what the person stopped only the person continues);
+ * 3. a missing or declined proposal follows the source of the safer-method
+ *    disposition: the person's goes back to the person;
+ * 4/5. the adviser's disposition interrupted again (② narrow) or the second
+ *    consecutive interruption (①) -> the adviser answers, then the person sees
+ *    the card with that answer as the suggestion;
+ * 6. everything else (partial, undetermined, crash suspicion, unfinished or
+ *    unavailable review, an approval) -> the adviser; with no adviser the
+ *    person, `no_adviser` (③).
+ * A person route with a `cause` writes that new escalation; today's card
+ * (rules 1-2) clears an older one; the person's own method coming back (rule 3)
+ * keeps the record's escalation as it is.
+ */
+export function unknownCallReviewRouteOf(input: {
+  reasons: readonly UnknownCallDecisionReasonV1[];
+  streak: UnknownCallReviewV1['streak'];
+  autonomy: GoalAutonomyV1;
+  adviserAvailable: boolean;
+  dispositionSource: UnknownCallDispositionV1['source'] | null;
+}): UnknownCallReviewRouteV1 {
+  const { reasons } = input;
+  if (input.autonomy === 'every_step') return { to: 'person', cause: null, escalation: 'clear' };
+  if (reasons.includes('review_stopped') || reasons.includes('inventory_incomplete')) {
+    return { to: 'person', cause: null, escalation: 'clear' };
+  }
+  if ((reasons.includes('proposal_missing') || reasons.includes('proposal_declined'))
+    && input.dispositionSource !== 'adviser') {
+    return { to: 'person', cause: null, escalation: 'keep' };
+  }
+  const streakCause = input.streak.priorAdvised === true ? 'advised_failed_again' as const
+    : input.streak.priorUnknownProcess ? 'second_consecutive' as const : null;
+  if (streakCause !== null) {
+    return input.adviserAvailable ? { to: 'adviser_then_person', cause: streakCause } : { to: 'person', cause: streakCause };
+  }
+  return input.adviserAvailable ? { to: 'adviser' } : { to: 'person', cause: 'no_adviser' };
+}
+
+/** L18: `safer_method` needs a proposable target and two free round slots (the card and the adviser alike). */
+export function unknownCallReviewSaferMethodOpen(record: Pick<UnknownCallReviewV1, 'proposalTargets' | 'rounds'>): boolean {
+  return (record.proposalTargets ?? []).length > 0 && record.rounds.length <= UNKNOWN_CALL_REVIEW_MAX_ROUNDS - 2;
+}
+
+/** L20: the approved methods are the current proposals, kept alias-ascending by their only writer. */
+export function approvedMethodsOf(proposals: readonly SaferMethodProposalV1[]): UnknownCallApprovedMethodV1[] {
+  return proposals.map(proposal => ({ proposalId: proposal.proposalId, callId: proposal.callId,
+    alias: proposal.alias, command: proposal.command, cwd: proposal.cwd }));
+}
 
 // ------------------------------------------------------------------------ //
 // Constructor                                                                //
@@ -260,6 +333,8 @@ export function transitionUnknownCallReview(
     case 'approval_applied': return approvalApplied(current, event, ctx);
     case 'hold_applied': return holdApplied(current, event, ctx);
     case 'hold_released': return holdReleased(current, ctx);
+    case 'adviser_answer_applied': return adviserAnswerApplied(current, event, ctx);
+    case 'escalated': return escalated(current, event, ctx);
   }
   return unreachable(event, 'UnknownCallReviewEvent');
 }
@@ -405,11 +480,11 @@ function settleWithoutRound(
     proposalMissing: current.status === 'awaiting_proposal',
     autonomy: ctx.autonomy,
   });
-  return write(current, {
-    items, activeRound: null, status: 'needs_decision', decisionReasons: reasons,
+  return routed(current, {
+    items, activeRound: null, decisionReasons: reasons,
     dispositionTargets: dispositionTargetsOf(items),
     proposalTargets: current.status === 'awaiting_proposal' ? current.proposalTargets : proposalTargetsOf(items),
-  }, 'settled', ctx);
+  }, 'disposition', routeFor(current, reasons, ctx), 'settled', ctx);
 }
 
 /** UCR-06b: the round was stopped by the human. */
@@ -421,11 +496,11 @@ function settleStopped(
   const items = settleItems(current.items, 'review_stopped', ctx);
   const rounds = [...current.rounds, roundRecord(activeRound, 'stopped')];
   const reasons = decisionReasons(current, items, { reviewStopped: true, autonomy: ctx.autonomy });
-  return write(current, {
-    items, rounds, activeRound: null, status: 'needs_decision', decisionReasons: reasons,
+  return routed(current, {
+    items, rounds, activeRound: null, decisionReasons: reasons,
     dispositionTargets: dispositionTargetsOf(items) ?? current.dispositionTargets,
     proposalTargets: proposalTargetsOf(items) ?? current.proposalTargets,
-  }, 'settled', ctx);
+  }, 'disposition', routeFor(current, reasons, ctx), 'settled', ctx);
 }
 
 /** UCR-07: settle `pending_review`. */
@@ -442,13 +517,13 @@ function settlePendingReview(
   const items = settleItems(current.items, cause, ctx);
   const rounds = [...current.rounds, roundRecord(activeRound, second ? 'unfinished' : 'finished')];
   const reasons = decisionReasons(current, items, { reviewIncomplete: second, autonomy: ctx.autonomy });
-  const status = reasons.length === 0 ? 'resolved' : 'needs_decision';
-  return write(current, {
-    items, rounds, activeRound: null, status, decisionReasons: reasons,
-    ...(status === 'needs_decision'
-      ? { dispositionTargets: dispositionTargetsOf(items), proposalTargets: proposalTargetsOf(items) }
-      : {}),
-  }, 'settled', ctx);
+  if (reasons.length === 0) {
+    return write(current, { items, rounds, activeRound: null, status: 'resolved', decisionReasons: reasons }, 'settled', ctx);
+  }
+  return routed(current, {
+    items, rounds, activeRound: null, decisionReasons: reasons,
+    dispositionTargets: dispositionTargetsOf(items), proposalTargets: proposalTargetsOf(items),
+  }, 'disposition', routeFor(current, reasons, ctx), 'settled', ctx);
 }
 
 /** UCR-08: settle `awaiting_proposal`. */
@@ -469,16 +544,19 @@ function settleAwaitingProposal(
   // when every target already has a proposal; `proposal_missing` is added only
   // for a target that really lacks one.
   if (!second && everyTargetProposed) {
-    return write(current, { items, rounds, activeRound: null, status: 'awaiting_approval', decisionReasons: [] }, 'settled', ctx);
+    // Lead ruling 6: who approves is judged again at this moment with the same
+    // route, from the reasons the record still stands on.
+    return routed(current, { items, rounds, activeRound: null, decisionReasons: [] }, 'approval',
+      routeFor(current, standingReasons(current, items, rounds, ctx), ctx), 'settled', ctx);
   }
   const reasons = decisionReasons(current, items, {
     reviewIncomplete: second, proposalMissing: !everyTargetProposed, autonomy: ctx.autonomy,
   });
-  return write(current, {
-    items, rounds, activeRound: null, status: 'needs_decision', decisionReasons: reasons,
+  return routed(current, {
+    items, rounds, activeRound: null, decisionReasons: reasons,
     dispositionTargets: dispositionTargetsOf(items) ?? current.dispositionTargets,
     proposalTargets: current.proposalTargets,
-  }, 'settled', ctx);
+  }, 'disposition', routeFor(current, reasons, ctx), 'settled', ctx);
 }
 
 /** UCR-08b: settle the running round of a review already held via UCR-15. */
@@ -506,8 +584,19 @@ function dispositionApplied(
   if (current.status !== 'needs_decision') {
     return reject('illegal', 'invalid', `disposition_applied is not legal from ${current.status}`);
   }
-  const base = buildDisposition(current, event, ctx);
-  switch (event.choice) {
+  return applyDispositionChoice(current,
+    buildDisposition(current, event.choice, 'card', event.answerMessageRef, event.answeredRevision, event.text, ctx),
+    'disposition_applied', ctx);
+}
+
+/** UCR-09/UCR-10/UCR-11 for one built disposition, whoever chose it (the person's card or the adviser). */
+function applyDispositionChoice(
+  current: UnknownCallReviewV1,
+  base: UnknownCallDispositionV1,
+  change: UnknownCallReviewChangeV1,
+  ctx: UnknownCallReviewContextV1,
+): Transition<UnknownCallReviewV1, UnknownCallReviewEventV1, UnknownCallReviewEffectV1> {
+  switch (base.choice) {
     case 'safer_method': {
       if ((current.proposalTargets ?? []).length === 0) {
         return reject('illegal', 'invalid', 'safer_method needs a non-empty proposalTargets');
@@ -518,23 +607,23 @@ function dispositionApplied(
       return write(current, {
         status: 'awaiting_proposal', stateEntry: current.stateEntry + 1, proposals: [],
         disposition: base, decisionReasons: [], blockedCommands: [], activeRound: null,
-      }, 'disposition_applied', ctx);
+      }, change, ctx);
     }
     case 'skip_as_done':
       return write(current, {
         status: 'resolved', disposition: base, decisionReasons: [],
         blockedCommands: [...(ctx.blockedCommands ?? [])], activeRound: null,
-      }, 'disposition_applied', ctx);
+      }, change, ctx);
     case 'handle_myself':
       return write(current, {
         status: 'resolved', disposition: { ...base, hold: 'held' }, decisionReasons: [],
         blockedCommands: [], activeRound: null,
-      }, 'disposition_applied', ctx);
+      }, change, ctx);
     case 'rerun_as_is':
       return write(current, {
         status: 'resolved', disposition: base, decisionReasons: [],
         blockedCommands: [], activeRound: null,
-      }, 'disposition_applied', ctx);
+      }, change, ctx);
   }
 }
 
@@ -547,24 +636,97 @@ function approvalApplied(
   if (current.status !== 'awaiting_approval') {
     return reject('illegal', 'invalid', `approval_applied is not legal from ${current.status}`);
   }
+  return applyApprovalDecision(current, event.decision, event.answerMessageRef, event.answeredRevision,
+    event.approvedMethods, 'approval_applied', ctx);
+}
+
+/** UCR-12/UCR-13 for one decision, whoever made it (the person's card or the adviser). */
+function applyApprovalDecision(
+  current: UnknownCallReviewV1,
+  decision: 'approve' | 'decline',
+  answerMessageRef: SessionMessageRef | null,
+  answeredRevision: number,
+  approvedMethods: UnknownCallApprovedMethodV1[] | null,
+  change: UnknownCallReviewChangeV1,
+  ctx: UnknownCallReviewContextV1,
+): Transition<UnknownCallReviewV1, UnknownCallReviewEventV1, UnknownCallReviewEffectV1> {
   const existing = current.disposition;
   if (existing === null) return reject('illegal', 'invalid', 'the review has no safer-method disposition to approve');
-  const approval = {
-    decision: event.decision, answerMessageRef: event.answerMessageRef,
-    answeredRevision: event.answeredRevision, appliedBy: ctx.actor, appliedAt: ctx.updatedAt,
-  };
-  if (event.decision === 'decline') {
+  const approval = { decision, answerMessageRef, answeredRevision, appliedBy: ctx.actor, appliedAt: ctx.updatedAt };
+  if (decision === 'decline') {
     const reasons = decisionReasons(current, current.items, { proposalDeclined: true, autonomy: ctx.autonomy });
-    return write(current, {
-      status: 'needs_decision', decisionReasons: reasons,
-      disposition: { ...existing, approval, approvedMethods: null },
-    }, 'approval_applied', ctx);
+    return routed(current, {
+      decisionReasons: reasons, disposition: { ...existing, approval, approvedMethods: null },
+    }, 'disposition', routeFor(current, reasons, ctx), change, ctx);
   }
   return write(current, {
     status: 'resolved', decisionReasons: [],
-    disposition: { ...existing, approval, approvedMethods: event.approvedMethods },
+    disposition: { ...existing, approval, approvedMethods },
     blockedCommands: [...(ctx.blockedCommands ?? [])],
-  }, 'approval_applied', ctx);
+  }, change, ctx);
+}
+
+/**
+ * K3 layering: the adviser's answer to the record's `advice.phase`. The route
+ * is judged again with the Goal's autonomy now: every step confirmed meanwhile
+ * puts today's card in front of the person; a record that asks the adviser
+ * first and the person second turns the answer into the card's suggestion. An
+ * escalation, or a choice this record cannot take, reaches the person too;
+ * otherwise the answer is applied exactly as the person's card would be, with
+ * source `adviser` and the rationale as the 附言.
+ */
+function adviserAnswerApplied(
+  current: UnknownCallReviewV1,
+  event: Extract<UnknownCallReviewEventV1, { kind: 'adviser_answer_applied' }>,
+  ctx: UnknownCallReviewContextV1,
+): Transition<UnknownCallReviewV1, UnknownCallReviewEventV1, UnknownCallReviewEffectV1> {
+  if (current.status !== 'awaiting_advice' || current.advice === undefined) {
+    return reject('illegal', 'invalid', `adviser_answer_applied is not legal from ${current.status}`);
+  }
+  const { answer } = event;
+  const phase = current.advice.phase;
+  if (answer.phase !== phase) return reject('illegal', 'invalid', `the adviser answered the ${answer.phase} phase, not ${phase}`);
+  const reasons = phase === 'approval' ? standingReasons(current, current.items, current.rounds, ctx) : current.decisionReasons;
+  const route = routeFor(current, reasons, { ...ctx, adviserAvailable: true });
+  if (route.to === 'person') {
+    // ④: today's card; L17 adds `confirm_each_step` to the reasons the card carries.
+    return routed(current, {
+      decisionReasons: phase === 'disposition'
+        ? UNKNOWN_CALL_DECISION_REASON_ORDER.filter(reason => current.decisionReasons.includes(reason)
+          || reason === 'confirm_each_step')
+        : [],
+    }, phase, route, 'escalated', ctx);
+  }
+  if (route.to === 'adviser_then_person') return escalate(current, phase, route.cause, answer, ctx);
+  if (answer.choice === 'escalate') return escalate(current, phase, 'adviser_escalated', answer, ctx);
+  const advised: UnknownCallReviewV1 = { ...current, advice: { phase, answer } };
+  if (phase === 'approval') {
+    const decision = answer.choice as 'approve' | 'decline';
+    return applyApprovalDecision(advised, decision, null, current.revision,
+      decision === 'approve' ? approvedMethodsOf(current.proposals) : null, 'adviser_answer_applied', ctx);
+  }
+  const choice = answer.choice as 'rerun_as_is' | 'safer_method' | 'skip_as_done';
+  if (choice === 'safer_method' && !unknownCallReviewSaferMethodOpen(current)) {
+    return escalate(current, phase, 'adviser_failed', null, ctx);
+  }
+  return applyDispositionChoice(advised,
+    buildDisposition(current, choice, 'adviser', null, current.revision, answer.rationale, ctx),
+    'adviser_answer_applied', ctx);
+}
+
+/** K3 layering: the Workflow's escalation of an `awaiting_advice` record (no line, failed round, the second layer). */
+function escalated(
+  current: UnknownCallReviewV1,
+  event: Extract<UnknownCallReviewEventV1, { kind: 'escalated' }>,
+  ctx: UnknownCallReviewContextV1,
+): Transition<UnknownCallReviewV1, UnknownCallReviewEventV1, UnknownCallReviewEffectV1> {
+  if (current.status !== 'awaiting_advice' || current.advice === undefined) {
+    return reject('illegal', 'invalid', `escalated is not legal from ${current.status}`);
+  }
+  if (event.suggestion !== null && event.suggestion.phase !== current.advice.phase) {
+    return reject('illegal', 'invalid', `the suggestion answers the ${event.suggestion.phase} phase, not ${current.advice.phase}`);
+  }
+  return escalate(current, current.advice.phase, event.cause, event.suggestion, ctx);
 }
 
 /** UCR-15: the direct "I'll handle it", human only. */
@@ -575,6 +737,7 @@ function holdApplied(
 ): Transition<UnknownCallReviewV1, UnknownCallReviewEventV1, UnknownCallReviewEffectV1> {
   if (ctx.actor.kind !== 'human') return reject('guard_failed', 'forbidden', 'only a human can hold a review');
   const direct = current.status === 'pending_review' || current.status === 'awaiting_proposal'
+    || current.status === 'awaiting_advice'
     || current.status === 'needs_decision' || current.status === 'awaiting_approval';
   if (!direct) {
     const fromResolved = current.status === 'resolved' && holdOf(current) !== 'held' && ctx.originalRunSelected;
@@ -824,15 +987,100 @@ function holdOf(review: UnknownCallReviewV1): 'held' | 'released' | null {
 
 function buildDisposition(
   current: UnknownCallReviewV1,
-  event: Extract<UnknownCallReviewEventV1, { kind: 'disposition_applied' }>,
+  choice: UnknownCallDispositionV1['choice'],
+  source: 'card' | 'adviser',
+  answerMessageRef: SessionMessageRef | null,
+  answeredRevision: number,
+  text: string | null,
   ctx: UnknownCallReviewContextV1,
 ): UnknownCallDispositionV1 {
   return {
-    choice: event.choice, source: 'card', targets: current.dispositionTargets ?? [],
-    answerMessageRef: event.answerMessageRef, answeredRevision: event.answeredRevision,
-    appliedBy: ctx.actor, appliedAt: ctx.updatedAt, text: event.text,
+    choice, source, targets: current.dispositionTargets ?? [],
+    answerMessageRef, answeredRevision,
+    appliedBy: ctx.actor, appliedAt: ctx.updatedAt, text,
     annotations: [], approval: null, approvedMethods: null, hold: null,
   };
+}
+
+/** K3 layering: the route of this record from `reasons`, its streak and its disposition's source. */
+function routeFor(
+  current: UnknownCallReviewV1,
+  reasons: readonly UnknownCallDecisionReasonV1[],
+  ctx: UnknownCallReviewContextV1,
+): UnknownCallReviewRouteV1 {
+  return unknownCallReviewRouteOf({ reasons, streak: current.streak, autonomy: ctx.autonomy,
+    adviserAvailable: ctx.adviserAvailable === true, dispositionSource: current.disposition?.source ?? null });
+}
+
+/**
+ * Lead ruling 6: the reasons an approval is routed by are those the record
+ * still stands on (its items, inventory, streak and autonomy), plus
+ * `review_stopped` when the person stopped one of its rounds.
+ */
+function standingReasons(
+  current: UnknownCallReviewV1,
+  items: readonly UnknownCallReviewItemV1[],
+  rounds: UnknownCallReviewV1['rounds'],
+  ctx: UnknownCallReviewContextV1,
+): UnknownCallDecisionReasonV1[] {
+  return decisionReasons(current, items, {
+    reviewStopped: rounds.some(round => round.result === 'stopped'), autonomy: ctx.autonomy,
+  });
+}
+
+/**
+ * K3 layering: one routed write. The adviser routes enter `awaiting_advice`
+ * for `phase`; the person's route is written by `toPerson` with the route's
+ * escalation.
+ */
+function routed(
+  current: UnknownCallReviewV1,
+  patch: Partial<UnknownCallReviewV1>,
+  phase: UnknownCallAdvicePhaseV1,
+  route: UnknownCallReviewRouteV1,
+  change: UnknownCallReviewChangeV1,
+  ctx: UnknownCallReviewContextV1,
+): Transition<UnknownCallReviewV1, UnknownCallReviewEventV1, UnknownCallReviewEffectV1> {
+  if (route.to !== 'person') {
+    return write(current, { ...patch, status: 'awaiting_advice', advice: { phase, answer: null } }, change, ctx);
+  }
+  return toPerson(current, patch, phase,
+    route.cause === null ? route.escalation : { cause: route.cause, suggestion: null }, change, ctx);
+}
+
+/** K3 layering: the second layer, written from `awaiting_advice` for `phase`. */
+function escalate(
+  current: UnknownCallReviewV1,
+  phase: UnknownCallAdvicePhaseV1,
+  cause: UnknownCallEscalationCauseV1,
+  suggestion: UnknownCallAdviceV1 | null,
+  ctx: UnknownCallReviewContextV1,
+): Transition<UnknownCallReviewV1, UnknownCallReviewEventV1, UnknownCallReviewEffectV1> {
+  return toPerson(current, {}, phase, { cause, suggestion }, 'escalated', ctx);
+}
+
+/**
+ * K3 layering: the one write that puts the record in front of the person,
+ * `needs_decision` for a disposition or `awaiting_approval` for an approval.
+ * Today's card drops an older escalation (`clear`), so a card the person
+ * reaches again by stopping a round is not shown as the second layer; the
+ * person's own method coming back keeps the record's (`keep`); the second
+ * layer writes its new escalation.
+ */
+function toPerson(
+  current: UnknownCallReviewV1,
+  patch: Partial<UnknownCallReviewV1>,
+  phase: UnknownCallAdvicePhaseV1,
+  escalation: 'clear' | 'keep' | NonNullable<UnknownCallReviewV1['escalation']>,
+  change: UnknownCallReviewChangeV1,
+  ctx: UnknownCallReviewContextV1,
+): Transition<UnknownCallReviewV1, UnknownCallReviewEventV1, UnknownCallReviewEffectV1> {
+  const status = phase === 'disposition' ? 'needs_decision' : 'awaiting_approval';
+  if (escalation === 'keep') return write(current, { ...patch, status }, change, ctx);
+  if (escalation !== 'clear') return write(current, { ...patch, status, escalation }, change, ctx);
+  const cleared: UnknownCallReviewV1 = { ...current };
+  delete cleared.escalation;
+  return write(cleared, { ...patch, status }, change, ctx);
 }
 
 /**

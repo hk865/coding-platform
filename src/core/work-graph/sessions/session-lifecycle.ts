@@ -199,7 +199,7 @@ type LinkRead = { ok: true; links: SessionWorkLink[] } | { ok: false; rejection:
 function decide(
   session: SessionRecord | null,
   event: SessionEvent,
-  facts: Partial<Pick<SessionGuardContext, 'openResponsibleLink' | 'link' | 'archive' | 'dispatch'>> = {},
+  facts: Partial<Pick<SessionGuardContext, 'openResponsibleLink' | 'link' | 'archive' | 'dispatch' | 'settlementDue'>> = {},
 ): SessionTransition {
   return transitionSession(sessionMachineStateOf(session), event, {
     caller: 'service', hostLease: null, pin: null, holder: null, probe: null, kernelHeader: null,
@@ -291,6 +291,14 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
   async function readSessionLinks(projectId: string, sessionId: string): Promise<LinkRead> {
     const read = await readSessionWorkLinks(lookups, projectId, sessionId);
     return read.ok ? { ok: true, links: read.links } : read;
+  }
+
+  /** Window 3's archive fact for the machine: a failed read is `not_read`, which the machine refuses. */
+  async function settlementDueFact(ctx: CoreCallContext, session: SessionRecord):
+    Promise<boolean | 'not_read' | undefined> {
+    if (stores.settlementDue === undefined) return undefined;
+    const read = await stores.settlementDue.readSettlementDue(ctx, session);
+    return read.status === 'ready' ? read.value : 'not_read';
   }
 
   // ------------------------------------------------------------------------
@@ -777,7 +785,8 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
         const links = await readSessionLinks(scope.projectId, session.ref.sessionId);
         if (!links.ok) return links.rejection;
         archiveLinks = links.links;
-        verdict = decide(session, lifecycleEvent, { openResponsibleLink: openResponsibleLinkOf(links.links) });
+        verdict = decide(session, lifecycleEvent, { openResponsibleLink: openResponsibleLinkOf(links.links),
+          settlementDue: await settlementDueFact(ctx, session) });
       }
       if (!verdict.ok) {
         // Slice 1 SV20 / §5.3: the final archive of a Session whose responsible
@@ -1469,6 +1478,7 @@ export function createSessionLifecycleService(stores: SessionLifecycleServiceSto
           requestMatches: true, choicesValid: true, authorityValid: true, wait, retired,
           sourceExecutionStopped: true, stopQueued: false, failedDisposal: false,
         },
+        settlementDue: await settlementDueFact(ctx, session),
       });
       if (!verdict.ok) return reject(verdict.code, verdict.detail);
       // `archiveSessionRecord` (S1-SES-04) clears a present archiveRequest in the

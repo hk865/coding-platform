@@ -21,6 +21,8 @@ import type {
   UnknownCallDecisionReasonV1, UnknownCallInventoryProblemV1,
   UnknownCallReviewRef, UnknownCallReviewStatusV1, UnknownCallReviewV1,
 } from '../../../contracts/unknown-call-review.js';
+import { UNKNOWN_CALL_ESCALATION_CAUSES } from '../../../contracts/unknown-call-review.js';
+import { unknownCallAdviceProblem } from '../../../contracts/unknown-call-advice.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type {
   DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
@@ -46,10 +48,11 @@ export const K3_UCR_BY_WORKSPACE_OPEN_LOOKUP = 'k3-ucr-by-workspace-open';
 const CHANGE_KINDS: readonly UnknownCallReviewChangeV1[] = [
   'created', 'round_claimed', 'conclusion_recorded', 'proposal_recorded', 'round_unfinished',
   'settled', 'disposition_applied', 'approval_applied', 'hold_applied', 'hold_released',
+  'adviser_answer_applied', 'escalated',
 ];
 const PROOF_CHANGES: readonly UnknownCallReviewChangeV1[] = ['disposition_applied', 'approval_applied'];
 const STATUSES: readonly UnknownCallReviewStatusV1[] = [
-  'pending_review', 'needs_decision', 'awaiting_proposal', 'awaiting_approval', 'resolved',
+  'pending_review', 'awaiting_advice', 'needs_decision', 'awaiting_proposal', 'awaiting_approval', 'resolved',
 ];
 const DECISION_REASONS: readonly UnknownCallDecisionReasonV1[] = [
   'inventory_incomplete', 'review_stopped', 'review_incomplete', 'review_unavailable',
@@ -307,7 +310,9 @@ function dispositionProblem(value: unknown): string | null {
     return 'review disposition is malformed';
   }
   if (!inList(value['choice'], DISPOSITION_CHOICES)) return 'review disposition.choice is not recognized';
-  if (value['source'] !== 'card' && value['source'] !== 'direct') return 'review disposition.source is not recognized';
+  if (value['source'] !== 'card' && value['source'] !== 'direct' && value['source'] !== 'adviser') {
+    return 'review disposition.source is not recognized';
+  }
   if (!Array.isArray(value['targets']) || !value['targets'].every(nonEmpty)) {
     return 'review disposition.targets must be an array of call ids';
   }
@@ -334,7 +339,8 @@ function dispositionProblem(value: unknown): string | null {
     if (!isObject(approval) || !hasOnlyKeys(approval, ['decision', 'answerMessageRef', 'answeredRevision',
       'appliedBy', 'appliedAt'])
       || (approval['decision'] !== 'approve' && approval['decision'] !== 'decline')
-      || sessionMessageRefProblem(approval['answerMessageRef'], 'review disposition.approval.answerMessageRef') !== null
+      || (approval['answerMessageRef'] !== null
+        && sessionMessageRefProblem(approval['answerMessageRef'], 'review disposition.approval.answerMessageRef') !== null)
       || !isNonNeg(approval['answeredRevision'])
       || actorProblem(approval['appliedBy'], 'review disposition.approval.appliedBy') !== null
       || !nonEmpty(approval['appliedAt'])) {
@@ -394,12 +400,38 @@ function workspaceProblem(value: unknown): string | null {
   return 'review workspace status is not recognized';
 }
 function streakProblem(value: unknown): string | null {
-  if (!isObject(value) || !hasOnlyKeys(value, ['priorAutoCleanup', 'priorUnknownProcess', 'resetRunRef'])
-    || typeof value['priorAutoCleanup'] !== 'boolean' || typeof value['priorUnknownProcess'] !== 'boolean') {
+  // `priorAdvised` is written only when true; a record without it reads false.
+  if (!isObject(value) || !hasOnlyKeys(value, ['priorAutoCleanup', 'priorUnknownProcess', 'resetRunRef', 'priorAdvised'])
+    || typeof value['priorAutoCleanup'] !== 'boolean' || typeof value['priorUnknownProcess'] !== 'boolean'
+    || !(value['priorAdvised'] === undefined || value['priorAdvised'] === true)) {
     return 'review streak is malformed';
   }
   if (value['resetRunRef'] === null) return null;
   return runRefProblem(value['resetRunRef'], 'review streak.resetRunRef');
+}
+/** K3 layering: `advice` and `escalation`, both optional; each advice passes the contract's one check. */
+function layeringProblem(body: UnknownRecord): string | null {
+  const advice = body['advice'];
+  if (advice !== undefined) {
+    if (!isObject(advice) || !hasOnlyKeys(advice, ['phase', 'answer'])
+      || (advice['phase'] !== 'disposition' && advice['phase'] !== 'approval')) {
+      return 'review advice is malformed';
+    }
+    const answer = advice['answer'];
+    if (answer !== null && (unknownCallAdviceProblem(answer) !== null || (answer as UnknownRecord)['phase'] !== advice['phase'])) {
+      return 'review advice.answer is malformed';
+    }
+  }
+  if (body['status'] === 'awaiting_advice' && advice === undefined) return 'review awaiting_advice needs its advice';
+  const escalation = body['escalation'];
+  if (escalation !== undefined) {
+    if (!isObject(escalation) || !hasOnlyKeys(escalation, ['cause', 'suggestion'])
+      || !inList(escalation['cause'], UNKNOWN_CALL_ESCALATION_CAUSES)
+      || !(escalation['suggestion'] === null || unknownCallAdviceProblem(escalation['suggestion']) === null)) {
+      return 'review escalation is malformed';
+    }
+  }
+  return null;
 }
 function activeRoundProblem(value: unknown): string | null {
   if (!isObject(value) || !hasOnlyKeys(value, ['runRef', 'phase', 'round', 'stateEntry', 'startedRevision'])
@@ -431,7 +463,7 @@ const REVIEW_BODY_KEYS: readonly string[] = [
   'ref', 'schemaVersion', 'revision', 'workspaceId', 'task', 'runRef', 'sessionRef', 'origin',
   'inventory', 'inventoryProblem', 'items', 'itemsOmitted', 'workspace', 'streak', 'status', 'open',
   'decisionReasons', 'dispositionTargets', 'proposalTargets', 'stateEntry', 'activeRound', 'rounds',
-  'proposals', 'blockedCommands', 'disposition', 'createdAt', 'updatedAt',
+  'proposals', 'blockedCommands', 'disposition', 'createdAt', 'updatedAt', 'advice', 'escalation',
 ];
 
 /**
@@ -484,6 +516,8 @@ export function unknownCallReviewBodyProblem(value: unknown): string | null {
   const streak = streakProblem(body['streak']);
   if (streak !== null) return streak;
   if (!inList(body['status'], STATUSES)) return 'review status is not recognized';
+  const layering = layeringProblem(body);
+  if (layering !== null) return layering;
   const active = body['activeRound'];
   if (active !== null) {
     const activeProblem = activeRoundProblem(active);

@@ -642,12 +642,15 @@ function authorizeReadContext(ctx: CoreCallContext, projectId: string):
   return forbidden('unknown principal kind');
 }
 
-function authorizeGoal(principal: ReadPrincipal, goal: { ref: GoalRef; workspaceRef: { workspaceId: string } }): Rejection | null {
+/** `scope: 'project'` opens only the Host branch's workspace comparison (104-1); the project is checked by
+ *  `authorizeReadContext`, and the Run/QueryRun branches never read `scope`. */
+function authorizeGoal(principal: ReadPrincipal, goal: { ref: GoalRef; workspaceRef: { workspaceId: string } },
+  scope: 'workspace' | 'project' = 'workspace'): Rejection | null {
   if (principal.kind === 'work_run') {
     if (principal.runRef.goalId !== goal.ref.goalId) return forbidden('the work run is not scoped to this goal');
   } else if (principal.kind === 'query_run') {
     if (principal.queryRunRef.workspaceId !== goal.workspaceRef.workspaceId) return forbidden('the query run is not scoped to this workspace');
-  } else if (principal.workspaceId !== null && principal.workspaceId !== goal.workspaceRef.workspaceId) {
+  } else if (scope !== 'project' && principal.workspaceId !== null && principal.workspaceId !== goal.workspaceRef.workspaceId) {
     return forbidden('the host context is scoped to another workspace');
   }
   return null;
@@ -1874,7 +1877,8 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       ...(facts.resolution.kind === 'plain' ? {} : { expectedGoalRevision: facts.resolution.goalRevision }) });
   }
 
-  async function queryGoal(ctx: CoreCallContext, ref: GoalRef): Promise<ReadResult<GoalDetail>> {
+  async function queryGoal(ctx: CoreCallContext, ref: GoalRef,
+    options?: { scope?: 'workspace' | 'project' }): Promise<ReadResult<GoalDetail>> {
     if (ctx?.signal?.aborted) return rejected('cancelled', 'queryGoal was cancelled');
     if (!isRecord(ref) || ref.aggregateType !== 'Goal' || !nonEmpty(ref.projectId) || !nonEmpty(ref.goalId)) {
       return rejected('invalid', 'queryGoal requires a full GoalRef');
@@ -1883,7 +1887,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     if (authority.status !== 'ok') return authority;
     const read = await readGoal(records, ref);
     if (read.status !== 'ready') return asReadResult(read);
-    const scopeError = authorizeGoal(authority.principal, read.goal);
+    const scopeError = authorizeGoal(authority.principal, read.goal, options?.scope);
     if (scopeError !== null) return scopeError;
     // `findPendingProposal` decodes the Goal in the same canonical batch as the
     // candidates and verifies the revision/active pointer this call read. It

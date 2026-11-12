@@ -298,8 +298,9 @@ type ReviewRedriveKind = 1 | 2 | 3 | 4;
 
 /**
  * Which L28 step 6b (c) kind this open record is, or `null`:
- * 1. open, `pending_review`/`awaiting_proposal` and not `held` (an
- *    `activeRound` claimed but not entered included);
+ * 1. open, `pending_review`/`awaiting_proposal`/`awaiting_advice` and not
+ *    `held` (an `activeRound` claimed but not entered included; K3 layering:
+ *    the adviser round of an `awaiting_advice` record is driven again);
  * 2. open with an `activeRound`, whatever its status and hold: the round must
  *    be closed (an ended one through `settle_review`, a held claimed-not-entered
  *    one through UR3h), and a held record never opens a new round (L21).
@@ -312,7 +313,8 @@ function reviewRedriveKindOf(record: UnknownCallReviewV1): ReviewRedriveKind | n
   if (record.open !== 'yes') return null;
   if (record.activeRound !== null) return 2;
   if ((record.disposition?.hold ?? null) !== 'held'
-    && (record.status === 'pending_review' || record.status === 'awaiting_proposal')) return 1;
+    && (record.status === 'pending_review' || record.status === 'awaiting_proposal'
+      || record.status === 'awaiting_advice')) return 1;
   return null;
 }
 

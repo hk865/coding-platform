@@ -144,7 +144,7 @@ import {
     decodeNoticeOrigin, type NoticeOriginWireV1,
 } from '../persistence/decision-record-codecs.js';
 import {
-    NO_ACCEPTED_ANSWER, type AbandonCheckInput, type EvidencePort, type FinalizedChecks, type InterruptCheckInput,
+    NO_ACCEPTED_ANSWER, reviewQueryEnded, type AbandonCheckInput, type EvidencePort, type FinalizedChecks, type InterruptCheckInput,
     type OriginalVerificationQuery, type RecordReviewEvidenceInputV1, type ReverifyOutcomeV1, type ReverifyRoundInput,
     type ReviewQueryReads, type ReviewSessionDuty, type RoundChainHeadQuery,
 } from '../model/evidence-contracts.js';
@@ -1686,7 +1686,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         if (read.status === 'not_found') return incomplete('the review Query has not been created; the review waits');
         if (read.status !== 'ready') return mapRead(read);
         const job = read.value.job.job;
-        if (job.status === 'pending' || job.status === 'running') return incomplete('the review Query has not ended; the review waits');
+        if (!reviewQueryEnded(job)) return incomplete('the review Query has not ended; the review waits');
         const execution = job.intent.execution;
         const packet = execReviewPacketOfText(job.intent.question);
         const frozen = execReviewPacketOfRound(round);

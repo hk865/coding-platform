@@ -3,13 +3,15 @@
  * candidate, its availability, the busy reason and the offerable input kinds. It reads published facts only and
  * writes nothing: the directory scan is the Session owner's, the delivery verdict is the one `deliveryEligibility`
  * rule, and the offer order is the one `compareSessionInputCandidates`. `after`/`next` are Session keys
- * (`plainSessionRefKey`), never the opaque directory cursor that turns `source_stale` after any commit.
+ * (`plainSessionRefKey`), never the opaque directory cursor that turns `source_stale` after any commit. A line whose
+ * own facts cannot be read is `skipped` with its reason; the other lines are still answered.
  */
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { RoleConfigurationRef, SessionRef, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
-import type { ReadResult } from '../../../contracts/core/results.js';
+import type { CoreError, ReadResult } from '../../../contracts/core/results.js';
+import { rejected } from '../../../contracts/core/rejections.js';
 import { parseInitialPlanningResponseV2 } from '../../../contracts/initial-planning-parse.js';
 import { interventionPlanningQueryRefs, queryJobRefFor } from '../../../contracts/query-job.js';
 import type { SessionAvailability } from '../state/session-availability.js';
@@ -19,7 +21,7 @@ import { consultationFacts, type SessionMessage } from '../model/communication-c
 import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
 import type { PlanTaskPort } from '../model/plan-contracts.js';
 import type { QueryJobPort } from '../queries/contracts.js';
-import type { DeliveryEligibilityFactsPort } from '../model/session-facts-contracts.js';
+import type { DeliveryEligibilityFactsPort, SessionSettlementDuePort } from '../model/session-facts-contracts.js';
 import { deliveryEligibility, waitFactsOfRecord, waitStateOf } from '../state/message-machine.js';
 import { plainSessionRefKey } from '../sessions/session-record-codecs.js';
 import { compareSessionInputCandidates, sessionMessageRefKey } from '../sessions/message-record-codecs.js';
@@ -40,16 +42,28 @@ export type ConsumableSessionV1 = {
   /** the Session's role; the Host matches its profile by `scope` + `sessionRole`. */
   role: RoleConfigurationRef;
   availability: SessionAvailability;
-  /** non-null means no queued offer; only a line's own unentered intervention planning Query keeps its source message. */
+  /**
+   * non-null means no queued offer; only a line's own unentered intervention planning Query keeps its source message,
+   * and an unoccupied line with a pending archive request keeps its settlement close-outs (window 3).
+   */
   busy: ConsumableSessionBusyV1 | null;
   /** offerable kinds in precedence order (person first); `['notify']` is the no-turn case. */
   kinds: readonly ConsumableSessionKindV1[];
   /** the first non-`notify` offer, or null; the Host reads this one message and opens one turn. */
   nextMessage: ConsumableSessionOfferV1 | null;
 };
+/** A line whose own facts could not be read this pass; it is left whole for a later pass (121-105). */
+export type ConsumableSessionSkipV1 = {
+  session: SessionRef;
+  /** the failed read's rejection code, or `not_found`/`not_ready` for a read that returned that status */
+  code: CoreError | 'not_ready';
+  reason: string;
+};
 export type ConsumableSessionsPageV1 = {
   items: ConsumableSessionV1[];
-  /** the last candidate Session key returned (plainSessionRefKey); null when the walk reached the end (wrap next heartbeat). */
+  /** the walked lines that were skipped, in walk order; they use no quota. */
+  skipped: ConsumableSessionSkipV1[];
+  /** the last walked Session key, an item or a skip (plainSessionRefKey); null when the walk reached the end (wrap next heartbeat). */
   next: string | null;
 };
 export type ConsumableSessionsDependencies = {
@@ -69,7 +83,7 @@ export interface ConsumableSessionsPort {
 }
 
 export function createConsumableSessions(deps: ConsumableSessionsDependencies):
-  Pick<ConsumableSessionsPort, 'readConsumableSessions'> {
+  Pick<ConsumableSessionsPort, 'readConsumableSessions'> & SessionSettlementDuePort {
   type CandidateOffer = {
     kind: ConsumableSessionKindV1;
     message: SessionMessage;
@@ -120,8 +134,9 @@ export function createConsumableSessions(deps: ConsumableSessionsDependencies):
       if (run.outcome === 'outcome_unknown') return ready('unknown');
       return ready('run');
     }
+    // The same for a QueryRun: a joined workspace's exploration Query may run on a line of this workspace.
     const read = await deps.queries.readQueryJob(ctx,
-      queryJobRefFor(executionRef.projectId, executionRef.workspaceId, executionRef.queryJobId));
+      queryJobRefFor(executionRef.projectId, executionRef.workspaceId, executionRef.queryJobId), { scope: 'project' });
     if (read.status !== 'ready') return read;
     const phase = read.value.run.run.executionState?.phase;
     if (phase === 'claimed' || phase === 'prepared' || phase === 'entering' || phase === 'entered') {
@@ -217,8 +232,12 @@ export function createConsumableSessions(deps: ConsumableSessionsDependencies):
     return ready('action_request');
   }
 
-  /** The inbox and the Session's whole outbox, walked to the end; person offers first, then commit order. */
-  async function offersOf(ctx: CoreCallContext, record: SessionCard['record']):
+  /**
+   * The inbox and the Session's whole outbox, walked to the end; person offers first, then commit order.
+   * `settlementOnly` keeps only the inbox's settlement offers (window 3: an archive-requested line takes no new input,
+   * but the Host still closes out the source of an ended Query, so the archive can finish).
+   */
+  async function offersOf(ctx: CoreCallContext, record: SessionCard['record'], settlementOnly = false):
     Promise<ReadResult<OfferSet>> {
     // The mailbox ports take a plain SessionRef; the record's ref carries `aggregateType` for the store.
     const session: SessionRef = { projectId: record.ref.projectId, sessionId: record.ref.sessionId };
@@ -233,7 +252,8 @@ export function createConsumableSessions(deps: ConsumableSessionsDependencies):
       const page = read.value;
       for (const [index, message] of page.items.entries()) {
         if (message.intent === 'inquiry' && message.status === 'responded') continue;
-        const offer = await offerOf(ctx, message, 'message', session, () => page.cursors[index]!);
+        const offer = settlementOnly ? ready<CandidateOffer | null>(null)
+          : await offerOf(ctx, message, 'message', session, () => page.cursors[index]!);
         if (offer.status !== 'ready') return offer;
         if (offer.value !== null && offer.value.kind !== 'action_request') {
           offers.push(offer.value);
@@ -256,7 +276,7 @@ export function createConsumableSessions(deps: ConsumableSessionsDependencies):
       inboxCursor = next;
     }
     let outboxCursor: string | undefined;
-    for (;;) {
+    while (!settlementOnly) {
       const read = await deps.messages.readOutbox!(ctx, { senderSession: session, page: {
         limit: 100, ...(outboxCursor === undefined ? {} : { cursor: outboxCursor }) } });
       if (read.status !== 'ready') return read;
@@ -300,7 +320,7 @@ export function createConsumableSessions(deps: ConsumableSessionsDependencies):
       || occupancy.executionRef.aggregateType !== 'QueryRun') return ready(null);
     const read = await deps.queries.readQueryJob(ctx, queryJobRefFor(
       occupancy.executionRef.projectId, occupancy.executionRef.workspaceId,
-      occupancy.executionRef.queryJobId));
+      occupancy.executionRef.queryJobId), { scope: 'project' });
     if (read.status !== 'ready') return read;
     const execution = read.value.job.job.intent.execution;
     if (execution.kind !== 'intervention_planning') return ready(null);
@@ -320,12 +340,49 @@ export function createConsumableSessions(deps: ConsumableSessionsDependencies):
     return offerOf(ctx, message.value, 'message', session, () => { throw new Error('a resume offer is never sorted'); });
   }
 
+  /**
+   * One line's item: its busy reason, then its offers (idle, or only its settlement close-outs while an archive
+   * request is pending) or its resume offer (a Query not entered yet).
+   */
+  async function consumableLineOf(ctx: CoreCallContext, card: SessionCard): Promise<ReadResult<ConsumableSessionV1>> {
+    const busyRead = await busyReasonOf(ctx, card.record);
+    if (busyRead.status !== 'ready') return busyRead;
+    let kinds: ConsumableSessionKindV1[] = [];
+    let nextMessage: ConsumableSessionOfferV1 | null = null;
+    // Window 3: an unoccupied line with a pending archive request offers only the close-out of an ended Query's
+    // source (the archive's final guard waits for it), never new input.
+    const archiveSettles = busyRead.value === 'archive_request' && card.record.archiveRequest != null
+      && card.record.occupancy === null;
+    if (busyRead.value === null || archiveSettles) {
+      const offers = await offersOf(ctx, card.record, archiveSettles);
+      if (offers.status !== 'ready') return offers;
+      kinds = offers.value.kinds;
+      nextMessage = offers.value.nextMessage;
+    } else if (busyRead.value === 'query') {
+      const resumed = await resumeOfferOf(ctx, card.record);
+      if (resumed.status !== 'ready') return resumed;
+      if (resumed.value !== null) {
+        kinds = [resumed.value.kind];
+        nextMessage = { kind: resumed.value.kind, messageRef: resumed.value.message.ref };
+      }
+    }
+    return ready({
+      session: { projectId: card.record.ref.projectId, sessionId: card.record.ref.sessionId },
+      role: card.record.role,
+      availability: card.availability,
+      busy: busyRead.value,
+      kinds,
+      nextMessage,
+    });
+  }
+
   async function readConsumableSessions(ctx: CoreCallContext,
     input: { workspace: WorkspaceScope; after: string | null; limit: number }):
     Promise<ReadResult<ConsumableSessionsPageV1>> {
     // `limit` counts candidate Sessions only: a busy card is returned with its reason but does not use the quota,
     // so the directory is walked page by page until the quota or the directory's end.
     const items: ConsumableSessionV1[] = [];
+    const skipped: ConsumableSessionSkipV1[] = [];
     let candidates = 0;
     let next: string | null = null;
     let after = input.after;
@@ -338,40 +395,41 @@ export function createConsumableSessions(deps: ConsumableSessionsDependencies):
       });
       if (found.status !== 'ready') return found;
       for (const card of found.value.items) {
-        if (candidates >= input.limit) return ready({ items, next });
-        const busyRead = await busyReasonOf(ctx, card.record);
-        if (busyRead.status !== 'ready') return busyRead;
-        let kinds: ConsumableSessionKindV1[] = [];
-        let nextMessage: ConsumableSessionOfferV1 | null = null;
-        if (busyRead.value === null) {
-          const offers = await offersOf(ctx, card.record);
-          if (offers.status !== 'ready') return offers;
-          kinds = offers.value.kinds;
-          nextMessage = offers.value.nextMessage;
-        } else if (busyRead.value === 'query') {
-          const resumed = await resumeOfferOf(ctx, card.record);
-          if (resumed.status !== 'ready') return resumed;
-          if (resumed.value !== null) {
-            kinds = [resumed.value.kind];
-            nextMessage = { kind: resumed.value.kind, messageRef: resumed.value.message.ref };
-          }
+        if (candidates >= input.limit) return ready({ items, skipped, next });
+        let line: ReadResult<ConsumableSessionV1>;
+        try {
+          line = await consumableLineOf(ctx, card);
+        } catch (error) {
+          // A read that throws (some owners pass a store I/O throw on) is this line's failure too, never the page's.
+          line = rejected('unavailable',
+            `the line's facts could not be read: ${error instanceof Error ? error.message : String(error)}`);
         }
-        items.push({
-          session: { projectId: card.record.ref.projectId, sessionId: card.record.ref.sessionId },
-          role: card.record.role,
-          availability: card.availability,
-          busy: busyRead.value,
-          kinds,
-          nextMessage,
-        });
         next = plainSessionRefKey(card.record.ref);
-        if (busyRead.value === null) candidates += 1;
+        if (line.status !== 'ready') {
+          // 121-105: one line's failed read skips that whole line (no later message of it is offered first) and
+          // the walk goes on; a cancelled call is never degraded into a skip and returns as a whole.
+          if (line.status === 'rejected' && line.code === 'cancelled') return line;
+          if (ctx.signal.aborted) return rejected('cancelled', 'the consumable view was cancelled');
+          skipped.push({ session: { projectId: card.record.ref.projectId, sessionId: card.record.ref.sessionId },
+            code: line.status === 'rejected' ? line.code : line.status,
+            reason: line.status === 'rejected' ? line.reason : `a fact of the line is ${line.status}` });
+          continue;
+        }
+        items.push(line.value);
+        if (line.value.busy === null) candidates += 1;
       }
-      if (found.value.nextCursor === null) return ready({ items, next: null });
-      if (candidates >= input.limit) return ready({ items, next });
+      if (found.value.nextCursor === null) return ready({ items, skipped, next: null });
+      if (candidates >= input.limit) return ready({ items, skipped, next });
       after = next;
     }
   }
 
-  return { readConsumableSessions };
+  /** The archive guard's one settlement fact: the same inbox walk, settlement offers only. */
+  async function readSettlementDue(ctx: CoreCallContext, session: SessionCard['record']):
+    Promise<ReadResult<boolean>> {
+    const offers = await offersOf(ctx, session, true);
+    return offers.status === 'ready' ? ready(offers.value.nextMessage !== null) : offers;
+  }
+
+  return { readConsumableSessions, readSettlementDue };
 }

@@ -985,6 +985,9 @@ it.each(['memory', 'sqlite'] as const)('K3 settle_review (%s): the owner receipt
     // L19a: written only when a disposition is applied; none is.
     blockedCommands: [],
     disposition: null,
+    // K3 layering (HANDOFF 121-109, lead ruling 3): this world has no adviser, so the
+    // adviser-layer reasons reach the person as the second layer, `no_adviser`.
+    escalation: { cause: 'no_adviser', suggestion: null },
     // RUN-22 created the record at the harness Host clock, minute 8
     // (`at(8)`, K3-continuation-pure-fixture); the settlement is written by the
     // K3 world's review owner, whose clock is the S5 fixture's T.

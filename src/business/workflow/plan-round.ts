@@ -14,7 +14,7 @@ import { canonicalJson, type JsonValue } from '../../contracts/fingerprint.js';
 import type { GoalRef } from '../../contracts/ledger.js';
 import {
   SYSTEM_ROUND_ACTOR, systemRoundRequestId,
-  type RefinementTargetV1, type SystemRoundV1,
+  type RefinementTargetV1, type SystemRoundHeadV1, type SystemRoundV1,
 } from '../../contracts/plan-round.js';
 import type { PlatformDutyV1 } from '../../contracts/platform-duty.js';
 import type { PlanningAnswerShapeV1 } from '../../contracts/query-job.js';
@@ -107,7 +107,9 @@ export function systemRoundSendInput(input: {
  * The submit-tool shape of a planning Query, computed once where the Query is
  * created (§5.2.7 (2)): the sender identity plus the recipient line's duty.
  * The body and the request id are never parsed here; unknown combinations are
- * the ordinary text answer.
+ * the ordinary text answer. Slice 9: the caller passes the system round's head
+ * kind (`systemRoundOfText`), and only a reviewer answering an `execreview:`
+ * round gets `exec_review`; every other reviewer round stays `plan_review`.
  */
 export function planningAnswerShapeOf(
   message: {
@@ -118,12 +120,14 @@ export function planningAnswerShapeOf(
     intent?: 'notify' | 'inquiry' | 'action_request' | 'decision_request';
   },
   duty: PlatformDutyV1 | null,
+  roundKind?: SystemRoundHeadV1['kind'],
 ): PlanningAnswerShapeV1 {
   if (message.intent !== 'action_request') return 'text';
   const sender = message.sender;
   if (sender.kind === 'host' && sender.actor.kind === 'system') {
     if (sender.actor.id !== SYSTEM_ROUND_ACTOR.id) return 'text';
-    return duty === 'reviewer' ? 'plan_review' : duty === 'adviser' || duty === 'secretary' ? 'plan_round' : 'text';
+    if (duty === 'reviewer') return roundKind === 'exec_review' ? 'exec_review' : 'plan_review';
+    return duty === 'adviser' || duty === 'secretary' ? 'plan_round' : 'text';
   }
   if (sender.kind === 'host' && sender.actor.kind === 'human') {
     return duty === 'adviser' || duty === 'secretary' ? 'plan_round' : 'text';

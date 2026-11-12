@@ -120,7 +120,7 @@ export type ContinuationUnknownCallReviewItemV1 = {
  */
 export type ContinuationUnknownCallReviewDispositionV1 = {
   choice: UnknownCallDispositionV1['choice'];
-  source: 'card' | 'direct';
+  source: UnknownCallDispositionV1['source'];
   text: BoundedTextV1 | null;
   /** `dispositionTargets` by alias. */
   targets: number[];
@@ -874,7 +874,7 @@ const REVIEW_CHANGES: readonly string[] = ['added', 'modified', 'deleted', 'mode
 const REVIEW_MODES: readonly string[] = ['replace', 'create'];
 const REVIEW_DIFF_REASONS: readonly string[] = ['baseline_dirty', 'binary', 'too_large', 'protected', 'section_limit', 'not_text'];
 const REVIEW_CHOICES: readonly string[] = ['rerun_as_is', 'safer_method', 'skip_as_done', 'handle_myself'];
-const REVIEW_SOURCES: readonly string[] = ['card', 'direct'];
+const REVIEW_SOURCES: readonly string[] = ['card', 'direct', 'adviser'];
 const REVIEW_ITEM_LIMIT = 32;
 /** L6: `oldText`/`newText` excerpts per path. */
 const REVIEW_EXCERPT_CHARS = 1_000;

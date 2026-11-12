@@ -48,6 +48,12 @@ describe('K3-18 (一) requeue confirmed predicate (pure)', () => {
     expect(requeueConfirmedByReview(autoSettled)).toBe(false);
   });
 
+  // K3L-1 V9 mutation: requeueConfirmedByReview reads only the choice, not who applied it; red today: :54 (it returns true)
+  it.each(['rerun_as_is', 'skip_as_done'])('K3L-1 V9: a %s the adviser applied never confirms the requeue', choice => {
+    const advised = { status: 'resolved', disposition: { choice, source: 'adviser' } } as unknown as UnknownCallReviewV1;
+    expect(requeueConfirmedByReview(advised)).toBe(false);
+  });
+
   it('K3-18 (一): the every_step system_requeue cause is suppressed only by the confirmation', () => {
     expect(confirmation(true)).toBeNull();
     expect(confirmation(false)).toEqual({

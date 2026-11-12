@@ -9,6 +9,7 @@ import type { CoreCallContext } from './core/call-context.js';
 import type { SessionRef } from './core/identity.js';
 import type { SessionMessageRef } from './core/session-message.js';
 import type { RunRef, TaskTriple } from './dispatch.js';
+import type { UnknownCallAdvicePhaseV1, UnknownCallAdviceV1 } from './unknown-call-advice.js';
 
 export type UnknownCallReviewRef = {
   aggregateType: 'UnknownCallReview';
@@ -144,6 +145,8 @@ export type UnknownCallReviewItemV1 = {
 
 export type UnknownCallReviewStatusV1 =
   | 'pending_review'
+  /** K3 layering: the first layer, the adviser answers before any card reaches the person. */
+  | 'awaiting_advice'
   | 'needs_decision'
   | 'awaiting_proposal'
   | 'awaiting_approval'
@@ -163,6 +166,17 @@ export type UnknownCallDecisionReasonV1 =
   | 'confirm_each_step'
   | 'proposal_missing'
   | 'proposal_declined';
+
+/**
+ * K3 layering: the mechanical conditions that put a record in front of the
+ * person (user decision 11-12): no adviser to ask, the adviser round failed,
+ * the adviser escalated, the second consecutive interruption, the adviser's
+ * disposition interrupted again.
+ */
+export const UNKNOWN_CALL_ESCALATION_CAUSES = [
+  'no_adviser', 'adviser_failed', 'adviser_escalated', 'second_consecutive', 'advised_failed_again',
+] as const;
+export type UnknownCallEscalationCauseV1 = typeof UNKNOWN_CALL_ESCALATION_CAUSES[number];
 
 export type UnknownCallInventoryProblemV1 =
   | 'kernel_unreadable'
@@ -196,8 +210,8 @@ export const UNKNOWN_CALL_REVIEW_T02_REASON = 'the Goal content changed since th
 
 export type UnknownCallDispositionV1 = {
   choice: 'rerun_as_is' | 'safer_method' | 'skip_as_done' | 'handle_myself';
-  /** direct: the "I'll handle it" pressed outside the card (UCR-15). */
-  source: 'card' | 'direct';
+  /** direct: the "I'll handle it" pressed outside the card (UCR-15); adviser: the first layer's applied answer. */
+  source: 'card' | 'direct' | 'adviser';
   targets: string[] /* the callIds recorded as dispositionTargets (D7) */;
   answerMessageRef: SessionMessageRef | null;
   answeredRevision: number;
@@ -214,7 +228,8 @@ export type UnknownCallDispositionV1 = {
   annotations: Array<{ path: string | null; text: string }>;
   approval: null | {
     decision: 'approve' | 'decline';
-    answerMessageRef: SessionMessageRef;
+    /** null: the adviser answered the approval phase; there is no person's answer message. */
+    answerMessageRef: SessionMessageRef | null;
     answeredRevision: number;
     appliedBy: ActorRef;
     appliedAt: string;
@@ -257,8 +272,24 @@ export type UnknownCallReviewV1 = {
   items: UnknownCallReviewItemV1[] /* <=32 */;
   itemsOmitted: number;
   workspace: WorkspaceCaptureV1;
-  streak: { priorAutoCleanup: boolean; priorUnknownProcess: boolean; resetRunRef: RunRef | null };
+  /**
+   * `priorAdvised` (K3 layering ② narrow): R's direct predecessor on the work
+   * chain was disposed by the adviser. Written only when true; absent reads false.
+   */
+  streak: { priorAutoCleanup: boolean; priorUnknownProcess: boolean; resetRunRef: RunRef | null; priorAdvised?: true };
   status: UnknownCallReviewStatusV1;
+  /**
+   * K3 layering: written on entry into `awaiting_advice` with the phase the
+   * adviser answers (`answer: null`); `answer` keeps the adviser answer that was
+   * applied. Absent on a record that never went to the adviser.
+   */
+  advice?: { phase: UnknownCallAdvicePhaseV1; answer: UnknownCallAdviceV1 | null };
+  /**
+   * K3 layering, the second layer: why the record reached the person and the
+   * adviser's suggestion, if any. Absent on a person card of the first kind
+   * (every step confirmed, stopped by the person, inventory incomplete).
+   */
+  escalation?: { cause: UnknownCallEscalationCauseV1; suggestion: UnknownCallAdviceV1 | null };
   /** Derived: status is not resolved, or activeRound is not null -> yes (D4, writer-only). */
   open: 'yes' | 'no';
   decisionReasons: UnknownCallDecisionReasonV1[];

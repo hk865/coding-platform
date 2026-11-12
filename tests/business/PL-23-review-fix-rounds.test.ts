@@ -21,12 +21,18 @@
  * `planfix:` Query and does not follow the `planresume:` continuation; the
  * in-flight continuation would be read `terminal` and a `fix_invalid` card would
  * appear, so that world must go red.
+ *
+ * PL-23(e) (slice 9 G3 fix, window 3): a `planfix:` Query ends while the Host's closing notice fails once, then the
+ * Goal is cancelled. Named mutation: the terminal settlement moved back after the Goal's new-work admission check in
+ * `handleIntervention` (red at the source being settled). On the tree before it: the same red.
  */
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import type { PlanRevisionDraft, PlanRevisionSnapshot, RuntimeTask } from '../../src/contracts/plan.js';
 import type { PlanProposal } from '../../src/core/work-graph/model/plan-contracts.js';
 import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
-import { S7A_REPLY_TOOLS, checkConfiguration, ready, setS7AAutonomy } from '../helpers/S7A-fixture.js';
+import { S7A_REPLY_TOOLS, cancelS7AGoal, checkConfiguration, ready, setS7AAutonomy } from '../helpers/S7A-fixture.js';
+import { byIdentityPrefix, commitBarrier } from '../helpers/S6A-commit-barrier.js';
+import { readS7BMessage } from '../helpers/S7B-fixture.js';
 import { OPERATOR, S6A_SCOPE, S6A_WORK_ROLE, type S6AExtraBinding } from '../helpers/S6A-request-fixture.js';
 import { createS6BLine } from '../helpers/S6B1-fixture.js';
 import { sessionOf } from '../helpers/S7A-fixture.js';
@@ -44,8 +50,11 @@ import { interventionPlanningQueryRefs } from '../../src/contracts/query-job.js'
 import type { CandidateCardFactsV1 } from '../../src/core/work-graph/views/decision-read-model.js';
 import type { WorkflowAdvanceInput } from '../../src/business/workflow/contracts.js';
 
+vi.mock('../../src/core/record-store/in-memory-record-store.js', async importOriginal =>
+  (await import('../helpers/S6A-commit-barrier.js')).inMemoryBarrierModule(importOriginal));
+
 let opened: PLWorkflowWorld | null = null;
-afterEach(async () => { await opened?.close(); opened = null; });
+afterEach(async () => { commitBarrier.reset(); await opened?.close(); opened = null; });
 
 const FIX = { verdict: 'fix' as const,
   findings: [{ taskId: 'pl-placeholder-pl-stage-2', text: 'PL-23 add the missing check' }] };
@@ -528,4 +537,35 @@ it('PL-23(d): the P2 fix round asks the person; planresume continues from P2 and
     `planreview:${round.ref.proposalId}:1`).sort());
   expect((await requestHeads(workflow, adviser)).sort()).toEqual([`planfix:${p1.ref.proposalId}:1`,
     `planfix:${p2.ref.proposalId}:1`, resumeHead].sort());
+});
+
+it('PL-23(e): a planfix ended unsettled, the Goal cancelled: the adviser line archives once the Host settles it', async () => {
+  const { workflow, skeleton, reviewer, adviser } = await openFixWorld('pl-23-c');
+  opened = workflow;
+  const { world } = workflow;
+  await world.scripted.script(reviewer, [
+    { kind: 'calls', calls: [{ callId: 'pl-23-c-review-p1', name: 'submit_plan_review', args: FIX }] }]);
+  await world.scripted.script(adviser, [{ kind: 'text', text: 'PL-23(c) no plan this time' }]);
+  const p1 = await writeP1(workflow, skeleton, 'pl-23-c');
+  await performOne(workflow, 'pl-23-c-review-p1', 'send_system_round');
+  expect(await verdictOf(workflow, await plSystemRoundRef(workflow, reviewer, `planreview:${p1.ref.proposalId}:1`)))
+    .toBe('fix');
+  await performOne(workflow, 'pl-23-c-fix-p1', 'send_system_round');
+  const fix = await plSystemRoundRef(workflow, adviser, `planfix:${p1.ref.proposalId}:1`);
+  await heartbeatUntil(world, () => readPlanningQuery(world, fix), query => (query?.run.run.executionState ?? null) !== null);
+  commitBarrier.failCommitOnce(byIdentityPrefix('session-message-send:'));   // the Host's closing notice
+  await heartbeatUntil(world, () => readPlanningQuery(world, fix), query => query?.job.job.status === 'answered'
+    || query?.run.run.status === 'closed' || query?.run.run.executionState?.phase === 'settled');
+  await cancelS7AGoal(world, workflow.goal);
+  const archive = async (requestId: string) => {
+    const card = await world.readSession(adviser);
+    return (await world.post('sessions/archive', graphWrite(S6A_SCOPE, { sessionRef: adviser.ref, reason: 'PL-23(c)' },
+      requestId, [{ ref: card.record.ref, revision: card.record.revision }]))).body;
+  };
+  expect(await archive('pl-23-c-early')).toMatchObject({ status: 'rejected', code: 'busy',
+    reason: expect.stringContaining('archive_settlement_pending') });
+  const source = await heartbeatUntil(world, () => readS7BMessage(world, fix),
+    message => message.response !== null || message.withdrawnAt !== null);
+  expect(source.response !== null || source.withdrawnAt !== null).toBe(true);
+  expect(await archive('pl-23-c-late')).toMatchObject({ status: 'committed', value: { lifecycle: 'archived' } });
 });

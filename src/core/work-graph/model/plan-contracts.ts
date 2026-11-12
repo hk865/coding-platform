@@ -156,7 +156,10 @@ export type InitialPlanDecision = {
 export type InitialPlanProposalResult = WriteResult<PlanProposal> | InitialPlanDecision;
 
 export interface PlanTaskPort {
-  queryGoal(ctx: CoreCallContext, ref: GoalRef): Promise<ReadResult<GoalDetail>>;
+  /** `scope: 'project'` (decision 104-1) lets only a Host caller read a Goal of another workspace of its project;
+   *  the default `'workspace'` and the Run/QueryRun principals keep their own scope. */
+  queryGoal(ctx: CoreCallContext, ref: GoalRef,
+    options?: { scope?: 'workspace' | 'project' }): Promise<ReadResult<GoalDetail>>;
   readPlanProposal(ctx: CoreCallContext, ref: PlanProposalRef): Promise<ReadResult<PlanProposalWithAdoption>>;
   proposePlan(ctx: CoreCallContext, request: GraphWrite<ProposedPlanRequestV1>): Promise<EffectWriteResultV1<PlanProposal>>;
   applyPlanChange(ctx: CoreCallContext, request: GraphWrite<{ proposalRef: PlanProposalRef;

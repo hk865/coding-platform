@@ -1,4 +1,4 @@
-import type { CoreCallContext } from '../../contracts/core/call-context.js';
+import type { CoreCallContext, HostPrincipal } from '../../contracts/core/call-context.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
 import type { EffectWriteResultV1, SessionMessageRef } from '../../contracts/core/session-message.js';
 import type { TaskClaim } from '../../contracts/core/task-claim.js';
@@ -10,7 +10,11 @@ import type { PlanRevisionSnapshot, PlanRevisionRef, RuntimeTask, TaskScope } fr
 import { revisionAssignments } from '../../contracts/plan.js';
 import type { TaskReductionRef } from '../../contracts/reduction.js';
 import type { GoalPhaseRef } from '../../contracts/goal-phase.js';
-import type { RoundSnapshot } from '../../contracts/verification.js';
+import { reviewPacketItemOf, type RoundSnapshot } from '../../contracts/verification.js';
+import type { EvidenceRef } from '../../contracts/evidence.js';
+import { parseExecReviewAnswer } from '../../contracts/exec-review.js';
+import { execReviewPacketOfRound, execReviewPacketText } from '../../core/work-graph/tasks/exec-review-packet.js';
+import { NO_ACCEPTED_ANSWER, reviewQueryEnded } from '../../core/work-graph/model/evidence-contracts.js';
 import type { PreparedTaskExecution } from '../../contracts/core/prepared-execution.js';
 import type { ConsumedWaitV1 } from '../../contracts/dispatch.js';
 import type {
@@ -38,6 +42,7 @@ import { runUnresolvedBlocker } from '../../core/work-graph/state/run-machine.js
 import { lastHolderOf } from '../../core/work-graph/state/unknown-call-review.js';
 import { sessionMessageRefKey } from '../../core/work-graph/sessions/message-record-codecs.js';
 import { plainSessionRefKey } from '../../core/work-graph/sessions/session-record-codecs.js';
+import { handoffContextOf } from '../../core/work-graph/sessions/session-handoff-service.js';
 import { liveWaitMessage } from '../../core/work-graph/tasks/session-facts.js';
 import {
   beginRefusalIsPermanent, displayRoundStatus, reverifyExemptionOfFacts, successorAutoCount,
@@ -64,7 +69,7 @@ import { createSessionChooser, roleReusable, type SessionChoice } from './sessio
 import type { PickBasisV1 } from '../../contracts/pick-basis.js';
 import type { ModuleOverlapTaskFactsV1, OverlapBasisV1 } from '../../core/work-graph/tasks/overlap-gates.js';
 import { moduleOverlapOf, overlapBasisDigest, splitNonOverlapping } from '../../core/work-graph/tasks/overlap-gates.js';
-import { createDutyRecipient } from '../../core/work-graph/sessions/duty-recipient.js';
+import { createDutyRecipient, reviewLineOf } from '../../core/work-graph/sessions/duty-recipient.js';
 import { decidePlanCandidate, type PlanCandidateFactsV1, type PlanCandidateSourceV1 } from '../../core/work-graph/state/plan-candidate.js';
 import { decisionActionPolicy, gateCoveredTaskIds } from '../../core/work-graph/state/decision-policy.js';
 import { systemRoundContext, systemRoundOfText, systemRoundRequestId,
@@ -86,6 +91,7 @@ import { sameRef } from '../../core/work-graph/state/ref-equality.js';
 import type { DeliveryEligibilityFactsV1 } from '../../core/work-graph/model/session-facts-contracts.js';
 import { createInterventionHandler } from './intervention.js';
 import { proposeFromPlanTurn } from './request-candidate.js';
+
 
 /**
  * R5c.1 stage-two adoption-first advancement loop.
@@ -293,10 +299,22 @@ function openGateChecksStep(
   const input = { subjectRunRef: producer, subject: gate, planRef, gateSubject };
   return { kind: 'open_checks', request: graphWrite(base, 'open_checks', input, []) };
 }
-function finalizeChecksStep(base: Base, round: RoundSnapshot): WorkflowAdvanceInput {
-  const request = graphWrite(base, 'finalize_checks', { roundRef: round.ref },
-    [{ ref: round.ref, revision: round.revision }]);
+/**
+ * The finalize step. Slice 9: the third parameter is the booked review ref; `undefined` and `[]` are the same
+ * request (no `reviewerEvidence` key), so no caller can make a second empty form.
+ */
+function finalizeChecksStep(base: Base, round: Pick<RoundSnapshot, 'ref' | 'revision'>,
+  reviewerEvidence?: readonly EvidenceRef[]): WorkflowAdvanceInput {
+  const input = reviewerEvidence === undefined || reviewerEvidence.length === 0
+    ? { roundRef: round.ref }
+    : { roundRef: round.ref, reviewerEvidence: reviewerEvidence.map((ref) => ({ ...ref })) };
+  const request = graphWrite(base, 'finalize_checks', input, [{ ref: round.ref, revision: round.revision }]);
   return makePerform(base, { kind: 'finalize_checks', request });
+}
+/** Slice 9 VR-16: the one booking step; it names only the round, the owner reads everything else. */
+function recordReviewStep(base: Base, round: Pick<RoundSnapshot, 'ref' | 'revision'>): WorkflowOperation {
+  return { kind: 'record_review', request: graphWrite(base, 'record_review', { roundRef: round.ref },
+    [{ ref: round.ref, revision: round.revision }]) };
 }
 /**
  * The next step of an open round (§9.3 "Workflow 推进顺序", by the §9.1 display
@@ -304,14 +322,16 @@ function finalizeChecksStep(base: Base, round: RoundSnapshot): WorkflowAdvanceIn
  * keeps the receipt and waits; never skip it or finalize early); otherwise a
  * `pending` check runs first, interrupted checks or not (V6 "只补未执行");
  * otherwise the round finalizes, an interrupted check counting as a gap. An
- * interrupted check never runs again in the round (D-12).
+ * interrupted check never runs again in the round (D-12). Slice 9: a round
+ * whose plan has the `review-packet` item answers `'review'` where it would
+ * finalize, and the caller runs the review arm first (`reviewArm`).
  */
-function nextAfterRound(base: Base, round: RoundSnapshot): WorkflowAdvanceInput | null {
+function nextAfterRound(base: Base, round: RoundSnapshot): WorkflowAdvanceInput | 'review' | null {
   switch (displayRoundStatus(round)) {
     case 'running': return null;
     case 'completed':
     case 'interrupted':
-      return finalizeChecksStep(base, round);
+      return reviewPacketItemOf(round.verificationPlan) === undefined ? finalizeChecksStep(base, round) : 'review';
     case 'incomplete': break;
   }
   const pending = round.checks.find((check) => check.phase === 'pending');
@@ -320,8 +340,39 @@ function nextAfterRound(base: Base, round: RoundSnapshot): WorkflowAdvanceInput 
       [{ ref: round.ref, revision: round.revision }]);
     return makePerform(base, { kind: 'run_check', request });
   }
-  return finalizeChecksStep(base, round);
+  return reviewPacketItemOf(round.verificationPlan) === undefined ? finalizeChecksStep(base, round) : 'review';
 }
+/** The Goal of a round, from its own ref (the review message and its Query carry this Goal). */
+function roundGoalRef(round: Pick<RoundSnapshot, 'ref'>): GoalRef {
+  return { aggregateType: 'Goal', projectId: round.ref.projectId, goalId: round.ref.goalId };
+}
+/**
+ * Slice 9 §3.2: what wakes a review wait. A pending review wakes on the message, its line, the round, the Evidence
+ * and the Run; a missing line (none at all, or only in another workspace) on the line facts; a settlement on the
+ * source message; a refused send on the line.
+ */
+const REVIEW_WAIT_KINDS = {
+  exec_review_pending: ['SessionMessage', 'Session', 'VerificationRound', 'Evidence', 'Run'],
+  no_review_line: ['Session', 'SessionMessage'],
+  review_line_other_workspace: ['Session', 'SessionMessage'],
+  settlement_pending: ['SessionMessage'],
+  exec_review_send_refused: ['Session', 'SessionMessage'],
+} as const;
+function reviewWaitBasisOf(goalRef: GoalRef, reason: keyof typeof REVIEW_WAIT_KINDS): GoalWaitBasisV1 {
+  return goalWaitBasisOf({ ref: goalRef }, [reason], REVIEW_WAIT_KINDS[reason]);
+}
+/** Slice 9 §3.2: the five review states of an open round's chain head (`readReviewState`). */
+type ReviewStateV1 =
+  | { kind: 'not_sent'; recipient: SessionRef }
+  | { kind: 'waiting'; reason: 'exec_review_pending' | 'no_review_line' | 'review_line_other_workspace';
+    basis: GoalWaitBasisV1 }
+  | { kind: 'answered' }
+  | { kind: 'closed' }
+  | { kind: 'settlement_pending'; basis: GoalWaitBasisV1 };
+/** The refusals of `record_review` that are the review's own answer; every other refusal waits. */
+const REVIEW_BOOKING_REFUSALS: ReadonlySet<CoreRejection['code']> = new Set([
+  'forbidden', 'invalid', 'unsupported', 'source_stale',
+]);
 /** VD-7: the completion names the Goal's CURRENT adopted Plan, never the round's frozen `adoptedPlanRef`. */
 function completeTaskStep(base: Base, goal: GoalSnapshot, planRef: PlanRevisionRef, round: RoundSnapshot): WorkflowOperation {
   const reductionRef: TaskReductionRef = {
@@ -728,6 +779,14 @@ export function automationContext(owned: Owned): CoreCallContext {
   return { projectId: owned.projectId, workspaceId: owned.workspaceId, principal: { kind: 'host', actor },
     materialReader: { kind: 'host', projectId: owned.projectId, workspaceId: owned.workspaceId, actor: { ...actor } },
     signal: owned.ctx.signal };
+}
+
+/** The same trusted Host call in another workspace of the project (rule W: a Goal's facts are read where the Goal
+ *  lives); `ownContext` admits only a Host principal, and the context is built as `lineContextOf` builds it. */
+function ownedInWorkspace(owned: Owned, workspaceId: string): Owned {
+  if (workspaceId === owned.workspaceId) return owned;
+  return { ...owned, workspaceId,
+    ctx: handoffContextOf({ ...owned.ctx, workspaceId }, owned.ctx.principal as HostPrincipal) };
 }
 
 function failedCardRefsFromInternal(
@@ -1191,7 +1250,84 @@ export function createWorkflow(deps: WorkflowDependencies & {
     if (next === null) {
       return waiting(null, 'the verification round chain head has an executing check; not advancing', undefined, waitBasis);
     }
+    if (next === 'review') return await reviewArm(owned, base, round, null);
     return advancing(null, next);
+  }
+
+  /**
+   * Slice 9 §3.2 `readReviewState`: one read, five states, no writes. The locator chain is fixed —
+   * `execreview:<roundId>` → `systemRoundMessageRef` → `interventionPlanningQueryRefs` → `readQueryJob` →
+   * `readQueryAnswer` — and it never scans. No message yet is `not_sent` with a line in the round's workspace,
+   * `waiting/review_line_other_workspace` with a line only elsewhere in the project (never sent: joined-workspace exec
+   * review is not connected), `waiting/no_review_line` with none (`reviewLineOf`); a message whose Query is not
+   * created or not ended is `waiting/exec_review_pending`; an ended Query is `answered` with an answer that parses,
+   * else `closed`; either is
+   * `settlement_pending` while its source message has no reply and is not withdrawn. A failed read is its rejection.
+   */
+  async function readReviewState(owned: Owned, round: RoundSnapshot): Promise<ReviewStateV1 | CoreRejection> {
+    const consult = deps.consultations;
+    if (consult === undefined) return rejection('unsupported', 'the exec review reads (mailbox and Query) are not wired');
+    const goalRef = roundGoalRef(round);
+    const requestId = systemRoundRequestId({ kind: 'exec_review', goalRef, roundRef: round.ref });
+    if (requestId.status !== 'ready') return requestId;
+    const messageRef = systemRoundMessageRef({ projectId: round.ref.projectId, workspaceId: round.ref.workspaceId },
+      requestId.value);
+    if (messageRef.status !== 'ready') return messageRef;
+    const message = await consult.messages.readMessage(owned.ctx, messageRef.value);
+    if (message.status === 'not_found') {
+      if (suggestionDutyRecipient === null) return rejection('unsupported', 'the Session duty resolver is not wired');
+      const line = await reviewLineOf(suggestionDutyRecipient, automationContext(owned),
+        { projectId: round.ref.projectId, workspaceId: round.ref.workspaceId });
+      if (line.status !== 'ready') return readRejection(line);
+      if (line.value.kind === 'here') return { kind: 'not_sent', recipient: line.value.line };
+      const reason = line.value.kind === 'none' ? 'no_review_line' : 'review_line_other_workspace';
+      return { kind: 'waiting', reason, basis: reviewWaitBasisOf(goalRef, reason) };
+    }
+    if (message.status !== 'ready') return readRejection(message);
+    const pending: ReviewStateV1 = { kind: 'waiting', reason: 'exec_review_pending',
+      basis: reviewWaitBasisOf(goalRef, 'exec_review_pending') };
+    const read = await consult.queries.readQueryJob(owned.ctx, interventionPlanningQueryRefs(messageRef.value).queryJobRef);
+    if (read.status === 'not_found') return pending;
+    if (read.status !== 'ready') return readRejection(read);
+    const job = read.value.job.job;
+    if (!reviewQueryEnded(job)) return pending;
+    const execution = job.intent.execution;
+    const answerRef = job.answerRefs.at(-1);
+    let answered = false;
+    if (answerRef !== undefined && execution.kind === 'intervention_planning' && execution.answerShape === 'exec_review') {
+      const answer = await consult.queries.readQueryAnswer(owned.ctx, answerRef);
+      if (answer.status !== 'ready') return readRejection(answer);
+      answered = parseExecReviewAnswer(answer.value.answer.answer).status === 'parsed';
+    }
+    if (message.value.response === null && message.value.withdrawnAt === null) {
+      return { kind: 'settlement_pending', basis: reviewWaitBasisOf(goalRef, 'settlement_pending') };
+    }
+    return answered ? { kind: 'answered' } : { kind: 'closed' };
+  }
+
+  /**
+   * Slice 9 §3.2: the review arm at the chain head, after the command checks and before the finalize. Its one step
+   * per state: send from `not_sent` (the pending basis rides along so the driver registers before it sends), book an
+   * `answered` review, finalize a `closed` one without a ref; a wait returns to the task loop, which skips this Task.
+   */
+  async function reviewArm(owned: Owned, base: Base, round: RoundSnapshot, receipt: WorkflowStepReceipt | null):
+  Promise<WorkflowAdvanceResult> {
+    const state = await readReviewState(owned, round);
+    if ('status' in state) return state;
+    switch (state.kind) {
+      case 'not_sent': {
+        const packet = execReviewPacketOfRound(round);
+        if (packet.status !== 'ready') return packet;
+        return advancing(receipt, makePerform(base, { kind: 'send_system_round', request: {
+          round: { kind: 'exec_review', goalRef: roundGoalRef(round), roundRef: round.ref },
+          recipient: state.recipient, text: execReviewPacketText(packet.value),
+        } }), null, null, reviewWaitBasisOf(roundGoalRef(round), 'exec_review_pending'));
+      }
+      case 'waiting': return waiting(receipt, state.reason, undefined, state.basis);
+      case 'settlement_pending': return waiting(receipt, 'settlement_pending', undefined, state.basis);
+      case 'answered': return advancing(receipt, makePerform(base, recordReviewStep(base, round)));
+      case 'closed': return advancing(receipt, finalizeChecksStep(base, round));
+    }
   }
 
   /**
@@ -1371,12 +1507,15 @@ export function createWorkflow(deps: WorkflowDependencies & {
   async function automationBlockedFor(owned: Owned, base: Base, taskRef: TaskTriple): Promise<boolean | null> {
     const config = deps.configuration;
     if (config === undefined) return null;
-    const goal = await deps.plans.queryGoal(owned.ctx, { aggregateType: 'Goal', projectId: taskRef.projectId, goalId: taskRef.goalId });
+    const goal = await deps.plans.queryGoal(owned.ctx,
+      { aggregateType: 'Goal', projectId: taskRef.projectId, goalId: taskRef.goalId }, { scope: 'project' });
     if (goal.status !== 'ready') return null;
-    const graph = await deps.plans.queryTaskGraph(owned.ctx, { goalRef: goal.value.goal.ref });
+    // A line may hold a message about another workspace's Task: its graph and blocks are read in the Goal's workspace.
+    const goalOwned = ownedInWorkspace(owned, goal.value.goal.workspaceRef.workspaceId);
+    const graph = await deps.plans.queryTaskGraph(goalOwned.ctx, { goalRef: goal.value.goal.ref });
     if (graph.status !== 'ready') return null;
     const ordered = orderTasks(graph.value.plan.tasks, graph.value.plan.executionDag?.dependsOn ?? []);
-    const read = await taskBlocks(owned, base, config, goal.value.goal, graph.value, ordered);
+    const read = await taskBlocks(goalOwned, base, config, goal.value.goal, graph.value, ordered);
     if (read.status !== 'ready') return null;
     return read.value.waiting.has(taskRef.taskId);
   }
@@ -1384,7 +1523,9 @@ export function createWorkflow(deps: WorkflowDependencies & {
   /** The ONE delivery-fact builder (A-34): the message's consumption, Goal, Task block and recipient outcome. */
   async function deliveryFacts(owned: Owned, message: SessionMessage, part: 'message' | 'response',
     goalRef: GoalRef | null, target: SessionRef | null): Promise<DeliveryFactsV1 | CoreRejection> {
-    const goalRead = goalRef === null ? null : await deps.plans.queryGoal(owned.ctx, goalRef);
+    // 104-1: the message's Goal, the recipient's last execution and the reply's sending Run may live in another
+    // workspace of the project (a line here may serve a Goal or run a Query there); they are read project-scoped.
+    const goalRead = goalRef === null ? null : await deps.plans.queryGoal(owned.ctx, goalRef, { scope: 'project' });
     if (goalRead !== null && goalRead.status !== 'ready') return asRejection(goalRead, 'the message Goal');
     const goal = goalRead === null ? null : goalRead.value.goal.desiredState;
     let taskBlocked = false;
@@ -1407,7 +1548,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
       const prior = card.value.record.lastExecutionRef;
       if (prior !== null && prior !== undefined) {
         if (prior.aggregateType === 'Run') {
-          const read = await deps.executions.readExecution(owned.ctx, prior);
+          const read = await deps.executions.readExecution(owned.ctx, prior, { scope: 'project' });
           if (read.status !== 'ready') return asRejection(read, 'the recipient last execution');
           recipientOutcomeUnknown = read.value.run.outcome === 'outcome_unknown';
         } else {
@@ -1417,7 +1558,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
           }
           const read = await deps.consultations.queries.readQueryJob(owned.ctx, {
             aggregateType: 'QueryJob', projectId: prior.projectId, workspaceId: prior.workspaceId,
-            queryJobId: prior.queryJobId });
+            queryJobId: prior.queryJobId }, { scope: 'project' });
           if (read.status !== 'ready') return asRejection(read, 'the recipient QueryRun');
           recipientOutcomeUnknown = read.value.run.run.executionState?.phase === 'unknown';
         }
@@ -1439,7 +1580,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
       const handler = effectiveReplyHandler(message);
       let intervention = false;
       if (message.sender.kind === 'work_run') {
-        const sender = await deps.executions.readExecution(owned.ctx, message.sender.runRef);
+        const sender = await deps.executions.readExecution(owned.ctx, message.sender.runRef, { scope: 'project' });
         if (sender.status !== 'ready') return asRejection(sender, 'the response sender Run');
         intervention = sender.value.run.consumedWait?.kind === 'intervention';
       }
@@ -3234,6 +3375,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
         if (result.status !== 'committed') return waiting(receipt, result.reason);
         const next = nextAfterRound(base, result.value);
         if (next === null) return waiting(receipt, 'the round has an executing check; not advancing');
+        if (next === 'review') return await reviewArm(owned, base, result.value, receipt);
         return advancing(receipt, next);
       }
       case 'run_check': {
@@ -3250,7 +3392,26 @@ export function createWorkflow(deps: WorkflowDependencies & {
         if (result.status !== 'ready') return waiting(receipt, receiptReason(result, 'the registered check did not return a persisted round'));
         const next = nextAfterRound(base, result.value);
         if (next === null) return waiting(receipt, 'the round has an executing check; not advancing');
+        if (next === 'review') return await reviewArm(owned, base, result.value, receipt);
         return advancing(receipt, next);
+      }
+      // Slice 9 VR-16: the one booking call. A booked (or replayed) review finalizes with its ref; an ended Query
+      // without an answer that parses finalizes without one (the fold writes `reviewer_missing`); the review's own
+      // refusals are returned as they are; a finalized round goes back to the selection; anything else waits.
+      case 'record_review': {
+        const owner = deps.evidence.recordReviewEvidence;
+        if (owner === undefined) return rejection('unsupported', 'the evidence owner does not publish recordReviewEvidence');
+        const result = await owner(owned.ctx, operation.request);
+        const receipt: WorkflowStepReceipt = { kind: 'record_review', result };
+        const noAnswer = result.status === 'rejected' && result.code === 'invalid' && result.reason === NO_ACCEPTED_ANSWER;
+        if (result.status === 'rejected' && !noAnswer && REVIEW_BOOKING_REFUSALS.has(result.code)) return result;
+        if (result.status === 'rejected' && !noAnswer && result.code !== 'busy') return waiting(receipt, result.reason);
+        const read = await deps.evidence.readVerification(owned.ctx, operation.request.input.roundRef);
+        if (read.status !== 'ready') return waiting(receipt, receiptReason(read, 'the round could not be read for its finalize'));
+        if (read.value.status === 'finalized') return advancing(receipt, selectWorkStep(base));
+        if (result.status === 'rejected' && !noAnswer) return waiting(receipt, result.reason);
+        return advancing(receipt, finalizeChecksStep(base, read.value,
+          result.status === 'committed' ? [result.value.evidenceRef] : undefined));
       }
       case 'finalize_checks': {
         const result = await deps.evidence.finalizeChecks(owned.ctx, operation.request);
@@ -3521,6 +3682,12 @@ export function createWorkflow(deps: WorkflowDependencies & {
             });
             if (selected.status !== 'ready') return selected;
             return { ...selected, value: { ...selected.value, receipt } };
+          }
+          // Slice 9 §3.3: a refused review send (the line archived, busy or unreadable, a scope refusal) waits on the
+          // line facts; only a malformed request is returned. It writes no Evidence and finalizes nothing.
+          if (round.kind === 'exec_review' && result.code !== 'invalid') {
+            return waiting(receipt, `${result.code}: ${result.reason}`, undefined,
+              reviewWaitBasisOf(round.goalRef, 'exec_review_send_refused'));
           }
           return result;
         }

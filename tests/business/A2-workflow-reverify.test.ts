@@ -203,8 +203,9 @@ it('§13.7 points 4 and 9: a Host-interruption exemption keeps the count; the re
 });
 
 it('FC-13 (needsFinalize): the open head with only interrupted checks is finalized first; nothing is reverified yet', async () => {
+  // Slice 9: the chain head reads the round's plan for the review item; this round's plan has none.
   const openHead = { ref: roundRefOf('work-1'), revision: 6, status: 'open', outcome: null, gaps: [],
-    subject: { projectId: P, goalId: G, taskId: 'work-1' },
+    subject: { projectId: P, goalId: G, taskId: 'work-1' }, verificationPlan: { checks: [] },
     checks: [{ checkId: 'lint', phase: 'finished', outcome: 'PASS' }, { checkId: 'unit', phase: 'interrupted', outcome: null }] };
   const run = { ref: runRefOf('work-1'), task: { projectId: P, goalId: G, taskId: 'work-1' }, revision: 5, status: 'ended',
     outcome: 'completed', startedSince: null } as unknown as RunSnapshot;
@@ -251,7 +252,7 @@ it('GV-10: a gate whose INCONCLUSIVE head may be re-verified gets reverify_round
 
 it('GV-3 (needsFinalize): a gate\'s open head with only interrupted checks is finalized first; nothing is reverified yet', async () => {
   const openHead = { ref: roundRefOf('gate-1'), revision: 6, status: 'open', outcome: null, gaps: [],
-    subject: { projectId: P, goalId: G, taskId: 'gate-1' },
+    subject: { projectId: P, goalId: G, taskId: 'gate-1' }, verificationPlan: { checks: [] },
     checks: [{ checkId: 'lint', phase: 'finished', outcome: 'PASS' }, { checkId: 'unit', phase: 'interrupted', outcome: null }] };
   const heads: unknown[] = [];
   const row = gateRowOf(reverifyOf('gate-1', { needsFinalize: true }), { ...headOf('gate-1'), status: 'open', outcome: null,

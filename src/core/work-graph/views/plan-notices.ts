@@ -14,9 +14,18 @@
  * `intervention_planning` Query/Answer, and takes the reply commit cursor from
  * the fixed `intervention:<messageKey>:respond` receipt. A legal plan/questions
  * answer produces no item; a read failure is `unavailable`, never empty.
+ *
+ * No-line arm (slice 9 §3.3): an open round whose command checks are done, whose plan has the review item and whose
+ * `execreview:` message was never sent because its workspace has no review line gives one item, re-projected from
+ * the current facts (no record, no cache): it names the Task and says to open a line through `role-lines/open`, or,
+ * when the project's line is in another workspace, that joined-workspace exec review is not connected yet.
+ * A failed read of this arm (the message, the line, the position) makes the source not available for that read: never
+ * "no line", and never the whole queue (lead ruling s9g3 1, as 121-105); a cancelled read is returned whole.
  */
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+import { compareCursors } from '../../../contracts/ledger.js';
+import { reviewPacketItemOf } from '../../../contracts/verification.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
@@ -27,7 +36,9 @@ import {
 } from '../../../contracts/plan-loop-limits.js';
 import { interventionPlanningQueryRefs } from '../../../contracts/query-job.js';
 import { parseInitialPlanningResponseV2 } from '../../../contracts/initial-planning-parse.js';
-import { systemRoundMessageRef } from '../../../contracts/plan-round.js';
+import { systemRoundMessageRef, systemRoundRequestId } from '../../../contracts/plan-round.js';
+import { roundCommitIdentityOf } from '../evidence/evidence-service.js';
+import { reviewLineOf, type DutyRecipientPort, type ReviewLineV1 } from '../sessions/duty-recipient.js';
 import type { RecordCommitIdentityPort } from '../../record-store/ports.js';
 import type { RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import type {
@@ -72,6 +83,8 @@ export type PlanNoticeDependencies = {
   commitIdentities: Pick<RecordCommitIdentityPort, 'readCommitByIdentity'>;
   /** The Host's effective §10.3 value, read per page (never frozen at construction). */
   limits: () => PlanLoopLimitsV1;
+  /** Slice 9: the one duty recipient read; the no-line arm decides through it with `reviewLineOf`, as Workflow does. */
+  resolveDutyRecipient: DutyRecipientPort['resolveDutyRecipient'];
 };
 
 /** §5.8: a next-stage placeholder without a size class is shown as 未分档. */
@@ -188,6 +201,17 @@ async function readStageEndPage(
   }
 
   const items: NoticeItemV1[] = [];
+  // The page's one review-line decision (Workflow's `reviewLineOf`), made only when a round needs it. The rounds are
+  // read by this page's workspace, so it is each round's own workspace.
+  let reviewLine: ReviewLineV1 | undefined;
+  const reviewLineHere = async (): Promise<ReviewLineV1> => {
+    if (reviewLine === undefined) {
+      const read = await reviewLineOf(deps, ctx, { projectId, workspaceId });
+      if (read.status !== 'ready') throw noticeUnavailableOf(read);
+      reviewLine = read.value;
+    }
+    return reviewLine;
+  };
   // §5.8: one item per adopted PlanRevision, so a stage finished on an older
   // version keeps its item after a newer version is adopted. The ordered read
   // already lists every version; each one reads its own TaskRows.
@@ -257,6 +281,12 @@ async function readStageEndPage(
     // PlanRevision's historical deviation source messages, not from the
     // current `deviationsOfGoal` result.
     items.push(...await deviationItemsOf(deps, ctx, plan, projectId, workspaceId));
+    try {
+      items.push(...await noReviewLineItemsOf(deps, ctx, plan, rounds, reviewLineHere));
+    } catch (error) {
+      if (ctx.signal?.aborted === true) throw error;
+      return { availability: 'not_available', items: [], nextCursor: null, sourceCursor: null };
+    }
   }
 
   items.sort((left, right) => compareNoticePositions(left.position, right.position));
@@ -401,6 +431,78 @@ async function deviationItemsOf(
     }
   }
   return items;
+}
+
+/**
+ * Slice 9 §3.3: the no-line items of this version's rounds (a round belongs to the version it was opened under, so
+ * each round is judged once). The condition is re-read every time: an open round with the review item, every command
+ * check done, no `execreview:` message and no review line in the round's workspace. The text says which: no line in
+ * the project, or a line only in another workspace (joined-workspace exec review is not connected yet).
+ */
+async function noReviewLineItemsOf(
+  deps: PlanNoticeDependencies,
+  ctx: CoreCallContext,
+  plan: PlanRevisionSnapshot,
+  rounds: readonly RoundWithSince[],
+  reviewLineHere: () => Promise<ReviewLineV1>,
+): Promise<NoticeItemV1[]> {
+  const planKey = planRevisionRefKey(plan.ref);
+  const items: NoticeItemV1[] = [];
+  for (const { snapshot: round, since } of rounds) {
+    if (round.status !== 'open' || planRevisionRefKey(round.adoptedPlanRef) !== planKey) continue;
+    if (reviewPacketItemOf(round.verificationPlan) === undefined) continue;
+    if (round.checks.some((check) => check.phase === 'pending' || check.phase === 'executing')) continue;
+    const goalRef: GoalRef = { aggregateType: 'Goal', projectId: round.ref.projectId, goalId: round.ref.goalId };
+    const scope = { projectId: round.ref.projectId, workspaceId: round.ref.workspaceId };
+    const requestId = systemRoundRequestId({ kind: 'exec_review', goalRef, roundRef: round.ref });
+    if (requestId.status !== 'ready') throw requestId;
+    const messageRef = systemRoundMessageRef(scope, requestId.value);
+    if (messageRef.status !== 'ready') throw messageRef;
+    const message = await deps.messages.readMessage(ctx, messageRef.value);
+    if (message.status === 'ready') continue;
+    if (message.status !== 'not_found') throw noticeUnavailableOf(message);
+    const line = await reviewLineHere();
+    if (line.kind === 'here') continue;
+    const itemKey = `exec-review-no-line:${goalRef.goalId}:${round.ref.roundId}`;
+    const task = plan.tasks.find((candidate) => candidate.taskId === round.subject.taskId);
+    items.push({
+      itemKey,
+      category: 'plan_notice',
+      subject: { kind: 'goal', goalRef },
+      position: { kind: 'commit', cursor: await noLinePositionOf(deps, round, since), itemKey },
+      summary: `任务 ${round.subject.taskId}「${task?.title ?? round.subject.taskId}」的检查已跑完，执行结果审阅在等：`
+        + (line.kind === 'none' ? '项目里没有审阅线；用 role-lines/open（duty: reviewer）开一条，同一轮接着审'
+          : '审阅线不在这个工作区（角色线都开在主工作区）；加入的工作区的执行结果审阅还没接通，这一轮先停在这里'),
+      objects: [],
+      rework: null,
+    });
+  }
+  return items;
+}
+
+/**
+ * Slice 9 §3.3 / S9-N6: where the no-line item sits — the newest result commit of the round's finished command
+ * checks, read by its identity, or the round's opening commit (the `since` the Store bound in that commit) when no
+ * check finished. An interrupted check's commit has no identity this read can derive (its request names the
+ * reconciling Host instance), so it is passed over (lead ruling s9g3, after hand-back #1: one notice never fails the
+ * whole queue). A failed read is `unavailable`.
+ */
+async function noLinePositionOf(
+  deps: PlanNoticeDependencies, round: RoundSnapshot, since: CommitCursor,
+): Promise<CommitCursor> {
+  const scope = { projectId: round.ref.projectId, workspaceId: round.ref.workspaceId };
+  let newest = since;
+  for (const check of round.checks) {
+    if (check.phase !== 'finished') continue;
+    if (check.invocationId === null) {
+      throw rejected('unavailable', `round ${round.ref.roundId}: a finished check has no invocation`);
+    }
+    const read = await deps.commitIdentities.readCommitByIdentity(
+      roundCommitIdentityOf('record', round.executor, scope, `r3e-check-result-${check.invocationId}`));
+    if (read.status !== 'ready') throw rejected('unavailable', read.reason);
+    if (compareCursors(read.value.receipt.cursor, newest) > 0) newest = read.value.receipt.cursor;
+  }
+  return newest;
 }
 
 /** §6.4.2: R's first line is the request id; the rest are its four stored facts. */

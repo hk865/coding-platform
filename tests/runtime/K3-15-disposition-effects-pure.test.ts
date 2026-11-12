@@ -162,7 +162,7 @@ function reviewOf(
 const OPTION_TEXT: Readonly<Record<UnknownCallDispositionV1['choice'], string>> = {
   rerun_as_is: '照原样重跑',
   skip_as_done: '跳过，当作已做：不要重跑这些命令',
-  handle_myself: '由人处理：操作者自己处理过这几条，先看当前状态',
+  handle_myself: '暂停后继续：暂停期间这几条可能有人动过，先看当前状态',
   safer_method: '换个稳妥的跑法：不要跑原命令，照下面的方案原样跑',
 };
 
@@ -239,11 +239,11 @@ describe('K3-15 L20 pure disposition assembler and renderer', () => {
     expect(single.rendered.indexOf('- 处置：')).toBeLessThan(single.rendered.indexOf('- 作用对象：'));
   });
 
-  it('K3-15 (L20): a released handle_myself renders the human-handled wording', () => {
+  it('K3-15 (L20): a released handle_myself renders the neutral resumed-after-pause wording', () => {
     const { lines } = render(reviewOf(dispositionOf('handle_myself', 'I handled it', { hold: 'released' })));
     // A84 (original :346): the released card disposition's full rendered line.
     expect(ONE_LINE(lines.find(line => line.startsWith('- 处置：'))))
-      .toBe('- 处置：由人处理：操作者自己处理过这几条，先看当前状态（卡上选的）；附言：I handled it。');
+      .toBe('- 处置：暂停后继续：暂停期间这几条可能有人动过，先看当前状态（卡上选的）；附言：I handled it。');
   });
 
   it('K3-15: a disposition with no targets renders - 作用对象：无。',
@@ -258,7 +258,7 @@ describe('K3-15 L20 pure disposition assembler and renderer', () => {
     if (disposition === null) throw new Error('the disposition must be assembled');
     expect(disposition).toMatchObject({ choice: 'handle_myself', source: 'direct', targets: [], platformTargets: [] });
     expect(ONE_LINE(lines.find(line => line.startsWith('- 处置：'))))
-      .toBe('- 处置：由人处理：操作者自己处理过这几条，先看当前状态（直接点的）；附言：the operator handles it。');
+      .toBe('- 处置：暂停后继续：暂停期间这几条可能有人动过，先看当前状态（直接点的）；附言：the operator handles it。');
     expect(lines).toContain('- 作用对象：无。');
     expect(lines.some(line => line.startsWith('- 平台条目 '))).toBe(false);
   });

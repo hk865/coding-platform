@@ -18,6 +18,7 @@ import { plainSessionRefToAggregate } from '../../core/work-graph/sessions/sessi
 import { sessionMessageRefKey } from '../../core/work-graph/sessions/message-record-codecs.js';
 import { decisionActionPolicy } from '../../core/work-graph/state/decision-policy.js';
 import { normalizeInitialPlanningResponseV2 } from '../../core/work-graph/tasks/initial-plan.js';
+import { reviewQueryEnded } from '../../core/work-graph/model/evidence-contracts.js';
 import { planSourceLineageOf } from '../../core/work-graph/tasks/plan-lineage.js';
 import { planProposalIdFor } from '../../core/work-graph/tasks/plan-service.js';
 import { mergeStageRefinement } from '../../core/work-graph/tasks/stage-segment.js';
@@ -95,8 +96,6 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
       const systemRound = message.sender.kind === 'host' && message.sender.actor.kind === 'system'
         && message.intent === 'action_request';
       const planningLine = duty === 'adviser' || duty === 'reviewer';
-      // The submit shape is frozen from the trusted sender plus the recipient line's duty, never from the body.
-      const answerShape: PlanningAnswerShapeV1 = duty === null ? 'text' : planningAnswerShapeOf(message, duty);
       // The planning branch never treats the line's newest Work as the message's addressee: a Host system round
       // and an adviser/reviewer line carry only the message's own `taskRef` as planning context. Every other
       // line keeps today's `taskRef ?? latestWork` claim path.
@@ -124,6 +123,15 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
       if (display !== null && display.causes.some((cause) => 'interruption' in cause)) {
         return { status: 'rejected', code: 'busy',
           reason: 'a Host restart interrupted the Goal; a person continues it by starting the Goal' };
+      }
+      // Window 3 (§5.5.2, slice 9 §3.7): the terminal settlement a settlement offer stands for runs BEFORE the Goal's
+      // branches. An ended `execreview:` Query's source always settles here (a completed Goal's reviewer line is never
+      // routed to `requestNewGoal`); any other ended Query's source settles here once its Goal takes no new work for
+      // good (cancelled or COMPLETED), where the branches below would leave it open and its line unarchivable.
+      const goalOpen = goal !== null && goal.desiredState !== 'cancelled' && display?.phase !== 'COMPLETED';
+      if (!goalOpen || (systemRound && duty === 'reviewer')) {
+        const settled = await closeSettledSource(owned, message, goalOpen);
+        if (settled !== null) return settled;
       }
       // COMPLETED is checked BEFORE any claim: a completed Goal's dead line starts a new goal-less request, never
       // a planning Query or a claim on an old Task.
@@ -159,7 +167,67 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
       const body = await mailbox.readMessageBody(owned.ctx,
         { messageRef: input.messageRef, part: 'message' });
       if (body.status !== 'ready') return asRejection(body, 'the intervention message body');
+      // The submit shape is frozen from the trusted sender, the recipient line's duty and the system round's head
+      // kind (slice 9: only `execreview:` makes a reviewer's shape `exec_review`); the body gives nothing else.
+      const answerShape: PlanningAnswerShapeV1 = duty === null ? 'text'
+        : planningAnswerShapeOf(message, duty, systemRoundOfText(body.value.text)?.kind);
       return planOnIdleLine(owned, input, message, goal, body.value.text, planning, answerShape);
+
+      /**
+       * Window 3's one terminal settlement, for every planning round: the source of an ended `intervention_planning`
+       * Query that still has no reply closes through the Host's existing endings — the reply (`answer_ready`), or the
+       * fixed notice and withdrawal (`no_answer`) when the ended Query has no answer that gives a reply. While the
+       * Goal is open only an exec review closes here (any other answer keeps `planOnIdleLine`, which may still write
+       * its candidate); on a Goal that takes no new work a review closes `answered`, an answer that is no plan
+       * `invalid_plan`, a plan whose candidate the person adopted before the Goal ended `adopted` (the reply
+       * `planOnIdleLine` gives an accepted candidate), and any other plan `declined` (it can no longer be taken).
+       * `null` keeps today's path: no Query yet, another Query, not ended, or the source already replied.
+       */
+      async function closeSettledSource(owned: Owned, message: SessionMessage, goalOpen: boolean):
+      Promise<HandleInterventionResultV1 | null> {
+        const read = await queryOwner.readQueryJob(owned.ctx, interventionPlanningQueryRefs(message.ref).queryJobRef);
+        if (read.status === 'not_found') return null;
+        if (read.status !== 'ready') return asRejection(read, 'the ended planning Query');
+        const job = read.value.job.job;
+        const execution = job.intent.execution;
+        if (execution.kind !== 'intervention_planning'
+          || sessionMessageRefKey(execution.sourceMessageRef as SessionMessageRef) !== sessionMessageRefKey(message.ref)) {
+          return null;
+        }
+        const shape = execution.answerShape ?? 'text';
+        if (goalOpen && shape !== 'exec_review') return null;
+        if (!reviewQueryEnded(job) || message.response !== null) return null;
+        const answerRef = job.answerRefs.at(-1);
+        if (answerRef === undefined) return { status: 'no_answer', branch: 'no_task' };
+        const answer = await queryOwner.readQueryAnswer(owned.ctx, answerRef);
+        if (answer.status !== 'ready') return asRejection(answer, 'the ended planning answer');
+        const answerText = answer.value.answer.answer;
+        if (planningReplyTextOf({ shape, answerText, queryJobId: job.queryJobId }) === null) {
+          return { status: 'no_answer', branch: 'no_task' };
+        }
+        if (shape === 'exec_review' || shape === 'plan_review') {
+          return { status: 'answer_ready', branch: 'no_task', answerRef: { ...answerRef }, reason: 'answered' };
+        }
+        if (parseInitialPlanningResponseV2(answerText).status !== 'parsed') {
+          return { status: 'answer_ready', branch: 'no_task', answerRef: { ...answerRef }, reason: 'invalid_plan' };
+        }
+        // The commit entry admits an intervention Query only with its real Goal, so `goalId` is present.
+        const proposal = await plans.readPlanProposal(owned.ctx,
+          interventionProposalRefOf(owned, message, job.goalId as string));
+        if (proposal.status !== 'ready' && proposal.status !== 'not_found') {
+          return asRejection(proposal, 'the intervention plan proposal');
+        }
+        const adopted = proposal.status === 'ready' && proposal.value.status === 'accepted';
+        return { status: 'answer_ready', branch: 'no_task', answerRef: { ...answerRef },
+          reason: adopted ? 'adopted' : 'declined' };
+      }
+
+      /** The intervention's one candidate address for its source: the propose identity `intervention:<key>:propose`. */
+      function interventionProposalRefOf(owned: Owned, message: SessionMessage, goalId: string): PlanProposalRef {
+        return { aggregateType: 'PlanProposal', projectId: owned.projectId, workspaceId: owned.workspaceId,
+          proposalId: planProposalIdFor({ projectId: owned.projectId, workspaceId: owned.workspaceId, goalId,
+            requestId: `intervention:${sessionMessageRefKey(message.ref)}:propose` }) };
+      }
 
       /**
        * The closing's association step: the formal Answer of the source Query becomes one reply. `queryMessageRef`
@@ -305,11 +373,7 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
       Promise<HandleInterventionResultV1> {
         const key = sessionMessageRefKey(message.ref);
         const refs = interventionPlanningQueryRefs(message.ref);
-        const proposalRef: PlanProposalRef = {
-          aggregateType: 'PlanProposal', projectId: owned.projectId, workspaceId: owned.workspaceId,
-          proposalId: planProposalIdFor({ projectId: owned.projectId, workspaceId: owned.workspaceId,
-            goalId: goal.ref.goalId, requestId: `intervention:${key}:propose` }),
-        };
+        const proposalRef = interventionProposalRefOf(owned, message, goal.ref.goalId);
         // Stage 8: the deterministic Query. A re-run finds the pending pair and continues it.
         const existing = await queryOwner.readQueryJob(owned.ctx, refs.queryJobRef);
         if (existing.status !== 'ready' && existing.status !== 'not_found') {

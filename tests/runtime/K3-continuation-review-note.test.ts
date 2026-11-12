@@ -340,4 +340,14 @@ describe('K3 L6: the continuation note review section', () => {
     expect(text.indexOf(platformLine)).toBeGreaterThan(text.indexOf(methodLine));
   });
 
+  // K3L-1: the adviser's disposition names its source. Named mutation: the label always reads the card's -> red.
+  it('K3L-1 (continuation): a disposition the adviser applied is labelled 参谋定的', () => {
+    const review = reviewOf([processItem(1, 'npm run build')], {
+      dispositionTargets: ['call-1'], proposalTargets: ['call-1'],
+      disposition: dispositionOf([], { choice: 'skip_as_done', source: 'adviser', targets: ['call-1'], approvedMethods: null }),
+    });
+    expect(renderWith(baseBrief(), assembleUnknownCallReviewSection({ review })))
+      .toContain('- 处置：跳过，当作已做：不要重跑这些命令（参谋定的）');
+  });
+
 });

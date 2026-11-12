@@ -1382,60 +1382,6 @@
       "note": "kept for KLS-3a, decision 121-75"
     },
     {
-      "file": "src/core/work-graph/tasks/exec-review-packet.ts",
-      "name": "EXEC_REVIEW_BODY",
-      "reason": "kept-for",
-      "note": "kept for slice 9 of the orchestration design: S9 G1 lands the exec review packet header and its parse is wired now; G3 sends execReviewPacketText(execReviewPacketOfRound(round)) and G2's readAcceptedAnswer compares against execReviewPacketOfRound; the group that wires the build and the text deletes these entries"
-    },
-    {
-      "file": "src/core/work-graph/tasks/exec-review-packet.ts",
-      "name": "byCode",
-      "reason": "kept-for",
-      "note": "kept for slice 9 of the orchestration design: S9 G1 lands the exec review packet header and its parse is wired now; G3 sends execReviewPacketText(execReviewPacketOfRound(round)) and G2's readAcceptedAnswer compares against execReviewPacketOfRound; the group that wires the build and the text deletes these entries"
-    },
-    {
-      "file": "src/core/work-graph/tasks/exec-review-packet.ts",
-      "name": "execReviewPacketOfRound",
-      "reason": "kept-for",
-      "note": "kept for slice 9 of the orchestration design: S9 G1 lands the exec review packet header and its parse is wired now; G3 sends execReviewPacketText(execReviewPacketOfRound(round)) and G2's readAcceptedAnswer compares against execReviewPacketOfRound; the group that wires the build and the text deletes these entries"
-    },
-    {
-      "file": "src/core/work-graph/tasks/exec-review-packet.ts",
-      "name": "jsonLine",
-      "reason": "kept-for",
-      "note": "kept for slice 9 of the orchestration design: S9 G1 lands the exec review packet header and its parse is wired now; G3 sends execReviewPacketText(execReviewPacketOfRound(round)) and G2's readAcceptedAnswer compares against execReviewPacketOfRound; the group that wires the build and the text deletes these entries"
-    },
-    {
-      "file": "src/core/work-graph/tasks/exec-review-packet.ts",
-      "name": "execReviewPacketText",
-      "reason": "kept-for",
-      "note": "kept for slice 9 of the orchestration design: S9 G1 lands the exec review packet header and its parse is wired now; G3 sends execReviewPacketText(execReviewPacketOfRound(round)) and G2's readAcceptedAnswer compares against execReviewPacketOfRound; the group that wires the build and the text deletes these entries"
-    },
-    {
-      "file": "src/core/work-graph/evidence/evidence-service.ts",
-      "name": "REVIEW_REPORT_CONTENT_TYPE",
-      "reason": "kept-for",
-      "note": "kept for slice 9 of the orchestration design: S9 G2 lands the review booking owner (recordReviewEvidence) and the round commit identity; G3 is their only caller (wires the port at the composition root, calls record_review and the no-line notice); the group that wires them deletes these entries"
-    },
-    {
-      "file": "src/core/work-graph/model/evidence-contracts.ts",
-      "name": "RecordReviewEvidenceInputV1",
-      "reason": "kept-for",
-      "note": "kept for slice 9 of the orchestration design: S9 G2 lands the review booking owner (recordReviewEvidence) and the round commit identity; G3 is their only caller (wires the port at the composition root, calls record_review and the no-line notice); the group that wires them deletes these entries"
-    },
-    {
-      "file": "src/core/work-graph/model/evidence-contracts.ts",
-      "name": "NO_ACCEPTED_ANSWER",
-      "reason": "kept-for",
-      "note": "kept for slice 9 of the orchestration design: S9 G2 lands the review booking owner (recordReviewEvidence) and the round commit identity; G3 is their only caller (wires the port at the composition root, calls record_review and the no-line notice); the group that wires them deletes these entries"
-    },
-    {
-      "file": "src/core/work-graph/model/evidence-contracts.ts",
-      "name": "EvidencePort.recordReviewEvidence",
-      "reason": "kept-for",
-      "note": "kept for slice 9 of the orchestration design: S9 G2 lands the review booking owner (recordReviewEvidence) and the round commit identity; G3 is their only caller (wires the port at the composition root, calls record_review and the no-line notice); the group that wires them deletes these entries"
-    },
-    {
       "file": "src/contracts/verification.ts",
       "name": "WitnessRunState",
       "reason": "kept-for",
@@ -1494,6 +1440,66 @@
       "name": "runWitnessCheck",
       "reason": "kept-for",
       "note": "kept for B06 (MVP-BEHAVIOR.md, the read-only witness check): G1 lands the witness contract and the pure verdict before G2 wires the owner (recordWitness calls effectsOf, pathVerdictsOf and runWitnessCheck when it records a witness check); the group that wires the owner deletes these entries"
+    },
+    {
+      "file": "src/contracts/unknown-call-advice.ts",
+      "name": "UnknownCallAdviceSubjectV1",
+      "reason": "kept-for",
+      "note": "kept for K3L-3 (decision 121-109/121-110): reached through UnknownCallReviewPort.applyAdviserAnswer / escalateReview, which the Workflow's adviser-round branch calls once the adviser round exists; until then only tests/work-graph/K3L1-owner.test.ts reaches it"
+    },
+    {
+      "file": "src/contracts/unknown-call-advice.ts",
+      "name": "ParsedUnknownCallAdviceAnswerV1",
+      "reason": "kept-for",
+      "note": "kept for K3L-3 (decision 121-109/121-110): reached through UnknownCallReviewPort.applyAdviserAnswer / escalateReview, which the Workflow's adviser-round branch calls once the adviser round exists; until then only tests/work-graph/K3L1-owner.test.ts reaches it"
+    },
+    {
+      "file": "src/contracts/unknown-call-advice.ts",
+      "name": "ANSWER_KEYS",
+      "reason": "kept-for",
+      "note": "kept for K3L-3 (decision 121-109/121-110): reached through UnknownCallReviewPort.applyAdviserAnswer / escalateReview, which the Workflow's adviser-round branch calls once the adviser round exists; until then only tests/work-graph/K3L1-owner.test.ts reaches it"
+    },
+    {
+      "file": "src/contracts/unknown-call-advice.ts",
+      "name": "unknownCallAdviceGoalBasisDigest",
+      "reason": "kept-for",
+      "note": "kept for K3L-3 (decision 121-109/121-110): reached through UnknownCallReviewPort.applyAdviserAnswer / escalateReview, which the Workflow's adviser-round branch calls once the adviser round exists; until then only tests/work-graph/K3L1-owner.test.ts reaches it"
+    },
+    {
+      "file": "src/contracts/unknown-call-advice.ts",
+      "name": "unknownCallAdviceAnswerText",
+      "reason": "kept-for",
+      "note": "kept for K3L-2 (decision 121-109/121-110): the adviser's submit tool writes the answer text with it; K3L-1 froze the format and its owner-side reader"
+    },
+    {
+      "file": "src/contracts/unknown-call-advice.ts",
+      "name": "parseUnknownCallAdviceAnswer",
+      "reason": "kept-for",
+      "note": "kept for K3L-3 (decision 121-109/121-110): reached through UnknownCallReviewPort.applyAdviserAnswer / escalateReview, which the Workflow's adviser-round branch calls once the adviser round exists; until then only tests/work-graph/K3L1-owner.test.ts reaches it"
+    },
+    {
+      "file": "src/core/work-graph/model/unknown-call-review-contracts.ts",
+      "name": "UnknownCallReviewPort.applyAdviserAnswer",
+      "reason": "kept-for",
+      "note": "kept for K3L-3 (decision 121-109/121-110): reached through UnknownCallReviewPort.applyAdviserAnswer / escalateReview, which the Workflow's adviser-round branch calls once the adviser round exists; until then only tests/work-graph/K3L1-owner.test.ts reaches it"
+    },
+    {
+      "file": "src/core/work-graph/model/unknown-call-review-contracts.ts",
+      "name": "UnknownCallReviewPort.escalateReview",
+      "reason": "kept-for",
+      "note": "kept for K3L-3 (decision 121-109/121-110): reached through UnknownCallReviewPort.applyAdviserAnswer / escalateReview, which the Workflow's adviser-round branch calls once the adviser round exists; until then only tests/work-graph/K3L1-owner.test.ts reaches it"
+    },
+    {
+      "file": "src/core/work-graph/tasks/unknown-call-review-service.ts",
+      "name": "ADVISER_ANSWER_IDENTITY_PREFIX",
+      "reason": "kept-for",
+      "note": "kept for K3L-3 (decision 121-109/121-110): reached through UnknownCallReviewPort.applyAdviserAnswer / escalateReview, which the Workflow's adviser-round branch calls once the adviser round exists; until then only tests/work-graph/K3L1-owner.test.ts reaches it"
+    },
+    {
+      "file": "src/core/work-graph/tasks/unknown-call-review-service.ts",
+      "name": "ESCALATE_IDENTITY_PREFIX",
+      "reason": "kept-for",
+      "note": "kept for K3L-3 (decision 121-109/121-110): reached through UnknownCallReviewPort.applyAdviserAnswer / escalateReview, which the Workflow's adviser-round branch calls once the adviser round exists; until then only tests/work-graph/K3L1-owner.test.ts reaches it"
     }
   ]
 }

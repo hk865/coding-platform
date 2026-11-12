@@ -196,8 +196,9 @@ export type WorkbenchInputConsumer = {
 
 /** The heartbeat opens at most this many Sessions. */
 const CONSUME_BATCH = 8;
-/** The Host's consumer status: the last heartbeat's skips; one write per heartbeat, never persisted. */
-export type HostConsumeSkipV1 = { sessionRef: SessionRef; reason: 'no_profile' | 'no_goal' };
+/** The Host's consumer status: the last heartbeat's skips; one write per heartbeat, never persisted. `unreadable` is
+ *  a line the consumable view skipped because its own facts could not be read. */
+export type HostConsumeSkipV1 = { sessionRef: SessionRef; reason: 'no_profile' | 'no_goal' | 'unreadable' };
 
 export type LocalWorkbenchHostOptions = {
   storage: TargetPlatformOptions['storage'];
@@ -279,7 +280,8 @@ export type LocalWorkbenchHost = {
   /** A.2 step 5.6 (§12.8, §12.1 step 7), per project (V7): that project's lease and its start-up reconcile report
    * (`report` null without the lease); null when the project is not open in this Host. */
   reconcileOf(projectId: string): HostReconcileReportV1 | null;
-  /** the last heartbeat's skips, in Session-key order; replaced each pass, never persisted, no route. */
+  /** the last heartbeat's skips (the unreadable lines, then the others, each in Session-key order); replaced each
+   *  pass, never persisted, no route. */
   readonly consumeStatus: readonly HostConsumeSkipV1[];
   /** Resolves after the next real `consumeIdle` pass settles; it observes that pass and changes nothing. */
   consumeBarrier(): Promise<void>;
@@ -2603,7 +2605,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
    * Session-key order, each at most one turn, and the next continuation key. A Session with no matching
    * profile or no Goal is skipped with its reason and stays queued; `notify` never reaches this loop because
    * C's `nextMessage` is never a notify. A non-ready page returns the same `after` so the next heartbeat
-   * retries it, never "nothing to do".
+   * retries it, never "nothing to do". The view's unreadable lines come first in the skips, then the others.
    */
   async function consumeIdle(scope: WorkspaceScope, after: string | null): Promise<string | null> {
     const ctx = hostContext(scope);
@@ -2613,7 +2615,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     const page = await platform.consumableSessions.readConsumableSessions(ctx,
       { workspace: scope, after, limit: CONSUME_BATCH });
     if (page.status !== 'ready') return after;
-    const skips: HostConsumeSkipV1[] = [];
+    const skips: HostConsumeSkipV1[] = page.value.skipped.map(skip =>
+      ({ sessionRef: skip.session, reason: 'unreadable' as const }));
     for (const candidate of page.value.items) {
       // notify-only (and every other no-offer candidate): no turn, zero model calls.
       const offer = candidate.nextMessage;

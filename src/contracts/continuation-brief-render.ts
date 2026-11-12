@@ -55,7 +55,7 @@ type BriefTexts = {
   blockedState: Readonly<Record<'pending' | 'allowed' | 'denied' | 'denied_final', string>>;
   disposition: Readonly<Record<NonNullable<ContinuationUnknownCallReviewV1['disposition']>['choice'], string>>;
   noDisposition: string;
-  reviewSource: Readonly<Record<'card' | 'direct', string>>;
+  reviewSource: Readonly<Record<NonNullable<ContinuationUnknownCallReviewV1['disposition']>['source'], string>>;
   autoSource: string;
   reviewVerdict: Readonly<Record<string, string>>;
   reviewChange: Readonly<Record<ContinuationUnknownCallReviewFileV1['change'], string>>;
@@ -120,7 +120,8 @@ function briefTexts(texts: PromptTextsV1): BriefTexts {
       safer_method: S('brief.review.disposition.safer_method') ?? '',
     },
     noDisposition: S('brief.review.noDisposition') ?? '',
-    reviewSource: { card: S('brief.review.source.card') ?? '', direct: S('brief.review.source.direct') ?? '' },
+    reviewSource: { card: S('brief.review.source.card') ?? '', direct: S('brief.review.source.direct') ?? '',
+      adviser: S('brief.review.source.adviser') ?? '' },
     autoSource: S('brief.review.autoSource') ?? '',
     reviewVerdict: {
       no_review_needed: S('brief.review.verdict.no_review_needed') ?? '', done: S('brief.review.verdict.done') ?? '',

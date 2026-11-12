@@ -32,8 +32,17 @@ import { compareRefKeys } from '../../record-store/lookup-index.js';
 import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
 import type { SessionMessage } from '../model/communication-contracts.js';
 import type { UnknownCallReviewPort, UnknownCallReviewReadPort } from '../model/unknown-call-review-contracts.js';
-import { admitUnknownCallReview, transitionUnknownCallReview, UNKNOWN_CALL_REVIEW_MAX_ITEMS,
+import { NO_ACCEPTED_ANSWER, type ReviewQueryReads, type ReviewSessionDuty } from '../model/evidence-contracts.js';
+import { admitUnknownCallReview, approvedMethodsOf, transitionUnknownCallReview, UNKNOWN_CALL_REVIEW_MAX_ITEMS,
   type UnknownCallReviewContextV1 } from '../state/unknown-call-review.js';
+import {
+  parseUnknownCallAdviceAnswer, unknownCallAdviceGoalBasisDigest, unknownCallAdviceProblem,
+  type ParsedUnknownCallAdviceAnswerV1, type UnknownCallAdviceV1,
+} from '../../../contracts/unknown-call-advice.js';
+import { UNKNOWN_CALL_ESCALATION_CAUSES, type UnknownCallEscalationCauseV1 } from '../../../contracts/unknown-call-review.js';
+import { systemRoundMessageRef } from '../../../contracts/plan-round.js';
+import { interventionPlanningQueryRefs } from '../../../contracts/query-job.js';
+import { goalDecisionBasis } from './goal-basis.js';
 import { reworkFenceOf } from '../state/task-failure.js';
 import { readUnappliedAnswers, unknownCallReviewDispositionIdentity } from './unknown-call-review-answers.js';
 import type { KernelCommandReader, WorkspaceFileReader } from '../model/kernel-command-read-contracts.js';
@@ -44,7 +53,7 @@ import { readGoal, readPointerIntents, type CanonicalTaskFactRead, type Canonica
 import { readGoalSettings } from '../persistence/record-codecs.js';
 import { goalDecisionBasisMatches } from '../state/goal-settings-machine.js';
 import { pinRevision } from './revision-guard.js';
-import { unknownCallReviewOptions } from './unknown-call-review-card.js';
+import { unknownCallReviewOptions, unknownCallReviewSuggestedChoice } from './unknown-call-review-card.js';
 import { decodeSessionMessageRecord, sessionMessageRefKey } from '../sessions/message-record-codecs.js';
 import { mergeGuards, isolateWrite } from './execution-entry-service.js';
 import { replayCommittedReceipt } from './receipt-replay.js';
@@ -96,6 +105,13 @@ export type UnknownCallReviewServiceDependencies = {
   readKernelCommandFacts?: KernelCommandReader;
   /** L19a: the platform's workspace read port for `package.json` expansion. */
   readWorkspace?: WorkspaceFileReader;
+  /**
+   * K3 layering: the adviser round's Query and answer reads, and the answering
+   * Session's duty (the slice 9 review reads' shapes). Absent ->
+   * `applyAdviserAnswer` is `unavailable`.
+   */
+  queries?: ReviewQueryReads;
+  sessionDuty?: ReviewSessionDuty;
   now: () => string;
   eventId: () => string;
 };
@@ -276,8 +292,10 @@ const MAX_PAGE_LIMIT = 200;
 /** How many times one keyset page is re-read until every tuple reads at one watermark. */
 const LOOKUP_WATERMARK_ATTEMPTS = 3;
 const STATUSES: readonly UnknownCallReviewStatusV1[] = [
-  'pending_review', 'needs_decision', 'awaiting_proposal', 'awaiting_approval', 'resolved',
+  'pending_review', 'awaiting_advice', 'needs_decision', 'awaiting_proposal', 'awaiting_approval', 'resolved',
 ];
+const ADVISER_ANSWER_IDENTITY_PREFIX = 'ucr-adviser-answer:';
+const ESCALATE_IDENTITY_PREFIX = 'ucr-escalate:';
 const CONCLUSION_IDENTITY_PREFIX = 'ucr-conclusion:';
 const PROPOSAL_IDENTITY_PREFIX = 'ucr-proposal:';
 /** L20/lead answer 7: command and cwd are UTF-8 byte bounds, rationale is UTF-16 code units. */
@@ -828,12 +846,17 @@ export function createUnknownCallReviewService(
     if (cause !== 'round_ended' && cause !== 'review_unavailable') {
       return rejected('invalid', 'settleReview requires cause round_ended or review_unavailable');
     }
+    // K3 layering: the Workflow's finding, taken as given like `cause`.
+    const adviserAvailable = input['adviserAvailable'] ?? false;
+    if (typeof adviserAvailable !== 'boolean') return rejected('invalid', 'settleReview adviserAvailable must be a boolean');
     const reviewRef = reviewRefOf({ ref: input['reviewRef'] as UnknownCallReviewRef })!;
     if (ctx.projectId !== reviewRef.projectId) return rejected('forbidden', 'the review belongs to another project');
     const identityKey = SETTLEMENT_IDENTITY_PREFIX + sha256Hex(canonicalJson({
       ref: fourReviewFields(reviewRef), cause, requestId: owned.requestId,
     } as never));
-    const fingerprint = sha256Hex(canonicalJson({ ref: fourReviewFields(reviewRef), cause } as never));
+    // A settlement without an adviser keeps its pre-layering fingerprint.
+    const fingerprint = sha256Hex(canonicalJson({ ref: fourReviewFields(reviewRef), cause,
+      ...(adviserAvailable ? { adviserAvailable } : {}) } as never));
     let existing;
     try {
       existing = await records.lookupCommit({ identityKey, fingerprint });
@@ -902,7 +925,7 @@ export function createUnknownCallReviewService(
       activeRunEnded, activeRunCompleted, fenceHumanOnly,
       reviewUnavailable: cause === 'review_unavailable',
       autonomy, incompleteCommandAliases: incomplete.value, missingSelfCheckAliases: [],
-      originalRunSelected: false,
+      originalRunSelected: false, adviserAvailable,
     };
     const decided = transitionUnknownCallReview(current, event, transitionCtx);
     if (!decided.ok) return rejected(decided.code, decided.detail);
@@ -1251,10 +1274,14 @@ export function createUnknownCallReviewService(
     } else if (current.status !== 'needs_decision') {
       return rejected('invalid', `a review disposition is not legal from ${current.status}`);
     }
-    const optionId = rawSelection['optionId'] as string;
-    if (!unknownCallReviewOptions(current).some(option => option.id === optionId)) {
+    const answeredOptionId = rawSelection['optionId'] as string;
+    if (!unknownCallReviewOptions(current).some(option => option.id === answeredOptionId)) {
       return rejected('invalid', 'the chosen option is not on the review card');
     }
+    // K3 layering: "follow the suggestion" is applied as the suggested choice;
+    // the answer (and its identity) stays the person's own `follow_suggestion`.
+    const optionId = answeredOptionId === 'follow_suggestion'
+      ? unknownCallReviewSuggestedChoice(current)! : answeredOptionId;
 
     const goalRef: GoalRef = { aggregateType: 'Goal', projectId: identity.reviewRef.projectId,
       goalId: identity.reviewRef.goalId };
@@ -1305,15 +1332,15 @@ export function createUnknownCallReviewService(
       activeRunEnded: false, activeRunCompleted: false, fenceHumanOnly: false, reviewUnavailable: false,
       autonomy: projected, incompleteCommandAliases: [], missingSelfCheckAliases: [],
       blockedCommands: blocked.commands, originalRunSelected: false,
+      // K3 layering: a person declining the adviser's own method sends it back
+      // to the adviser (the route follows the method's source); with no adviser
+      // line left the Workflow escalates `no_adviser`.
+      adviserAvailable: current.disposition?.source === 'adviser',
     };
     const approvalEvent = (): Extract<Parameters<typeof transitionUnknownCallReview>[1],
       { kind: 'approval_applied' }> => {
       const decision = optionId as 'approve' | 'decline';
-      // The only writer (`proposalRecorded`) keeps proposals alias-ascending.
-      const approvedMethods = decision === 'approve'
-        ? current.proposals.map(proposal => ({ proposalId: proposal.proposalId, callId: proposal.callId,
-          alias: proposal.alias, command: proposal.command, cwd: proposal.cwd }))
-        : null;
+      const approvedMethods = decision === 'approve' ? approvedMethodsOf(current.proposals) : null;
       return { kind: 'approval_applied', decision, answerMessageRef: answerRef,
         answeredRevision: identity.revision, text: null, approvedMethods };
     };
@@ -1363,6 +1390,228 @@ export function createUnknownCallReviewService(
       change: phase === 'approval' ? 'approval_applied' : 'disposition_applied', actor: operator,
       signal: ctx.signal, proof,
     });
+  }
+
+  // ---- applyAdviserAnswer / escalateReview (K3 layering) ------------------
+
+  /**
+   * The adviser round's accepted answer, as `evidence-service.ts`
+   * `readAcceptedAnswer` reads a review round's: the system message of
+   * `requestId`, its intervention-planning Query, the Session that answered
+   * and the parsed answer. A Query not created or not ended is `incomplete`
+   * (the caller waits); an ended Query without an answer that parses is
+   * `invalid` `NO_ACCEPTED_ANSWER`.
+   */
+  async function readAdviserAnswer(ctx: CoreCallContext, current: UnknownCallReviewV1, requestId: string):
+  Promise<{ ok: true; value: ParsedUnknownCallAdviceAnswerV1 } | { ok: false; rejection: CoreRejection }> {
+    const adviserReadRefusal = (rejection: CoreRejection) => ({ ok: false as const, rejection });
+    if (deps.queries === undefined || deps.sessionDuty === undefined) {
+      return adviserReadRefusal(rejected('unavailable', 'the adviser Query and duty reads are not wired'));
+    }
+    const messageRef = systemRoundMessageRef({ projectId: current.ref.projectId, workspaceId: current.workspaceId }, requestId);
+    if (messageRef.status !== 'ready') return adviserReadRefusal(messageRef);
+    const read = await deps.queries.readQueryJob(ctx, interventionPlanningQueryRefs(messageRef.value).queryJobRef);
+    if (read.status === 'not_found') return adviserReadRefusal(rejected('incomplete', 'the adviser Query has not been created; the review waits'));
+    if (read.status !== 'ready') {
+      return adviserReadRefusal(read.status === 'rejected' ? read : rejected('incomplete', 'the adviser Query is not readable yet'));
+    }
+    const job = read.value.job.job;
+    if (job.status === 'pending' || job.status === 'running') {
+      return adviserReadRefusal(rejected('incomplete', 'the adviser Query has not ended; the review waits'));
+    }
+    const execution = job.intent.execution;
+    if (execution.kind !== 'intervention_planning' || job.goalId !== current.ref.goalId
+      || refKeyOf(execution.sourceMessageRef) !== refKeyOf(messageRef.value)) {
+      return adviserReadRefusal(rejected('invalid', 'the adviser Query was not asked by this round\'s message'));
+    }
+    const answerRef = job.answerRefs.at(-1);
+    if (answerRef === undefined) return adviserReadRefusal(rejected('invalid', NO_ACCEPTED_ANSWER));
+    const sessionRef = read.value.run.run.executionState?.sessionRef;
+    if (sessionRef === undefined) return adviserReadRefusal(rejected('unavailable', 'the answered adviser Query names no entering Session'));
+    const session = await deps.sessionDuty.readSession(ctx, sessionRef, 'project');
+    if (session.status !== 'ready') return adviserReadRefusal(rejected('unavailable', 'the adviser Session could not be read'));
+    const duty = await deps.sessionDuty.dutyOfRole(ctx, session.value.record.role);
+    if (duty.status !== 'ready' || duty.value === 'unknown') return adviserReadRefusal(rejected('unavailable', 'the adviser Session duty could not be read'));
+    if (duty.value !== 'adviser') return adviserReadRefusal(rejected('forbidden', `the Session that answered has duty ${duty.value}, not adviser`));
+    const stored = await deps.queries.readQueryAnswer(ctx, answerRef);
+    if (stored.status !== 'ready') {
+      return adviserReadRefusal(stored.status === 'rejected' ? stored : rejected('unavailable', 'the adviser answer is not readable'));
+    }
+    const parsed = parseUnknownCallAdviceAnswer(stored.value.answer.answer);
+    if (parsed.status !== 'parsed') return adviserReadRefusal(rejected('invalid', NO_ACCEPTED_ANSWER));
+    return { ok: true, value: parsed };
+  }
+
+  async function applyAdviserAnswer(
+    ctx: CoreCallContext,
+    request: Parameters<UnknownCallReviewPort['applyAdviserAnswer']>[1],
+  ): Promise<WriteResult<UnknownCallReviewV1>> {
+    if (ctx.principal.kind !== 'host') return rejected('forbidden', 'applyAdviserAnswer is written by the Workflow (a host principal)');
+    const owned = isolateWrite(request);
+    if (!owned.ok) return owned.rejection;
+    const input = owned.input as unknown as Record<string, unknown>;
+    const refProblemText = refProblem(input['reviewRef']);
+    if (refProblemText !== null) return rejected('invalid', `applyAdviserAnswer ${refProblemText}`);
+    const requestId = input['requestId'];
+    const phase = input['phase'];
+    if (!nonEmpty(requestId)) return rejected('invalid', 'applyAdviserAnswer requires the adviser round requestId');
+    if (phase !== 'disposition' && phase !== 'approval') return rejected('invalid', 'applyAdviserAnswer phase is disposition or approval');
+    const reviewRef = reviewRefOf({ ref: input['reviewRef'] as UnknownCallReviewRef })!;
+    if (ctx.projectId !== reviewRef.projectId) return rejected('forbidden', 'the review belongs to another project');
+    const identity = canonicalJson({ ref: fourReviewFields(reviewRef), requestId, phase } as never);
+    const identityKey = ADVISER_ANSWER_IDENTITY_PREFIX + sha256Hex(identity);
+    const fingerprint = sha256Hex(identity);
+    let existing;
+    try {
+      existing = await records.lookupCommit({ identityKey, fingerprint });
+    } catch (error) {
+      return rejected('unavailable', `the review receipt could not be looked up: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (existing.status === 'ready') return replayReview(existing.value, identityKey, fingerprint);
+    if (existing.code !== 'not_found') return ownerWriteStoreFailureToRejection(existing);
+
+    const refKey = unknownCallReviewRefKey(reviewRef);
+    const loaded = await loadReview(refKey);
+    if ('rejection' in loaded) return loaded.rejection;
+    if ('notFound' in loaded) return rejected('not_found', 'the review record does not exist');
+    const current = loaded.value;
+    if (ctx.workspaceId !== undefined && ctx.workspaceId !== current.workspaceId) {
+      return rejected('forbidden', 'the review belongs to another workspace');
+    }
+    const ctxRevision = pinRevision(owned.expected, reviewRef);
+    if (ctxRevision === null) return rejected('invalid', 'meta.expected must pin the review ref exactly once');
+    // The pin is compared before the status, as the person's card answer is:
+    // a round pinned to an older revision (the person held the record
+    // meanwhile, say) is a conflict, never `invalid`.
+    if (ctxRevision !== current.revision) {
+      return rejected('revision_conflict', 'the review record moved since the adviser round was pinned', [
+        { ref: structuredClone(current.ref), revision: current.revision },
+      ]);
+    }
+    if (current.status !== 'awaiting_advice' || current.advice?.phase !== phase) {
+      return rejected('invalid', `an adviser ${phase} answer is not legal from ${current.status}`);
+    }
+    const answer = await readAdviserAnswer(ctx, current, requestId);
+    if (!answer.ok) return answer.rejection;
+    const { subject, advice } = answer.value;
+    if (refKeyOf(subject.reviewRef) !== refKeyOf(fourReviewFields(reviewRef)) || subject.phase !== phase) {
+      return rejected('invalid', 'the adviser answered another record or phase');
+    }
+    // The packet froze the record revision: an answer to an older revision
+    // (the person held it meanwhile, say) is a conflict, never applied.
+    if (subject.revision !== current.revision) {
+      return rejected('revision_conflict', 'the review record moved since the adviser was asked', [
+        { ref: structuredClone(current.ref), revision: current.revision },
+      ]);
+    }
+    const goalRef: GoalRef = { aggregateType: 'Goal', projectId: reviewRef.projectId, goalId: reviewRef.goalId };
+    const goalRead = await readGoal(records, goalRef);
+    if (goalRead.status !== 'ready') return rejected(goalRead.code, goalRead.reason);
+    const goal = goalRead.goal;
+    if (goal.desiredState !== 'active') return rejected('busy', 'the Goal is not active; the adviser answer waits for resume');
+    if (subject.goalBasisDigest !== unknownCallAdviceGoalBasisDigest(goalDecisionBasis(goal))) {
+      return rejected('revision_conflict', UNKNOWN_CALL_REVIEW_T02_REASON);
+    }
+    // L19a: only a skip or an approval the machine really applies blocks the
+    // original commands. The route is judged once with none; an answer that
+    // only reaches the person (or is refused) never reads them, so a failing
+    // command read cannot hold up the escalation.
+    const event = { kind: 'adviser_answer_applied' as const, answer: advice };
+    const transitionCtx: UnknownCallReviewContextV1 = {
+      expectedRevision: ctxRevision, updatedAt: now(), actor: ctx.principal.actor,
+      activeRunEnded: false, activeRunCompleted: false, fenceHumanOnly: false, reviewUnavailable: false,
+      autonomy: readGoalSettings(goal).autonomy, incompleteCommandAliases: [], missingSelfCheckAliases: [],
+      blockedCommands: [], originalRunSelected: false, adviserAvailable: true,
+    };
+    let decided = transitionUnknownCallReview(current, event, transitionCtx);
+    const applied = decided.ok && decided.effects.some(effect =>
+      effect.kind === 'emit_event' && effect.change === 'adviser_answer_applied');
+    if (applied && (advice.choice === 'skip_as_done' || advice.choice === 'approve')) {
+      const blocked = await buildBlockedCommands(ctx, deps, current, phase, advice.choice);
+      if (!blocked.ok) return blocked.rejection;
+      decided = transitionUnknownCallReview(current, event, { ...transitionCtx, blockedCommands: blocked.commands });
+    }
+    return commitTransition(decided, {
+      identityKey, fingerprint, requestId: owned.requestId,
+      guards: [{ refKey, expectedRevision: current.revision }, { refKey: refKeyOf(goalRef), expectedRevision: goal.revision }],
+      actor: ctx.principal.actor, signal: ctx.signal,
+    });
+  }
+
+  async function escalateReview(
+    ctx: CoreCallContext,
+    request: Parameters<UnknownCallReviewPort['escalateReview']>[1],
+  ): Promise<WriteResult<UnknownCallReviewV1>> {
+    if (ctx.principal.kind !== 'host') return rejected('forbidden', 'escalateReview is written by the Workflow (a host principal)');
+    const owned = isolateWrite(request);
+    if (!owned.ok) return owned.rejection;
+    const input = owned.input as unknown as Record<string, unknown>;
+    const refProblemText = refProblem(input['reviewRef']);
+    if (refProblemText !== null) return rejected('invalid', `escalateReview ${refProblemText}`);
+    const cause = input['cause'];
+    if (!(UNKNOWN_CALL_ESCALATION_CAUSES as readonly unknown[]).includes(cause)) {
+      return rejected('invalid', 'escalateReview cause is not a recognized escalation cause');
+    }
+    const suggestion = input['suggestion'] ?? null;
+    if (suggestion !== null && unknownCallAdviceProblem(suggestion) !== null) {
+      return rejected('invalid', `escalateReview suggestion: ${unknownCallAdviceProblem(suggestion)!}`);
+    }
+    const reviewRef = reviewRefOf({ ref: input['reviewRef'] as UnknownCallReviewRef })!;
+    if (ctx.projectId !== reviewRef.projectId) return rejected('forbidden', 'the review belongs to another project');
+    const ctxRevision = pinRevision(owned.expected, reviewRef);
+    if (ctxRevision === null) return rejected('invalid', 'meta.expected must pin the review ref exactly once');
+    const identityKey = ESCALATE_IDENTITY_PREFIX + sha256Hex(canonicalJson({
+      ref: fourReviewFields(reviewRef), revision: ctxRevision, cause,
+    } as never));
+    const fingerprint = sha256Hex(canonicalJson({ ref: fourReviewFields(reviewRef), revision: ctxRevision, cause,
+      suggestion } as never));
+    let existing;
+    try {
+      existing = await records.lookupCommit({ identityKey, fingerprint });
+    } catch (error) {
+      return rejected('unavailable', `the review receipt could not be looked up: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (existing.status === 'ready') return replayReview(existing.value, identityKey, fingerprint);
+    if (existing.code !== 'not_found') return ownerWriteStoreFailureToRejection(existing);
+    const refKey = unknownCallReviewRefKey(reviewRef);
+    const loaded = await loadReview(refKey);
+    if ('rejection' in loaded) return loaded.rejection;
+    if ('notFound' in loaded) return rejected('not_found', 'the review record does not exist');
+    const current = loaded.value;
+    if (ctx.workspaceId !== undefined && ctx.workspaceId !== current.workspaceId) {
+      return rejected('forbidden', 'the review belongs to another workspace');
+    }
+    const decided = transitionUnknownCallReview(current, {
+      kind: 'escalated', cause: cause as UnknownCallEscalationCauseV1, suggestion: suggestion as UnknownCallAdviceV1 | null,
+    }, {
+      expectedRevision: ctxRevision, updatedAt: now(), actor: ctx.principal.actor,
+      activeRunEnded: false, activeRunCompleted: false, fenceHumanOnly: false, reviewUnavailable: false,
+      autonomy: 'after_plan_confirmation', incompleteCommandAliases: [], missingSelfCheckAliases: [],
+      originalRunSelected: false,
+    });
+    return commitTransition(decided, {
+      identityKey, fingerprint, requestId: owned.requestId,
+      guards: [{ refKey, expectedRevision: current.revision }], actor: ctx.principal.actor, signal: ctx.signal,
+    });
+  }
+
+  /** The machine's one write effect, admitted as a must-write and committed with its own change name. */
+  async function commitTransition(
+    decided: ReturnType<typeof transitionUnknownCallReview>,
+    commit: Omit<Parameters<typeof commitReview>[0], 'next' | 'change'>,
+  ): Promise<WriteResult<UnknownCallReviewV1>> {
+    if (!decided.ok) return rejected(decided.code, decided.detail);
+    const writeEffect = decided.effects.find(effect => effect.kind === 'write_review');
+    const changeEffect = decided.effects.find(effect => effect.kind === 'emit_event');
+    if (writeEffect?.kind !== 'write_review' || changeEffect?.kind !== 'emit_event') {
+      return rejected('unavailable', 'the review machine produced no record');
+    }
+    const admission = admitUnknownCallReview(writeEffect.review, { required: true });
+    if (admission !== null) {
+      return admission.ok ? rejected('unavailable', 'the review admission refused unexpectedly')
+        : rejected(admission.code, admission.detail);
+    }
+    return commitReview({ ...commit, next: writeEffect.review, change: changeEffect.change });
   }
 
   // ---- read port ----------------------------------------------------------
@@ -1586,6 +1835,8 @@ export function createUnknownCallReviewService(
     recordProposal,
     settleReview,
     applyDisposition,
+    applyAdviserAnswer,
+    escalateReview,
     async holdReview(
       ctx: CoreCallContext,
       request: Parameters<UnknownCallReviewPort['holdReview']>[1],

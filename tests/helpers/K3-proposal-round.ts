@@ -47,7 +47,7 @@
  *   claimK3ReviewRound(world, record, { phase? }) -> { record, claim, run, context }
  *   recordK3Conclusion(world, round, input)
  *   endK3RunCompleted(world, claim) / endK3RunUnfinished(world, claim)
- *   settleK3Review(world, record, { cause?, expectedRevision? })
+ *   settleK3Review(world, record, { cause?, expectedRevision?, adviserAvailable? })
  *   readK3ReviewCard(world, record) / answerK3Disposition(world, record, optionId)
  *   proposeK3SaferMethodWithTool(world, round, input) / writeK3Proposal(world, round, input)
  *   writeK3Proposals(world, round, { mode: 'tool' | 'owner' })
@@ -566,6 +566,8 @@ type K3SettleOptions = {
   requestId?: string;
   /** Overrides the record pin (a test may deliberately send a stale one). */
   expectedRevision?: number;
+  /** K3L-1: the Workflow's "is there an adviser" input; absent sends nothing, as before. */
+  adviserAvailable?: boolean;
 };
 
 /**
@@ -617,7 +619,8 @@ export async function settleK3Review(
     item.kind === 'process' && item.observed.by === 'review_round');
   const owner = needsDisplayReader ? settlementOwner(world) : world.reviews;
   const result = await owner.settleReview(world.fixture.ctx, {
-    input: { reviewRef: record.ref, cause: options.cause ?? 'round_ended' },
+    input: { reviewRef: record.ref, cause: options.cause ?? 'round_ended',
+      ...(options.adviserAvailable === undefined ? {} : { adviserAvailable: options.adviserAvailable }) },
     meta: { requestId: options.requestId ?? k3RequestId(world, 'settle'),
       expected: [{ ref: record.ref, revision: options.expectedRevision ?? record.revision }] },
   });

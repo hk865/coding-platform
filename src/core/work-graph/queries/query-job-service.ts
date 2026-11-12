@@ -847,6 +847,7 @@ async function read(
   deps: QueryJobDependencies,
   ctx: CoreCallContext,
   ref: QueryJobRef,
+  options?: { scope?: 'workspace' | 'project' },
 ): Promise<ReadResult<{ job: QueryJobSnapshot; run: QueryRunSnapshot }>> {
   const bound = ctx as unknown as
     | { projectId?: unknown; workspaceId?: unknown; principal?: { kind?: unknown } }
@@ -860,7 +861,8 @@ async function read(
       !nonEmpty(ref.projectId) || !nonEmpty(ref.workspaceId) || !nonEmpty(ref.queryJobId)) {
     return rejectedWithNonEmptyCurrent('invalid', 'readQueryJob requires a complete QueryJobRef');
   }
-  if (bound.projectId !== ref.projectId || bound.workspaceId !== ref.workspaceId) {
+  if (bound.projectId !== ref.projectId
+    || (options?.scope !== 'project' && bound.workspaceId !== ref.workspaceId)) {
     return rejectedWithNonEmptyCurrent('forbidden', 'the QueryJob ref is outside the Host call scope');
   }
 
@@ -920,7 +922,7 @@ function queryExecutionAbsent(operation: string): CoreRejection {
 export function createQueryJobService(deps: QueryJobDependencies): QueryJobPort {
   return {
     submitQueryJob: (ctx, request) => submit(deps, ctx, request),
-    readQueryJob: (ctx, ref) => read(deps, ctx, ref),
+    readQueryJob: (ctx, ref, options) => read(deps, ctx, ref, options),
     async claimQuery(ctx, request) {
       if (deps.execution === undefined) return queryExecutionAbsent('claimQuery');
       return deps.execution.claimQuery(ctx, request);

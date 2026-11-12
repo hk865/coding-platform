@@ -90,7 +90,8 @@ const FOUR_OPTIONS = [
   { id: 'rerun_as_is', label: '照原样重跑', effect: 'apply' },
   { id: 'safer_method', label: '换个稳妥的跑法再跑', effect: 'apply' },
   { id: 'skip_as_done', label: '跳过，当作已做', effect: 'apply' },
-  { id: 'handle_myself', label: '我来处理', effect: 'apply' },
+  // K3 layering: with no adviser the card is the second layer (no_adviser).
+  { id: 'handle_myself', label: '先暂停这项任务', effect: 'apply' },
 ];
 
 /**
@@ -113,7 +114,7 @@ async function expectSettledReviewCard(h: HostScenario, record: UnknownCallRevie
   expect(card.options).toEqual(FOUR_OPTIONS);
   const aggregate = card.objects.filter(object => object.kind === 'aggregate');
   expect(aggregate).toEqual([{ kind: 'aggregate', pin: { ref: record.ref, revision: record.revision },
-    label: `核对记录 ${record.runRef.runId.slice(0, 8)}：需要你决定` }]);
+    label: '任务中断时有一步操作不知道做完没有，没有参谋可以帮着判断，要你来定怎么继续。' }]);
   expect(card.closedReason).toBeNull();
   expect(card.readOnly).toBe(false);
   expect(card.actions).toEqual(['answer']);

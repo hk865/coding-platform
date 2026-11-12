@@ -27,7 +27,7 @@ import { readActivePlan, proposeCandidate } from '../scenarios/support/S5-decisi
 import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { cancelS7AGoal, committed, ready } from '../helpers/S7A-fixture.js';
 import { openConsumeWorld, openIdleLine, createLine, awaitPlanningAnswer, awaitProposal, candidateCards,
-  heartbeat, proposalRefOf, readProposal } from '../helpers/IV-host-fixture.js';
+  heartbeat, notices, proposalRefOf, readProposal } from '../helpers/IV-host-fixture.js';
 import { createPLAdviserLine, needsDecisionAnswer, openPLConsumptionWorld, seedPLHistoryQuestion,
   seedPLSenderPlan } from '../helpers/PL-consumption-fixture.js';
 import { waitDriver } from '../helpers/DRV-fixture.js';
@@ -253,11 +253,11 @@ describe('PL-41 goal-wait rebuild, adopted-unreplied recovery', () => {
     expect(await adoptionPositions(world, world.goals.second), 'the replies add no notice').toEqual(positions);
   });
 
-  it('does not register or reply a cancelled Goal with the same accepted-unreplied candidate', async () => {
+  it('a cancelled Goal with the same accepted-unreplied candidate: no restart registration, one reply saying adopted', async () => {
     const world = await openConsumeWorld({ backend: 'sqlite', label: 'pl41-terminal' });
     worlds.push(world);
     await settlePL41(world);
-    const { messageRef } = await openIdleLine(world,
+    const { line, messageRef } = await openIdleLine(world,
       firstPlan({ label: 'pl41-terminal', taskId: 'pl41-terminal-task', role: S6A_WORK_ROLE.templateId }),
       'pl41-terminal-line');
     await awaitPlanningAnswer(world, messageRef);
@@ -271,9 +271,13 @@ describe('PL-41 goal-wait rebuild, adopted-unreplied recovery', () => {
     expect(report.report.interruptedGoals.map(entry => entry.goalRef.goalId),
       'a cancelled Goal has no restart interruption').not.toContain(world.goals.second.goalId);
     await startDriver(world, world.goals.second, 'pl41-terminal-driver');
-    // Give the driver its bounded settle window; the Goal is terminal, so no reply is ever written.
-    await new Promise(resolve => setTimeout(resolve, 500));
-    expect((await readS7BMessage(world, messageRef)).response, 'a cancelled Goal is never replied').toBeNull();
+    // The open source would hold its line's archive for good (window 3): it settles once, telling the truth.
+    const replied = await waitFor(() => readS7BMessage(world, messageRef), message => message.response !== null,
+      'the cancelled Goal\'s one reply');
+    expect(await notices(world, line, '这次规划已经采用，计划的内容在候选卡和回复里。'), 'the reply says adopted')
+      .toHaveLength(1);
+    await heartbeat(world);
+    expect(await readS7BMessage(world, messageRef), 'M has this one reply').toEqual(replied);
     expect(await acceptedOf(world, world.goals.second), 'no new adoption for a cancelled Goal').toHaveLength(1);
     expect(await planRevision(world, world.goals.second), 'its Plan does not move').toBe(1);
   });

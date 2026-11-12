@@ -1364,6 +1364,13 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       // and `package.json` script expansion through the ONE workspace read port.
       readKernelCommandFacts: (ctx, input) => readKernelCommandFacts({ kernelStores, kernel }, ctx, input),
       readWorkspace: { readWorkspace: workspace.tools.readWorkspace },
+      // K3 layering: the adviser round's answer is read through the SAME Query
+      // owner and the SAME Session duty read the review evidence uses (both are
+      // built below; the closures resolve them at call time).
+      queries: { readQueryJob: (...args) => queryJobs.readQueryJob(...args),
+        readQueryAnswer: (...args) => queryJobs.readQueryAnswer(...args) },
+      sessionDuty: { readSession: (...args) => sessionDirectory.readSession(...args),
+        dutyOfRole: (ctx, role) => sessionDutyResolver(role, ctx) },
       now, eventId: randomUUID,
     });
     // K3 L19a (spec §3.2b): the CommandRerunRequest owner. The ONE recognizer is
@@ -2012,6 +2019,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
         readQueryAnswer: (...args) => queryJobs.readQueryAnswer(...args) },
       commitIdentities: rawBackend.commitIdentities,
       limits: options.planLoopLimits ?? (() => DEFAULT_PLAN_LOOP_LIMITS),
+      // Slice 9: the same duty recipient read the Workflow finds the review line with (by project, S9-N4).
+      resolveDutyRecipient,
     });
     // The card-source list is the decision read model's ONE registration point. M's member source exists on this
     // tree; R's rework source is pushed below once its owner is built (the read model holds this array by reference,
@@ -2126,7 +2135,9 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       sessionFacts, duty: sessionDutyResolver, archiveCondition: { check: async (ctx, input) => archiveCondition === null
         ? { status: 'rejected', code: 'unavailable', reason: 'the archive condition is not wired' }
         : archiveCondition.check(ctx, input) }, reclaim: () => roleLineMaintenance, roleCapacity: roleCapacityService,
-      knowledge: knowledgeLines });
+      knowledge: knowledgeLines,
+      // Window 3: the archive's settlement fact is the consumable view's own read, built later in this root.
+      settlementDue: { readSettlementDue: (ctx, session) => consumableSessionsOwner.readSettlementDue(ctx, session) } });
     const kernelStores = await createKernelStoreRegistry(options.kernelStores ?? { entries: [] });
     // Internal calls retain the raw directory. The outer Runtime operation is
     // drained once as a whole, so close cannot reject its later registration.
@@ -2307,6 +2318,10 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     };
     const evidenceOwner = createEvidenceService({
       records: backend.records, commitIdentities: rawBackend.commitIdentities, knowledge: knowledgeLines,
+      // Slice 9 VR-16: the review booking reads the review Query and the answering Session's duty (project scope).
+      queries: { readQueryJob: (c, r) => queryJobs.readQueryJob(c, r), readQueryAnswer: (c, r) => queryJobs.readQueryAnswer(c, r) },
+      sessionDuty: { readSession: (c, r, s) => sessionDirectory.readSession(c, r, s),
+        dutyOfRole: (c, role) => sessionDutyResolver(role, c) },
       materials: rawMaterials, executions: executionReader,
       workspaceHost: options.workspace, source: verificationWorkspaceReader,
       ...(options.checks === undefined ? {} : { configuration: options.checks }),
@@ -2933,6 +2948,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       finalizeChecks: (...args) => trackedCall(() => rawEvidence.finalizeChecks(...args), unavailable),
       // A.2 step 5.9 (VR-14): the successor round or its policy refusal (`verification/reverify`).
       reverifyRound: (...args) => trackedCall(() => rawEvidence.reverifyRound!(...args), unavailable),
+      // Slice 9 VR-16: the one exec review booking (the Workflow's `record_review` calls the raw owner).
+      recordReviewEvidence: (...args) => trackedCall(() => rawEvidence.recordReviewEvidence!(...args), unavailable),
     };
     const checks: RegisteredCheckRunner = {
       runRegisteredCheck: (...args) => trackedCall(() => rawCheckRunner.runRegisteredCheck(...args), unavailable),

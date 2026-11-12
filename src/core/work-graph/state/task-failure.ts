@@ -603,13 +603,18 @@ export function countEndedGoalRuns(
  * `priorAutoCleanup` is true when a RUN-25-ended Run lies between the reset
  * point and R. `priorUnknownProcess` is true when any such Run's record has a
  * `process` item (RUN-25 or attestation). `resetRunRef` names the reset point,
- * or null when the walk reached the chain start.
+ * or null when the walk reached the chain start. `priorAdvised` (K3 layering
+ * ② narrow) is true when R's direct predecessor on the chain has a record the
+ * adviser disposed, whether or not that predecessor is a reset point.
  */
 export function streakOf(
   run: Pick<RunSnapshot, 'ref' | 'requeueRef' | 'previousRun'>,
   runs: readonly RunSnapshot[],
   reviews?: readonly UnknownCallReviewV1[],
-): { priorAutoCleanup: boolean; priorUnknownProcess: boolean; resetRunRef: RunRef | null } {
+): { priorAutoCleanup: boolean; priorUnknownProcess: boolean; resetRunRef: RunRef | null; priorAdvised: boolean } {
+  const predecessor = previousChainRefOf(run);
+  const priorAdvised = predecessor !== null && (reviews ?? []).some(review =>
+    review.runRef.runId === predecessor.runId && review.disposition?.source === 'adviser');
   const byRunId = new Map(runs.map((candidate) => [candidate.ref.runId, candidate]));
   const between: RunSnapshot[] = [];
   const seen = new Set<string>([run.ref.runId]);
@@ -635,6 +640,7 @@ export function streakOf(
     priorUnknownProcess: between.some((candidate) => (reviews ?? []).some((review) =>
       review.runRef.runId === candidate.ref.runId && review.items.some((item) => item.kind === 'process'))),
     resetRunRef,
+    priorAdvised,
   };
 }
 
@@ -1118,18 +1124,20 @@ function unknownCallReviewFacts(
  * L22: the user's disposition already confirmed the one system requeue of this
  * original Run: `rerun_as_is` / `skip_as_done`, an approved safer method, or a
  * released "I'll handle it". It only covers the requeue of this Run
- * (`coveringRequeue` absent); later Runs are unaffected.
+ * (`coveringRequeue` absent); later Runs are unaffected. K3 layering: what the
+ * adviser disposed or approved (no person's answer) is never the user's
+ * confirmation.
  */
 export function requeueConfirmedByReview(review: UnknownCallReviewV1): boolean {
   if (review.status !== 'resolved') return false;
   const disposition = review.disposition;
-  if (disposition === null) return false;
+  if (disposition === null || disposition.source === 'adviser') return false;
   switch (disposition.choice) {
     case 'rerun_as_is':
     case 'skip_as_done':
       return true;
     case 'safer_method':
-      return disposition.approval?.decision === 'approve';
+      return disposition.approval?.decision === 'approve' && disposition.approval.answerMessageRef !== null;
     case 'handle_myself':
       return disposition.hold === 'released';
     default:

@@ -386,6 +386,7 @@ function reconcileRunContext(
     priorAutoCleanup: auto?.priorAutoCleanup ?? false,
     priorUnknownProcess: auto?.priorUnknownProcess ?? false,
     streakResetRunRef: auto?.streakResetRunRef ?? null,
+    priorAdvised: auto?.priorAdvised ?? false,
   };
 }
 
@@ -397,6 +398,8 @@ type AutoCleanupFacts = {
   priorAutoCleanup: boolean;
   priorUnknownProcess: boolean;
   streakResetRunRef: RunRef | null;
+  /** K3 layering ② narrow: the direct predecessor was disposed by the adviser. */
+  priorAdvised: boolean;
 };
 
 /**
@@ -439,7 +442,7 @@ async function readSessionClosable(
  */
 async function readStreakFacts(
   deps: RunReconcileDependencies, ctx: CoreCallContext, facts: TaskExecutionRecord,
-): Promise<{ ok: true; streak: Pick<AutoCleanupFacts, 'priorAutoCleanup' | 'priorUnknownProcess' | 'streakResetRunRef'>;
+): Promise<{ ok: true; streak: Pick<AutoCleanupFacts, 'priorAutoCleanup' | 'priorUnknownProcess' | 'streakResetRunRef' | 'priorAdvised'>;
     guards: RecordGuard[] } | { ok: false; rejection: CoreRejection }> {
   const runs: RunSnapshot[] = [facts.run];
   const guards: RecordGuard[] = [];
@@ -486,7 +489,8 @@ async function readStreakFacts(
   }
   const streak = streakOf(facts.run, runs, reviews);
   return { ok: true, streak: { priorAutoCleanup: streak.priorAutoCleanup,
-    priorUnknownProcess: streak.priorUnknownProcess, streakResetRunRef: streak.resetRunRef }, guards };
+    priorUnknownProcess: streak.priorUnknownProcess, streakResetRunRef: streak.resetRunRef,
+    priorAdvised: streak.priorAdvised }, guards };
 }
 
 function reviewRefOfRun(runRef: RunRef): UnknownCallReviewRef {
@@ -949,7 +953,7 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
       }
       // Q4 (L23): the record carries the chain's streak; the chain Runs and
       // records read are guarded in this same commit.
-      let streakFacts: Pick<AutoCleanupFacts, 'priorAutoCleanup' | 'priorUnknownProcess' | 'streakResetRunRef'> | null = null;
+      let streakFacts: Pick<AutoCleanupFacts, 'priorAutoCleanup' | 'priorUnknownProcess' | 'streakResetRunRef' | 'priorAdvised'> | null = null;
       let autoGuards: readonly RecordGuard[] = [];
       if (draft !== null) {
         const streak = await readStreakFacts(deps, ctx, facts);
@@ -984,7 +988,8 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
           itemsOmitted: draft.itemsOmitted, workspace: input.review.workspace,
           streak: { priorAutoCleanup: streakFacts?.priorAutoCleanup === true,
             priorUnknownProcess: streakFacts?.priorUnknownProcess === true,
-            resetRunRef: streakFacts?.streakResetRunRef ?? null },
+            resetRunRef: streakFacts?.streakResetRunRef ?? null,
+            ...(streakFacts?.priorAdvised === true ? { priorAdvised: true as const } : {}) },
           createdAt: stamped.nowIso,
         });
         if (!built.ok) return reject(built.code, built.detail);

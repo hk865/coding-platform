@@ -11,7 +11,7 @@
  * page is returned unchanged.
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
-import type { RoleConfigurationRef, SessionRef, WorkspaceScope } from '../../../contracts/core/identity.js';
+import type { ProjectScope, RoleConfigurationRef, SessionRef, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
@@ -23,9 +23,33 @@ export type DutyRecipientDependencies = {
   dutyOfRole: (ctx: CoreCallContext, role: RoleConfigurationRef) => Promise<ReadResult<PlatformDutyV1 | 'unknown'>>;
 };
 export interface DutyRecipientPort {
+  /** A scope without `workspaceId` reads the whole project; only `reviewLineOf` asks that, to name a missing line. */
   resolveDutyRecipient(ctx: CoreCallContext, input: {
-    workspace: WorkspaceScope; duty: 'adviser' | 'secretary' | 'scribe' | 'reviewer';
+    workspace: WorkspaceScope | ProjectScope; duty: 'adviser' | 'secretary' | 'scribe' | 'reviewer';
   }): Promise<ReadResult<SessionRef | null>>;
+}
+
+/** Where a workspace's exec review goes: its own line, a line only elsewhere in the project, or none at all. */
+export type ReviewLineV1 =
+  | { kind: 'here'; line: SessionRef }
+  | { kind: 'other_workspace' }
+  | { kind: 'none' };
+
+/**
+ * The exec review's one review-line decision (Workflow's `readReviewState` and the no-line notice both read it): the
+ * round's own workspace first; without a line there, one project-wide read only names the reason. A line elsewhere
+ * is never sent to — joined-workspace exec review is not connected yet (a known limit: the message and its Query
+ * would live in the line's workspace, not the round's). A failed read is returned unchanged.
+ */
+export async function reviewLineOf(port: Pick<DutyRecipientPort, 'resolveDutyRecipient'>, ctx: CoreCallContext,
+  workspace: WorkspaceScope): Promise<ReadResult<ReviewLineV1>> {
+  const here = await port.resolveDutyRecipient(ctx, { workspace, duty: 'reviewer' });
+  if (here.status !== 'ready') return here;
+  if (here.value !== null) return { status: 'ready', value: { kind: 'here', line: here.value } };
+  const project = await port.resolveDutyRecipient(ctx,
+    { workspace: { projectId: workspace.projectId }, duty: 'reviewer' });
+  if (project.status !== 'ready') return project;
+  return { status: 'ready', value: { kind: project.value === null ? 'none' : 'other_workspace' } };
 }
 
 export function createDutyRecipient(deps: DutyRecipientDependencies): DutyRecipientPort {

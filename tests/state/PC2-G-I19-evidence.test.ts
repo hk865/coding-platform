@@ -152,6 +152,7 @@ const STRINGS: Record<string, string> = {
   'brief.review.notListed': 'X',
   'brief.review.source.card': 'X',
   'brief.review.source.direct': 'X',
+  'brief.review.source.adviser': 'X',
   'brief.review.title': 'X',
   'brief.review.verdict.compare_in_continuation': 'X',
   'brief.review.verdict.done': 'X',

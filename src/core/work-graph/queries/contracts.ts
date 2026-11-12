@@ -266,9 +266,11 @@ export interface QueryJobPort {
     ctx: CoreCallContext,
     request: GraphWrite<SubmitQueryJobInput>,
   ): Promise<WriteResult<QueryJobRecord>>;
+  /** Host-only exact read; `scope: 'project'` (decision 104-1) skips only the workspace comparison, never the project. */
   readQueryJob(
     ctx: CoreCallContext,
     ref: QueryJobRef,
+    options?: { scope?: 'workspace' | 'project' },
   ): Promise<ReadResult<QueryJobRecord>>;
   /** The execution port's request, forwarded whole (a request round's claim carries its profile). */
   claimQuery(

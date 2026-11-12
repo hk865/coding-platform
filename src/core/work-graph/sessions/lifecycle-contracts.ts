@@ -20,7 +20,7 @@ import type { ArchiveStepRefV1, RequestSessionArchiveInput } from '../../../cont
 import type { SessionRecord, SessionWorkLink } from '../../../contracts/core/session.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
-import type { SessionFactsPort } from '../model/session-facts-contracts.js';
+import type { SessionFactsPort, SessionSettlementDuePort } from '../model/session-facts-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
 
@@ -30,6 +30,11 @@ export type SessionLifecycleStores = {
   lookups: RecordLookupPort;
   /** Slice 1 §3.3: injected by the composition root; absent leaves the new archive entries unsupported. */
   sessionFacts?: SessionFactsPort;
+  /**
+   * Window 3's archive fact, injected by the composition root (the consumable view's one settlement read). Absent only
+   * in a narrow owner double without mail; a failed read refuses the archive as unread facts.
+   */
+  settlementDue?: SessionSettlementDuePort;
   /** The one fixed-duty read the link claim and archive release use; never a second resolver. */
   duty: SessionDutyReadPort;
 };

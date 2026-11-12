@@ -23,7 +23,7 @@
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
 | `queryTextProblem` | `src/core/work-graph/queries/query-job-service.ts:96` | 所有 Query/请求文本的规则：非空、≤16 KiB UTF-8、不 trim | 任何 Query/请求文本入口；不要另写文本校验 |
-| `createQueryJobService` | `src/core/work-graph/queries/query-job-service.ts:917` | pending 提交/读取端口；可选注入执行端口转发 claim/readAnswer | composition 装配 QueryJob 端口 |
+| `createQueryJobService` | `src/core/work-graph/queries/query-job-service.ts:919` | pending 提交/读取端口；可选注入执行端口转发 claim/readAnswer | composition 装配 QueryJob 端口 |
 | `lookupCommittedReceipt` | `src/core/work-graph/persistence/receipt-lookup.ts:18`（本模块 `query-job-service.ts` 转出） | 唯一的提交收据查找：按 identity/fingerprint 调 `lookupCommit`（`src/core/record-store/ports.ts:194`），把 missing/conflict/invalid/unavailable 分类；**正本** | 提交前查重；提交抛异常后只按 identity/fingerprint 查原收据恢复，绝不重试（M1-14、M1-15、M1-26） |
 | `createQueryExecution` | `src/core/work-graph/queries/query-execution.ts:1260` | 唯一 Query 执行写入端口：claim/prepare/entry/model/usage/observation/answer/recovery；claim 只收没有执行状态的 Run（已 claim 或已 prepare 的 attempt 答 `busy`）；请求轮的起跑提交输给先提交的请求命令（tail 或 intake 被移动、读过的记录变了，答 `revision_conflict`）时重读再判，最多 `SECRETARY_TAIL_RETRIES` 次 | composition 注入执行端口；Runtime 只经端口调用 |
 | `queryClaimDispatchProblem` | `src/core/work-graph/queries/query-execution.ts:272` | Query claim 的 Session 排除：archive 请求/Work wait 为 busy，只读副本只允许自己的 consultation Query | claim 前的准入判断 |

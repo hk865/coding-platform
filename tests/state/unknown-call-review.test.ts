@@ -29,6 +29,7 @@ import {
   type UnknownCallReviewContextV1,
   type UnknownCallReviewEventV1,
 } from '../../src/core/work-graph/state/unknown-call-review.js';
+import { unknownCallReviewOptions, unknownCallReviewSummary } from '../../src/core/work-graph/tasks/unknown-call-review-card.js';
 
 const P = 'p1';
 const G = 'g1';
@@ -374,6 +375,55 @@ describe('K3-31 UnknownCallReview table', () => {
     expect(next.decisionReasons).toEqual(['review_stopped']);
     expect(next.activeRound).toBeNull();
     expect(next.rounds).toEqual([roundOf(1, 'review', 1, 'stopped')]);
+  });
+
+  // K3L-1 V4 mutation (adviser true): routeOf lets the adviser reasons of a stopped round win; (adviser false): no_adviser is written on a person-route record; green today
+  it.each([true, false])('K3L-1 V4 (adviser %s): a human-stopped round reaches the person with today\'s four options', adviserAvailable => {
+    const current = baseReview({ status: 'pending_review', items: [item(1)], activeRound: active() });
+    const next = nextOf(transition(current, { kind: 'settled' },
+      ctx({ activeRunEnded: true, fenceHumanOnly: true, adviserAvailable })));
+    expect(next).toMatchObject({ status: 'needs_decision',
+      decisionReasons: ['review_stopped', 'undetermined', 'crash_undetermined'] });
+    expect(next.escalation ?? null).toBeNull();
+    expect(unknownCallReviewOptions(next).map(option => option.label))
+      .toEqual(['照原样重跑', '换个稳妥的跑法再跑', '跳过，当作已做', '我来处理']);
+  });
+
+  // K3L-1 mutation: a person route keeps the record's older escalation; red before the fix: :404 (no_adviser stays)
+  it('K3L-1: no adviser, the person\'s safer method, then the person stops the proposal round -> today\'s card again', () => {
+    const noAdviser = nextOf(transition(baseReview({ status: 'pending_review', items: [item(1)] }), { kind: 'settled' },
+      ctx({ reviewUnavailable: true, adviserAvailable: false })));
+    expect(noAdviser.escalation).toEqual({ cause: 'no_adviser', suggestion: null });
+    const safer = nextOf(transition(noAdviser, { kind: 'disposition_applied', choice: 'safer_method',
+      answerMessageRef: messageRef('m2'), answeredRevision: 5, text: null }, ctx({ expectedRevision: 5 })));
+    const claimed = nextOf(transition(safer, { kind: 'round_claimed', runRef: run('r1'), phase: 'proposal', round: 1 },
+      ctx({ expectedRevision: 6 })));
+    const stopped = nextOf(transition(claimed, { kind: 'settled' },
+      ctx({ expectedRevision: 7, activeRunEnded: true, fenceHumanOnly: true })));
+    expect(stopped).toMatchObject({ status: 'needs_decision', decisionReasons: ['review_stopped', 'undetermined', 'crash_undetermined'] });
+    expect(stopped.escalation).toBeUndefined();
+    expect(unknownCallReviewOptions(stopped).map(option => option.label))
+      .toEqual(['照原样重跑', '换个稳妥的跑法再跑', '跳过，当作已做', '我来处理']);
+    expect(unknownCallReviewSummary(stopped)).toBe('核对记录 origin：需要你决定');
+  });
+
+  // K3L-1 rule 2 for an incomplete inventory. Named mutation: rule 2 keeps only review_stopped -> the adviser is
+  // asked to approve, red.
+  it('K3L-1: an incomplete inventory\'s finished proposal round goes to the person for approval, even with an adviser', () => {
+    // Reachable: a too-large creation keeps its first process items (K3-48), so its card offers safer_method ...
+    const created = newUnknownCallReview(creationInput({ items: Array.from({ length: 32 }, (_, i) => item(i + 1, {
+      summary: { command: 'c'.repeat(6_000), cwd: '/w', mode: null, paths: [], pathsOmitted: 0, truncated: false } })) }));
+    if (!created.ok) throw new Error(created.detail);
+    expect(created.next.inventory).toBe('incomplete');
+    expect(unknownCallReviewOptions(created.next).map(option => option.id)).toContain('safer_method');
+    // ... and the proposal round's settlement routes with inventory_incomplete among the standing reasons.
+    const current = baseReview({ status: 'awaiting_proposal', inventory: 'incomplete', inventoryProblem: 'too_large',
+      items: [concludedItem(1, 'done')], activeRound: active(1, 'proposal'), proposalTargets: ['call-1'],
+      proposals: [proposal(1)] });
+    const next = nextOf(transition(current, { kind: 'settled' },
+      ctx({ activeRunEnded: true, activeRunCompleted: true, adviserAvailable: true })));
+    expect(next.status).toBe('awaiting_approval');
+    expect(next.escalation).toBeUndefined();
   });
 
   it('K3-31 UCR-07 settles a normally finished pending_review round to resolved', () => {

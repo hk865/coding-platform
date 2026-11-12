@@ -153,7 +153,8 @@ describe('K3-18 (四) review card in a paused Goal queue', () => {
       { id: 'rerun_as_is', label: '照原样重跑', effect: 'apply' },
       { id: 'safer_method', label: '换个稳妥的跑法再跑', effect: 'apply' },
       { id: 'skip_as_done', label: '跳过，当作已做', effect: 'apply' },
-      { id: 'handle_myself', label: '我来处理', effect: 'apply' },
+      // K3 layering: the record settled before every_step with no adviser, so its card is the second layer.
+      { id: 'handle_myself', label: '先暂停这项任务', effect: 'apply' },
     ]);
     expect(card.closedReason).toBeNull();
     expect(card.readOnly).toBe(false);
