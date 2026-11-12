@@ -57,6 +57,18 @@ function activate(world: S8CRepairWorld, staged: { noteId: string; version: numb
   });
 }
 
+/**
+ * Starts the commit count after a PASS. The PASS's `check_passed` trigger (`src/composition/create-platform.ts:2325`)
+ * starts the Host's detached automatic capture (`src/app/auto-capture-driver.ts:116`, `:203`), whose request and
+ * `observed-architecture` commits go through the same counted `records.commit` and can land inside the counted call.
+ * The count starts once that tracked work has settled (the world's `settleDetached`), so it sees only the call's own
+ * commits.
+ */
+async function startCount(world: S8CRepairWorld): Promise<void> {
+  await world.world.settleDetached();
+  repairCommits.reset();
+}
+
 describe('S8C G3 R1/R9 activation and post-state', () => {
   let w: S8CRepairWorld;
   let staged: S8CStagedRepair;
@@ -73,7 +85,7 @@ describe('S8C G3 R1/R9 activation and post-state', () => {
     staged = await w.writeRepair({ ops: small });
     passed = await w.pass(staged);
     stagedRevision = await w.readCatalog();
-    repairCommits.reset();
+    await startCount(w);
     activated = await activate(w, staged);
     activationCommits = repairCommits.businessCount();
   });
@@ -151,7 +163,7 @@ describe('S8C G3 R1/R9 activation and post-state', () => {
         : realReadMany(keys) },
     });
 
-    repairCommits.reset();
+    await startCount(w);
     const result = await owner.activateRepair(w.world.humanContext(),
       { commandId: `activate:${staged.noteId}:${staged.version}`, noteId: staged.noteId,
         expectedVersion: staged.version });
@@ -172,7 +184,7 @@ describe('S8C G3 R2/R5 owner approval', () => {
     const passed = await w.pass(staged);
     expect(passed.finalize.result).toMatchObject({ status: 'committed', value: { outcome: 'PASS' } });
 
-    repairCommits.reset();
+    await startCount(w);
     expect(await activate(w, staged)).toEqual({ status: 'not_ready', reason: 'approval_pending' });
     expect(await w.readNote(staged.noteId)).toMatchObject({ version: 1, storedState: 'staged' });
     expect(repairCommits.count()).toBe(0);
@@ -237,7 +249,7 @@ describe('S8C G3 R3 binding and withdrawal', () => {
     await w.pass(staged);
     await w.endTask(staged.task.taskId, 'cancelled');
 
-    repairCommits.reset();
+    await startCount(w);
     expect(await activate(w, staged)).toMatchObject({ status: 'rejected', code: 'invalid', reason: 'withdrawn' });
     const note = await w.readNote(staged.noteId);
     expect(note).toMatchObject({ version: 2, storedState: 'withdrawn' });
@@ -266,7 +278,7 @@ describe('S8C G3 R4 two repairs and replay', () => {
     await w.pass(larger);
     await w.pass(smaller);
 
-    repairCommits.reset();
+    await startCount(w);
     const results = await w.owner.attemptRepairsForGoal(w.world.humanContext(), { goalRef: w.goal });
     expect(results).toHaveLength(2);
     expect(results[0]).toMatchObject({ status: 'activated', noteId: larger.noteId });
