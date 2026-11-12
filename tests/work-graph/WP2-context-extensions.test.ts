@@ -166,7 +166,7 @@ function decisionsDouble(
       },
       // The context reader prepares the queue once before its pages (R-window); no catalog and no source files here.
       async prepareDecisionQueue() {
-        return { status: 'ready', value: { architecture: null, attempt: { cache: new Map() } } };
+        return { status: 'ready', value: { architecture: null, conflictsUnavailable: false, attempt: { cache: new Map() } } };
       },
       async queryDecisionQueuePrepared(_ctx, input) {
         calls.push(input);

@@ -522,9 +522,14 @@ export type ConflictArchitectureRead = {
  * files, read before the window is fixed: the conflicts' architecture (`null`
  * when the queue reads no conflicts) and, in `attempt`, what the card sources'
  * `prepareWindow` read for the subjects, listed once. Internal only.
+ * `conflictsUnavailable` (stk16, lead 11-12): the architecture read failed but not
+ * on a write in flight (the 2a-1 read-back gate: a bad file, a duplicate id, a
+ * dangling reference); the queue reads without the conflict cards and says
+ * `goal_conflict` is `not_available`.
  */
 export type DecisionQueuePreparation = {
   architecture: ConflictArchitectureRead | null;
+  conflictsUnavailable: boolean;
   attempt: DecisionSourceAttempt;
 };
 /**

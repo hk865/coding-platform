@@ -20,6 +20,8 @@
  * one exact input requirement). The production footprint producer emits no
  * rows and stays a declared future section.
  */
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { ModelRequest } from '../../vendor/coding-agent/dist/public-api.js';
 import type { ArtifactRef } from '../../src/contracts/artifact.js';
@@ -117,6 +119,7 @@ const BRIEF_BODY = `[continuation-brief v1 sha256:<brief-digest>]
 
 ### 检查
 - 轮次 <round-id>（第 1 轮）未通过的检查：无
+- 缺口：source_changed
 
 ### 重新入队
 - 原因（人工）：Continue PC work
@@ -125,7 +128,7 @@ const BRIEF_BODY = `[continuation-brief v1 sha256:<brief-digest>]
 ### 工作区
 - 上一次执行经工具改动的文件（完整）：无
 - 上一次执行结束（2026-09-26T00:00:00.000Z）到“检查轮次开始”之间：无法从持久记录确定是否有改动。
-- 检查轮次开始 → 重新入队：源码摘要相同
+- 检查轮次开始 → 重新入队：有变化（具体文件无法从持久记录确定）
 - 重新入队 → 本次执行开始前：源码摘要相同
 - 工作区不是 git 仓库，未提交的改动无法列出。
 
@@ -179,7 +182,13 @@ async function frozenManifest(
   return JSON.parse(read.value.body) as PreparedTaskManifestV1;
 }
 
-/** Close one verification round with an empty check list, as the current test does. */
+/**
+ * Close one verification round with an empty check list, INCONCLUSIVE because a person changes a workspace file between
+ * the open (which froze the source) and the finalize: the finalize's `source_changed` gap (stk16 ruling 3; the round
+ * itself is not what J-08 is about, only the requeue it allows). The earlier ways to it are gone: the claim fixture's
+ * store left the workspace root (b2 F-4) and a round counts only its own Task's requirements (S9 G2), so the empty
+ * list alone is PASS. A file of its own per round, so the second round changes the digest too.
+ */
 async function closeInconclusiveRound(
   fixture: Awaited<ReturnType<typeof openPCWorkFixture>>,
   runRef: RunRef, subject: TaskTriple, planRef: PlanRevisionRef, suffix: string,
@@ -200,6 +209,7 @@ async function closeInconclusiveRound(
   });
   expect(round.status, JSON.stringify(round)).toBe('committed');
   if (round.status !== 'committed') throw new Error(JSON.stringify(round));
+  await writeFile(join(fixture.base.directory, `pc2-j08-edit-${suffix}.txt`), `J-08 edit during round ${suffix}\n`);
   const finalized = await fixture.base.platform.evidence.finalizeChecks(fixture.base.ctx, {
     input: { roundRef: round.value.ref },
     meta: { requestId: `pc2-j08-final-${suffix}`, expected: [

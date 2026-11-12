@@ -127,6 +127,7 @@ import {
   readWatermark,
   storeFailureToRejection,
   workspaceScopeProblem,
+  conflictArchitectureRefused,
   type DecisionReadRecordsPort,
   type GoalConflictAssemblerPort,
   type GoalTerminalState,
@@ -1176,8 +1177,10 @@ function queueScopeProblem(ctx: CoreCallContext, input: QueuePreparationInput): 
  * at), and each card source's `prepareWindow` for every listed Goal and the
  * project, or the one explicit Goal (inside the window the source reads only
  * records and answers DECISION_WINDOW_MOVED_REASON when one moved since). A
- * failure is the queue's own answer. The public read prepares before each
- * attempt; lines/list and the context's pages prepare before their own window.
+ * failure is the queue's own answer, except an architecture the read-back gate
+ * refused (stk16): that takes only the conflict cards. The public read prepares
+ * before each attempt; lines/list and the context's pages prepare before their
+ * own window.
  */
 async function prepareQueueWindow(
   deps: DecisionReadModelDependencies,
@@ -1189,10 +1192,12 @@ async function prepareQueueWindow(
   const workspace = input.workspace;
   const wantsCards = input.sections.some((section) => section !== 'notices');
   let architecture: ConflictArchitectureRead | null = null;
+  let conflictsUnavailable = false;
   if (wantsCards && !deps.cardSources.some((source) => source.kind === 'goal_conflict')) {
     const read = await deps.conflicts.readCurrentArchitecture(ctx);
-    if (read.status !== 'ready') return read;
-    architecture = read.value;
+    if (read.status === 'ready') architecture = read.value;
+    else if (conflictArchitectureRefused(read)) conflictsUnavailable = true;
+    else return read;
   }
   const attempt: DecisionSourceAttempt = { cache: new Map() };
   const preparing = wantsCards ? deps.cardSources.filter(source => source.prepareWindow !== undefined) : [];
@@ -1215,7 +1220,7 @@ async function prepareQueueWindow(
       if (prepared !== undefined && prepared.status !== 'ready') return prepared;
     }
   }
-  return { status: 'ready', value: { architecture, attempt } };
+  return { status: 'ready', value: { architecture, conflictsUnavailable, attempt } };
 }
 
 async function readDecisionQueueWindow(
@@ -1251,6 +1256,7 @@ async function readDecisionQueueWindow(
   const capabilities = new Map<string, 'available' | 'not_available'>();
   for (const kind of CARD_KINDS) capabilities.set(kind, cardSourceAvailability(kind, injectedCards));
   for (const category of NOTICE_CATEGORIES) capabilities.set(category, noticeSourceAvailability(category, injectedNotices));
+  if (prepared.value.conflictsUnavailable) capabilities.set('goal_conflict', 'not_available');
 
   // §4.1 line 772 / §3.3: the read window is fixed FIRST, at the first Goal
   // listing's horizon; `sourceCursor` is that window, never a later watermark.

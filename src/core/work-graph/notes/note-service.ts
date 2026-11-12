@@ -53,7 +53,8 @@ import {
 import type { ArchitectureCatalogPort } from '../architecture/catalog-contracts.js';
 import type { CurrentCatalogWindow } from '../architecture/catalog-service.js';
 import {
-  catalogModuleFactsOf, opsInProjectView, readCatalogPointerRevision, readCurrentCatalogWindow, readRevisionByRef,
+  catalogModuleFactsOf, KNOWLEDGE_WRITE_UNCONFIRMED, opsInProjectView, readCatalogPointerRevision,
+  readCurrentCatalogWindow, readRevisionByRef,
 } from '../architecture/catalog-service.js';
 import {
   readArchitectureBaselinePin, readArchitectureCatalogRef,
@@ -1382,10 +1383,14 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
    * heads, computed with the ONE per-call plan cache. This is the per-head loop
    * the guard uses, exposed batched so the card source reads no head twice.
    */
-  async function reasonFactsOf(call: NoteCall, ctx: CoreCallContext, heads: Iterable<NoteHeadSnapshot>):
+  async function reasonFactsOf(call: NoteCall, ctx: CoreCallContext, heads: Iterable<NoteHeadSnapshot>,
+    leaveOutCatalogAnchors = false):
   Promise<{ ok: true; value: Map<string, NoteUserReasonTargetV1> } | { ok: false; rejection: Rejected }> {
     const facts = new Map<string, NoteUserReasonTargetV1>();
     for (const head of heads) {
+      // stk16 (lead 11-12, investigation §3 B): a queue window whose catalog the read-back gate refused leaves a target
+      // on a module or an interface out, as 2c-1d leaves out a target with no head; a card with no other reason goes.
+      if (leaveOutCatalogAnchors && (head.anchor.kind === 'module' || head.anchor.kind === 'interface')) continue;
       const retired = await primaryAnchorRetiredNonFile(call, ctx, head.anchor);
       if (!retired.ok) return { ok: false, rejection: retired.rejection };
       facts.set(head.noteId, { noteId: head.noteId, version: head.version, state: head.state,
@@ -1457,7 +1462,8 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     for (const { goalId, window } of planWindows) {
       call.planWindows.set(`${ctx.projectId}\u0000${goalId}`, Promise.resolve(window));
     }
-    const facts = await reasonFactsOf(call, ctx, heads);
+    const facts = await reasonFactsOf(call, ctx, heads,
+      attempt !== undefined && catalogRefused(await call.catalogWindows.get(ctx.projectId)));
     if (!facts.ok) return { status: 'rejected', code: facts.rejection.code, reason: facts.rejection.reason };
     return { status: 'ready', value: facts.value };
   }
@@ -1499,6 +1505,11 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     windows.set(ctx.projectId, Promise.resolve(window));
     attempt.cache.set(ATTEMPT_CATALOG_POINTER_KEY, window);
     return { status: 'ready', value: undefined };
+  }
+  /** stk16: the window prepared for the queue was refused by the read-back gate (a write in flight fails the queue). */
+  function catalogRefused(window: CurrentCatalogWindow | undefined): boolean {
+    return window !== undefined && window.status === 'rejected' && window.code === 'unavailable'
+      && window.reason !== KNOWLEDGE_WRITE_UNCONFIRMED;
   }
   function attemptCatalogWindowsOf(attempt: DecisionSourceAttempt): AttemptCatalogWindows {
     const cached = attempt.cache.get(ATTEMPT_CATALOG_WINDOWS_KEY);

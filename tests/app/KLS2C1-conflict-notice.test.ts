@@ -4,7 +4,8 @@
  * a module file, or makes two module files conflict, under a running Host. The idle reconcile leaves the architecture
  * read unavailable with the file named, tells the person once in the decision queue (`knowledge_conflict`; the same
  * problems never twice), and asks the region adviser of a conflicting module, when there is one, for an architecture
- * revision (`action_request`, once per adviser, module and notice); it makes no card. The world is
+ * revision (`action_request`, once per adviser, module and notice); it makes no card. While the conflict stands the
+ * decision queue still reads (stk16 ruling 1–2: only the conflict cards go, `goal_conflict` not_available). The world is
  * `KLS2C-knowledge-host.ts` (idle threshold 0, so every heartbeat reconciles); the adviser comes from `role-lines/open`,
  * its messages from `messages/inbox` and `messages/body`, the cards from `decisions/queue`.
  */
@@ -54,12 +55,11 @@ async function everyActionRequest(world: KLS2CHost): Promise<InboxItem[]> {
   return all;
 }
 
-/** The structural proposal cards waiting for the person (`decisions/queue`). */
-async function proposalCards(world: KLS2CHost): Promise<number> {
-  const queue = await readRoute<{ waitingAnswer: { source: { kind: string } }[] }>(world, 'decisions/queue',
-    { workspace: world.scope, sections: ['waiting_answer'], page: { limit: 100 } });
-  return queue.waitingAnswer.filter(card => card.source.kind === 'structural_proposal').length;
-}
+type QueueRead = { waitingAnswer: { source: { kind: string } }[]; notices: { summary: string }[];
+  capabilities: { source: string; availability: string }[] };
+/** `decisions/queue` read as the Decide page reads it: the waiting cards and the notices in one read. */
+const decideQueue = (world: KLS2CHost): Promise<QueueRead> => readRoute<QueueRead>(world, 'decisions/queue',
+  { workspace: world.scope, sections: ['waiting_answer', 'notices'], page: { limit: 100 } });
 
 describe.each(['memory', 'sqlite'] as const)('%s', storage => {
   it('K06 a module file that is not JSON: the architecture read is unavailable naming it, one knowledge_conflict notice', async () => {
@@ -134,11 +134,16 @@ it.each([
     if (opened.status !== 'committed' || !opened.value?.session) throw new Error(`role-lines/open: ${JSON.stringify(opened)}`);
     adviser = opened.value.session;
   }
-  const other = kls2cModuleFile(world, 'other');
-  const otherText = world.read(other)?.toString('utf8') ?? '';
   kls2cConflict(world, 'same_id');
   await world.idle();
   expect(await world.notices('knowledge_conflict')).toHaveLength(1);
+  // 不新造卡（冲突前没有结构提案卡，实跑核过）。stk16 裁定第 1、2 条：冲突在场时决定队列照读，同一次读里有这条通知，
+  // 只有目标冲突卡读不了（`goal_conflict` 是 not_available）。
+  // 具名改坏：架构读 unavailable 就整次返回（去掉调查第三节 A）→ 红在这一句（`decisions/queue` 不是 ready）。
+  const queue = await decideQueue(world);
+  expect([queue.waitingAnswer.filter(card => card.source.kind === 'structural_proposal'),
+    queue.notices.filter(item => item.summary.includes('知识文件有')).length,
+    queue.capabilities.find(entry => entry.source === 'goal_conflict')?.availability]).toEqual([[], 1, 'not_available']);
   if (adviser === null) {
     // [2C1-17]：没有区域参谋就只通知（冲突前所有 Session 的收件箱里没有 action_request，实跑核过）。
     expect(await everyActionRequest(world)).toEqual([]);
@@ -153,9 +158,4 @@ it.each([
   await world.idle();
   // 同一个（参谋、模块、通知身份）只发一次。
   expect(await actionRequests(world, adviser)).toHaveLength(1);
-  // 不新造卡（冲突前没有结构提案卡，实跑核过）。冲突没清时 decisions/queue 的待回答段要读架构，回 unavailable
-  // （2a-1 的读回闸门，b2 裁定第一节第 3 条不改它），所以人把文件改回、再过一轮之后再数。
-  world.edit(other, otherText);
-  await world.idle();
-  expect(await proposalCards(world)).toBe(0);
 }, 120_000);

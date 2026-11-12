@@ -26,8 +26,8 @@ import {
   architectureFilesOf, architectureOfFiles, moduleFileIdOf,
 } from '../core/work-graph/architecture/architecture-file.js';
 import type {
-  KnowledgeCaller, KnowledgeDiskFileV1, KnowledgeFileChange, KnowledgeLineScope, KnowledgeLines, KnowledgeWriteDeps,
-  KnowledgeWriteLease, LineKnowledge, LineNoteFileV1, LineNoteV1, LineRef,
+  KnowledgeArchitecture, KnowledgeCaller, KnowledgeDiskFileV1, KnowledgeFileChange, KnowledgeLineScope, KnowledgeLines,
+  KnowledgeWriteDeps, KnowledgeWriteLease, LineKnowledge, LineNoteFileV1, LineNoteV1, LineRef,
 } from '../core/work-graph/model/line-knowledge.js';
 import { knowledgeFileKindOf } from '../core/work-graph/notes/knowledge-files.js';
 import { noteFileBytes, noteIdFromFilePath, noteOfFileBytes } from '../core/work-graph/notes/note-file.js';
@@ -135,22 +135,27 @@ export async function openLineKnowledge(projectId: string, line: LineRef, scope:
     return ready(files);
   }
 
-  async function readArchitecture(): ReturnType<LineKnowledge['readArchitecture']> {
-    const index = await bytesAt(ARCHITECTURE_FILE_PATH);
-    if (index.status !== 'ready') return index;
-    const modules = await moduleFiles();
-    if (modules.status !== 'ready') return modules;
-    if (index.value === null) {
+  /** The line's graph of these bytes: `architecture.json` (null when absent) and the `modules/*.json` files. */
+  function architectureOf(index: Uint8Array | null, modules: readonly { path: string; bytes: Uint8Array }[]):
+    StoreResult<KnowledgeArchitecture> {
+    if (index === null) {
       // KLS-2b A8: a workspace that joined after the last architecture write has no files yet and adds no module to
       // the project view; the main workspace (the baseline) and module files without their index stay unavailable.
-      if (scope.workspaceId !== scope.mainWorkspaceId && modules.value.length === 0) {
+      if (scope.workspaceId !== scope.mainWorkspaceId && modules.length === 0) {
         return ready({ catalog: { modules: [], dependencies: [], requireDag: true },
           crossWorkspace: { dependencies: [], parentOf: [] }, baseline: null });
       }
       return unavailable(`${ARCHITECTURE_FILE_PATH} does not exist in ${line.folder}`);
     }
-    const decoded = architectureOfFiles(index.value, modules.value, scope, projectId);
+    const decoded = architectureOfFiles(index, modules, scope, projectId);
     return decoded.status === 'decoded' ? ready(decoded.value) : unavailable(decoded.reason);
+  }
+  async function readArchitecture(): ReturnType<LineKnowledge['readArchitecture']> {
+    const index = await bytesAt(ARCHITECTURE_FILE_PATH);
+    if (index.status !== 'ready') return index;
+    const modules = await moduleFiles();
+    if (modules.status !== 'ready') return modules;
+    return architectureOf(index.value, modules.value);
   }
 
   async function readNoteFiles(noteIds: readonly string[]): Promise<StoreResult<LineNoteFileV1[]>> {
@@ -307,7 +312,9 @@ export async function openLineKnowledge(projectId: string, line: LineRef, scope:
   }
 
   return ready({ projectId, line, scope, objectFormat,
-    readArchitecture, readNoteFiles, readNotesById, writeModule, writeNote, applyChange, readKnowledgeFiles });
+    readArchitecture, readNoteFiles, readNotesById, writeModule, writeNote, applyChange, readKnowledgeFiles,
+    architectureOfDisk: files => architectureOf(files.find(file => file.path === ARCHITECTURE_FILE_PATH)?.bytes ?? null,
+      files.filter(file => file.kind === 'module')) });
 }
 
 /**

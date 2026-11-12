@@ -5,7 +5,8 @@
  * line it reads answers `unavailable` (no waiting), and a writer on that line is refused with "有未确认的知识写"; an
  * `unconfirmed` log (a recovery item 2c-1b1's reconciliation handed to the person) stops neither. The notes window
  * moves on the log of a note it reads (R2, the builder's D-2 moved here; lead after the merge). The decision queue
- * isolates one bad note instead of failing whole. Platform level, memory
+ * isolates one bad note instead of failing whole, and a module file the 2a-1 read-back gate refuses takes only the
+ * cards that read the architecture (stk16 ruling 1: Q3, Q4). Platform level, memory
  * (business rows, S3): `openKLS2AWorld` with the Host's `knowledgeWriteHold` seam armed by the row (`armedSeam`):
  * `hold()` keeps one write between its commit and its first file, `fail()` stops one there for good. Waiting
  * reviews come from the world's real executor Run; the project notice from the platform's one notice writer.
@@ -90,19 +91,21 @@ async function revise(world: KLS2AWorld, text: string) {
 }
 
 /**
- * The queue rows' world: n person's notes `a1…an` on `core`, n executor notes `p1…pn` each contradicting its `a`
- * (waiting for review, each a card), and one project notice; the queue then reads ready with all of them.
+ * The queue rows' world: n person's notes `a1…an` on `core`, n executor notes `p1…pn` each contradicting its `a` on
+ * the same anchor (those numbered in `onFile` both on `src/a.ts`; waiting for review, each a card), and one project
+ * notice; the queue then reads ready with all of them.
  */
-async function reviewWorld(world: KLS2AWorld, n: number):
+async function reviewWorld(world: KLS2AWorld, n: number, onFile: readonly number[] = []):
   Promise<{ person: string[]; pending: string[]; cards: DecisionCardV1[] }> {
   await adoptCore(world);
   await world.claimExecutorRun();
   const person: string[] = [];
   const pending: string[] = [];
   for (let i = 1; i <= n; i += 1) {
-    const a = await write(world, `kls2c1-a${i}`, note(`kls2c1-a${i}`));
+    const anchor = onFile.includes(i) ? { anchor: { kind: 'file', path: 'src/a.ts' } } as const : {};
+    const a = await write(world, `kls2c1-a${i}`, note(`kls2c1-a${i}`, anchor));
     const p = a.status === 'rejected' ? a
-      : await write(world, `kls2c1-p${i}`, note(`kls2c1-p${i}`, { contradicts: [a.noteId] }), 'work_run');
+      : await write(world, `kls2c1-p${i}`, note(`kls2c1-p${i}`, { ...anchor, contradicts: [a.noteId] }), 'work_run');
     if (a.status !== 'accepted' || p.status !== 'pending_review') {
       throw new Error(`KLS2C1: a${i}/p${i} are not a person's note and its waiting review: ${JSON.stringify([a, p])}`);
     }
@@ -119,6 +122,16 @@ async function reviewWorld(world: KLS2AWorld, n: number):
   }
   return { person, pending, cards: before.value.waitingAnswer };
 }
+
+/** A person breaks the one module file (`core`'s): the 2a-1 read-back gate refuses the current architecture read. */
+async function breakModuleFile(world: KLS2AWorld): Promise<void> {
+  const [name] = world.files('.workbench/modules');
+  world.edit(`.workbench/modules/${name}`, '{ "id": "core", not json');
+  expect(await world.platform.architecture.readArchitectureRevision(world.ctx(), { selection: { kind: 'current' } }))
+    .toMatchObject({ status: 'rejected', code: 'unavailable' });
+}
+const conflictCards = (read: DecisionQueueReadV1): string | undefined =>
+  read.capabilities.find(entry => entry.source === 'goal_conflict')?.availability;
 
 /** Whether a started write stopped at the armed seam ('held') or answered first; a failed row lets it go after. */
 async function stopped(gate: { reached: Promise<void>; release(): void }, writing: Promise<unknown>): Promise<string> {
@@ -235,5 +248,27 @@ describe('KLS2C1 the decision queue isolates one bad note', () => {
     world.edit(notePath(pending[1]!), '这不是注记文件\n');
     const read = await readyQueue(world);
     expect([reviewed(read), noticed(read)]).toEqual([[pending[2]], [NOTICE]]);
+  });
+
+  // stk16 裁定第 1 条（调查第三节 A）：读回闸门拒了当前架构读，只拿掉目标冲突卡；冲突之前就有的、不读架构的卡和通知照出。
+  it('Q3 a person breaks the module file: the queue is ready without the conflict cards (`goal_conflict` '
+    + 'not_available); a card made before that reads no architecture, and it and the notice are there', async () => {
+    const world = await knowledgeWorld();
+    const { pending } = await reviewWorld(world, 1, [1]);
+    await breakModuleFile(world);
+    // 具名改坏：架构读 unavailable 就整次返回（去掉 A）→ 红在 readyQueue（整张 unavailable）。
+    const read = await readyQueue(world);
+    expect([reviewed(read), noticed(read), conflictCards(read)]).toEqual([pending, [NOTICE], 'not_available']);
+  });
+
+  // stk16 裁定第 1 条（调查第三节 B）：锚在模块上的处置目标要读架构，这一条的理由不进卡；只靠它的卡不出，别的卡照出。
+  it('Q4 the same broken module file, two waiting notes and only one contradicting a note on `core`: only that card '
+    + 'is missing', async () => {
+    const world = await knowledgeWorld();
+    const { pending } = await reviewWorld(world, 2, [2]);
+    await breakModuleFile(world);
+    // 具名改坏：锚在模块上的目标照旧读架构、读不成就拒（去掉 B）→ 红在 readyQueue（注记来源回 unavailable，整张 unavailable）。
+    const read = await readyQueue(world);
+    expect([reviewed(read), noticed(read), conflictCards(read)]).toEqual([[pending[1]], [NOTICE], 'not_available']);
   });
 });

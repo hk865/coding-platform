@@ -138,6 +138,11 @@ export interface LineKnowledge {
    * here: the index reports it).
    */
   readKnowledgeFiles(): Promise<StoreResult<{ files: KnowledgeDiskFileV1[]; temporaries: string[] }>>;
+  /**
+   * [2C1-17] step 8: `readArchitecture` over files `readKnowledgeFiles` already read, never the disk again, so one
+   * reconciliation judges one state of the files (stk16: a person's edit landing mid-round made a second notice).
+   */
+  architectureOfDisk(files: readonly KnowledgeDiskFileV1[]): StoreResult<KnowledgeArchitecture>;
 }
 
 /** The caller a service holds; `CoreCallContext` is structurally one. */

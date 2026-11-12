@@ -133,9 +133,9 @@ async function reconcileLeased(write: KnowledgeWriteDeps, line: LineKnowledge, t
   // Step 8: the graph read every round and the conflicts among the module files, with the files above that do not
   // read, in one `knowledge_conflict` notice; the same problems keep its identity ([2C1-15]), so finding them again
   // notifies nothing. A line that never had an architecture file (none now, none indexed last round) has no graph:
-  // that read is no issue.
+  // that read is no issue. Both judge step 1's bytes, never the disk again (stk16: an edit landing mid-round).
   const conflicts = write.conflictsOf(disk.value.files.filter(file => file.kind === 'module'), line.scope);
-  const architecture = await line.readArchitecture();
+  const architecture = line.architectureOfDisk(disk.value.files);
   if (architecture.status !== 'ready' && (files.has(ARCHITECTURE_FILE_PATH) || previous.has(ARCHITECTURE_FILE_PATH))) {
     issues.push({ path: ARCHITECTURE_FILE_PATH, reason: architecture.reason });
   }

@@ -78,6 +78,8 @@ import {
 import { parseRepairOps } from './repair-ops.js';
 
 export { ARCHITECTURE_CATALOG_SCHEMAS } from './catalog-record-codecs.js';
+/** 2c-1d's refusal of a read that meets a write in flight; the decision queue tells it from the read-back gate (stk16). */
+export { KNOWLEDGE_WRITE_UNCONFIRMED } from '../knowledge/write-log.js';
 
 /** Records only: the catalog shares the baseline/active transaction and needs no
  * second store, body or index. */

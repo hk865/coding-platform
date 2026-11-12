@@ -5,19 +5,40 @@
  * reads those (the note routes are `notes/list`, which lists record heads, `write`, `withdraw` and `review`), so the
  * world is `openKLS2AWorld` (a real platform over a real git root, as the KLS-2b rows) and the reads are the public
  * owners `notes.readNote`, `notes.listByAnchor`, `notes.memoryFind`. The idle reconcile is the platform port the Host
- * calls, `platform.knowledge.reconcile(ctx, workspaceId, 'idle')` ([2C1-23]). Index rows: memory and SQLite.
+ * calls, `platform.knowledge.reconcile(ctx, workspaceId, 'idle')` ([2C1-23]). Index rows: memory and SQLite. K08s
+ * (stk16 ruling 2) is a person's edit landing while a round is in flight, read back from the decision queue's notices.
  */
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NoteAnchorV1, NoteDraftV1 } from '../../src/contracts/note.js';
 import { openKLS2AWorld, type KLS2AWorld } from '../helpers/KLS2A-knowledge-world.js';
 import { noteFileText } from '../helpers/KLS2C-knowledge-host.js';
 import { gitIn } from '../scenarios/support/git-workspace.js';
 
+/**
+ * K08s: a step a row arms runs once right after a round's step 1 has listed and read the line's files
+ * (`readKnowledgeFiles`), as a person's edit that lands while that round is in flight. The result comes back
+ * unchanged; unarmed, the line is the real one.
+ */
+const roundGate = vi.hoisted(() => ({ afterFilesRead: null as null | (() => void) }));
+vi.mock('../../src/core/work-graph/knowledge/reconcile.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../src/core/work-graph/knowledge/reconcile.js')>();
+  return { ...actual,
+    reconcileKnowledgeLine: (...[write, line, trigger]: Parameters<typeof actual.reconcileKnowledgeLine>) =>
+      actual.reconcileKnowledgeLine(write, { ...line, async readKnowledgeFiles() {
+        const read = await line.readKnowledgeFiles();
+        const step = roundGate.afterFilesRead;
+        roundGate.afterFilesRead = null;
+        step?.();
+        return read;
+      } }, trigger) };
+});
+
 const CORE: NoteAnchorV1 = { kind: 'module', moduleId: 'core' };
 const closers: (() => Promise<void>)[] = [];
 afterEach(async () => {
+  roundGate.afterFilesRead = null;
   for (const close of closers.splice(0).reverse()) await close();
 });
 
@@ -102,4 +123,28 @@ describe.each(['memory', 'sqlite'] as const)('%s', storage => {
     expect(await idsUnder(world, 'src/dir')).toContain(noteId);
     expect(await idsUnder(world, 'src/a.ts')).not.toContain(noteId);
   });
+});
+
+/** The `knowledge_conflict` notices' summaries ([2C1-17] “知识文件有 n 处问题：”) in the decision queue. */
+async function conflictNotices(world: KLS2AWorld): Promise<string[]> {
+  const read = await world.platform.decisions.queryDecisionQueue(world.ctx(), {
+    workspace: { projectId: world.projectId, workspaceId: world.workspaceId }, sections: ['notices'], page: { limit: 100 } });
+  if (read.status !== 'ready') throw new Error(`the decision queue is not ready: ${JSON.stringify(read)}`);
+  return read.value.notices.map(item => item.summary).filter(summary => summary.startsWith('知识文件有'));
+}
+
+// stk16 裁定第 2 条：K08 原来 6/10 红的根。一轮对账在途时人改了文件：第 1 步读到的是旧文件，第 8 步若再读一次盘就读到新文件，
+// 这一轮报出“只有 architecture.json 一处”，身份和下一轮完整的问题不同，多出一条通知。一轮只看第 1 步读到的那一份。
+it('K08s a person breaks a module file while a round is in flight, after its file list: that round judges the files '
+  + 'it listed, so the next round\'s one knowledge_conflict notice is the only one', async () => {
+  const world = await reconcileWorld('memory');
+  await adoptCore(world);
+  const module = `.workbench/modules/${world.files('.workbench/modules')[0]!}`;
+  roundGate.afterFilesRead = () => world.edit(module, '{ "id": "core", not json');
+  await reconcileIdle(world);
+  await reconcileIdle(world);
+  // 具名改坏：第 8 步再读一次盘（`line.readArchitecture()`）→ 在途那一轮单报 architecture.json，红在这一句（2 条）。
+  const notices = await conflictNotices(world);
+  expect(notices).toHaveLength(1);
+  expect(notices[0]).toContain(module);
 });

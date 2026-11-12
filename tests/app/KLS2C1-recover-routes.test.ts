@@ -122,26 +122,24 @@ describe.each(['memory', 'sqlite'] as const)('%s', storage => {
     expect(world.read(file)).toBeNull();
   }, 120_000);
 
-  it.each([
-    ['走动的时钟', undefined],
-    ['注入的时钟不动（b1 裁定 F-10）', () => '2026-11-12T00:00:00.000Z'],
-  ] as const)('K16 two reverts to the same HEAD with different snapshots are two notices; the second restores B: %s',
-    async (_, now) => {
-      const world = await hostWorld({ storage, git: true, ...(now === undefined ? {} : { now }) });
-      const { file } = await committedThenRevised(world, `kls2c1-k16-${now === undefined ? 'a' : 'b'}`);
-      world.git(['checkout', '--', file]);
-      const first = await oneNotice(world, 'knowledge_reverted');
-      const v2 = kls2cEditModule(world, file, { responsibility: 'k16 人改的 v2' });
-      await world.idle();
-      world.git(['checkout', '--', file]);
-      // 具名改坏 [2C1-15]「撤回通知的身份只用 {path, expectedBlob}」→ 第二次撤回和第一条同身份，红在这一句（仍一条）。
-      const both = await kls2cNoticesAtLeast(world, 'knowledge_reverted', 2);
-      expect(both).toHaveLength(2);
-      const second = both.find(notice => notice.noticeId !== first)?.noticeId ?? '';
-      expect(await kls2cRecover(world, second, 1)).toMatchObject({ status: 'committed', value: { path: file } });
-      // F-10：第二次撤回的恢复材料是 B（v2），固定时钟下也是。
-      expect(world.read(file)?.toString('utf8')).toBe(v2);
-    }, 120_000);
+  // c 的 Astra 审查（lead 收）：只留注入的时钟不动这一项，它走的流程和走动时钟的一样，还多覆盖 b1 裁定 F-10。
+  it('K16 two reverts to the same HEAD with different snapshots are two notices; the second restores B, with the '
+    + 'injected clock standing still (b1 ruling F-10)', async () => {
+    const world = await hostWorld({ storage, git: true, now: () => '2026-11-12T00:00:00.000Z' });
+    const { file } = await committedThenRevised(world, 'kls2c1-k16');
+    world.git(['checkout', '--', file]);
+    const first = await oneNotice(world, 'knowledge_reverted');
+    const v2 = kls2cEditModule(world, file, { responsibility: 'k16 人改的 v2' });
+    await world.idle();
+    world.git(['checkout', '--', file]);
+    // 具名改坏 [2C1-15]「撤回通知的身份只用 {path, expectedBlob}」→ 第二次撤回和第一条同身份，红在这一句（仍一条）。
+    const both = await kls2cNoticesAtLeast(world, 'knowledge_reverted', 2);
+    expect(both).toHaveLength(2);
+    const second = both.find(notice => notice.noticeId !== first)?.noticeId ?? '';
+    expect(await kls2cRecover(world, second, 1)).toMatchObject({ status: 'committed', value: { path: file } });
+    // F-10：第二次撤回的恢复材料是 B（v2），时钟不动也是。
+    expect(world.read(file)?.toString('utf8')).toBe(v2);
+  }, 120_000);
 });
 
 it('K37 a notice\'s recovery items are found only in its own project', async () => {
