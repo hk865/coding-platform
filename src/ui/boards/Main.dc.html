@@ -2928,6 +2928,8 @@ class Component extends DCLogic {
     const tree = this.taskModel(goal); const n = tree.byId[id];
     if (!n) return null;
     const noop = () => {};
+    /* ruling 17: a wired tree names no 语义 (a stage, the goal, a node page, a task before graph/detail's "—") */
+    const sem = this.dataMode() ? '—' : n.sem;
     const crumbs = this.crumbsOf(tree.byId, id).map((c, i, a) => ({ name: c.name, sep: i > 0, cls: 'c' + (i === a.length - 1 ? ' is-on' : ''), go: () => go.selTask(c.id) }));
     const sqOf = (t) => 'sq z8 ' + (t.kids.length ? this.taskSq(t, 'collapsed', goal) : 's-' + t.st);
     const item = (tid, line) => { const t = tree.byId[tid]; return { name: t.name, sq: sqOf(t), go: () => go.selTask(tid), over: line ? () => hov.on(tid) : noop, out: line ? hov.off : noop }; };
@@ -2939,7 +2941,7 @@ class Component extends DCLogic {
       if (n.rework && n.rework.length) rel.push({ k: '返工', items: [], files: [], lines: n.rework.map((r) => r[0] + ' · ' + r[1] + ' · ' + r[2] + ' · ' + r[3]), hasText: false, text: '' });
       const agent = this.ownerOf(goal, n);
       return { kind: 'task', id: id, sq: 'sq s-' + n.st, name: n.name, tx: 'tx-' + n.st, word: W[n.st] + (n.gate ? '（验收）' : ''), why: n.why ? '：' + n.why : '',
-        crumbs: crumbs, agent: agent, sem: n.sem, rel: rel, group: false };
+        crumbs: crumbs, agent: agent, sem: sem, rel: rel, group: false };
     }
     const isRoot = n.kind === 'goal';
     const count = this.countLine(n, 'task');
@@ -2953,7 +2955,7 @@ class Component extends DCLogic {
     const ag = this.ownerOf(goal, n);
     return { kind: 'task', id: id, sq: 'sq ' + (isRoot ? 's-' + this.goalSt(goal) : this.taskSq(n, 'collapsed', goal)), name: n.name,
       tx: isRoot ? 'tx-' + this.goalSt(goal) : 'tx-plain', word: isRoot ? this.goalWord(goal) : count, why: isRoot ? ' · ' + count : '',
-      crumbs: crumbs, agent: ag, sem: n.sem, rel: rel, group: true };
+      crumbs: crumbs, agent: ag, sem: sem, rel: rel, group: true };
   }
 
   /* rework 2026-10-06 (Main): the height the detail will take under the 任务图, from its content and the kit's .detail
@@ -2993,7 +2995,7 @@ class Component extends DCLogic {
     w(n);
     const known = taskIds.filter((t) => tm.byId[t]);
     const items = known.slice(0, 8).map((tid) => { const t = tm.byId[tid]; return { name: t.name, sq: 'sq z8 ' + this.sqAt(t.st), go: () => go.selTask(tid), over: noop, out: noop }; });
-    /* a wired 架构图 tab reads no task tree: tasks it cannot name draw no conclusion (—) */
+    /* a wired page writes — only when its task tree was not read: tasks it cannot name draw no conclusion */
     const rel = [{ k: '任务', items: items, files: [], lines: [], hasText: !items.length || known.length > 8,
       text: !items.length ? (this.dataMode() && taskIds.length ? '—' : '本目标没有任务改动这里') : '另有 ' + (known.length - 8) + ' 个任务' }];
     /* the module's observed import counts (semDeps), most first; three by name, the rest as one count (consistency pass:
@@ -3061,6 +3063,11 @@ class Component extends DCLogic {
   auxData() {
     const data = this.props.data || null;
     return data && data.aux ? data.aux : null;
+  }
+  /* DC4's empty sentence, only when the read says the project has no Goal (the head and M7's empty task map) */
+  noGoalText() {
+    const data = this.props.data;
+    return data && Array.isArray(data.goals) && data.goals.length === 0 ? '还没有目标' : '';
   }
   /* §2.2: the right panel's own route data, finished into Main's tree shape.
      `finishTree` is the same aggregate rule the sample tree uses; the copy
@@ -3266,20 +3273,26 @@ class Component extends DCLogic {
           line: (D.status.word === '已暂停' ? '它已停在安全点，取消立即生效' : '它会在下一个安全点停下，然后取消生效')
             + '：任务记为“已取消”，之后只有你能重新入队；改动和工作记录保留。',
           go: lvGuarded(() => { set({ lvConfirm: null }); return actions.controlLine('cancel'); }) });
+        /* M1: the line and way of the send in flight (lvSending) keep its send off until it is answered,
+           as the main composer's `st.sending` does */
+        const lvModeOf = (x) => (D.readOnly ? 'ask' : x.lvMode === 'act' ? 'act' : 'ask');
+        const busy = s.lvSending === openLine.id + '|' + lvModeOf(s);
         lv.cm = Object.assign({}, lv.cm, {
           /* A37: a line lvView already ended (its 直接干预 is drawn off) reads off too */
           show: !confirmShow, actOff: !D.canIntervene || !!lv.cm.actOff, foot: err || lv.cm.foot,
+          sendOff: lv.cm.sendOff || busy, sendCls: busy ? 'send is-off' : lv.cm.sendCls,
           send: () => {
             const st = this.state || {};
-            const mode = D.readOnly ? 'ask' : st.lvMode === 'act' ? 'act' : 'ask';
+            const mode = lvModeOf(st);
             const dkey = openLine.id + '|' + mode;
             const text = String((st.lvDrafts || {})[dkey] || '').trim();
-            if (!text) return;
+            if (!text || st.lvSending === dkey) return;
+            set({ lvSending: dkey });
             /* SPEC-9: the draft is cleared once the send is answered, so a failed send keeps its words */
             lvGuarded(() => (mode === 'ask' ? actions.askLine(text) : actions.interveneLine(text)).then(() => {
               const patch = Object.assign({}, (this.state || {}).lvDrafts || {}); patch[dkey] = '';
               set(this.lvAttach({ lvDrafts: patch }));
-            }))();
+            }).finally(() => { if ((this.state || {}).lvSending === dkey) set({ lvSending: null }); }))();
           }
         });
         lv.facts = (lv.facts || []).map((fact) => fact.k === '尝试' ? Object.assign({}, fact, { v: D.attempt.text }) : fact);
@@ -3334,8 +3347,7 @@ class Component extends DCLogic {
     });
     return Object.assign({}, base, { goalsHref: goalsHref, taskMapHref: taskMapHref,
       /* LEAD-1: never the sample's goal; DC4's empty sentence only when the read says the project has none */
-      headTitle: selectedGoal ? selectedGoal.objective
-        : this.props.data && Array.isArray(this.props.data.goals) && this.props.data.goals.length === 0 ? '还没有目标' : '',
+      headTitle: selectedGoal ? selectedGoal.objective : this.noGoalText(),
       inbox: inbox, goals: goals, rail: rail, lvr: lvr, lv: lv, gb: gb });
   }
 
@@ -3657,7 +3669,16 @@ class Component extends DCLogic {
     }
     if (out.scope && out.scope.show && aux && aux.arch && aux.arch.tree === null && !out.qNote) {
       out.qNote = '还没有采纳的架构'; out.hasQNote = true;
-      out.scope = Object.assign({}, out.scope, { empty: false });
+    }
+    /* M7 (lead 11-12): with no tree read (on its way, failed, no Goal, no adopted architecture) the map draws no
+       unnamed root and no empty square, only its note: a failed first read's text, the head's no-Goal sentence */
+    const isArch = !!(out.scope && out.scope.show);
+    if (out.tpIsTask ? !(aux && aux.task && aux.task.tree) : isArch && !(aux && aux.arch && aux.arch.tree)) {
+      out.rows = [];
+      if (isArch) out.scope = Object.assign({}, out.scope, { empty: false });
+      const read = this.props.readState;
+      const none = read.status === 'error' ? read.message : out.tpIsTask ? this.noGoalText() : '';
+      if (none && !out.qNote) { out.qNote = none; out.hasQNote = true; }
     }
     if (aux && aux.error && (aux.tab === 'task' || aux.tab === 'arch')) {
       out.qNote = aux.error.text; out.hasQNote = true;

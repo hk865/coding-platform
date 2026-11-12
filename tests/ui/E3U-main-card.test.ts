@@ -1,8 +1,7 @@
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { findButton, findClass, findElement } from './helpers/boot-page.js';
 import {
-  bootE3N, bootMainCard, callsTo, countRoute, descendants, hasClass, quietPage, sentWrite, textOf, userTexts, waitFor,
-  type PageLog,
+  bootE3N, bootMainCard, callsTo, countRoute, descendants, hasClass, quietPage, sentWrite, settledN, textOf, userTexts, waitFor,
 } from './helpers/E3N-page.js';
 import { click, notConnected, pressEnter } from './helpers/E3N-interact.js';
 import { E3N_BUDGET_TITLES, E3N_INTERRUPTED_TITLE, openW1 } from './helpers/E3N-world.js';
@@ -56,11 +55,6 @@ async function askOnCard(page: BootedPage, text: string): Promise<void> {
   await waitFor(() => card(page.root) === undefined && labelled(page.root, '发送') !== undefined);
   typeInto(page.root, 'composer-input', text);
   click(labelled(page.root, '发送')!);
-}
-
-function settled(log: PageLog, route: string, n: number): Promise<void> {
-  return expect.poll(() => callsTo(log, route).filter((call) => call.reply !== undefined).length,
-    { timeout: 8_000, interval: 25 }).toBe(n);
 }
 
 describe('E3U Main decision card', () => {
@@ -127,7 +121,7 @@ describe('E3U Main decision card', () => {
         && hasClass(element, 'opt-top'));
       click(options[1]!);
       click(descendants(foot).filter((element) => element.tagName.toLowerCase() === 'button').at(-1)!);
-      await settled(log, 'decisions/answer', 1);
+      await settledN(log, 'decisions/answer', 1);
       /* M1: a successful answer closes the card and hands the composer back. */
       await waitFor(() => card(page.root) === undefined);
       const sent = sentWrite(callsTo(log, 'decisions/answer')[0]);
@@ -153,7 +147,7 @@ describe('E3U Main decision card', () => {
       await waitFor(() => cardTitle(page.root).includes('计划候选'));
       await askOnCard(page, '这个卡怎么办');
       /* 具名改坏: `askCard` 改走 `requests/submit`；`requests/ask` 计数红。 */
-      await settled(log, 'requests/ask', 1);
+      await settledN(log, 'requests/ask', 1);
       const input = callsTo(log, 'requests/ask')[0]!.input as Record<string, unknown>;
       expect(input['round']).toEqual(candidate.requestRef);
       expect(input['cardRefs']).toEqual(candidate.source.pins);
@@ -175,7 +169,7 @@ describe('E3U Main decision card', () => {
       /* W1's Goal waits on its two missing-pointer cards; neither names a request. */
       await openFromGoalBar(page, null);
       await askOnCard(page, '这个卡怎么办');
-      await settled(log, 'requests/submit', 1);
+      await settledN(log, 'requests/submit', 1);
       const input = callsTo(log, 'requests/submit')[0]!.input as Record<string, unknown>;
       expect(input['text']).toBe('这个卡怎么办');
       expect(input['references']).toEqual([]);
@@ -213,7 +207,7 @@ describe('E3U Main decision card', () => {
         .filter((value) => value !== undefined && typeof value.displayToken === 'string')
         .map((value) => ({ displayToken: value!.displayToken, seenThrough: value!.seenThrough }));
       click(cardButton(page.root, '标为已读')!);
-      await settled(log, 'decisions/notices/seen', 1);
+      await settledN(log, 'decisions/notices/seen', 1);
       await waitFor(() => card(page.root) === undefined);
       const sent = sentWrite(callsTo(log, 'decisions/notices/seen')[0]);
       expect(issued).toContainEqual({ displayToken: sent.input['displayToken'], seenThrough: sent.input['seenThrough'] });

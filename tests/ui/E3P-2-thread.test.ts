@@ -6,7 +6,7 @@ import {
 import { click, notConnected } from './helpers/E3N-interact.js';
 import { labelled, typeInto } from './helpers/E3D-page.js';
 import { answerOf, openPAW1, openPAW2, planReady, type PAWorld } from './helpers/E3P-world.js';
-import { pauseS7AGoal, resumeS7AGoal } from '../helpers/S7A-fixture.js';
+import { pauseS7AGoal } from '../helpers/S7A-fixture.js';
 import { S6A_GOAL_1 } from '../helpers/S6A-request-fixture.js';
 import type { FakeElement } from './helpers/dom.js';
 
@@ -84,16 +84,17 @@ describe('E3P Plan thread', () => {
 
   it('PA-16 a successful reread clears the error an out-of-date pause wrote', async () => {
     const w = await openPAW2();
-    const { page, log } = await bootE3N(w.world, 'Plan', { search: GOAL });
+    const { page, log } = await bootE3N(w.world, 'Plan', { search: GOAL, mode: 'controlled' });
     try {
       await planReady(log);
       await pauseS7AGoal(w.world, S6A_GOAL_1);
       /* The page still holds the pre-pause pins, so its own pause is refused. */
       click(findButton(page.root, '暂停')!);
       await waitFor(() => findClass(page.root, 'to') !== undefined);
-      /* A later write reaches the page as a reread, which is the new state. */
-      await resumeS7AGoal(w.world, S6A_GOAL_1);
-      /* 具名改坏: 删掉 `if (s.err) patch.err = ''`；这一句红。 */
+      /* The stream is controlled, so the outside pause started no reread; this
+         one change frame starts one, and its success is the new state. */
+      log.openings.at(-1)!.enqueue(new TextEncoder().encode('event: change\nid: c0000000002\ndata: {}\n\n'));
+      /* 具名改坏: 删掉 componentDidUpdate 里清 err 的那一句（`patch.err = ''`）；这一句红。 */
       await waitFor(() => findClass(page.root, 'to') === undefined);
     } finally {
       await page.restore();

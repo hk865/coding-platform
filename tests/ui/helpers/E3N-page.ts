@@ -177,11 +177,26 @@ export async function bootMainCard(h: { readonly host: E3NTarget }, search: stri
   return await bootE3N({ get base() { return h.host.base; }, get token() { return h.host.token; } }, 'Main', { search });
 }
 
-/** E3U Main B: Main on `search` in controlled mode, after its first reads settle. */
-export async function bootQuiet(world: E3NTarget, search: string): Promise<{ page: BootedPage; log: PageLog }> {
-  const booted = await bootE3N(world, 'Main', { search, mode: 'controlled' });
-  await quietPage(booted.log);
-  return booted;
+/** E3U Main B: Main on `search` (the S6A worlds' `?goal=ag2b-goal` when not given) in controlled mode (`options` as
+ *  `bootE3N`'s), after its first reads settle; the row's `body`, then the page restored. */
+export async function onMain(world: E3NTarget, body: (page: BootedPage, log: PageLog) => Promise<void>,
+  { search = '?goal=ag2b-goal', ...options }: NonNullable<Parameters<typeof bootE3N>[2]> = {}): Promise<void> {
+  const { page, log } = await bootE3N(world, 'Main', { mode: 'controlled', ...options, search });
+  try {
+    await quietPage(log);
+    await body(page, log);
+  } finally {
+    await page.restore();
+  }
+}
+
+/** E3U Main B: selects the right-panel tab `name`, waits for it and for its reads to settle; returns the log index the click starts at. */
+export async function pickTab(page: BootedPage, log: PageLog, name: string): Promise<number> {
+  const before = log.calls.length;
+  click(auxTab(page.root, name)!);
+  await waitFor(() => auxTab(page.root, name)?.getAttribute('aria-selected') === 'true');
+  await quietPage(log);
+  return before;
 }
 
 /** Waits until `route` has `n` answered calls. */

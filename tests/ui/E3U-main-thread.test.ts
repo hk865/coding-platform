@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { findAllClass, findButton, findClass, findElement } from './helpers/boot-page.js';
 import {
-  answerTexts, bootE3N, callsTo, clickable, countRoute, descendants, hasClass, quietPage, textOf, thread, userTexts, waitFor,
+  answerTexts, bootE3N, callsTo, clickable, countRoute, descendants, hasClass, onMain, quietPage, textOf, thread, userTexts, waitFor,
 } from './helpers/E3N-page.js';
 import { click } from './helpers/E3N-interact.js';
 import { answerRequest, openW1, openWA, submitRequest } from './helpers/E3N-world.js';
@@ -181,30 +181,28 @@ describe('E3U Main thread', () => {
   it('T-A21 the same words asked twice on a card stay two bubbles, each claimed by its own row', async () => {
     const opened = await openW1();
     worlds.push(opened.world);
-    const { page, log } = await bootE3N(opened.world, 'Main', { search: GOAL, mode: 'controlled' });
-    const SAME = '同一句话';
-    const same = (): number => userTexts(page.root).filter((text) => text === SAME).length;
-    const answered = (route: string): number => callsTo(log, route).filter((call) => call.reply !== undefined).length;
-    const askOnCard = async (n: number): Promise<void> => {
-      const decide = (): FakeElement | undefined => findButton(findClass(page.root, 'goalbar') ?? page.root, '需要你决定');
-      await waitFor(() => decide() !== undefined);
-      click(decide()!);
-      await waitFor(() => cardButton(page.root, '问秘书') !== undefined);
-      click(cardButton(page.root, '问秘书')!);
-      await waitFor(() => card(page.root) === undefined && labelled(page.root, '发送') !== undefined);
-      typeInto(page.root, 'composer-input', SAME);
-      click(labelled(page.root, '发送')!);
-      await waitFor(() => answered('requests/submit') === n && answered('requests/read') === n);
-      await quietPage(log);
-    };
-    const reread = async (id: string): Promise<void> => {
-      const reads = answered('main/read');
-      log.openings.at(-1)!.enqueue(new TextEncoder().encode(`event: change\nid: ${id}\ndata: {}\n\n`));
-      await waitFor(() => answered('main/read') > reads);
-      await quietPage(log);
-    };
-    try {
-      await quietPage(log);
+    await onMain(opened.world, async (page, log) => {
+      const SAME = '同一句话';
+      const same = (): number => userTexts(page.root).filter((text) => text === SAME).length;
+      const answered = (route: string): number => callsTo(log, route).filter((call) => call.reply !== undefined).length;
+      const askOnCard = async (n: number): Promise<void> => {
+        const decide = (): FakeElement | undefined => findButton(findClass(page.root, 'goalbar') ?? page.root, '需要你决定');
+        await waitFor(() => decide() !== undefined);
+        click(decide()!);
+        await waitFor(() => cardButton(page.root, '问秘书') !== undefined);
+        click(cardButton(page.root, '问秘书')!);
+        await waitFor(() => card(page.root) === undefined && labelled(page.root, '发送') !== undefined);
+        typeInto(page.root, 'composer-input', SAME);
+        click(labelled(page.root, '发送')!);
+        await waitFor(() => answered('requests/submit') === n && answered('requests/read') === n);
+        await quietPage(log);
+      };
+      const reread = async (id: string): Promise<void> => {
+        const reads = answered('main/read');
+        log.openings.at(-1)!.enqueue(new TextEncoder().encode(`event: change\nid: ${id}\ndata: {}\n\n`));
+        await waitFor(() => answered('main/read') > reads);
+        await quietPage(log);
+      };
       await askOnCard(1);
       await reread('c0000000002');
       expect(same()).toBe(1);
@@ -215,9 +213,7 @@ describe('E3U Main thread', () => {
       expect(same()).toBe(2);
       await reread('c0000000003');
       expect(same()).toBe(2);
-    } finally {
-      await page.restore();
-    }
+    }, { search: GOAL });
   }, 120_000);
 });
 

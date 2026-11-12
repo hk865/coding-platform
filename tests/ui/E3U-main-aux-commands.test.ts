@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { findAllClass } from './helpers/boot-page.js';
-import { auxPanel, auxTab, bootE3N, countRoute, quietPage, textOf, waitFor } from './helpers/E3N-page.js';
-import { click } from './helpers/E3N-interact.js';
+import { auxPanel, countRoute, onMain, pickTab, textOf } from './helpers/E3N-page.js';
 import { openW1 } from './helpers/E3N-world.js';
 import type { S6ARequestWorld } from '../helpers/S6A-request-fixture.js';
 
@@ -24,12 +23,8 @@ describe('E3U Main right panel: 命令', () => {
   it('T-B15 命令 shows 还没接通 and reads no command route', async () => {
     const opened = await openW1();
     worlds.push(opened.world);
-    const { page, log } = await bootE3N(opened.world, 'Main', { search: '?goal=ag2b-goal', mode: 'controlled' });
-    try {
-      await quietPage(log);
-      click(auxTab(page.root, '命令')!);
-      await waitFor(() => auxTab(page.root, '命令')?.getAttribute('aria-selected') === 'true');
-      await quietPage(log);
+    await onMain(opened.world, async (page, log) => {
+      await pickTab(page, log, '命令');
       const panel = auxPanel(page.root)!;
       expect(textOf(panel)).toContain('还没接通');
       expect(findAllClass(panel, 'cmd')).toHaveLength(0);
@@ -39,8 +34,6 @@ describe('E3U Main right panel: 命令', () => {
       expect(countRoute(log, 'commands/read')).toBe(0);
       expect(countRoute(log, 'commands/start')).toBe(0);
       expect(countRoute(log, 'commands/stop')).toBe(0);
-    } finally {
-      await page.restore();
-    }
+    });
   }, 60_000);
 });

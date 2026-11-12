@@ -1434,12 +1434,13 @@ class Component extends DCLogic {
     if (prev && prev.theme !== this.props.theme && s.theme) this.setState({ theme: null });
     if (prev && prev.start !== this.props.start) this.setState(this.preset(this.props.start));
     /* a successful reread is the new state: an action error no longer shows, and the
-       local bubbles the read now carries are not drawn twice (Main A §2.6/Main 6) */
+       local bubbles the read now carries are not drawn twice (Main A §2.6/Main 6).
+       采用's `busy` text (errKeep) stays until the next 采用 or 发送 (§2.3, STK15 P1). */
     if (prev && prev.dataVersion !== this.props.dataVersion) {
       const roots = new Set(((this.props.data || {}).conversation || []).map((r) => r.root));
       const pending = (s.pending || []).filter((p) => !roots.has(p.root));
       const patch = {};
-      if (s.err) patch.err = '';
+      if (s.err && s.err !== s.errKeep) patch.err = '';
       if (pending.length !== (s.pending || []).length) patch.pending = pending;
       if (Object.keys(patch).length > 0) this.setState(patch);
     }
@@ -3963,9 +3964,9 @@ class Component extends DCLogic {
       if (d.v) rows.push({ k: d.k, v: d.v });
       rows.push({ k: '最近一步', v: L.last || r.recent || '没有记录', tip: L.last === '—' ? '还没接通' : '' });
       const live = d.live ? '，' + d.live : '';
-      const hint = main ? (on ? '你正在主对话里' : '点一下回到主对话') : on ? '它的对话在中间' : '点一下在中间打开它的对话';
-      const def = arch || i >= upFrom; const up = hvUp && hvUp.id === r.id ? !!hvUp.up : def;
       const off = L.off === 'true';
+      const hint = main ? (on ? '你正在主对话里' : '点一下回到主对话') : off ? '还没接通' : on ? '它的对话在中间' : '点一下在中间打开它的对话';
+      const def = arch || i >= upFrom; const up = hvUp && hvUp.id === r.id ? !!hvUp.up : def;
       return { id: r.id, name: r.name, word: r.word, dot: r.dot, current: on ? 'true' : null,
         cls: (arch ? 'rail-arch-ln lv-line' : 'row wl-row lv-line') + (on ? ' is-current' : ''),
         off: off ? 'true' : 'false', tip: off ? '还没接通' : '',
@@ -5293,8 +5294,9 @@ class Component extends DCLogic {
         menu: null, pane: 'chat', confirmCancel: false, dcOpen: false
       }),
       adopt: canAdopt ? () => {
+        set({ err: '', errKeep: '' });
         Promise.resolve(actions.adoptPlan(proposal.ref, proposal.revision))
-          .catch((e) => set({ err: this.planMsg(e) }));
+          .catch((e) => { const err = this.planMsg(e); set({ err: err, errKeep: e && e.keep === true ? err : '' }); });
       } : nc
     };
   }
@@ -5444,7 +5446,7 @@ class Component extends DCLogic {
       const st = this.state || {};
       const text = String(st.draft || '').trim();
       if (!text || st.sending) return;
-      set({ sending: true, err: '' });
+      set({ sending: true, err: '', errKeep: '' });
       const goalCard = data.goalCard || null;
       const plan = data.plan || null;
       const planChange = !!st.iterating && st.iterKey !== 'G' && plan !== null && plan.proposal !== null;

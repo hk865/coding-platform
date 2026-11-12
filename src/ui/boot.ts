@@ -28,7 +28,8 @@ import {
 import {
   auxChangedRowsOf, auxFileListOf, auxFilePageOf, auxLeafCountsOf, auxTaskDetailOf, catalogArchTree, goalTaskTree,
   goalTreeNodeOf,
-  type AuxDemand, type AuxFilePage, type AuxPanelData, type AuxTab, type AuxWorkspaceFile, type GoalsTaskNode,
+  type AuxDemand, type AuxFilePage, type AuxPanelData, type AuxTab, type AuxTaskData, type AuxWorkspaceFile,
+  type GoalsTaskNode,
 } from './adapters/aux-panel.js';
 import { adaptGoals, conflictSelectionOf, goalOrderOf, type GoalsData } from './adapters/goals.js';
 import {
@@ -561,11 +562,14 @@ export async function bootBoardPage(): Promise<void> {
         }), 'plans/apply');
       } catch (error) {
         /* §2.3: a revision conflict is shown and the page rereads; `busy` keeps
-           its one-click retry text and does not reread. */
+           its one-click retry text and does not reread. The stop behind `busy`
+           still reaches the page as rereads, so that error carries `keep`: the
+           page keeps its text until the next 采用 or 发送 (STK15 P1). */
         if (error instanceof RouteReadError && error.code === 'revision_conflict') {
           await refresh.reread();
         }
-        throw new Error(writeTextOf(error));
+        const shown = new Error(writeTextOf(error));
+        throw error instanceof RouteReadError && error.code === 'busy' ? Object.assign(shown, { keep: true }) : shown;
       }
       await refresh.reread();
     },
@@ -1084,12 +1088,30 @@ export async function bootBoardPage(): Promise<void> {
   await refresh.start();
 }
 
+/** STK15 M9: the one place `files/uncommitted` is called — one call per 100
+ * paths of one workspace, each answer yielded in order; an empty `paths`
+ * makes no call (READS-7: the Host rejects an empty `paths`). Both
+ * `readUncommittedByWorkspace` and `readUncommittedPage` read through it;
+ * which paths they pass and what a failure does stay their own. */
+async function* uncommittedPagesOf(
+  client: ReturnType<typeof createHostClient>, scope: CoreScope, workspaceId: string, paths: readonly string[],
+): AsyncGenerator<UncommittedFilesV1> {
+  for (let index = 0; index < paths.length; index += 100) {
+    /* §2.3: this route wants a WorkspaceRef, not the caller's CoreScope. */
+    yield readyRouteValue<UncommittedFilesV1>(await client.post('files/uncommitted',
+      { ...scope, workspaceId }, {
+        workspace: { aggregateType: 'Workspace', projectId: scope.projectId, workspaceId },
+        paths: paths.slice(index, index + 100),
+      }), 'files/uncommitted');
+  }
+}
+
 /** One per-workspace `files/uncommitted` read shared by TaskMap's detail and Done:
  * each path is sent with its own workspace's ref and the answer's path is
  * qualified back to the canonical project path. TaskMap caps the whole read at
- * 100 paths; Done has no total cap, but both send at most 100 paths per
- * `files/uncommitted` call. One workspace's failed read leaves its files
- * without numbers (the other workspaces keep theirs). */
+ * 100 paths; Done has no total cap; the calls go through `uncommittedPagesOf`.
+ * One workspace's failed read leaves its files without numbers (the other
+ * workspaces keep theirs). */
 async function readUncommittedByWorkspace(
   client: ReturnType<typeof createHostClient>, scope: CoreScope,
   entries: ReadonlyArray<{ workspaceId: string; path: string }>,
@@ -1112,13 +1134,7 @@ async function readUncommittedByWorkspace(
     if (capped.length === 0) continue;
     const collected: UncommittedFileV1[] = [];
     try {
-      for (let index = 0; index < capped.length; index += 100) {
-        /* §2.3: this route wants a WorkspaceRef, not the caller's CoreScope. */
-        const page = readyRouteValue<UncommittedFilesV1>(await client.post('files/uncommitted',
-          { ...scope, workspaceId }, {
-            workspace: { aggregateType: 'Workspace', projectId: scope.projectId, workspaceId },
-            paths: capped.slice(index, index + 100),
-          }), 'files/uncommitted');
+      for await (const page of uncommittedPagesOf(client, scope, workspaceId, capped)) {
         if (page.repository !== 'git') {
           if (repository === null) repository = 'not_git';
           continue;
@@ -2112,8 +2128,8 @@ async function readAuxFile(
  * truncation fact (Member's 只列了部分); `checkedFirst` is how many files the
  * uncommitted read checked when that is not every file of the workspace (the
  * listing passed 100, or the listing itself is partial), and `null` when it
- * checked them all (lead 11-12 item 4). An empty listing checks nothing, so
- * `files` is null (READS-7: the Host rejects an empty `paths`).
+ * checked them all (lead 11-12 item 4). The first 100 paths are one
+ * `uncommittedPagesOf` call; an empty listing makes none, so `files` is null.
  */
 async function readUncommittedPage(
   client: ReturnType<typeof createHostClient>, scope: CoreScope,
@@ -2123,10 +2139,8 @@ async function readUncommittedPage(
   const paths = list.paths;
   const partial = list.partial === true;
   const first = paths.slice(0, 100);
-  const files = first.length === 0 ? null : readyRouteValue<UncommittedFilesV1>(await client.post('files/uncommitted', scope, {
-    workspace: { aggregateType: 'Workspace', projectId: scope.projectId, workspaceId: scope.workspaceId },
-    paths: first,
-  }), 'files/uncommitted');
+  let files: UncommittedFilesV1 | null = null;
+  for await (const page of uncommittedPagesOf(client, scope, scope.workspaceId, first)) files = page;
   return { files, checkedFirst: partial || paths.length > first.length ? first.length : null, paths, partial };
 }
 
@@ -2144,11 +2158,16 @@ export async function readAuxPanel(
   const empty: AuxPanelData = {
     tab, task: null, arch: null, files: null, file: null, diff: null, error: null,
   };
+  const goal = nav.selectedGoalId === null ? null
+    : nav.goals.find((row) => row.goalId === nav.selectedGoalId) ?? null;
+  /* The task tree is `nav.tasks` (no read): 任务图 draws it and 架构图 names its tasks from it (lead 11-12, M6). */
+  const taskTreeOf = (): Pick<AuxTaskData, 'tree' | 'counts'> => {
+    const tree = goal === null ? null : goalTaskTree({ id: goal.goalId, name: goal.objective }, nav.tasks);
+    return { tree, counts: tree === null ? {} : auxLeafCountsOf(tree, 'task') };
+  };
   try {
     if (tab === 'task') {
-      const goal = nav.selectedGoalId === null ? null
-        : nav.goals.find((row) => row.goalId === nav.selectedGoalId) ?? null;
-      const tree = goal === null ? null : goalTaskTree({ id: goal.goalId, name: goal.objective }, nav.tasks);
+      const { tree, counts } = taskTreeOf();
       let moduleNames: Record<string, string> = {};
       const taskModules: Record<string, string> = {};
       if (goal !== null) {
@@ -2178,7 +2197,6 @@ export async function readAuxPanel(
       const det = detail !== null && tree !== null
         ? auxTaskDetailOf(detail, tree, (id) => crumbPathOf(tree, id))
         : null;
-      const counts = tree === null ? {} : auxLeafCountsOf(tree, 'task');
       return { ...empty, task: { tree, counts, detail, detailFor: demand.detailTaskId, moduleNames, taskModules, det } };
     }
     if (tab === 'arch') {
@@ -2198,7 +2216,10 @@ export async function readAuxPanel(
         work = new Set(scopeRead.files.map((file) => file.path));
       }
       const tree = catalogArchTree(architecture, scope.projectId, nav.tasks, work);
-      return { ...empty, arch: { tree, counts: tree === null ? {} : auxLeafCountsOf(tree, 'file'), work } };
+      return {
+        ...empty, arch: { tree, counts: tree === null ? {} : auxLeafCountsOf(tree, 'file'), work },
+        task: { ...taskTreeOf(), detail: null, detailFor: null, moduleNames: {}, taskModules: {}, det: null },
+      };
     }
     if (tab === 'files') {
       const page = await readUncommittedPage(client, scope);

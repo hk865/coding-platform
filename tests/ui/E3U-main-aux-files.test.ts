@@ -4,12 +4,12 @@ import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { findAllClass, findClass, findElement, type BootedPage } from './helpers/boot-page.js';
 import type { FakeElement } from './helpers/dom.js';
 import {
-  auxTab, bootE3N, bootQuiet, callsTo, countRoute, descendants, hasClass, lineRowNamed, quietPage, settledN, textOf, waitFor,
+  auxTab, callsTo, countRoute, descendants, hasClass, lineRowNamed, onMain, quietPage, settledN, textOf, waitFor,
   type PageLog,
 } from './helpers/E3N-page.js';
 import { click } from './helpers/E3N-interact.js';
 import { E3U_MODULE_SHA, openW1, openWGit, openWWritable, unlockWGit, type E3NWorld } from './helpers/E3N-world.js';
-import { bootMemberAt, callsOf, memberSearch, settle, worldSlot } from './helpers/E3M-world.js';
+import { bootMemberAt, buttonText, callsOf, elementsOf, memberSearch, settle, worldSlot } from './helpers/E3M-world.js';
 import { labelled, typeInto } from './helpers/E3D-page.js';
 
 /**
@@ -24,15 +24,19 @@ import { labelled, typeInto } from './helpers/E3D-page.js';
 
 const slot = worldSlot();
 afterAll(async () => { await slot.close(); }, 180_000);
-const wg = () => slot.use('WG', () => openWGit(), (opened) => opened.world.close());
+const wg = async () => (await slot.use('WG', () => openWGit(), (opened) => opened.world.close())).world;
 
-const writable: E3NWorld[] = [];
+/* A row's own world (WW, which its saves change; another WG shape; the emptied W1), closed after the row. */
+const owned: Array<{ opened: E3NWorld; locked: boolean }> = [];
 afterEach(async () => {
-  for (const opened of writable.splice(0)) await opened.world.close();
+  for (const { opened, locked } of owned.splice(0)) {
+    if (locked) await unlockWGit(opened);
+    await opened.world.close();
+  }
 });
-async function ww(): Promise<E3NWorld> {
-  const opened = await openWWritable();
-  writable.push(opened);
+async function own(open: () => Promise<E3NWorld> = openWWritable, locked = false): Promise<E3NWorld> {
+  const opened = await open();
+  owned.push({ opened, locked });
   return opened;
 }
 
@@ -46,15 +50,13 @@ const SHA = {
   [OUTSIDE]: 'dc025a86cace8a8ea23ce252874126e8b14601fafe492e71025f09ac98621e5b',
 } as const;
 
-const GOAL = '?goal=ag2b-goal';
+/** The buttons inside the first `.holder` (a tab's list, a page's bar or note). */
+const buttonsIn = (root: FakeElement, holder: string): FakeElement[] => elementsOf(findClass(root, holder), 'button');
 
 /** A file-tree row (`.ftree button` with `.fname`), the folders opened one by one (the tree names each level). */
 async function fileRow(root: FakeElement, path: string): Promise<FakeElement | undefined> {
-  const named = (name: string): FakeElement | undefined => {
-    const tree = findClass(root, 'ftree');
-    return tree === undefined ? undefined : descendants(tree).find((element) => element.tagName.toLowerCase() === 'button'
-      && textOf(findClass(element, 'fname')) === name);
-  };
+  const named = (name: string): FakeElement | undefined => rowsOf(root, '文件')
+    .find((element) => textOf(findClass(element, 'fname')) === name);
   const parts = path.split('/');
   for (const folder of parts.slice(0, -1)) {
     const row = named(folder);
@@ -72,48 +74,29 @@ function codeTexts(root: FakeElement): string[] {
     .map((row) => textOf(findClass(row, 'fl-t')));
 }
 
-const pageButton = (root: FakeElement, holder: string, label: string): FakeElement | undefined => {
-  const scope = findClass(root, holder);
-  return scope === undefined ? undefined : descendants(scope).find((element) => element.tagName.toLowerCase() === 'button'
-    && textOf(element) === label);
-};
-const conflictButtons = (root: FakeElement): string[] => {
-  const note = findClass(root, 'fp-note');
-  return note === undefined ? [] : descendants(note).filter((element) => element.tagName.toLowerCase() === 'button')
-    .map((element) => textOf(element));
-};
-const diffRow = (root: FakeElement, path: string): FakeElement | undefined => {
-  const list = findClass(root, 'dfiles');
-  return list === undefined ? undefined : descendants(list).find((element) => element.getAttribute('title') === path);
-};
+const conflictButtons = (root: FakeElement): string[] => buttonsIn(root, 'fp-note').map((element) => textOf(element));
+const diffRow = (root: FakeElement, path: string): FakeElement | undefined =>
+  rowsOf(root, 'Diff').find((element) => element.getAttribute('title') === path);
 /** The tab's own note: 文件's `.fnote`, Diff's line-area `.pnote`. */
 const noteOf = (root: FakeElement, tab: '文件' | 'Diff'): string => (tab === 'Diff'
   ? textOf(findClass(findClass(root, 'diff-body')!, 'pnote')) : textOf(findClass(root, 'fnote')));
 /** The tab's rows: the Diff file buttons or the 文件 tree buttons. */
-const rowsOf = (root: FakeElement, tab: '文件' | 'Diff'): FakeElement[] => {
-  const list = findClass(root, tab === 'Diff' ? 'dfiles' : 'ftree');
-  return list === undefined ? [] : descendants(list).filter((element) => element.tagName.toLowerCase() === 'button');
-};
+const rowsOf = (root: FakeElement, tab: '文件' | 'Diff'): FakeElement[] => buttonsIn(root, tab === 'Diff' ? 'dfiles' : 'ftree');
 const fpState = (root: FakeElement): string => textOf(findClass(root, 'fp-state'));
 
-/** 文件 → the row of `src/module.ts` → its page; returns the log index before the row's click. */
-async function openModule(page: BootedPage, log: PageLog): Promise<number> {
+/** 文件 → the row of `src/module.ts` → its page. */
+async function openModule(page: BootedPage, log: PageLog): Promise<void> {
   click(auxTab(page.root, '文件')!);
   const row = await waitRow(page.root);
   await quietPage(log);
-  const before = log.calls.length;
   click(row);
   await waitFor(() => codeTexts(page.root).length > 0);
   await quietPage(log);
-  return before;
 }
 
 async function waitRow(root: FakeElement): Promise<FakeElement> {
   /* The tab's `files/list` lands after the click: wait for the tree's first row, not only its frame. */
-  await waitFor(() => {
-    const tree = findClass(root, 'ftree');
-    return tree !== undefined && descendants(tree).some((element) => element.tagName.toLowerCase() === 'button');
-  });
+  await waitFor(() => rowsOf(root, '文件').length > 0);
   const row = await fileRow(root, MODULE);
   expect(row, 'the file row of src/module.ts').toBeDefined();
   return row!;
@@ -122,10 +105,10 @@ async function waitRow(root: FakeElement): Promise<FakeElement> {
 /** 编辑, the whole text typed into `#ax-fedit`, then 保存. */
 function editAndSave(root: FakeElement, text: string): void {
   if (findElement(root, (element) => element.getAttribute('id') === 'ax-fedit') === undefined) {
-    click(pageButton(root, 'fpage', '编辑')!);
+    click(buttonText(findClass(root, 'fpage'), '编辑')!);
   }
   typeInto(root, 'ax-fedit', text);
-  click(pageButton(root, 'fpage', '保存')!);
+  click(buttonText(findClass(root, 'fpage'), '保存')!);
 }
 
 /** The work line's Member page: open 改动, wait for its uncommitted read, return the panel's text. */
@@ -155,9 +138,7 @@ async function fileReadFrom(log: PageLog, from: number): Promise<PageLog['calls'
 
 describe('E3U Main right panel: 文件 and Diff', () => {
   it('T-B12 文件 lists the workspace once and opens src/module.ts through files/read', async () => {
-    const opened = await wg();
-    const { page, log } = await bootQuiet(opened.world, GOAL);
-    try {
+    await onMain(await wg(), async (page, log) => {
       const from = log.calls.length;
       click(auxTab(page.root, '文件')!);
       const row = await waitRow(page.root);
@@ -171,29 +152,22 @@ describe('E3U Main right panel: 文件 and Diff', () => {
       expect(readPath(reads[0])).toBe(MODULE);
       await waitFor(() => codeTexts(page.root).length > 0);
       expect(codeTexts(page.root).filter((text) => text !== '')).toEqual(['第一行', '第二行', '第三行']);
-    } finally {
-      await page.restore();
-    }
+    });
   }, 120_000);
 
   it('T-B14 Diff shows the git counts of the one listed workspace and draws no line diff', async () => {
-    const opened = await wg();
-    const { page, log } = await bootQuiet(opened.world, GOAL);
-    try {
+    await onMain(await wg(), async (page, log) => {
       const from = log.calls.length;
       click(auxTab(page.root, 'Diff')!);
       await waitFor(() => diffRow(page.root, MODULE) !== undefined);
       await quietPage(log);
       expect(callsOf(log, 'files/uncommitted', from)).toHaveLength(1);
       expect(callsOf(log, 'files/list', from)).toHaveLength(1);
-      expect(textOf(findClass(diffRow(page.root, MODULE)!, 'fmeta'))).toBe('+2 −1');
       /* Three listed files: nothing is cut at 100, so the note says no count. */
       expect(noteOf(page.root, 'Diff')).toBe('还没接通');
       /* 具名改坏: `src/ui/boot.ts` 的 `readAuxPanel` 调 `files/compare` 画样例 hunk；这一句红。 */
       expect(countRoute(log, 'files/compare')).toBe(0);
-    } finally {
-      await page.restore();
-    }
+    });
   }, 120_000);
 
   /*
@@ -218,60 +192,46 @@ describe('E3U Main right panel: 文件 and Diff', () => {
       diff: '还没接通 · 只核对了前 100 个文件', files: '工作区 · 改动 99 个文件 · 只核对了前 100 个文件',
     },
   ])('T-B14b $name: Diff and 文件 say the checked count, Member only the listing’s partial', async ({ shape, memberPartial, diff, files }) => {
-    const opened = await openWGit(shape);
-    try {
-      const { page, log } = await bootQuiet(opened.world, GOAL);
-      try {
-        click(auxTab(page.root, 'Diff')!);
-        await waitFor(() => diffRow(page.root, MODULE) !== undefined);
-        await quietPage(log);
-        expect(noteOf(page.root, 'Diff')).toBe(diff);
-        const before = log.calls.length;
-        click(auxTab(page.root, '文件')!);
-        await waitFor(() => callsOf(log, 'files/uncommitted', before).some((call) => call.reply !== undefined));
-        await quietPage(log);
-        expect(noteOf(page.root, '文件')).toBe(files);
-      } finally {
-        await page.restore();
-      }
-      expect((await memberChangesNote(opened)).includes('只列了部分')).toBe(memberPartial);
-    } finally {
-      if ('lockedDir' in shape) await unlockWGit(opened);
-      await opened.world.close();
-    }
+    const opened = await own(() => openWGit(shape), 'lockedDir' in shape);
+    await onMain(opened.world, async (page, log) => {
+      click(auxTab(page.root, 'Diff')!);
+      await waitFor(() => diffRow(page.root, MODULE) !== undefined);
+      await quietPage(log);
+      expect(noteOf(page.root, 'Diff')).toBe(diff);
+      const before = log.calls.length;
+      click(auxTab(page.root, '文件')!);
+      await waitFor(() => callsOf(log, 'files/uncommitted', before).some((call) => call.reply !== undefined));
+      await quietPage(log);
+      expect(noteOf(page.root, '文件')).toBe(files);
+    });
+    expect((await memberChangesNote(opened)).includes('只列了部分')).toBe(memberPartial);
   }, 180_000);
 
   it('T-B17 打开文件 on the Diff head opens that file through files/read', async () => {
-    const opened = await wg();
-    const { page, log } = await bootQuiet(opened.world, GOAL);
-    try {
+    await onMain(await wg(), async (page, log) => {
       click(auxTab(page.root, 'Diff')!);
       await waitFor(() => diffRow(page.root, MODULE) !== undefined);
       click(diffRow(page.root, MODULE)!);
       await quietPage(log);
       const before = log.calls.length;
-      click(pageButton(page.root, 'diff-head', '打开文件')!);
+      click(buttonText(findClass(page.root, 'diff-head'), '打开文件')!);
       const reads = await fileReadFrom(log, before);
       expect(reads).toHaveLength(1);
       /* 具名改坏: `Main.dc.html` 的 `dOpen` 打开 `repo.changed[0]`（= README.md，不是选中的 `dPath`）；这一句红。 */
       expect(readPath(reads[0])).toBe(MODULE);
       expect(findClass(page.root, 'fp-path')?.getAttribute('title')).toBe(MODULE);
-    } finally {
-      await page.restore();
-    }
+    });
   }, 120_000);
 
   it('T-B18 引用到草稿 keeps lines 2–3 and the send carries them as one reference', async () => {
-    const opened = await wg();
-    const { page, log } = await bootQuiet(opened.world, GOAL);
-    try {
+    await onMain(await wg(), async (page, log) => {
       await openModule(page, log);
       const lineNo = (n: number): FakeElement | undefined => descendants(findClass(page.root, 'fcode')!)
         .find((element) => hasClass(element, 'fl-n') && textOf(element) === String(n));
       click(lineNo(2)!);
       await settle(() => findAllClass(findClass(page.root, 'fcode')!, 'is-sel').length > 0, 1_000);
       click(lineNo(3)!, { shiftKey: true });
-      click(pageButton(page.root, 'fp-bar', '引用到草稿')!);
+      click(buttonText(findClass(page.root, 'fp-bar'), '引用到草稿')!);
       await waitFor(() => findClass(page.root, 'composer-quote') !== undefined);
       const quote = findClass(page.root, 'composer-quote')!;
       expect(textOf(findClass(quote, 'cq-path'))).toBe(MODULE);
@@ -284,35 +244,27 @@ describe('E3U Main right panel: 文件 and Diff', () => {
       expect(input['text']).toBe('看这里');
       /* 具名改坏: `Main.dc.html` 发送时引用的 `startLine`/`endLine` 写 `null`；这一句红。 */
       expect(input['references']).toEqual([{ path: MODULE, startLine: 2, endLine: 3, snapshot: null }]);
-    } finally {
-      await page.restore();
-    }
+    });
   }, 120_000);
 
   it('SPEC-18 a quote taken while a line is open does not ride on the line’s composer', async () => {
-    const opened = await wg();
-    const { page, log } = await bootQuiet(opened.world, GOAL);
-    try {
+    await onMain(await wg(), async (page, log) => {
       click(lineRowNamed(page.root, '执行者')!);
       await quietPage(log);
       await openModule(page, log);
       click(descendants(findClass(page.root, 'fcode')!).find((element) => hasClass(element, 'fl-n') && textOf(element) === '2')!);
-      click(pageButton(page.root, 'fp-bar', '引用到草稿')!);
+      click(buttonText(findClass(page.root, 'fp-bar'), '引用到草稿')!);
       const composer = findElement(page.root, (element) => hasClass(element, 'composer')
         && findElement(element, (child) => child.getAttribute('id') === 'lv-input') !== undefined)!;
       /* 具名改坏: `Main.dc.html` 把主对话的 `s` 原样交给 `lvView`；这一句红（引用条挂在线的输入区上）。 */
       expect(findClass(composer, 'composer-quote')).toBeUndefined();
       expect(textOf(findClass(composer, 'to'))).not.toBe('已引用到草稿，还没有发送');
       expect(findClass(composer, 'send')!.getAttribute('aria-disabled')).toBe('true');
-    } finally {
-      await page.restore();
-    }
+    });
   }, 120_000);
 
   it('T-B13 保存 sends the read digest, then the saved revision', async () => {
-    const opened = await ww();
-    const { page, log } = await bootQuiet(opened.world, GOAL);
-    try {
+    await onMain((await own()).world, async (page, log) => {
       await openModule(page, log);
       editAndSave(page.root, EDIT_ONE);
       await settledN(log, 'files/save', 1);
@@ -327,16 +279,13 @@ describe('E3U Main right panel: 文件 and Diff', () => {
       const second = callsTo(log, 'files/save')[1]!;
       expect((second.input as { expectedRevision?: unknown }).expectedRevision).toBe(SHA[EDIT_ONE]);
       expect((second.reply as { value?: { revision?: unknown } }).value?.revision).toBe(SHA[EDIT_TWO]);
-    } finally {
-      await page.restore();
-    }
+    });
   }, 120_000);
 
   /* The test changes the file on disk after the page read it (a write the page did not make). */
   it.each(['比较', '仍然保存', '先不保存'] as const)('T-B16 a stale save shows the four-button bar; %s', async (choice) => {
-    const opened = await ww();
-    const { page, log } = await bootQuiet(opened.world, GOAL);
-    try {
+    const opened = await own();
+    await onMain(opened.world, async (page, log) => {
       await openModule(page, log);
       await writeFile(join(opened.world.root, MODULE), OUTSIDE);
       editAndSave(page.root, EDIT_ONE);
@@ -347,7 +296,7 @@ describe('E3U Main right panel: 文件 and Diff', () => {
       expect(conflictButtons(page.root)).toEqual(['重新载入', '比较', '仍然保存', '先不保存']);
       await quietPage(log);
       const before = log.calls.length;
-      click(pageButton(page.root, 'fp-note', choice)!);
+      click(buttonText(findClass(page.root, 'fp-note'), choice)!);
       if (choice === '比较') {
         await waitFor(() => findAllClass(page.root, 'dl-row').some((row) => hasClass(row, 'is-add') || hasClass(row, 'is-del')));
         await quietPage(log);
@@ -355,7 +304,7 @@ describe('E3U Main right panel: 文件 and Diff', () => {
         /* READS-6/SPEC-11 (S37): 比较 left the read on the file page; 回到 Git ↔ 工作区 reads files/uncommitted again.
            具名改坏: `Main.dc.html` 的 `ax.backToGit` 只清 `axCmp`；这一句红。 */
         const back = log.calls.length;
-        click(pageButton(page.root, 'diff-head', '回到 Git ↔ 工作区')!);
+        click(buttonText(findClass(page.root, 'diff-head'), '回到 Git ↔ 工作区')!);
         await quietPage(log);
         expect(callsOf(log, 'files/uncommitted', back)).toHaveLength(1);
       } else if (choice === '仍然保存') {
@@ -368,9 +317,7 @@ describe('E3U Main right panel: 文件 and Diff', () => {
         await quietPage(log);
         expect(log.calls.length).toBe(before);
       }
-    } finally {
-      await page.restore();
-    }
+    });
   }, 120_000);
 
   /*
@@ -383,11 +330,8 @@ describe('E3U Main right panel: 文件 and Diff', () => {
     ['Diff', 'files/uncommitted', '暂时读不到，可以重试。'],
     ['文件', 'main/read', ''],
   ] as const)('READS-3 %s with %s unavailable: the note is %j, no sample row, the route is logged', async (tab, route, note) => {
-    const opened = await wg();
     const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const { page, log } = await bootE3N(opened.world, 'Main', { search: '?goal=ag2b-goal', mode: 'controlled', unavailable: route });
-    try {
-      await quietPage(log);
+    await onMain(await wg(), async (page, log) => {
       const before = log.calls.length;
       click(auxTab(page.root, tab)!);
       await waitFor(() => callsOf(log, route, before).some((call) => call.reply !== undefined));
@@ -398,51 +342,36 @@ describe('E3U Main right panel: 文件 and Diff', () => {
       expect(rowsOf(page.root, tab)).toEqual([]);
       /* 具名改坏: `boot.ts` 的 `readAuxPanel` 吞错不调 `logReadError`；Diff 行这一句红。 */
       expect(logged.mock.calls.some((args) => args[0] === route && args[1] === 'unavailable')).toBe(true);
-    } finally {
-      logged.mockRestore();
-      await page.restore();
-    }
+    }, { unavailable: route });
   }, 120_000);
 
   it('READS-2 a save the Host holds unavailable says the write text, not the route and code', async () => {
-    const opened = await wg();
-    const { page, log } = await bootE3N(opened.world, 'Main', { search: '?goal=ag2b-goal', mode: 'controlled', unavailable: 'files/save' });
-    try {
-      await quietPage(log);
+    await onMain(await wg(), async (page, log) => {
       await openModule(page, log);
       editAndSave(page.root, EDIT_ONE);
       await settledN(log, 'files/save', 1);
       await quietPage(log);
       /* 具名改坏: `boot.ts` 的 `saveFile` 又把 `source_stale` 以外的错原样抛出；这一句红（“files/save failed: unavailable: …”）。 */
       expect(textOf(findClass(findClass(page.root, 'composer-foot')!, 'to'))).toBe('暂时写不了，可以重试。');
-    } finally {
-      await page.restore();
-    }
+    }, { unavailable: 'files/save' });
   }, 120_000);
 
   /* READS-7: W1 without its two files lists nothing; an empty `paths` is the Host's `invalid`, so nothing is checked. */
   it('READS-7 an empty workspace sends no files/uncommitted and is not a read failure', async () => {
-    const opened = await openW1();
-    try {
-      await rm(join(opened.world.root, 'src'), { recursive: true });
-      await rm(join(opened.world.root, 'tsconfig.json'));
-      const { page, log } = await bootQuiet(opened.world, GOAL);
-      try {
-        for (const tab of ['文件', 'Diff'] as const) {
-          const before = log.calls.length;
-          click(auxTab(page.root, tab)!);
-          await waitFor(() => callsOf(log, 'files/list', before).some((call) => call.reply !== undefined));
-          await quietPage(log);
-          /* 具名改坏: `boot.ts` 的 `readUncommittedPage` 不判空、照发 `paths: []`；这一句红（“读取失败。”）。 */
-          expect(noteOf(page.root, tab)).toBe(tab === '文件' ? '工作区 · 改动 0 个文件' : '还没接通');
-        }
-        expect(countRoute(log, 'files/uncommitted')).toBe(0);
-      } finally {
-        await page.restore();
+    const opened = await own(openW1);
+    await rm(join(opened.world.root, 'src'), { recursive: true });
+    await rm(join(opened.world.root, 'tsconfig.json'));
+    await onMain(opened.world, async (page, log) => {
+      for (const tab of ['文件', 'Diff'] as const) {
+        const before = log.calls.length;
+        click(auxTab(page.root, tab)!);
+        await waitFor(() => callsOf(log, 'files/list', before).some((call) => call.reply !== undefined));
+        await quietPage(log);
+        /* 具名改坏: `boot.ts` 的 `readUncommittedPage` 不判空、照发 `paths: []`；这一句红（“读取失败。”）。 */
+        expect(noteOf(page.root, tab)).toBe(tab === '文件' ? '工作区 · 改动 0 个文件' : '还没接通');
       }
-    } finally {
-      await opened.world.close();
-    }
+      expect(countRoute(log, 'files/uncommitted')).toBe(0);
+    });
   }, 120_000);
 
   /*
@@ -451,28 +380,21 @@ describe('E3U Main right panel: 文件 and Diff', () => {
    * src/blob.bin is a binary with `lines: null`) shows no numbers.
    */
   it('READS-8 an unknown and a binary file are changed rows without numbers', async () => {
-    const opened = await openWGit({ oddFiles: true });
-    try {
-      const { page, log } = await bootQuiet(opened.world, GOAL);
-      try {
-        click(auxTab(page.root, 'Diff')!);
-        await waitFor(() => diffRow(page.root, MODULE) !== undefined);
-        await quietPage(log);
-        /* 具名改坏: `aux-panel.ts` 的 `auxChangedRowsOf` 只留 `uncommitted`；这一句红（少了 src/big.txt）。 */
-        expect(rowsOf(page.root, 'Diff').map((row) => [row.getAttribute('title'), textOf(findClass(row, 'fmeta'))]))
-          .toEqual([['README.md', '+1 −1'], ['src/big.txt', ''], ['src/blob.bin', ''], [MODULE, '+2 −1']]);
-        click(auxTab(page.root, '文件')!);
-        await waitRow(page.root);
-        await quietPage(log);
-        expect(noteOf(page.root, '文件')).toBe('工作区 · 改动 4 个文件');
-        /* 具名改坏: `Main.dc.html` 文件树那行不判 `ch.add` 为 null；这一句红（“+null −null”）。 */
-        expect(textOf(findClass((await fileRow(page.root, 'src/blob.bin'))!, 'fmeta'))).toBe('');
-      } finally {
-        await page.restore();
-      }
-    } finally {
-      await opened.world.close();
-    }
+    await onMain((await own(() => openWGit({ oddFiles: true }))).world, async (page, log) => {
+      click(auxTab(page.root, 'Diff')!);
+      await waitFor(() => diffRow(page.root, MODULE) !== undefined);
+      await quietPage(log);
+      /* 具名改坏: `aux-panel.ts` 的 `auxChangedRowsOf` 只留 `uncommitted`；这一句红（少了 src/big.txt）。
+         具名改坏（M14，原 T-B14 的加减那句）: `auxChangedRowsOf` 的 `added` 写成 `null`；这一句红（“−1”，不是“+2 −1”）。 */
+      expect(rowsOf(page.root, 'Diff').map((row) => [row.getAttribute('title'), textOf(findClass(row, 'fmeta'))]))
+        .toEqual([['README.md', '+1 −1'], ['src/big.txt', ''], ['src/blob.bin', ''], [MODULE, '+2 −1']]);
+      click(auxTab(page.root, '文件')!);
+      await waitRow(page.root);
+      await quietPage(log);
+      expect(noteOf(page.root, '文件')).toBe('工作区 · 改动 4 个文件');
+      /* 具名改坏: `Main.dc.html` 文件树那行不判 `ch.add` 为 null；这一句红（“+null −null”）。 */
+      expect(textOf(findClass((await fileRow(page.root, 'src/blob.bin'))!, 'fmeta'))).toBe('');
+    });
   }, 120_000);
 
   /*
@@ -481,9 +403,7 @@ describe('E3U Main right panel: 文件 and Diff', () => {
    * with it (the module ends in one).
    */
   it('SPEC-15 the file page shows its read time and a save keeps the last newline', async () => {
-    const opened = await ww();
-    const { page, log } = await bootQuiet(opened.world, GOAL);
-    try {
+    await onMain((await own()).world, async (page, log) => {
       await openModule(page, log);
       /* 具名改坏: `aux-panel.ts` 的 `auxFilePageOf` 把 `readAtText` 写成“已读”；这一句红。 */
       expect(fpState(page.root)).toMatch(/^载入于 \d\d-\d\d \d\d:\d\d$/);
@@ -493,8 +413,6 @@ describe('E3U Main right panel: 文件 and Diff', () => {
       /* 具名改坏: `Main.dc.html` 的 `saveNow` 不补 `F.eol` 的换行；这一句红。 */
       expect((callsTo(log, 'files/save')[0]!.input as { content?: unknown }).content).toBe(EDIT_ONE);
       expect(fpState(page.root)).toBe('已保存');
-    } finally {
-      await page.restore();
-    }
+    });
   }, 120_000);
 });

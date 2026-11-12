@@ -18,6 +18,7 @@ import { completeS7BGoal, refinementPlanFrom } from '../../helpers/S7B-V-fixture
 import { sessionOf } from '../../helpers/S7A-fixture.js';
 import { secretaryAnswer, type S6AIdea } from '../../helpers/S6A-history-fixture.js';
 import { claimWithSecretaryProfile, prepareAttempt, start } from '../../helpers/request-claim-steps.js';
+import { adoptPLPlanDraft } from '../../helpers/PL-workflow-fixture.js';
 import { readActivePlan } from '../../scenarios/support/S5-decisions.js';
 import {
   AG2B_GATE_TASK_ID, ag2bChecksConfiguration, ag2bPlanDraft, graphWrite, plain,
@@ -278,8 +279,8 @@ export async function openWProgress(): Promise<{ world: S6AHostWorld; goal: Goal
 /**
  * WD (Main B rework, SPEC-14): one adopted Plan of two work Tasks where
  * `E3U_WD_LATER` and the draft's `Goal gate` depend on `E3U_WD_FIRST`
- * (`executionDag.dependsOn`), through `plans/propose` + `plans/apply`
- * (`adoptS6BPlan` cannot carry the edges). No Task has started.
+ * (`executionDag.dependsOn`), through `adoptPLPlanDraft`'s `plans/propose` +
+ * `plans/apply` (`adoptS6BPlan` cannot carry the edges). No Task has started.
  */
 export const E3U_WD_FIRST = 'e3u-wd-first';
 export const E3U_WD_LATER = 'e3u-wd-later';
@@ -290,29 +291,13 @@ export async function openWDeps(): Promise<{ world: S6AHostWorld; goal: GoalRef 
     const ws = s6aCardsWorkspace(world, S6A_SCOPE);
     const goal = world.goals.first;
     await governS6B(world, ws, world.goals);
-    const draft = {
+    await adoptPLPlanDraft(ws, goal, {
       ...ag2bPlanDraft([E3U_WD_FIRST, E3U_WD_LATER]), planId: 'e3u-wd-plan', goalId: goal.goalId,
       assignments: [E3U_WD_FIRST, E3U_WD_LATER].map((taskId) => ({
         taskId, role: S6A_WORK_ROLE.templateId, instruction: `E3U WD ${taskId}` })),
       executionDag: { dependsOn: [E3U_WD_LATER, AG2B_GATE_TASK_ID].map((taskId) => ({ taskId, dependsOnId: E3U_WD_FIRST,
         requires: { kind: 'output-contract' as const, label: 'E3U WD first output' } })) },
-    };
-    const goalRead = (await world.post('goals/read', plain(S6A_SCOPE, goal))).body as
-      { status?: string; value?: { goal: { revision: number } } };
-    if (goalRead.status !== 'ready' || goalRead.value === undefined) {
-      throw new Error(`E3N WD: the Goal is not readable: ${JSON.stringify(goalRead)}`);
-    }
-    const proposed = (await world.post('plans/propose', graphWrite(S6A_SCOPE, {
-      goalRef: goal, basedOn: null, draft, reason: { text: 'E3U WD', sources: [] },
-    }, 'e3u-wd-propose', [{ ref: goal, revision: goalRead.value.goal.revision }]))).body as
-      { status?: string; value?: { ref: unknown; revision: number } };
-    if (proposed.status !== 'committed' || proposed.value === undefined) {
-      throw new Error(`E3N WD: the Plan was not proposed: ${JSON.stringify(proposed)}`);
-    }
-    const applied = (await world.post('plans/apply', graphWrite(S6A_SCOPE, {
-      proposalRef: proposed.value.ref, expectedProposalRevision: proposed.value.revision, decisionRefs: [],
-    }, 'e3u-wd-apply'))).body as { status?: string };
-    if (applied.status !== 'committed') throw new Error(`E3N WD: the Plan was not adopted: ${JSON.stringify(applied)}`);
+    }, 'e3u-wd');
     return { world, goal };
   } catch (error) {
     await world.close().catch(() => undefined);

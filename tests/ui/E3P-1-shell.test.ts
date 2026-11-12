@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { findClass, findElement } from './helpers/boot-page.js';
 import { bootE3N, descendants, hasClass, quietPage, textOf, waitFor } from './helpers/E3N-page.js';
-import { click } from './helpers/E3N-interact.js';
+import { click, hover } from './helpers/E3N-interact.js';
 import { openE3GW0, type E3GWorld } from './helpers/E3G-world.js';
 import { planReady } from './helpers/E3P-world.js';
 import type { FakeElement } from './helpers/dom.js';
@@ -116,6 +116,10 @@ describe('E3P Plan rail', () => {
       await quietPage(log);
       expect(log.calls.length).toBe(calls);
       expect(hasClass(lines.find((line) => textOf(findClass(line, 'row-name')).includes('秘书'))!, 'is-current')).toBe(true);
+      hover(dataLine);
+      await waitFor(() => findClass(page.root, 'lv-card') !== undefined);
+      /* 具名改坏: `lvRail` 的 hint 不看 `off`（原 `Plan.dc.html:3966`）；这一句红（写“点一下在中间打开它的对话”）。 */
+      expect(textOf(findClass(findClass(page.root, 'lv-card')!, 'hc-hint'))).toBe('还没接通');
     } finally {
       await page.restore();
     }
