@@ -250,7 +250,7 @@ function taskRowsOf(graph: unknown): Array<Record<string, unknown>> {
   return Array.isArray(tasks) ? tasks.map((entry) => asRecord(entry)) : [];
 }
 
-/** §2.7 A07: the one done/total rule Goals and Main share. A Goal without an
+/** §2.7 A07: the one done/total rule Goals, Main and Done share. A Goal without an
  * adopted Plan reads as 0/0, not as an error. */
 export function taskProgressOf(graph: unknown): { done: number; total: number } {
   const rows = taskRowsOf(graph);

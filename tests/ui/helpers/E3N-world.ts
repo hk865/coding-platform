@@ -69,7 +69,7 @@ export async function openW3(): Promise<E3NWorld> {
  * keeps the old completion (`revision` 1) with `selectedPlanMatches: false`,
  * which is the non-zero GoalPhase pin N33 reads.
  */
-export async function openW4(): Promise<{ world: S6AHostWorld; goal: GoalRef }> {
+export async function openW4(options: { nextPlan?: boolean } = {}): Promise<{ world: S6AHostWorld; goal: GoalRef }> {
   const world = await openS6AHostWorld({ backend: 'memory' });
   try {
     const ws = s6aCardsWorkspace(world, S6A_SCOPE);
@@ -79,6 +79,7 @@ export async function openW4(): Promise<{ world: S6AHostWorld; goal: GoalRef }> 
       label: 'e3n-w4', taskIds: ['e3n-w4-work'], role: S6A_WORK_ROLE.templateId,
     });
     await completeS7BGoal({ world, goalRef: goal });
+    if (options.nextPlan === false) return { world, goal };
 
     const active = await readActivePlan(world.platform, world.humanContext(), goal);
     const draft = (JSON.parse(refinementPlanFrom(active, goal, {

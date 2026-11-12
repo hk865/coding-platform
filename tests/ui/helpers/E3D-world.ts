@@ -1,11 +1,12 @@
 import type { QueryJobRef } from '../../../src/contracts/query-job.js';
 import type { WorkspaceScope } from '../../../src/contracts/core/identity.js';
 import type { DecisionCardV1 } from '../../../src/core/work-graph/model/decision-contracts.js';
+import type { NoticeCategoryV1 } from '../../../src/contracts/goal-decisions.js';
 import { AG2B_WORK_TASK_ID, graphWrite, plain } from '../../helpers/AG2b-collaboration-fixture.js';
 import { moveKernelAside } from '../../helpers/A2-restart-fixture.js';
 import { ensureProjectPointers, openS6AHostWorld, type S6AHostWorld } from '../../helpers/S6A-host-fixture.js';
 import { s6aCardsWorkspace, type S6ACandidate, type S6ACardsWorkspace, type S6ARequest } from '../../helpers/S6A-cards-fixture.js';
-import { S6A_SCOPE } from '../../helpers/S6A-request-fixture.js';
+import { S6A_SCOPE, type S6ASession } from '../../helpers/S6A-request-fixture.js';
 import { secretaryAnswer } from '../../helpers/S6A-history-fixture.js';
 import { claimWithSecretaryProfile, prepareAttempt, start } from '../../helpers/request-claim-steps.js';
 import { crashedUnknownKernel } from '../../helpers/S2C-K-scenario-support.js';
@@ -131,9 +132,10 @@ type CorePost = (route: string, body: unknown) => Promise<unknown>;
  * that read's token and positions. One body serves both the Host scenario
  * (`h.post`) and the cards workspace (`ws.post`); its `post` is the boundary.
  */
-export async function seePlanAdoptionsVia(post: CorePost, scope: WorkspaceScope, label: string): Promise<void> {
+export async function seePlanAdoptionsVia(post: CorePost, scope: WorkspaceScope, label: string,
+  categories: NoticeCategoryV1[] = ['plan_adoption']): Promise<void> {
   const read = await post('decisions/queue', plain(scope, { workspace: scope, sections: ['notices'],
-    categories: ['plan_adoption'], page: { limit: 100 } })) as
+    categories, page: { limit: 100 } })) as
     { value?: { notices?: unknown[]; displayToken?: string | null; seenThrough?: unknown } };
   if ((read.value?.notices ?? []).length === 0) return;
   const displayToken = read.value?.displayToken;
@@ -151,8 +153,9 @@ export async function seePlanAdoptionsVia(post: CorePost, scope: WorkspaceScope,
 }
 
 /** The cards-workspace call of `seePlanAdoptionsVia`. */
-export async function seePlanAdoptions(ws: S6ACardsWorkspace, label: string): Promise<void> {
-  await seePlanAdoptionsVia((route, body) => ws.post(route, body), ws.scope, label);
+export async function seePlanAdoptions(ws: S6ACardsWorkspace, label: string,
+  categories: NoticeCategoryV1[] = ['plan_adoption']): Promise<void> {
+  await seePlanAdoptionsVia((route, body) => ws.post(route, body), ws.scope, label, categories);
 }
 
 /** The text the secretary answered the first round of the D44a request with. */
@@ -173,13 +176,7 @@ export async function openOldAnswerWorld(): Promise<E3DOldAnswerWorld> {
     const ws = s6aCardsWorkspace(world, S6A_SCOPE);
     const secretary = await world.createSecretary('e3d-old-secretary');
     const request = await ws.submit({ label: 'e3d-old', goalId: world.goals.first.goalId, recipient: secretary.ref });
-    const claimed = await claimWithSecretaryProfile(world, request.round, secretary, 'e3d-old-claim');
-    if (claimed['status'] !== 'committed') throw new Error(`E3D: the old round was not claimed: ${JSON.stringify(claimed)}`);
-    const prepared = await prepareAttempt(world, request.round, 'e3d-old-prepare');
-    await world.scripted.script(secretary, [{ kind: 'text', text: secretaryAnswer({ body: E3D_OLD_ANSWER }) }]);
-    await start(world, prepared, 'e3d-old-start');
-    await world.waitForRequest(request.requestRoot, (view) => roundAnswered(view, request.round),
-      'the old round answered');
+    await answerRound(world, request, secretary, E3D_OLD_ANSWER, 'e3d-old');
     const candidate = await ws.proposeCandidate({ label: 'e3d-old', goal: world.goals.first, request });
     return { world, ws, request, candidate };
   } catch (error) {
@@ -188,9 +185,18 @@ export async function openOldAnswerWorld(): Promise<E3DOldAnswerWorld> {
   }
 }
 
-function roundAnswered(view: { rounds: ReadonlyArray<{ ref: QueryJobRef; answer?: unknown }> }, round: QueryJobRef): boolean {
-  const entry = view.rounds.find((item) => item.ref.queryJobId === round.queryJobId);
-  return entry !== undefined && entry.answer !== null && entry.answer !== undefined;
+/**
+ * One claimed-and-answered request round: the secretary is scripted with
+ * `body`, the round is claimed with its profile and prepared, started, then
+ * the request read shows the answer `body`.
+ */
+export async function answerRound(world: S6AHostWorld, round: { requestRoot: QueryJobRef; round: QueryJobRef },
+  secretary: S6ASession, body: string, label: string): Promise<void> {
+  await world.scripted.script(secretary, [{ kind: 'text', text: secretaryAnswer({ body }) }]);
+  await claimWithSecretaryProfile(world, round.round, secretary, `${label}-claim`);
+  await start(world, await prepareAttempt(world, round.round, `${label}-prepare`), `${label}-start`);
+  await world.waitForRequest(round.requestRoot, (view) => view.rounds.some((entry) =>
+    entry.ref.queryJobId === round.round.queryJobId && entry.answer === body), `${label}: the secretary answered`);
 }
 
 /** The waiting card of `taskId` a public `decisions/queue` read shows (its `taskRef`, `runRef` and `source.pins`). */

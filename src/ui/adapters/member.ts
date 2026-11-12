@@ -229,7 +229,7 @@ function messageTaskOf(state: LineMessageStateV1, views: Map<string, SessionMess
   return view?.message.taskRef ?? lineTask;
 }
 
-function briefRowsOf(brief: ContinuationBriefV1): Array<{ k: string; v: string }> {
+export function briefRowsOf(brief: ContinuationBriefV1): Array<{ k: string; v: string }> {
   const previous = brief.previous;
   const last = previous.error !== null ? previous.error.text
     : previous.interruption !== null ? '中断（' + previous.interruption.kind + '）'

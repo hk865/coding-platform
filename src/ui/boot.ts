@@ -5,13 +5,14 @@ import {
   RouteReadError, subscribeChanges, type BootstrapReply, type CoreScope, type RouteReply,
 } from './host-client.js';
 import { asRecord, asText } from './values.js';
-import { qualifyProjectPath } from '../contracts/workspace-path.js';
+import { qualifyProjectPath, splitWorkspacePath } from '../contracts/workspace-path.js';
 import { createAutoRefresh, type RefreshRead, type RefreshSnapshot, type RefreshSources } from './refresh.js';
 import { adaptNav, completionRevisionOf, goalHref, type LineKey, type NavData, type NavLineDetail } from './adapters/nav.js';
 import {
   adaptMember, messageBodyKey, traceOf, type MemberData, type MemberSource, type MemberWriteBasis,
 } from './adapters/member.js';
 import { adaptChain, type ChainData, type ChainSource } from './adapters/chain.js';
+import { adaptDone, type DoneData, type DonePolicyRead, type DoneRoundRead, type DoneRunActivity, type DoneSource } from './adapters/done.js';
 import {
   readLine, readSessionTrace, requeueVisible, submitRunControl, type LineReadValue,
 } from './adapters/line-shared.js';
@@ -36,9 +37,11 @@ import type { QueryExecutionRecord } from '../contracts/query-job.js';
 import type { GoalCopyDraftResultV1 } from '../contracts/goal-card.js';
 import type { MessageBody, SessionMessageReadV1 } from '../contracts/mailbox.js';
 import type { TaskExecutionRecord } from '../contracts/execution-read.js';
-import type { TaskGraph } from '../contracts/task-graph.js';
+import type { ArtifactRecord } from '../contracts/artifact.js';
+import type { RunRef } from '../contracts/dispatch.js';
+import type { TaskGraph, TaskRow } from '../contracts/task-graph.js';
 import type { SessionHistoryEntry } from '../contracts/session-activity.js';
-import type { UncommittedFilesV1 } from '../contracts/workspace-files.js';
+import type { UncommittedFileV1, UncommittedFilesV1 } from '../contracts/workspace-files.js';
 import type { MemberCopySource } from './adapters/member.js';
 import type { ArchitectureChangeScopeV1 } from '../contracts/architecture-search.js';
 import type { NoteAnchorV1 } from '../contracts/note.js';
@@ -125,6 +128,8 @@ export type BoardReadDemand = TaskMapReadDemand & {
   workOnly?: boolean;
   dirView?: boolean;
   noteAnchor?: NoteAnchorV1 | null;
+  /** Done: expanding one requirement's report reads its `materials/open` once. */
+  doneReport?: string | null;
 };
 
 /** The one action surface `pageProps` gives every board. TaskMap uses
@@ -269,9 +274,6 @@ export async function bootBoardPage(): Promise<void> {
   let latestMember: MemberData | null = null;
   /** Chain's last successful read; the write seams live beside the reader. */
   let latestChain: ChainData | null = null;
-  let controlSeq = 0;
-  let reorderSeq = 0;
-  let answerSeq = 0;
   const decideRowOf = (key: string): DecideRow | null => {
     const data = latestDecide;
     if (data === null) return null;
@@ -357,11 +359,10 @@ export async function bootBoardPage(): Promise<void> {
       }
       const goalRef = { aggregateType: 'Goal' as const, projectId: data.scope.projectId, goalId: data.selectedGoalId };
       const phaseRef = { aggregateType: 'GoalPhase' as const, projectId: data.scope.projectId, goalId: data.selectedGoalId };
-      controlSeq += 1;
       const reply = await client.write('goals/control', data.scope, {
         input: { goalRef, control, reason: null },
         meta: {
-          requestId: 'navfix-control-' + String(controlSeq),
+          requestId: crypto.randomUUID(),
           expected: [
             { ref: goalRef, revision: data.selectedGoalRevision },
             { ref: phaseRef, revision: data.phaseRevision },
@@ -383,12 +384,11 @@ export async function bootBoardPage(): Promise<void> {
       const next = goals.slice();
       const [moved] = next.splice(from, 1);
       next.splice(to, 0, moved!);
-      reorderSeq += 1;
       try {
         const reply = await client.write('goals/reorder', scope, {
           input: { workspace: scope, goalOrder: next.map((goal) => goal.ref) },
           meta: {
-            requestId: 'goals-reorder-' + String(reorderSeq),
+            requestId: crypto.randomUUID(),
             expected: next.map((goal) => ({ ref: goal.ref, revision: goal.revision })),
           },
         });
@@ -464,11 +464,10 @@ export async function bootBoardPage(): Promise<void> {
           revision: conflict.earlierPhaseRevision,
         });
       }
-      answerSeq += 1;
       try {
         const reply = await client.write('decisions/answer', scope, {
           input: { source: conflict.source, selection, text: '', annotations: [] },
-          meta: { requestId: 'goals-answer-' + String(answerSeq), expected },
+          meta: { requestId: crypto.randomUUID(), expected },
         });
         /* `decisions/answer` answers a read of the resolved decision: the
            commit is the nested `answer` receipt, not the top-level status. */
@@ -903,11 +902,15 @@ export async function bootBoardPage(): Promise<void> {
       /* A failed reread keeps the old data for the page; it must not become
          the pins of a control write (§2.8: no second, stale read window). */
       if (snapshot.error === null) {
-        latest = snapshot.data as NavData | null;
         /* §2.10: every board's successful read publishes the scope and selected
-           Goal the one `askSecretary` seam sends with. */
-        latestNavScope = (snapshot.data as { scope?: CoreScope | null } | null)?.scope ?? null;
-        latestSelectedGoalId = (snapshot.data as { selectedGoalId?: string | null } | null)?.selectedGoalId ?? null;
+           Goal the one `askSecretary` seam sends with. Done publishes its five
+           sections beside the chrome, so its navigation is unwrapped first. */
+        const nav = boardName === 'Done'
+          ? (snapshot.data as DoneData | null)?.nav ?? null
+          : snapshot.data as NavData | null;
+        latest = nav;
+        latestNavScope = nav?.scope ?? null;
+        latestSelectedGoalId = nav?.selectedGoalId ?? null;
         if (boardName === 'Goals') {
           latestGoals = snapshot.data as GoalsData | null;
           latestGoalsScope = latestGoals?.scope ?? null;
@@ -937,6 +940,247 @@ export async function bootBoardPage(): Promise<void> {
   await refresh.start();
 }
 
+/** One per-workspace `files/uncommitted` read shared by TaskMap's detail and Done:
+ * each path is sent with its own workspace's ref and the answer's path is
+ * qualified back to the canonical project path. TaskMap caps the whole read at
+ * 100 paths; Done has no total cap, but both send at most 100 paths per
+ * `files/uncommitted` call. One workspace's failed read leaves its files
+ * without numbers (the other workspaces keep theirs). */
+async function readUncommittedByWorkspace(
+  client: ReturnType<typeof createHostClient>, scope: CoreScope,
+  entries: ReadonlyArray<{ workspaceId: string; path: string }>,
+  options: { totalCap?: number } = {},
+): Promise<{ repository: 'git' | 'not_git' | null; files: UncommittedFileV1[] }> {
+  const groupedPaths = new Map<string, string[]>();
+  for (const entry of entries) {
+    if (entry.path === '') continue;
+    const paths = groupedPaths.get(entry.workspaceId) ?? [];
+    if (!paths.includes(entry.path)) paths.push(entry.path);
+    groupedPaths.set(entry.workspaceId, paths);
+  }
+  const files: UncommittedFileV1[] = [];
+  let repository: 'git' | 'not_git' | null = null;
+  let remaining = options.totalCap ?? Number.POSITIVE_INFINITY;
+  for (const [workspaceId, workspacePaths] of groupedPaths) {
+    if (remaining <= 0) break;
+    const capped = workspacePaths.slice(0, remaining);
+    remaining -= capped.length;
+    if (capped.length === 0) continue;
+    const collected: UncommittedFileV1[] = [];
+    try {
+      for (let index = 0; index < capped.length; index += 100) {
+        /* §2.3: this route wants a WorkspaceRef, not the caller's CoreScope. */
+        const page = readyRouteValue<UncommittedFilesV1>(await client.post('files/uncommitted',
+          { ...scope, workspaceId }, {
+            workspace: { aggregateType: 'Workspace', projectId: scope.projectId, workspaceId },
+            paths: capped.slice(index, index + 100),
+          }), 'files/uncommitted');
+        if (page.repository !== 'git') {
+          if (repository === null) repository = 'not_git';
+          continue;
+        }
+        repository = 'git';
+        for (const file of page.files) {
+          collected.push({ ...file, path: qualifyProjectPath(workspaceId, file.path, scope.workspaceId) });
+        }
+      }
+      files.push(...collected);
+    } catch {
+      // One workspace's failed read leaves its files without numbers.
+    }
+  }
+  return { repository, files };
+}
+
+/**
+ * E3-DONE §2.2: the Done read. It is `readNav`'s chrome read plus the delivery's
+ * six public routes in the ruled order: completion policy, the one gate's
+ * verification round, `architecture/change-scope`, one `graph/detail` per Task
+ * (only its actual files), `files/uncommitted` for those paths, the Runs and
+ * their briefs, `activity/runs`, and — only when the page asks for one digest —
+ * `materials/open`. `not_found` is a legitimate empty state only where §2.2
+ * names it; every other failure is the read's own error. No route shape reaches
+ * the page: `adaptDone` folds it into `DoneData`.
+ */
+export async function readDone(
+  client: ReturnType<typeof createHostClient>, goalId: string | null,
+  demand: BoardReadDemand = {},
+): Promise<RefreshRead<DoneData>> {
+  const boot = await client.bootstrap();
+  const cursor = boot.changesHead ?? null;
+  const navRead = await readNav(client, goalId, demand, boot);
+  const nav = navRead.data;
+  if (nav === null) return { data: null, cursor };
+  const selectedGoalId = nav.selectedGoalId;
+  const scope = nav.scope;
+  if (selectedGoalId === null || scope === null) {
+    const blankSource: DoneSource = {
+      nav, deliveryState: 'no_plan', round: null, policy: null,
+      changeScope: {
+        goalRef: { aggregateType: 'Goal', projectId: scope?.projectId ?? '', goalId: selectedGoalId ?? '' },
+        files: [], modules: [], counts: { files: 0, changed: 0, possible: 0 }, complete: true, sourceCursor: null,
+      },
+      taskFiles: {}, taskFilesIncomplete: false, files: null, runs: [], briefs: {}, activity: [],
+      reports: {}, reportError: null,
+    };
+    return { data: adaptDone(blankSource), cursor };
+  }
+  const goalRef = { aggregateType: 'Goal' as const, projectId: scope.projectId, goalId: selectedGoalId };
+
+  /* ④ The completion policy: `not_found` is "no policy yet", not a read error;
+     only the section's closing note depends on it. */
+  let policy: DonePolicyRead | null = null;
+  try {
+    policy = readyRouteValue<DonePolicyRead>(
+      await client.post('completion-policies/read', scope, { projectId: scope.projectId }),
+      'completion-policies/read');
+  } catch (error) {
+    if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
+  }
+
+  /* ⑤ One gate: the Goal-level one; else the only one; more than one without a
+     Goal-level gate is the ruled "many gates, not connected" state. */
+  const graph = nav.tasks;
+  let gate: TaskRow | null = null;
+  let deliveryState: DoneSource['deliveryState'] = 'no_plan';
+  if (graph !== null) {
+    const gates = graph.tasks.filter((row) => row.definition.taskKind === 'gate' && row.disposition === 'active');
+    const goalGate = gates.find((row) => row.definition.scope.kind === 'goal') ?? null;
+    if (goalGate !== null) gate = goalGate;
+    else if (gates.length === 1) gate = gates[0] ?? null;
+    else if (gates.length === 0) deliveryState = 'no_gate';
+    else deliveryState = 'many_gates';
+  }
+  let round: DoneRoundRead | null = null;
+  if (gate !== null) {
+    deliveryState = 'ready';
+    try {
+      round = readyRouteValue<DoneRoundRead>(
+        await client.post('verification/round', scope, { taskRef: gate.ref }), 'verification/round');
+    } catch (error) {
+      if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
+      deliveryState = 'no_round';
+    }
+  }
+
+  /* ⑥ The one file grouping: `architecture/change-scope`; a failure fails the read. */
+  const changeScope = readyRouteValue<ArchitectureChangeScopeV1>(
+    await client.post('architecture/change-scope', scope, { goalRef }), 'architecture/change-scope');
+
+  /* ⑦ Task ↔ file: one summary read per Task; `unavailable` only leaves that
+     Task without an attribution and never guesses `plannedFiles`. */
+  const taskFiles: Record<string, string[]> = {};
+  let taskFilesIncomplete = false;
+  if (graph !== null) {
+    for (const row of graph.tasks) {
+      const detail = readyRouteValue<unknown>(await client.post('graph/detail', scope, {
+        goalRef, node: { kind: 'task', ref: row.ref, planRef: graph.plan.ref },
+        section: 'summary', page: { afterCursor: null, limit: 100 },
+      }), 'graph/detail');
+      const actual = asRecord(asRecord(asRecord(detail).task).actualFiles);
+      if (actual.availability !== 'available') continue;
+      const files = (Array.isArray(actual.value) ? actual.value : []).map((entry) => {
+        const file = asRecord(entry);
+        const path = asText(file.path);
+        if (path === '') return '';
+        const workspaceId = asText(file.workspaceId) || scope.workspaceId;
+        return qualifyProjectPath(workspaceId, path, scope.workspaceId);
+      }).filter((path) => path !== '');
+      if (files.length > 0) taskFiles[row.ref.taskId] = [...new Set(files)];
+      if (actual.possiblyIncomplete === true) taskFilesIncomplete = true;
+    }
+  }
+
+  /* ⑧ The added/deleted numbers only: each change-scope path against its own
+     workspace's HEAD (the canonical project path names the workspace). A
+     failed read only makes that workspace's numbers unreadable; the file list
+     stays. Done has no total path cap, only 100-path batches per workspace. */
+  const paths = changeScope.files.map((file) => {
+    const parsed = splitWorkspacePath(file.path);
+    return { workspaceId: parsed.workspaceId ?? scope.workspaceId, path: parsed.path };
+  });
+  let files: UncommittedFilesV1 | null = null;
+  if (paths.length > 0) {
+    const read = await readUncommittedByWorkspace(client, scope, paths);
+    files = read.repository === 'git' ? { repository: 'git', files: read.files }
+      : read.repository === 'not_git' ? { repository: 'not_git' } : null;
+  }
+
+  /* ⑨ Rework/succession Runs: each rework entry's after Run, each Task's
+     requeue target and its selected Run; deduplicated, then `executions/read`
+     (one unreadable Run only leaves that row without facts) and, for a Run that
+     carries `requeueRef`, its continuation brief. */
+  const runRefs: RunRef[] = [];
+  const seenRuns = new Set<string>();
+  const addRun = (ref: RunRef | null | undefined): void => {
+    if (ref === null || ref === undefined || seenRuns.has(ref.runId)) return;
+    seenRuns.add(ref.runId);
+    runRefs.push(ref);
+  };
+  for (const row of graph?.tasks ?? []) {
+    for (const entry of row.rework?.entries ?? []) addRun(entry.afterRunRef);
+    if (row.requeueRef !== undefined) {
+      addRun({ aggregateType: 'Run', projectId: scope.projectId, goalId: row.ref.goalId, runId: row.requeueRef.afterRunId });
+    }
+    addRun(row.execution);
+  }
+  const runs: TaskExecutionRecord[] = [];
+  for (const ref of runRefs) {
+    try {
+      runs.push(readyRouteValue<TaskExecutionRecord>(
+        await client.post('executions/read', scope, ref), 'executions/read'));
+    } catch (error) {
+      if (!(error instanceof RouteReadError)) throw error;
+    }
+  }
+  const briefs: Record<string, ContinuationBriefV1 | null> = {};
+  for (const record of runs) {
+    if (record.run.requeueRef === undefined) continue;
+    const read = readyRouteValue<{ brief: ContinuationBriefV1; digest: string } | null>(
+      await client.post('executions/brief', scope, { runRef: record.run.ref }), 'executions/brief');
+    briefs[record.run.ref.runId] = read === null ? null : read.brief;
+  }
+
+  /* ⑩ Token usage: `activity/runs` for those Runs, 200 at a time; no Run means
+     no route call and `usage === null` in the adapter. */
+  const activity: DoneRunActivity[] = [];
+  const activityRefs = runs.map((record) => record.run.ref);
+  for (let index = 0; index < activityRefs.length; index += 200) {
+    const page = readyRouteValue<DoneRunActivity[]>(await client.post('activity/runs', scope, {
+      runRefs: activityRefs.slice(index, index + 200),
+    }), 'activity/runs');
+    activity.push(...page);
+  }
+
+  /* ⑪ The one on-demand report: only a digest the shown round really carries;
+     its failure is `reportError`, never the page's failure. */
+  const reports: Record<string, string> = {};
+  let reportError: string | null = null;
+  const reportDigest = demand.doneReport ?? null;
+  if (reportDigest !== null && round !== null) {
+    const wanted = round.delivery.requirements.flatMap((requirement) => requirement.checks)
+      .find((check) => check.reportRef !== null && check.reportRef.digest === reportDigest)?.reportRef ?? null;
+    if (wanted !== null) {
+      try {
+        const record = readyRouteValue<ArtifactRecord>(
+          await client.post('materials/open', scope, { ref: wanted, usage: 'historical_explanation' }),
+          'materials/open');
+        reports[wanted.digest] = record.body;
+      } catch (error) {
+        reportError = pageTextOf(error);
+      }
+    }
+  }
+
+  return {
+    data: adaptDone({
+      nav, deliveryState, round, policy, changeScope, taskFiles, taskFilesIncomplete,
+      files, runs, briefs, activity, reports, reportError,
+    }),
+    cursor,
+  };
+}
+
 type BoardReader<T> = (
   client: ReturnType<typeof createHostClient>, goalId: string | null, demand?: BoardReadDemand,
 ) => Promise<RefreshRead<T>>;
@@ -952,6 +1196,7 @@ const BOARD_READERS: Record<string, BoardReader<unknown>> = {
   Decide: readDecide as BoardReader<unknown>,
   Member: readMember as BoardReader<unknown>,
   Chain: readChain as BoardReader<unknown>,
+  Done: readDone as BoardReader<unknown>,
 };
 
 /** The board name a served page is for: `/workbench/TaskMap.dc.html` -> `TaskMap`. */
@@ -2210,44 +2455,17 @@ async function readNodeDetail(
    * (UNCOMMITTED_FILES_MAX_PATHS). The result is keyed by the canonical project path, the same key
    * the adapter's rows use, so two workspaces' same-named files never share a number. A failed read
    * only hides that workspace's numbers. */
-  const groupedPaths = new Map<string, string[]>();
+  const entries: Array<{ workspaceId: string; path: string }> = [];
   if (actual.availability === 'available' && Array.isArray(actual.value)) {
     for (const entry of actual.value) {
       const file = asRecord(entry);
       const path = asText(file.path);
       if (path === '') continue;
-      const workspaceId = asText(file.workspaceId) || scope.workspaceId;
-      const paths = groupedPaths.get(workspaceId) ?? [];
-      if (!paths.includes(path)) paths.push(path);
-      groupedPaths.set(workspaceId, paths);
+      entries.push({ workspaceId: asText(file.workspaceId) || scope.workspaceId, path });
     }
   }
-  let uncommitted: TaskMapUncommittedRead = null;
-  if (groupedPaths.size > 0) {
-    const files: NonNullable<NonNullable<TaskMapUncommittedRead>['files']> = [];
-    let repository: 'git' | 'not_git' | null = null;
-    let remaining = 100;
-    for (const [workspaceId, workspacePaths] of groupedPaths) {
-      const paths = workspacePaths.slice(0, remaining);
-      remaining -= paths.length;
-      if (paths.length === 0) break;
-      try {
-        const read = readyRouteValue<NonNullable<TaskMapUncommittedRead>>(await client.post('files/uncommitted',
-          { ...scope, workspaceId }, {
-            workspace: { aggregateType: 'Workspace', projectId: scope.projectId, workspaceId }, paths,
-          }), 'files/uncommitted');
-        if (read.repository !== 'git') continue;
-        repository = 'git';
-        for (const entry of read.files ?? []) {
-          const file = asRecord(entry);
-          files.push({ ...file, path: qualifyProjectPath(workspaceId, asText(file.path), scope.workspaceId) });
-        }
-      } catch {
-        // One workspace's failed read leaves its files without numbers.
-      }
-    }
-    uncommitted = repository === null ? null : { repository, files };
-  }
+  const read = await readUncommittedByWorkspace(client, scope, entries, { totalCap: 100 });
+  const uncommitted: TaskMapUncommittedRead = read.repository === 'git' ? { repository: 'git', files: read.files } : null;
   let catalog: { modules?: unknown[]; containment?: unknown } | null = null;
   if (needsCatalog) {
     try {

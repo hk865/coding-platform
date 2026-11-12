@@ -18,8 +18,8 @@ import type { TaskGraph, TaskRow } from '../../contracts/task-graph.js';
 import type { SessionRef } from '../../contracts/core/identity.js';
 import { asRecord, asText } from '../values.js';
 import {
-  automationStopOf, CHECK_RESULT_WORD, FAILURE_CLASS_WORD, PHASE_WORD, RUN_RESULT_WORD,
-  taskState, taskWhyOf,
+  CHECK_RESULT_WORD, FAILURE_CLASS_WORD, PHASE_WORD, RUN_RESULT_WORD,
+  taskStateOfRow, taskWhyOf,
 } from './task-map.js';
 import { dutyWordOf, lineHref, lineStatusView, type LineKey, type NavData, type NavLine } from './nav.js';
 import { requeueVisible } from './line-shared.js';
@@ -199,9 +199,7 @@ function chainTaskRowOf(graph: TaskGraph | null, task: { projectId: string; goal
 /** The task state the bar and its square use; `taskState` is the TaskMap
  * table's own, with the automation stop read from the failure facts (§2.7). */
 function chainTaskStateOf(row: TaskRow): string | null {
-  return taskState(row.effectivePhase, asRecord(row.definition).executionIntent, row.disposition,
-    asText(asRecord(row.phaseCause).code), automationStopOf(row as unknown as Record<string, unknown>),
-    row.eligibility.eligible);
+  return taskStateOfRow(row);
 }
 
 function taskOf(graph: TaskGraph | null, task: TaskRow['ref'] | null): ChainTask | null {

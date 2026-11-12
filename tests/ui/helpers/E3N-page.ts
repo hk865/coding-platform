@@ -133,17 +133,28 @@ export function forwardPage(world: Pick<E3NTarget, 'base'>, log: PageLog, mode: 
   };
 }
 
-export async function bootE3N(world: E3NTarget, name: 'Main' | 'TaskMap' | 'Goals' | 'ArchOverview' | 'Decide' | 'Member' | 'Chain', options: {
+export async function bootE3N(world: E3NTarget, name: 'Main' | 'TaskMap' | 'Goals' | 'ArchOverview' | 'Decide' | 'Member' | 'Chain' | 'Done', options: {
   search?: string; mode?: ChangeMode; token?: string | (() => string | null); source?: string;
-  gate?: boolean; unavailable?: string;
+  gate?: boolean; unavailable?: string; failOnce?: string; before?: Record<string, (log: PageLog) => Promise<void>>;
 } = {}): Promise<{ page: BootedPage; log: PageLog }> {
   const log = newPageLog();
   if (options.gate === true) gateChanges(log);
+  const forward = forwardPage(world, log, options.mode ?? 'stream', options.unavailable ?? null);
+  let failed = false;
+  const pageRequest: PageFetch = async (url, init, realFetch) => {
+    const route = routeOf(url);
+    if (options.failOnce !== undefined && !failed && route === options.failOnce) {
+      failed = true;
+      throw new TypeError('E3N: the network dropped this request');
+    }
+    if (options.before !== undefined && options.before[route] !== undefined) await options.before[route]!(log);
+    return await forward(url, init, realFetch);
+  };
   const page = await bootPage({
     name,
     ...(options.search === undefined ? {} : { search: options.search }),
     token: options.token ?? (() => world.token),
-    request: forwardPage(world, log, options.mode ?? 'stream', options.unavailable ?? null),
+    request: pageRequest,
     ...(options.source === undefined ? {} : { source: options.source }),
   });
   const restore = page.restore;

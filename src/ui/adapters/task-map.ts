@@ -16,6 +16,7 @@ import { pathOwnershipOf } from '../../contracts/path-ownership.js';
 import { catalogForWorkspace } from '../../contracts/workspace-catalog.js';
 import { displayProjectPath, qualifyProjectPath } from '../../contracts/workspace-path.js';
 import type { AdoptedArchitecture } from '../../contracts/architecture-catalog.js';
+import type { TaskRow } from '../../contracts/task-graph.js';
 import { revisionAssignments } from '../../contracts/plan.js';
 import { asRecord, asText, type JsonRecord } from '../values.js';
 
@@ -183,6 +184,14 @@ export function taskState(
   }
   if (phase === 'failed' && DECIDE_STOPS.has(stopReason)) return 'decide';
   return phase;
+}
+
+/** The same Task state from a whole row: the one rule every board calls
+ * (`done.ts` and `chain.ts` had their own copies), with the automation stop read
+ * from the failure facts. */
+export function taskStateOfRow(row: TaskRow): string | null {
+  return taskState(row.effectivePhase, row.definition.executionIntent, row.disposition,
+    asText(asRecord(row.phaseCause).code), automationStopOf({ ...row }), row.eligibility.eligible);
 }
 
 /** The short current reason a TaskRow carries, in the A.2 words (DESIGN `:606`,
@@ -413,7 +422,7 @@ const isAutoReworkCode = (reason: string): boolean => reason.startsWith('auto-re
 /** Ruling 5: rework history from `tasks[].rework.entries`, no demo batch:
  * 第 n 次 · who · class · reason · date (DESIGN `:507`). 第 n 次 is the
  * rework's order, never an attempt ordinal. */
-function reworkLines(rework: unknown): string[] {
+export function reworkLines(rework: unknown): string[] {
   const entries = asRecord(rework).entries;
   return (Array.isArray(entries) ? entries : []).map((entry, index) => {
     const row = asRecord(entry);

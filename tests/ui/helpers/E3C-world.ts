@@ -202,15 +202,21 @@ export function goalRowLabel(row: FakeElement | undefined): string {
   return name.startsWith('目标 ') || ord === '' ? name : `目标 ${ord} · ${name}`;
 }
 
-/** The value of the `<dd>` after the `<dt>` named `key` under `scope`. */
-export function dlValue(scope: FakeElement | undefined, key: string): string | null {
-  if (scope === undefined) return null;
+/** The `<dd>` element after the `<dt>` named `key` under `scope`. */
+export function dlElement(scope: FakeElement | undefined, key: string): FakeElement | undefined {
+  if (scope === undefined) return undefined;
   for (const list of descendants(scope).filter((element) => element.tagName.toLowerCase() === 'dl')) {
     const children = list.childNodes.filter((child): child is FakeElement => 'tagName' in child);
     const at = children.findIndex((child) => child.tagName.toLowerCase() === 'dt' && textOf(child) === key);
-    if (at >= 0 && children[at + 1] !== undefined) return textOf(children[at + 1]);
+    if (at >= 0 && children[at + 1] !== undefined) return children[at + 1];
   }
-  return null;
+  return undefined;
+}
+
+/** The value of the `<dd>` after the `<dt>` named `key` under `scope`. */
+export function dlValue(scope: FakeElement | undefined, key: string): string | null {
+  const element = dlElement(scope, key);
+  return element === undefined ? null : textOf(element);
 }
 
 /** The dock's task bar (`aria-label="任务状态"`). */

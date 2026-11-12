@@ -122,8 +122,8 @@ export async function seedPlatformLine(platform: SessionLineWriter, ctx: CoreCal
 export type AdvanceValue = Extract<WorkflowAdvanceResult, { status: 'ready' }>['value'];
 
 export type DriveWorkflowOptions = {
-  /** Stop before performing this Workflow operation (e.g. the automatic `requeue_task`). */
-  stopBefore?: string;
+  /** Stop before performing this Workflow operation, or before any operation the predicate names. */
+  stopBefore?: string | ((op: { kind: string }) => boolean);
   /** Collect every non-null step receipt, in order. */
   receipts?: WorkflowStepReceipt[];
 };
@@ -139,7 +139,9 @@ export async function driveWorkflow(host: AG2bHost, input: WorkflowAdvanceInput,
     if (options.receipts !== undefined && result.value.receipt !== null) options.receipts.push(result.value.receipt);
     if (result.value.state === 'completed' || result.value.next === null) return steps;
     current = result.value.next;
-    if (options.stopBefore !== undefined && current.kind === 'perform' && current.operation.kind === options.stopBefore) return steps;
+    const stop = typeof options.stopBefore === 'function' ? options.stopBefore
+      : (op: { kind: string }) => op.kind === options.stopBefore;
+    if (options.stopBefore !== undefined && current.kind === 'perform' && stop(current.operation)) return steps;
   }
   throw new Error('the Workflow did not settle');
 }

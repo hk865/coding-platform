@@ -14,6 +14,7 @@
 | `task-map.ts` | `adaptTaskMap` 把 `ReadResult<GoalDetail>`、`ReadResult<GoalDisplayRead>`、`ReadResult<TaskGraph>` 和每次通知的 `lines/list` / `graph/hover` 值转成 `TaskMapData`：Goal 的名字/展示状态/状态词（`goalDisplayState`），阶段按计划顺序，任务的状态词按 `effectivePhase`、`executionIntent` 和 `disposition`；DAG 的节点就是同一批任务行，边是 `plan.executionDag.dependsOn`，门是 `definition.taskKind === 'gate'` 的真实 Task（阶段可只写在 `scope.stageId`），未排定带同时检查无入边、无出边、非门、无验收义务四个条件，关键路径是最长未完成依赖串，没有目标门时不合成节点；`graph/hover` 的 `modules[]` 给 `moduleNames`（“模块”分组按模块 id 分、组标题用名字，页面上不出现 id）；悬停 `owners` 为空或摘要 `responsibility: none`、任务又没完成时，负责写“未分配”（可领取、待执行再接说明），已满足、已取消、已替代仍藏；`why` 留空（路由没有这段正文）。`tasks/query` 的 `not_found` 是 `planMissing` 和 `NO_PLAN_TEXT`。`adaptTaskMapCalendar` 把 `activity/calendar` 的窗口页转成日/小时卡：身份只用返回的 `localDate/localHour/startAt/endAt`，DST 日不补成 24 小时，覆盖不完整时汇总写明范围和“未记全”，不冒充完整 0；`taskMapStatesAt` 按半开时间段取历史状态；`adaptTaskMapTime` 把 `activity/track` 的多页横条、`lines/list` 的行和 `tasks/timeline` 转成轨道：一行一个 `LineRowV1.key`（含接续 Session），Run/检查/Query 按真实 Session、owner 和 `via` 归线，Query 按 `queryRunRef` 去重，检查保留真实 `ordinal`，只从横条自身的 result/pauses 生成标记，Host 重启保留 `approximate`。 |
 | `line-shared.ts` | Member/Chain 的共用入口（E3 Member §10）：线身份 `LineKey` 的正本在 `nav.ts`（这里只 import）；`readLine` 是唯一的 `lines/read`，返回线或 `{kind:'branched',heads}`；`submitRunControl` 是唯一的 `controls/submit`，`expected` 取控制项自己的 `pins`、`requestId` 一次点击一个、只认 `committed`；`requeueVisible` 只认 `effectivePhase==='failed'` 且 `failure.requeueActors` 含 `human`；`readSessionTrace` 是唯一的 `sessions/history` 读（Member 的轨迹和 Main 的轨迹页签共用）。不碰 DOM、不碰页面本地状态。 |
 | `chain.ts` | Chain 页（E3 Chain §2.3–§2.10）：`adaptChain(source, ui)` 把导航段、选中线的 `lines/read`/`lines/page` executions、尾部 10 段的 `executions/read`/`executions/history`/`executions/brief`、`verification/round` 与 `tasks/query` 折成 `ChainData`；执行段不重排，检查每轮都读，任务词表和重新入队可见性复用正本。 |
+| `done.ts` | Done 页（E3-DONE §2.2–§2.10）：`adaptDone(source)` 把导航段、完成策略、一个 gate 的 `verification/round`、`architecture/change-scope`、每 Task 的实际文件、`files/uncommitted`、`executions/read`/`brief`、`activity/runs` 和 `materials/open` 折成 `DoneData`（五段、交付卡、报告正文、目标栏的 `progress`）；`deliveryState` 由读序选，不猜；词表/返工行/接续行复用 `task-map.ts` 与 `member.ts` 的正本：要求状态的 `word`/`sq`/`tx` 由本文件的 `REQUIREMENT_VIEW` 给（通过、未通过、检查不完整取 `task-map.ts` 的 `CHECK_RESULT_WORD`，待检查、没有检查只写在这张表里）；轮次的 `word` 取 `CHECK_RESULT_WORD`，`tx` 由适配器按 `outcome` 算；交付卡的 `askRef` 和 `progress`（`taskProgressOf`）都由适配器算。 |
 | `member.ts` | Member 页（E3 Member §2.3–§2.10）：`adaptMember(source, selected)` 把导航段、`lines/page` 四段、`messages/view`/`messages/body`、`executions/read`（含 `controls/read`/`executions/brief`）、副本的 `queries/read`/`queries/answer`、按需的 `sessions/history`/`files/*`、`graph/hover` 折成 `MemberData`；左栏 `current` 只认 `ownKey`，控制可用性、重新入队可见性和整页链接都来自已读数据和共用函数；`MemberWriteBasis` 是 `tasks/requeue` 的 pins 依据；`trace` 只列 `sessions/history` 原文，`traceOf` 的时间/类型/编号转换也导出给 Main 复用；`changes` 只画工作区未提交文件。 |
 
 ## 可复用的能力
@@ -25,8 +26,9 @@
 - `adaptMain` / `MainData` / `MainQuote` / `MainLogRow` / `MainTrackRow`：Main A 的纯转换（线程、翻页游标、轨迹、待决卡）；复用 `adaptNav` 的导航段、`adaptDecide` 的卡视图和 `goals.ts` 的 `taskProgressOf`。
 - `adaptNav` / `NavData` / `NavGoal` / `NavLine` / `LineKey` / `lineHref` / `lineStatusView` / `goalHref` / `completionRevisionOf`：导航段的纯转换和链接形状；目标状态词复用 `goalDisplayState`，结束判断复用 `isFinishedGoalDisplayPhase`，GoalPhase 版本复用 `completionRevisionOf`。`lineHref` 给 Member/Chain 的整页链接带 Goal 和线身份，各编码一次；`lineStatusView` 是线状态词的唯一映射。
 - `adaptChain` / `ChainData` / `ChainSource` / `ChainAttempt` / `ChainRound` / `ChainTraceRecord` / `ChainRail` / `ChainBar`：Chain 页的纯转换；复用 `task-map.ts` 的 `taskState`/`taskWhyOf`/`PHASE_WORD`/`FAILURE_CLASS_WORD`/`CHECK_RESULT_WORD`/`RUN_RESULT_WORD`、`nav.ts` 的 `lineStatusView`/`dutyWordOf`、`line-shared.ts` 的 `requeueVisible`。
+- `adaptDone` / `DoneData` / `DoneDelivery` / `DoneRequirement` / `DoneSource`：Done 页的纯转换；复用 `task-map.ts` 的 `taskStateOfRow`（其内是 `taskState` 与 `automationStopOf` 的正本）/`goalDisplayState`/`FAILURE_CLASS_WORD`/`CHECK_RESULT_WORD`/`reworkLines`、`member.ts` 的 `briefRowsOf`、`goals.ts` 的 `taskProgressOf` 和 `nav.ts` 的 `goalHref`/`NavData`；要求行带 `word`/`sq`/`tx`，轮次带 `word`/`tx`，交付卡带 `askRef`，目标栏带 `progress`。
 - `adaptMember` / `MemberData` / `MemberSource` / `MemberWriteBasis` / `MemberCopySource` / `MemberLine` / `MemberItem` / `MemberTraceRow` / `MemberChanges` / `messageBodyKey`：Member 页的纯转换、写 pins 的依据和正文键；复用 `lineStatusView`、`dutyWordOf`、`lineHref`、`requeueVisible` 和 `task-map.ts` 的 `taskState`/`taskWhyOf`/`PHASE_WORD`。
-- `taskProgressOf` / `readSessionTrace`：A07 的 `done/total` 唯一规则（Goals 和 Main 共用）和 `sessions/history` 的唯一读（Member 和 Main 共用）。
+- `taskProgressOf` / `readSessionTrace`：A07 的 `done/total` 唯一规则（Goals、Main 和 Done 共用）和 `sessions/history` 的唯一读（Member 和 Main 共用）。
 - `readLine` / `submitRunControl` / `requeueVisible` / `LineReadValue` / `UiClient`：Member 和 Chain 共用的选中线读取、控制提交和重新入队可见性；线身份复用 `nav.ts` 的 `LineKey`。
 - 值守卫 `asRecord` / `asText` 在 `src/ui/values.ts`，与 `src/ui/boot.ts` 共用一份。
 
@@ -44,6 +46,7 @@
 | `addRepairTask` | `plans/propose`，随后 `plans/apply` |
 | `markNoticeSeen` | `decisions/notices/seen` |
 | `askCard` | `requests/ask`（卡带 `requestRef`）或 `requests/submit`，随后 `requests/read` |
+| Done 的问秘书 | 复用 `askSecretary`（`requests/submit` + `requests/read`）和 `controlGoal`（`goals/control`）；Done 不新增写口 |
 
 ## 边界
 
