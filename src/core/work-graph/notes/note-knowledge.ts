@@ -95,15 +95,19 @@ export function indexKnowledgeFile(tx: KnowledgeIndexTx, line: LineKnowledge, pa
   return { status: 'decoded', value: { kind, blobSha } };
 }
 
-/** Where each note's file is now: every line of the project, by id (a note's file is on one line only). */
-export async function notesAcrossLines(read: KnowledgeRead, noteIds: readonly string[]):
+/**
+ * Where each note's file is now: every line of the project, by id (a note's file is on one line only); `unreadable`
+ * as `LineKnowledge.readNoteFiles`'s.
+ */
+export async function notesAcrossLines(read: KnowledgeRead, noteIds: readonly string[],
+  unreadable: 'unavailable' | 'leave_out' = 'unavailable'):
 Promise<StoreResult<Map<string, { line: LineKnowledge; note: LineNoteFileV1 }>>> {
   const found = new Map<string, { line: LineKnowledge; note: LineNoteFileV1 }>();
   if (noteIds.length === 0) return { status: 'ready', value: found };
   const lines = await read.lines.project(read.caller);
   if (lines.status !== 'ready') return lines;
   for (const line of lines.value) {
-    const notes = await line.readNoteFiles(noteIds.filter(noteId => !found.has(noteId)));
+    const notes = await line.readNoteFiles(noteIds.filter(noteId => !found.has(noteId)), unreadable);
     if (notes.status !== 'ready') return notes;
     for (const note of notes.value) found.set(note.noteId, { line, note });
   }
@@ -194,25 +198,13 @@ export function headWithFile(head: NoteHeadSnapshot, line: LineKnowledge, note: 
 /**
  * The record heads with each knowledge-anchored head's file knowledge over it (found by id on every line). A file
  * missing or bad makes the read unavailable; with `leave_out` (2c-1d: the decision queue's waiting notes) that head
- * is left out and the others are read.
+ * is left out and the others are read. A line or a notes directory that cannot be listed fails the read either way.
  */
 export async function overlayFileKnowledge(heads: readonly NoteHeadSnapshot[], read: KnowledgeRead,
   unreadable: 'unavailable' | 'leave_out' = 'unavailable'): Promise<StoreResult<NoteHeadSnapshot[]>> {
   const wanted = heads.filter(head => isKnowledgeAnchor(head.anchor)).map(head => head.noteId);
   if (wanted.length === 0) return { status: 'ready', value: [...heads] };
-  let found = await notesAcrossLines(read, wanted);
-  if (found.status !== 'ready' && unreadable === 'leave_out') {
-    // One bad file fails the batch: each note is read alone, and one that cannot be read is left out. Lines that
-    // cannot be listed are the read's failure, never every note left out.
-    const lines = await read.lines.project(read.caller);
-    if (lines.status !== 'ready') return lines;
-    const each = new Map<string, { line: LineKnowledge; note: LineNoteFileV1 }>();
-    for (const noteId of wanted) {
-      const one = await notesAcrossLines(read, [noteId]);
-      if (one.status === 'ready') for (const [id, entry] of one.value) each.set(id, entry);
-    }
-    found = { status: 'ready', value: each };
-  }
+  const found = await notesAcrossLines(read, wanted, unreadable);
   if (found.status !== 'ready') return found;
   const files = found.value;
   const missing = wanted.filter(noteId => !files.has(noteId));
@@ -338,10 +330,13 @@ export async function prepareNoteFiles(attempt: DecisionSourceAttempt, key: stri
   const pending = lines === null ? null
     : await pendingKnowledgeWrites(read.lines.write.records, read.caller.projectId, lines.value);
   if (pending !== null && pending.status !== 'ready') return pending;
-  const overlaid = await overlayFileKnowledge(heads, read, unreadable);
+  // 2c-1d (Astra d 1): a head this attempt already left out at this version is not read again, strictly or not (a bad
+  // waiting note another card names as its target leaves out only itself); the pending check above still counts it.
+  const cached = attempt.cache.get(key) as PreparedNotes | undefined;
+  const overlaid = await overlayFileKnowledge(cached === undefined ? heads
+    : heads.filter(head => cached.leftOut.get(head.noteId) !== head.version), read, unreadable);
   if (overlaid.status !== 'ready') return overlaid;
-  const prepared = (attempt.cache.get(key) as PreparedNotes | undefined)
-    ?? { heads: new Map(), leftOut: new Map(), writing: false };
+  const prepared = cached ?? { heads: new Map(), leftOut: new Map(), writing: false };
   if (pending?.value.some(log => filed.has(noteIdFromFilePath(log.path) ?? '')) === true) prepared.writing = true;
   for (const head of overlaid.value) if (isKnowledgeAnchor(head.anchor)) prepared.heads.set(head.noteId, head);
   const shown = new Set(overlaid.value.map(head => head.noteId));

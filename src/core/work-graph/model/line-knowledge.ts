@@ -5,7 +5,7 @@
  * themselves; the composition root implements both interfaces.
  */
 import type { AdoptedArchitecture, ModuleContainment } from '../../../contracts/architecture-catalog.js';
-import type { WriteResult } from '../../../contracts/core/results.js';
+import type { CoreRejection, WriteResult } from '../../../contracts/core/results.js';
 import { canonicalJson } from '../../../contracts/fingerprint.js';
 import type { KnowledgeConflictV1 } from '../../../contracts/knowledge.js';
 import type {
@@ -121,8 +121,13 @@ export interface LineKnowledge {
   readonly objectFormat: 'sha1' | 'sha256';
   /** `architecture.json` and `modules/*.json` of this line: file frame in, project view out; one bad file or conflict makes the whole read unavailable with the paths. */
   readArchitecture(): Promise<StoreResult<KnowledgeArchitecture>>;
-  /** The note files of these ids on this line (no record read: a caller that holds the heads already); an id with no file is left out. A bad file or one id with two files is unavailable with the ids and paths. */
-  readNoteFiles(noteIds: readonly string[]): Promise<StoreResult<LineNoteFileV1[]>>;
+  /**
+   * The note files of these ids on this line (no record read: a caller that holds the heads already); an id with no
+   * file is left out. A bad file or one id with two files is unavailable with the ids and paths; with `leave_out`
+   * (2c-1d: the decision queue's waiting notes) that note is left out instead. A notes directory that cannot be listed
+   * is unavailable either way.
+   */
+  readNoteFiles(noteIds: readonly string[], unreadable?: 'unavailable' | 'leave_out'): Promise<StoreResult<LineNoteFileV1[]>>;
   /** `readNoteFiles` with this project's runtime state (one record `readMany`); an id with no file is left out (the caller judges it). */
   readNotesById(noteIds: readonly string[]): Promise<StoreResult<LineNoteV1[]>>;
   /** Before the commit: from the whole project view, the architecture file changes of this line (the partition and the file names are decided here). Writes nothing. */
@@ -209,6 +214,11 @@ export type KnowledgeWriteDeps = {
   /** The semantic conflicts of one line's module files (`knowledgeConflictsOf`, pure). */
   readonly conflictsOf: (modules: readonly { path: string; bytes: Uint8Array }[], scope: KnowledgeLineScope) =>
     readonly KnowledgeConflictV1[];
+  /**
+   * [2C1-17] step 8 (b2 Astra 1): whether the project's records ever adopted an architecture (`readCatalogAdopted`);
+   * a failed read is a rejection, never `false`.
+   */
+  readonly catalogAdopted: (projectId: string) => Promise<{ status: 'ready'; value: boolean } | CoreRejection>;
 };
 /** The one knowledge entry a service gets (injected by the composition root, required in the service's dependencies). */
 export interface KnowledgeLines {

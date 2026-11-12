@@ -104,6 +104,11 @@ export interface WakeLoop {
   committed(notice: RecordCommitNotice): void;
   start(workspaces: WorkspaceScope[], input: { resumeOnStartup: boolean }): Promise<void>;
   addWorkspace(scope: WorkspaceScope): Promise<void>;
+  /**
+   * Test observation (the Host's `lifecycleIdle`): resolves once no pass of the pair runs, is due or waits out a
+   * back-off (no chain), at once when there is none. It changes nothing; production never calls it.
+   */
+  idle(scope: WorkspaceScope, queueKey: string): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -178,6 +183,8 @@ type QueueState = {
   failures: number;
   /** When the pending back-off ends; 0 when no back-off is pending. */
   retryAt: number;
+  /** `idle` observers, settled when the chain ends with nothing more scheduled. */
+  idleWaiters: (() => void)[];
 };
 
 /** The aggregate types that may carry a request or a Session into a pass. */
@@ -252,7 +259,7 @@ export function createWakeLoop(deps: WakeLoopDependencies): WakeLoop {
     const existing = queues.get(key);
     if (existing !== undefined) return existing;
     const created: QueueState = {
-      workspaceKey, queueKey, continuation: null, dirty: false, chain: null, failures: 0, retryAt: 0,
+      workspaceKey, queueKey, continuation: null, dirty: false, chain: null, failures: 0, retryAt: 0, idleWaiters: [],
     };
     queues.set(key, created);
     return created;
@@ -285,6 +292,7 @@ export function createWakeLoop(deps: WakeLoopDependencies): WakeLoop {
       chains.delete(chain);
       entry.chain = null;
       if (entry.dirty && !closed && driving(entry)) schedule(entry);
+      if (entry.chain === null) for (const settle of entry.idleWaiters.splice(0)) settle();
     });
     entry.chain = chain;
     chains.add(chain);
@@ -429,6 +437,12 @@ export function createWakeLoop(deps: WakeLoopDependencies): WakeLoop {
       await rebuildWorkspace(workspace);
       if (!workspace.armed) return;
       for (const queueKey of handlers.keys()) wake(scope, queueKey, 'start');
+    },
+
+    idle(scope, queueKey) {
+      const entry = queues.get(queueKeyOf(workspaceKeyOf(scope), queueKey));
+      if (entry === undefined || entry.chain === null) return Promise.resolve();
+      return new Promise<void>(resolve => { entry.idleWaiters.push(resolve); });
     },
 
     async close() {

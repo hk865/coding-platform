@@ -283,6 +283,11 @@ export type LocalWorkbenchHost = {
   readonly consumeStatus: readonly HostConsumeSkipV1[];
   /** Resolves after the next real `consumeIdle` pass settles; it observes that pass and changes nothing. */
   consumeBarrier(): Promise<void>;
+  /**
+   * Resolves once the workspace's lifecycle queue has no pass running, due or waiting out a back-off (the wake loop's
+   * `idle`); like `consumeBarrier` it observes and changes nothing (RL-23a, d Astra 3).
+   */
+  lifecycleIdle(scope: WorkspaceScope): Promise<void>;
 };
 
 /**
@@ -3585,6 +3590,9 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     get consumeStatus(): readonly HostConsumeSkipV1[] { return lastConsumeSkips; },
     consumeBarrier(): Promise<void> {
       return new Promise<void>(resolve => { consumeBarrierWaiters.push(() => resolve()); });
+    },
+    lifecycleIdle(scope: WorkspaceScope): Promise<void> {
+      return wakeLoop.idle(scope, LIFECYCLE_QUEUE);
     },
     listen(port?: number): Promise<WorkbenchAddress> {
       if (closePromise !== undefined) return Promise.reject(new Error('the workbench Host is closed'));

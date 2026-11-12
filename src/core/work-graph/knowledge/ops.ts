@@ -10,6 +10,7 @@ import { rejected } from '../../../contracts/core/rejections.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { KnowledgeConflictV1, ReconcileResult } from '../../../contracts/knowledge.js';
+import { utf8ByteLength } from '../../../contracts/utf8.js';
 import { isPos, isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type { SessionMessageCommandPort } from '../model/communication-contracts.js';
 import type { KnowledgeOpsPort } from '../model/knowledge-ops.js';
@@ -25,6 +26,8 @@ export type KnowledgeConflictAsks = {
   regionAdvisersOf(ctx: CoreCallContext, projectId: string, moduleIds: readonly string[]):
     Promise<ReadResult<ReadonlyMap<string, SessionRef | null>>>;
   readonly sendMessage: SessionMessageCommandPort['sendMessage'];
+  /** The mailbox's text bound for this sender: a request's text is cut to it (b2 Astra 2). */
+  readonly maxTextBytes: number;
 };
 
 /** The one sender of every conflict request: the mailbox keys a send by its sender and workspace too. */
@@ -34,6 +37,8 @@ const CONFLICT_REASONS: Record<KnowledgeConflictV1['kind'], string> = {
   path_claimed_by_two_modules: '同一个路径被两个模块认领',
   dangling_reference: '引用了不存在的模块',
 };
+const REQUEST_INSTRUCTION = '请核对这些文件，用 propose_architecture_revision 提一份架构修订来解决。平台不会自动合并，也不会改这些文件。';
+const omittedPaths = (count: number): string => `（还有 ${count} 条路径没列出）`;
 
 export function createKnowledgeOps(lines: KnowledgeLines, asks: KnowledgeConflictAsks): KnowledgeOpsPort {
   const reconcile: KnowledgeOpsPort['reconcile'] = async (ctx, workspaceId, trigger) => {
@@ -79,14 +84,37 @@ async function askRegionAdvisers(asks: KnowledgeConflictAsks, ctx: CoreCallConte
   for (const moduleId of moduleIds) {
     const adviser = advisers.value.get(moduleId) ?? null;
     if (adviser === null) continue;
-    const listed = result.conflicts.filter(conflict => conflict.moduleId === moduleId)
-      .map(conflict => `- ${CONFLICT_REASONS[conflict.kind]}（${conflict.kind}）：${conflict.paths.join('、')}`);
-    const text = [`知识文件里的模块 ${moduleId} 有冲突：`, ...listed,
-      '请核对这些文件，用 propose_architecture_revision 提一份架构修订来解决。平台不会自动合并，也不会改这些文件。'].join('\n');
+    const text = conflictRequestText(moduleId, result.conflicts.filter(conflict => conflict.moduleId === moduleId),
+      asks.maxTextBytes);
     const identity = { adviser, moduleId, noticeId: notice.noticeId };
     await asks.sendMessage(sender, {
       input: { recipient: adviser, text, intent: 'action_request', needsReply: true },
       meta: { requestId: `knowledge-conflict:${sha256Hex(canonicalJson(identity as unknown as JsonValue))}`, expected: [] },
     });
   }
+}
+
+/**
+ * b2 Astra 2: one request's text within the mailbox's bound. The module, each conflict's reason (one per kind) and the
+ * instruction always stay; the paths go in whole, in order, while they fit, and a reason that left some out says how
+ * many. Each reason line keeps room for the widest such note, so the text never passes `maxBytes`.
+ */
+function conflictRequestText(moduleId: string, conflicts: readonly KnowledgeConflictV1[], maxBytes: number): string {
+  const head = `知识文件里的模块 ${moduleId} 有冲突：`;
+  const reasonLine = (conflict: KnowledgeConflictV1): string => `- ${CONFLICT_REASONS[conflict.kind]}（${conflict.kind}）：`;
+  const widest = omittedPaths(conflicts.reduce((sum, conflict) => sum + conflict.paths.length, 0));
+  let left = maxBytes - utf8ByteLength([head, ...conflicts.map(conflict => reasonLine(conflict) + widest),
+    REQUEST_INSTRUCTION].join('\n'));
+  const listed = conflicts.map(conflict => {
+    const shown: string[] = [];
+    for (const path of conflict.paths) {
+      const cost = utf8ByteLength(shown.length === 0 ? path : `、${path}`);
+      if (cost > left) break;
+      left -= cost;
+      shown.push(path);
+    }
+    const omitted = conflict.paths.length - shown.length;
+    return `${reasonLine(conflict)}${shown.join('、')}${omitted === 0 ? '' : omittedPaths(omitted)}`;
+  });
+  return [head, ...listed, REQUEST_INSTRUCTION].join('\n');
 }

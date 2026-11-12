@@ -150,8 +150,9 @@ it('K37 a notice\'s recovery items are found only in its own project', async () 
   world.remove(path);
   const noticeId = await oneNotice(world, 'knowledge_reverted');
   // [2C1-23] 读路由回 ReadResult 自己的 not_found，[2C1-19] 写路由回 code 为 not_found 的拒绝。这一行守的是 B 的 scope 只到
-  // B 的平台和快照库。说明书的改坏「按 noticeId 全局找」在 Host 上造不出来：每个项目一个平台，memory 快照库每个平台一份
-  // （create-platform.ts:1220），SQLite 的在项目库目录里（project-store-paths.ts:31），没有两个项目共用的库可找。
+  // B 的平台和快照库：抓进程级全局查找（按 noticeId 跨进程里各项目的快照库找，c 的具名改坏实打红在下一句）；单个平台内部的
+  // 全局查找造不出来：每个项目一个平台，memory 快照库每个平台一份（create-platform.ts:1224），SQLite 的在项目库目录里
+  // （project-store-paths.ts:31），一个平台里没有两个项目共用的库可找。
   expect(await kls2cRecoveryItems(world, noticeId, K37_B)).toEqual({ status: 'not_found' });
   expect(await kls2cRecover(world, noticeId, 1, K37_B)).toMatchObject({ status: 'rejected', code: 'not_found' });
   expect(world.read(path)).toBeNull();

@@ -62,6 +62,12 @@ async function crashedNote(commandId: string): Promise<{ world: KLS2CHost; notic
   return { world, noticeId, path: items[0]?.path ?? '' };
 }
 
+/** The records' position now, by a public read: `goals/list`'s `sourceCursor` is its lookup's `readThrough`. */
+async function recordsHead(world: KLS2CHost): Promise<string> {
+  return readyValue<{ sourceCursor: string }>(await world.call('goals/list', plain(world.scope, { workspace: world.scope })),
+    'goals/list').sourceCursor;
+}
+
 /** A note file's text split at its JSON header (between the version line and the `---` line). */
 function noteHeader(text: string): { head: string; header: Record<string, unknown>; tail: string } {
   const start = text.indexOf('\n') + 1;
@@ -74,8 +80,13 @@ it('K18 a note write killed before its file landed: one notice of one item, the 
   // 具名改坏 [2C1-12]「启动对账自动补写 pending」→ 红在这一句（文件已在）。
   expect(world.read(path)).toBeNull();
   // That an idle reconcile leaves it too is b1's (KLS2C1B1-unconfirmed-write).
-  expect(await kls2cRecover(world, noticeId, 1))
-    .toMatchObject({ status: 'committed', value: { path, blobSha: kls2cBlobSha(world, path) } });
+  const before = await recordsHead(world);
+  const recovered = await kls2cRecover(world, noticeId, 1);
+  expect(recovered).toMatchObject({ status: 'committed', value: { path, blobSha: kls2cBlobSha(world, path) } });
+  // c 具名改坏之后第 10 条：回的 cursor 是恢复之后记录的位置；补完成写日志是一次提交，所以比恢复前前进。
+  // 具名改坏「recover.ts 回的 cursor 写成常量」→ 红在这一句。
+  const cursor = (recovered as { cursor?: string }).cursor ?? '';
+  expect([cursor, cursor > before]).toEqual([await recordsHead(world), true]);
   expect((await kls2cListedNote(world, NOTE_FILE.exec(path)?.[1] ?? '')).topic).toBe('kls2c1-k18 崩溃时的写');
 }, 180_000);
 
@@ -119,7 +130,8 @@ it('K20 recover checks the file the notice saw and rebuilds the module file from
   expect(current.catalog.catalog.modules.find(module => module.ref.moduleId === 'core')?.responsibility).toBe('修订后');
 }, 180_000);
 
-it('K20b a note commit replacing A: A\'s item is rebuilt from A\'s own event on A\'s file as the notice saw it', async () => {
+it('K20b a note commit replacing A: A\'s item is rebuilt from A\'s own event on A\'s file as the notice saw it, B\'s '
+  + 'from B\'s own (the commit\'s second)', async () => {
   let a = { noteId: '', path: '' };
   const world = await afterCrash(async first => {
     await kls2cAdopt(first, ['core']);
@@ -140,4 +152,11 @@ it('K20b a note commit replacing A: A\'s item is rebuilt from A\'s own event on 
   const { header } = noteHeader(world.read(a.path)?.toString('utf8') ?? '');
   expect(header['topic']).toBe('k20b A');
   expect(header['basisFiles']).toContain('src/extra.ts');
+  // c 具名改坏之后第 11 条：B 的携带事件是这次提交的第 1 个（A 的处置事件在前），B 也按它自己的事件重建。
+  // 具名改坏 [2C1-02]「carrierEventIndex 恒为 0」（改完 src 先 npm run build：子进程跑 dist）→ 按 A 的处置事件重建 B，
+  // 对不上 afterBlob，红在这一句（unavailable）。
+  const b = items.find(item => item.path !== a.path);
+  expect(await kls2cRecover(world, noticeId, b?.itemNo ?? 0))
+    .toMatchObject({ status: 'committed', value: { path: b?.path, blobSha: kls2cBlobSha(world, b?.path ?? '') } });
+  expect(noteHeader(world.read(b?.path ?? '')?.toString('utf8') ?? '').header['topic']).toBe('k20b B');
 }, 180_000);

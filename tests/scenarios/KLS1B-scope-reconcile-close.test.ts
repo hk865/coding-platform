@@ -84,6 +84,9 @@ describe('KLS-1b per-scope reconcile and close ordering', () => {
     });
     vi.spyOn(leaseModule, 'acquireHostInstanceLease').mockImplementation(async options => {
       const acquired = await realAcquireLease(options);
+      // KLS-2c-1: a checkout's knowledge write lease (`<...>/leases/<key>`) goes through the same function; only the
+      // Host's own lease is in the close order.
+      if (options.directory !== null && /[\\/]leases[\\/][^\\/]+$/.test(options.directory)) return acquired;
       const realRelease = acquired.release.bind(acquired);
       acquired.release = async () => {
         order.push('lease-release');

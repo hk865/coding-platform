@@ -273,11 +273,12 @@ describe('RL-23: the cold start and the exploration round', () => {
 
   /*
    * The coarse split's approval is a knowledge write: its commit wakes the cold start before its files land. A
-   * `regions` pass that reads the old files cannot open `src` (not in the current formal catalog, a permanent refusal)
-   * and parks; only the write's completion commit, after the files landed, wakes the lifecycle queue again. The Host's
-   * knowledge write seam holds that one write at `committed`, so the pass reads the old files whatever the file system's
-   * speed. Named mutation: drop `'KnowledgeWrite'` from `LIFECYCLE_WAKE_AGGREGATE_TYPES` (`src/app/wake-loop.ts`) ->
-   * nothing wakes the cold start after the release, `waitForExplorations(2)` times out, red.
+   * `regions` pass that reads before they land opens no region line (both wait in `pendingRegions`) and the queue
+   * parks; only the write's completion commit, after the files landed, wakes the lifecycle queue again. The Host's
+   * knowledge write seam holds that one write at `committed`; the row lets it land only once the lifecycle queue has no
+   * pass running, due or backing off (`lifecycleIdle`, d Astra 3), so that pass has read the held write and returned
+   * whatever the speed. Named mutation: drop `'KnowledgeWrite'` from `LIFECYCLE_WAKE_AGGREGATE_TYPES`
+   * (`src/app/wake-loop.ts`) -> nothing wakes the cold start after the release, `waitForExplorations(2)` times out, red.
    */
   it('RL-23a (memory): a region the cold start could not open on the old files opens once the coarse split lands', async () => {
     let gate: ReturnType<typeof holdGate> | null = null;
@@ -295,10 +296,12 @@ describe('RL-23: the cold start and the exploration round', () => {
     gate = holdGate('committed');
     const approving = cold.approve((await cold.proposalCards())[0]!, 'rl23w-approve-coarse');
     await gate.reached;
-    // The approval's commit moved the cold start to `regions`; on the old files no region line opened.
-    const held = await cold.waitForPhase('regions');
-    expect(held.pendingRegions ?? []).toEqual([]);
-    expect((held.explorations ?? []).map(entry => entry.segment)).toEqual(['coarse_split']);
+    // The approval's commit woke the lifecycle queue: once it is idle, the passes it ran moved the cold start to
+    // `regions` and read the held write; no region line opened and both regions wait.
+    await cold.host.lifecycleIdle(S6A_SCOPE);
+    const held = await cold.coldStart();
+    expect([held.actionPhase, held.pendingRegions, (held.explorations ?? []).map(entry => entry.segment)]).toEqual(
+      ['regions', [{ projectId: P, moduleId: 'src' }, { projectId: P, moduleId: 'docs' }], ['coarse_split']]);
     gate.release();
     expect(await approving).toMatchObject({ status: 'ready', value: { answer: { status: 'committed' } } });
     // The files landed and nothing else is written: `src` opens at the one free seat, `docs` waits for a seat.

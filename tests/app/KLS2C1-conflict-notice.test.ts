@@ -55,6 +55,20 @@ async function everyActionRequest(world: KLS2CHost): Promise<InboxItem[]> {
   return all;
 }
 
+/**
+ * The opening lines (O1b) settle first, so every later Session comes from the row; then, given a command id, a region
+ * adviser directly on `core` (`role-lines/open`).
+ */
+async function settledLines(world: KLS2CHost, adviserCommand: string | null): Promise<SessionRef | null> {
+  await startLinesEnded(async () => await world.call('role-lines/operations', plain(world.scope, { workspace: world.scope })));
+  if (adviserCommand === null) return null;
+  const opened = await world.call<{ status: string; value?: { session: SessionRef | null } }>('role-lines/open',
+    graphWrite(world.scope, { duty: 'adviser', scope: [{ kind: 'region',
+      moduleRef: { projectId: world.scope.projectId, moduleId: 'core' } }] }, adviserCommand));
+  if (opened.status !== 'committed' || !opened.value?.session) throw new Error(`role-lines/open: ${JSON.stringify(opened)}`);
+  return opened.value.session;
+}
+
 type QueueRead = { waitingAnswer: { source: { kind: string } }[]; notices: { summary: string }[];
   capabilities: { source: string; availability: string }[] };
 /** `decisions/queue` read as the Decide page reads it: the waiting cards and the notices in one read. */
@@ -124,16 +138,7 @@ it.each([
   ['② 没有参谋：通知照出，没有人收到 action_request', false],
 ] as const)('K08 a conflict asks the region adviser for a revision: %s', async (_, withAdviser) => {
   const world = await adoptedWorld('memory', true);
-  // The three opening lines (O1b) settle first, so every later Session comes from this row.
-  await startLinesEnded(async () => await world.call('role-lines/operations', plain(world.scope, { workspace: world.scope })));
-  let adviser: SessionRef | null = null;
-  if (withAdviser) {
-    const opened = await world.call<{ status: string; value?: { session: SessionRef | null } }>('role-lines/open',
-      graphWrite(world.scope, { duty: 'adviser', scope: [{ kind: 'region',
-        moduleRef: { projectId: world.scope.projectId, moduleId: 'core' } }] }, 'kls2c1-k08-adviser'));
-    if (opened.status !== 'committed' || !opened.value?.session) throw new Error(`role-lines/open: ${JSON.stringify(opened)}`);
-    adviser = opened.value.session;
-  }
+  const adviser = await settledLines(world, withAdviser ? 'kls2c1-k08-adviser' : null);
   kls2cConflict(world, 'same_id');
   await world.idle();
   expect(await world.notices('knowledge_conflict')).toHaveLength(1);
@@ -157,5 +162,45 @@ it.each([
   expect(body.text).toContain('propose_architecture_revision');
   await world.idle();
   // 同一个（参谋、模块、通知身份）只发一次。
+  expect(await actionRequests(world, adviser)).toHaveLength(1);
+}, 120_000);
+
+// b2 Astra 1（lead 收）：“从没采用过”看平台记录里的采用事实，不看磁盘和上一轮索引；已采用的工作区缺图，每一轮都是同一处问题。
+it('K08b adopted, then architecture.json deleted and a path claimed by two modules: round after round the same problem '
+  + 'list, one knowledge_conflict notice and one request to the adviser', async () => {
+  const world = await adoptedWorld('memory', true);
+  const adviser = (await settledLines(world, 'kls2c1-k08b-adviser'))!;
+  await world.idle();
+  // 两处改动在同一个同步段里：屏障放行时这一轮已经跑完，下一轮要等下一次心跳（计时器），读文件之前还有 I/O。
+  world.remove('.workbench/architecture.json');
+  const [core, other] = kls2cConflict(world, 'same_path');
+  await world.idle();
+  // 具名改坏：第 8 步改回“磁盘或上一轮索引里有 architecture.json 才记”→ 第二轮只剩路径冲突、身份变了，红在这一句（2 条）。
+  const notices = await world.notices('knowledge_conflict');
+  expect(notices.map(notice => ['.workbench/architecture.json', core, other]
+    .every(path => notice.summary.includes(path)))).toEqual([true]);
+  expect(await actionRequests(world, adviser)).toHaveLength(1);
+  await world.idle();
+  expect([await world.notices('knowledge_conflict'), (await actionRequests(world, adviser)).length]).toEqual([notices, 1]);
+}, 120_000);
+
+// b2 Astra 2（lead 收）：路径多到一条消息装不下时，正文按邮箱上限截断，模块、原因和 propose_architecture_revision 都在。
+it('K08c a conflict listing more paths than one message holds still asks the adviser once, the instruction whole and '
+  + 'the left-out paths counted', async () => {
+  const world = await adoptedWorld('memory', true);
+  const adviser = (await settledLines(world, 'kls2c1-k08c-adviser'))!;
+  const copy = world.read(kls2cModuleFile(world, 'core'))?.toString('utf8') ?? '';
+  await world.idle();
+  // 200 份 core 模块文件的副本，文件名约 100 个字符：同 id 冲突的路径合起来超过邮箱的 16 KiB（同一个同步段，理由同 K08b）。
+  for (let i = 0; i < 200; i += 1) world.edit(`.workbench/modules/${'k'.repeat(96)}${String(i).padStart(3, '0')}.json`, copy);
+  await world.idle();
+  // 具名改坏：正文照旧拼全部路径、不截断 → 邮箱回 capacity，红在这一句（0 条）。
+  const requests = await actionRequests(world, adviser);
+  expect(requests).toHaveLength(1);
+  const body = await readRoute<{ text: string }>(world, 'messages/body', { messageRef: requests[0]?.ref, part: 'message' });
+  expect([body.text.includes('模块 core'), body.text.includes('duplicate_module_id'),
+    body.text.includes('propose_architecture_revision'), /还有 \d+ 条路径没列出/.test(body.text)])
+    .toEqual([true, true, true, true]);
+  await world.idle();
   expect(await actionRequests(world, adviser)).toHaveLength(1);
 }, 120_000);

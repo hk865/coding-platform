@@ -5,17 +5,17 @@
  * line it reads answers `unavailable` (no waiting), and a writer on that line is refused with "有未确认的知识写"; an
  * `unconfirmed` log (a recovery item 2c-1b1's reconciliation handed to the person) stops neither. The notes window
  * moves on the log of a note it reads (R2, the builder's D-2 moved here; lead after the merge). The decision queue
- * isolates one bad note instead of failing whole, and a module file the 2a-1 read-back gate refuses takes only the
- * cards that read the architecture (stk16 ruling 1: Q3, Q4). Platform level, memory
+ * isolates one bad note instead of failing whole (a bad note another card names included; a notes folder that cannot
+ * be listed still fails it, Astra d 1–2), and a module file the 2a-1 read-back gate refuses takes only the cards that
+ * read the architecture (stk16 ruling 1: Q3, Q4), unless the read was cancelled (Q6). Platform level, memory
  * (business rows, S3): `openKLS2AWorld` with the Host's `knowledgeWriteHold` seam armed by the row (`armedSeam`):
  * `hold()` keeps one write between its commit and its first file, `fail()` stops one there for good. Waiting
- * reviews come from the world's real executor Run; the project notice from the platform's one notice writer.
- * Every assertion reads a public answer or the files.
+ * reviews come from the world's real executor Run; the project notice from a real reconciliation (Astra d 4: a
+ * person deletes a note file, `knowledge_reverted`). Every assertion reads a public answer or the files.
  */
-import { rmSync } from 'node:fs';
+import { chmodSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { NoteDraftV1 } from '../../src/contracts/note.js';
 import type { DecisionCardV1, DecisionQueueReadV1 } from '../../src/core/work-graph/model/decision-contracts.js';
 import type { WriteNoteResult } from '../../src/core/work-graph/model/note-contracts.js';
@@ -35,7 +35,6 @@ async function knowledgeWorld(seam?: ReturnType<typeof armedSeam>): Promise<KLS2
   return world;
 }
 
-const NOTICE = 'KLS2C1 的项目通知';
 const notePath = (noteId: string): string => `.workbench/notes/ws/${noteId}.md`;
 const note = (topic: string, over: Partial<NoteDraftV1> = {}): NoteDraftV1 => ({ kind: 'decision', topic,
   conclusion: `${topic} 的结论`, body: 'b', anchor: { kind: 'module', moduleId: 'core' }, extraAnchors: [], facts: [],
@@ -56,7 +55,11 @@ async function readyQueue(world: KLS2AWorld): Promise<DecisionQueueReadV1> {
   expect(read, JSON.stringify(read)).toMatchObject({ status: 'ready' });
   return (read as { value: DecisionQueueReadV1 }).value;
 }
-/** A review card's note (its first object); the waiting review cards' notes, sorted; the project notices' summaries. */
+/** The published reconciliation of the world's line, which answers ready. */
+async function reconciled(world: KLS2AWorld): Promise<void> {
+  expect(await world.platform.knowledge.reconcile(world.ctx(), world.workspaceId, 'idle')).toMatchObject({ status: 'ready' });
+}
+/** A review card's note (its first object); the waiting review cards' notes, sorted; the project notices' identities. */
 function subjectOf(card: DecisionCardV1): string | null {
   const subject = card.objects[0];
   return card.source.kind === 'note_review' && subject?.kind === 'aggregate'
@@ -64,7 +67,7 @@ function subjectOf(card: DecisionCardV1): string | null {
 }
 const reviewed = (read: DecisionQueueReadV1): string[] => read.waitingAnswer.flatMap(card => subjectOf(card) ?? []).sort();
 const noticed = (read: DecisionQueueReadV1): string[] =>
-  read.notices.filter(item => item.category === 'project_notice').map(item => item.summary);
+  read.notices.filter(item => item.category === 'project_notice').map(item => item.itemKey);
 
 async function architecture(world: KLS2AWorld) {
   const read = await world.platform.architecture.readArchitectureRevision(world.ctx(), { selection: { kind: 'current' } });
@@ -93,10 +96,12 @@ async function revise(world: KLS2AWorld, text: string) {
 /**
  * The queue rows' world: n person's notes `a1…an` on `core`, n executor notes `p1…pn` each contradicting its `a` on
  * the same anchor (those numbered in `onFile` both on `src/a.ts`; waiting for review, each a card), and one project
- * notice; the queue then reads ready with all of them.
+ * notice made by public steps: a person's note on `README.md`, which no card names, is reconciled (its snapshot kept),
+ * the person deletes its file, and the next reconciliation hands the revert to the person (`knowledge_reverted`). The
+ * queue then reads ready with all of them; `notice` is that notice's identity there.
  */
 async function reviewWorld(world: KLS2AWorld, n: number, onFile: readonly number[] = []):
-  Promise<{ person: string[]; pending: string[]; cards: DecisionCardV1[] }> {
+  Promise<{ person: string[]; pending: string[]; cards: DecisionCardV1[]; notice: string }> {
   await adoptCore(world);
   await world.claimExecutorRun();
   const person: string[] = [];
@@ -112,15 +117,18 @@ async function reviewWorld(world: KLS2AWorld, n: number, onFile: readonly number
     person.push(a.noteId);
     pending.push(p.noteId);
   }
-  const notice = await world.platform.projectNoticeWriter({ projectRef: { projectId: world.projectId },
-    kind: 'automatic_adjustment', summary: NOTICE,
-    operation: { aggregateType: 'CoreOperation', projectId: world.projectId, operationId: 'kls2c1-notice' } });
+  const aside = await write(world, 'kls2c1-aside', fileNote('kls2c1-aside', 'README.md'));
+  if (aside.status !== 'accepted') throw new Error(`KLS2C1: the person's aside note is not accepted: ${JSON.stringify(aside)}`);
+  await reconciled(world);
+  rmSync(join(world.root, notePath(aside.noteId)));
+  await reconciled(world);
   const before = await queueRead(world);
-  if (notice.status !== 'committed' || before.status !== 'ready'
-    || JSON.stringify([reviewed(before.value), noticed(before.value)]) !== JSON.stringify([[...pending].sort(), [NOTICE]])) {
-    throw new Error(`KLS2C1: the review world's queue is not as built: ${JSON.stringify([notice, before])}`);
+  const notices = before.status === 'ready' ? noticed(before.value) : [];
+  if (before.status !== 'ready' || notices.length !== 1
+    || JSON.stringify(reviewed(before.value)) !== JSON.stringify([...pending].sort())) {
+    throw new Error(`KLS2C1: the review world's queue is not as built: ${JSON.stringify(before)}`);
   }
-  return { person, pending, cards: before.value.waitingAnswer };
+  return { person, pending, cards: before.value.waitingAnswer, notice: notices[0]! };
 }
 
 /** A person breaks the one module file (`core`'s): the 2a-1 read-back gate refuses the current architecture read. */
@@ -147,13 +155,6 @@ async function leavePending(world: KLS2AWorld, seam: ReturnType<typeof armedSeam
   expect(world.files('.workbench/notes/ws')).toEqual([]);
 }
 
-/** 2c-1b1's `platform.knowledge` (seam §ops, non-enumerable); absent before it lands. */
-type KnowledgeOps = { reconcile(ctx: CoreCallContext, workspaceId: string, trigger: 'idle'): Promise<{ status: string }> };
-function knowledgeOps(world: KLS2AWorld): KnowledgeOps {
-  const ops = (world.platform as unknown as { knowledge?: KnowledgeOps }).knowledge;
-  if (ops === undefined) throw new Error('KLS2C1: platform.knowledge.reconcile (2c-1b1) is not published');
-  return ops;
-}
 
 describe('KLS2C1 a pending knowledge write moves the read windows and stops the next writer on its line', () => {
   // Lead 11-12: the architecture readers look at the architecture and module files' pending logs only.
@@ -214,7 +215,7 @@ describe('KLS2C1 a pending knowledge write moves the read windows and stops the 
     const seam = armedSeam('committed');
     const world = await knowledgeWorld(seam);
     await leavePending(world, seam);
-    expect(await knowledgeOps(world).reconcile(world.ctx(), world.workspaceId, 'idle')).toMatchObject({ status: 'ready' });
+    await reconciled(world);
     const next = await write(world, 'kls2c1-w2', fileNote('kls2c1-w2', 'README.md'));
     expect(next).toMatchObject({ status: 'accepted' });
     expect(await queueRead(world)).toMatchObject({ status: 'ready' });
@@ -225,7 +226,7 @@ describe('KLS2C1 the decision queue isolates one bad note', () => {
   it('Q1 a person points a waiting note\'s relation at a note number that does not exist: the queue is ready, the '
     + 'other card and the notice are there, nothing names that number; that note\'s own card still reads', async () => {
     const world = await knowledgeWorld();
-    const { person, pending, cards } = await reviewWorld(world, 2);
+    const { person, pending, cards, notice } = await reviewWorld(world, 2);
     const ghost = person[0]!.slice(0, -1) + (person[0]!.endsWith('0') ? '1' : '0');
     const text = world.file(notePath(pending[0]!));
     const from = `"contradicts": [\n    "${person[0]!}"\n  ]`;
@@ -233,42 +234,78 @@ describe('KLS2C1 the decision queue isolates one bad note', () => {
     world.edit(notePath(pending[0]!), text.replace(from, `"contradicts": [\n    "${ghost}"\n  ]`));
     const read = await readyQueue(world);
     expect(reviewed(read)).toContain(pending[1]);
-    expect(noticed(read)).toEqual([NOTICE]);
+    expect(noticed(read)).toEqual([notice]);
     expect(JSON.stringify(read.waitingAnswer)).not.toContain(ghost);
     const own = cards.find(card => subjectOf(card) === pending[0])!;
     expect(await world.platform.decisions.readDecisionCard(world.ctx(), { source: own.source }))
       .toMatchObject({ status: 'ready' });
   });
 
-  it('Q2 one waiting note\'s file deleted and another\'s broken: neither shows a card, the third card and the notice '
-    + 'are there', async () => {
+  // Astra d 1：坏的两条也是第三条的关系目标；预读已把它们留在外面，同一版本不再严格重读，第三条照定稿只少这两个目标。
+  it('Q2 one waiting note\'s file deleted and another\'s broken: neither shows a card; a third naming both in its '
+    + 'relations shows its card without them, the fourth card and the notice are there', async () => {
     const world = await knowledgeWorld();
-    const { pending } = await reviewWorld(world, 3);
+    const { person, pending, notice } = await reviewWorld(world, 4);
+    const text = world.file(notePath(pending[2]!));
+    const from = `"contradicts": [\n    "${person[2]!}"\n  ]`;
+    if (text === null || !text.includes(from)) throw new Error(`KLS2C1: p3's file has no ${from}`);
+    world.edit(notePath(pending[2]!), text.replace(from,
+      `"contradicts": [\n    "${person[2]!}",\n    "${pending[0]!}",\n    "${pending[1]!}"\n  ]`));
     rmSync(join(world.root, notePath(pending[0]!)));
     world.edit(notePath(pending[1]!), '这不是注记文件\n');
+    // 具名改坏：预读关系目标时照旧严格重读已留在外面的那两条 → 红在 readyQueue（整张 unavailable）。
     const read = await readyQueue(world);
-    expect([reviewed(read), noticed(read)]).toEqual([[pending[2]], [NOTICE]]);
+    expect([reviewed(read), noticed(read)]).toEqual([[pending[2]!, pending[3]!].sort(), [notice]]);
+    expect([pending[0], pending[1]].filter(noteId => JSON.stringify(read.waitingAnswer).includes(noteId!))).toEqual([]);
+  });
+
+  // Astra d 2：注记目录列不出是整次读失败，不是“没有待审卡”。
+  it('Q5 a notes folder that cannot be listed: the queue is unavailable, never ready without the cards', async () => {
+    const world = await knowledgeWorld();
+    await reviewWorld(world, 1);
+    const folder = join(world.root, '.workbench/notes/kls2c1-q5');
+    mkdirSync(folder);
+    chmodSync(folder, 0o000);
+    try {
+      // 具名改坏：批量读失败后逐条重读、读不成就略过（删掉的那段放回去）→ 红在这一句（ready，没有卡）。
+      expect(await queueRead(world)).toMatchObject({ status: 'rejected', code: 'unavailable' });
+    } finally {
+      chmodSync(folder, 0o755);
+    }
   });
 
   // stk16 裁定第 1 条（调查第三节 A）：读回闸门拒了当前架构读，只拿掉目标冲突卡；冲突之前就有的、不读架构的卡和通知照出。
   it('Q3 a person breaks the module file: the queue is ready without the conflict cards (`goal_conflict` '
     + 'not_available); a card made before that reads no architecture, and it and the notice are there', async () => {
     const world = await knowledgeWorld();
-    const { pending } = await reviewWorld(world, 1, [1]);
+    const { pending, notice } = await reviewWorld(world, 1, [1]);
     await breakModuleFile(world);
     // 具名改坏：架构读 unavailable 就整次返回（去掉 A）→ 红在 readyQueue（整张 unavailable）。
     const read = await readyQueue(world);
-    expect([reviewed(read), noticed(read), conflictCards(read)]).toEqual([pending, [NOTICE], 'not_available']);
+    expect([reviewed(read), noticed(read), conflictCards(read)]).toEqual([pending, [notice], 'not_available']);
   });
 
   // stk16 裁定第 1 条（调查第三节 B）：锚在模块上的处置目标要读架构，这一条的理由不进卡；只靠它的卡不出，别的卡照出。
   it('Q4 the same broken module file, two waiting notes and only one contradicting a note on `core`: only that card '
     + 'is missing', async () => {
     const world = await knowledgeWorld();
-    const { pending } = await reviewWorld(world, 2, [2]);
+    const { pending, notice } = await reviewWorld(world, 2, [2]);
     await breakModuleFile(world);
     // 具名改坏：锚在模块上的目标照旧读架构、读不成就拒（去掉 B）→ 红在 readyQueue（注记来源回 unavailable，整张 unavailable）。
     const read = await readyQueue(world);
-    expect([reviewed(read), noticed(read), conflictCards(read)]).toEqual([[pending[1]], [NOTICE], 'not_available']);
+    expect([reviewed(read), noticed(read), conflictCards(read)]).toEqual([[pending[1]], [notice], 'not_available']);
+  });
+
+  // stk16 叠树修回复之后第 2 条：被取消的读照原样整次返回，不降成“只少目标冲突卡”。
+  it('Q6 a queue read cancelled before it starts is answered as the cancelled read, never ready without the conflict '
+    + 'cards', async () => {
+    // The second workspace has no Goal, so no task graph read of the queue meets the signal first (it would, in `ws`).
+    const world = await openKLS2AWorld({ workspaces: ['ws', 'ws2'] });
+    closers.push(() => world.close());
+    const read = await world.platform.decisions.queryDecisionQueue({ ...world.ctx('host', 'ws2'),
+      signal: AbortSignal.abort() }, { workspace: { projectId: world.projectId, workspaceId: 'ws2' },
+      sections: ['waiting_answer'], page: { limit: 100 } });
+    // 具名改坏：降级点不看这次读的取消信号 → 红在这一句（ready，goal_conflict not_available）。
+    expect(read).toMatchObject({ status: 'rejected', reason: expect.stringContaining('cancelled') });
   });
 });

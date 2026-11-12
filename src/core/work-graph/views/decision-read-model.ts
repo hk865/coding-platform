@@ -1196,7 +1196,8 @@ async function prepareQueueWindow(
   if (wantsCards && !deps.cardSources.some((source) => source.kind === 'goal_conflict')) {
     const read = await deps.conflicts.readCurrentArchitecture(ctx);
     if (read.status === 'ready') architecture = read.value;
-    else if (conflictArchitectureRefused(read)) conflictsUnavailable = true;
+    // stk16 (lead after the fix reply, 2): a read this attempt's caller cancelled is answered whole, never as the gate.
+    else if (conflictArchitectureRefused(read) && ctx.signal?.aborted !== true) conflictsUnavailable = true;
     else return read;
   }
   const attempt: DecisionSourceAttempt = { cache: new Map() };

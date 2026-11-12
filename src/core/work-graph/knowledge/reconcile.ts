@@ -72,6 +72,16 @@ async function reconcileLeased(write: KnowledgeWriteDeps, line: LineKnowledge, t
   if (disk.status !== 'ready') return storeFailureToRejection(disk);
   const files = new Map(disk.value.files.map(file => [file.path, file]));
   const blobAt = (path: string): string | null => files.get(path)?.blobSha ?? null;
+  // Step 8's graph of these bytes, and its one exemption read now, before this round changes anything (a failed read
+  // leaves the round undone): a line with no architecture.json in a project whose records never adopted an
+  // architecture has no graph, which is no issue (b2 Astra 1: the records' fact, never the disk or last round's index).
+  const architecture = line.architectureOfDisk(disk.value.files);
+  let noGraphYet = false;
+  if (architecture.status !== 'ready' && !files.has(ARCHITECTURE_FILE_PATH)) {
+    const adopted = await write.catalogAdopted(projectId);
+    if (adopted.status !== 'ready') return adopted;
+    noGraphYet = !adopted.value;
+  }
   const now = write.now();
   // Step 2: what the index held after the last round (or the platform's last write).
   const index = write.indexOf(projectId);
@@ -132,13 +142,10 @@ async function reconcileLeased(write: KnowledgeWriteDeps, line: LineKnowledge, t
 
   // Step 8: the graph read every round and the conflicts among the module files, with the files above that do not
   // read, in one `knowledge_conflict` notice; the same problems keep its identity ([2C1-15]), so finding them again
-  // notifies nothing. A line that never had an architecture file (none now, none indexed last round) has no graph:
-  // that read is no issue. Both judge step 1's bytes, never the disk again (stk16: an edit landing mid-round).
+  // notifies nothing. Only the graph step 1 found missing in a never-adopted project is no issue. Both judge step 1's
+  // bytes, never the disk again (stk16: an edit landing mid-round).
   const conflicts = write.conflictsOf(disk.value.files.filter(file => file.kind === 'module'), line.scope);
-  const architecture = line.architectureOfDisk(disk.value.files);
-  if (architecture.status !== 'ready' && (files.has(ARCHITECTURE_FILE_PATH) || previous.has(ARCHITECTURE_FILE_PATH))) {
-    issues.push({ path: ARCHITECTURE_FILE_PATH, reason: architecture.reason });
-  }
+  if (architecture.status !== 'ready' && !noGraphYet) issues.push({ path: ARCHITECTURE_FILE_PATH, reason: architecture.reason });
   const conflictNotice = conflictNoticeOf(projectId, lineRef, issues, conflicts);
   if (conflictNotice !== null) {
     await write.notify({ projectRef: { projectId }, subject: conflictNotice.subject, kind: 'knowledge_conflict',

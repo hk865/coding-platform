@@ -158,7 +158,8 @@ export async function openLineKnowledge(projectId: string, line: LineRef, scope:
     return architectureOf(index.value, modules.value);
   }
 
-  async function readNoteFiles(noteIds: readonly string[]): Promise<StoreResult<LineNoteFileV1[]>> {
+  async function readNoteFiles(noteIds: readonly string[], unreadable: 'unavailable' | 'leave_out' = 'unavailable'):
+    Promise<StoreResult<LineNoteFileV1[]>> {
     const wanted = new Set(noteIds);
     if (wanted.size === 0) return ready([]);
     const directories = await entriesOf(NOTES_DIRECTORY, 'directory');
@@ -174,21 +175,28 @@ export async function openLineKnowledge(projectId: string, line: LineRef, scope:
         pathsOf.set(noteId, [...(pathsOf.get(noteId) ?? []), path]);
       }
     }
+    // 2c-1d (Astra d 2): only one note's own files are left out (`leave_out`); a directory above stays the failure.
     const twice = [...pathsOf].filter(([, paths]) => paths.length > 1);
-    if (twice.length > 0) {
+    if (twice.length > 0 && unreadable === 'unavailable') {
       return unavailable(twice.map(([noteId, paths]) => `the note ${noteId} has two files: ${paths.join(', ')}`).join('; '));
     }
     const notes: LineNoteFileV1[] = [];
-    for (const noteId of noteIds.filter((noteId, index) => pathsOf.has(noteId) && noteIds.indexOf(noteId) === index)) {
-      const path = pathsOf.get(noteId)![0]!;
-      const bytes = await bytesAt(path);
-      if (bytes.status !== 'ready') return bytes;
-      if (bytes.value === null) return unavailable(`${path} disappeared while it was read`);
-      const knowledge = noteOfFileBytes(bytes.value, scope);
-      if (knowledge.status !== 'decoded') return unavailable(`${path}: ${knowledge.reason}`);
-      notes.push({ noteId, path, blobSha: gitBlobId(bytes.value, objectFormat), knowledge: knowledge.value });
+    for (const noteId of noteIds.filter((noteId, index) => pathsOf.get(noteId)?.length === 1
+      && noteIds.indexOf(noteId) === index)) {
+      const note = await noteFileOf(noteId, pathsOf.get(noteId)![0]!);
+      if (note.status === 'ready') notes.push(note.value);
+      else if (unreadable === 'unavailable') return note;
     }
     return ready(notes);
+  }
+  /** One note's file read and parsed: unavailable when it cannot be read, is gone since it was listed, or is bad. */
+  async function noteFileOf(noteId: string, path: string): Promise<StoreResult<LineNoteFileV1>> {
+    const bytes = await bytesAt(path);
+    if (bytes.status !== 'ready') return bytes;
+    if (bytes.value === null) return unavailable(`${path} disappeared while it was read`);
+    const knowledge = noteOfFileBytes(bytes.value, scope);
+    if (knowledge.status !== 'decoded') return unavailable(`${path}: ${knowledge.reason}`);
+    return ready({ noteId, path, blobSha: gitBlobId(bytes.value, objectFormat), knowledge: knowledge.value });
   }
 
   async function readNotesById(noteIds: readonly string[]): Promise<StoreResult<LineNoteV1[]>> {

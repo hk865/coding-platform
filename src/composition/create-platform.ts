@@ -103,7 +103,9 @@ import type {
 } from '../core/work-graph/model/communication-contracts.js';
 import type { MessageForwardingPort } from '../core/work-graph/model/communication-contracts.js';
 import type { MessageReleaseApprovedHookV1 } from '../core/work-graph/communication/decision-change-proof.js';
-import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../core/work-graph/sessions/message-record-codecs.js';
+import {
+  SESSION_MESSAGE_MAX_TEXT_BYTES, SESSION_MESSAGE_RECORD_SCHEMAS,
+} from '../core/work-graph/sessions/message-record-codecs.js';
 import { createSourceAuthorityReader } from '../core/work-graph/source-authority-reader.js';
 import { createWorkflow } from '../business/workflow/workflow.js';
 import { servingBinding, servedRoleIds } from '../business/workflow/role-bindings.js';
@@ -394,7 +396,9 @@ import { QUERY_JOB_RECORD_SCHEMAS } from '../core/work-graph/queries/query-recor
 import { createConsultationFactsReader } from '../core/work-graph/queries/platform-facts.js';
 import { createObservedArchitecture } from '../core/work-graph/architecture/architecture-service.js';
 import { OBSERVED_ARCHITECTURE_RECORD_SCHEMAS } from '../core/work-graph/architecture/architecture-record-codecs.js';
-import { createArchitectureCatalogService, readCurrentCatalogWindow } from '../core/work-graph/architecture/catalog-service.js';
+import {
+  createArchitectureCatalogService, readCatalogAdopted, readCurrentCatalogWindow,
+} from '../core/work-graph/architecture/catalog-service.js';
 import { createArchitectureWorkScopeReader, type ArchitectureWorkScopePort } from '../core/work-graph/views/architecture-work-scope-reader.js';
 import { createArchitectureChangeScopeReader, type ArchitectureChangeScopePort } from '../core/work-graph/views/architecture-change-scope-reader.js';
 import type { ArchitectureCatalogPort } from '../core/work-graph/architecture/catalog-contracts.js';
@@ -1234,6 +1238,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       now,
       notify: input => notifyProject({ records: backend.records, now }, input),
       conflictsOf: knowledgeConflictsOf,
+      catalogAdopted: projectId => readCatalogAdopted(backend.records, projectId),
     });
     // §6.4.3: the Host's rooted probe; a missing one is an explicit
     // `unavailable`, never "no settings directory".
@@ -4730,6 +4735,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
         return { status: 'ready', value: advisers };
       },
       sendMessage: (ctx, request) => mailbox.sendMessage(ctx, request),
+      // b2 Astra 2: the knowledge-conflict sender is an ordinary 16 KiB sender (`sessionMessageTextBound`).
+      maxTextBytes: SESSION_MESSAGE_MAX_TEXT_BYTES,
     });
     // KLS-2c: the Host's knowledge reconciliations and the person's recoveries; internal like `notes` (the
     // `reconcile` key is the Run's).

@@ -63,7 +63,7 @@
 | 要做什么 | 去哪个文件夹（必要时到文件） | 先看的可复用能力（含位置） |
 | --- | --- | --- |
 | 加一个 HTTP 路由 | `src/app/`（`core-routes.ts`、`server.ts`） | `dispatchCoreRoute`（`src/app/core-routes.ts:1537`）、`parseCoreRouteRequest`（`src/app/core-routes.ts:799`） |
-| 加一个 Host 选项 / 运行期配置 | `src/app/`（`host.ts`、`runtime-configuration.ts`）+ `src/composition/` | `createLocalWorkbenchHost`（`src/app/host.ts:480`）、`createTargetPlatform`（`src/composition/create-platform.ts:1031`） |
+| 加一个 Host 选项 / 运行期配置 | `src/app/`（`host.ts`、`runtime-configuration.ts`）+ `src/composition/` | `createLocalWorkbenchHost`（`src/app/host.ts:485`）、`createTargetPlatform`（`src/composition/create-platform.ts:1035`） |
 | 加一种记录或索引 | `src/core/record-store/`（`lookup-ports.ts`、`ports.ts`） | `RecordLookupIndex`（`src/core/record-store/lookup-ports.ts:5`）、`RecordLookupPort`（`src/core/record-store/lookup-ports.ts:35`） |
 | 加一种事件/记录编解码 | `src/core/work-graph/persistence/` | `createEventCodec`（`src/core/work-graph/persistence/event-codec-factory.ts:42`）、`canonicalRefKey`（`src/core/work-graph/persistence/record-codecs.ts:81`） |
 | 状态迁移 | `src/core/work-graph/state/`（按聚合分文件） | `transitionRun`（`src/core/work-graph/state/run-machine.ts:1395`）、`transitionTask`（`src/core/work-graph/state/task-machine.ts:797`） |
@@ -76,7 +76,7 @@
 | Session 创建与 Kernel 历史读取 | `src/core/agent-runtime/`（`session-operations.ts`、`observation-recovery.ts`） | `createSessionOperations`（`src/core/agent-runtime/session-operations.ts:537`）、`createExecutionHistoryReader`（`src/core/agent-runtime/observation-recovery.ts:242`） |
 | 工作线读取 | `src/core/work-graph/views/`（`work-line-reader.ts`） | `createWorkLineReader`（`src/core/work-graph/views/work-line-reader.ts:3108`）、`assembleLineBriefs`（`src/core/work-graph/views/work-line-reader.ts:241`） |
 | 附件和材料 | `src/core/work-graph/materials/` | `createMaterialService`（`src/core/work-graph/materials/material-service.ts:116`）、`createMaterialApplicability`（`src/core/work-graph/materials/applicability.ts:23`） |
-| 架构图/正式架构 | `src/core/work-graph/architecture/` | `createObservedArchitecture`（`src/core/work-graph/architecture/architecture-service.ts:904`）、`readCurrentCatalogWindow`（`src/core/work-graph/architecture/catalog-service.ts:389`）、`catalogPinOf`（`src/core/work-graph/architecture/catalog-service.ts:610`） |
+| 架构图/正式架构 | `src/core/work-graph/architecture/` | `createObservedArchitecture`（`src/core/work-graph/architecture/architecture-service.ts:904`）、`readCurrentCatalogWindow`（`src/core/work-graph/architecture/catalog-service.ts:389`）、`catalogPinOf`（`src/core/work-graph/architecture/catalog-service.ts:620`） |
 | 笔记（注记） | `src/core/work-graph/notes/` | `createNoteService`（`src/core/work-graph/notes/note-service.ts:852`）、`createNoteReadModel`（`src/core/work-graph/notes/note-read-model.ts:413`） |
 | 配置和设置 | `src/core/work-graph/configuration/` | `createProjectBootstrapServices`（`src/core/work-graph/configuration/project-bootstrap-service.ts:1125`）、`createRoleConfigurationService`（`src/core/work-graph/configuration/role-memory-service.ts:206`） |
 | 记录存储（提交/回执/翻页） | `src/core/record-store/`（`ports.ts`、`lookup-ports.ts`） | `GoalRecordTransactionPort`（`src/core/record-store/ports.ts:192`）、`lookupCommit`（`src/core/record-store/ports.ts:190`） |

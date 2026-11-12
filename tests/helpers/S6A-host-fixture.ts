@@ -394,6 +394,8 @@ export type S6AHostWorld = S6ARequestWorld & {
   crash(options?: S6AReopenOptions & { keepLease?: true }): Promise<void>;
   /** The Host's consume barrier (SR9 §2.4): resolves after the next real `consumeIdle` pass settles. */
   consumeBarrier(): Promise<void>;
+  /** The Host's `lifecycleIdle`: resolves once the workspace's lifecycle queue has no pass running, due or backing off. */
+  lifecycleIdle(scope: WorkspaceScope): Promise<void>;
   /** The Host's `automation.resumeOnStartup` through `automation/save` (used by the next start). */
   setResumeOnStartup(on: boolean): Promise<HostSettingsSnapshot>;
   /** Any Host settings route (`/api/real/settings/<route>`) as the Host's page; answers the route's result. */
@@ -546,6 +548,7 @@ export async function openS6AHostWorld(options: S6AHostWorldOptions): Promise<S6
     reconcileOf: projectId => real.reconcileOf(projectId),
     get consumeStatus() { return real.consumeStatus; },
     consumeBarrier: () => real.consumeBarrier(),
+    lifecycleIdle: scope => real.lifecycleIdle(scope),
   });
 
   /** Runs `start` with the Host factory wrapper installed; host-world starts are serialized. */
@@ -699,6 +702,7 @@ export async function openS6AHostWorld(options: S6AHostWorldOptions): Promise<S6
     },
     reopen: reopenOptions => hostStart(() => base.reopen(reopenOptions)),
     consumeBarrier: () => world.host.consumeBarrier(),
+    lifecycleIdle: scope => world.host.lifecycleIdle(scope),
     makeUnavailableSecretary: (label, unavailableOptions) =>
       hostStart(() => base.makeUnavailableSecretary(label, unavailableOptions)),
 

@@ -156,8 +156,9 @@ describe('S4C find/lookup read bounds (RW-12)', () => {
       expect(read.status).toBe('ready');
       if (read.status !== 'ready') return;
       expect(read.value.items.map(item => item.segment)).toEqual(['related', 'related', 'project']);
-      // The spill adds 12 lookups (20 -> 32):
+      // The spill adds 13 lookups (20 -> 33):
       //   1: the a2-goal-by-workspace goal index (`projectGoalIds`);
+      //   1：2c-1d 的在途核对读当前线的写日志（pendingKnowledgeWrites）;
       //   6: the visible-state buckets over the two slots — the project slot
       //      (null) and s4a-goal, three states each (accepted, reviewed,
       //      pending_review; the host caller has no own-goal narrowing);
@@ -171,7 +172,7 @@ describe('S4C find/lookup read bounds (RW-12)', () => {
       // the basis catalog revision's baseline+catalog read. The scoped plan
       // window is still shared with the check, so the extra checked item adds no
       // plan read.
-      expect(deltaOf(before, counter)).toEqual({ searchText: 0, lookup: 32, lookupOrdered: 5, readMany: 8 });
+      expect(deltaOf(before, counter)).toEqual({ searchText: 0, lookup: 33, lookupOrdered: 5, readMany: 8 });
     } finally { await f.close(); }
   });
 
