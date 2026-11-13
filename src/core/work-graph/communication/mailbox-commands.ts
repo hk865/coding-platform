@@ -209,8 +209,10 @@ export async function respondFromQueryAnswer(mailbox: MailboxContext,
   let answerRef: QueryJobAnswerRef;
   try { answerRef = structuredClone(rawAnswer) as unknown as QueryJobAnswerRef; }
   catch { return reject('invalid', 'the answer ref cannot be isolated from the caller'); }
-  if (answerRef.projectId !== owned.projectId || answerRef.workspaceId !== owned.workspaceId) {
-    return reject('forbidden', 'the Query answer ref is outside the bound project/workspace');
+  // Safety: an answer of another project is never associated. The workspace is not compared: a planning Query lives
+  // in the workspace of the Goal its message names, and MSG-06's binding below proves the answer is this message's.
+  if (answerRef.projectId !== owned.projectId) {
+    return reject('forbidden', 'the Query answer ref is outside the bound project');
   }
   const pins = pinsOf(write.expected, normalized.ref);
   if (!pins.ok) return pins.rejection;

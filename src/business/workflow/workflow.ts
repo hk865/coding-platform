@@ -72,8 +72,7 @@ import { moduleOverlapOf, overlapBasisDigest, splitNonOverlapping } from '../../
 import { createDutyRecipient, reviewLineOf } from '../../core/work-graph/sessions/duty-recipient.js';
 import { decidePlanCandidate, type PlanCandidateFactsV1, type PlanCandidateSourceV1 } from '../../core/work-graph/state/plan-candidate.js';
 import { decisionActionPolicy, gateCoveredTaskIds } from '../../core/work-graph/state/decision-policy.js';
-import { systemRoundContext, systemRoundOfText, systemRoundRequestId,
-  systemRoundMessageRef, type SystemRoundV1 } from '../../contracts/plan-round.js';
+import { systemRoundContext, systemRoundOfText, systemRoundRequestId, type SystemRoundV1 } from '../../contracts/plan-round.js';
 import { deviationRequestId, deviationText, deviationsOfGoal, taskRemindersOfGoal } from '../../contracts/plan-deviation.js';
 import { controlIntentRefFor } from '../../core/work-graph/tasks/control-service.js';
 import { reworkFenceOf } from '../../core/work-graph/state/task-failure.js';
@@ -86,7 +85,7 @@ import {
   type DeliveryFactsV1, type DeliveryResponseWaitV1,
 } from '../../core/work-graph/state/message-machine.js';
 import { interventionPlanningQueryRefs } from '../../contracts/query-job.js';
-import { planSourceLineageOf } from '../../core/work-graph/tasks/plan-lineage.js';
+import { planSourceLineageOf, sentSystemRoundRef } from '../../core/work-graph/tasks/plan-lineage.js';
 import { sameRef } from '../../core/work-graph/state/ref-equality.js';
 import type { DeliveryEligibilityFactsV1 } from '../../core/work-graph/model/session-facts-contracts.js';
 import { createInterventionHandler } from './intervention.js';
@@ -348,13 +347,11 @@ function roundGoalRef(round: Pick<RoundSnapshot, 'ref'>): GoalRef {
 }
 /**
  * Slice 9 §3.2: what wakes a review wait. A pending review wakes on the message, its line, the round, the Evidence
- * and the Run; a missing line (none at all, or only in another workspace) on the line facts; a settlement on the
- * source message; a refused send on the line.
+ * and the Run; a missing line on the line facts; a settlement on the source message; a refused send on the line.
  */
 const REVIEW_WAIT_KINDS = {
   exec_review_pending: ['SessionMessage', 'Session', 'VerificationRound', 'Evidence', 'Run'],
   no_review_line: ['Session', 'SessionMessage'],
-  review_line_other_workspace: ['Session', 'SessionMessage'],
   settlement_pending: ['SessionMessage'],
   exec_review_send_refused: ['Session', 'SessionMessage'],
 } as const;
@@ -364,8 +361,7 @@ function reviewWaitBasisOf(goalRef: GoalRef, reason: keyof typeof REVIEW_WAIT_KI
 /** Slice 9 §3.2: the five review states of an open round's chain head (`readReviewState`). */
 type ReviewStateV1 =
   | { kind: 'not_sent'; recipient: SessionRef }
-  | { kind: 'waiting'; reason: 'exec_review_pending' | 'no_review_line' | 'review_line_other_workspace';
-    basis: GoalWaitBasisV1 }
+  | { kind: 'waiting'; reason: 'exec_review_pending' | 'no_review_line'; basis: GoalWaitBasisV1 }
   | { kind: 'answered' }
   | { kind: 'closed' }
   | { kind: 'settlement_pending'; basis: GoalWaitBasisV1 };
@@ -783,7 +779,7 @@ export function automationContext(owned: Owned): CoreCallContext {
 
 /** The same trusted Host call in another workspace of the project (rule W: a Goal's facts are read where the Goal
  *  lives); `ownContext` admits only a Host principal, and the context is built as `lineContextOf` builds it. */
-function ownedInWorkspace(owned: Owned, workspaceId: string): Owned {
+export function ownedInWorkspace(owned: Owned, workspaceId: string): Owned {
   if (workspaceId === owned.workspaceId) return owned;
   return { ...owned, workspaceId,
     ctx: handoffContextOf({ ...owned.ctx, workspaceId }, owned.ctx.principal as HostPrincipal) };
@@ -1256,12 +1252,11 @@ export function createWorkflow(deps: WorkflowDependencies & {
 
   /**
    * Slice 9 §3.2 `readReviewState`: one read, five states, no writes. The locator chain is fixed —
-   * `execreview:<roundId>` → `systemRoundMessageRef` → `interventionPlanningQueryRefs` → `readQueryJob` →
-   * `readQueryAnswer` — and it never scans. No message yet is `not_sent` with a line in the round's workspace,
-   * `waiting/review_line_other_workspace` with a line only elsewhere in the project (never sent: joined-workspace exec
-   * review is not connected), `waiting/no_review_line` with none (`reviewLineOf`); a message whose Query is not
-   * created or not ended is `waiting/exec_review_pending`; an ended Query is `answered` with an answer that parses,
-   * else `closed`; either is
+   * `execreview:<roundId>` → the Host's own send receipt (`sentRoundOf`) → `interventionPlanningQueryRefs` →
+   * `readQueryJob` → `readQueryAnswer` — and it never scans. No message yet is `not_sent` with a review line in the
+   * project (`reviewLineOf`; the message lands in the line's workspace, the Query stays with the round's Goal), and
+   * `waiting/no_review_line` with none; a message whose Query is not created or not ended is
+   * `waiting/exec_review_pending`; an ended Query is `answered` with an answer that parses, else `closed`; either is
    * `settlement_pending` while its source message has no reply and is not withdrawn. A failed read is its rejection.
    */
   async function readReviewState(owned: Owned, round: RoundSnapshot): Promise<ReviewStateV1 | CoreRejection> {
@@ -1270,23 +1265,21 @@ export function createWorkflow(deps: WorkflowDependencies & {
     const goalRef = roundGoalRef(round);
     const requestId = systemRoundRequestId({ kind: 'exec_review', goalRef, roundRef: round.ref });
     if (requestId.status !== 'ready') return requestId;
-    const messageRef = systemRoundMessageRef({ projectId: round.ref.projectId, workspaceId: round.ref.workspaceId },
-      requestId.value);
-    if (messageRef.status !== 'ready') return messageRef;
-    const message = await consult.messages.readMessage(owned.ctx, messageRef.value);
-    if (message.status === 'not_found') {
+    const sent = await sentRoundOf(owned, requestId.value);
+    if (sent.status === 'not_found') {
       if (suggestionDutyRecipient === null) return rejection('unsupported', 'the Session duty resolver is not wired');
-      const line = await reviewLineOf(suggestionDutyRecipient, automationContext(owned),
-        { projectId: round.ref.projectId, workspaceId: round.ref.workspaceId });
+      const line = await reviewLineOf(suggestionDutyRecipient, automationContext(owned), round.ref.projectId);
       if (line.status !== 'ready') return readRejection(line);
-      if (line.value.kind === 'here') return { kind: 'not_sent', recipient: line.value.line };
-      const reason = line.value.kind === 'none' ? 'no_review_line' : 'review_line_other_workspace';
-      return { kind: 'waiting', reason, basis: reviewWaitBasisOf(goalRef, reason) };
+      if (line.value !== null) return { kind: 'not_sent', recipient: line.value };
+      return { kind: 'waiting', reason: 'no_review_line', basis: reviewWaitBasisOf(goalRef, 'no_review_line') };
     }
+    if (sent.status !== 'ready') return readRejection(sent);
+    const message = await consult.messages.readMessage(ownedInWorkspace(owned, sent.value.workspaceId).ctx, sent.value);
     if (message.status !== 'ready') return readRejection(message);
     const pending: ReviewStateV1 = { kind: 'waiting', reason: 'exec_review_pending',
       basis: reviewWaitBasisOf(goalRef, 'exec_review_pending') };
-    const read = await consult.queries.readQueryJob(owned.ctx, interventionPlanningQueryRefs(messageRef.value).queryJobRef);
+    const read = await consult.queries.readQueryJob(owned.ctx,
+      interventionPlanningQueryRefs(sent.value, owned.workspaceId).queryJobRef);
     if (read.status === 'not_found') return pending;
     if (read.status !== 'ready') return readRejection(read);
     const job = read.value.job.job;
@@ -1726,6 +1719,16 @@ export function createWorkflow(deps: WorkflowDependencies & {
       scope: { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' } });
     return result.status === 'committed' ? 'committed'
       : result.status === 'not_committed' ? 'not_committed' : 'undetermined';
+  }
+
+  /**
+   * Where this Goal's system round of `requestId` landed (`sentSystemRoundRef`): the Workflow sends it from the Goal's
+   * workspace, and the message lives in its recipient line's. `not_found` is "not sent".
+   */
+  async function sentRoundOf(owned: Owned, requestId: string): Promise<ReadResult<SessionMessageRef>> {
+    if (deps.messages === undefined) return rejection('unsupported', 'the mailbox does not publish its sent-message read');
+    return sentSystemRoundRef(deps.messages, { projectId: owned.projectId, workspaceId: owned.workspaceId },
+      requestId, owned.ctx.signal);
   }
 
   type PlanCandidateWait = { reason: string; basis: GoalWaitBasisV1; source?: DecisionSourceV1; inFlight?: true };
@@ -2268,12 +2271,13 @@ export function createWorkflow(deps: WorkflowDependencies & {
     const lineage = await planSourceLineageOf(owned.ctx,
       { messages: mailbox, queries, plans: deps.plans }, sourceMessageRef);
     if (lineage.status !== 'ready') return readRejection(lineage);
+    // The candidate's Query lives with the Goal (this Workflow's workspace); M lives in its own line's workspace.
     const query = await queries.readQueryJob(owned.ctx,
-      interventionPlanningQueryRefs(sourceMessageRef).queryJobRef);
+      interventionPlanningQueryRefs(sourceMessageRef, owned.workspaceId).queryJobRef);
     if (query.status !== 'ready') return readRejection(query);
     const replyTo = query.value.job.job.intent.execution.repliesToMessageRef
       ?? lineage.value.rootMessage;
-    const message = await mailbox.readMessage(owned.ctx, replyTo);
+    const message = await mailbox.readMessage(ownedInWorkspace(owned, replyTo.workspaceId).ctx, replyTo);
     if (message.status !== 'ready') return readRejection(message);
     if (message.value.response !== null
       || waitStateOf(message.value, waitFactsOfRecord(message.value)).state !== 'open') {
@@ -2287,19 +2291,6 @@ export function createWorkflow(deps: WorkflowDependencies & {
     if (answered.status === 'responded') return 'responded';
     if (answered.status === 'rejected') return answered;
     return rejection('incomplete', `the candidate reply ended ${answered.status}`);
-  }
-
-  /** PL §7.1.3: whether the deterministic Host message of one request id already exists. */
-  async function hostSendCommitted(
-    owned: Owned, ref: SessionMessageRef,
-  ): Promise<'sent' | 'unsent' | CoreRejection> {
-    if (deps.messages === undefined) {
-      return rejection('unsupported', 'the mailbox does not publish readMessage');
-    }
-    const read = await deps.messages.readMessage(owned.ctx, ref);
-    if (read.status === 'ready') return 'sent';
-    if (read.status === 'not_found') return 'unsent';
-    return readRejection(read);
   }
 
   /**
@@ -2321,9 +2312,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
     if (round === null) return false;
     const requestId = systemRoundRequestId(round);
     if (requestId.status !== 'ready') return false;
-    const ref = systemRoundMessageRef({ projectId: owned.projectId, workspaceId: owned.workspaceId }, requestId.value);
-    if (ref.status !== 'ready') return false;
-    return await hostSendCommitted(owned, ref.value) === 'unsent';
+    return (await sentRoundOf(owned, requestId.value)).status === 'not_found';
   }
 
   /**
@@ -2358,11 +2347,10 @@ export function createWorkflow(deps: WorkflowDependencies & {
       // §7.1.3: no fallback to the Goal's secretary; with no line this deviation writes nothing (the derived card is
       // the exit).
       if (adviser.session === null) continue;
-      const ref = systemRoundMessageRef({ projectId: owned.projectId, workspaceId: owned.workspaceId }, requestId);
-      if (ref.status !== 'ready') return ref;
-      const sent = await hostSendCommitted(owned, ref.value);
-      if (typeof sent !== 'string') return sent;
-      if (sent === 'sent') continue;
+      // PL §7.1.3: the committed Host message of this request id is the only dedupe.
+      const sent = await sentRoundOf(owned, requestId);
+      if (sent.status === 'ready') continue;
+      if (sent.status !== 'not_found') return readRejection(sent);
       if (adviser.copy !== null && deps.messages !== undefined) {
         // v4 :5459–:5466 (book :588–:591): one `notify` to the creator, deduped by (source operation, final
         // recipient); a reply still goes to the sender. It goes out before the round, so a sent round has its copy.
@@ -2470,7 +2458,8 @@ export function createWorkflow(deps: WorkflowDependencies & {
     const replaced = waiting.task;
     const run = waiting.run;
     if (run.continuation === undefined) return null;
-    const wait = await mailbox.readMessage(owned.ctx, run.continuation.messageRef);
+    const waitRef = run.continuation.messageRef;
+    const wait = await mailbox.readMessage(ownedInWorkspace(owned, waitRef.workspaceId).ctx, waitRef);
     if (wait.status !== 'ready') return readRejection(wait);
     if (wait.value.response !== null
       || waitStateOf(wait.value, waitFactsOfRecord(wait.value)).state !== 'open') return null;
@@ -2597,7 +2586,8 @@ export function createWorkflow(deps: WorkflowDependencies & {
           if (deps.messages === undefined) {
             return rejection('unsupported', 'the mailbox does not publish readMessage');
           }
-          const original = await deps.messages.readMessage(owned.ctx, group.originalMessageRef);
+          const original = await deps.messages.readMessage(
+            ownedInWorkspace(owned, group.originalMessageRef.workspaceId).ctx, group.originalMessageRef);
           if (original.status !== 'ready') return readRejection(original);
           const recipient = original.value.recipient as SessionRef;
           return advancing(null, makePerform(base, { kind: 'send_system_round', request: {
@@ -2658,14 +2648,12 @@ export function createWorkflow(deps: WorkflowDependencies & {
             if (fixRead.status !== 'ready') return readRejection(fixRead);
             fix = fixRead.value;
           }
-          // §6.3.1: the review line is the existing duty recipient resolver;
+          // §6.3.1: the review line is the one project-wide decision the exec review reads too (`reviewLineOf`);
           // a missing resolver is an unwired narrow double, not "no line".
           if (suggestionDutyRecipient === null) {
             return rejection('unsupported', 'the Session duty resolver is not wired');
           }
-          const reviewerRead = await suggestionDutyRecipient.resolveDutyRecipient(automationContext(owned), {
-            workspace: { projectId: owned.projectId, workspaceId: owned.workspaceId }, duty: 'reviewer',
-          });
+          const reviewerRead = await reviewLineOf(suggestionDutyRecipient, automationContext(owned), owned.projectId);
           if (reviewerRead.status !== 'ready') return readRejection(reviewerRead);
           const reviewer = reviewerRead.value;
           let source: PlanCandidateSourceV1 = 'agent_proposal';
@@ -2673,8 +2661,10 @@ export function createWorkflow(deps: WorkflowDependencies & {
             if (deps.messages === undefined) {
               return rejection('unsupported', 'the mailbox does not publish readMessageBody');
             }
-            const body = await deps.messages.readMessageBody(owned.ctx,
-              { messageRef: proposal.sourceMessageRef, part: 'message' });
+            // The candidate's source lives in its line's workspace, maybe not this Goal's.
+            const sourceRef = proposal.sourceMessageRef;
+            const body = await deps.messages.readMessageBody(ownedInWorkspace(owned, sourceRef.workspaceId).ctx,
+              { messageRef: sourceRef, part: 'message' });
             if (body.status !== 'ready') return readRejection(body);
             const head = systemRoundOfText(body.value.text);
             source = head === null ? 'other'

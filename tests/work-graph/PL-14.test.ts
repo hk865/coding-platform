@@ -19,8 +19,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-  systemRoundMessageRef, systemRoundRequestId, type SystemRoundV1,
+  systemRoundRequestId, type SystemRoundV1,
 } from '../../src/contracts/plan-round.js';
+import { systemRoundMessageRef } from '../helpers/system-round-ref.js';
 import type { WorkflowStepReceipt } from '../../src/business/workflow/contracts.js';
 import { platformRoleProfile } from '../../src/core/agent-runtime/role-profiles.js';
 import { S2B_ROUND_BY_GOAL_LOOKUP } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';

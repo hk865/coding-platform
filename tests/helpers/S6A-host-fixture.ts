@@ -95,7 +95,7 @@ import type { ReadResult } from '../../src/contracts/core/results.js';
 import type { QueryJobRef } from '../../src/contracts/query-job.js';
 import type { PreparedCommit } from '../../src/core/record-store/ports.js';
 import type { RequestCoreViewV1 } from '../../src/core/work-graph/model/request-contracts.js';
-import type { SessionCreateOperationRecord } from '../../src/core/work-graph/model/session-contracts.js';
+import type { SessionCard, SessionCreateOperationRecord } from '../../src/core/work-graph/model/session-contracts.js';
 import { ROLE_LINE_STEP_KEYS } from '../../src/core/work-graph/state/role-line-action.js';
 import { waitFor } from '../scenarios/harness.js';
 import { deferred, driveWorkflow, writeStaleLock, type Deferred } from './A2-restart-fixture.js';
@@ -326,8 +326,9 @@ export type S6AAbandonedCall = { instance: number; request: ModelRequest };
 
 /** The scripted model of the SE2 world. */
 export type S6AScriptedModel = {
-  /** Appends replies to the Session's queue; the next runs on that Session consume them in order. */
-  script(session: S6ASession, replies: readonly S6AReply[]): Promise<void>;
+  /** Appends replies to the Session's queue; the next runs on that Session consume them in order. `scope`: the
+   * Session's own workspace when it is not the main one (XWR R3's second-workspace line). */
+  script(session: S6ASession, replies: readonly S6AReply[], scope?: WorkspaceScope): Promise<void>;
   /** Replies of the Session's queue not consumed yet. */
   pending(session: S6ASession): Promise<number>;
   /** The model requests served from the Session's queue, in order. */
@@ -581,11 +582,14 @@ export async function openS6AHostWorld(options: S6AHostWorldOptions): Promise<S6
     throw error;
   }
 
-  async function kernelSessionOf(session: S6ASession): Promise<string> {
-    return (await base.readSession(session)).record.kernel.kernelSessionId;
+  async function kernelSessionOf(session: S6ASession, scope?: WorkspaceScope): Promise<string> {
+    if (scope === undefined) return (await base.readSession(session)).record.kernel.kernelSessionId;
+    const read = (await base.post('sessions/read', plain(scope, session.ref))).body as ReadResult<SessionCard>;
+    if (read.status !== 'ready') throw new Error(`S6A: the Session ${session.ref.sessionId} is not readable: ${JSON.stringify(read)}`);
+    return read.value.record.kernel.kernelSessionId;
   }
-  async function scriptOf(session: S6ASession): Promise<SessionScript> {
-    const key = await kernelSessionOf(session);
+  async function scriptOf(session: S6ASession, scope?: WorkspaceScope): Promise<SessionScript> {
+    const key = await kernelSessionOf(session, scope);
     let script = scripts.get(key);
     if (script === undefined) { script = new SessionScript(); scripts.set(key, script); }
     return script;
@@ -638,8 +642,8 @@ export async function openS6AHostWorld(options: S6AHostWorldOptions): Promise<S6
   const world = Object.create(base) as S6AHostWorld;
   const extra: Omit<S6AHostWorld, keyof S6ARequestWorld> & Pick<S6ARequestWorld, 'reopen' | 'makeUnavailableSecretary' | 'close'> = {
     scripted: {
-      async script(session, replies) {
-        const script = await scriptOf(session);
+      async script(session, replies, scope) {
+        const script = await scriptOf(session, scope);
         for (const reply of replies) script.push(reply);
       },
       async pending(session) { return (await scriptOf(session)).pending(); },

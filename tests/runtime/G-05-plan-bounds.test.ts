@@ -33,7 +33,8 @@ import { commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import { toolOutputJson } from '../scenarios/support/common.js';
 import { driveWorkflow } from '../helpers/A2-restart-fixture.js';
 import type { WorkflowStepReceipt } from '../../src/business/workflow/contracts.js';
-import { systemRoundMessageRef, systemRoundRequestId, type SystemRoundV1 } from '../../src/contracts/plan-round.js';
+import { systemRoundRequestId, type SystemRoundV1 } from '../../src/contracts/plan-round.js';
+import { systemRoundMessageRef } from '../helpers/system-round-ref.js';
 
 vi.mock('../../src/core/record-store/in-memory-record-store.js', async (importOriginal) =>
   (await import('../helpers/S6A-commit-barrier.js')).inMemoryBarrierModule(importOriginal));

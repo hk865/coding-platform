@@ -22,7 +22,8 @@
  * with the paths joined by `, ` (§3.3), right after the `module: ` row; the reviewer row `plannedFiles: <路径, 路径>`.
  */
 import { describe, expect, it } from 'vitest';
-import { systemRoundMessageRef, systemRoundRequestId } from '../../src/contracts/plan-round.js';
+import { systemRoundRequestId } from '../../src/contracts/plan-round.js';
+import { systemRoundMessageRef } from '../helpers/system-round-ref.js';
 import type { PlanProposalRef } from '../../src/core/work-graph/model/plan-contracts.js';
 import type { ModelRequest } from '../../vendor/coding-agent/dist/public-api.js';
 import { graphWrite } from '../helpers/AG2b-collaboration-fixture.js';

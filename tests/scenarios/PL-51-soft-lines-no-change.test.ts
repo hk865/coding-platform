@@ -12,7 +12,7 @@
  */
 import { afterEach, expect, it } from 'vitest';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
-import { systemRoundMessageRef } from '../../src/contracts/plan-round.js';
+import { systemRoundMessageRef } from '../helpers/system-round-ref.js';
 import { deviationsOfGoal } from '../../src/contracts/plan-deviation.js';
 import { advanceUntil, post, readExecution } from '../helpers/A2-restart-fixture.js';
 import { plain } from '../helpers/AG2b-collaboration-fixture.js';

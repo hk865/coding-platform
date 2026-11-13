@@ -181,7 +181,7 @@
     },
     "skill-platform-adviser": {
       "file": "templates/skill-platform-adviser.txt",
-      "version": 10,
+      "version": 11,
       "mentionsTools": []
     },
     "skill-platform-scribe": {

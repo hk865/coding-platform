@@ -5,9 +5,10 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-  SYSTEM_ROUND_ACTOR, hostMessageId, systemRoundMessageRef, systemRoundRequestId,
+  SYSTEM_ROUND_ACTOR, hostMessageId, systemRoundRequestId,
   type SystemRoundV1,
 } from '../../src/contracts/plan-round.js';
+import { systemRoundMessageRef } from '../helpers/system-round-ref.js';
 import {
   queryAnswerShapeOf, type QueryJobIntentV1,
 } from '../../src/contracts/query-job.js';

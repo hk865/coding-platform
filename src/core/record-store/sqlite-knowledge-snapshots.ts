@@ -5,6 +5,7 @@
  * is never dropped. This file imports no WorkGraph module.
  */
 import { createHash } from 'node:crypto';
+import type { KnowledgeProblemV1 } from '../../contracts/knowledge.js';
 import type { KnowledgeRecoveryRow, KnowledgeSnapshots } from './knowledge-snapshot-ports.js';
 import { inImmediateTransaction, openSqliteWithSchema } from './sqlite-body-store.js';
 
@@ -13,7 +14,9 @@ CREATE TABLE IF NOT EXISTS snapshot_blob(blob_sha TEXT PRIMARY KEY, content BLOB
 CREATE TABLE IF NOT EXISTS snapshot_ref(line_ref TEXT, path TEXT, taken_at TEXT, blob_sha TEXT,
   PRIMARY KEY(line_ref, path, taken_at));
 CREATE TABLE IF NOT EXISTS knowledge_recovery(notice_id TEXT, item_no INTEGER, kind TEXT, write_id TEXT, line_ref TEXT,
-  path TEXT, taken_at TEXT, expected_blob TEXT, PRIMARY KEY(notice_id, item_no));`;
+  path TEXT, taken_at TEXT, expected_blob TEXT, PRIMARY KEY(notice_id, item_no));
+CREATE TABLE IF NOT EXISTS knowledge_problem(notice_id TEXT, item_no INTEGER, line_ref TEXT, body TEXT NOT NULL,
+  PRIMARY KEY(notice_id, item_no));`;
 
 /** Copies kept per (line, path), besides those a recovery item points at. */
 const KEPT_PER_KEY = 20;
@@ -87,6 +90,18 @@ export function openKnowledgeSnapshots(path: string | null): KnowledgeSnapshots 
     },
     readRecovery(noticeId) {
       return (open.prepare('SELECT * FROM knowledge_recovery WHERE notice_id = ? ORDER BY item_no').all(noticeId) as Row[]).map(recoveryOf);
+    },
+    recordProblems(noticeId, lineRef, rows) {
+      transaction(() => {
+        for (const row of rows) {
+          open.prepare(`INSERT INTO knowledge_problem(notice_id, item_no, line_ref, body) VALUES (?, ?, ?, ?)
+            ON CONFLICT(notice_id, item_no) DO NOTHING`).run(noticeId, row.itemNo, lineRef, JSON.stringify(row));
+        }
+      });
+    },
+    readProblems(noticeId) {
+      return (open.prepare('SELECT body FROM knowledge_problem WHERE notice_id = ? ORDER BY item_no').all(noticeId) as Row[])
+        .map(row => JSON.parse(row['body'] as string) as KnowledgeProblemV1);
     },
     hasRecoveryForWrite(writeId) {
       return open.prepare('SELECT 1 AS found FROM knowledge_recovery WHERE write_id = ? LIMIT 1').get(writeId) !== undefined;

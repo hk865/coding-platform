@@ -35,7 +35,7 @@ describe('O5b-R5: the pack closure and digests of the three changed Skill templa
   /* Named mutation: leave `pack.json`'s adviser entry at version 9 (and regenerate) -> the adviser row's manifest
    * `toEqual` is red; edit the adviser file without regenerating -> its text `toBe` is red. */
   it.each([
-    ['skill-platform-adviser', 10], ['skill-platform-reviewer', 4], ['skill-platform-work', 11],
+    ['skill-platform-adviser', 11], ['skill-platform-reviewer', 4], ['skill-platform-work', 11],
   ] as const)('R5-1 %s: the generated text is the file, at version %i, with no tool mention', async (id, version) => {
     expect(PACK.templates[id]).toBe((await bytesOf(fileOf(id))).toString('utf8'));
     expect(PACK.manifest.templates[id]).toEqual({ file: `templates/${id}.txt`, version, mentionsTools: [] });

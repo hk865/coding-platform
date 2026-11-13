@@ -88,8 +88,9 @@ export async function proveInterventionSource(input: {
   if (input.selector !== null && sessionMessageRefKey(input.selector) !== sessionMessageRefKey(source)) {
     return { status: 'ready', value: null };
   }
-  // The Query, the message it names and the Goal this caller proves are one Goal.
-  if (source.projectId !== input.goalRef.projectId || source.workspaceId !== input.query.ref.workspaceId
+  // The Query, the message it names and the Goal this caller proves are one Goal. The message may live in another
+  // workspace of the project than the Query: the Query lives with its Goal (the submit admits it only there).
+  if (source.projectId !== input.goalRef.projectId
     || input.query.job.projectId !== input.goalRef.projectId || input.query.job.goalId !== input.goalRef.goalId) {
     return { status: 'ready', value: null };
   }

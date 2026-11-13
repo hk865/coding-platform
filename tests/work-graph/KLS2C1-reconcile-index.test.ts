@@ -25,14 +25,14 @@ const roundGate = vi.hoisted(() => ({ afterFilesRead: null as null | (() => void
 vi.mock('../../src/core/work-graph/knowledge/reconcile.js', async importOriginal => {
   const actual = await importOriginal<typeof import('../../src/core/work-graph/knowledge/reconcile.js')>();
   return { ...actual,
-    reconcileKnowledgeLine: (...[write, line, trigger]: Parameters<typeof actual.reconcileKnowledgeLine>) =>
+    reconcileKnowledgeLine: (...[write, line, trigger, projectLines]: Parameters<typeof actual.reconcileKnowledgeLine>) =>
       actual.reconcileKnowledgeLine(write, { ...line, async readKnowledgeFiles() {
         const read = await line.readKnowledgeFiles();
         const step = roundGate.afterFilesRead;
         roundGate.afterFilesRead = null;
         step?.();
         return read;
-      } }, trigger) };
+      } }, trigger, projectLines) };
 });
 
 const CORE: NoteAnchorV1 = { kind: 'module', moduleId: 'core' };

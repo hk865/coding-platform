@@ -11,7 +11,7 @@
  */
 import { afterEach, expect, it, vi } from 'vitest';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
-import { systemRoundMessageRef } from '../../src/contracts/plan-round.js';
+import { systemRoundMessageRef } from '../helpers/system-round-ref.js';
 import { advanceUntil, post, readExecution } from '../helpers/A2-restart-fixture.js';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';

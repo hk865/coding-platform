@@ -26,6 +26,7 @@ import { deliveryEligibility, waitFactsOfRecord, waitStateOf } from '../state/me
 import { plainSessionRefKey } from '../sessions/session-record-codecs.js';
 import { compareSessionInputCandidates, sessionMessageRefKey } from '../sessions/message-record-codecs.js';
 import { planProposalIdFor } from '../tasks/plan-service.js';
+import { hostContextIn, interventionQueryWorkspaceOf } from '../tasks/plan-lineage.js';
 
 /** The five kinds an offer can name; `notify` is listed but never opens a turn. */
 export type ConsumableSessionKindV1 =
@@ -71,8 +72,8 @@ export type ConsumableSessionsDependencies = {
   executions: Pick<ExecutionReadPort, 'readExecution'>;
   queries: Pick<QueryJobPort, 'readQueryJob' | 'readQueryAnswer'>;
   messages: Pick<SessionMailboxPort, 'readInbox' | 'readOutbox' | 'readMessage'>;
-  /** The one candidate read `settlementOfferOf` needs; it never writes a record. */
-  plans: Pick<PlanTaskPort, 'readPlanProposal'>;
+  /** The candidate and the source's Goal (where its Query lives) `settlementOfferOf` reads; it never writes a record. */
+  plans: Pick<PlanTaskPort, 'readPlanProposal' | 'queryGoal'>;
   /** The delivery-eligibility facts the offer rule reads (`session-facts-contracts.ts:79`). */
   eligibility: DeliveryEligibilityFactsPort;
 };
@@ -169,12 +170,17 @@ export function createConsumableSessions(deps: ConsumableSessionsDependencies):
    * occupancy is never consulted and nothing is written or re-delivered. Only an executor M whose wait is still
    * open has its candidate/questions close-out deferred (C-25); its accepted-candidate reply belongs to the adopted
    * recovery (6.1.6), so it gets no settlement offer in that class either. A consumed wait, a message that did not
-   * wait, a person's message and a Host system R always get the close-out.
+   * wait, a person's message and a Host system R always get the close-out. The Query and its candidate live in the
+   * workspace of the Goal the source names, read as the Host of that workspace.
    */
-  async function settlementOfferOf(ctx: CoreCallContext, source: SessionMessage, scope: WorkspaceScope):
+  async function settlementOfferOf(ctx: CoreCallContext, source: SessionMessage):
     Promise<ReadResult<ConsumableSessionKindV1 | 'deferred' | null>> {
-    const refs = interventionPlanningQueryRefs(source.ref);
-    const read = await deps.queries.readQueryJob(ctx, refs.queryJobRef);
+    const queryWorkspace = await interventionQueryWorkspaceOf(ctx, deps.plans, source);
+    if (queryWorkspace.status !== 'ready') return queryWorkspace;
+    const workspaceId = queryWorkspace.value;
+    const goalCtx = hostContextIn(ctx, workspaceId);
+    const refs = interventionPlanningQueryRefs(source.ref, workspaceId);
+    const read = await deps.queries.readQueryJob(goalCtx, refs.queryJobRef);
     if (read.status === 'not_found') return ready(null);
     if (read.status !== 'ready') return read;
     const record = read.value;
@@ -197,7 +203,7 @@ export function createConsumableSessions(deps: ConsumableSessionsDependencies):
       if (jobStatus !== 'closed' && !runEnded) return ready(null);
       return ready('action_request');
     }
-    const answer = await deps.queries.readQueryAnswer(ctx, answerRef);
+    const answer = await deps.queries.readQueryAnswer(goalCtx, answerRef);
     if (answer.status !== 'ready') return answer;
     let terminal: 'settled' | 'candidate' | 'questions' | 'adopted' = 'settled';
     if (execution.answerShape !== 'plan_review') {
@@ -207,9 +213,10 @@ export function createConsumableSessions(deps: ConsumableSessionsDependencies):
       } else if (parsed.status === 'parsed' && parsed.response.kind === 'plan') {
         // The candidate's deterministic identity is the intervention's propose identity for this source.
         const goalId = record.job.job.goalId as string;
-        const proposal = await deps.plans.readPlanProposal(ctx, {
-          aggregateType: 'PlanProposal', projectId: scope.projectId, workspaceId: scope.workspaceId,
-          proposalId: planProposalIdFor({ projectId: scope.projectId, workspaceId: scope.workspaceId, goalId,
+        const projectId = source.ref.projectId;
+        const proposal = await deps.plans.readPlanProposal(goalCtx, {
+          aggregateType: 'PlanProposal', projectId, workspaceId,
+          proposalId: planProposalIdFor({ projectId, workspaceId, goalId,
             requestId: `intervention:${sessionMessageRefKey(source.ref)}:propose` }),
         });
         if (proposal.status !== 'ready' && proposal.status !== 'not_found') return proposal;
@@ -241,7 +248,6 @@ export function createConsumableSessions(deps: ConsumableSessionsDependencies):
     Promise<ReadResult<OfferSet>> {
     // The mailbox ports take a plain SessionRef; the record's ref carries `aggregateType` for the store.
     const session: SessionRef = { projectId: record.ref.projectId, sessionId: record.ref.sessionId };
-    const workspace: WorkspaceScope = { projectId: record.ref.projectId, workspaceId: record.workspaceId };
     const offers: CandidateOffer[] = [];
     let inboxCursor: string | undefined;
     for (;;) {
@@ -262,7 +268,7 @@ export function createConsumableSessions(deps: ConsumableSessionsDependencies):
         // §5.5.2: a terminal Query whose source close-out is still missing is offered again from the same source;
         // the ordinary delivery rule above no longer offers a delivered message. A deferred executor M stays
         // undelivered while its wait is open, and its answered Query makes it no new input: it never heads the queue.
-        const settlement = await settlementOfferOf(ctx, message, workspace);
+        const settlement = await settlementOfferOf(ctx, message);
         if (settlement.status !== 'ready') return settlement;
         if (settlement.value === 'deferred') continue;
         if (offer.value !== null) {

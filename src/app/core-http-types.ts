@@ -196,6 +196,7 @@ export type CoreRouteSuffix =
   | 'architecture/revise'
   | 'architecture/read'
   | 'architecture/proposals/read'
+  | 'architecture/proposal-batch-files'
   | 'architecture/semantic-links'
   | 'architecture/semantic-flows'
   | 'architecture/semantic-links/check'
@@ -387,7 +388,7 @@ export type CoreRouteSuffix =
   | 'goals/copy-confirm'
   | 'initialization/adopt'
   // KLS-2c: a knowledge notice's recovery items and the person's recovery of one.
-  | 'knowledge/recover' | 'knowledge/recovery-items'
+  | 'knowledge/recover' | 'knowledge/recovery-items' | 'knowledge/problems'
   // The knowledge directory's git status and the person's commit of it (kls-design §2.2.11).
   | 'knowledge/status' | 'knowledge/commit';
 
@@ -426,6 +427,8 @@ export type ArchitectureReadBody = PlainBody<ArchitectureCatalogPort['readArchit
 export type ArchitectureReadResponse = RouteResponse<ArchitectureCatalogPort['readArchitectureRevision']>;
 export type ArchitectureProposalsReadBody = PlainBody<ArchitectureProposalService['readArchitectureProposal']>;
 export type ArchitectureProposalsReadResponse = RouteResponse<ArchitectureProposalService['readArchitectureProposal']>;
+export type ArchitectureProposalBatchFilesBody = PlainBody<ArchitectureProposalService['readProposalBatchFiles']>;
+export type ArchitectureProposalBatchFilesResponse = RouteResponse<ArchitectureProposalService['readProposalBatchFiles']>;
 export type ArchitectureSemanticLinksBody = PlainBody<SemanticLinksReader['readSemanticLinks']>;
 export type ArchitectureSemanticLinksResponse = RouteResponse<SemanticLinksReader['readSemanticLinks']>;
 export type ArchitectureSemanticFlowsBody = PlainBody<SemanticLinksReader['readSemanticFlows']>;
@@ -450,6 +453,8 @@ export type ExplorationCoreRouteDto = {
 export type ArchitectureCoreRouteDto = {
   'architecture/revise': { body: ArchitectureReviseBody; response: ArchitectureReviseResponse };
   'architecture/proposals/read': { body: ArchitectureProposalsReadBody; response: ArchitectureProposalsReadResponse };
+  'architecture/proposal-batch-files': { body: ArchitectureProposalBatchFilesBody;
+    response: ArchitectureProposalBatchFilesResponse };
   'architecture/semantic-links': { body: ArchitectureSemanticLinksBody; response: ArchitectureSemanticLinksResponse };
   'architecture/semantic-flows': { body: ArchitectureSemanticFlowsBody; response: ArchitectureSemanticFlowsResponse };
   'architecture/semantic-links/check': { body: ArchitectureSemanticLinksCheckBody; response: ArchitectureSemanticLinksCheckResponse };
@@ -608,6 +613,8 @@ export type KnowledgeRecoverBody = PlainBody<KnowledgeOpsPort['recover']>;
 export type KnowledgeRecoverResponse = RouteResponse<KnowledgeOpsPort['recover']>;
 export type KnowledgeRecoveryItemsBody = PlainBody<KnowledgeOpsPort['recoveryItems']>;
 export type KnowledgeRecoveryItemsResponse = RouteResponse<KnowledgeOpsPort['recoveryItems']>;
+export type KnowledgeProblemsBody = PlainBody<KnowledgeOpsPort['problems']>;
+export type KnowledgeProblemsResponse = RouteResponse<KnowledgeOpsPort['problems']>;
 /** The knowledge status: the workspace is the scope's; a plain route still carries `input`, which status does not read. */
 export type KnowledgeStatusBody = { scope: CoreScope; input: Record<string, never> };
 export type KnowledgeStatusResponse = RouteResponse<KnowledgeOpsPort['status']>;
@@ -618,6 +625,7 @@ export type KnowledgeCommitResponse = RouteResponse<KnowledgeOpsPort['commit']>;
 export type KnowledgeCoreRouteDto = {
   'knowledge/recover': { body: KnowledgeRecoverBody; response: KnowledgeRecoverResponse };
   'knowledge/recovery-items': { body: KnowledgeRecoveryItemsBody; response: KnowledgeRecoveryItemsResponse };
+  'knowledge/problems': { body: KnowledgeProblemsBody; response: KnowledgeProblemsResponse };
   'knowledge/status': { body: KnowledgeStatusBody; response: KnowledgeStatusResponse };
   'knowledge/commit': { body: KnowledgeCommitBody; response: KnowledgeCommitResponse };
 };

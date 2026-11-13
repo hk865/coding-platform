@@ -27,6 +27,7 @@ import { decodeHostSystemOutboxRecord, encodeHostSystemOutboxAppendedEvent, enco
 import { isNonZeroPlatformCursor } from '../sessions/session-record-codecs.js';
 import { eventIdOf as trustedEventIdOf } from '../sessions/trusted-context.js';
 import { ownContext, ownWrite, normalizeMessageRef, senderIdentityOf, identityKeyOf, fingerprintOf } from './mailbox-common.js';
+import { replaySessionMessageReceipt } from './mailbox-write.js';
 
 // --------------------------------------------------------------------------
 // Small pure helpers
@@ -375,4 +376,29 @@ export const lookupHostSendCommit: (
   } catch {
     return { status: 'undetermined', reason: 'the mailbox receipt lookup failed' };
   }
+};
+
+/**
+ * The Host send's real message ref (X-3): the same identity-only receipt read, then the receipt's own event replayed.
+ * A Host send's id comes from the sender's scope while its record lives in the recipient line's workspace, so a ref
+ * built from the request id alone is right only when the two are one workspace. Only the Host reads its own sends
+ * (safety: the receipt is the Host's own). `not_found` is "never sent"; a failed read is its rejection.
+ */
+export const readHostSendMessageRef = async (
+  mailbox: MailboxContext, ctx: CoreCallContext, input: { requestId: string; scope: WorkspaceScope },
+): Promise<ReadResult<SessionMessageRef>> => {
+  const owned = ownContext(ctx);
+  if (!owned.ok) return owned.rejection;
+  if (owned.principal.kind !== 'host') return reject('forbidden', 'only the Host reads its own send receipt');
+  if (mailbox.deps.commitIdentities === undefined) {
+    return reject('unsupported', 'the commit-identity read is not configured');
+  }
+  const identityKey = identityKeyOf('send', input.scope,
+    senderIdentityOf({ kind: 'host', actor: { ...owned.principal.actor } }), input.requestId);
+  const found = await lookupCommittedReceiptByIdentity(mailbox.deps.commitIdentities, identityKey);
+  if (found.status === 'missing') return { status: 'not_found' };
+  if (found.status !== 'found') return reject('unavailable', found.reason);
+  const replayed = await replaySessionMessageReceipt(mailbox.records, found.receipt);
+  if (replayed.status !== 'committed') return replayed;
+  return { status: 'ready', value: { ...replayed.value.ref } };
 };

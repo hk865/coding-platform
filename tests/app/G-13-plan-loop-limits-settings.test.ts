@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { createHostSettings, type HostSettingsAssembly, type HostSettingsPrivateSnapshot } from '../../src/app/host-settings.js';
 import type { HostSettingsPort, HostSettingsSnapshot } from '../../src/app/host-settings-types.js';
 import { deviationsOfGoal } from '../../src/contracts/plan-deviation.js';
-import { systemRoundMessageRef } from '../../src/contracts/plan-round.js';
+import { systemRoundMessageRef } from '../helpers/system-round-ref.js';
 import type { PlanLoopLimitsV1 } from '../../src/contracts/plan-loop-limits.js';
 import type { BootstrapResponse } from '../../src/app/core-http-types.js';
 import { advanceUntil, cleanupRestart, driveWorkflow, post, readExecution } from '../helpers/A2-restart-fixture.js';

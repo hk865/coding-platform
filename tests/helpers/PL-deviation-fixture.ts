@@ -10,7 +10,7 @@
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
-import { systemRoundMessageRef } from '../../src/contracts/plan-round.js';
+import { systemRoundMessageRef } from './system-round-ref.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
 import type { DeviationInputV1 } from '../../src/contracts/plan-deviation.js';

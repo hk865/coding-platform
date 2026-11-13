@@ -24,8 +24,8 @@ import type { ReadResult } from '../../src/contracts/core/results.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { PlanRevisionSnapshot } from '../../src/contracts/plan.js';
 import type { PlanProposalRef } from '../../src/core/work-graph/model/plan-contracts.js';
-import { systemRoundRequestId, systemRoundContext, systemRoundMessageRef,
-  type SystemRoundV1 } from '../../src/contracts/plan-round.js';
+import { systemRoundRequestId, systemRoundContext, type SystemRoundV1 } from '../../src/contracts/plan-round.js';
+import { systemRoundMessageRef } from './system-round-ref.js';
 import { interventionPlanningQueryRefs, type QueryJobAnswerSnapshot } from '../../src/contracts/query-job.js';
 import type { QueryJobRecord } from '../../src/core/work-graph/queries/contracts.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';

@@ -10,13 +10,15 @@ import type { ArchitectureProposalBatchRef } from '../../../contracts/architectu
 import type {
   ColdStartExplorationQueryRefV1, ExplorationDepthV1, RoleLineActionV1,
 } from './role-line-action.js';
+import { roleExplorationQuestion } from './role-exploration.js';
 
 export type ExplorationFollowUpActionV1 = RoleLineActionV1 & {
   action: 'exploration_followup';
   phase: 'regions';
   lastCompleted: null;
   followUp: {
-    kind: 'repropose' | 'deepen';
+    /** `knowledge_conflict` is KC-1 G1's repair round: one notice, its regions, the places' text. */
+    kind: 'repropose' | 'deepen' | 'knowledge_conflict';
     moduleRefs: ModuleRef[];
     reason: string | null;
     sourceBatchRef: ArchitectureProposalBatchRef | null;
@@ -29,14 +31,19 @@ export type ExplorationFollowUpActionV1 = RoleLineActionV1 & {
   baseCatalogPin: ArchitectureCatalogPinV1;
 };
 
-/** One follow-up operation per public cause: `repropose:<batchId>` or `deepen:<requestId>`. */
+/** One follow-up operation per public cause: `repropose:<batchId>`, `deepen:<requestId>` or `conflict:<noticeId>`. */
 export function explorationFollowUpOperationRef(projectId: string, key: string): OperationRef {
   return { aggregateType: 'CoreOperation', projectId, operationId: `exploration_followup:${key}` };
 }
 
+/** The knowledge-conflict round's question: the region question, then the places given to this region (KC-1 G1). */
+export function knowledgeConflictQuestion(region: ModuleRef, text: string): string {
+  return `${roleExplorationQuestion('region', region, 1)}\n\n${text}`;
+}
+
 export function newExplorationFollowUpAction(input: {
   depth: ExplorationDepthV1;
-  kind: 'repropose' | 'deepen';
+  kind: 'repropose' | 'deepen' | 'knowledge_conflict';
   moduleRefs: ModuleRef[];
   reason: string | null;
   sourceBatchRef: ArchitectureProposalBatchRef | null;

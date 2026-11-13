@@ -72,9 +72,9 @@ function owner(name: string): (...args: unknown[]) => unknown {
   };
 }
 const group = (name: string): unknown => new Proxy({}, { get: (_t, key) => owner(`${name}.${String(key)}`) });
-// `resolveUnknownRun`/`resolveUnknownQueryRun` are the only top-level method
-// accesses (`.bind(platform)`), so they must be functions, not group proxies.
-const TOP_LEVEL = new Set(['resolveUnknownRun', 'resolveUnknownQueryRun']);
+// `resolveUnknownRun`/`resolveUnknownQueryRun`/`readProposalBatchFiles` are the only three
+// top-level method accesses (`.bind(platform)`), so they must be functions, not group proxies.
+const TOP_LEVEL = new Set(['resolveUnknownRun', 'resolveUnknownQueryRun', 'readProposalBatchFiles']);
 let realPlatform: Platform;
 let bindings: ReturnType<typeof createPlatformCoreRouteBindings>;
 beforeEach(async () => {

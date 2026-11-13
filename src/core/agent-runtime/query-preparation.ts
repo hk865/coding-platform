@@ -56,6 +56,7 @@ import { finalToolNamesOf, BUILTIN_TOOL_NAMES, RUNTIME_TOOL_NAMES } from './tool
 import { READONLY_COMMAND_TOOL_NAME } from './readonly-command-tool.js';
 import type { ContextQueryHistoryInputV1 } from './context-types.js';
 import type { PlanningQuestionReader } from '../work-graph/tasks/planning-question-reader.js';
+import { hostContextIn } from '../work-graph/tasks/plan-lineage.js';
 import type { PlanProposal } from '../work-graph/model/plan-contracts.js';
 import { deriveFuturePlanDelta, type FuturePlanDelta } from '../work-graph/tasks/plan-validation.js';
 import { queryPlanSummary } from './context-fact-text.js';
@@ -459,7 +460,9 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         }
         let source;
         try {
-          source = await deps.messages.readMessage(owned, execution.sourceMessageRef!);
+          // The source lives in its recipient line's workspace, which may differ from the Query's (the Goal's).
+          const sourceRef = execution.sourceMessageRef!;
+          source = await deps.messages.readMessage(hostContextIn(owned, sourceRef.workspaceId), sourceRef);
         } catch (error) {
           return rejected('unavailable', `the planning source message read failed: ${messageOf(error)}`);
         }
@@ -617,7 +620,8 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
           return rejected('unsupported', 'the decision answer read is not bound');
         }
         if (goal === null) return rejected('invalid', 'no goal');
-        const originalRefs = interventionPlanningQueryRefs(resumeOriginal);
+        // The original Query lives with the same Goal as this one, in this Query's workspace.
+        const originalRefs = interventionPlanningQueryRefs(resumeOriginal, queryRunRef.workspaceId);
         const original = await deps.queryExecution.readQueryExecution(owned, originalRefs.queryRunRef);
         if (original.status !== 'ready') return original;
         const answerRef = original.value.job.job.answerRefs.at(-1);

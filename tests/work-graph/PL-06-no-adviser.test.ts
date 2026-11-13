@@ -19,8 +19,9 @@ import type { WorkflowAdvanceInput } from '../../src/business/workflow/contracts
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 import {
-  SYSTEM_ROUND_ACTOR, systemRoundMessageRef, systemRoundRequestId, type SystemRoundV1,
+  SYSTEM_ROUND_ACTOR, systemRoundRequestId, type SystemRoundV1,
 } from '../../src/contracts/plan-round.js';
+import { systemRoundMessageRef } from '../helpers/system-round-ref.js';
 import { platformRoleProfile } from '../../src/core/agent-runtime/role-profiles.js';
 import { createGoalDecisionCauseReader } from '../../src/core/work-graph/tasks/goal-decision-reader.js';
 import { advanceUntil } from '../helpers/A2-restart-fixture.js';

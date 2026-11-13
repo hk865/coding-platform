@@ -10,14 +10,16 @@ import { rejected } from '../../../contracts/core/rejections.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import {
-  ARCHITECTURE_FILE_PATH, type KnowledgeConflictV1, type KnowledgeIssueV1, type ReconcileResult, type ReconcileTrigger,
+  ARCHITECTURE_FILE_PATH, type KnowledgeConflictV1, type KnowledgeIssueV1, type KnowledgeProblemV1,
+  type ReconcileResult, type ReconcileTrigger,
 } from '../../../contracts/knowledge.js';
 import type { ProjectNoticeKindV1 } from '../../../contracts/role-lines.js';
 import { truncateUtf8 } from '../../../contracts/utf8.js';
 import type { KnowledgeRecoveryRow, KnowledgeSnapshots } from '../../record-store/knowledge-snapshot-ports.js';
 import { gitBlobId } from '../../workspace/workspace-change-capture.js';
 import {
-  lineRefKey, type KnowledgeDiskFileV1, type KnowledgeWriteDeps, type LineKnowledge,
+  lineRefKey, type KnowledgeArchitecture, type KnowledgeDiskFileV1, type KnowledgeLineScope, type KnowledgeWriteDeps,
+  type LineKnowledge,
 } from '../model/line-knowledge.js';
 import {
   KNOWLEDGE_WRITES_BY_LINE_STATE_LOOKUP, knowledgeWriteCodec, type KnowledgeWriteV1,
@@ -38,10 +40,10 @@ type RecoveryItem = Omit<KnowledgeRecoveryRow, 'noticeId' | 'itemNo' | 'lineRef'
  * file does not fail the round.
  */
 export async function reconcileKnowledgeLine(write: KnowledgeWriteDeps, line: LineKnowledge,
-  trigger: ReconcileTrigger): Promise<ReadResult<ReconcileResult>> {
+  trigger: ReconcileTrigger, projectLines: readonly LineKnowledge[] | null): Promise<ReadResult<ReconcileResult>> {
   return write.queue.run(line.projectId, [line.line.folder], async () => {
     const leased = await withKnowledgeLeases(write, [line], () =>
-      withSnapshots(write, line.projectId, snapshots => reconcileLeased(write, line, trigger, snapshots)));
+      withSnapshots(write, line.projectId, snapshots => reconcileLeased(write, line, trigger, projectLines, snapshots)));
     return leased.status === 'ready' ? leased.value : storeFailureToRejection(leased);
   });
 }
@@ -64,7 +66,7 @@ export async function withSnapshots<T>(write: KnowledgeWriteDeps, projectId: str
 }
 
 async function reconcileLeased(write: KnowledgeWriteDeps, line: LineKnowledge, trigger: ReconcileTrigger,
-  snapshots: KnowledgeSnapshots): Promise<ReadResult<ReconcileResult>> {
+  projectLines: readonly LineKnowledge[] | null, snapshots: KnowledgeSnapshots): Promise<ReadResult<ReconcileResult>> {
   const { projectId, objectFormat } = line;
   const lineRef = lineRefKey(line.scope, line.line);
   // Step 1: the complete list from disk, with git's view.
@@ -76,12 +78,10 @@ async function reconcileLeased(write: KnowledgeWriteDeps, line: LineKnowledge, t
   // leaves the round undone): a line with no architecture.json in a project whose records never adopted an
   // architecture has no graph, which is no issue (b2 Astra 1: the records' fact, never the disk or last round's index).
   const architecture = line.architectureOfDisk(disk.value.files);
+  const recorded = await write.recordedArchitecture(projectId);
+  if (recorded.status !== 'ready') return recorded;
   let noGraphYet = false;
-  if (architecture.status !== 'ready' && !files.has(ARCHITECTURE_FILE_PATH)) {
-    const adopted = await write.catalogAdopted(projectId);
-    if (adopted.status !== 'ready') return adopted;
-    noGraphYet = !adopted.value;
-  }
+  if (architecture.status !== 'ready' && !files.has(ARCHITECTURE_FILE_PATH)) noGraphYet = recorded.value === null;
   const now = write.now();
   // Step 2: what the index held after the last round (or the platform's last write).
   const index = write.indexOf(projectId);
@@ -144,10 +144,37 @@ async function reconcileLeased(write: KnowledgeWriteDeps, line: LineKnowledge, t
   // read, in one `knowledge_conflict` notice; the same problems keep its identity ([2C1-15]), so finding them again
   // notifies nothing. Only the graph step 1 found missing in a never-adopted project is no issue. Both judge step 1's
   // bytes, never the disk again (stk16: an edit landing mid-round).
+  const fileIssues = [...issues];
   const conflicts = write.conflictsOf(disk.value.files.filter(file => file.kind === 'module'), line.scope);
-  if (architecture.status !== 'ready' && !noGraphYet) issues.push({ path: ARCHITECTURE_FILE_PATH, reason: architecture.reason });
+  const graphReason = architecture.status !== 'ready' && !noGraphYet ? architecture.reason : null;
+  if (graphReason !== null) issues.push({ path: ARCHITECTURE_FILE_PATH, reason: graphReason });
+  // 4-4: every line whose own graph reads checks the project merge. A line another workspace cannot read skips only
+  // this check (协调: its own reconciliation reports it; this line's round must not stop).
+  let projectReason: string | null = null;
+  if (architecture.status === 'ready' && projectLines !== null) {
+    const parts: { scope: KnowledgeLineScope; architecture: KnowledgeArchitecture }[] = [];
+    let complete = true;
+    for (const other of projectLines) {
+      if (lineRefKey(other.scope, other.line) === lineRef) {
+        parts.push({ scope: other.scope, architecture: architecture.value });
+        continue;
+      }
+      const read = await other.readArchitecture();
+      if (read.status !== 'ready') { complete = false; break; }
+      parts.push({ scope: other.scope, architecture: read.value });
+    }
+    if (complete) {
+      const merged = write.projectArchitectureOf(parts, projectId);
+      if (merged.status !== 'decoded') projectReason = merged.reason;
+    }
+  }
+  if (projectReason !== null) issues.push({ path: ARCHITECTURE_FILE_PATH, reason: projectReason });
   const conflictNotice = conflictNoticeOf(projectId, lineRef, issues, conflicts);
+  let problems: KnowledgeProblemV1[] = [];
   if (conflictNotice !== null) {
+    problems = write.problemsOf({ files: disk.value.files, fileIssues, graphReason, projectReason,
+      scope: line.scope, recorded: recorded.value });
+    snapshots.recordProblems(conflictNotice.noticeId, lineRef, problems);   // rows first, then the notice
     await write.notify({ projectRef: { projectId }, subject: conflictNotice.subject, kind: 'knowledge_conflict',
       summary: conflictNotice.summary, operation: conflictNotice.operation });
   }
@@ -161,7 +188,7 @@ async function reconcileLeased(write: KnowledgeWriteDeps, line: LineKnowledge, t
   // Step 10.
   index.transaction(tx => tx.writeMeta(lineRef, now));
   for (const path of disk.value.temporaries) await line.applyChange({ path, before: null, after: null });
-  return { status: 'ready', value: { lineRef, trigger, changed: changes.length, issues, conflicts,
+  return { status: 'ready', value: { lineRef, trigger, changed: changes.length, issues, conflicts, problems,
     unconfirmed: r18.length, reverted: newReverts } };
 }
 

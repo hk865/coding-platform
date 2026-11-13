@@ -31,7 +31,7 @@ import {
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createUnknownCallReviewService } from '../../src/core/work-graph/tasks/unknown-call-review-service.js';
 import { unknownCallReviewRouteOf } from '../../src/core/work-graph/state/unknown-call-review.js';
-import { systemRoundMessageRef } from '../../src/contracts/plan-round.js';
+import { systemRoundMessageRef } from '../helpers/system-round-ref.js';
 import { goalDecisionBasis } from '../../src/core/work-graph/tasks/goal-basis.js';
 import {
   createK3PendingReview, openK3ReviewCardWorld, readK3Review, readK3ReviewCard, type K3ReviewCardWorld,
@@ -88,6 +88,8 @@ function adviserOwner(world: K3ReviewCardWorld, serve: () => Served & { record: 
       readSession: async () => ({ status: 'ready', value: { record: { role: { kind: 'adviser-role' } } } }) as never,
       dutyOfRole: async () => ({ status: 'ready', value: (serve().duty ?? 'adviser') as never }),
     },
+    // The adviser round was sent: its receipt names the same message the Query above was asked by.
+    messages: { readHostSendMessageRef: async (_ctx, input) => systemRoundMessageRef(input.scope, input.requestId) },
     // A2: the original command read always fails, so no row here applies a skip.
     readKernelCommandFacts: async () => ({ status: 'rejected', code: 'unavailable', reason: 'the Kernel store is not readable' }),
     readWorkspace: { readWorkspace: async () => ({ status: 'rejected', code: 'not_found', reason: 'no package.json' }) },

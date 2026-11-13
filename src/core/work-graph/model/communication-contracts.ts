@@ -104,6 +104,16 @@ export function consultationFacts(message: SessionMessage, part: 'message' | 're
       : { kind: 'unconsumed', boundHere: false } };
 }
 
+/**
+ * The Goal a message's one intervention-planning Query belongs to: the Goal the message names (its `goalRef`, else
+ * its `taskRef`'s Goal). The Query lives in that Goal's workspace, so every reader finds it from the message alone;
+ * `null` keeps the Query in the message's own workspace.
+ */
+export function interventionGoalRefOf(message: SessionMessage): GoalRef | null {
+  return message.goalRef ?? (message.taskRef === null ? null
+    : { aggregateType: 'Goal', projectId: message.taskRef.projectId, goalId: message.taskRef.goalId });
+}
+
 /** The one wait-consumed unique slot; the acceptance claim's key and the reader's key are the same. */
 export function waitConsumedClaimKey(messageRef: SessionMessageRef): string {
   return 'wait-consumed:' + canonicalKey(messageRef);
@@ -296,6 +306,13 @@ export type HostSendCommitLookupInput = {
 /** The read-only Host-send committed-receipt lookup, answered from the original send's identity. */
 export type HostSendCommitLookup = (ctx: CoreCallContext, input: HostSendCommitLookupInput) =>
   Promise<ToolCommitLookupResult>;
+/**
+ * The Host send's real message ref, replayed from its own committed receipt (identity: the sender's `scope`, the
+ * caller's Host actor and `requestId`). The message lives in the recipient line's workspace, which may differ from
+ * the sender's; `not_found` is "never sent".
+ */
+export type HostSendMessageRefRead = (ctx: CoreCallContext, input: { requestId: string; scope: WorkspaceScope }) =>
+  Promise<ReadResult<SessionMessageRef>>;
 
 /**
  * The Host system outbox: the Host's own record of one rework-notice delivery.
@@ -451,6 +468,8 @@ export interface SessionMailboxPort {
   lookupToolCommit?: ToolCommitLookup;
   /** The Host send's own identity-only committed-receipt read (`send_session_message`); never the current recipient. */
   lookupHostSendCommit?: HostSendCommitLookup;
+  /** Where a Host send landed (its receipt's message ref): the one way a sender finds its own sent message. */
+  readHostSendMessageRef?: HostSendMessageRefRead;
 }
 /** The full command port; the historical `SessionMailboxPort` stays the narrow read/old-write port. */
 export interface SessionMessageCommandPort extends SessionMailboxPort {

@@ -9,12 +9,13 @@
  * `sessions/find`, `sessions/read`, `queries/read`, `messages/inbox`, `messages/read`, `architecture/read`,
  * `architecture/proposals/read`, `executions/read` and `tasks/query`.
  */
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ArchitectureCatalogPinV1, ModuleDefinition } from '../../src/contracts/architecture-catalog.js';
 import type { ArchitectureProposalRef, ProposalRead } from '../../src/contracts/architecture-proposal.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
-import type { WorkspaceScope } from '../../src/contracts/core/identity.js';
+import type { SessionRef, WorkspaceScope } from '../../src/contracts/core/identity.js';
 import type { OperationRef } from '../../src/contracts/core/operations.js';
 import type { QueryJobRef } from '../../src/contracts/query-job.js';
 import type { RunRef, TaskTriple } from '../../src/contracts/dispatch.js';
@@ -31,14 +32,20 @@ import type { QueryJobRecord } from '../../src/core/work-graph/queries/contracts
 import type { RoleLineReadV1 } from '../../src/core/work-graph/views/role-line-read.js';
 import type { RoleLineOperationReadV1 } from '../../src/core/work-graph/views/role-line-operations-read.js';
 import { roleExplorationQuestion } from '../../src/core/work-graph/state/role-exploration.js';
-import { ag2bPlanDraft, graphWrite, plain } from './AG2b-collaboration-fixture.js';
+import {
+  AG2B_CONSUMER_ID, AG2B_QUERY_BUDGET, AG2B_RUNTIME_BUDGET, ag2bPlanDraft, graphWrite, plain,
+  writeAG2bWorkspace,
+} from './AG2b-collaboration-fixture.js';
 import { readQuery } from './A2-restart-fixture.js';
 import { commitBarrier, type CommitHold } from './S6A-commit-barrier.js';
 import { s6aCardsWorkspace, type S6ACardsWorkspace } from './S6A-cards-fixture.js';
 import { readBody } from './IV-host-fixture.js';
 import { PL_ADVISER_ROLE } from './PL-consumption-fixture.js';
 import { readyValue } from './S6A-memory-fixture.js';
-import { S6A_SCOPE, type S6ABackend, type S6ARequestWorld, type S6ASession } from './S6A-request-fixture.js';
+import {
+  S6A_SCRIBE_ROLE, S6A_SCRIBE_ROLE_BINDING, S6A_SCOPE, type S6ABackend, type S6AExtraBinding,
+  type S6ARequestWorld, type S6ASession,
+} from './S6A-request-fixture.js';
 import type { S6AReply } from './S6A-host-fixture.js';
 import { valueOf } from './S6B3-fixture.js';
 import { queryJobRefOfRun } from './S7D2-coldstart-world.js';
@@ -46,6 +53,7 @@ import {
   addS7D2SecondWorkspace, adviserWorkOf, openS7D2RoleLineWorld, readS7D2Operations, S7D2_MODULE_IDS,
   type S7D2RoleLineWorld, type S7D2SecondWorkspace,
 } from './S7D2-role-line-world.js';
+import { bindingOf } from './S7A-fixture.js';
 import { waitFor } from '../scenarios/harness.js';
 import { xws2pProjectPath } from './XWS2P-world.js';
 
@@ -111,6 +119,21 @@ export const XWS2A_ADVISER_TOOLS = ['read', 'send_session_message', 'respond_ses
   'read_session_message', 'read_session_message_body', 'ack_session_message', 'withdraw_session_message',
   'create_member', 'look_graph', 'find_graph', 'read_requests', 'record_note',
   'propose_architecture_revision'] as const;
+
+/**
+ * XWR R7: the opening scribe line's own trusted binding (Runtime + Workflow) and the one query profile the Host's
+ * consume loop requires for its role. A second binding with the same role would make `servingBinding` ambiguous, so
+ * this is added only when the world is opened with `scribe: true`.
+ */
+export const XWS2A_SCRIBE_WORK: S6AExtraBinding = {
+  binding: bindingOf('xws2a-scribe-binding', S6A_SCRIBE_ROLE, 'XWS2A scribe guidance', ['read', 'record_note']),
+  workflow: { workspace: S6A_SCOPE, sessionRole: S6A_SCRIBE_ROLE, roleBinding: S6A_SCRIBE_ROLE_BINDING,
+    budget: { tokenBudget: 1_000_000, deadline: null } },
+  queryProfile: { id: 'xws2a-scribe-query-profile', label: 'XWS2A scribe query', scope: S6A_SCOPE,
+    runtimeBindingId: 'xws2a-scribe-binding', sessionRole: S6A_SCRIBE_ROLE,
+    roleBinding: S6A_SCRIBE_ROLE_BINDING, runtimeBudget: AG2B_RUNTIME_BUDGET, budget: AG2B_QUERY_BUDGET,
+    consumerId: AG2B_CONSUMER_ID },
+};
 
 function moduleOf(moduleId: string, path: string): ModuleDefinition {
   return { ref: { projectId: S6A_SCOPE.projectId, moduleId }, name: moduleId,
@@ -222,6 +245,42 @@ export async function driveSecondWorkflow(second: S6ACardsWorkspace, input: Work
   throw new Error('XWS2A: the Workflow did not settle');
 }
 
+/**
+ * The Goal's next system round (XWR-0, XWR): `workflow/advance` of `select_work` in `ws` (the Goal's workspace) until
+ * the selection's first `send_system_round`, which it performs. Answers that send's request, or `null` when the
+ * selection stopped first.
+ */
+export async function sendRoundOf(ws: S6ACardsWorkspace, goal: GoalRef, flowId: string):
+Promise<{ round: { kind: string }; recipient: SessionRef } | null> {
+  let input: WorkflowAdvanceInput = { schemaVersion: 1, goalRef: goal, flowId, sessionHint: null, kind: 'select_work' };
+  for (let step = 0; step < 8; step += 1) {
+    const result = await ws.route('workflow/advance', input) as WorkflowAdvanceResult;
+    if (result.status !== 'ready' || result.value.next === null) return null;
+    input = result.value.next;
+    if (input.kind === 'perform' && (input.operation.kind as string) === 'send_system_round') {
+      await ws.route('workflow/advance', input);
+      return (input.operation as unknown as { request: { round: { kind: string }; recipient: SessionRef } }).request;
+    }
+  }
+  return null;
+}
+
+/**
+ * One `refine:` round on `goal`: the public `plans/propose`/`plans/apply` adopt a Plan whose only Task is a goal-level
+ * `plan_only` placeholder `label`, then `sendRoundOf` sends the refinement. Answers its recipient line, or `null`.
+ */
+export async function refineRound(ws: S6ACardsWorkspace, goal: GoalRef, label: string): Promise<SessionRef | null> {
+  const draft = { schemaVersion: 2, planId: label, planRevision: 1, goalId: goal.goalId, stages: [], tasks: [{
+    taskId: label, title: label, requirementLevel: 'required', taskKind: 'work', disposition: 'active', phase: 'pending',
+    scope: { kind: 'goal' }, executionIntent: 'plan_only', sizeClass: 'small' }], assignments: [], obligations: [],
+    taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] }, taskRelations: [], inputRequirements: [] };
+  const proposed = valueOf<{ ref: unknown; revision: number }>(await ws.post('plans/propose', graphWrite(ws.scope,
+    { goalRef: goal, basedOn: null, draft, reason: { text: label, sources: [] } }, `${label}-propose`)), 'committed', label);
+  valueOf(await ws.post('plans/apply', graphWrite(ws.scope, { proposalRef: proposed.ref,
+    expectedProposalRevision: proposed.revision, decisionRefs: [] }, `${label}-apply`)), 'committed', label);
+  return (await sendRoundOf(ws, goal, label))?.recipient ?? null;
+}
+
 /** Open the world and start its one join: the second workspace is born in the registration commit. */
 export async function openXWS2AWorld(options: {
   backend: S6ABackend;
@@ -238,6 +297,11 @@ export async function openXWS2AWorld(options: {
   adviserTools?: readonly string[];
   /** The opening adviser binding's write scope (default `[]`); B1-15 passes `['.']`. */
   adviserWriteScope?: readonly string[];
+  /** Host bindings after the adviser's (XWR R2: the S9 reviewer binding, so a main reviewer line is consumed). */
+  extraBindings?: readonly S6AExtraBinding[];
+  /** XWR R7: bind the opening scribe line's Runtime, Workflow and query profile, so the Host consumes it and it can
+   *  claim a Task. */
+  scribe?: boolean;
 }): Promise<XWS2AWorld> {
   const adviser = adviserWorkOf(options.adviserTools ?? [...XWS2A_ADVISER_TOOLS], true);
   if (options.adviserWriteScope !== undefined) {
@@ -245,7 +309,8 @@ export async function openXWS2AWorld(options: {
       grant: { ...adviser.binding.grant, writeScope: [...options.adviserWriteScope] } };
   }
   const base = await openS7D2RoleLineWorld({ backend: options.backend,
-    extraBindings: [adviser],
+    extraBindings: [adviser, ...(options.scribe === true ? [XWS2A_SCRIBE_WORK] : []),
+      ...(options.extraBindings ?? [])],
     ...(options.extraHostOptions === undefined ? {} : { extraHostOptions: options.extraHostOptions }) });
   let second: S7D2SecondWorkspace | null = null;
   try {
@@ -419,6 +484,38 @@ export async function openXWS2AWorld(options: {
   } catch (error) {
     await base.close().catch(() => undefined);
     await second?.remove().catch(() => undefined);
+    throw error;
+  }
+}
+
+/**
+ * XWR R8: a SECOND project on the same Host, opened through the Host's own `workspaces/open` settings route with
+ * no `projectId` (a new project: its own root, project and workspace records, and its own platform). The world's
+ * fixture capture keeps the first project's platform; a caller uses only the returned scope, never that project's
+ * records. The root is removed by the caller's `remove()` after the world closes.
+ */
+export type XWS2AOtherProject = {
+  readonly scope: WorkspaceScope;
+  readonly root: string;
+  remove(): Promise<void>;
+};
+
+export async function openXWS2AOtherProject(world: XWS2AWorld, label: string): Promise<XWS2AOtherProject> {
+  const root = await mkdtemp(join(tmpdir(), 'xws2a-other-project-'));
+  const remove = (): Promise<void> => rm(root, { recursive: true, force: true });
+  try {
+    await writeAG2bWorkspace(root);
+    const opened = await world.base.world.settings('workspaces/open', { path: root, name: label,
+      writeAllowed: false, commandsAllowed: false });
+    if (opened.status !== 'ready') {
+      throw new Error(`XWS2A: the other project did not open: ${JSON.stringify(opened)}`);
+    }
+    await world.base.world.settleDetached();
+    const scope: WorkspaceScope = { projectId: opened.value.scope.projectId,
+      workspaceId: opened.value.scope.workspaceId };
+    return { scope, root, remove };
+  } catch (error) {
+    await remove();
     throw error;
   }
 }

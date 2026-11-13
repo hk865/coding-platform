@@ -136,24 +136,6 @@ export function hostMessageId(
   };
 }
 
-/** The system round's message ref; the same request id always yields the same ref. */
-export function systemRoundMessageRef(
-  scope: { projectId: string; workspaceId: string },
-  requestId: string,
-): { status: 'ready'; value: SessionMessageRef } | CoreRejection {
-  const messageId = hostMessageId(scope, SYSTEM_ROUND_ACTOR, requestId);
-  if (messageId.status !== 'ready') return messageId;
-  return {
-    status: 'ready',
-    value: {
-      aggregateType: 'SessionMessage',
-      projectId: scope.projectId,
-      workspaceId: scope.workspaceId,
-      messageId: messageId.value,
-    },
-  };
-}
-
 /**
  * The head of a round from the text's FIRST line only. An unknown prefix (or a
  * line that is not the exact shape of a known one) is not an error: it reads

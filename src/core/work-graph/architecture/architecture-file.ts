@@ -14,7 +14,10 @@
  * id or dangling reference makes the whole read invalid: never half a catalog.
  */
 import type { ModuleRef } from '../../../contracts/core/identity.js';
-import { ARCHITECTURE_FILE_PATH, type KnowledgeConflictV1 } from '../../../contracts/knowledge.js';
+import {
+  ARCHITECTURE_FILE_PATH, type KnowledgeConflictV1, type KnowledgeFileSourceV1, type KnowledgeIssueV1,
+  type KnowledgeProblemKindV1, type KnowledgeProblemV1,
+} from '../../../contracts/knowledge.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import { isSafeProjectPath } from '../../../contracts/workspace-path.js';
 import { messageOf } from '../../../contracts/error-message.js';
@@ -23,9 +26,12 @@ import {
   fileModuleId, fileProjectPath, projectModuleId, projectModuleIdOfFile, projectPathOfFile, rawModuleId,
 } from '../../../contracts/workspace-module-id.js';
 import type { DecodeResult } from '../../record-store/ports.js';
-import type { KnowledgeArchitecture, KnowledgeBaselineV1, KnowledgeLineScope } from '../model/line-knowledge.js';
+import type {
+  KnowledgeArchitecture, KnowledgeBaselineV1, KnowledgeDiskFileV1, KnowledgeLineScope, KnowledgeRecordedArchitecture,
+} from '../model/line-knowledge.js';
 import type { AdoptedArchitecture } from './catalog-contracts.js';
 import { readArchitectureBaselineContent, validateAdoptedArchitecture } from './catalog-record-codecs.js';
+import { stronglyConnectedCycles } from './architecture-delta.js';
 
 
 export type ModuleFileV1 = {
@@ -227,6 +233,190 @@ export function knowledgeConflictsOf(modules: readonly { path: string; bytes: Ui
   return [...found.values()]
     .map(entry => ({ kind: entry.kind, moduleId: entry.moduleId, paths: [...entry.paths].sort(compare) }))
     .sort((left, right) => compare(left.kind, right.kind) || compare(left.moduleId, right.moduleId));
+}
+
+/**
+ * The projection's bytes for one path: `architecture.json`, or the module whose raw id is `moduleId`; null when the
+ * projection has none. The one lookup the note rebuild (`notes/knowledge-files.ts`) and the source verdict share.
+ */
+export function projectedFileOf(projection: { architecture: Uint8Array; modules: readonly { moduleId: string; bytes: Uint8Array }[] },
+  path: string, moduleId: string | null): Uint8Array | null {
+  if (path === ARCHITECTURE_FILE_PATH) return projection.architecture;
+  if (moduleId === null) return null;
+  return projection.modules.find(module => module.moduleId === moduleId)?.bytes ?? null;
+}
+
+/**
+ * Ruling 4-2 A, the one verdict (G2, KC-2, KC-3): the platform wrote a file when its bytes are exactly the bytes of
+ * the catalog the records last adopted (`projection`); otherwise the person's, committed or not by git. A note file
+ * and a module file whose bytes name no module are never the platform's.
+ */
+export function platformFileSource(projection: { architecture: Uint8Array; modules: readonly { moduleId: string; bytes: Uint8Array }[] } | null,
+  file: { path: string; bytes: Uint8Array; committed: boolean }): KnowledgeFileSourceV1 {
+  let projected: Uint8Array | null = null;
+  if (projection !== null) {
+    if (file.path === ARCHITECTURE_FILE_PATH) projected = projection.architecture;
+    else {
+      const id = moduleFileIdOf(file.path, file.bytes);
+      if (id.status === 'decoded') projected = projectedFileOf(projection, file.path, id.value);
+    }
+  }
+  if (projected !== null && Buffer.from(projected).equals(Buffer.from(file.bytes))) return 'platform';
+  return file.committed ? 'committed' : 'uncommitted';
+}
+
+/** One raw place before the file sources and `itemNo` are added. */
+type ProblemPlace = { kind: KnowledgeProblemKindV1; paths: string[]; moduleIds: string[]; reason: string };
+
+/**
+ * Every place one line's knowledge files go wrong, from their bytes only (KC-3's gate calls it too, ruling 4-6):
+ * the bad files step 7 already found, the module-file conflicts, the index's own structural faults, a cycle, the
+ * project merge's failure and one fallback for a graph reason no other place names. The order is draft §2.3-2's
+ * judgment order, then `moduleIds`, then `paths`.
+ */
+export function knowledgeProblemsOf(input: {
+  architecture: Uint8Array | null; modules: readonly { path: string; bytes: Uint8Array }[];
+  fileIssues: readonly KnowledgeIssueV1[]; graphReason: string | null; projectReason: string | null;
+  scope: KnowledgeLineScope;
+}): { kind: KnowledgeProblemKindV1; paths: string[]; moduleIds: string[]; reason: string }[] {
+  const { workspaceId, mainWorkspaceId } = input.scope;
+  const projectViewIdOf = (raw: string): string => projectModuleId(workspaceId, raw, mainWorkspaceId);
+  const parsed = new Map<string, { path: string; file: ModuleFileV1 }[]>();
+  for (const module of input.modules) {
+    const file = moduleFileOf(module.path, module.bytes);
+    if (typeof file === 'string') continue;   // already a bad_file row
+    parsed.set(file.id, [...(parsed.get(file.id) ?? []), { path: module.path, file }]);
+  }
+  const filesOfId = (id: string): string[] => (parsed.get(id) ?? []).map(entry => entry.path).sort(compare);
+  const places: ProblemPlace[] = [];
+  for (const issue of [...input.fileIssues].sort((left, right) => compare(left.path, right.path))) {
+    places.push({ kind: 'bad_file', paths: [issue.path], moduleIds: [], reason: `文件读不出：${issue.reason}` });
+  }
+  for (const [id, entries] of [...parsed].sort(([left], [right]) => compare(left, right))) {
+    if (entries.length < 2) continue;
+    places.push({ kind: 'duplicate_module_id', paths: entries.map(entry => entry.path).sort(compare),
+      moduleIds: [projectViewIdOf(id)],
+      reason: `${entries.length} 个模块文件都写了模块号 ${projectViewIdOf(id)}：一个模块号只能有一个文件，删掉或改掉多余的` });
+  }
+  const claimers = new Map<string, Set<string>>();
+  for (const entries of parsed.values()) {
+    for (const { file } of entries) {
+      for (const path of file.paths) claimers.set(path, (claimers.get(path) ?? new Set()).add(file.id));
+    }
+  }
+  const byClaimants = new Map<string, { ids: string[]; paths: string[] }>();
+  for (const [path, ids] of claimers) {
+    if (ids.size < 2) continue;
+    const sorted = [...ids].sort(compare);
+    const key = sorted.join('\u0000');
+    const entry = byClaimants.get(key) ?? { ids: sorted, paths: [] };
+    entry.paths.push(path);
+    byClaimants.set(key, entry);
+  }
+  for (const { ids, paths } of byClaimants.values()) {
+    const moduleIds = ids.map(projectViewIdOf).sort(compare);
+    places.push({ kind: 'path_claimed_by_two_modules',
+      paths: [...new Set(ids.flatMap(filesOfId))].sort(compare), moduleIds,
+      reason: `模块 ${moduleIds.join('、')} 都认领了 ${paths.sort(compare).join('、')}：一个路径只能归一个模块，从其余模块的 paths 里去掉` });
+  }
+  const dangling = new Map<string, { raw: string; target: string; path: string }>();
+  for (const entries of parsed.values()) {
+    for (const { path, file } of entries) {
+      for (const target of [...(file.contains ?? []), ...file.dependsOn.map(entry => entry.to)]) {
+        if (parsed.has(target)) continue;
+        const key = `${file.id}\u0000${target}`;
+        if (!dangling.has(key)) dangling.set(key, { raw: file.id, target, path });
+      }
+    }
+  }
+  for (const { raw, target, path } of dangling.values()) {
+    places.push({ kind: 'dangling_reference', paths: [path], moduleIds: [projectViewIdOf(raw), projectViewIdOf(target)],
+      reason: `模块 ${projectViewIdOf(raw)} 引用了不存在的模块 ${projectViewIdOf(target)}：改 ${projectViewIdOf(raw)} 的 contains 或 dependsOn，或补上 ${projectViewIdOf(target)} 的模块文件` });
+  }
+  const index = input.architecture === null ? null : architectureFileOf(input.architecture, workspaceId === mainWorkspaceId);
+  if (index !== null && typeof index !== 'string') {
+    const named = [...index.modules, ...index.crossWorkspace.dependsOn.map(edge => edge.from),
+      ...index.crossWorkspace.contains.map(edge => edge.parent)];
+    for (const id of [...new Set(named)].sort(compare)) {
+      if (parsed.has(id)) continue;
+      places.push({ kind: 'module_without_file', paths: [ARCHITECTURE_FILE_PATH], moduleIds: [projectViewIdOf(id)],
+        reason: `architecture.json 点名了模块 ${projectViewIdOf(id)}，但没有它的模块文件：补上文件，或从 architecture.json 去掉` });
+    }
+    const all = [...parsed.values()].flat();
+    const undeclared = all.filter(entry => entry.file.contains === undefined);
+    if (undeclared.length > 0 && undeclared.length < all.length) {
+      const ids = undeclared.map(entry => projectViewIdOf(entry.file.id)).sort(compare);
+      places.push({ kind: 'partial_contains', paths: undeclared.map(entry => entry.path).sort(compare), moduleIds: ids,
+        reason: `有的模块文件写了 contains、有的没写（没写的：${ids.join('、')}）：要么都写，要么都不写` });
+    }
+    const reached = new Set<string>();
+    const queue = [...index.modules];
+    while (queue.length > 0) {
+      const id = queue.pop()!;
+      if (reached.has(id)) continue;
+      reached.add(id);
+      queue.push(...(parsed.get(id)?.[0]?.file.contains ?? []));
+    }
+    const unreached = all.filter(entry => !reached.has(entry.file.id));
+    if (unreached.length > 0) {
+      const ids = unreached.map(entry => projectViewIdOf(entry.file.id)).sort(compare);
+      places.push({ kind: 'unreachable', paths: unreached.map(entry => entry.path).sort(compare), moduleIds: ids,
+        reason: `模块 ${ids.join('、')} 从 architecture.json 的 modules 走不到：放进 modules，或放进某个模块的 contains` });
+    }
+  }
+  const cycles = stronglyConnectedCycles([...parsed.keys()], [...parsed.values()].flatMap(entries =>
+    entries.flatMap(({ file }) => file.dependsOn.map(edge => ({ from: file.id, to: edge.to })))));
+  for (const component of cycles) {
+    const ids = component.map(projectViewIdOf).sort(compare);
+    places.push({ kind: 'cycle', paths: [...new Set(component.flatMap(filesOfId))].sort(compare), moduleIds: ids,
+      reason: `模块 ${ids.join('、')} 的依赖成环：去掉环上的一条 dependsOn` });
+  }
+  if (input.projectReason !== null) {
+    places.push({ kind: 'project_merge', paths: [ARCHITECTURE_FILE_PATH], moduleIds: [],
+      reason: `几个工作区的架构图合不起来：${input.projectReason}` });
+  }
+  // 4-6: one fallback when no other place names a file (a note's bad file does not count).
+  const modulePaths = new Set(input.modules.map(module => module.path));
+  if (input.graphReason !== null && places.every(place => place.kind === 'project_merge'
+    || !place.paths.some(path => path === ARCHITECTURE_FILE_PATH || modulePaths.has(path)))) {
+    places.push({ kind: 'other', paths: [ARCHITECTURE_FILE_PATH], moduleIds: [],
+      reason: `架构图读不出：${input.graphReason}` });
+  }
+  const rank = (kind: KnowledgeProblemKindV1): number => ORDER.indexOf(kind);
+  return places.sort((left, right) => rank(left.kind) - rank(right.kind)
+    || compare(left.moduleIds.join('\u0000'), right.moduleIds.join('\u0000'))
+    || compare(left.paths.join('\u0000'), right.paths.join('\u0000')));
+}
+
+const ORDER: readonly KnowledgeProblemKindV1[] = ['bad_file', 'duplicate_module_id', 'path_claimed_by_two_modules',
+  'dangling_reference', 'cycle', 'module_without_file', 'partial_contains', 'unreachable', 'project_merge', 'other'];
+
+/** `knowledgeProblemsOf` plus each file's source and `itemNo`: the one injected `KnowledgeWriteDeps.problemsOf`. */
+export function lineProblemsOf(input: {
+  files: readonly KnowledgeDiskFileV1[]; fileIssues: readonly KnowledgeIssueV1[]; graphReason: string | null;
+  projectReason: string | null; scope: KnowledgeLineScope; recorded: KnowledgeRecordedArchitecture | null;
+}): KnowledgeProblemV1[] {
+  const byPath = new Map(input.files.map(file => [file.path, file]));
+  const architecture = byPath.get(ARCHITECTURE_FILE_PATH)?.bytes ?? null;
+  const projection = input.recorded === null ? null
+    : architectureFilesOf(input.recorded.catalog, input.recorded.baseline, input.scope, architecture);
+  // A recorded catalog is written by the same function (lists B), so an invalid projection is a programming error.
+  if (projection !== null && projection.status !== 'decoded') {
+    throw new Error(`the recorded catalog cannot be written as knowledge files: ${projection.reason}`);
+  }
+  const projected = projection === null ? null : projection.value;
+  const modules = input.files.filter(file => file.kind === 'module').map(file => ({ path: file.path, bytes: file.bytes }));
+  return knowledgeProblemsOf({ architecture, modules, fileIssues: input.fileIssues, graphReason: input.graphReason,
+    projectReason: input.projectReason, scope: input.scope }).map((place, index) => ({
+    itemNo: index + 1, kind: place.kind,
+    files: place.paths.map(path => {
+      const file = byPath.get(path);
+      // A path the round did not read (a deleted architecture.json): the person's, never the platform's.
+      return file === undefined ? { path, source: 'uncommitted' as const }
+        : { path, source: platformFileSource(projected, file) };
+    }),
+    moduleIds: place.moduleIds, reason: place.reason,
+  }));
 }
 
 /**

@@ -79,8 +79,11 @@ async function readProjectNoticePage(
     if (input.goalRef !== undefined && (notice.subject.kind !== 'goal'
       || notice.subject.goalRef.goalId !== input.goalRef.goalId)) continue;
     const itemKey = `project_notice:${notice.ref.noticeId}`;
+    const noticeKind = notice.kind === 'knowledge_write_unconfirmed' || notice.kind === 'knowledge_reverted'
+      || notice.kind === 'knowledge_conflict' ? notice.kind : null;
     items.push({ itemKey, category: 'project_notice', subject: notice.subject, summary: notice.summary,
-      position: { kind: 'commit', cursor: since, itemKey }, objects: [], rework: null });
+      position: { kind: 'commit', cursor: since, itemKey }, objects: [], rework: null,
+      ...(noticeKind === null ? {} : { noticeKind }) });
   }
   items.sort((left, right) => {
     const byPosition = compareNoticePositions(left.position, right.position);

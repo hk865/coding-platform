@@ -27,7 +27,8 @@ import {
 import { plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
 import { listed } from '../helpers/S7B-fixture.js';
-import { systemRoundMessageRef, systemRoundRequestId, type SystemRoundV1 } from '../../src/contracts/plan-round.js';
+import { systemRoundRequestId, type SystemRoundV1 } from '../../src/contracts/plan-round.js';
+import { systemRoundMessageRef } from '../helpers/system-round-ref.js';
 import { canonicalJson } from '../../src/contracts/fingerprint.js';
 import type { PreparedQueryManifestV1 } from '../../src/contracts/core/prepared-execution.js';
 import type { RunExecutionHistoryV1 } from '../../src/contracts/core/execution-history.js';

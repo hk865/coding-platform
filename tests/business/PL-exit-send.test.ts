@@ -8,8 +8,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { sendSystemRound } from '../../src/app/system-round.js';
 import {
-  systemRoundContext, systemRoundMessageRef, type SystemRoundV1,
+  systemRoundContext, type SystemRoundV1,
 } from '../../src/contracts/plan-round.js';
+import { systemRoundMessageRef } from '../helpers/system-round-ref.js';
 import { createC1Harness, type C1Harness } from '../helpers/C1-mailbox-fixture.js';
 
 const harnesses: C1Harness[] = [];

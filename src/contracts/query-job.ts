@@ -153,13 +153,17 @@ export function consultationQueryRefs(messageRef: SessionMessageRef, part: 'mess
  * The frozen deterministic identity of the ONE intervention-planning Query bound
  * to a real source message: the canonical SHA-256 of the message ref decides the
  * QueryJob and QueryRun ids, so a retry addresses the same persisted pair.
+ * The pair lives in the workspace of the Goal the message names, which may be
+ * another workspace of the project than the message's own (a joined
+ * workspace's round to a main-workspace line); the default is the message's.
  */
-export function interventionPlanningQueryRefs(messageRef: SessionMessageRef): { queryJobRef: QueryJobRef; queryRunRef: QueryRunRef } {
+export function interventionPlanningQueryRefs(messageRef: SessionMessageRef,
+    queryWorkspaceId: string = messageRef.workspaceId): { queryJobRef: QueryJobRef; queryRunRef: QueryRunRef } {
     const hash = sha256Hex(canonicalJson(messageRef as unknown as JsonValue));
     const queryJobId = `intervention-planning-${hash}`;
     return {
-        queryJobRef: queryJobRefFor(messageRef.projectId, messageRef.workspaceId, queryJobId),
-        queryRunRef: { aggregateType: "QueryRun", projectId: messageRef.projectId, workspaceId: messageRef.workspaceId,
+        queryJobRef: queryJobRefFor(messageRef.projectId, queryWorkspaceId, queryJobId),
+        queryRunRef: { aggregateType: "QueryRun", projectId: messageRef.projectId, workspaceId: queryWorkspaceId,
             queryJobId, runId: `intervention-planning-run-${hash}` },
     };
 }

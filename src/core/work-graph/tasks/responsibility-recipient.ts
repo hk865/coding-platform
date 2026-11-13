@@ -67,7 +67,7 @@ export function createResponsibilityRecipient(
           catalog: catalogRead.status === 'ready' ? catalogRead.value.catalog.catalog : null,
         }, deps.duty);
         if (region.status !== 'ready') return region;
-        recipient = region.value;
+        recipient = region.value?.session ?? null;
       }
 
       if (recipient === null && input.goalRef !== null) {

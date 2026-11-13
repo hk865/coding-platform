@@ -8,13 +8,10 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
 import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
-import type { GoalRef } from '../../src/contracts/ledger.js';
-import type { WorkflowAdvanceInput, WorkflowAdvanceResult } from '../../src/business/workflow/contracts.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { ConsumableSessionsDependencies } from '../../src/core/work-graph/views/consumable-sessions.js';
 import { graphWrite } from '../helpers/AG2b-collaboration-fixture.js';
 import { heartbeatUntil, readPlanningQuery } from '../helpers/IV-host-fixture.js';
-import type { S6ACardsWorkspace } from '../helpers/S6A-cards-fixture.js';
 import { commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import type { S6AHostWorld } from '../helpers/S6A-host-fixture.js';
 import { S6A_SCOPE, type S6ASession } from '../helpers/S6A-request-fixture.js';
@@ -22,7 +19,7 @@ import { valueOf } from '../helpers/S6B3-fixture.js';
 import { listed } from '../helpers/S7B-fixture.js';
 import { openS7D2ColdStartWorld } from '../helpers/S7D2-coldstart-world.js';
 import { openS7D2RoleLineWorld } from '../helpers/S7D2-role-line-world.js';
-import { openXWS2AWorld } from '../helpers/XWS2A-world.js';
+import { openXWS2AWorld, refineRound } from '../helpers/XWS2A-world.js';
 
 const armed = vi.hoisted(() => ({ unreadable: new Set<string>(), abort: null as AbortController | null }));
 vi.mock('../../src/core/work-graph/views/consumable-sessions.js', async importOriginal => {
@@ -60,27 +57,6 @@ const send = async (host: S6AHostWorld, recipient: SessionRef, label: string): P
     intent: 'action_request', needsReply: true, goalRef: host.goals.first }, label))).body, 'committed', label).ref;
 const dispatched = async (host: S6AHostWorld, ref: SessionMessageRef, passes: number): Promise<boolean> =>
   (await heartbeatUntil(host, () => readPlanningQuery(host, ref), query => query !== null, passes)) !== null;
-async function refineRound(ws: S6ACardsWorkspace, goal: GoalRef, label: string): Promise<SessionRef | null> {
-  const draft = { schemaVersion: 2, planId: label, planRevision: 1, goalId: goal.goalId, stages: [], tasks: [{
-    taskId: label, title: label, requirementLevel: 'required', taskKind: 'work', disposition: 'active', phase: 'pending',
-    scope: { kind: 'goal' }, executionIntent: 'plan_only', sizeClass: 'small' }], assignments: [], obligations: [],
-    taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] }, taskRelations: [], inputRequirements: [] };
-  const proposed = valueOf<{ ref: unknown; revision: number }>(await ws.post('plans/propose', graphWrite(ws.scope,
-    { goalRef: goal, basedOn: null, draft, reason: { text: label, sources: [] } }, `${label}-propose`)), 'committed', label);
-  valueOf(await ws.post('plans/apply', graphWrite(ws.scope, { proposalRef: proposed.ref,
-    expectedProposalRevision: proposed.revision, decisionRefs: [] }, `${label}-apply`)), 'committed', label);
-  let input: WorkflowAdvanceInput = { schemaVersion: 1, goalRef: goal, flowId: label, sessionHint: null, kind: 'select_work' };
-  let recipient: SessionRef | null = null;
-  for (let step = 0; step < 8; step += 1) {
-    const result = await ws.route('workflow/advance', input) as WorkflowAdvanceResult;
-    if (result.status !== 'ready' || result.value.next === null) break;
-    input = result.value.next;
-    if (input.kind === 'perform' && (input.operation.kind as string) === 'send_system_round') {
-      recipient = (input.operation as unknown as { request: { recipient: SessionRef } }).request.recipient;
-    }
-  }
-  return recipient;
-}
 
 // R0-1 · mutation: a non-cancelled line read fails the whole page again (isolation removed) · red today: the other line's message is never dispatched.
 it('R0-1 an unreadable main adviser no longer stops the other main lines; it shows only in skipped', async () => {

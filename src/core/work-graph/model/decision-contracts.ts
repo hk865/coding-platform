@@ -436,6 +436,8 @@ export type NoticeItemV1 = {
   position: NoticePositionV1; summary: string; objects: DecisionObjectV1[];
   /** L16（决定 55）：只加在触发返工的那一轮有 `resourceCapHit` 的条目上；别的条目不带这个字段。 */
   actions?: readonly { kind: 'raise_memory_cap' }[];
+  /** KC-1 G3 (ruling 4-10): the notice's own kind, only on the three knowledge notices; every other item omits it. */
+  noticeKind?: 'knowledge_write_unconfirmed' | 'knowledge_reverted' | 'knowledge_conflict';
   rework: null | {
     operation: 'requeue' | 'reverify'; actorClass: 'system' | 'agent';
     taskRef: TaskTriple; count: number; cap: number | null; reason: string;

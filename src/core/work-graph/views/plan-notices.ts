@@ -16,14 +16,14 @@
  * answer produces no item; a read failure is `unavailable`, never empty.
  *
  * No-line arm (slice 9 §3.3): an open round whose command checks are done, whose plan has the review item and whose
- * `execreview:` message was never sent because its workspace has no review line gives one item, re-projected from
- * the current facts (no record, no cache): it names the Task and says to open a line through `role-lines/open`, or,
- * when the project's line is in another workspace, that joined-workspace exec review is not connected yet.
+ * `execreview:` message was never sent because the project has no review line gives one item, re-projected from the
+ * current facts (no record, no cache): it names the Task and says to open a line through `role-lines/open`.
  * A failed read of this arm (the message, the line, the position) makes the source not available for that read: never
  * "no line", and never the whole queue (lead ruling s9g3 1, as 121-105); a cancelled read is returned whole.
  */
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+import type { SessionRef } from '../../../contracts/core/identity.js';
 import { compareCursors } from '../../../contracts/ledger.js';
 import { reviewPacketItemOf } from '../../../contracts/verification.js';
 import { rejected } from '../../../contracts/core/rejections.js';
@@ -36,9 +36,9 @@ import {
 } from '../../../contracts/plan-loop-limits.js';
 import { interventionPlanningQueryRefs } from '../../../contracts/query-job.js';
 import { parseInitialPlanningResponseV2 } from '../../../contracts/initial-planning-parse.js';
-import { systemRoundMessageRef, systemRoundRequestId } from '../../../contracts/plan-round.js';
+import { systemRoundRequestId } from '../../../contracts/plan-round.js';
 import { roundCommitIdentityOf } from '../evidence/evidence-service.js';
-import { reviewLineOf, type DutyRecipientPort, type ReviewLineV1 } from '../sessions/duty-recipient.js';
+import { reviewLineOf, type DutyRecipientPort } from '../sessions/duty-recipient.js';
 import type { RecordCommitIdentityPort } from '../../record-store/ports.js';
 import type { RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import type {
@@ -67,6 +67,7 @@ import { compareNoticePositions } from './notice-position.js';
 import { idsTextOf, noticeUnavailableOf, planNoticeGoalRefs } from './plan-adoption-notices.js';
 import { readGoal } from '../tasks/plan-readers.js';
 import { readTaskRunActivities } from '../tasks/goal-deviation-facts.js';
+import { hostContextIn, sentSystemRoundRef } from '../tasks/plan-lineage.js';
 import { respondReceiptIdentityOf } from '../communication/mailbox-service.js';
 import { stageIdOf } from '../notes/note-related-scope.js';
 
@@ -75,8 +76,8 @@ export type PlanNoticeDependencies = {
   plans: Pick<PlanTaskPort, 'queryTaskGraph'>;
   runs: { listExecutions: NonNullable<ExecutionReadPort['listExecutions']> };
   activities: Pick<ActivityReadPort, 'readRunActivities'>;
-  /** The source message R and its stored body (the four facts R already carries). */
-  messages: Pick<SessionMailboxPort, 'readMessage' | 'readMessageBody'>;
+  /** Where the Host's round R landed (its send receipt) and R's stored body (the four facts R already carries). */
+  messages: Pick<SessionMailboxPort, 'readMessageBody' | 'readHostSendMessageRef'>;
   /** R's deterministic `intervention_planning` Query and its formal answer. */
   queries: Pick<QueryJobPort, 'readQueryJob' | 'readQueryAnswer'>;
   /** The reply commit cursor of `intervention:<messageKey>:respond`. */
@@ -201,16 +202,15 @@ async function readStageEndPage(
   }
 
   const items: NoticeItemV1[] = [];
-  // The page's one review-line decision (Workflow's `reviewLineOf`), made only when a round needs it. The rounds are
-  // read by this page's workspace, so it is each round's own workspace.
-  let reviewLine: ReviewLineV1 | undefined;
-  const reviewLineHere = async (): Promise<ReviewLineV1> => {
-    if (reviewLine === undefined) {
-      const read = await reviewLineOf(deps, ctx, { projectId, workspaceId });
+  // The page's one review-line decision (Workflow's `reviewLineOf`, by project), made only when a round needs it.
+  let projectReviewLine: SessionRef | null | undefined;
+  const reviewLine = async (): Promise<SessionRef | null> => {
+    if (projectReviewLine === undefined) {
+      const read = await reviewLineOf(deps, ctx, projectId);
       if (read.status !== 'ready') throw noticeUnavailableOf(read);
-      reviewLine = read.value;
+      projectReviewLine = read.value;
     }
-    return reviewLine;
+    return projectReviewLine;
   };
   // §5.8: one item per adopted PlanRevision, so a stage finished on an older
   // version keeps its item after a newer version is adopted. The ordered read
@@ -282,7 +282,7 @@ async function readStageEndPage(
     // current `deviationsOfGoal` result.
     items.push(...await deviationItemsOf(deps, ctx, plan, projectId, workspaceId));
     try {
-      items.push(...await noReviewLineItemsOf(deps, ctx, plan, rounds, reviewLineHere));
+      items.push(...await noReviewLineItemsOf(deps, ctx, plan, rounds, reviewLine));
     } catch (error) {
       if (ctx.signal?.aborted === true) throw error;
       return { availability: 'not_available', items: [], nextCursor: null, sourceCursor: null };
@@ -387,15 +387,15 @@ async function deviationItemsOf(
   for (const task of plan.tasks) {
     for (const kind of DEVIATION_KINDS) {
       const requestId = `deviation:${goalRef.goalId}:${task.taskId}:${kind}:${String(plan.planRevision)}`;
-      const messageRef = systemRoundMessageRef(scope, requestId);
-      if (messageRef.status !== 'ready') throw messageRef;
-      const message = await deps.messages.readMessage(ctx, messageRef.value);
-      if (message.status === 'not_found') continue;
-      if (message.status !== 'ready') throw noticeUnavailableOf(message);
-      const body = await deps.messages.readMessageBody(ctx,
-        { messageRef: messageRef.value, part: 'message' });
+      // R lands in the adviser line's workspace; the Goal's workspace sent it and keeps its Query.
+      const sent = await sentSystemRoundRef(deps.messages, scope, requestId, ctx.signal);
+      if (sent.status === 'not_found') continue;
+      if (sent.status !== 'ready') throw noticeUnavailableOf(sent);
+      const messageRef = sent.value;
+      const messageCtx = hostContextIn(ctx, messageRef.workspaceId);
+      const body = await deps.messages.readMessageBody(messageCtx, { messageRef, part: 'message' });
       if (body.status !== 'ready') throw noticeUnavailableOf(body);
-      const queryRefs = interventionPlanningQueryRefs(messageRef.value);
+      const queryRefs = interventionPlanningQueryRefs(messageRef, workspaceId);
       const job = await deps.queries.readQueryJob(ctx, queryRefs.queryJobRef);
       if (job.status === 'not_found') continue;
       if (job.status !== 'ready') throw noticeUnavailableOf(job);
@@ -408,8 +408,9 @@ async function deviationItemsOf(
       // stored answer has nothing to show.
       if (answerText.length === 0) continue;
       if (parseInitialPlanningResponseV2(answerText).status === 'parsed') continue;
-      const identity = await respondReceiptIdentityOf(ctx, deps.records, messageRef.value,
-        `intervention:${sessionMessageRefKey(messageRef.value)}:respond`);
+      // The reply's identity is taken where R lives (`mailbox-commands.ts` `respondFromQueryAnswer`).
+      const identity = await respondReceiptIdentityOf(messageCtx, deps.records, messageRef,
+        `intervention:${sessionMessageRefKey(messageRef)}:respond`, workspaceId);
       if (identity.status === 'not_found') continue;
       if (identity.status !== 'ready') throw noticeUnavailableOf(identity);
       const receipt = await deps.commitIdentities.readCommitByIdentity(identity.value);
@@ -436,15 +437,14 @@ async function deviationItemsOf(
 /**
  * Slice 9 §3.3: the no-line items of this version's rounds (a round belongs to the version it was opened under, so
  * each round is judged once). The condition is re-read every time: an open round with the review item, every command
- * check done, no `execreview:` message and no review line in the round's workspace. The text says which: no line in
- * the project, or a line only in another workspace (joined-workspace exec review is not connected yet).
+ * check done, no `execreview:` message sent and no review line in the project (Workflow's same `reviewLineOf`).
  */
 async function noReviewLineItemsOf(
   deps: PlanNoticeDependencies,
   ctx: CoreCallContext,
   plan: PlanRevisionSnapshot,
   rounds: readonly RoundWithSince[],
-  reviewLineHere: () => Promise<ReviewLineV1>,
+  reviewLine: () => Promise<SessionRef | null>,
 ): Promise<NoticeItemV1[]> {
   const planKey = planRevisionRefKey(plan.ref);
   const items: NoticeItemV1[] = [];
@@ -456,13 +456,10 @@ async function noReviewLineItemsOf(
     const scope = { projectId: round.ref.projectId, workspaceId: round.ref.workspaceId };
     const requestId = systemRoundRequestId({ kind: 'exec_review', goalRef, roundRef: round.ref });
     if (requestId.status !== 'ready') throw requestId;
-    const messageRef = systemRoundMessageRef(scope, requestId.value);
-    if (messageRef.status !== 'ready') throw messageRef;
-    const message = await deps.messages.readMessage(ctx, messageRef.value);
-    if (message.status === 'ready') continue;
-    if (message.status !== 'not_found') throw noticeUnavailableOf(message);
-    const line = await reviewLineHere();
-    if (line.kind === 'here') continue;
+    const sent = await sentSystemRoundRef(deps.messages, scope, requestId.value, ctx.signal);
+    if (sent.status === 'ready') continue;
+    if (sent.status !== 'not_found') throw noticeUnavailableOf(sent);
+    if (await reviewLine() !== null) continue;
     const itemKey = `exec-review-no-line:${goalRef.goalId}:${round.ref.roundId}`;
     const task = plan.tasks.find((candidate) => candidate.taskId === round.subject.taskId);
     items.push({
@@ -471,8 +468,7 @@ async function noReviewLineItemsOf(
       subject: { kind: 'goal', goalRef },
       position: { kind: 'commit', cursor: await noLinePositionOf(deps, round, since), itemKey },
       summary: `任务 ${round.subject.taskId}「${task?.title ?? round.subject.taskId}」的检查已跑完，执行结果审阅在等：`
-        + (line.kind === 'none' ? '项目里没有审阅线；用 role-lines/open（duty: reviewer）开一条，同一轮接着审'
-          : '审阅线不在这个工作区（角色线都开在主工作区）；加入的工作区的执行结果审阅还没接通，这一轮先停在这里'),
+        + '项目里没有审阅线；用 role-lines/open（duty: reviewer）开一条，同一轮接着审',
       objects: [],
       rework: null,
     });

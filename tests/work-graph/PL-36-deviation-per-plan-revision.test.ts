@@ -19,7 +19,7 @@ import { afterEach, expect, it } from 'vitest';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 import { deviationsOfGoal, deviationRequestId } from '../../src/contracts/plan-deviation.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
-import { systemRoundMessageRef } from '../../src/contracts/plan-round.js';
+import { systemRoundMessageRef } from '../helpers/system-round-ref.js';
 import { advanceUntil, post, readExecution } from '../helpers/A2-restart-fixture.js';
 import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';

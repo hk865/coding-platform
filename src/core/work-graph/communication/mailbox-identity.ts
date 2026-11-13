@@ -11,6 +11,7 @@ import { isPos as isPositiveInt, isRecord as isObject, nonEmpty } from '../../..
 import type { QueryJobAnswerRef, QueryJobAnswerSnapshot, QueryJobRef, QueryJobSnapshot, QueryRunRef, QueryRunSnapshot } from '../../../contracts/query-job.js';
 import { consultationQueryRefs, interventionPlanningQueryRefs } from '../../../contracts/query-job.js';
 import type { MessageQueryAnswerSender, MessageWorkRunSender, SessionMessage } from '../model/communication-contracts.js';
+import { interventionGoalRefOf } from '../model/communication-contracts.js';
 import type { TaskClaimOutbox } from '../model/claim-contracts.js';
 import type { TaskExecutionRecord } from '../model/execution-read-contracts.js';
 import type { SecretaryQueryRunV1 } from '../model/secretary-query-run-contracts.js';
@@ -23,7 +24,7 @@ import { decodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey
 import { SESSION_MESSAGE_MAX_TEXT_BYTES } from '../sessions/message-record-codecs.js';
 import { decodeDispatchOutboxEntry, dispatchOutboxRefKey } from '../tasks/claim-record-codecs.js';
 import { readStoredManifest, recheckHostRoleAdmission } from '../tasks/execution-entry-service.js';
-import { readBatch } from '../tasks/plan-readers.js';
+import { readBatch, readGoal } from '../tasks/plan-readers.js';
 import type { QueryAnswerBinding } from '../state/message-machine.js';
 import {
   identityKeyOf, internalHostContext, isolatedContext, isUserRecipient, mapBatchFailure, mapReadResult, ownContext,
@@ -122,18 +123,21 @@ async function readStoredQueryRecord<T>(
  * `respond_from_query_answer` arm derives, then return the exact commit
  * identity. It reuses `senderIdentityOf` and `identityKeyOf`; it writes no
  * record, adds no mailbox method, and copies no hash. The caller reads the
- * receipt cursor with `readCommitByIdentity`.
+ * receipt cursor with `readCommitByIdentity`. The Query lives in
+ * `queryWorkspaceId` (the workspace of the Goal R names); `ctx` is bound to R's
+ * own workspace, where the reply's identity was taken.
  */
 export async function respondReceiptIdentityOf(
   ctx: CoreCallContext,
   records: Pick<GoalRecordTransactionPort, 'readMany'>,
   source: SessionMessageRef,
   requestId: string,
+  queryWorkspaceId: string,
 ): Promise<ReadResult<string>> {
   const owned = ownContext(ctx);
   if (!owned.ok) return owned.rejection;
   if (!nonEmpty(requestId)) return reject('invalid', 'the reply request id must be a non-empty string');
-  const refs = interventionPlanningQueryRefs(source);
+  const refs = interventionPlanningQueryRefs(source, queryWorkspaceId);
   const jobRead = await readStoredQueryRecord(records, refs.queryJobRef, decodeQueryJobSnapshot, 'QueryJob');
   if (jobRead.status !== 'ready') return jobRead;
   const job = jobRead.value;
@@ -588,7 +592,16 @@ export async function secretaryReader(mailbox: MailboxContext, owned: Owned): Pr
 export async function interventionSourceFormallyEnded(mailbox: MailboxContext, owned: Owned, message: SessionMessage):
 Promise<{ ok: true } | { ok: false; rejection?: CoreRejection }> {
   if (isUserRecipient(message.recipient)) return { ok: false };
-  const refs = interventionPlanningQueryRefs(message.ref);
+  // The Query lives in the workspace of the Goal the message names; a Goal ref carries no workspace, so the Goal
+  // record is read by its key (the mailbox has no Goal port).
+  const goalRef = interventionGoalRefOf(message);
+  let queryWorkspaceId = message.ref.workspaceId;
+  if (goalRef !== null) {
+    const goal = await readGoal(mailbox.records, goalRef);
+    if (goal.status !== 'ready') return { ok: false, rejection: goal };
+    queryWorkspaceId = goal.goal.workspaceRef.workspaceId;
+  }
+  const refs = interventionPlanningQueryRefs(message.ref, queryWorkspaceId);
   const jobRead = await loadQueryJob(mailbox, owned, refs.queryJobRef);
   if (jobRead.status === 'not_found') return { ok: false };
   if (jobRead.status !== 'ready') return { ok: false, rejection: mapReadResult(jobRead) as CoreRejection };

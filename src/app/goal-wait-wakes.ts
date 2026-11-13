@@ -27,7 +27,7 @@ import type { SessionDirectoryPort } from '../core/work-graph/model/session-cont
 import type { QueryJobPort } from '../core/work-graph/queries/contracts.js';
 import { plainSessionRefKey } from '../core/work-graph/sessions/session-record-codecs.js';
 import { waitFactsOfRecord, waitStateOf } from '../core/work-graph/state/message-machine.js';
-import { planSourceLineageOf } from '../core/work-graph/tasks/plan-lineage.js';
+import { hostContextIn, planSourceLineageOf } from '../core/work-graph/tasks/plan-lineage.js';
 import type { PlanReaders } from '../core/work-graph/tasks/plan-readers.js';
 import { notReady, type QueueHandler } from './wake-loop.js';
 
@@ -273,13 +273,14 @@ export function createGoalWaitRebuild(deps: GoalWaitRebuildDependencies):
     if (accepted.status !== 'ready') throw notReady('the accepted-candidate read', accepted);
     for (const proposal of accepted.value) {
       if (proposal.sourceMessageRef === null) continue;
+      // `ctx` is the Goal's workspace, where its candidates and Queries live; each message is read where it lives.
       const lineage = await planSourceLineageOf(ctx, deps, proposal.sourceMessageRef);
       if (lineage.status !== 'ready') throw notReady('the accepted candidate source lineage', lineage);
       const query = await deps.queries.readQueryJob(ctx,
-        interventionPlanningQueryRefs(proposal.sourceMessageRef).queryJobRef);
+        interventionPlanningQueryRefs(proposal.sourceMessageRef, proposal.ref.workspaceId).queryJobRef);
       if (query.status !== 'ready') throw notReady('the accepted candidate planning Query', query);
-      const message = await deps.messages.readMessage(ctx,
-        query.value.job.job.intent.execution.repliesToMessageRef ?? lineage.value.rootMessage);
+      const waitRef = query.value.job.job.intent.execution.repliesToMessageRef ?? lineage.value.rootMessage;
+      const message = await deps.messages.readMessage(hostContextIn(ctx, waitRef.workspaceId), waitRef);
       if (message.status !== 'ready') throw notReady('the accepted candidate wait message', message);
       if (message.value.response === null
         && waitStateOf(message.value, waitFactsOfRecord(message.value)).state === 'open') return true;

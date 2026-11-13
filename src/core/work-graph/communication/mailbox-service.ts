@@ -66,7 +66,9 @@ import {
   withdrawMessage, releaseMessage,
 } from './mailbox-commands.js';
 import { disposeArchiveWait } from './mailbox-archive.js';
-import { readHostSystemOutbox, appendHostSystemOutbox, lookupToolCommit, lookupHostSendCommit } from './mailbox-host.js';
+import {
+  readHostSystemOutbox, appendHostSystemOutbox, lookupToolCommit, lookupHostSendCommit, readHostSendMessageRef,
+} from './mailbox-host.js';
 import { sendMessage, sendUserMessage } from './mailbox-send.js';
 
 export {
@@ -111,6 +113,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     readRoutedReplies: (...args) => readRoutedReplies(mailbox, ...args),
     lookupToolCommit: (...args) => lookupToolCommit(mailbox, ...args),
     lookupHostSendCommit: (...args) => lookupHostSendCommit(mailbox, ...args),
+    readHostSendMessageRef: (...args) => readHostSendMessageRef(mailbox, ...args),
     readHostSystemOutbox: (...args) => readHostSystemOutbox(mailbox, ...args),
     appendHostSystemOutbox: (...args) => appendHostSystemOutbox(mailbox, ...args),
     withdrawMessage: (...args) => withdrawMessage(mailbox, ...args),

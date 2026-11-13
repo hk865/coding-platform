@@ -69,7 +69,7 @@ import type { PlanProposalRef } from '../core/work-graph/model/plan-contracts.js
 import type { PlanRevisionDraft, PlanRevisionSnapshot } from '../contracts/plan.js';
 import { interventionPlanningQueryRefs, isRequestRound, queryJobRefFor, type QueryJobRef } from '../contracts/query-job.js';
 import type { RunSnapshot } from '../contracts/dispatch.js';
-import { planSourceLineageOf } from '../core/work-graph/tasks/plan-lineage.js';
+import { hostContextIn, interventionQueryWorkspaceOf, planSourceLineageOf } from '../core/work-graph/tasks/plan-lineage.js';
 import { waitFactsOfRecord, waitStateOf } from '../core/work-graph/state/message-machine.js';
 import { QUEUE_DRAIN_BATCH } from '../core/work-graph/state/goal-adviser-queue.js';
 import type { GoalDrainResultV1 } from '../core/work-graph/tasks/goal-adviser-queue-service.js';
@@ -2637,8 +2637,11 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     const platform = projectPlatform(ctx.projectId);
     let targetRef = message.ref;
     if (message.sender.kind === 'host' && message.sender.actor.kind === 'system') {
+      // The round's Query and its lineage's candidates live with the Goal the round names, maybe another workspace.
+      const goalWorkspace = await interventionQueryWorkspaceOf(ctx, platform.plans, message);
+      if (goalWorkspace.status !== 'ready') return true;
       const query = await platform.queries.readQueryJob(ctx,
-        interventionPlanningQueryRefs(message.ref).queryJobRef);
+        interventionPlanningQueryRefs(message.ref, goalWorkspace.value).queryJobRef, { scope: 'project' });
       if (query.status !== 'ready') return true;
       const execution = query.value.job.job.intent.execution;
       const repliesTo = execution.kind === 'intervention_planning' ? execution.repliesToMessageRef : undefined;
@@ -2646,7 +2649,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         targetRef = repliesTo;
       } else {
         const lineage = await planSourceLineageOf(ctx,
-          { messages: platform.messages, queries: platform.queries, plans: platform.plans }, message.ref);
+          { messages: platform.messages, queries: platform.queries, plans: platform.plans }, message.ref,
+          goalWorkspace.value);
         if (lineage.status !== 'ready') return true;
         targetRef = lineage.value.rootMessage;
       }
@@ -2656,7 +2660,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     const same = targetRef.projectId === message.ref.projectId
       && targetRef.workspaceId === message.ref.workspaceId
       && targetRef.messageId === message.ref.messageId;
-    const target = same ? null : await platform.messages.readMessage(ctx, targetRef);
+    const target = same ? null : await platform.messages.readMessage(hostContextIn(ctx, targetRef.workspaceId), targetRef);
     if (target !== null && target.status !== 'ready') return true;
     const targetMessage = target === null ? message : (target as { status: 'ready'; value: SessionMessage }).value;
     if (!executorSender(targetMessage.sender)) return false;
@@ -2709,14 +2713,15 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         };
         const claimed = await platform.workflow.handleIntervention?.(ctx, interventionInput);
         if (claimed?.status === 'claimed') {
+          // The claimed Task's Goal may live in another workspace than the message: the claim names it.
           const addressed = claimed.claim.task;
           await announceInterruption({ ...reconcileContext(scope), signal: ctx.signal }, project.hostNotices, {
-            scope: { projectId: addressed.projectId, workspaceId: read.value.ref.workspaceId },
+            scope: { projectId: addressed.projectId, workspaceId: claimed.claim.workspaceId },
             sessionRef: candidate.session,
             personMessageRef: offer.messageRef,
           });
           await project.collaborationDriver.start(hostScopeContext({ projectId: addressed.projectId,
-            workspaceId: read.value.ref.workspaceId }, actor), {
+            workspaceId: claimed.claim.workspaceId }, actor), {
             advance: { schemaVersion: 1, flowId: `intervention:${claimed.claim.runRef.runId}`,
               goalRef: { aggregateType: 'Goal' as const, projectId: addressed.projectId, goalId: addressed.goalId },
               sessionHint: claimed.claim.sessionRef, kind: 'select_work', taskId: addressed.taskId },

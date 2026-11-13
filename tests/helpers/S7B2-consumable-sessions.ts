@@ -193,14 +193,11 @@ async function personSend(world: S6AHostWorld, to: S6ASession, requestId: string
 }
 /**
  * The scenario's own Host input (H-06): the frozen S6A fixture cannot add a Work profile through
- * `extraHostOptions`/`extraBindings`, so this wraps `createLocalWorkbenchHost` the way its `hostStart` does
- * (`S6A-host-fixture.ts:541`/`:547`), adding the Work role's Query profile before the real factory runs.
- * The wrapper stays installed until the world closes (or its open fails), so a SQLite `crash()`/reopen starts
- * the replacement Host with the same profile instead of losing it when the first start returns.
+ * `extraHostOptions`/`extraBindings`, so this wraps a `createLocalWorkbenchHost` the way its `hostStart` does
+ * (`S6A-host-fixture.ts:541`/`:547`), adding the Work role's Query profile before `original` runs.
  */
-async function openConsumeHostWorld(options: S6AHostWorldOptions): Promise<S6AHostWorld> {
-  const original = hostModule.createLocalWorkbenchHost;
-  const wrapper: typeof original = async hostOptions => {
+function withS6AWorkProfile(original: typeof hostModule.createLocalWorkbenchHost): typeof original {
+  return async hostOptions => {
     const configuration = hostOptions.runtimeConfiguration;
     configuration?.queryProfiles.push({
       id: 's6a-work-profile', label: 'S6A work continuation', scope: S6A_SCOPE,
@@ -211,6 +208,14 @@ async function openConsumeHostWorld(options: S6AHostWorldOptions): Promise<S6AHo
     });
     return await original(hostOptions);
   };
+}
+/**
+ * `withS6AWorkProfile` stays installed until the world closes (or its open fails), so a SQLite `crash()`/reopen
+ * starts the replacement Host with the same profile instead of losing it when the first start returns.
+ */
+async function openConsumeHostWorld(options: S6AHostWorldOptions): Promise<S6AHostWorld> {
+  const original = hostModule.createLocalWorkbenchHost;
+  const wrapper = withS6AWorkProfile(original);
   Object.defineProperty(hostModule, 'createLocalWorkbenchHost', { value: wrapper, configurable: true, writable: true });
   let world: S6AHostWorld;
   try {
@@ -306,4 +311,4 @@ export async function openS7B2ConsumeWorld(options: { backend?: S6ABackend;
   world.clock.set(new Date(Date.parse(S6A_AT) + 10_000).toISOString());
   return { world, eligible, notify, unmatchedRole, goalLess, replies: [noWaitSender, waitSender] };
 }
-export { openConsumeHostWorld };
+export { openConsumeHostWorld, withS6AWorkProfile };

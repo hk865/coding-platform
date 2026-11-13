@@ -1,28 +1,29 @@
 /**
- * W2-send, W6 (a rejected send waits), W7 (a reviewer line only in another workspace) — slice 9 G3, shared S9 world.
+ * W2-send, W6 (a rejected send waits), R3 (XWR, was W7: a reviewer line only in another workspace) — shared S9 world.
  * Named mutations: W2 the send fills `taskRef` (red at `taskRef: null`); W6 the send rejection returned as the
- * advance's own rejection (red at `state:'waiting'`); W7 (a) `readReviewState` sends to a line found elsewhere in the
- * project (red at `review_line_other_workspace`), (b) the no-line notice keeps a project-wide "has a line" read (red
- * at the notice text).
- * Today (no G3) red at: every selection's step is `finalize_checks`, not `send_system_round`; W2's no-line advance is
- * `state:'advance'`. W7 on the G3 tree before the step-back: the selection sends to the other workspace's line.
+ * advance's own rejection (red at `state:'waiting'`); R3 ① the review line found the G3 way again (this workspace
+ * first, elsewhere only names the reason; red at the first advance: `review_line_other_workspace`), ② `readReviewState`
+ * reads the message at the composed ref (red at `exec_review_pending`: not found, the send is selected again);
+ * ③ `readAcceptedAnswer` at the composed ref (red at `record_review`: `incomplete`, the Query is not found there).
+ * R3 red today at the first advance (`review_line_other_workspace`, G3 丙). R3's second workspace has the Host catalog's
+ * model selected (`openS9SecondReviewLine`), so the Host consumes its line: the mirror world of W7, round in the main
+ * workspace and line in the second (the other direction has no trusted checks in B, start rulings §0 item 3).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { DecisionQueueReadV1 } from '../../src/core/work-graph/model/decision-contracts.js';
 import { interventionPlanningQueryRefs } from '../../src/contracts/query-job.js';
-import { systemRoundMessageRef } from '../../src/contracts/plan-round.js';
+import { systemRoundMessageRef } from '../helpers/system-round-ref.js';
 import type { WorkflowAdvanceInput } from '../../src/business/workflow/contracts.js';
-import { platformRoleProfile } from '../../src/core/agent-runtime/role-profiles.js';
 import { plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { heartbeatUntil, readBody, readPlanningQuery, sessionQueries } from '../helpers/IV-host-fixture.js';
 import { byIdentityPrefix, commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
-import { createS6BLine } from '../helpers/S6B1-fixture.js';
 import { ready } from '../helpers/S7A-fixture.js';
 import { listed, readS7BMessage } from '../helpers/S7B-fixture.js';
-import { addS7D2SecondWorkspace } from '../helpers/S7D2-role-line-world.js';
-import { advanceS9Review, openS9ReviewRound, openS9ReviewWorld, type S9ReviewWorld } from '../helpers/S9-review-fixture.js';
+import {
+  advanceS9Review, openS9ReviewRound, openS9ReviewWorld, openS9SecondReviewLine, type S9ReviewWorld,
+} from '../helpers/S9-review-fixture.js';
 
 vi.mock('../../src/core/record-store/in-memory-record-store.js', async importOriginal =>
   (await import('../helpers/S6A-commit-barrier.js')).inMemoryBarrierModule(importOriginal));
@@ -109,29 +110,43 @@ describe('W2-send: send_system_round only from not_sent', () => {
     expect(sentMessage(sent).recipient).toEqual(review.reviewLine!.ref);
   }, 120_000);
 
-  it('W7: a reviewer line only in another workspace is a wait and a plain notice, never a send', async () => {
+  it('R3 (was W7): a reviewer line only in another workspace gets the exec review; the Query stays the round\'s', async () => {
     const review = await openS9ReviewWorld({ reviewLine: 'none' });
     worlds.push(review);
-    const second = await addS7D2SecondWorkspace(review.world, 's9-w7');
+    const { world } = review;
+    const { second, line } = await openS9SecondReviewLine(review, 's9-w7');
     cleanups.push(second.remove);
-    // `role-lines/open` puts a Host's line in the main workspace; `sessions/create` keeps this one in the second.
-    const line = (await createS6BLine(second.workspace, { label: 's9-w7-review',
-      role: platformRoleProfile('reviewer').template })).ref;
-    expect(await second.workspace.route('sessions/read', line)).toMatchObject({ status: 'ready',
+    expect(await second.workspace.route('sessions/read', line.ref)).toMatchObject({ status: 'ready',
       value: { record: { workspaceId: second.scope.workspaceId } } });
     const round = await openS9ReviewRound({ review });
     expect(round.roundRef.workspaceId).toBe(S6A_SCOPE.workspaceId);
-    for (const pass of [1, 2]) {
-      expect(await advanceS9Review(review), `advance ${String(pass)}`).toMatchObject({ status: 'ready',
-        value: { state: 'waiting', reason: 'review_line_other_workspace', receipt: null, next: null } });
-    }
-    const inbox = await second.workspace.route('messages/inbox', { recipient: line, page: { limit: 20 } });
-    expect((inbox as { value: { items: SessionMessage[] } }).value.items.filter(fromPlanRound)).toEqual([]);
-    const queue = ready<DecisionQueueReadV1>(await review.world.post('decisions/queue', plain(S6A_SCOPE, {
+    const selected = await advanceS9Review(review);
+    expect(selected).toMatchObject({ status: 'ready', value: { state: 'advance', next: { operation: {
+      kind: 'send_system_round', request: { recipient: line.ref } } } } });
+    await world.scripted.script(line, [{ kind: 'calls', calls: [{ callId: 's9-r3-pass', name: 'submit_exec_review',
+      args: { verdict: 'pass', basis: 'S9 R3 basis', report: 'S9 R3 report' } }] }], second.scope);
+    await advanceS9Review(review, sendStepOf(selected));
+    expect(await advanceS9Review(review)).toMatchObject({ status: 'ready',
+      value: { state: 'waiting', reason: 'exec_review_pending' } });
+    const inbox = await second.workspace.route('messages/inbox', { recipient: line.ref, page: { limit: 20 } });
+    const [sent] = (inbox as { value: { items: SessionMessage[] } }).value.items.filter(fromPlanRound);
+    const settled = await heartbeatUntil(world, async () => ready<SessionMessage>(await second.workspace.route(
+      'messages/read', sent!.ref), 'the review message'), message => message.response !== null, 24);
+    expect(settled.response).not.toBeNull();
+    // X-1: the Query is the round's Goal's (main), under the real message's id.
+    const queryRef = interventionPlanningQueryRefs(sent!.ref).queryJobRef;
+    expect((await world.post('queries/read', plain(S6A_SCOPE, { ...queryRef, workspaceId: S6A_SCOPE.workspaceId })))
+      .body).toMatchObject({ status: 'ready', value: { job: { job: { status: 'answered' } } } });
+    expect(await second.workspace.route('queries/read', queryRef)).toMatchObject({ status: 'not_found' });
+    const booked = await advanceS9Review(review, sendStepOf(await advanceS9Review(review)));
+    expect(booked).toMatchObject({ status: 'ready', value: { receipt: { kind: 'record_review',
+      result: { status: 'committed' } }, next: { operation: { kind: 'finalize_checks' } } } });
+    await advanceS9Review(review, sendStepOf(booked));
+    expect(await world.platform.evidence.readVerification(world.humanContext(), round.roundRef)).toMatchObject({
+      status: 'ready', value: { status: 'finalized', outcome: 'PASS' } });
+    const queue = ready<DecisionQueueReadV1>(await world.post('decisions/queue', plain(S6A_SCOPE, {
       workspace: S6A_SCOPE, sections: ['notices'], categories: ['plan_notice'], page: { limit: 100 } })), 'the queue');
-    const notice = queue.notices.find(item => item.itemKey === `exec-review-no-line:${review.goal.goalId}:${
-      round.roundRef.roundId}`)?.summary;
-    for (const part of ['审阅线不在这个工作区', '还没接通']) expect(notice).toContain(part);
-    expect(notice).not.toContain('role-lines/open');
+    expect(queue.notices.map(item => item.itemKey)).not.toContain(`exec-review-no-line:${review.goal.goalId}:${
+      round.roundRef.roundId}`);
   }, 180_000);
 });

@@ -37,7 +37,7 @@ import { interventionPlanningQueryRefs, isRequestRound, type QueryJobAnswerRef, 
 import { parseInitialPlanningResponseV2 } from '../../../contracts/initial-planning-parse.js';
 import { parsePlanReviewAnswer, type PlanReviewReadV1 } from '../../../contracts/plan-review.js';
 import {
-  systemRoundContext, systemRoundMessageRef, systemRoundOfText, systemRoundRequestId,
+  systemRoundContext, systemRoundOfText, systemRoundRequestId,
   type PlanFixReadV1, type PlanningQuestionGroupV1,
 } from '../../../contracts/plan-round.js';
 import type { CheckCapabilityV1, RegisteredCommandCheck } from '../../../contracts/verification.js';
@@ -79,10 +79,12 @@ import {
 } from '../persistence/evidence-record-codecs.js';
 import type { VerifiedGovernance } from './plan-commit-compiler.js';
 import type { PlanProposal, PlanProposalRef, PlanTaskPort, TaskUnknownCallReview } from '../model/plan-contracts.js';
-import type { SessionMailboxPort, HostSendCommitLookup } from '../model/communication-contracts.js';
+import type { SessionMailboxPort } from '../model/communication-contracts.js';
 import type { DecisionCardV1, DecisionMessagePort } from '../model/decision-contracts.js';
 import type { PlanningQuestionReader } from './planning-question-reader.js';
-import { planSourceLineageOf, type PlanSourceLineageDeps, type PlanSourceLineageV1 } from './plan-lineage.js';
+import {
+  hostContextIn, planSourceLineageOf, sentSystemRoundRef, type PlanSourceLineageDeps, type PlanSourceLineageV1,
+} from './plan-lineage.js';
 import { messageOf } from '../../../contracts/error-message.js';
 import type { QueryJobPort, QueryJobRecord } from '../queries/contracts.js';
 import type { NoteRunTaskResolver, NoteUpdateDueTriggerV1 } from '../model/note-contracts.js';
@@ -2539,16 +2541,17 @@ export async function readOpenResponsibilityLines(
 }
 
 /**
- * O4b (v4 §5.2 (b)): the narrowest effective region adviser of one module, over the shared open-link read. The
- * project's open responsible module links of adviser lines are the claims of 7D1's `effectiveRegions`; the
- * claim whose effective modules hold the module is the narrowest (deeper same-duty claims were subtracted), and
- * its Session answers; none is `null`. A failed page, link or duty read is the read's own answer, never `null`.
+ * O4b (v4 §5.2 (b)), KC-1 G1: the narrowest effective region adviser of one module and its region root, over the
+ * shared open-link read. The project's open responsible module links of adviser lines are the claims of 7D1's
+ * `effectiveRegions`; the claim whose effective modules hold the module is the narrowest (deeper same-duty claims
+ * were subtracted), and its Session and `moduleRef` answer; none is `null`. A failed page, link or duty read is the
+ * read's own answer, never `null`.
  */
 export async function readEffectiveRegionAdviser(
   records: GoalRecordTransactionPort & RecordLookupPort, ctx: CoreCallContext,
   input: { projectId: string; moduleRef: ModuleRef; catalog: AdoptedArchitecture | null },
   duty: SessionDutyReadPort,
-): Promise<ReadResult<SessionRef | null>> {
+): Promise<ReadResult<{ session: SessionRef; region: ModuleRef } | null>> {
   const lines = await readOpenResponsibilityLines(records, ctx, { projectId: input.projectId }, duty);
   if (lines.status !== 'ready') return lines;
   const regions: RegionClaimV1[] = [];
@@ -2556,9 +2559,13 @@ export async function readEffectiveRegionAdviser(
     if (line.duty !== 'adviser' || line.link.ref.target.kind !== 'module') continue;
     regions.push({ session: line.session, duty: line.duty, moduleRef: line.link.ref.target.ref });
   }
-  const found = effectiveRegions({ regions, catalog: input.catalog }).find((region) => region.modules.some(
+  const effective = effectiveRegions({ regions, catalog: input.catalog });
+  const found = effective.findIndex((region) => region.modules.some(
     (module) => module.projectId === input.moduleRef.projectId && module.moduleId === input.moduleRef.moduleId));
-  return { status: 'ready', value: found === undefined ? null : found.session };
+  // `effectiveRegions` maps the claims in order, so the hit's `moduleRef` is the claim's (its `modules` are sorted,
+  // and the first is not necessarily the root).
+  return { status: 'ready', value: found < 0 ? null
+    : { session: effective[found]!.session, region: regions[found]!.moduleRef } };
 }
 
 // --------------------------------------------------------------------------
@@ -2584,10 +2591,8 @@ export type PlanCheckResolver = (
 
 export type PlanReadersDependencies = {
   records: PlanReadersRecords;
-  messages: Pick<SessionMailboxPort, 'readMessage' | 'readMessageBody'>
-    & { lookupHostSendCommit?: HostSendCommitLookup };
-  /** The raw mailbox's Host-send receipt read; the composition injects the same owner. */
-  hostSendReceipt?: HostSendCommitLookup;
+  /** The source messages and bodies, and the Host's own sent-message read (`readHostSendMessageRef`). */
+  messages: Pick<SessionMailboxPort, 'readMessage' | 'readMessageBody' | 'readHostSendMessageRef'>;
   queries: Pick<QueryJobPort, 'readQueryJob' | 'readQueryAnswer'>;
   plans: Pick<PlanTaskPort, 'readPlanProposal'>;
   /** The same saved planning-question reader the decision card source uses. */
@@ -2628,46 +2633,6 @@ function unsupportedRead(read: string): Rejected {
   return { status: 'rejected', code: 'unsupported', reason: `${read} is not wired` };
 }
 
-/** The identity-only Host-send receipt read, on the fixed `host:plan-round` identity. */
-type SendReceiptRead = { status: 'committed' } | { status: 'not_committed' } | Rejected;
-async function hostSendReceipt(
-  ctx: CoreCallContext,
-  messages: Pick<SessionMailboxPort, 'readMessage'>,
-  lookup: HostSendCommitLookup | undefined,
-  scope: WorkspaceScope,
-  requestId: string,
-): Promise<SendReceiptRead> {
-  if (lookup === undefined) return unsupportedRead('the Host send receipt read');
-  const ref = systemRoundMessageRef(scope, requestId);
-  if (ref.status !== 'ready') return ref;
-  // The lookup validates the send's own argument shape but finds the commit by
-  // request identity alone. The committed message's recipient is the existing
-  // plain `SessionRef`; a workspaceId here is not part of that shape and made
-  // the real lookup answer `invalid_arguments` for every round.
-  const source = await messages.readMessage(ctx, ref.value);
-  if (source.status === 'not_found') return { status: 'not_committed' };
-  if (source.status === 'not_ready') {
-    return { status: 'rejected', code: 'unavailable', reason: 'the round message is not ready' };
-  }
-  if (source.status === 'rejected') return source;
-  const recipient = source.value.recipient;
-  if (!('sessionId' in recipient)) return { status: 'not_committed' };
-  try {
-    const result = await lookup(ctx, {
-      requestId,
-      scope: { projectId: scope.projectId, workspaceId: scope.workspaceId },
-      toolName: 'send_session_message',
-      arguments: { recipient, text: requestId },
-    });
-    if (result.status === 'committed') return { status: 'committed' };
-    if (result.status === 'not_committed') return { status: 'not_committed' };
-    return { status: 'rejected', code: 'unavailable', reason: result.reason };
-  } catch (error) {
-    return { status: 'rejected', code: 'unavailable',
-      reason: `the Host send receipt read failed: ${messageOf(error)}` };
-  }
-}
-
 function queryJobPinOfCard(card: DecisionCardV1): QueryJobRef | null {
   for (const pin of card.source.pins) {
     if (pin.ref.aggregateType === 'QueryJob') return pin.ref as QueryJobRef;
@@ -2701,34 +2666,33 @@ export async function successorParentsOf(
 /** Builds the goal-loop readers; the factory itself never throws. */
 export function createPlanReaders(deps: PlanReadersDependencies): PlanReaders {
   const lineageDeps = { messages: deps.messages, queries: deps.queries, plans: deps.plans };
-  const receiptLookup = deps.hostSendReceipt ?? deps.messages.lookupHostSendCommit;
 
-  /** The source message of a round, used for the close-out fact. */
+  const sentRoundRef = (scope: WorkspaceScope, requestId: string, signal: AbortSignal) =>
+    sentSystemRoundRef(deps.messages, scope, requestId, signal);
+
+  /** The source message of a round, used for the close-out fact; read where the message lives. */
   async function roundSettled(ctx: CoreCallContext, source: SessionMessageRef): Promise<ReadResult<boolean>> {
-    const message = await deps.messages.readMessage(ctx, source);
+    const message = await deps.messages.readMessage(hostContextIn(ctx, source.workspaceId), source);
     if (message.status !== 'ready') return message;
     return { status: 'ready', value: message.value.response !== null || message.value.withdrawnAt !== null };
   }
 
-  /** `resumeMessageExists`: the deterministic `planresume:` message or its Query already exists. */
+  /**
+   * `resumeMessageExists`: the deterministic `planresume:` message was sent. Its sender is the Goal's workspace, where
+   * the original Query lives (`originalQuery`); a resume Query exists only once its message does.
+   */
   async function resumeExists(
-    ctx: CoreCallContext, goalRef: GoalRef, queryJobId: string, originalMessageRef: SessionMessageRef,
+    ctx: CoreCallContext, goalRef: GoalRef, originalQuery: QueryJobRef, originalMessageRef: SessionMessageRef,
   ): Promise<ReadResult<boolean>> {
     const request = systemRoundRequestId({
-      kind: 'planresume', goalRef, queryJobId, originalMessageRef,
+      kind: 'planresume', goalRef, queryJobId: originalQuery.queryJobId, originalMessageRef,
     });
     if (request.status !== 'ready') return request;
-    const scope = { projectId: goalRef.projectId, workspaceId: originalMessageRef.workspaceId };
-    const message = systemRoundMessageRef(scope, request.value);
-    if (message.status !== 'ready') return message;
-    const receipt = await hostSendReceipt(planReadContext(scope), deps.messages, receiptLookup, scope, request.value);
-    if ('status' in receipt && receipt.status === 'rejected') return receipt;
-    if (receipt.status === 'committed') return { status: 'ready', value: true };
-    const query = await deps.queries.readQueryJob(ctx,
-      interventionPlanningQueryRefs(message.value).queryJobRef);
-    if (query.status === 'ready') return { status: 'ready', value: true };
-    if (query.status === 'not_found') return { status: 'ready', value: false };
-    return query;
+    const sent = await sentRoundRef({ projectId: goalRef.projectId, workspaceId: originalQuery.workspaceId },
+      request.value, ctx.signal);
+    if (sent.status === 'not_found') return { status: 'ready', value: false };
+    if (sent.status !== 'ready') return sent;
+    return { status: 'ready', value: true };
   }
 
   /** The question groups of one Goal that carry this loop's own source. */
@@ -2782,7 +2746,7 @@ export function createPlanReaders(deps: PlanReadersDependencies): PlanReaders {
         if (answer.value.body !== null) answered += 1;
       }
       const allAnswered = group.cards.length > 0 && answered === group.cards.length;
-      const resumed = await resumeExists(ctx, goalRef, group.queryJobRef.queryJobId, group.originalMessageRef);
+      const resumed = await resumeExists(ctx, goalRef, group.queryJobRef, group.originalMessageRef);
       if (resumed.status !== 'ready') return resumed;
       groups.push({
         queryJobRef: group.queryJobRef, originalMessageRef: group.originalMessageRef,
@@ -2924,20 +2888,16 @@ export function createPlanReaders(deps: PlanReadersDependencies): PlanReaders {
         kind: 'planfix', goalRef, proposalId: proposalRef.proposalId, proposalRevision: revision,
       });
       if (request.status !== 'ready') return request;
-      const message = systemRoundMessageRef(scope, request.value);
-      if (message.status !== 'ready') return message;
-      const receipt = await hostSendReceipt(ctx, deps.messages, receiptLookup, scope, request.value);
-      if ('status' in receipt && receipt.status === 'rejected') return receipt;
+      // `not_sent` is ONLY the uncommitted receipt; a sent round whose Query is not built yet waits.
+      const sent = await sentRoundRef(scope, request.value, ctx.signal);
+      if (sent.status === 'not_found') return { status: 'ready', value: { status: 'not_sent' } };
+      if (sent.status !== 'ready') return sent;
       const first = await deps.queries.readQueryJob(ctx,
-        interventionPlanningQueryRefs(message.value).queryJobRef);
-      if (first.status === 'not_found') {
-        // `not_sent` is ONLY the uncommitted receipt plus the absent original
-        // planfix Query; a committed receipt whose Query is not built yet waits.
-        return { status: 'ready', value: { status: receipt.status === 'not_committed' ? 'not_sent' : 'waiting' } };
-      }
+        interventionPlanningQueryRefs(sent.value, scope.workspaceId).queryJobRef);
+      if (first.status === 'not_found') return { status: 'ready', value: { status: 'waiting' } };
       if (first.status !== 'ready') return first;
       let current: QueryJobRecord = first.value;
-      let sourceRef: SessionMessageRef = message.value;
+      let sourceRef: SessionMessageRef = sent.value;
       for (;;) {
         const job = current.job.job;
         if (job.status === 'pending' || job.status === 'running') {
@@ -2964,16 +2924,17 @@ export function createPlanReaders(deps: PlanReadersDependencies): PlanReaders {
             originalMessageRef: group.originalMessageRef,
           });
           if (nextRequest.status !== 'ready') return nextRequest;
-          const nextMessage = systemRoundMessageRef(scope, nextRequest.value);
-          if (nextMessage.status !== 'ready') return nextMessage;
+          // The cards are answered but the continuation has not been sent or
+          // built: the round still waits, it is not terminal.
+          const nextSent = await sentRoundRef(scope, nextRequest.value, ctx.signal);
+          if (nextSent.status === 'not_found') return { status: 'ready', value: { status: 'waiting' } };
+          if (nextSent.status !== 'ready') return nextSent;
           const next = await deps.queries.readQueryJob(ctx,
-            interventionPlanningQueryRefs(nextMessage.value).queryJobRef);
-          // The cards are answered but the continuation has not been created:
-          // the round still waits, it is not terminal.
+            interventionPlanningQueryRefs(nextSent.value, scope.workspaceId).queryJobRef);
           if (next.status === 'not_found') return { status: 'ready', value: { status: 'waiting' } };
           if (next.status !== 'ready') return next;
           current = next.value;
-          sourceRef = nextMessage.value;
+          sourceRef = nextSent.value;
           continue;
         }
         // The last round is terminal. Its own source message must have been
@@ -3008,18 +2969,15 @@ export function createPlanReaders(deps: PlanReadersDependencies): PlanReaders {
         kind: 'planreview', goalRef, proposalId: proposalRef.proposalId, proposalRevision: revision,
       });
       if (request.status !== 'ready') return request;
-      const message = systemRoundMessageRef(scope, request.value);
-      if (message.status !== 'ready') return message;
       try {
-        const receipt = await hostSendReceipt(systemRoundContext(scope, ctx.signal), deps.messages, receiptLookup, scope, request.value);
-        if ('status' in receipt && receipt.status === 'rejected') return receipt;
+        // Only an uncommitted receipt proves the request was never sent; a sent
+        // message whose Query is not built yet is still waiting.
+        const sent = await sentRoundRef(scope, request.value, ctx.signal);
+        if (sent.status === 'not_found') return { status: 'ready', value: { status: 'not_sent' } };
+        if (sent.status !== 'ready') return sent;
         const query = await deps.queries.readQueryJob(ctx,
-          interventionPlanningQueryRefs(message.value).queryJobRef);
-        if (query.status === 'not_found') {
-          // The message is committed but its Query is not built yet: still
-          // waiting. Only an uncommitted receipt proves the request was never sent.
-          return { status: 'ready', value: { status: receipt.status === 'committed' ? 'waiting' : 'not_sent' } };
-        }
+          interventionPlanningQueryRefs(sent.value, scope.workspaceId).queryJobRef);
+        if (query.status === 'not_found') return { status: 'ready', value: { status: 'waiting' } };
         if (query.status !== 'ready') return query;
         const job = query.value.job.job;
         if (job.status === 'pending' || job.status === 'running') {

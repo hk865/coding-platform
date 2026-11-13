@@ -13,7 +13,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
-import { systemRoundMessageRef, systemRoundRequestId } from '../../src/contracts/plan-round.js';
+import { systemRoundRequestId } from '../../src/contracts/plan-round.js';
+import { systemRoundMessageRef } from '../helpers/system-round-ref.js';
 import { WORKFLOW_AUTOMATION_ACTOR } from '../../src/contracts/task-requeue.js';
 import type { PlanProposal, PlanProposalWithAdoption } from '../../src/core/work-graph/model/plan-contracts.js';
 import { ag2bChecksConfiguration, graphWrite } from '../helpers/AG2b-collaboration-fixture.js';

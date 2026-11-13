@@ -12,8 +12,9 @@ import { describe, expect, it } from 'vitest';
 import { planningOutputReserveTokens } from '../../src/contracts/runtime-budget.js';
 import type { QueryJobAnswerSnapshot } from '../../src/contracts/query-job.js';
 import {
-  systemRoundMessageRef, systemRoundRequestId, type SystemRoundV1,
+  systemRoundRequestId, type SystemRoundV1,
 } from '../../src/contracts/plan-round.js';
+import { systemRoundMessageRef } from '../helpers/system-round-ref.js';
 import type { CollaborationSnapshot } from '../../src/app/collaboration-driver.js';
 import { sha256Hex } from '../../src/contracts/fingerprint.js';
 import type { PlanProposal } from '../../src/core/work-graph/model/plan-contracts.js';

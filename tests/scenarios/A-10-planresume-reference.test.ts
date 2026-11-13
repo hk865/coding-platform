@@ -32,7 +32,8 @@ import { plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { canonicalRefKey } from '../../src/core/work-graph/persistence/record-codecs.js';
 import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
 import { interventionPlanningQueryRefs } from '../../src/contracts/query-job.js';
-import { systemRoundRequestId, systemRoundMessageRef } from '../../src/contracts/plan-round.js';
+import { systemRoundRequestId } from '../../src/contracts/plan-round.js';
+import { systemRoundMessageRef } from '../helpers/system-round-ref.js';
 import {
   answerCard, heartbeat, heartbeatUntil, proposalRefOf, questionCards, readBody, readPlanningQuery,
   sessionQueries, settleHost, waitForResponse,
@@ -446,7 +447,6 @@ describe('A-10: planresume carries a reference; the assembled input carries the 
   it.each([
     { read: 'the card answer', fails: 'decision' },
     { read: 'the question enumeration', fails: 'questions' },
-    { read: 'the planresume Query', fails: 'query' },
     { read: 'the original message', fails: 'message' },
   ] as const)('A-10 candidate read: $read fails and passes through workflow/advance', async ({ fails }) => {
     const decisionFault = installPLDecisionReadFault();
@@ -457,15 +457,10 @@ describe('A-10: planresume carries a reference; the assembled input carries the 
     const { goal, m } = await answeredReferenceRound(world, 'a10-candidates');
     const round = plPlanResumeRound({ goal, originalQueryJobId: interventionPlanningQueryRefs(m.message.ref)
       .queryJobRef.queryJobId, originalMessageRef: m.message.ref });
-    const requestId = systemRoundRequestId(round);
-    if (requestId.status !== 'ready') throw new Error('A-10: the planresume has no request id');
-    const resumeRef = systemRoundMessageRef(S6A_SCOPE, requestId.value);
-    if (resumeRef.status !== 'ready') throw new Error('A-10: the planresume has no message ref');
 
     if (fails === 'decision') decisionFault.arm();
     const key = fails === 'questions' ? canonicalRefKey(interventionPlanningQueryRefs(m.message.ref).queryJobRef)
-      : fails === 'query' ? canonicalRefKey(interventionPlanningQueryRefs(resumeRef.value).queryJobRef)
-        : canonicalRefKey(m.message.ref);
+      : canonicalRefKey(m.message.ref);
     const storeFault = fails === 'decision' ? null : commitBarrier.failReads(key, 'throw-always');
     const select = { schemaVersion: 1 as const, goalRef: goal, flowId: `a10-candidates-${fails}`,
       sessionHint: null, kind: 'select_work' as const };

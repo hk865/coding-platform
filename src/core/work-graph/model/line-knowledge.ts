@@ -8,7 +8,8 @@ import type { AdoptedArchitecture, ModuleContainment } from '../../../contracts/
 import type { CoreRejection, WriteResult } from '../../../contracts/core/results.js';
 import { canonicalJson } from '../../../contracts/fingerprint.js';
 import type {
-  KnowledgeCommitResult, KnowledgeConflictV1, KnowledgeLinePinV1, KnowledgeLineStatusV1,
+  KnowledgeCommitResult, KnowledgeConflictV1, KnowledgeIssueV1, KnowledgeLinePinV1, KnowledgeLineStatusV1,
+  KnowledgeProblemV1,
 } from '../../../contracts/knowledge.js';
 import type {
   CatalogRepairOpV1, FlowPayloadV1, LinkEvidenceRoleV1, LinkPayloadV1, NoteFactV1, NoteHeadSnapshot, NoteKind,
@@ -50,6 +51,8 @@ export type KnowledgeArchitecture = {
   /** Only the main workspace's file has one; `null` for every other workspace. */
   baseline: KnowledgeBaselineV1 | null;
 };
+/** The catalog and baseline the records last adopted: the projection ruling 4-2 A compares a file's bytes with. */
+export type KnowledgeRecordedArchitecture = { catalog: AdoptedArchitecture; baseline: KnowledgeBaselineV1 };
 
 /** An anchor in a file: only the three knowledge anchors; a file anchor carries no resolved symbol. */
 export type KnowledgeAnchorV1 =
@@ -229,11 +232,20 @@ export type KnowledgeWriteDeps = {
   /** The semantic conflicts of one line's module files (`knowledgeConflictsOf`, pure). */
   readonly conflictsOf: (modules: readonly { path: string; bytes: Uint8Array }[], scope: KnowledgeLineScope) =>
     readonly KnowledgeConflictV1[];
+  /** KC-1 G3: the places of one conflict notice (`lineProblemsOf`, pure), from the round's own bytes. */
+  readonly problemsOf: (input: {
+    files: readonly KnowledgeDiskFileV1[]; fileIssues: readonly KnowledgeIssueV1[]; graphReason: string | null;
+    projectReason: string | null; scope: KnowledgeLineScope; recorded: KnowledgeRecordedArchitecture | null;
+  }) => KnowledgeProblemV1[];
+  /** KLS-2b A8's one project merge (`projectArchitectureOf`, pure), for the reconciliation's project-level check. */
+  readonly projectArchitectureOf: (parts: readonly { scope: KnowledgeLineScope; architecture: KnowledgeArchitecture }[],
+    projectId: string) => DecodeResult<unknown>;
   /**
-   * [2C1-17] step 8 (b2 Astra 1): whether the project's records ever adopted an architecture (`readCatalogAdopted`);
-   * a failed read is a rejection, never `false`.
+   * The catalog and baseline the records last adopted (`readRecordedCatalogWindow`), null when none (b2 Astra 1's
+   * exemption); a failed read is the rejection. Replaces `catalogAdopted`, read once before a round changes anything.
    */
-  readonly catalogAdopted: (projectId: string) => Promise<{ status: 'ready'; value: boolean } | CoreRejection>;
+  readonly recordedArchitecture: (projectId: string) =>
+    Promise<{ status: 'ready'; value: KnowledgeRecordedArchitecture | null } | CoreRejection>;
 };
 /** The one knowledge entry a service gets (injected by the composition root, required in the service's dependencies). */
 export interface KnowledgeLines {

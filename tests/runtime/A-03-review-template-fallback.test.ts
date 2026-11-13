@@ -21,7 +21,8 @@ import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
 import { listed, readS7BMessage } from '../helpers/S7B-fixture.js';
 import { ready } from '../helpers/S7A-fixture.js';
 import { parsePlanReviewAnswer } from '../../src/contracts/plan-review.js';
-import { systemRoundMessageRef, systemRoundRequestId, type SystemRoundV1 } from '../../src/contracts/plan-round.js';
+import { systemRoundRequestId, type SystemRoundV1 } from '../../src/contracts/plan-round.js';
+import { systemRoundMessageRef } from '../helpers/system-round-ref.js';
 
 const PASS_EMPTY = '{"schemaVersion":1,"kind":"plan_review","verdict":"pass","findings":[]}';
 const PASS_FINDING = '{"schemaVersion":1,"kind":"plan_review","verdict":"pass","findings":'

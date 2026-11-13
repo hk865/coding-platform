@@ -9,24 +9,25 @@ import type { PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot, RuntimeT
 import type { PlanningAnswerShapeV1, QueryJobAnswerRef, QueryJobIntentV1 } from '../../contracts/query-job.js';
 import { interventionPlanningQueryRefs, queryJobRefFor } from '../../contracts/query-job.js';
 import { planningReplyTextOf, systemRoundOfText } from '../../contracts/plan-round.js';
+import { isRoleLineOpenDuty } from '../../contracts/role-lines.js';
 import { sameJson } from '../../contracts/fingerprint.js';
 import { parseInitialPlanningResponseV2 } from '../../contracts/initial-planning-parse.js';
 import type { PlanProposal, PlanProposalRef, TaskRow } from '../../core/work-graph/model/plan-contracts.js';
 import type { SessionCard } from '../../core/work-graph/model/session-contracts.js';
-import type { SessionMessage } from '../../core/work-graph/model/communication-contracts.js';
+import { interventionGoalRefOf, type SessionMessage } from '../../core/work-graph/model/communication-contracts.js';
 import { plainSessionRefToAggregate } from '../../core/work-graph/sessions/session-record-codecs.js';
 import { sessionMessageRefKey } from '../../core/work-graph/sessions/message-record-codecs.js';
 import { decisionActionPolicy } from '../../core/work-graph/state/decision-policy.js';
 import { normalizeInitialPlanningResponseV2 } from '../../core/work-graph/tasks/initial-plan.js';
 import { reviewQueryEnded } from '../../core/work-graph/model/evidence-contracts.js';
-import { planSourceLineageOf } from '../../core/work-graph/tasks/plan-lineage.js';
+import { interventionQueryWorkspaceOf, planSourceLineageOf } from '../../core/work-graph/tasks/plan-lineage.js';
 import { planProposalIdFor } from '../../core/work-graph/tasks/plan-service.js';
 import { mergeStageRefinement } from '../../core/work-graph/tasks/stage-segment.js';
 import { asRejection } from './consultation.js';
 import { planningAnswerShapeOf } from './plan-round.js';
 import { createQueryStageDriver, queryRunEndedWithoutAnswer } from './query-stage-driver.js';
 import type { HandleInterventionResultV1, InterventionInput, WorkflowDependencies } from './ports.js';
-import { automationContext, ownContext, type Base, type Owned } from './workflow.js';
+import { automationContext, ownContext, ownedInWorkspace, type Base, type Owned } from './workflow.js';
 
 /** The propose refusals another pass could change; any other refusal is about the plan itself. */
 const PROPOSE_RETRIED_CODES: ReadonlySet<CoreRejection['code']> = new Set([
@@ -62,12 +63,18 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
       const projects = consultations.projects;
       /** P1's one source-lineage walk over the three frozen read ports (DR-P2-02). */
       const lineageDeps = { messages: mailbox, queries: queryOwner, plans };
-      const read = await mailbox.readMessage(owned.ctx, input.messageRef);
+      // Two Host scopes of one project: the message, its body, its reply and the line's facts live in the message's
+      // workspace (`lineOwned`); the Goal, its graph, plans, candidates and the message's one planning Query live in
+      // the Goal's (`goalOwned`). A joined workspace's round to a main-workspace line keeps the two apart.
+      const lineOwned = ownedInWorkspace(owned, input.messageRef.workspaceId);
+      const read = await mailbox.readMessage(lineOwned.ctx, input.messageRef);
       if (read.status !== 'ready') return asRejection(read, 'the intervention message');
       const message = read.value;
-      if (message.ref.projectId !== owned.projectId || message.ref.workspaceId !== owned.workspaceId) {
+      // Safety: another project's message is never handled. Another workspace of this project is: the Host is
+      // trusted project-wide (104-1), and the Goal's Workflow closes a main-workspace line's round.
+      if (message.ref.projectId !== owned.projectId) {
         return { status: 'rejected', code: 'forbidden',
-          reason: 'the intervention message is outside the bound project/workspace' };
+          reason: 'the intervention message is outside the bound project' };
       }
       if ('kind' in message.recipient) {
         return { status: 'rejected', code: 'unsupported', reason: 'a user-recipient message is not a line' };
@@ -83,12 +90,12 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
       // without `taskRef` is allowed: its effective line is the Session below (book `:445`; 7b1rd-07). The
       // allowed sender is L's dispatch gate (person or `action_request`, SR9 L3); this handler does not restate it.
       const line = message.recipient;
-      const facts = await sessionFacts.readSessionFacts(owned.ctx, line);
+      const facts = await sessionFacts.readSessionFacts(lineOwned.ctx, line);
       if (facts.status !== 'ready') return asRejection(facts, 'the intervention line facts');
       // The recipient line's duty is a read through the existing resolver; an uninstalled or `unknown` duty keeps
       // today's path and never guesses a review. A non-ready read is the existing rejection mapping, no new code.
       const dutyRead = deps.workflow.sessionDuty === undefined
-        ? null : await deps.workflow.sessionDuty(facts.value.session.role, owned.ctx);
+        ? null : await deps.workflow.sessionDuty(facts.value.session.role, lineOwned.ctx);
       if (dutyRead !== null && dutyRead.status !== 'ready') {
         return asRejection(dutyRead, 'the intervention line duty');
       }
@@ -100,21 +107,40 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
       // and an adviser/reviewer line carry only the message's own `taskRef` as planning context. Every other
       // line keeps today's `taskRef ?? latestWork` claim path.
       const planning = systemRound || planningLine;
-      const addressed = planning
+      let addressed = planning
         ? message.taskRef ?? null
         : message.taskRef ?? facts.value.latestWork?.task ?? null;
       // The branch is decided by the FORMAL Goal phase, not by a Task row (a Task row is a separate projection):
       // read the Goal and the display before the graph, so a completed Goal never reaches the unfinished-task claim.
-      const goalRef = planning
+      let goalRef = planning
         ? message.goalRef ?? null
         : addressed !== null
           ? { aggregateType: 'Goal' as const, projectId: addressed.projectId, goalId: addressed.goalId }
           : message.goalRef ?? null;
-      const goalRead = goalRef === null ? null : await plans.queryGoal(owned.ctx, goalRef);
+      let goalRead = goalRef === null ? null : await plans.queryGoal(lineOwned.ctx, goalRef, { scope: 'project' });
       if (goalRead !== null && goalRead.status !== 'ready') return asRejection(goalRead, 'the message Goal');
+      // Coordination: every reader finds a message's one Query from the message alone, in the workspace of the Goal
+      // it names (`interventionGoalRefOf`), else its own. A line's newest Work whose Goal lives in another workspace
+      // gives way: the named Goal is handled instead, and with none named the message stays queued. One workspace
+      // never differs.
+      const named = interventionGoalRefOf(message);
+      if (goalRead !== null && goalRef !== null && !planning && message.taskRef === null && addressed !== null
+        && named?.goalId !== goalRef.goalId) {
+        const namedRead = named === null ? null : await plans.queryGoal(lineOwned.ctx, named, { scope: 'project' });
+        if (namedRead !== null && namedRead.status !== 'ready') return asRejection(namedRead, 'the message Goal');
+        const queryWorkspaceId = namedRead === null ? message.ref.workspaceId
+          : namedRead.value.goal.workspaceRef.workspaceId;
+        if (goalRead.value.goal.workspaceRef.workspaceId !== queryWorkspaceId) {
+          if (named === null) return { status: 'queued', reason: 'no_task' };
+          addressed = null;
+          goalRef = named;
+          goalRead = namedRead;
+        }
+      }
       const goal = goalRead === null ? null : goalRead.value.goal;
+      const goalOwned = goal === null ? lineOwned : ownedInWorkspace(owned, goal.workspaceRef.workspaceId);
       const queryGoalDisplay = plans.queryGoalDisplay;
-      const displayRead = goalRef === null ? null : await queryGoalDisplay(owned.ctx, { goalRef });
+      const displayRead = goalRef === null ? null : await queryGoalDisplay(goalOwned.ctx, { goalRef });
       if (displayRead !== null && displayRead.status !== 'ready') return asRejection(displayRead, 'the Goal display');
       const display = displayRead === null ? null : displayRead.value.display;
       // SMK3b (97-9; v3.4 B-01): a Host restart's pending GoalInterruption is resolved only when a person starts the
@@ -130,33 +156,39 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
       // good (cancelled or COMPLETED), where the branches below would leave it open and its line unarchivable.
       const goalOpen = goal !== null && goal.desiredState !== 'cancelled' && display?.phase !== 'COMPLETED';
       if (!goalOpen || (systemRound && duty === 'reviewer')) {
-        const settled = await closeSettledSource(owned, message, goalOpen);
+        const settled = await closeSettledSource(goalOwned, message, goalOpen);
         if (settled !== null) return settled;
       }
       // COMPLETED is checked BEFORE any claim: a completed Goal's dead line starts a new goal-less request, never
       // a planning Query or a claim on an old Task.
       if (goal !== null && display !== null && display.phase === 'COMPLETED') {
-        const body = await mailbox.readMessageBody(owned.ctx,
+        const body = await mailbox.readMessageBody(lineOwned.ctx,
           { messageRef: input.messageRef, part: 'message' });
         if (body.status !== 'ready') return asRejection(body, 'the intervention message body');
-        return requestNewGoal(owned, message, goal, body.value.text);
+        return requestNewGoal(goalOwned, message, goal, body.value.text);
       }
       if (goal === null) return { status: 'queued', reason: 'no_task' };
-      if (!planning && addressed !== null) {
-        const graph = await plans.queryTaskGraph(owned.ctx, { goalRef: goal.ref });
+      // Rule W (`session-chooser.ts` `projectReusable`): only a project-level duty line runs another workspace's Task.
+      // Any other line outside the Goal's workspace plans only: its Query, candidate and reply stay, and the work
+      // goes to the Goal's own line selection; neither claim below hands it this line.
+      const planningOnly = planning
+        || (lineOwned.workspaceId !== goalOwned.workspaceId && !isRoleLineOpenDuty(duty));
+      const target = addressed;
+      if (!planningOnly && target !== null) {
+        const graph = await plans.queryTaskGraph(goalOwned.ctx, { goalRef: goal.ref });
         if (graph.status !== 'ready') return asRejection(graph, 'the Task graph');
-        const task = graph.value.plan.tasks.find((candidate) => candidate.taskId === addressed.taskId);
-        const row = graph.value.tasks.find((candidate) => candidate.ref.taskId === addressed.taskId);
+        const task = graph.value.plan.tasks.find((candidate) => candidate.taskId === target.taskId);
+        const row = graph.value.tasks.find((candidate) => candidate.ref.taskId === target.taskId);
         // Unfinished = active and not satisfied; the open wait is deliberately not consulted (D-04).
         const unfinished = task !== undefined && row !== undefined && row.disposition === 'active'
           && row.effectivePhase !== 'satisfied';
         if (unfinished && task !== undefined && row !== undefined) {
-          const card = await sessions.readSession(owned.ctx,
+          const card = await sessions.readSession(lineOwned.ctx,
             { projectId: line.projectId, sessionId: line.sessionId });
           if (card.status !== 'ready') return asRejection(card, 'the intervention Session');
           const base: Base = { goalRef: goal.ref, flowId: '', sessionHint: line,
-            actor: owned.actor, taskId: addressed.taskId, failedCardRefs: [], releaseSkip: new Set<string>() };
-          const claimed = await deps.claimIntervention(owned, base, goal, graph.value.plan,
+            actor: owned.actor, taskId: target.taskId, failedCardRefs: [], releaseSkip: new Set<string>() };
+          const claimed = await deps.claimIntervention(goalOwned, base, goal, graph.value.plan,
             task, row, card.value, input.messageRef);
           if ('status' in claimed) return claimed;       // CoreRejection; its `status` is 'rejected'
           return { status: 'claimed', branch: 'existing_task', claim: claimed.claim };
@@ -164,14 +196,14 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
       }
       // A Goal that is neither active nor completed (paused/cancelled) has no planning branch.
       if (goal.desiredState !== 'active') return { status: 'queued', reason: 'no_task' };
-      const body = await mailbox.readMessageBody(owned.ctx,
+      const body = await mailbox.readMessageBody(lineOwned.ctx,
         { messageRef: input.messageRef, part: 'message' });
       if (body.status !== 'ready') return asRejection(body, 'the intervention message body');
       // The submit shape is frozen from the trusted sender, the recipient line's duty and the system round's head
       // kind (slice 9: only `execreview:` makes a reviewer's shape `exec_review`); the body gives nothing else.
       const answerShape: PlanningAnswerShapeV1 = duty === null ? 'text'
         : planningAnswerShapeOf(message, duty, systemRoundOfText(body.value.text)?.kind);
-      return planOnIdleLine(owned, input, message, goal, body.value.text, planning, answerShape);
+      return planOnIdleLine(goalOwned, input, message, goal, body.value.text, planningOnly, answerShape);
 
       /**
        * Window 3's one terminal settlement, for every planning round: the source of an ended `intervention_planning`
@@ -185,7 +217,8 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
        */
       async function closeSettledSource(owned: Owned, message: SessionMessage, goalOpen: boolean):
       Promise<HandleInterventionResultV1 | null> {
-        const read = await queryOwner.readQueryJob(owned.ctx, interventionPlanningQueryRefs(message.ref).queryJobRef);
+        const read = await queryOwner.readQueryJob(owned.ctx,
+          interventionPlanningQueryRefs(message.ref, owned.workspaceId).queryJobRef);
         if (read.status === 'not_found') return null;
         if (read.status !== 'ready') return asRejection(read, 'the ended planning Query');
         const job = read.value.job.job;
@@ -238,8 +271,11 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
       async function associateAnswer(owned: Owned,
         input: Extract<InterventionInput, { completion: 'associate_answer' }>, message: SessionMessage):
       Promise<HandleInterventionResultV1> {
-        const refs = interventionPlanningQueryRefs(message.ref);
-        const read = await queryOwner.readQueryJob(owned.ctx, refs.queryJobRef);
+        // The Query lives with the Goal the message names; this arm reads no line facts.
+        const queryWorkspace = await interventionQueryWorkspaceOf(lineOwned.ctx, plans, message);
+        if (queryWorkspace.status !== 'ready') return asRejection(queryWorkspace, 'the message Goal');
+        const read = await queryOwner.readQueryJob(ownedInWorkspace(owned, queryWorkspace.value).ctx,
+          interventionPlanningQueryRefs(message.ref, queryWorkspace.value).queryJobRef);
         if (read.status !== 'ready') return asRejection(read, 'the intervention planning Query');
         // The only production caller runs after `answer_ready`, so the settled Query has its formal Answer.
         const answerRef: QueryJobAnswerRef = read.value.job.job.answerRefs.at(-1)!;
@@ -263,9 +299,13 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
         return associateReply(owned, message.ref, answerRef);
       }
 
-      /** One reply write: the same answer replays as `responded`, any other existing reply is `source_stale`. */
-      async function associateReply(owned: Owned, replyRef: SessionMessageRef, answerRef: QueryJobAnswerRef):
+      /**
+       * One reply write: the same answer replays as `responded`, any other existing reply is `source_stale`. The reply
+       * is read and written where its message lives.
+       */
+      async function associateReply(caller: Owned, replyRef: SessionMessageRef, answerRef: QueryJobAnswerRef):
       Promise<HandleInterventionResultV1> {
+        const owned = ownedInWorkspace(caller, replyRef.workspaceId);
         // Re-read the current reply target: the reply is first-wins and the pin is its own revision.
         const current = await mailbox.readMessage(owned.ctx, replyRef);
         if (current.status !== 'ready') return asRejection(current, 'the intervention message');
@@ -328,7 +368,7 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
         if (sessionMessageRefKey(root) === sessionMessageRefKey(message.ref)) {
           return { status: 'ready', value: undefined };
         }
-        const rootRead = await mailbox.readMessage(owned.ctx, root);
+        const rootRead = await mailbox.readMessage(ownedInWorkspace(owned, root.workspaceId).ctx, root);
         if (rootRead.status !== 'ready') return asRejection(rootRead, 'the planning source lineage root');
         const hostSystemRound = rootRead.value.sender.kind === 'host'
           && rootRead.value.sender.actor.kind === 'system';
@@ -372,7 +412,8 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
         goal: GoalSnapshot, text: string, planning: boolean, answerShape: PlanningAnswerShapeV1):
       Promise<HandleInterventionResultV1> {
         const key = sessionMessageRefKey(message.ref);
-        const refs = interventionPlanningQueryRefs(message.ref);
+        // `owned` is the Goal's workspace: the Query is submitted, claimed and driven there, on the line's Session.
+        const refs = interventionPlanningQueryRefs(message.ref, owned.workspaceId);
         const proposalRef = interventionProposalRefOf(owned, message, goal.ref.goalId);
         // Stage 8: the deterministic Query. A re-run finds the pending pair and continues it.
         const existing = await queryOwner.readQueryJob(owned.ctx, refs.queryJobRef);
@@ -417,7 +458,7 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
           const phase = record.run.run.executionState?.phase;
           if (phase === undefined) {
             // A plain Query is claimed by the caller that chose its line; one claim, then the driver drives it.
-            const card = await sessions.readSession(owned.ctx,
+            const card = await sessions.readSession(lineOwned.ctx,
               { projectId: line.projectId, sessionId: line.sessionId });
             if (card.status !== 'ready') return asRejection(card, 'the intervention Session');
             const sessionAggregate = plainSessionRefToAggregate(line);
@@ -591,7 +632,7 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
         if (graph.status !== 'ready') return asRejection(graph, 'the ready Task graph');
         const task = first.task.definition;
         const row = first.task;
-        const card = await sessions.readSession(owned.ctx,
+        const card = await sessions.readSession(lineOwned.ctx,
           { projectId: line.projectId, sessionId: line.sessionId });
         if (card.status !== 'ready') return asRejection(card, 'the intervention Session');
         const base: Base = { goalRef: { ...fresh.ref }, flowId: '', sessionHint: line,

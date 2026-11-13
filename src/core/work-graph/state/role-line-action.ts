@@ -68,7 +68,7 @@ export type RoleLineActionV1 = {
   plannedRounds?: number;
   /** Only `exploration_followup`: what the person asked to explore again, and why. */
   followUp?: {
-    kind: 'repropose' | 'deepen';
+    kind: 'repropose' | 'deepen' | 'knowledge_conflict';
     moduleRefs: ModuleRef[];
     reason: string | null;
     sourceBatchRef: ArchitectureProposalBatchRef | null;
@@ -131,7 +131,7 @@ export const RoleLineActionShape = defineShape({ name: 'RoleLineAction', fields:
   depth: f.optional(f.integer({ min: 1, max: 3 })),
   plannedRounds: f.optional(f.integer({ min: 1 })),
   followUp: f.optional(f.object({
-    kind: f.enumOf(['repropose', 'deepen'] as const),
+    kind: f.enumOf(['repropose', 'deepen', 'knowledge_conflict'] as const),
     moduleRefs: f.array(f.ref(ModuleRefShape)),
     reason: f.nullable(id),
     sourceBatchRef: f.nullable(f.object({ aggregateType: f.literal('ArchitectureProposalBatch'),

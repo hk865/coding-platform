@@ -13,7 +13,7 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "837ab1cb6dfec97001632fe5469a52e86987fb01c9433af29b582320fa73fd93"
+    "sha256": "7bbf7639ce9a2f631360cab4a67d63676ebad83bae18aac2be5086884fedbd6c"
   },
   {
     "path": "resources/prompts/platform/strings.json",
@@ -141,7 +141,7 @@
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-adviser.txt",
-    "sha256": "8954f1e09e66ce7a1e7e38ea96d0dd413f1dfa10e640c1a15a2d656dd6166d96"
+    "sha256": "6e649060d8e346d4b8d5c6cc579a85a7c29c50a470118cb3de3529fc5e38fb57"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-scribe.txt",

@@ -30,7 +30,7 @@ import type { GoalRecordTransactionPort, EncodedRecord } from '../../record-stor
 import type { LookupValue, RecordLookupPage, RecordLookupPort } from '../../record-store/lookup-ports.js';
 import { compareRefKeys } from '../../record-store/lookup-index.js';
 import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
-import type { SessionMessage } from '../model/communication-contracts.js';
+import type { SessionMailboxPort, SessionMessage } from '../model/communication-contracts.js';
 import type { UnknownCallReviewPort, UnknownCallReviewReadPort } from '../model/unknown-call-review-contracts.js';
 import { NO_ACCEPTED_ANSWER, type ReviewQueryReads, type ReviewSessionDuty } from '../model/evidence-contracts.js';
 import { admitUnknownCallReview, approvedMethodsOf, transitionUnknownCallReview, UNKNOWN_CALL_REVIEW_MAX_ITEMS,
@@ -40,7 +40,7 @@ import {
   type ParsedUnknownCallAdviceAnswerV1, type UnknownCallAdviceV1,
 } from '../../../contracts/unknown-call-advice.js';
 import { UNKNOWN_CALL_ESCALATION_CAUSES, type UnknownCallEscalationCauseV1 } from '../../../contracts/unknown-call-review.js';
-import { systemRoundMessageRef } from '../../../contracts/plan-round.js';
+import { sentSystemRoundRef } from './plan-lineage.js';
 import { interventionPlanningQueryRefs } from '../../../contracts/query-job.js';
 import { goalDecisionBasis } from './goal-basis.js';
 import { reworkFenceOf } from '../state/task-failure.js';
@@ -112,6 +112,8 @@ export type UnknownCallReviewServiceDependencies = {
    */
   queries?: ReviewQueryReads;
   sessionDuty?: ReviewSessionDuty;
+  /** The adviser round's message, found through the Host's own send receipt. Absent -> `applyAdviserAnswer` is `unavailable`. */
+  messages?: Pick<SessionMailboxPort, 'readHostSendMessageRef'>;
   now: () => string;
   eventId: () => string;
 };
@@ -1405,13 +1407,20 @@ export function createUnknownCallReviewService(
   async function readAdviserAnswer(ctx: CoreCallContext, current: UnknownCallReviewV1, requestId: string):
   Promise<{ ok: true; value: ParsedUnknownCallAdviceAnswerV1 } | { ok: false; rejection: CoreRejection }> {
     const adviserReadRefusal = (rejection: CoreRejection) => ({ ok: false as const, rejection });
-    if (deps.queries === undefined || deps.sessionDuty === undefined) {
-      return adviserReadRefusal(rejected('unavailable', 'the adviser Query and duty reads are not wired'));
+    if (deps.queries === undefined || deps.sessionDuty === undefined || deps.messages === undefined) {
+      return adviserReadRefusal(rejected('unavailable', 'the adviser Query, duty and sent-message reads are not wired'));
     }
-    const messageRef = systemRoundMessageRef({ projectId: current.ref.projectId, workspaceId: current.workspaceId }, requestId);
-    if (messageRef.status !== 'ready') return adviserReadRefusal(messageRef);
-    const read = await deps.queries.readQueryJob(ctx, interventionPlanningQueryRefs(messageRef.value).queryJobRef);
-    if (read.status === 'not_found') return adviserReadRefusal(rejected('incomplete', 'the adviser Query has not been created; the review waits'));
+    // The round's message lands in the adviser line's workspace; the review's workspace sent it and keeps its Query.
+    const scope = { projectId: current.ref.projectId, workspaceId: current.workspaceId };
+    const notCreated = rejected('incomplete', 'the adviser Query has not been created; the review waits');
+    const sent = await sentSystemRoundRef(deps.messages, scope, requestId, ctx.signal);
+    if (sent.status === 'not_found') return adviserReadRefusal(notCreated);
+    if (sent.status !== 'ready') {
+      return adviserReadRefusal(sent.status === 'rejected' ? sent : rejected('unavailable', 'the adviser round message is not readable'));
+    }
+    const messageRef = sent.value;
+    const read = await deps.queries.readQueryJob(ctx, interventionPlanningQueryRefs(messageRef, scope.workspaceId).queryJobRef);
+    if (read.status === 'not_found') return adviserReadRefusal(notCreated);
     if (read.status !== 'ready') {
       return adviserReadRefusal(read.status === 'rejected' ? read : rejected('incomplete', 'the adviser Query is not readable yet'));
     }
@@ -1421,7 +1430,7 @@ export function createUnknownCallReviewService(
     }
     const execution = job.intent.execution;
     if (execution.kind !== 'intervention_planning' || job.goalId !== current.ref.goalId
-      || refKeyOf(execution.sourceMessageRef) !== refKeyOf(messageRef.value)) {
+      || refKeyOf(execution.sourceMessageRef) !== refKeyOf(messageRef)) {
       return adviserReadRefusal(rejected('invalid', 'the adviser Query was not asked by this round\'s message'));
     }
     const answerRef = job.answerRefs.at(-1);

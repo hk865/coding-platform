@@ -44,7 +44,7 @@ import type {
 } from '../../../contracts/evidence.js';
 import { EVIDENCE_SUMMARY_MAX_BYTES, requirementKeyOf } from '../../../contracts/evidence.js';
 import { parseExecReviewAnswer, type ExecReviewVerdictV1 } from '../../../contracts/exec-review.js';
-import { systemRoundMessageRef, systemRoundRequestId } from '../../../contracts/plan-round.js';
+import { systemRoundRequestId } from '../../../contracts/plan-round.js';
 import { interventionPlanningQueryRefs } from '../../../contracts/query-job.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import {
@@ -83,6 +83,7 @@ import { repairBindingDigest } from '../architecture/repair-ops.js';
 import { readAllHeads } from '../notes/note-base-reader.js';
 import { lookupCommittedReceiptByIdentity } from '../persistence/receipt-lookup.js';
 import { execReviewPacketOfRound, execReviewPacketOfText } from '../tasks/exec-review-packet.js';
+import { sentSystemRoundRef } from '../tasks/plan-lineage.js';
 import { overlayFileKnowledge } from '../notes/note-knowledge.js';
 import type { KnowledgeLines } from '../model/line-knowledge.js';
 import { S4_NOTE_BY_STAGED_RUN_LOOKUP } from '../persistence/note-record-codecs.js';
@@ -944,8 +945,11 @@ export type EvidenceServiceDependencies = {
     automaticReverifyPolicy?: AutomaticReverifyPolicyV1;
     /** VR-14 step 2: the delegated-write admission an Agent reverify goes through; absent refuses an Agent. */
     delegatedWrites?: PlanDelegatedWriteDependencies;
-    /** ND-9: a session-message new input is read through the mailbox owner; absent refuses one (`unsupported`). */
-    messages?: Pick<SessionMailboxPort, 'readMessage'>;
+    /**
+     * ND-9: a session-message new input is read through the mailbox owner; absent refuses one (`unsupported`). Slice 9
+     * VR-16 finds the review round's message through the Host's own send receipt (`readHostSendMessageRef`).
+     */
+    messages?: Pick<SessionMailboxPort, 'readMessage' | 'readHostSendMessageRef'>;
     /** Slice 9 VR-16: the review Query reads; absent makes `recordReviewEvidence` `unsupported`. */
     queries?: ReviewQueryReads;
     /** Slice 9 VR-16: the reviewer Session's duty read; absent makes `recordReviewEvidence` `unsupported`. */
@@ -1676,13 +1680,19 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
     Promise<{ status: 'accepted'; verdict: ExecReviewVerdictV1; basis: string; report: string; sessionId: string } | CoreRejection> {
         const queries: ReviewQueryReads | undefined = deps.queries;
         const sessionDuty: ReviewSessionDuty | undefined = deps.sessionDuty;
-        if (queries === undefined || sessionDuty === undefined) return unsupported('the review Query and duty reads are not wired');
+        if (queries === undefined || sessionDuty === undefined || deps.messages === undefined) {
+            return unsupported('the review Query, duty and sent-message reads are not wired');
+        }
         const goalRef: GoalRef = { aggregateType: 'Goal', projectId: round.ref.projectId, goalId: round.ref.goalId };
         const requestId = systemRoundRequestId({ kind: 'exec_review', goalRef, roundRef: round.ref });
         if (requestId.status !== 'ready') return requestId;
-        const messageRef = systemRoundMessageRef(scope, requestId.value);
-        if (messageRef.status !== 'ready') return messageRef;
-        const read = await queries.readQueryJob(ctx, interventionPlanningQueryRefs(messageRef.value).queryJobRef);
+        // The round's message lands in the review line's workspace; the round's workspace sent it and keeps its Query.
+        const sent = await sentSystemRoundRef(deps.messages, scope, requestId.value, ctx.signal);
+        if (sent.status === 'not_found') return incomplete('the review Query has not been created; the review waits');
+        if (sent.status !== 'ready') return mapRead(sent);
+        const messageRef = sent.value;
+        const read = await queries.readQueryJob(ctx,
+            interventionPlanningQueryRefs(messageRef, scope.workspaceId).queryJobRef);
         if (read.status === 'not_found') return incomplete('the review Query has not been created; the review waits');
         if (read.status !== 'ready') return mapRead(read);
         const job = read.value.job.job;
@@ -1691,7 +1701,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         const packet = execReviewPacketOfText(job.intent.question);
         const frozen = execReviewPacketOfRound(round);
         if (execution.kind !== 'intervention_planning' || execution.answerShape !== 'exec_review'
-            || !sameRef(execution.sourceMessageRef, messageRef.value) || job.goalId !== round.ref.goalId
+            || !sameRef(execution.sourceMessageRef, messageRef) || job.goalId !== round.ref.goalId
             || packet.status !== 'ready' || frozen.status !== 'ready'
             || canonicalJson(packet.value.packet as unknown as JsonValue) !== canonicalJson(frozen.value as unknown as JsonValue)) {
             return invalid('the review Query does not carry this round\'s frozen review packet');

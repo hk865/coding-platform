@@ -3,6 +3,7 @@
  * knowledge files, kept to undo a person's revert, and the recovery items a reconciliation notice points at. Only a
  * recovery reads a snapshot; no read path does, and dropping the knowledge index does not drop them.
  */
+import type { KnowledgeProblemV1 } from '../../contracts/knowledge.js';
 
 /** One recovery item of a notice: what the person's "恢复" undoes and what the file was when the notice went out. */
 export type KnowledgeRecoveryRow = {
@@ -35,6 +36,10 @@ export interface KnowledgeSnapshots {
   recordRecovery(rows: readonly KnowledgeRecoveryRow[]): void;
   /** One notice's items, by itemNo. */
   readRecovery(noticeId: string): readonly KnowledgeRecoveryRow[];
+  /** KC-1 G3: a knowledge_conflict notice's places by itemNo; a notice id already there is kept as it is. */
+  recordProblems(noticeId: string, lineRef: string, rows: readonly KnowledgeProblemV1[]): void;
+  /** KC-1 G3: one notice's places, by itemNo. */
+  readProblems(noticeId: string): readonly KnowledgeProblemV1[];
   hasRecoveryForWrite(writeId: string): boolean;
   /** A recovered item is removed (the notice itself is history and stays). */
   deleteRecovery(noticeId: string, itemNo: number): void;

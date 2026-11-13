@@ -6,41 +6,38 @@
  * knowledge directory, and R6's mark of a checkout another project already had.
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
-import type { SessionRef } from '../../../contracts/core/identity.js';
+import type { ModuleRef, SessionRef } from '../../../contracts/core/identity.js';
 import { rejected } from '../../../contracts/core/rejections.js';
-import type { ReadResult } from '../../../contracts/core/results.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
-import type { KnowledgeConflictV1, ReconcileResult } from '../../../contracts/knowledge.js';
-import { utf8ByteLength } from '../../../contracts/utf8.js';
+import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import type { KnowledgeProblemV1, ReconcileResult } from '../../../contracts/knowledge.js';
+import { truncateUtf8, utf8ByteLength } from '../../../contracts/utf8.js';
 import { isPos, isRecord, nonEmpty } from '../../../contracts/validation/common.js';
-import type { SessionMessageCommandPort } from '../model/communication-contracts.js';
 import type { KnowledgeOpsPort } from '../model/knowledge-ops.js';
 import { lineRefKey, type KnowledgeLines, type LineKnowledge } from '../model/line-knowledge.js';
 import { hostSystemContext } from '../model/platform-check-context.js';
 import { storeFailureToRejection } from '../persistence/read-result-failures.js';
+import { knowledgeConflictQuestion } from '../state/exploration-followup.js';
 import { withKnowledgeLeases } from './knowledge-write.js';
-import { conflictNoticeOf, reconcileKnowledgeLine } from './reconcile.js';
+import { conflictNoticeOf, reconcileKnowledgeLine, withSnapshots } from './reconcile.js';
 import { recoverKnowledgeItem, recoveryItemsOf } from './recover.js';
 
-/** [2C1-17]: what a conflict's requests to the region advisers use; wired where `platform.knowledge` is published. */
+/** [2C1-17], KC-1 G1: what a conflict's repair round uses; wired where `platform.knowledge` is published. */
 export type KnowledgeConflictAsks = {
-  /** Each module's (project view) effective region adviser by the last catalog the records adopted, read once; null when none. */
+  /** Each module's (project view) effective region adviser and its region, read once; null when none. */
   regionAdvisersOf(ctx: CoreCallContext, projectId: string, moduleIds: readonly string[]):
-    Promise<ReadResult<ReadonlyMap<string, SessionRef | null>>>;
-  readonly sendMessage: SessionMessageCommandPort['sendMessage'];
+    Promise<ReadResult<ReadonlyMap<string, { session: SessionRef; region: ModuleRef } | null>>>;
+  /** Opens (a retry replays) the `knowledge_conflict` follow-up of one notice: `explorationFollowUp.begin`. */
+  beginConflictRepair(ctx: CoreCallContext, input: { workspaceId: string; noticeId: string; regions: ModuleRef[]; text: string }):
+    Promise<WriteResult<unknown>>;
   /** The mailbox's text bound for this sender: a request's text is cut to it (b2 Astra 2). */
   readonly maxTextBytes: number;
 };
 
-/** The one sender of every conflict request: the mailbox keys a send by its sender and workspace too. */
+/** The one sender of every conflict repair round: the mailbox keys a send by its sender and workspace too. */
 const KNOWLEDGE_CONFLICT_ACTOR = { kind: 'system' as const, id: 'knowledge-conflict' };
-const CONFLICT_REASONS: Record<KnowledgeConflictV1['kind'], string> = {
-  duplicate_module_id: '两个模块文件写了同一个模块号',
-  path_claimed_by_two_modules: '同一个路径被两个模块认领',
-  dangling_reference: '引用了不存在的模块',
-};
-const REQUEST_INSTRUCTION = '请核对这些文件，用 propose_architecture_revision 提一份架构修订来解决。平台不会自动合并，也不会改这些文件。';
-const omittedPaths = (count: number): string => `（还有 ${count} 条路径没列出）`;
+const REPAIR_HEAD = '知识文件里有同一个路径被几个模块认领的地方，每一处只交给一位区域参谋：';
+const REPAIR_INSTRUCTION = '请只处理交给你这个区域的那几处：用 propose_architecture_revision 提一份架构修订，让每个路径只归一个模块。平台不会自动合并，也不会改这些文件；人在卡上批准后由平台写。';
+const omittedPlaces = (count: number): string => `（还有 ${count} 处没列出）`;
 
 /**
  * `localOnly`: the person's "architecture and notes stay local" of a checkout (`LineRef.repoKey`), the Host's setting; a
@@ -51,8 +48,11 @@ export function createKnowledgeOps(lines: KnowledgeLines, asks: KnowledgeConflic
   const reconcile: KnowledgeOpsPort['reconcile'] = async (ctx, workspaceId, trigger) => {
     const line = await lines.line(ctx, workspaceId);
     if (line.status !== 'ready') return storeFailureToRejection(line);
-    const result = await reconcileKnowledgeLine(lines.write, line.value, trigger);
-    if (result.status === 'ready') await askRegionAdvisers(asks, ctx, line.value, result.value);
+    // A project read that fails skips only the project-level merge check (its own lines report their reads).
+    const project = await lines.project(ctx);
+    const result = await reconcileKnowledgeLine(lines.write, line.value, trigger,
+      project.status === 'ready' ? project.value : null);
+    if (result.status === 'ready') await openConflictRepair(asks, ctx, line.value, result.value);
     return result;
   };
   return {
@@ -69,6 +69,14 @@ export function createKnowledgeOps(lines: KnowledgeLines, asks: KnowledgeConflic
     async recoveryItems(ctx, input) {
       if (!isRecord(input) || !nonEmpty(input.noticeId)) return rejected('invalid', 'input must be { noticeId: a non-empty string }');
       return recoveryItemsOf(lines.write, ctx.projectId, input.noticeId);
+    },
+    // KC-1 G3: the places rows are this project's snapshots; another project's notice id reads none here.
+    async problems(ctx, input) {
+      if (!isRecord(input) || !nonEmpty(input.noticeId)) return rejected('invalid', 'input must be { noticeId: a non-empty string }');
+      return withSnapshots(lines.write, ctx.projectId, async snapshots => {
+        const rows = snapshots.readProblems(input.noticeId);
+        return rows.length === 0 ? { status: 'not_found' } : { status: 'ready', value: { problems: rows } };
+      });
     },
     // [2C2-08]: the line only through the project's lines, so a workspace not registered in it is refused there.
     async status(ctx, workspaceId) {
@@ -127,54 +135,52 @@ export function createKnowledgeOps(lines: KnowledgeLines, asks: KnowledgeConflic
 }
 
 /**
- * [2C1-17]: each module in a conflict asks its region adviser to settle it: a system `action_request` that needs a
- * reply, with the paths and why, naming `propose_architecture_revision`. The sender is fixed on the reconciled
- * workspace and the request id is the (adviser, module, notice), so the same problems ask each adviser once whichever
- * trigger reconciled. No adviser (the notice tells the person) or an adviser read that fails (the next round asks
- * again) sends nothing. Nothing is merged, no file is changed and no card is made.
+ * [2C1-17], KC-1 G1: a round whose only places are paths claimed by two modules opens (or replays) one
+ * `knowledge_conflict` follow-up for the region advisers that hold the first module of each place. The sender is
+ * fixed on the reconciled workspace and the follow-up's key is the notice id, so the same problems open it once
+ * whichever trigger reconciled. No adviser (the notice tells the person, [2C1-17]) or a read that fails (the next
+ * round opens it) opens nothing. Nothing is merged, no file is changed and no card is made.
  */
-async function askRegionAdvisers(asks: KnowledgeConflictAsks, ctx: CoreCallContext, line: LineKnowledge,
+async function openConflictRepair(asks: KnowledgeConflictAsks, ctx: CoreCallContext, line: LineKnowledge,
   result: ReconcileResult): Promise<void> {
   const notice = conflictNoticeOf(line.projectId, result.lineRef, result.issues, result.conflicts);
-  if (notice === null || result.conflicts.length === 0) return;
+  // 121-106 ② (产品规则): only a duplicate path is handed to an adviser; every other place is the person's to fix.
+  if (notice === null || result.issues.length > 0 || result.conflicts.length === 0
+    || result.conflicts.some(conflict => conflict.kind !== 'path_claimed_by_two_modules')) return;
+  const places = result.problems.filter(problem => problem.kind === 'path_claimed_by_two_modules');
   const sender = hostSystemContext({ ...ctx, workspaceId: line.scope.workspaceId }, KNOWLEDGE_CONFLICT_ACTOR);
-  const moduleIds = [...new Set(result.conflicts.map(conflict => conflict.moduleId))];
-  const advisers = await asks.regionAdvisersOf(sender, line.projectId, moduleIds);
+  // 4-7: one place is handed to the adviser of its first module (sorted), never to every claimant.
+  const advisers = await asks.regionAdvisersOf(sender, line.projectId, [...new Set(places.map(place => place.moduleIds[0]!))]);
   if (advisers.status !== 'ready') return;
-  for (const moduleId of moduleIds) {
-    const adviser = advisers.value.get(moduleId) ?? null;
-    if (adviser === null) continue;
-    const text = conflictRequestText(moduleId, result.conflicts.filter(conflict => conflict.moduleId === moduleId),
-      asks.maxTextBytes);
-    const identity = { adviser, moduleId, noticeId: notice.noticeId };
-    await asks.sendMessage(sender, {
-      input: { recipient: adviser, text, intent: 'action_request', needsReply: true },
-      meta: { requestId: `knowledge-conflict:${sha256Hex(canonicalJson(identity as unknown as JsonValue))}`, expected: [] },
-    });
-  }
+  const given = places.flatMap(place => {
+    const adviser = advisers.value.get(place.moduleIds[0]!);
+    return adviser === null || adviser === undefined ? [] : [{ place, region: adviser.region }];
+  });
+  if (given.length === 0) return;
+  const regions = [...new Map(given.map(entry => [entry.region.moduleId, entry.region])).values()]
+    .sort((left, right) => left.moduleId < right.moduleId ? -1 : left.moduleId > right.moduleId ? 1 : 0);
+  const bound = asks.maxTextBytes - Math.max(...regions.map(region => utf8ByteLength(knowledgeConflictQuestion(region, ''))));
+  await asks.beginConflictRepair(sender, { workspaceId: line.scope.workspaceId, noticeId: notice.noticeId, regions,
+    text: conflictRepairText(given, bound) });
+  // `committed` (opened or replayed) and `idempotency_conflict` (the same notice already opened on another pin or
+  // region) are both handled; every other rejection asks again next round.
 }
 
 /**
- * b2 Astra 2: one request's text within the mailbox's bound. The module, each conflict's reason (one per kind) and the
- * instruction always stay; the paths go in whole, in order, while they fit, and a reason that left some out says how
- * many. Each reason line keeps room for the widest such note, so the text never passes `maxBytes`.
+ * b2 Astra 2: the repair round's text within its bound. The head, each place's line in order and the instruction stay;
+ * a place line that does not fit is left out whole and counted, and when not even the first fits it is cut with
+ * `truncateUtf8` and ends in “……” (the round still says what to do).
  */
-function conflictRequestText(moduleId: string, conflicts: readonly KnowledgeConflictV1[], maxBytes: number): string {
-  const head = `知识文件里的模块 ${moduleId} 有冲突：`;
-  const reasonLine = (conflict: KnowledgeConflictV1): string => `- ${CONFLICT_REASONS[conflict.kind]}（${conflict.kind}）：`;
-  const widest = omittedPaths(conflicts.reduce((sum, conflict) => sum + conflict.paths.length, 0));
-  let left = maxBytes - utf8ByteLength([head, ...conflicts.map(conflict => reasonLine(conflict) + widest),
-    REQUEST_INSTRUCTION].join('\n'));
-  const listed = conflicts.map(conflict => {
-    const shown: string[] = [];
-    for (const path of conflict.paths) {
-      const cost = utf8ByteLength(shown.length === 0 ? path : `、${path}`);
-      if (cost > left) break;
-      left -= cost;
-      shown.push(path);
-    }
-    const omitted = conflict.paths.length - shown.length;
-    return `${reasonLine(conflict)}${shown.join('、')}${omitted === 0 ? '' : omittedPaths(omitted)}`;
-  });
-  return [head, ...listed, REQUEST_INSTRUCTION].join('\n');
+function conflictRepairText(given: readonly { place: KnowledgeProblemV1; region: ModuleRef }[], maxBytes: number): string {
+  const lines = given.map(({ place, region }) =>
+    `- 交给区域 ${region.moduleId}：${place.reason}（文件：${place.files.map(file => file.path).join('、')}）`);
+  for (let kept = lines.length; kept > 0; kept -= 1) {
+    const omitted = kept === lines.length ? [] : [omittedPlaces(lines.length - kept)];
+    const text = [REPAIR_HEAD, ...lines.slice(0, kept), ...omitted, REPAIR_INSTRUCTION].join('\n');
+    if (utf8ByteLength(text) <= maxBytes) return text;
+  }
+  const omitted = lines.length > 1 ? [omittedPlaces(lines.length - 1)] : [];
+  const headroom = maxBytes - utf8ByteLength([REPAIR_HEAD, ...omitted, REPAIR_INSTRUCTION].join('\n')) - 1
+    - utf8ByteLength('……');
+  return [REPAIR_HEAD, `${truncateUtf8(lines[0]!, Math.max(0, headroom))}……`, ...omitted, REPAIR_INSTRUCTION].join('\n');
 }

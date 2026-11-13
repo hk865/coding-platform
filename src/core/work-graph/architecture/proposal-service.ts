@@ -17,6 +17,7 @@ import type {
   ProposeArchitectureRevisionInputV1,
 } from '../../../contracts/architecture-proposal.js';
 import type { ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
+import { ARCHITECTURE_FILE_PATH, type ProposalBatchFileV1 } from '../../../contracts/knowledge.js';
 import type { CatalogRepairOpV1 } from '../../../contracts/note.js';
 import { qualifyProjectPath } from '../../../contracts/workspace-path.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
@@ -66,8 +67,10 @@ import {
   decodeArchitectureCatalogRevisedEvent, encodeArchitectureCatalogRevisedEvent,
 } from './catalog-record-codecs.js';
 import {
-  architectureWritePlansOf, catalogPinOf, knowledgeBaselineOf, opsInProjectView, readCurrentCatalogWindow, reframeRepairOps,
+  architectureWritePlansOf, catalogPinOf, knowledgeBaselineOf, opsInProjectView, readCurrentCatalogWindow,
+  readRecordedCatalogWindow, reframeRepairOps,
 } from './catalog-service.js';
+import { architectureFilesOf, platformFileSource } from './architecture-file.js';
 import { exactKeys } from './architecture-service.js';
 import {
   catalogRevisionMovesProblem, catalogRevisionPinProblem, draftCatalogRevision, finishCatalogRevision,
@@ -141,6 +144,9 @@ export type ArchitectureProposalService = {
     Promise<ApplyBatchResult<ArchitectureRevision>>;
   readArchitectureProposal(ctx: CoreCallContext,
     input: { proposalRef: ArchitectureProposalRef }): Promise<ReadResult<ProposalRead>>;
+  /** KC-1 G2 (ruling 4-9): the files this batch would create, change or delete if approved now; a read-time hint. */
+  readProposalBatchFiles(ctx: CoreCallContext, input: { batchRef: ArchitectureProposalBatchRef }):
+    Promise<ReadResult<{ files: readonly ProposalBatchFileV1[] }>>;
   /** Every pending, unbatched proposal of the project, in proposal-id order. */
   readPendingArchitectureProposals(ctx: CoreCallContext, input: { projectRef: ProjectScope }):
     Promise<ReadResult<ArchitectureProposalRef[]>>;
@@ -1125,6 +1131,64 @@ async function prepareApproval(deps: ProposalServiceDeps, ctx: CoreCallContext,
   return { kind: 'ready', plans: plans.value, commit: knowledgeCommit(commit => deps.records.commit(commit), prepared, thrown) };
 }
 
+/**
+ * KC-1 G2 (ruling 4-9): the files this batch would change if approved now, from a read-only trial of its ops on the
+ * current pin (never queued, leased or committed). Each line's files are read for the source verdict (ruling 4-2 A);
+ * a new module file has no name yet (`path: null`), because `writeModule` picks one at approval.
+ */
+export async function readProposalBatchFiles(deps: ProposalServiceDeps, ctx: CoreCallContext,
+  input: { batchRef: ArchitectureProposalBatchRef }): Promise<ReadResult<{ files: readonly ProposalBatchFileV1[] }>> {
+  if (!isRecord(input)) return rejected('invalid', 'a proposal batch files read requires an input object');
+  const problem = batchRefProblem(input.batchRef);
+  if (problem !== null) return rejected('invalid', problem);
+  if (input.batchRef.projectId !== ctx.projectId) return rejected('forbidden', 'the batch is outside the call context project');
+  const batch = await readBatch(deps, input.batchRef);
+  if (batch.status !== 'ready') return batch;
+  const trial = platformCheckContext(ctx, TRIAL_ACTOR);
+  const draft = await draftCatalogRevision(deps, trial, { expected: batch.value.baseCatalogPin, ops: batch.value.ops,
+    responsibilityMoves: batch.value.responsibilityMoves, reason: 'proposal batch files',
+    commandId: `files:${batch.value.ref.batchId}` });
+  if (draft.status !== 'ready') return draft;
+  const lines = await deps.knowledge.project(trial);
+  if (lines.status !== 'ready') return rejectionOf(lines);
+  const plans = await architectureWritePlansOf(lines.value, draft.value.catalog, knowledgeBaselineOf(draft.value.content));
+  if (plans.status !== 'ready') return rejectionOf(plans);
+  const recorded = await readRecordedCatalogWindow(deps.records, ctx.projectId);
+  if (recorded.status !== 'ready' && recorded.status !== 'not_found') return recorded;
+  const recordedBaseline = recorded.status === 'ready' ? knowledgeBaselineOf(recorded.baseline.content) : null;
+  const files: ProposalBatchFileV1[] = [];
+  for (const plan of plans.value) {
+    const disk = await plan.line.readKnowledgeFiles();
+    if (disk.status !== 'ready') return storeFailureToRejection(disk);
+    const byPath = new Map(disk.value.files.map(file => [file.path, file]));
+    const current = disk.value.files.find(file => file.path === ARCHITECTURE_FILE_PATH)?.bytes ?? null;
+    const projected = recorded.status === 'ready' && recordedBaseline !== null
+      ? architectureFilesOf(recorded.catalog.catalog, recordedBaseline, plan.line.scope, current) : null;
+    // A recorded catalog is written by the same function (lists B), so an invalid projection is a programming error.
+    if (projected !== null && projected.status !== 'decoded') {
+      return rejected('unavailable', `the recorded catalog cannot be written as knowledge files: ${projected.reason}`);
+    }
+    const projection = projected === null ? null : projected.value;
+    const lineFiles: ProposalBatchFileV1[] = plan.changes.map(change => {
+      const moduleChange = change.path !== ARCHITECTURE_FILE_PATH;
+      const moduleId = moduleChange
+        ? deps.knowledge.write.files.writeLogFileOf(plan.line.scope, change.path, (change.after ?? change.before)!).moduleId
+        : null;
+      return { workspaceId: plan.line.scope.workspaceId,
+        path: change.before === null && moduleChange ? null : change.path, moduleId,
+        action: change.before === null ? 'create' as const : change.after === null ? 'delete' as const : 'modify' as const,
+        source: change.before === null ? null : platformFileSource(projection,
+          { path: change.path, bytes: change.before, committed: byPath.get(change.path)!.committed }) };
+    });
+    lineFiles.sort((left, right) => left.path === null
+      ? right.path === null ? (left.moduleId ?? '') < (right.moduleId ?? '') ? -1
+        : (left.moduleId ?? '') > (right.moduleId ?? '') ? 1 : 0 : 1
+      : right.path === null ? -1 : left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
+    files.push(...lineFiles);
+  }
+  return { status: 'ready', value: { files } };
+}
+
 export async function readArchitectureProposal(deps: ProposalServiceDeps, ctx: CoreCallContext,
   input: { proposalRef: ArchitectureProposalRef }): Promise<ReadResult<ProposalRead>> {
   if (!isRecord(input)) return rejected('invalid', 'a proposal read requires an input object');
@@ -1182,6 +1246,7 @@ export function createArchitectureProposalService(deps: ProposalServiceDeps): Ar
     freezeArchitectureProposalBatch: (ctx, input) => freezeArchitectureProposalBatch(deps, ctx, input),
     applyArchitectureProposalBatch: (ctx, input) => applyArchitectureProposalBatch(deps, ctx, input),
     readArchitectureProposal: (ctx, input) => readArchitectureProposal(deps, ctx, input),
+    readProposalBatchFiles: (ctx, input) => readProposalBatchFiles(deps, ctx, input),
     readPendingArchitectureProposals: (ctx, input) => readPendingArchitectureProposals(deps, ctx, input),
     readFrozenArchitectureBatches: (ctx, input) => readFrozenArchitectureBatches(deps, ctx, input),
   };

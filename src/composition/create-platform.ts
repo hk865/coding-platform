@@ -284,7 +284,8 @@ import type { KnowledgeIndex } from '../core/record-store/knowledge-index-ports.
 import { createKnowledgeWriteQueue, type KnowledgeWriteQueue } from '../core/work-graph/knowledge/write-queue.js';
 import { indexKnowledgeFile, overlayFileKnowledge } from '../core/work-graph/notes/note-knowledge.js';
 import { knowledgeFileRules } from '../core/work-graph/notes/knowledge-files.js';
-import { knowledgeConflictsOf } from '../core/work-graph/architecture/architecture-file.js';
+import { knowledgeConflictsOf, lineProblemsOf } from '../core/work-graph/architecture/architecture-file.js';
+import { projectArchitectureOf } from '../core/work-graph/architecture/project-architecture.js';
 import { KNOWLEDGE_RECORD_SCHEMAS } from '../core/work-graph/persistence/knowledge-record-codecs.js';
 import type { KnowledgeWriteHoldPoint, KnowledgeWriteLease } from '../core/work-graph/model/line-knowledge.js';
 import type { CatalogPlanFactsV1 } from '../core/work-graph/model/catalog-revision-ports.js';
@@ -347,7 +348,7 @@ import { createSessionHistoryCursorOwner, createSessionOperations } from '../cor
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { CommitCursor } from '../contracts/command-event.js';
 import type { DecisionApplicationReceiptV1 } from '../contracts/core/session-message.js';
-import type { SessionRef, WorkspaceScope } from '../contracts/core/identity.js';
+import type { ModuleRef, SessionRef, WorkspaceScope } from '../contracts/core/identity.js';
 import type { NoteVersionSnapshot, ResponsibilityMoveV1 } from '../contracts/note.js';
 import type { CoreRejection, ReadResult } from '../contracts/core/results.js';
 import type { OperationRef } from '../contracts/core/operations.js';
@@ -401,7 +402,7 @@ import { createConsultationFactsReader } from '../core/work-graph/queries/platfo
 import { createObservedArchitecture } from '../core/work-graph/architecture/architecture-service.js';
 import { OBSERVED_ARCHITECTURE_RECORD_SCHEMAS } from '../core/work-graph/architecture/architecture-record-codecs.js';
 import {
-  createArchitectureCatalogService, readCatalogAdopted, readCatalogPointerRevision, readCurrentCatalogWindow,
+  createArchitectureCatalogService, knowledgeBaselineOf, readCatalogPointerRevision, readCurrentCatalogWindow,
   readRecordedCatalogWindow,
 } from '../core/work-graph/architecture/catalog-service.js';
 import { createArchitectureWorkScopeReader, type ArchitectureWorkScopePort } from '../core/work-graph/views/architecture-work-scope-reader.js';
@@ -1268,7 +1269,15 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       now,
       notify: input => notifyProject({ records: backend.records, now }, input),
       conflictsOf: knowledgeConflictsOf,
-      catalogAdopted: projectId => readCatalogAdopted(backend.records, projectId),
+      problemsOf: lineProblemsOf,
+      projectArchitectureOf,
+      recordedArchitecture: async projectId => {
+        const window = await readRecordedCatalogWindow(backend.records, projectId);
+        if (window.status === 'not_found') return { status: 'ready', value: null };
+        if (window.status !== 'ready') return window;
+        return { status: 'ready', value: { catalog: window.catalog.catalog,
+          baseline: knowledgeBaselineOf(window.baseline.content) } };
+      },
     });
     // §6.4.3: the Host's rooted probe; a missing one is an explicit
     // `unavailable`, never "no settings directory".
@@ -1395,6 +1404,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
         readQueryAnswer: (...args) => queryJobs.readQueryAnswer(...args) },
       sessionDuty: { readSession: (...args) => sessionDirectory.readSession(...args),
         dutyOfRole: (ctx, role) => sessionDutyResolver(role, ctx) },
+      // The adviser round's message, through the Host's own send receipt (the mailbox is built below).
+      messages: { readHostSendMessageRef: (...args) => mailbox.readHostSendMessageRef!(...args) },
       now, eventId: randomUUID,
     });
     // K3 L19a (spec §3.2b): the CommandRerunRequest owner. The ONE recognizer is
@@ -2037,8 +2048,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       // §6.4.2: the deviation arm reads the historical source message R, its
       // deterministic Query/Answer and the reply commit receipt; the stage arm
       // reads the SAME effective limits getter as the shared deviation reader.
-      messages: { readMessage: (...args) => mailbox.readMessage(...args),
-        readMessageBody: (...args) => mailbox.readMessageBody(...args) },
+      messages: { readMessageBody: (...args) => mailbox.readMessageBody(...args),
+        readHostSendMessageRef: (...args) => mailbox.readHostSendMessageRef!(...args) },
       queries: { readQueryJob: (...args) => queryJobs.readQueryJob(...args),
         readQueryAnswer: (...args) => queryJobs.readQueryAnswer(...args) },
       commitIdentities: rawBackend.commitIdentities,
@@ -2353,7 +2364,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       ...(hostInstance === undefined ? {} : { hostInstance }),
       automationPolicy: currentAutomationPolicy,
       automaticReverifyPolicy,
-      messages: { readMessage: mailbox.readMessage.bind(mailbox) },
+      messages: { readMessage: mailbox.readMessage.bind(mailbox),
+        readHostSendMessageRef: (...args) => mailbox.readHostSendMessageRef!(...args) },
       ...(authorizeConfiguration === undefined ? {} : {
         delegatedWrites: { reads: executionReader, roles: roleService, bodies, authorizeConfiguration },
       }),
@@ -4795,7 +4807,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
         const window = await readRecordedCatalogWindow(backend.records, projectId);
         if (window.status !== 'ready' && window.status !== 'not_found') return window;
         const catalog = window.status === 'ready' ? window.catalog.catalog : null;
-        const advisers = new Map<string, SessionRef | null>();
+        const advisers = new Map<string, { session: SessionRef; region: ModuleRef } | null>();
         for (const moduleId of moduleIds) {
           const adviser = await readEffectiveRegionAdviser(backend.records, ctx,
             { projectId, moduleRef: { projectId, moduleId }, catalog }, sessionDutyResolver);
@@ -4804,7 +4816,10 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
         }
         return { status: 'ready', value: advisers };
       },
-      sendMessage: (ctx, request) => mailbox.sendMessage(ctx, request),
+      // KC-1 G1: the repair round is the one follow-up birth, keyed and replayed by the notice id (4-7, 4-8).
+      beginConflictRepair: (ctx, input) => explorationFollowUp.begin(ctx, {
+        projectId: ctx.projectId, workspaceId: input.workspaceId, kind: 'knowledge_conflict',
+        moduleRefs: input.regions, reason: input.text, sourceBatchRef: null, requestId: input.noticeId }),
       // b2 Astra 2: the knowledge-conflict sender is an ordinary 16 KiB sender (`sessionMessageTextBound`).
       maxTextBytes: SESSION_MESSAGE_MAX_TEXT_BYTES,
     }, options.knowledgeLocalOnly ?? (() => false));
@@ -4812,6 +4827,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     // directory and R6's mark of a joined checkout; internal like `notes` (the `reconcile` key is the Run's).
     const knowledge: KnowledgeOpsPort = {
       reconcile: (...args) => trackedCall(() => knowledgeOps.reconcile(...args), unavailable),
+      problems: (...args) => trackedCall(() => knowledgeOps.problems(...args), unavailable),
       recover: (...args) => trackedCall(() => knowledgeOps.recover(...args), unavailable),
       recoveryItems: (...args) => trackedCall(() => knowledgeOps.recoveryItems(...args), unavailable),
       status: (...args) => trackedCall(() => knowledgeOps.status(...args), unavailable),
@@ -4847,6 +4863,10 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       readArchitectureProposal: (ctx: CoreCallContext,
         input: Parameters<typeof architectureProposals.readArchitectureProposal>[1]) =>
         architectureProposals.readArchitectureProposal(ctx, input),
+      // KC-1 G2: the same owner's read-time file list of a proposal batch (ruling 4-9); internal like the plain read.
+      readProposalBatchFiles: (ctx: CoreCallContext,
+        input: Parameters<typeof architectureProposals.readProposalBatchFiles>[1]) =>
+        architectureProposals.readProposalBatchFiles(ctx, input),
       // N's ONE gate owner, the same instance the Workflow and the two
       // overlap routes use. Internal like the other owner groups.
       overlapGates: overlapGatePort,
@@ -5025,7 +5045,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       'goalSettings', 'workspaceDecisionSettings', 'decisionMessages', 'decisions', 'requestCandidates',
       'runActivity', 'activity', 'timeline', 'runNetwork',
       'workLines', 'workLineConversation', 'nodeDetail', 'lineSettings', 'notes', 'knowledge', 'trackDetached',
-      'repairs', 'readArchitectureProposal', 'overlapGates',
+      'repairs', 'readArchitectureProposal', 'readProposalBatchFiles', 'overlapGates',
       'requestIntake', 'requestRounds', 'requestFacts', 'secretaryProfiles', 'mainSurface', 'memberCreations', 'sessionHandoff',
       'reworkNotices', 'recipients', 'roleLimits', 'roleLineAllocation', 'projectNoticeWriter', 'autonomyRules',
       'moduleMaintainers',

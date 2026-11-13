@@ -16,7 +16,8 @@ import { describe, expect, it } from 'vitest';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
-import { systemRoundMessageRef, systemRoundRequestId } from '../../src/contracts/plan-round.js';
+import { systemRoundRequestId } from '../../src/contracts/plan-round.js';
+import { systemRoundMessageRef } from '../helpers/system-round-ref.js';
 import { platformRoleProfile } from '../../src/core/agent-runtime/role-profiles.js';
 import { driveWorkflow } from '../helpers/A2-restart-fixture.js';
 import {

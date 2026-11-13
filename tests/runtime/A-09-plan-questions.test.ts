@@ -14,8 +14,9 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-  systemRoundMessageRef, systemRoundRequestId, type SystemRoundV1,
+  systemRoundRequestId, type SystemRoundV1,
 } from '../../src/contracts/plan-round.js';
+import { systemRoundMessageRef } from '../helpers/system-round-ref.js';
 import type { CollaborationSnapshot } from '../../src/app/collaboration-driver.js';
 import { plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { driverRead, startGoalDriver } from '../helpers/DRV-fixture.js';

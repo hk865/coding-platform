@@ -4,7 +4,8 @@
  * deletes or reverts an uncommitted knowledge file under a running Host. The idle reconcile tells the person once in the
  * decision queue (`knowledge_reverted`, the count only); `knowledge/recovery-items` lists that notice's items in its own
  * project, and only `knowledge/recover` writes a file back: against the file the notice saw, from the snapshot an item
- * keeps, indexed as the platform's own write, then one more reconcile that asks the region adviser like any other. The
+ * keeps, indexed as the platform's own write, then one more reconcile that (KC-1) opens the `knowledge_conflict`
+ * follow-up round when the recovered files are a path-only conflict, like any other reconcile. The
  * world is `KLS2C-knowledge-host.ts` (idle threshold 0 unless a row says otherwise); notes come from `notes/list`,
  * blobs from real `git hash-object`.
  */
@@ -167,19 +168,20 @@ async function actionRequests(world: KLS2CHost, recipient: SessionRef): Promise<
   return page.items.filter(item => item.intent === 'action_request');
 }
 
-it('K08r a recovery whose file makes two module files conflict: the recovery round asks the region adviser (F-9)', async () => {
+it('V6 a recovery whose file makes two module files claim one path: the recovery round opens the knowledge_conflict '
+  + 'follow-up and asks the region adviser (b2 F-9; 121-106 ①)', async () => {
   const first = await hostWorld({ storage: 'sqlite', git: true, kernelStore: true });
   const { database, root } = first;
   await kls2cAdopt(first, ['core', 'other']);
   await startLinesEnded(async () => await first.call('role-lines/operations', plain(first.scope, { workspace: first.scope })));
   const opened = await first.call<{ status: string; value?: { session: SessionRef | null } }>('role-lines/open',
     graphWrite(first.scope, { duty: 'adviser', scope: [{ kind: 'region',
-      moduleRef: { projectId: first.scope.projectId, moduleId: 'core' } }] }, 'kls2c1-k08r-adviser'));
+      moduleRef: { projectId: first.scope.projectId, moduleId: 'core' } }] }, 'kls2c1-v6-adviser'));
   const adviser = opened.value?.session;
   if (opened.status !== 'committed' || !adviser) throw new Error(`role-lines/open: ${JSON.stringify(opened)}`);
   await first.idle();
   const file = kls2cModuleFile(first, 'core');
-  const bytes = first.read(file)?.toString('utf8') ?? '';
+  const other = kls2cModuleFile(first, 'other');
   await worlds.pop()?.close();
   // 没有 Host 时人删掉 core 的模块文件；新 Host 的启动对账出撤回通知（只开启动对账，之后不再有空闲对账）。
   rmSync(join(root, file));
@@ -187,11 +189,18 @@ it('K08r a recovery whose file makes two module files conflict: the recovery rou
     idleMs: KLS2C_NEVER_IDLE_MS });
   const [reverted, ...others] = await world.notices('knowledge_reverted');
   expect(others).toEqual([]);
-  // 通知之后人把同样的内容放到另一个文件名下：恢复原文件后两个模块文件都写 "id":"core"。
-  const moved = '.workbench/modules/0123456789abcdef0123456789abcdef.json';
-  world.edit(moved, bytes);
+  // 恢复之前人把 other 的 paths 改成 src/core：只有 one file 认领它，还没有冲突，这一轮什么都不开。
+  kls2cEditModule(world, other, { paths: ['src/core'] });
   expect(await actionRequests(world, adviser)).toEqual([]);
   expect(await kls2cRecover(world, reverted?.noticeId ?? '', 1)).toMatchObject({ status: 'committed', value: { path: file } });
-  // 恢复之后那一轮对账见到两个文件同 id（冲突通知本身是 b2 的 K07）。b2 裁定 F-9：具名改坏「恢复后的对账直接调底层 reconcileKnowledgeLine、不经 ops 的 reconcile」→ 红在这一句（0 条）。
+  // 恢复之后那一轮对账见到两个模块文件都认领 src/core：打开 knowledge_conflict 续轮，参谋收到那一轮的请求。
+  // 续轮是 `begin` 写下的操作，Host 在另一趟才驱动它开轮、发请求（同 V1/V4）；等那一趟再读。
+  // 具名改坏：恢复后的对账直接调底层 reconcileKnowledgeLine、不经 ops 的 reconcile → 红在这里（0 条）。
+  // 今天红在续轮：旧树在恢复后的对账里直接发“请提修订”的信，没有 knowledge_conflict 续轮。
+  await world.idle();
   expect(await actionRequests(world, adviser)).toHaveLength(1);
+  const rows = readyValue<{ action: string; followUp?: unknown }[]>(await world.call('role-lines/operations',
+    plain(world.scope, { workspace: world.scope })), 'role-lines/operations');
+  expect(rows.filter(row => row.action === 'role_line' && row.followUp !== undefined && row.followUp !== null))
+    .toHaveLength(1);
 }, 180_000);

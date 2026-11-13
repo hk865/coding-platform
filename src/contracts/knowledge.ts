@@ -28,6 +28,35 @@ export type KnowledgeConflictV1 = {
   paths: readonly string[];
 };
 
+/** Who last wrote a knowledge file (ruling 4-2 A): the platform when its bytes are the projection of the catalog the
+ *  records last adopted on that line; otherwise the person's, committed or not by git. */
+export type KnowledgeFileSourceV1 = 'platform' | 'committed' | 'uncommitted';
+/** Every place one line's knowledge files go wrong; `project_merge` and `other` are the whole-graph verdicts. */
+export type KnowledgeProblemKindV1 = 'bad_file' | 'duplicate_module_id' | 'path_claimed_by_two_modules'
+  | 'dangling_reference' | 'module_without_file' | 'unreachable' | 'partial_contains' | 'cycle' | 'project_merge' | 'other';
+/** One place of a knowledge_conflict notice (KC-1 G3). */
+export type KnowledgeProblemV1 = {
+  /** 1.., the order of `knowledgeProblemsOf`. */
+  itemNo: number;
+  kind: KnowledgeProblemKindV1;
+  /** The knowledge files involved, relative to the line's folder, sorted. */
+  files: readonly { path: string; source: KnowledgeFileSourceV1 }[];
+  /** The project view; a dangling reference is `[R, T]`, the others are sorted. */
+  moduleIds: readonly string[];
+  reason: string;
+};
+/** KC-1 G2: one file a structural proposal batch would change if approved now; a read-time hint (ruling 4-9). */
+export type ProposalBatchFileV1 = {
+  workspaceId: string;
+  /** Null for a new module file: its name is chosen at approval (ruling 4-9, §9-5). */
+  path: string | null;
+  /** The project view; null for `architecture.json`. */
+  moduleId: string | null;
+  action: 'create' | 'modify' | 'delete';
+  /** The file's writer now; null for a `create`. */
+  source: KnowledgeFileSourceV1 | null;
+};
+
 /** What started one reconciliation of a line's knowledge files with the index. */
 export type ReconcileTrigger = 'run_end' | 'before_adopt' | 'idle' | 'startup' | 'after_commit' | 'recovery' | 'joined';
 /** A knowledge file that could not be read as one (R8): its path and why. */
@@ -40,6 +69,8 @@ export type ReconcileResult = {
   changed: number;
   issues: readonly KnowledgeIssueV1[];
   conflicts: readonly KnowledgeConflictV1[];
+  /** The places of this round's `knowledge_conflict` notice; `[]` when it has none (KC-1 G3). */
+  problems: readonly KnowledgeProblemV1[];
   /** The recovery items of unconfirmed platform writes this round added. */
   unconfirmed: number;
   /** The recovery items of reverted files this round added. */

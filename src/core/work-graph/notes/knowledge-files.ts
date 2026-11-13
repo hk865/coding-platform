@@ -12,7 +12,7 @@ import { projectModuleId, rawModuleId } from '../../../contracts/workspace-modul
 import type { KnowledgeFileKind } from '../../record-store/knowledge-index-ports.js';
 import type { DecodeResult, EncodedDomainEvent } from '../../record-store/ports.js';
 import { ARCHITECTURE_FILE_PATH } from '../../../contracts/knowledge.js';
-import { architectureFilesOf, moduleFileIdOf } from '../architecture/architecture-file.js';
+import { architectureFilesOf, moduleFileIdOf, projectedFileOf } from '../architecture/architecture-file.js';
 import type { ArchitectureBaselineContentV1 } from '../architecture/catalog-contracts.js';
 import {
   ARCHITECTURE_CATALOG_ADOPTED_EVENT, ARCHITECTURE_CATALOG_REVISED_EVENT, decodeArchitectureCatalogAdoptedEvent,
@@ -89,9 +89,8 @@ function knowledgeFileOfEvent(event: EncodedDomainEvent, scope: KnowledgeLineSco
   if (committed.status !== 'decoded') return committed;
   const files = architectureFilesOf(committed.value.catalog, knowledgeBaselineOf(committed.value.baseline), scope);
   if (files.status !== 'decoded') return files;
-  if (target.path === ARCHITECTURE_FILE_PATH) return { status: 'decoded', value: files.value.architecture };
-  const moduleId = target.moduleId === null ? null : rawModuleId(target.moduleId).moduleId;
-  return { status: 'decoded', value: files.value.modules.find(module => module.moduleId === moduleId)?.bytes ?? null };
+  const rawId = target.moduleId === null ? null : rawModuleId(target.moduleId).moduleId;
+  return { status: 'decoded', value: projectedFileOf(files.value, target.path, rawId) };
 }
 
 /** The catalog and baseline an adoption (`catalog`, `baseline.content`) or a revision (under `revision`) committed. */

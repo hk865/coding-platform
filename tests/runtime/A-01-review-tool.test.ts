@@ -24,8 +24,9 @@ import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
 import { listed, readS7BMessage } from '../helpers/S7B-fixture.js';
 import { ready } from '../helpers/S7A-fixture.js';
 import {
-  systemRoundMessageRef, systemRoundRequestId, type SystemRoundV1,
+  systemRoundRequestId, type SystemRoundV1,
 } from '../../src/contracts/plan-round.js';
+import { systemRoundMessageRef } from '../helpers/system-round-ref.js';
 import { canonicalJson } from '../../src/contracts/fingerprint.js';
 
 describe('A-01: one pass review through the reviewer Host line', () => {

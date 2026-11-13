@@ -29,8 +29,8 @@ import {
 } from '../state/role-line-action.js';
 import { DEFAULT_EXPLORATION_DEPTH, explorationDepthOf } from '../state/exploration-control.js';
 import {
-  completeFollowup, explorationFollowUpOperationRef, newExplorationFollowUpAction, saveBatchRefs,
-  type ExplorationFollowUpActionV1,
+  completeFollowup, explorationFollowUpOperationRef, knowledgeConflictQuestion, newExplorationFollowUpAction,
+  saveBatchRefs, type ExplorationFollowUpActionV1,
 } from '../state/exploration-followup.js';
 import {
   endingOf, openExploration, readColdStartRecord, readWorkspaceJoinRecord, regionOfRound, submitExploration,
@@ -165,7 +165,7 @@ export async function ensureExplorationFollowUp(deps: {
 export function createExplorationFollowUpService(deps: ExplorationFollowUpDeps): {
   drive(ctx: CoreCallContext, input: { operation: OperationRef }): Promise<ReadResult<ExplorationFollowUpResultV1>>;
   begin(ctx: CoreCallContext, input: {
-    projectId: string; workspaceId: string; kind: 'repropose' | 'deepen'; moduleRefs: ModuleRef[];
+    projectId: string; workspaceId: string; kind: 'repropose' | 'deepen' | 'knowledge_conflict'; moduleRefs: ModuleRef[];
     reason: string | null; sourceBatchRef: ArchitectureProposalBatchRef | null; requestId: string;
     depth?: ExplorationDepthV1; baseCatalogPin?: ArchitectureCatalogPinV1;
   }): Promise<WriteResult<ExplorationFollowUpResultV1>>;
@@ -228,8 +228,10 @@ export function createExplorationFollowUpService(deps: ExplorationFollowUpDeps):
       const base = at.action.followUp.kind === 'deepen'
         ? roleExplorationQuestion('region', module, (moduleDepth(window.catalog.catalog, module.moduleId) + 2) as 1 | 2 | 3)
         : roleExplorationQuestion('region', module, 1);
-      const question = reason === null ? base
-        : `${base}\n\nA person rejected the previous proposal and asked for one more exploration round: ${reason}`;
+      // 4-8: the conflict round's text is written in exactly one place (`conflictRepairText`), the question here.
+      const question = at.action.followUp.kind === 'knowledge_conflict' ? knowledgeConflictQuestion(module, reason ?? '')
+        : reason === null ? base
+          : `${base}\n\nA person rejected the previous proposal and asked for one more exploration round: ${reason}`;
       const round = await openExploration(deps, at, { line: chosen, segment: 'region', region: module,
         key: `followup:${module.moduleId}`, question,
         ids: { queryJobId: `followup-query:${at.op.ref.operationId}:${module.moduleId}`,
@@ -319,13 +321,13 @@ export function createExplorationFollowUpService(deps: ExplorationFollowUpDeps):
   }
 
   async function begin(ctx: CoreCallContext, input: {
-    projectId: string; workspaceId: string; kind: 'repropose' | 'deepen'; moduleRefs: ModuleRef[];
+    projectId: string; workspaceId: string; kind: 'repropose' | 'deepen' | 'knowledge_conflict'; moduleRefs: ModuleRef[];
     reason: string | null; sourceBatchRef: ArchitectureProposalBatchRef | null; requestId: string;
     depth?: ExplorationDepthV1; baseCatalogPin?: ArchitectureCatalogPinV1;
   }): Promise<WriteResult<ExplorationFollowUpResultV1>> {
     const key = input.kind === 'repropose'
       ? `repropose:${input.sourceBatchRef?.batchId ?? input.requestId}`
-      : `deepen:${input.requestId}`;
+      : input.kind === 'deepen' ? `deepen:${input.requestId}` : `conflict:${input.requestId}`;
     const window = input.baseCatalogPin === undefined
       ? await readCurrentCatalogWindow(deps.records, input.projectId, { lines: deps.knowledge, caller: ctx }) : null;
     if (window !== null && window.status !== 'ready') {

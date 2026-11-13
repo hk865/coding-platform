@@ -29,6 +29,7 @@ import type { SessionMessageRef } from '../../src/contracts/core/session-message
 import type { PreparedQueryManifestV1 } from '../../src/contracts/core/prepared-execution.js';
 import type { QueryJobRef, QueryRunRef } from '../../src/contracts/query-job.js';
 import type { VerificationRoundRef } from '../../src/contracts/verification.js';
+import type { SessionCard } from '../../src/core/work-graph/model/session-contracts.js';
 import type {
   WorkflowAdvanceInput, WorkflowAdvanceResult, WorkflowStepReceipt,
 } from '../../src/business/workflow/contracts.js';
@@ -40,12 +41,16 @@ import { lineBinding } from './PL-taskbook-fixture.js';
 import { adoptPLPlanDraft } from './PL-workflow-fixture.js';
 import { s6aCardsWorkspace, type S6ACardsWorkspace } from './S6A-cards-fixture.js';
 import { openS6AHostWorld, type S6AHostWorld, type S6AReply } from './S6A-host-fixture.js';
-import { OPERATOR, S6A_SCOPE, S6A_WORK_ROLE, type S6ABackend, type S6ASession } from './S6A-request-fixture.js';
+import {
+  OPERATOR, S6A_SCOPE, S6A_WORK_ROLE, type S6ABackend, type S6AExtraBinding, type S6ASession,
+} from './S6A-request-fixture.js';
 import { createS6BLine, governS6B } from './S6B1-fixture.js';
 import { bindingOf, checkConfiguration, claimedRunOf, ready, receiptOf, sessionOf } from './S7A-fixture.js';
 import { readS7BMessage } from './S7B-fixture.js';
 import type { S7BVWorkProfile } from './S7B-V-fixture.js';
-import { lineOfS7D2, openS7D2Line } from './S7D2-role-line-world.js';
+import {
+  addS7D2SecondWorkspace, lineOfS7D2, openS7D2Line, type S7D2SecondWorkspace,
+} from './S7D2-role-line-world.js';
 
 const REVIEWER_BINDING_ID = 's9-reviewer-binding';
 /** The subject Run's answer; G3's P5 finds the subject Run's history by this marker. */
@@ -102,13 +107,18 @@ export function s9ReviewDraft(goal: GoalRef, checks: 'command' | 'none' = 'comma
   };
 }
 
+/** The reviewer line's Host binding and Query profile (built-in reviewer read set); XWR R2 gives it to XWS2A too. */
+export function s9ReviewerBinding(): S6AExtraBinding {
+  const reviewer = platformRoleProfile('reviewer').template;
+  return { ...lineBinding(REVIEWER_BINDING_ID, reviewer, 'S9 reviewer'),
+    binding: bindingOf(REVIEWER_BINDING_ID, reviewer, 'S9 reviewer', ['read', 'look_graph', 'find_graph']) };
+}
+
 export async function openS9ReviewWorld(options: {
   backend?: S6ABackend; reviewLine?: 'open' | 'none'; checks?: 'command' | 'none';
 } = {}): Promise<S9ReviewWorld> {
-  const reviewer = platformRoleProfile('reviewer').template;
   const world = await openS6AHostWorld({ backend: options.backend ?? 'memory',
-    extraBindings: [{ ...lineBinding(REVIEWER_BINDING_ID, reviewer, 'S9 reviewer'),
-      binding: bindingOf(REVIEWER_BINDING_ID, reviewer, 'S9 reviewer', ['read', 'look_graph', 'find_graph']) }],
+    extraBindings: [s9ReviewerBinding()],
     extraHostOptions: {
       checks: checkConfiguration({ kind: 'human', id: OPERATOR.id }),
       inputConsumers: [{ scope: S6A_SCOPE, sessionRef: { projectId: S6A_SCOPE.projectId,
@@ -140,6 +150,27 @@ export async function openS9ReviewLine(world: S6AHostWorld): Promise<S6ASession>
   const opened = await openS7D2Line(world, { duty: 'reviewer', scope: [{ kind: 'project' }],
     requestId: 's9-review-line-open' });
   return await lineOfS7D2(world, 's9-review-line', opened.result);
+}
+
+/**
+ * XWR R3's reviewer line in a second workspace of the project (`addS7D2SecondWorkspace`): the Host catalog's model is
+ * selected there (`models/select`, so the Host publishes its built-in reviewer binding and Query profile for that
+ * workspace and consumes the line), and the line is a `sessions/create` there (`role-lines/open` opens in the main one).
+ * The caller removes `second` after the world closes.
+ */
+export async function openS9SecondReviewLine(review: S9ReviewWorld, label: string):
+Promise<{ second: S7D2SecondWorkspace; line: S6ASession }> {
+  const second = await addS7D2SecondWorkspace(review.world, label);
+  const snapshot = await review.world.settings('snapshot', {});
+  const model = snapshot.status === 'ready' ? snapshot.value.models[0] : undefined;
+  if (model === undefined) throw new Error('S9: the Host catalog has no model for the second workspace');
+  const selected = await review.world.settings('models/select', { scope: { ...second.scope }, modelId: model.id });
+  if (selected.status !== 'ready') throw new Error(`S9: the second workspace model: ${JSON.stringify(selected)}`);
+  const created = await createS6BLine(second.workspace, { label: `${label}-review`,
+    role: platformRoleProfile('reviewer').template });
+  const card = ready<SessionCard>(await second.workspace.route('sessions/read', created.ref), 'S9: the second line');
+  return { second, line: { label: created.label, ref: created.ref, aggregateRef: card.record.ref,
+    role: structuredClone(card.record.role), createdAt: card.record.createdAt } };
 }
 
 /** G3's review step after the command checks, or today's finalize: where the subject drive stops. */

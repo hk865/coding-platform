@@ -517,16 +517,6 @@ export async function readCatalogPointerRevision(
   return { status: 'ready', value: record === undefined ? null : record.revision };
 }
 
-/**
- * b2 Astra 1: whether the project's records ever adopted an architecture (its current catalog pointer exists), the
- * knowledge reconciliation's one exemption (`KnowledgeWriteDeps.catalogAdopted`); a failed read is the rejection.
- */
-export async function readCatalogAdopted(records: Pick<GoalRecordTransactionPort, 'readMany'>, projectId: string):
-  Promise<{ status: 'ready'; value: boolean } | CoreRejection> {
-  const pointer = await readCatalogPointerRevision(records, projectId);
-  return pointer.status === 'ready' ? { status: 'ready', value: pointer.value !== null } : pointer;
-}
-
 /** The baseline fields a knowledge file keeps; the schema version and the source binding stay in the record. */
 export function knowledgeBaselineOf(content: ArchitectureBaselineContentV1): KnowledgeBaselineV1 {
   return { description: content.description, constraints: content.constraints,

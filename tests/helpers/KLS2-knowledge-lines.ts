@@ -19,8 +19,9 @@ import type { KnowledgeIndex } from '../../src/core/record-store/knowledge-index
 import { createKnowledgeIndex } from '../../src/core/record-store/sqlite-knowledge-index.js';
 import { openKnowledgeSnapshots } from '../../src/core/record-store/sqlite-knowledge-snapshots.js';
 import { createKnowledgeLines, knowledgeLeaseOf } from '../../src/composition/line-knowledge.js';
-import { knowledgeConflictsOf } from '../../src/core/work-graph/architecture/architecture-file.js';
-import { readCatalogAdopted } from '../../src/core/work-graph/architecture/catalog-service.js';
+import { knowledgeConflictsOf, lineProblemsOf } from '../../src/core/work-graph/architecture/architecture-file.js';
+import { projectArchitectureOf } from '../../src/core/work-graph/architecture/project-architecture.js';
+import { knowledgeBaselineOf, readRecordedCatalogWindow } from '../../src/core/work-graph/architecture/catalog-service.js';
 import { notifyProject } from '../../src/core/work-graph/communication/project-notice-service.js';
 import { createKnowledgeWriteQueue } from '../../src/core/work-graph/knowledge/write-queue.js';
 import type { KnowledgeOpsPort } from '../../src/core/work-graph/model/knowledge-ops.js';
@@ -50,7 +51,14 @@ function writeDepsOver(records: KnowledgeFixtureRecords, queue: KnowledgeWriteQu
   return { queue, indexOf, indexFile: indexKnowledgeFile, openSnapshots, records, files: knowledgeFileRules,
     acquireLease: knowledgeLeaseOf(undefined), hold: null, newId: () => randomBytes(16).toString('hex'), now,
     notify: input => notifyProject({ records, now }, input), conflictsOf: knowledgeConflictsOf,
-    catalogAdopted: projectId => readCatalogAdopted(records, projectId) };
+    problemsOf: lineProblemsOf, projectArchitectureOf,
+    recordedArchitecture: async projectId => {
+      const window = await readRecordedCatalogWindow(records, projectId);
+      if (window.status === 'not_found') return { status: 'ready', value: null };
+      if (window.status !== 'ready') return window;
+      return { status: 'ready', value: { catalog: window.catalog.catalog,
+        baseline: knowledgeBaselineOf(window.baseline.content) } };
+    } };
 }
 
 export function knowledgeLinesFor(input: { root: string; projectId: string; workspaceId: string;

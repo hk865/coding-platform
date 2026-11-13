@@ -4,7 +4,7 @@
  * conflict `kls2cConflict`, the exported graph-write pins and the never-idle threshold; 2c-1c the Host clock `now`, a
  * second served project `alsoServe`, the adopt and revise bodies a crash child sends, the two recovery routes, the blob
  * id by `git hash-object` and a wait for a notice count; 2c-1d `armedSeam`, which platform rows hand to
- * `openKLS2AWorld`). One real
+ * `openKLS2AWorld`; KC-1 the `knowledge/problems` read of one notice's places). One real
  * `createLocalWorkbenchHost` (memory or SQLite) with one workspace on the test's own root (a real git repository
  * through `initGitWorkspace` when `git`), the Project and Workspace records through the public routes. The Host
  * options are Host inputs only (A8): the root, the idle threshold `linkBatchIdleMs` (`idleMs`, 2c1#7), a short
@@ -33,8 +33,10 @@ const HEARTBEAT_MS = 25;
 
 export type KLS2CNoticeKind = 'knowledge_write_unconfirmed' | 'knowledge_reverted' | 'knowledge_conflict';
 /**
- * The decision queue's notice item carries no kind (`project-notice-notices.ts`), so a kind is told by the words
- * of its summary: [2C1-14] “平台有 n 次写没确认落盘”, “架构图和注记被撤回了 n 处”; [2C1-17] “知识文件有 n 处问题：”.
+ * The decided notice item tells a kind by its summary words in the older worlds: [2C1-14] “平台有 n 次写没确认落盘”,
+ * “架构图和注记被撤回了 n 处”; [2C1-17] “知识文件有 n 处问题：”. KC-1 4-10 also puts `noticeKind` on the three
+ * knowledge kinds (V16 reads it through `decisions/queue`); `notices(kind)` keeps the summary words so both the old
+ * and the new items read the same.
  */
 const NOTICE_WORDS: Record<KLS2CNoticeKind, string> = {
   knowledge_write_unconfirmed: '没确认落盘', knowledge_reverted: '撤回', knowledge_conflict: '知识文件有',
@@ -246,8 +248,9 @@ export async function kls2cReviseResponsibility(world: KLS2CHost, moduleId: stri
   if (answer.status !== 'committed') throw new Error(`architecture/revise: ${JSON.stringify(answer)}`);
 }
 
-/** The root-relative path of the module file whose `id` is `moduleId` (module files have random names). */
-export function kls2cModuleFile(world: KLS2CHost, moduleId: string): string {
+/** The root-relative path of the module file whose `id` is `moduleId` (module files have random names); any world
+ *  with the same real `root` works (the two-workspace and cold-start worlds read their module files through it too). */
+export function kls2cModuleFile(world: Pick<KLS2CHost, 'root'>, moduleId: string): string {
   const folder = join(world.root, '.workbench/modules');
   const name = readdirSync(folder).find(file =>
     (JSON.parse(readFileSync(join(folder, file), 'utf8')) as { id?: string }).id === moduleId);
@@ -361,6 +364,18 @@ export const kls2cRecoveryItems = (world: KLS2CHost, noticeId: string, scope: Co
 /** `knowledge/recover {noticeId, itemNo}`. */
 export const kls2cRecover = (world: KLS2CHost, noticeId: string, itemNo: number, scope: CoreScope = world.scope) =>
   world.call<KLS2CRecovered>('knowledge/recover', plain(scope, { noticeId, itemNo }));
+
+/** One place of a `knowledge_conflict` notice as `knowledge/problems` reads it (KC-1 G3: itemNo, kind, files with
+ *  the file's source, module ids and the Chinese reason). */
+export type KLS2CProblem = { itemNo: number; kind: string; files: { path: string; source: string }[];
+  moduleIds: string[]; reason: string };
+/** The answer of `knowledge/problems` (a read: `ready` with the notice's places, or not found). */
+export type KLS2CProblems = { status: string; code?: string; reason?: string;
+  value?: { problems: KLS2CProblem[] } };
+
+/** `knowledge/problems {noticeId}` (KC-1 G3: the places of one `knowledge_conflict` notice, by itemNo). */
+export const kls2cProblems = (world: KLS2CHost, noticeId: string, scope: CoreScope = world.scope) =>
+  world.call<KLS2CProblems>('knowledge/problems', plain(scope, { noticeId }));
 
 /** A file's blob id by real `git hash-object` in the root (independent of `src`); null when the file is not there. */
 export const kls2cBlobSha = (world: KLS2CHost, rel: string): string | null =>

@@ -157,6 +157,8 @@ export type CoreRouteBindings = {
   reviseArchitectureCatalog: ArchitectureCatalogPort['reviseArchitectureCatalog'];
   readArchitectureRevision: ArchitectureCatalogPort['readArchitectureRevision'];
   readArchitectureProposal: ArchitectureProposalService['readArchitectureProposal'];
+  /** KC-1 G2 (ruling 4-9): a proposal batch's read-time file list. */
+  readProposalBatchFiles: ArchitectureProposalService['readProposalBatchFiles'];
   readSemanticLinks: SemanticLinksReader['readSemanticLinks'];
   readSemanticFlows: SemanticLinksReader['readSemanticFlows'];
   checkSemanticLinks: SemanticLinksReader['checkSemanticLinks'];
@@ -416,6 +418,8 @@ export type CoreRouteBindings = {
   // KLS-2c: a knowledge notice's recovery items and the person's recovery of one; the owner checks the input.
   recoverKnowledge: KnowledgeOpsPort['recover'];
   readKnowledgeRecoveryItems: KnowledgeOpsPort['recoveryItems'];
+  /** KC-1 G3: a knowledge_conflict notice's places (the owner checks the input). */
+  readKnowledgeProblems: KnowledgeOpsPort['problems'];
   // The knowledge directory's status on the scope's workspace (the input carries nothing), and the person's
   // commit of it (the input carries the message only).
   readKnowledgeStatus: (ctx: CoreCallContext, input: unknown) => ReturnType<KnowledgeOpsPort['status']>;
@@ -567,7 +571,9 @@ export type CoreRoutePlatform = {
    * without it answers `unsupported`. */
   verification?: VerificationRoundReadPort;
   /** KLS-2c: the knowledge operations; internal like the other owner groups, so a narrow platform answers `unsupported`. */
-  knowledge?: Pick<KnowledgeOpsPort, 'recover' | 'recoveryItems' | 'status' | 'commit'>;
+  knowledge?: Pick<KnowledgeOpsPort, 'problems' | 'recover' | 'recoveryItems' | 'status' | 'commit'>;
+  /** KC-1 G2: the proposal owner's batch file list, internal like the plain proposal read. */
+  readProposalBatchFiles?: ArchitectureProposalService['readProposalBatchFiles'];
 };
 
 /** `executions/resolve-unknown` input (RUN-22): the unknown Run and the operator's reason. */
@@ -625,6 +631,7 @@ export const CORE_ROUTE_SPECS: Record<
   'architecture/revise': { kind: 'graph_write', binding: 'reviseArchitectureCatalog', owner: 'architecture.reviseArchitectureCatalog' },
   'architecture/read': { kind: 'plain', binding: 'readArchitectureRevision', owner: 'architecture.readArchitectureRevision' },
   'architecture/proposals/read': { kind: 'plain', binding: 'readArchitectureProposal', owner: 'architecture.readArchitectureProposal' },
+  'architecture/proposal-batch-files': { kind: 'plain', binding: 'readProposalBatchFiles', owner: 'architecture.readProposalBatchFiles' },
   'architecture/semantic-links': { kind: 'plain', binding: 'readSemanticLinks', owner: 'notes.readSemanticLinks' },
   'architecture/semantic-flows': { kind: 'plain', binding: 'readSemanticFlows', owner: 'notes.readSemanticFlows' },
   'architecture/semantic-links/check': { kind: 'plain', binding: 'checkSemanticLinks', owner: 'notes.checkSemanticLinks' },
@@ -758,6 +765,7 @@ export const CORE_ROUTE_SPECS: Record<
   'initialization/adopt': { kind: 'plain', binding: 'adoptInitialization', owner: 'initialization.adopt' },
   'knowledge/recover': { kind: 'plain', binding: 'recoverKnowledge', owner: 'knowledge.recover' },
   'knowledge/recovery-items': { kind: 'plain', binding: 'readKnowledgeRecoveryItems', owner: 'knowledge.recoveryItems' },
+  'knowledge/problems': { kind: 'plain', binding: 'readKnowledgeProblems', owner: 'knowledge.problems' },
   'knowledge/status': { kind: 'plain', binding: 'readKnowledgeStatus', owner: 'knowledge.status' },
   'knowledge/commit': { kind: 'plain', binding: 'commitKnowledge', owner: 'knowledge.commit' },
   'plans/request-candidate': { kind: 'plain', binding: 'readRequestCandidate', owner: 'requestCandidates.readRequestCandidate' },
@@ -1084,6 +1092,9 @@ export function createPlatformCoreRouteBindings(
     readArchitectureProposal: readArchitectureProposal === undefined
       ? unsupported('the Host does not publish the architecture proposal read')
       : readArchitectureProposal,
+    readProposalBatchFiles: platform.readProposalBatchFiles === undefined
+      ? unsupported('the platform does not publish architecture.readProposalBatchFiles')
+      : platform.readProposalBatchFiles.bind(platform),
     readSemanticLinks: platform.notes === undefined
       ? unsupported('the platform does not publish notes.readSemanticLinks')
       : platform.notes.readSemanticLinks.bind(platform.notes),
@@ -1556,6 +1567,10 @@ export function createPlatformCoreRouteBindings(
     readKnowledgeRecoveryItems: platform.knowledge === undefined
       ? unsupported('the platform does not publish knowledge.recoveryItems')
       : platform.knowledge.recoveryItems.bind(platform.knowledge),
+    // KC-1 G3: the places read stays open, like the recovery items read.
+    readKnowledgeProblems: platform.knowledge === undefined
+      ? unsupported('the platform does not publish knowledge.problems')
+      : platform.knowledge.problems.bind(platform.knowledge),
     // [2C2-08]: the workspace only from the scope, never from the input or a path; only the person commits.
     readKnowledgeStatus: platform.knowledge === undefined ? unsupported('the platform does not publish knowledge.status')
       : ctx => platform.knowledge!.status(ctx, ctx.workspaceId ?? ''),
@@ -1700,6 +1715,7 @@ export async function dispatchCoreRoute(
       case 'architecture/revise': return bindings.reviseArchitectureCatalog(ctx, graphWrite.request as never);
       case 'architecture/read': return bindings.readArchitectureRevision(ctx, plain.input as never);
       case 'architecture/proposals/read': return bindings.readArchitectureProposal(ctx, plain.input as never);
+      case 'architecture/proposal-batch-files': return bindings.readProposalBatchFiles(ctx, plain.input as never);
       case 'architecture/semantic-links': return bindings.readSemanticLinks(ctx, plain.input as never);
       case 'architecture/semantic-flows': return bindings.readSemanticFlows(ctx, plain.input as never);
       case 'architecture/semantic-links/check': return bindings.checkSemanticLinks(ctx, plain.input as never);
@@ -1874,6 +1890,7 @@ export async function dispatchCoreRoute(
       case 'initialization/adopt': return bindings.adoptInitialization(ctx, plain.input as never);
       case 'knowledge/recover': return bindings.recoverKnowledge(ctx, plain.input as never);
       case 'knowledge/recovery-items': return bindings.readKnowledgeRecoveryItems(ctx, plain.input as never);
+      case 'knowledge/problems': return bindings.readKnowledgeProblems(ctx, plain.input as never);
       case 'knowledge/status': return bindings.readKnowledgeStatus(ctx, plain.input);
       case 'knowledge/commit': return bindings.commitKnowledge(ctx, plain.input);
     }
