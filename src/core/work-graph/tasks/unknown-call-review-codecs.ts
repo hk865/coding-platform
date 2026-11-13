@@ -23,6 +23,8 @@ import type {
 } from '../../../contracts/unknown-call-review.js';
 import { UNKNOWN_CALL_ESCALATION_CAUSES } from '../../../contracts/unknown-call-review.js';
 import { unknownCallAdviceProblem } from '../../../contracts/unknown-call-advice.js';
+import { RunNetworkReviewCopyShape } from '../../../contracts/run-network.js';
+import { checkShape } from '../../../contracts/validation/data-format.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type {
   DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
@@ -463,7 +465,7 @@ const REVIEW_BODY_KEYS: readonly string[] = [
   'ref', 'schemaVersion', 'revision', 'workspaceId', 'task', 'runRef', 'sessionRef', 'origin',
   'inventory', 'inventoryProblem', 'items', 'itemsOmitted', 'workspace', 'streak', 'status', 'open',
   'decisionReasons', 'dispositionTargets', 'proposalTargets', 'stateEntry', 'activeRound', 'rounds',
-  'proposals', 'blockedCommands', 'disposition', 'createdAt', 'updatedAt', 'advice', 'escalation',
+  'proposals', 'blockedCommands', 'disposition', 'createdAt', 'updatedAt', 'advice', 'escalation', 'network',
 ];
 
 /**
@@ -518,6 +520,11 @@ export function unknownCallReviewBodyProblem(value: unknown): string | null {
   if (!inList(body['status'], STATUSES)) return 'review status is not recognized';
   const layering = layeringProblem(body);
   if (layering !== null) return layering;
+  // NET-B: the optional host copy is checked by its own field table.
+  if (body['network'] !== undefined) {
+    const network = checkShape(RunNetworkReviewCopyShape, body['network'], 'stored');
+    if (network !== null) return network;
+  }
   const active = body['activeRound'];
   if (active !== null) {
     const activeProblem = activeRoundProblem(active);

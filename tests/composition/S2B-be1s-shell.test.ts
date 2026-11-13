@@ -8,9 +8,17 @@
  * Cases: `touch d.ts e.ts` (edit 1),
  * `ls` (edit 0), `echo x > f.ts; exit 3` (failed, edit 1), a cancelled
  * `echo y > g.ts; sleep 30` (tool.cancelled, edit 1), a cancelled `sleep 30`
- * with no change (tool.cancelled, edit 0), a timed-out `sleep 200`
- * (`timeoutMs: 100`, tool.failed timeout, edit 0), and a read-only Work running
- * `run_readonly_command` (`ls`): one step, zero edits, no changed files.
+ * with no change (tool.cancelled, edit 0), a command past its filled duration
+ * (`sleep 1; echo late`, `timeoutMs: 100`, success — SHT-1 S1), and a read-only
+ * Work running `run_readonly_command` (`ls`): one step, zero edits, no changed
+ * files, plus a read-only command past its filled duration (SHT-1 S4).
+ *
+ * SHT-1 S1/S4 (test writer, 2026-11-13). RED today: `ShellToolHandler.execute`
+ * still passes `Math.min(input.timeoutMs ?? …, maxTimeoutMs)` to the sandbox and
+ * `createReadonlyCommandTool` still passes `args.timeoutMs ?? …`, so each
+ * command is stopped at its filled 100 ms / 1000 ms with `tool.failed timeout`.
+ * GREEN after SHT-1: both pass the no-stop value (2_147_483_647 ms), so the
+ * command runs to completion and the result is `success` with its text.
  *
  * Lead, 2026-10-15 (run with bubblewrap at acceptance): the process sandbox keeps `.git` read-only
  * (vendor/coding-agent/patches/sandbox/process/process-sandbox.ts:91, :377), so a real `git checkout -b`
@@ -170,19 +178,27 @@ it('2B-09 a cancelled command that changed nothing is tool.cancelled with zero e
     changedFiles: { definite: 0, possible: 0 } });
 }, S2B_SLOW_TIMEOUT_MS);
 
-it('2B-09 a timed-out command that changed nothing is tool.failed timeout with zero edits', async () => {
+/** SHT-1 S1: a command past its filled duration is not stopped; its output is kept and the Run continues. */
+it('2B-09 a command past its filled duration is not stopped and its text is kept', async () => {
   const f = await shellFixture({
     initialAt: '2026-10-15T10:00:00.000Z',
     scriptedReplies: [
       { kind: 'calls', calls: [{ callId: 'be1s-timeout', name: 'shell',
-        args: { command: 'sleep 200', timeoutMs: 100 } }] },
+        args: { command: 'sleep 1; echo late', timeoutMs: 100 } }] },
       { kind: 'text', text: '2B-09 timeout done' },
     ],
   });
   opened.push(f);
 
-  await f.run('2b09-timeout');
-  expect(toolResult(f, 'be1s-timeout')).toMatchObject({ result: { status: 'error', error: { code: 'timeout' } } });
+  const record = await f.run('2b09-timeout');
+  const delivered = toolResult(f, 'be1s-timeout') as {
+    result: { status: string; output: Array<{ kind: string; text?: string }> };
+  };
+  expect(delivered.result.status).toBe('success');
+  expect(delivered.result.output.find(part => part.kind === 'text')).toEqual({ kind: 'text', text: 'late\n' });
+  // The Run moved on to the second scripted reply, so the tool result was accepted.
+  expect(record.run.status).toBe('ended');
+  expect(f.scripted.requests).toHaveLength(2);
 
   const views = await f.readRuns();
   expect(views[0]).toMatchObject({ status: 'counted', totals: { steps: 1, edits: 0, editsUnknown: 0 },
@@ -212,4 +228,29 @@ it('2B-09 a read-only Work running run_readonly_command is one step, zero edits 
   if (conflicts.status !== 'ready') return;
   const completeness = conflicts.value.footprintCompleteness.find(entry => entry.goalRef.goalId === f.goalRef.goalId);
   expect(completeness?.unmappedFiles ?? []).toEqual([]);
+}, S2B_SLOW_TIMEOUT_MS);
+
+/** SHT-1 S4: `run_readonly_command` past its filled duration is not stopped either. */
+it('2B-09 a read-only command past its filled duration is not stopped and its text is kept', async () => {
+  const f = await createS2BBe1Platform({
+    toolNames: ['read', 'run_readonly_command'],
+    writeScope: [],
+    readonlyCommands: true,
+    initialAt: '2026-10-15T10:00:00.000Z',
+    scriptedReplies: [
+      { kind: 'calls', calls: [{ callId: 'be1s-readonly-long', name: 'run_readonly_command',
+        args: { command: 'sleep 1.5; echo late', timeoutMs: 1000 } }] },
+      { kind: 'text', text: '2B-09 read-only long done' },
+    ],
+  });
+  opened.push(f);
+
+  const record = await f.run('2b09-readonly-long');
+  const delivered = toolResult(f, 'be1s-readonly-long') as {
+    result: { status: string; output: Array<{ kind: string; text?: string }> };
+  };
+  expect(delivered.result.status).toBe('success');
+  expect(delivered.result.output.find(part => part.kind === 'text')).toEqual({ kind: 'text', text: 'late\n' });
+  expect(record.run.status).toBe('ended');
+  expect(f.scripted.requests).toHaveLength(2);
 }, S2B_SLOW_TIMEOUT_MS);

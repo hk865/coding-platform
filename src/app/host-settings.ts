@@ -74,6 +74,7 @@ import type {
   HostSettingsSnapshot,
   OpenSettingsWorkspace,
   SaveResourceCapSettings,
+  SettingsAccessFixed,
   SettingsModel,
   SettingsProvider,
   SettingsResourceCaps,
@@ -90,7 +91,8 @@ import { DEFAULT_WORK_RUN_TOKEN_BUDGET, MAX_WORK_RUN_TOKEN_BUDGET } from './host
 
 /** The published settings route set. `SettingsRoutes` stays the type truth. */
 export const SETTINGS_ROUTE_SUFFIXES = [
-  'snapshot', 'directories', 'models/save', 'models/select', 'workspaces/open', 'checks/approve', 'automation/save',
+  'snapshot', 'directories', 'models/save', 'models/select', 'workspaces/open', 'workspaces/access', 'checks/approve',
+  'automation/save',
   'resource-caps/save', 'run-budget/save', 'plan-loop-limits/save', 'prompts/packs/list', 'prompts/packs/create', 'prompts/templates/read',
   'prompts/templates/save', 'prompts/tools/read', 'prompts/tools/save', 'knowledge-local',
 ] as const satisfies readonly SettingsRoute[];
@@ -209,6 +211,7 @@ export type HostSettingsWorkspaceFacts = {
   modelId: string | null;
   writeAllowed: boolean;
   commandsAllowed: boolean;
+  accessFixed: SettingsAccessFixed | null;
   /** Where the workspace's project store lives (U8); null for a memory store or a project that is not open. */
   storeLocation: SettingsStoreLocation | null;
   /** KLS-2: the repository key of the workspace's checkout; null (or absent) for a folder in no git work tree. */
@@ -234,6 +237,10 @@ export interface HostSettingsAssembly {
   /** KLS-2: the checkout behind one registered workspace, through the Host's one line resolution: its repository key
    *  (the real common git directory) or `notGit`. Absence means the setting is unsupported. */
   knowledgeCheckout?(scope: CoreScope): Promise<SettingsResponse<{ repoKey: RepoKey } | { notGit: true }>>;
+  /** 121-106: switch one registered workspace's write and command access in place; answers the two values it had.
+   *  not_found: unregistered; unsupported: access fixed (the reason names which); unavailable: project store not open. */
+  setWorkspaceAccess?(scope: CoreScope, access: { writeAllowed: boolean; commandsAllowed: boolean }):
+    SettingsResponse<{ writeAllowed: boolean; commandsAllowed: boolean }>;
   openWorkspace(request: OpenSettingsWorkspace & { workspaceId?: string }): Promise<SettingsResponse<HostSettingsOpenedHost>>;
   bootstrap(): BootstrapResponse;
   /** Boolean-only probe: whether the trusted Host can resolve the named secret.
@@ -875,6 +882,7 @@ export async function createHostSettings(
         modelId: selection[scopeKey(facts.scope)] ?? facts.modelId ?? null,
         writeAllowed: facts.writeAllowed,
         commandsAllowed: facts.commandsAllowed,
+        accessFixed: facts.accessFixed,
         ...(persistedFacts?.checks === undefined ? {} : { checks: structuredClone(persistedFacts.checks) }),
         ...(facts.storeLocation === null
           ? {} : { storeLocation: { place: facts.storeLocation.place, reason: facts.storeLocation.reason } }),
@@ -1040,30 +1048,22 @@ export async function createHostSettings(
     return { status: 'ready', value: snapshotOf() };
   }
 
-  async function openWorkspaceRoute(input: unknown): Promise<SettingsResponse<SettingsRoutes['workspaces/open']['value']>> {
-    if (!isRecord(input)) return invalid('workspaces/open requires an object body');
-    if (!nonEmpty(input['path'])) return invalid('path is required');
+  /** The switch validation both `workspaces/open` and `workspaces/access` use: both values are required booleans, and
+   *  commands require write because a command can change files anywhere in the workspace (host.ts's command shell
+   *  grant). */
+  const accessProblem = (input: Record<string, unknown>): string | null => {
     if (typeof input['writeAllowed'] !== 'boolean' || typeof input['commandsAllowed'] !== 'boolean')
-      return invalid('writeAllowed and commandsAllowed are required booleans');
+      return 'writeAllowed and commandsAllowed are required booleans';
     if (input['commandsAllowed'] === true && input['writeAllowed'] !== true)
-      return invalid('commandsAllowed requires writeAllowed');
-    if (input['name'] !== undefined && !nonEmpty(input['name'])) return invalid('name must be a non-empty string when present');
-    if (input['projectId'] !== undefined && !nonEmpty(input['projectId'])) return invalid('projectId must be a non-empty string when present');
-    if (input['modelId'] !== undefined && !nonEmpty(input['modelId'])) return invalid('modelId must be a non-empty string when present');
-    if (nonEmpty(input['modelId']) && !models.some(entry => entry.id === input['modelId'])) return notFound('the model does not exist');
+      return 'commandsAllowed requires writeAllowed';
+    return null;
+  };
 
-    const request: OpenSettingsWorkspace = {
-      path: input['path'], writeAllowed: input['writeAllowed'], commandsAllowed: input['commandsAllowed'],
-      ...(nonEmpty(input['name']) ? { name: input['name'] } : {}),
-      ...(nonEmpty(input['projectId']) ? { projectId: input['projectId'] } : {}),
-      ...(nonEmpty(input['modelId']) ? { modelId: input['modelId'] } : {}),
-    };
-    const opened = await assembly.openWorkspace(request);
-    if (opened.status !== 'ready') return opened;
-
-    const key = scopeKey(opened.value.scope);
-    const facts = assembly.listWorkspaces().find(workspace => scopeKey(workspace.scope) === key);
-    if (facts === undefined) return unavailable('the opened workspace is not visible in the Host registration');
+  /** Write one workspace's REAL Host registration facts onto the settings list, keeping its saved checks. A workspace
+   *  joining an open project none of whose workspaces is listed yet first puts the project's main workspace, its first
+   *  in the Host, on the list (X2). */
+  const listDescriptor = (facts: HostSettingsWorkspaceFacts): void => {
+    const key = scopeKey(facts.scope);
     // The persisted descriptor is the REAL Host registration fact. A repeated
     // open with wider flags can never silently widen the stored permissions.
     const existing = workspaces.find(entry => scopeKey(entry.scope) === key);
@@ -1090,6 +1090,31 @@ export async function createHostSettings(
       }
     }
     if (index >= 0) workspaces[index] = descriptor; else workspaces.push(descriptor);
+  };
+
+  async function openWorkspaceRoute(input: unknown): Promise<SettingsResponse<SettingsRoutes['workspaces/open']['value']>> {
+    if (!isRecord(input)) return invalid('workspaces/open requires an object body');
+    if (!nonEmpty(input['path'])) return invalid('path is required');
+    const problem = accessProblem(input);
+    if (problem !== null) return invalid(problem);
+    if (input['name'] !== undefined && !nonEmpty(input['name'])) return invalid('name must be a non-empty string when present');
+    if (input['projectId'] !== undefined && !nonEmpty(input['projectId'])) return invalid('projectId must be a non-empty string when present');
+    if (input['modelId'] !== undefined && !nonEmpty(input['modelId'])) return invalid('modelId must be a non-empty string when present');
+    if (nonEmpty(input['modelId']) && !models.some(entry => entry.id === input['modelId'])) return notFound('the model does not exist');
+
+    const request: OpenSettingsWorkspace = {
+      path: input['path'], writeAllowed: input['writeAllowed'] as boolean, commandsAllowed: input['commandsAllowed'] as boolean,
+      ...(nonEmpty(input['name']) ? { name: input['name'] } : {}),
+      ...(nonEmpty(input['projectId']) ? { projectId: input['projectId'] } : {}),
+      ...(nonEmpty(input['modelId']) ? { modelId: input['modelId'] } : {}),
+    };
+    const opened = await assembly.openWorkspace(request);
+    if (opened.status !== 'ready') return opened;
+
+    const key = scopeKey(opened.value.scope);
+    const facts = assembly.listWorkspaces().find(workspace => scopeKey(workspace.scope) === key);
+    if (facts === undefined) return unavailable('the opened workspace is not visible in the Host registration');
+    listDescriptor(facts);
     if (request.modelId !== undefined) selection[key] = request.modelId;
     try { await persist(); }
     catch {
@@ -1502,6 +1527,35 @@ export async function createHostSettings(
     return { status: 'ready', value: snapshotOf() };
   }
 
+  /**
+   * 121-106: switch one registered workspace's write and command access in place. The Host changes the two values it
+   * already publishes, so the person's very next save/command reads them and an agent's next preparation does too; an
+   * already prepared Run keeps the version it pinned. A write failure puts both the stored descriptor and the Host
+   * back, so the two never disagree.
+   */
+  async function workspaceAccessRoute(input: unknown): Promise<SettingsResponse<SettingsRoutes['workspaces/access']['value']>> {
+    if (!isRecord(input) || !validScope(input['scope'])) return invalid('workspaces/access requires a complete project/workspace scope');
+    const problem = accessProblem(input);
+    if (problem !== null) return invalid(problem);
+    if (assembly.setWorkspaceAccess === undefined)
+      return { status: 'rejected', code: 'unsupported', reason: 'the Host does not publish the workspace access switch' };
+    const scope = { projectId: input['scope'].projectId, workspaceId: input['scope'].workspaceId };
+    const changed = assembly.setWorkspaceAccess(scope,
+      { writeAllowed: input['writeAllowed'] as boolean, commandsAllowed: input['commandsAllowed'] as boolean });
+    if (changed.status !== 'ready') return changed;
+    const listed = [...workspaces];
+    listDescriptor(assembly.listWorkspaces().find(w => scopeKey(w.scope) === scopeKey(scope))!);  // just switched: registered
+    try { await persist(); }
+    catch {
+      workspaces.splice(0, workspaces.length, ...listed);
+      assembly.setWorkspaceAccess(scope, changed.value);            // the Host goes back to the values it had
+      return unavailable('the settings file could not be written');
+    }
+    try { await notify(); }
+    catch { return unavailable('the workspace access was saved but the Host configuration was not confirmed; retry the same save'); }
+    return { status: 'ready', value: { settings: snapshotOf(), bootstrap: assembly.bootstrap() } };
+  }
+
   // -------------------------------------------------------------------------
   // Prompt-pack editing routes. They read the disk tree at
   // `<settings directory>/prompts`, validate the whole resulting chain before
@@ -1773,6 +1827,7 @@ export async function createHostSettings(
       case 'models/save': return await saveModelRoute(input);
       case 'models/select': return await selectModelRoute(input);
       case 'workspaces/open': return await openWorkspaceRoute(input);
+      case 'workspaces/access': return await workspaceAccessRoute(input);
       case 'checks/approve': return await approveChecksRoute(input);
       case 'automation/save': return await saveAutomationRoute(input);
       case 'resource-caps/save': return await saveResourceCapsRoute(input);

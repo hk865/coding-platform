@@ -115,16 +115,18 @@ describe('P-reads: read failures on memory (book-7c.md:1368)', () => {
 
 describe('P-reads: the targeted responsible card (book-7c.md:1368)', () => {
   it('a refused authorization excludes the targeted responsible line (P-01)', async () => {
-    const world = await openS7C1World();
+    // Hold the module line's first Run so the executor caller line is the only free line with the
+    // creator Role; otherwise the selector reuses the module line and never reaches the caller script.
+    const world = await openS7C1World({ firstRun: 'held' });
     try {
       await setS7AAutonomy(world.world, world.goal, 'after_plan_confirmation');
       const task = world.tasks[2]!;
       // A REAL Work child line: the tool-bearing Work Run creates it through `create_member`. Its delegation
-      // ceiling is the creator's envelope (`writeScope: []`), while its own executor binding grants `['.']`,
-      // so the real pre-claim authorization refuses it (a refusal excludes without an `incomplete` mark).
-      await startS7C1ToolLine(world, { task });
-      const caller = world.lines.adviser;
-      if (caller === null) throw new Error('P-reads: the world was opened without its adviser caller line');
+      // ceiling is the creator's envelope (`writeScope: []`; an executor-built line never widens it,
+      // MVP-BEHAVIOR:327), while its own executor binding grants `['.']`, so the real pre-claim
+      // authorization refuses it (a refusal excludes without an `incomplete` mark).
+      await startS7C1ToolLine(world, { task, caller: 'work' });
+      const caller = world.lines.work;
       const created = jsonOf(await world.world.scripted.requests(caller), 's7c-tool-call') as MemberRequestResultV1;
       if (created.status !== 'created') throw new Error(`P-reads: no Work child line: ${JSON.stringify(created)}`);
       const child = await world.world.readSession(created.session);

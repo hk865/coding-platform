@@ -28,8 +28,8 @@ const EXISTING_DIGESTS = {
     'query-planning-input': 'ac29545b215361ea2ce479007f2c3ffcc3daa87a2bbacaf89957b49aa4022a77',
     'query-copy-input': '89ee28b2dc868787a7e41a063edadf9765e474e93b3bb477b038f93909808e20',
     'initial-planning-answer': 'a34231b808930bc7b7d357a774d0601a8fff212992446f20826c972ed1bd861b',
-    base: '5a9fa326d215e82d8329a0ddce8ff2da29463430550dd8320695b760ef7f03b5',
-    'skill-platform-work': '202fa0b83e3377a9dff1ccb3b189fe1c8ed6ea6c4e48ad4f20124e2757c4dab9',
+    base: 'cee15946501a2db933e00e1ea9954e8332542ab130268cd32c6962c91061958c',
+    'skill-platform-work': 'fee248cc70c5ed0a07bc8e679bd8357fa6e678976818b121e6f837cdf29ec7b3',
     'skill-platform-secretary': '0bb59d33dcba00898fbb35ca971580b3acfde7ccffc4b2ca168c3fb957e6780a',
     'skill-platform-adviser': '8954f1e09e66ce7a1e7e38ea96d0dd413f1dfa10e640c1a15a2d656dd6166d96',
     'skill-platform-scribe': '7e7d2ea6b21f44f407d7dcd2d2847651e7b156306ae97fdc5a1bceb92ee4bd94',
@@ -46,7 +46,17 @@ const secretaryAnswerText = [
     '{{/tool:submit_initial_plan}}{{#tool:submit_initial_questions}}When this round\'s answer is questions for the '
     + 'person, answer only by calling submit_initial_questions with them, as the last and only call of this reply; '
     + 'never write the answer as text. If it returns problems, fix every one and call it again in this round.'
-    + '{{/tool:submit_initial_questions}}',
+    + '{{/tool:submit_initial_questions}}'
+    + '{{#tool:submit_plan_round}}\n'
+    + 'The Goal already has an adopted Plan. When this request only adds 1-3 new Tasks, changes no existing Task '
+    + '(its definition, acceptance, disposition or dependencies), adds no gate or obligation for an existing Task, '
+    + 'and does not change the Goal objective, you may skip the ideas and call submit_plan_round directly: answerKind '
+    + '"plan", a one-sentence summary, and one segment that holds only the new Tasks with their assignments plus one '
+    + 'new obligation carrying them. Put them in an existing stage, or open a new stage with its own required stage '
+    + 'gate. The platform adopts a change this small under its own identity without review, and the person sees '
+    + '"arranged"; anything larger stays a candidate for the person. If the change is not small or you are unsure, '
+    + 'keep using submit_secretary_answer.\n'
+    + '{{/tool:submit_plan_round}}',
 ].join('\n');
 
 /** The platform `secretary-round` layout, written out: one blank line after the prelude. */
@@ -60,9 +70,9 @@ function textsOf(secretaryRound: string): PromptTextsV1 {
 }
 
 describe('the platform secretary templates', () => {
-    it('declares the round at version 2 and the answer at version 3, with their code-owned slots and digests', () => {
+    it('declares the round at version 2 and the answer at version 4, with their code-owned slots and digests', () => {
         const versions = {
-            'secretary-round': 2, 'secretary-answer': 3,
+            'secretary-round': 2, 'secretary-answer': 4,
             'handoff-write-understanding-secretary': 1, 'handoff-brief-secretary': 1,
         } as const;
         for (const id of [
@@ -95,7 +105,7 @@ describe('the platform secretary templates', () => {
         expect(sha256Hex(PACK.templates['secretary-round']!))
             .toBe('1fbe219c936568074193d9f4f57dd5a15e963f6487be2838a78d040429b3cc7c');
         expect(sha256Hex(PACK.templates['secretary-answer']!))
-            .toBe('5c3e4e0ba48660bf4c95411991769d7945e21ae8830ab08e6226c0b5938d038a');
+            .toBe('6de01c878a178ac3f108130eb73463d318eb8157ba7eeb24fb515240029ba3cf');
         expect(sha256Hex(PACK.templates['handoff-write-understanding-secretary']!))
             .toBe('d7afe976edbe02c6dd541b644b3c2b7f314bb186ff4458432e817a4fae7483c6');
         expect(sha256Hex(PACK.templates['handoff-brief-secretary']!))

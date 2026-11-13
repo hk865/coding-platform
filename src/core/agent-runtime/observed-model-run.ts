@@ -22,6 +22,7 @@ import { PROJECT_STORE_PREFIX } from '../../core/workspace/denied-prefixes.js';
 import { KNOWLEDGE_DIRECTORY } from '../../contracts/knowledge.js';
 import type { RuntimeSourceCaptureAccess, RuntimeSourceCaptureFactory } from './source-tool-ports.js';
 import { assembleObservedExtensions, kernelEnabledToolNames } from './tool-group-assembly.js';
+import { withCommandSandbox, type CommandSandboxAdditions } from './readonly-command-tool.js';
 
 /** The internal result of the ONE existing finally cleanup. It is a local
  * proof for the Trusted Host's live handle, never a public control ack. */
@@ -158,6 +159,9 @@ export type ObservedModelRunOptions = {
   /** L13: merged into the Kernel input at this last hop only; never into any
    * authorization, configuration version, prepared execution or digest. */
   resourceCaps?: import('../../../vendor/coding-agent/dist/public-api.js').ResourceCapSource;
+  /** NET-B: the Host's toolchain and this Run's route out, merged in at the last hop like `resourceCaps`; absent
+   * keeps today's shell sandbox (no network, the default PATH). */
+  commandSandbox?: CommandSandboxAdditions;
   publish: (event: { type: string; sequence: number; at: string; data: unknown }) => Promise<void>;
 };
 
@@ -472,9 +476,9 @@ export async function runObservedModel(o: ObservedModelRunOptions) {
         // L13: the resource-cap source is merged in at this last hop only; the
         // Kernel reads `current()` once per command, so a settings change reached
         // the holder is used by the next command of this same Run.
-        processSandboxOptions: o.resourceCaps === undefined
+        processSandboxOptions: withCommandSandbox(o.resourceCaps === undefined
           ? o.processSandboxOptions
-          : { ...o.processSandboxOptions, resourceCaps: o.resourceCaps },
+          : { ...o.processSandboxOptions, resourceCaps: o.resourceCaps }, o.commandSandbox),
         limits: kernelRunLimits(o.budget, o.taskBudget, o.now),
         approvalRequester: new o.kernel.StaticApprovalRequester({ decision: 'allow_once', reason: o.readOnly ? 'explicit_read_only_role_work' : 'explicit_gui_task_in_isolated_workspace' }),
         observerEventSinks: [{ sinkId: 'platform-live-events', delivery: 'best_effort', publish: async (event: AgentEvent) => {

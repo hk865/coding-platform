@@ -216,6 +216,8 @@ export type {
 } from "./core/runtime/recovery/recovery-coordinator.js";
 export type { RunLimits } from "./core/runtime/limits/limit-guard.js";
 export type {
+  HostMount,
+  NetworkProxySource,
   ResourceCapCapability,
   ResourceCapRequest,
   ResourceCapSource,

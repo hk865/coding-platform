@@ -59,13 +59,16 @@ export const SESSION_MAILBOX_TOOL_NAMES = [
   'withdraw_session_message',
 ] as const;
 
-/** The secretary request round's four mailbox tools; the three reads stay forbidden for every Query. */
+/** The secretary request round's two mailbox tools; the three reads stay forbidden for every Query. */
 export const SECRETARY_QUERY_MAILBOX_TOOL_NAMES = [
   'send_session_message',
-  'ack_session_message',
-  'respond_session_message',
   'withdraw_session_message',
 ] as const;
+
+/** A Query round has no wait registration, so `waitAfterSend` is refused at the tool.
+ *  The mailbox owner stays unchanged: a direct owner send is not this tool. */
+const QUERY_WAIT_REFUSAL =
+  '问答轮不能选“发完等回复”（waitAfterSend）：回复会在这一轮结束后、之后的轮次里交给你。把 waitAfterSend 设为 false 再发。';
 
 /**
  * Slice 5 §4.6 user-decision tool names. They are registered ONLY when the
@@ -473,6 +476,9 @@ export function createSessionMailboxTools(config: SessionMailboxToolsConfig): Se
             switch (name) {
               case 'send_session_message': {
                 const input = args as SessionMessageSendInput;
+                // A Query round registers no wait (it has no onWaitRegistered): the reply reaches a later round.
+                if (input.waitAfterSend === true && config.context.principal.kind === 'query_run')
+                  return failure(call.callId, 'invalid_arguments', QUERY_WAIT_REFUSAL);
                 const result = await config.mailbox.sendMessage(context, sendSessionMessageRequest(input, requestId));
                 if (result.status !== 'committed') return mapWrite(call.callId, result);
                 // The historical fire-and-forget send keeps the untouched result.

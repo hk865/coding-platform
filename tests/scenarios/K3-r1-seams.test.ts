@@ -77,7 +77,8 @@ describe('K3 §5.1 stand-in shell', () => {
 
     const real = createShellToolDefinition(sandbox);
     expect(real.requiredCapabilities).toContain('isolated_process');
-    expect(real.defaultTimeoutMs).toBe(30_000);
+    // SHT-1 §2 A1: the command is not stopped by time; 2^31-1 is the definition's positive-integer stand-in.
+    expect(real.defaultTimeoutMs).toBe(2_147_483_647);
     expect(real.outputLimitBytes).toBe(128 * 1024);
   });
 });

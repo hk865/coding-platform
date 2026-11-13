@@ -41,12 +41,12 @@ const SECRETARY_TOOLS = [
   'query_task_graph', 'query_ready_tasks', 'propose_future_plan',
 ] as const;
 const SECRETARY_ONLY = [
-  'send_session_message', 'ack_session_message', 'respond_session_message',
-  'withdraw_session_message', 'create_member', 'read_requests',
+  'send_session_message', 'withdraw_session_message', 'create_member', 'read_requests',
 ] as const;
 const STRIPPED = [
   'write', 'edit', 'shell', 'read_session_inbox', 'read_session_message', 'read_session_message_body',
   'query_task_graph', 'query_ready_tasks', 'propose_future_plan',
+  'ack_session_message', 'respond_session_message',
 ] as const;
 
 const worlds: S6AHostWorld[] = [];
@@ -306,3 +306,37 @@ describe('Q-no-adviser-note: the secretary writes the gate note', () => {
     }
   });
 });
+
+/* AGTP-9 (AGT+ ruling §3; §1 item 7): a Query round registers no wait, so `waitAfterSend:true` is refused at the
+ * tool layer instead of saving a message and answering `waiting:true`. Today red at the status assertion: the send
+ * commits and reports waiting. The package adds the guard before the send; the exact literal is the frozen one in
+ * §2 item 12. The recipient's real inbox read stays empty, so the refusal is not "sent then refused". */
+const AGTP_QUERY_WAIT_REFUSAL = '问答轮不能选“发完等回复”（waitAfterSend）：回复会在这一轮结束后、之后的轮次里交给你。把 waitAfterSend 设为 false 再发。';
+describe('AGTP-9: a Query round cannot ask to wait after sending', () => {
+  it('refuses waitAfterSend with invalid_arguments and writes no inbox item', async () => {
+    const options: S6AWorldOptions & { secretaryTools: readonly string[] } = {
+      backend: 'memory', secretaryTools: SECRETARY_TOOLS, extraHostOptions: { requestDriver: 'off' },
+    };
+    const { world } = await openS7B2RoundWorld(options);
+    worlds.push(world);
+    const target = await world.createWorkSession('agtp-9-target');
+    const round = await runRound(world, { label: 'agtp-9', goalId: null, first: [
+      { kind: 'calls', calls: [{ callId: 'agtp-9-send', name: 'send_session_message', args: {
+        recipient: target.ref, text: 'AGTP-9 wait after send', intent: 'inquiry',
+        needsReply: true, waitAfterSend: true,
+      } }] },
+      { kind: 'text', text: secretaryAnswer({ body: 'AGTP-9 answer' }) },
+    ] });
+    const delivered = round.requests.flatMap(request => request.messages)
+      .find(message => message.role === 'tool' && message.callId === 'agtp-9-send');
+    expect(delivered?.role).toBe('tool');
+    if (delivered?.role !== 'tool') return;
+    expect(delivered.result.status).toBe('error');
+    if (delivered.result.status !== 'error') return;
+    expect(delivered.result.error).toMatchObject({ code: 'invalid_arguments', message: AGTP_QUERY_WAIT_REFUSAL });
+    const inbox = readValue<{ items: SessionMessage[] }>((await world.post('messages/inbox',
+      plain(S6A_SCOPE, { recipient: target.ref, page: { limit: 20 } }))).body, 'the recipient inbox');
+    expect(inbox.items).toEqual([]);
+  });
+});
+

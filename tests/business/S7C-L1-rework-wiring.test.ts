@@ -50,7 +50,7 @@ describe('L1-rework-wiring: the rework tool names and their receipts', () => {
         // declared list agrees with the Query factory that never builds them.
         const queryFinal = finalToolNamesOf({
           callKind: 'query', noteAdmission: { class: 'none' }, selected: ['request_rework', 'request_recheck'],
-          readOnly: true, reviewPhase: null, hasBlockedCommands: false,
+          reviewPhase: null, hasBlockedCommands: false,
           reviewSource: false, frozenSource: false, materialTools: false,
           owners: { mailbox: true, decisionMessages: true, applicationReceipt: true, sessions: true,
             plans: true, graph: true, notes: true, unknownCallReviews: true, commandRerunRequests: true,

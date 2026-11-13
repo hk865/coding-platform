@@ -46,6 +46,7 @@ import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
 import type { SecretaryQueryRunPort } from '../model/secretary-query-run-contracts.js';
 import type { SessionDirectoryPort, SessionOperationRecord, SessionOperationRecordOf } from '../model/session-contracts.js';
 import type { SessionReusePortV1 } from '../model/pick-ports.js';
+import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
 import type { DutyRecipientPort } from '../sessions/duty-recipient.js';
 import { sessionRegisterIdentityKey, stableSessionCreationIdentity } from '../sessions/session-directory.js';
 import {
@@ -139,7 +140,7 @@ export type MemberLineCreationInputV1 = {
   reason: string;
   provenance: { schemaVersion: 1; kind: 'new' };
   roleConfiguration: RoleConfigurationRef;
-  /** A Work caller's accepted permissions; absent is no ceiling. A secretary-created line never carries one. */
+  /** A Work caller's accepted permissions; absent is no ceiling. A secretary- or adviser-created line never carries one. */
   delegationCeiling?: MemberDelegationCeilingV1;
   secretaryCreated?: true;
   parentOperation: OperationRef;
@@ -157,7 +158,7 @@ export interface MemberLineCreationPortV1 {
 
 export type MemberServiceDependenciesV1 = {
   records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort;
-  sessions: Pick<SessionDirectoryPort, 'findSessions'>;
+  sessions: Pick<SessionDirectoryPort, 'findSessions' | 'readSession'>;
   lines: MemberLineCreationPortV1;
   requests: RequestOwnerReadPort;
   secretaryRuns: SecretaryQueryRunPort;
@@ -173,6 +174,9 @@ export type MemberServiceDependenciesV1 = {
    * `createMember: true`) and the child Session's delegation ceiling. A secretary caller never reads it.
    */
   executions: Pick<ExecutionReadPort, 'readExecution'>;
+  /** 121-109: the one Session duty read; a Work caller whose line is an adviser builds its executor line on the Host's
+   *  executor grant, not on its own envelope. */
+  duty: SessionDutyReadPort;
   /**
    * The executor line's Role for one Task: the composition reads the Task's current plan assignment and returns
    * the served binding's `sessionRole`; absent binding is a rejection, never the platform executor template.
@@ -867,8 +871,22 @@ export function createMemberService(deps: MemberServiceDependenciesV1): MemberSe
     ctx: CoreCallContext, operation: MemberOperationRecordV1, ceiling?: MemberDelegationCeilingV1,
   ): Promise<MemberLineCreationInputV1 | CoreRejection> {
     const caller = operation.action.input.caller;
-    let delegationCeiling = ceiling;
-    if (caller.kind === 'work' && delegationCeiling === undefined) {
+    // 121-109: an executor line an adviser builds takes the Host's executor grant (tools, write scope), not the
+    // adviser's own read-only envelope; like a secretary-built line it carries no ceiling and may not create members.
+    let coordinatorBuilt = caller.kind === 'secretary_query';
+    if (caller.kind === 'work') {
+      const card = await deps.sessions.readSession(systemContext(ctx), caller.session, 'project');
+      if (card.status !== 'ready') {
+        return card.status === 'rejected' ? card : rejected('unavailable', 'the member caller line could not be read');
+      }
+      const duty = await deps.duty(card.value.record.role, systemContext(ctx));
+      if (duty.status !== 'ready') {
+        return duty.status === 'rejected' ? duty : rejected('unavailable', 'the member caller duty could not be read');
+      }
+      coordinatorBuilt = duty.value === 'adviser';
+    }
+    let delegationCeiling = coordinatorBuilt ? undefined : ceiling;
+    if (caller.kind === 'work' && !coordinatorBuilt && delegationCeiling === undefined) {
       const read = await readWorkCaller(ctx, caller);
       if ('status' in read) return read;
       delegationCeiling = read.ceiling;
@@ -888,7 +906,7 @@ export function createMemberService(deps: MemberServiceDependenciesV1): MemberSe
       provenance: { schemaVersion: 1, kind: 'new' },
       roleConfiguration: structuredClone(role.value),
       ...(delegationCeiling === undefined ? {} : { delegationCeiling: structuredClone(delegationCeiling) }),
-      ...(caller.kind === 'secretary_query' ? { secretaryCreated: true as const } : {}),
+      ...(coordinatorBuilt ? { secretaryCreated: true as const } : {}),
       parentOperation: structuredClone(operation.ref),
     };
   }

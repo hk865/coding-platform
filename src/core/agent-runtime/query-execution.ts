@@ -51,6 +51,7 @@ import {
 import { renderTemplate } from '../../contracts/prompts/render-template.js';
 import { createQueryGraphToolGroup, finalToolNamesOf, type ToolGroup } from './tool-group-assembly.js';
 import { createLinkCheckTools, LINK_CHECK_TOOL_NAMES } from './link-check-tool.js';
+import { createWebLookupTools, WEB_LOOKUP_TOOL_NAMES } from './web-lookup-tools.js';
 import {
   answerSubmitNamesIn, createAnswerToolBarrier, createAnswerTools, type AnswerToolsHandle,
 } from './answer-tools.js';
@@ -382,19 +383,24 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         explorationRound,
         noteAdmission,
         selected: manifest.permissions.tools,
-        readOnly: true,
         reviewPhase: null,
         hasBlockedCommands: false,
         reviewSource: false,
         frozenSource: hasFileRead && currentAuthorization?.status === 'ready',
         materialTools: false,
         answerTools: shape,
+        // The planning submit is part of the answer format, read back from the
+        // same frozen pack the preparation wrote; the whole list is compared
+        // below, so a moved selection still answers `forbidden`.
+        answerPlanTool: shape === 'secretary'
+          && manifest.promptSet.toolNames.includes('submit_plan_round'),
         owners: {
           mailbox: false, decisionMessages: false, applicationReceipt: false,
           sessions: false, plans: false,
           graph: deps.graphContext !== undefined && deps.taskInputs !== undefined,
           notes: noteAdmission.class !== 'none', unknownCallReviews: false, commandRerunRequests: false,
           linkCheck: deps.notes?.check !== undefined,
+          webLookup: hostConfig.model.webLookup !== undefined,
           architectureProposals: deps.architectureProposals !== undefined,
         },
         // The read-only command is a Host-gated capability: the start reads the
@@ -414,15 +420,17 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         && frozenToolNames.every((name, index) => name === startToolNames.value[index]);
       if (!sameToolList) return rejected('forbidden', 'the prepared tool list no longer fits this Run');
 
-      // The Query grant may name the two read-only graph tools and, for a
-      // secretary round, `record_note`. Those are the ONLY coordination tools a
-      // Query ever injects; the effective final set is the Host grant ∩ Role
-      // ceiling ∩ Query read ceiling already projected into
-      // `manifest.permissions.tools` by `projectQueryConfiguration`. The note
-      // group exposes only the note names the frozen list selected: the
-      // admission alone never widens the Host grant.
+      // The Query grant may name the two read-only graph tools, `check_links`,
+      // the two platform web tools and, for a secretary round, `record_note`.
+      // Those are the ONLY coordination tools a Query ever injects; the
+      // effective final set is the Host grant ∩ Role ceiling ∩ Query read
+      // ceiling already projected into `manifest.permissions.tools` by
+      // `projectQueryConfiguration`. The note group exposes only the note names
+      // the frozen list selected: the admission alone never widens the Host
+      // grant.
       const grantedGraphNames = GRAPH_TOOL_NAMES.filter(name => manifest.permissions.tools.includes(name));
       const grantedLinkCheckNames = LINK_CHECK_TOOL_NAMES.filter(name => manifest.permissions.tools.includes(name));
+      const grantedWebNames = WEB_LOOKUP_TOOL_NAMES.filter(name => manifest.permissions.tools.includes(name));
       const noteNames: readonly string[] = NOTE_TOOL_NAMES.filter(name => frozenToolNames.includes(name));
       // The answer tools follow the frozen request kind, never the Host grant.
       const submitNames = answerSubmitNamesIn(frozenToolNames);
@@ -436,7 +444,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         if (packet.status !== 'ready') return packet;
         subjectRunRef = packet.value.packet.subjectRunRef;
       }
-      // Only a secretary request round selects the four mailbox names and the
+      // Only a secretary request round selects the two mailbox names and the
       // two platform tools; every other Query's frozen list carries none.
       const secretaryMailboxNames: readonly string[] = manifest.request === null ? []
         : SECRETARY_QUERY_MAILBOX_TOOL_NAMES.filter(name => frozenToolNames.includes(name));
@@ -461,6 +469,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       }
       let coordinationTools: ToolGroup | null = null;
       if (grantedGraphNames.length > 0 || historyNames.length > 0 || grantedLinkCheckNames.length > 0
+        || grantedWebNames.length > 0
         || noteAdmission.class !== 'none' || submitNames.length > 0
         || secretaryMailboxNames.length > 0 || memberNames.length > 0 || readRequestNames.length > 0
         || architectureNames.length > 0) {
@@ -530,6 +539,11 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         }
         const linkCheckTools = grantedLinkCheckNames.length > 0
           ? createLinkCheckTools({ context: toolContext, check: deps.notes!.check!, texts: toolTexts })
+          : null;
+        // A selected web name without a bound port was already refused by
+        // `finalToolNamesOf` above, so this branch never invents one.
+        const webTools = grantedWebNames.length > 0 && hostConfig.model.webLookup !== undefined
+          ? createWebLookupTools({ lookup: hostConfig.model.webLookup, texts: toolTexts })
           : null;
         let noteTools: NoteToolsHandle | null = null;
         if (noteAdmission.class !== 'none') {
@@ -623,7 +637,8 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           });
         }
         const names = [
-          ...grantedGraphNames, ...historyNames, ...grantedLinkCheckNames, ...noteNames, ...architectureNames, ...secretaryMailboxNames,
+          ...grantedGraphNames, ...historyNames, ...grantedLinkCheckNames, ...grantedWebNames, ...noteNames, ...architectureNames,
+          ...secretaryMailboxNames,
           ...memberNames, ...readRequestNames, ...submitNames,
         ];
         if (names.length > 0) {
@@ -632,6 +647,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
             create: (workspace) => [
               ...(graphTools?.create(workspace) ?? []),
               ...(linkCheckTools?.create(workspace) ?? []),
+              ...(webTools?.create() ?? []),
               ...(noteTools?.create(workspace) ?? []).filter(definition => noteNames.includes(definition.name)),
               ...(architectureTools?.create(workspace) ?? []),
               ...(mailboxTools?.create(workspace) ?? []).filter(definition => secretaryMailboxNames.includes(definition.name)),
@@ -765,6 +781,12 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       // selected it, the explicit `readonlyCommandAccess` grant is present and
       // the current workspace read is the whole workspace. The handler re-reads
       // the same grant before every launch.
+      // NET-B (decision 121-112): a Query with the read-only command gets its own route out through the Host proxy,
+      // opened right before the model call and closed when it returns.
+      const commandRoute = deps.commandSandbox !== undefined && readonlyRequested
+        ? deps.commandSandbox.route(owned, queryRunRef) : undefined;
+      const commandSandbox = deps.commandSandbox === undefined ? undefined : { toolchain: deps.commandSandbox.toolchain,
+        ...(commandRoute === undefined ? {} : { network: commandRoute.source }) };
       // U5: the ONE shared read-only command construction; Query keeps its own
       // authorization choice (the same Host read re-check at every launch).
       const readonlyCommandTool = registerReadonlyCommandTool({
@@ -774,6 +796,8 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         workspaceRoot: rootResolved.value.root,
         processSandboxOptions: hostConfig.processSandboxOptions,
         ...(deps.resourceCaps === undefined ? {} : { resourceCaps: deps.resourceCaps }),
+        ...(deps.commandSlots === undefined ? {} : { commandSlots: deps.commandSlots }),
+        ...(commandSandbox === undefined ? {} : { commandSandbox }),
         authorizeCurrent: () => deps.workspaceHost.authorize(owned, workspace),
         texts: toolTexts,
       });
@@ -970,9 +994,12 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         : { version: 1 as const, mode: 'current_turn' as const };
 
       let thrown: unknown;
+      await commandRoute?.open();
       try {
         await runObservedModel({
           ...shared,
+          // Only this call: the summary call that shares `shared` has no command tool.
+          ...(commandSandbox === undefined ? {} : { commandSandbox }),
           sessionId: record.session.kernel.kernelSessionId,
           input: manifest.input,
           // A request round (all request kinds) takes the notify-only supply; it
@@ -997,6 +1024,8 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       } catch (error) {
         if (error instanceof RuntimeModelCallRejected) enteredFailure ??= rejected(error.code, error.message);
         else thrown = error;
+      } finally {
+        await commandRoute?.close();
       }
       if (enteredFailure !== undefined) return enteredFailure;
       const reconcileSignal = new AbortController().signal;

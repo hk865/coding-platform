@@ -233,7 +233,7 @@ describe('the whole input of a round that absorbs a queued input after an earlie
     expect(templateEntries(record)).toEqual([
       { id: 'secretary-answer', version: SECRETARY_TEMPLATE_VERSIONS['secretary-answer'], packId: 'platform' },
       { id: 'secretary-round', version: SECRETARY_TEMPLATE_VERSIONS['secretary-round'], packId: 'platform' },
-      { id: 'base', version: 2, packId: 'platform' },
+      { id: 'base', version: 3, packId: 'platform' },
       ...DELIVERY_SET_ENTRIES,
     ]);
   }, 240_000);
@@ -252,7 +252,7 @@ describe('a person\'s pack over the secretary templates reaching a real round', 
       status: 'ready', value: { templateId: 'secretary-round', version: 3, fromPack: PACK_ID, text: PERSON_ROUND_TEXT },
     });
     const savedAnswer = await world.packs.saveTemplate(PACK_ID, 'secretary-answer', 'ANSWER FROM THE PERSON');
-    expect(savedAnswer).toMatchObject({ status: 'ready', value: { version: 4, fromPack: PACK_ID } });
+    expect(savedAnswer).toMatchObject({ status: 'ready', value: { version: 5, fromPack: PACK_ID } });
     await selectPack(world);
 
     const a = await world.createSecretary('a');
@@ -276,9 +276,9 @@ describe('a person\'s pack over the secretary templates reaching a real round', 
     expect(record.set.packId).toBe(PACK_ID);
     expect(record.set.sectionOrder.secretary).toEqual(['role', 'goal', 'task', 'notes']);
     expect(templateEntries(record)).toEqual([
-      { id: 'secretary-answer', version: 4, packId: PACK_ID },
+      { id: 'secretary-answer', version: 5, packId: PACK_ID },
       { id: 'secretary-round', version: 3, packId: PACK_ID },
-      { id: 'base', version: 2, packId: 'platform' },
+      { id: 'base', version: 3, packId: 'platform' },
       ...DELIVERY_SET_ENTRIES,
     ]);
   }, 240_000);
@@ -296,7 +296,7 @@ describe('a pack edit while the round waits at the start gate', () => {
     const firstRound = await world.packs.saveTemplate(PACK_ID, 'secretary-round', PLATFORM_ROUND_TEXT);
     expect(firstRound).toMatchObject({ status: 'ready', value: { version: 3, fromPack: PACK_ID } });
     const firstAnswer = await world.packs.saveTemplate(PACK_ID, 'secretary-answer', 'PACK ONE ANSWER');
-    expect(firstAnswer).toMatchObject({ status: 'ready', value: { version: 4, fromPack: PACK_ID } });
+    expect(firstAnswer).toMatchObject({ status: 'ready', value: { version: 5, fromPack: PACK_ID } });
     await selectPack(world);
 
     const a = await world.createSecretary('a');
@@ -309,7 +309,7 @@ describe('a pack edit while the round waits at the start gate', () => {
     const editedRound = await world.packs.saveTemplate(PACK_ID, 'secretary-round', EDITED_ROUND_TEXT);
     expect(editedRound).toMatchObject({ status: 'ready', value: { version: 4, fromPack: PACK_ID } });
     const editedAnswer = await world.packs.saveTemplate(PACK_ID, 'secretary-answer', 'PACK TWO ANSWER');
-    expect(editedAnswer).toMatchObject({ status: 'ready', value: { version: 5, fromPack: PACK_ID } });
+    expect(editedAnswer).toMatchObject({ status: 'ready', value: { version: 6, fromPack: PACK_ID } });
     gate.release();
 
     const view = await waitForRound(world, round.requestRoot, round.round, 'ended');
@@ -325,9 +325,9 @@ describe('a pack edit while the round waits at the start gate', () => {
     const record = await promptRecordOf(world, round.round);
     expect(record.set.sectionOrder.secretary).toEqual(['role', 'goal', 'notes', 'task']);
     expect(templateEntries(record)).toEqual([
-      { id: 'secretary-answer', version: 4, packId: PACK_ID },
+      { id: 'secretary-answer', version: 5, packId: PACK_ID },
       { id: 'secretary-round', version: 3, packId: PACK_ID },
-      { id: 'base', version: 2, packId: 'platform' },
+      { id: 'base', version: 3, packId: 'platform' },
       ...DELIVERY_SET_ENTRIES,
     ]);
   }, 240_000);

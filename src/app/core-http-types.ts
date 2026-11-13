@@ -262,6 +262,8 @@ export type CoreRouteSuffix =
   | 'commands/start'
   | 'commands/read'
   | 'commands/stop'
+  // NET-B (decision 121-112): one Run's command hosts, `{ subject }` -> the record or null.
+  | 'network/read'
   // A.2 step 5.4 (D-3, C1, C3): the operator requeue/continue and the
   // continuation brief pinned to a requeue Run.
   | 'tasks/requeue'

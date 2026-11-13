@@ -143,7 +143,7 @@ describe('ruling 14: a Work preparation freezes before the pack await (and rulin
       });
       expect(gate.calls()).toBe(1);
       expect(prepared.set.base.digest).toBe(sha(`${BASE_A}\n\n${WORK_INSTRUCTION}`));
-      expect(prepared.texts.base).toEqual({ templateId: 'base', version: 2, text: `${BASE_A}\n\n${WORK_INSTRUCTION}` });
+      expect(prepared.texts.base).toEqual({ templateId: 'base', version: 3, text: `${BASE_A}\n\n${WORK_INSTRUCTION}` });
       expect(prepared.texts.strings['context.prelude.work']).toBe('PC_WORK_PRELUDE_A');
       expect(prepared.input.startsWith('PC_WORK_PRELUDE_A')).toBe(true);
       expect(prepared.input).toContain('PC_ROLE_HEADER_A');

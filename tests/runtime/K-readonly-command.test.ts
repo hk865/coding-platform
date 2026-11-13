@@ -10,6 +10,15 @@
  *
  * History is read through the public `readSessionHistory` page and decoded with
  * the public Kernel `sessionRecordSchema`; no Runtime-internal decoder is used.
+ *
+ * SHT-1 (test writer, 2026-11-13): KB-07's description row now pins the post-
+ * SHT-1 text; KB-10's out-of-range row becomes S6 (a 500 ms and a 2 h value are
+ * both accepted) and KB-10's subprocess-timeout row is deleted (§4: that branch
+ * goes with the sandbox timer). RED today: `buildInputSchema` still has
+ * `.min(1_000).max(120_000)` and the prompt pack still carries the old
+ * sentences, so both calls are `invalid_arguments` and no command starts; the
+ * description row fails on the old sentence. GREEN after SHT-1: schema is
+ * `.positive()` only and the pack is regenerated.
  */
 import { afterEach, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -523,15 +532,15 @@ it('KB-07 authorized Query sees run_readonly_command, runs it and stores the out
   } finally { await platform.close(); }
 });
 
-it('KB-07 the run_readonly_command description discloses timeout retention, cancellation replacement, read-only git and hidden denied paths', async () => {
+it('KB-07 the run_readonly_command description discloses no time stop, cancellation replacement, read-only git and hidden denied paths', async () => {
   const { platform, scripted, state } = await queryPlatform({ replies: [{ kind: 'text', text: 'K readonly description answer' }] });
   try {
     await runQuery(platform, state);
     const spec = scripted.requests[0]?.tools.find(tool => tool.name === READONLY_COMMAND_TOOL_NAME);
     expect(spec).toBeDefined();
     const description = spec?.description ?? '';
-    expect(description).toContain('subprocess timeout keeps the captured output');
-    expect(description).toContain('cancellation or the dispatcher timeout replaces it with empty output');
+    expect(description).toContain('Commands are not stopped by time');
+    expect(description).toContain('a cancellation replaces the captured output with empty output');
     expect(description).toContain('.git is readable but read-only');
     expect(description).toContain('Host-denied paths are hidden');
   } finally { await platform.close(); }
@@ -573,6 +582,48 @@ it('KB-07 authorized empty-write Work sees run_readonly_command, runs it and sto
     expect(stored?.status).toBe('success');
     const storedText = stored?.output.find(part => part.kind === 'text');
     expect(storedText?.kind === 'text' ? storedText.text : undefined).toBe('work:echo work\n');
+  } finally { await fixture.close(); }
+});
+
+
+/* AGTP-3 (AGT+ ruling §3; §1 item 2): the read-only command follows "no shell", not "empty write scope". A writable
+ * Work Run without `shell` may still run read-only commands; the tool is offered and its result reaches this
+ * execution. Today red at the offered-name assertion: `execution-preparation` still requires an empty write scope,
+ * so a writable Run freezes the name out. The package changes that condition (and the start's identical one) to
+ * `!tools.includes('shell') && tools.includes(run_readonly_command)`. */
+it('AGTP-3 a writable Work without shell still offers and runs run_readonly_command', async () => {
+  sandbox.next = (command: string) => ({
+    exitCode: 0, signal: null, timedOut: false, cancelled: false,
+    stdout: { text: `writable:${command}\n`, totalBytes: Buffer.byteLength(`writable:${command}\n`), truncated: false },
+    stderr: { text: '', totalBytes: 0, truncated: false },
+    effects: { sideEffect: 'none', changedPaths: [], workspaceRevision: null, artifactRefs: [] },
+    sandboxProfileVersion: 'stub-v1',
+    timings: { snapshotBeforeMs: 0, executionMs: 2, snapshotAfterMs: 0 },
+  });
+  const fixture = await createKReadonlyWorkFixture({
+    scriptedReplies: [
+      { kind: 'calls', calls: [{ callId: 'agtp-3-call', name: 'run_readonly_command', args: { command: 'echo agtp-3' } }] },
+      { kind: 'text', text: 'AGTP-3 writable Work answer' },
+    ],
+    tools: ['read', 'write', 'run_readonly_command'], writeScope: ['.'],
+  });
+  try {
+    const prepared = await fixture.runtime.port.prepareExecution(fixture.ctx,
+      { runRef: fixture.runRef, requestId: 'agtp-3-prepare' });
+    if (prepared.status !== 'ready') throw new Error('AGTP-3 prepare failed: ' + JSON.stringify(prepared));
+    const started = await fixture.runtime.port.startRun(fixture.ctx,
+      { prepared: prepared.value, consumerId: 'agtp-3-consumer', requestId: 'agtp-3-start' });
+    expect(started).toMatchObject({ status: 'ready' });
+    expect(fixture.scripted.requests[0]?.tools.map(tool => tool.name)).toContain(READONLY_COMMAND_TOOL_NAME);
+    const delivered = toolMessage(fixture.scripted, 'agtp-3-call');
+    expect(delivered?.role === 'tool' ? delivered.result.status : undefined).toBe('success');
+    if (delivered?.role !== 'tool') throw new Error('AGTP-3: the tool result was not delivered');
+    const text = delivered.result.output.find(part => part.kind === 'text');
+    expect(text?.kind === 'text' ? text.text : undefined).toBe('writable:echo agtp-3\n');
+    expect(sandbox.commands).toEqual(['echo agtp-3']);
+    const observed = await fixture.runtime.port.observeRun(fixture.ctx, { runRef: fixture.runRef });
+    expect(observed.status).toBe('ready');
+    if (observed.status === 'ready') expect(observed.value.run).toMatchObject({ status: 'ended' });
   } finally { await fixture.close(); }
 });
 
@@ -699,23 +750,6 @@ it('KB-08 a Work whose RoleSpec ceiling omits run_readonly_command does not see 
     const started = await runtime.port.startRun(fixture.ctx, { prepared: prepared.value, consumerId: 'k-role-ceiling-consumer', requestId: 'k-role-ceiling-start' });
     expect(started).toMatchObject({ status: 'ready' });
     const observed = await runtime.port.observeRun(fixture.ctx, { runRef: fixture.claim.runRef });
-    expect(observed.status).toBe('ready');
-    expect(fixture.scripted.requests[0]?.tools.map(tool => tool.name)).not.toContain(READONLY_COMMAND_TOOL_NAME);
-  } finally { await fixture.close(); }
-});
-
-it('KB-08 a Work with a non-empty write scope does not see run_readonly_command', async () => {
-  const fixture = await createKReadonlyWorkFixture({
-    scriptedReplies: [{ kind: 'text', text: 'K readonly write Work answer' }],
-    tools: ['read', 'write', 'run_readonly_command'], writeScope: ['.'],
-  });
-  try {
-    const prepared = await fixture.runtime.port.prepareExecution(fixture.ctx, { runRef: fixture.runRef, requestId: 'k-write-scope-prepare' });
-    if (prepared.status !== 'ready') throw new Error('K write scope prepare failed: ' + JSON.stringify(prepared));
-    expect(prepared.value.envelope.permissions.writeScope).toEqual(['.']);
-    const started = await fixture.runtime.port.startRun(fixture.ctx, { prepared: prepared.value, consumerId: 'k-write-scope-consumer', requestId: 'k-write-scope-start' });
-    expect(started).toMatchObject({ status: 'ready' });
-    const observed = await fixture.runtime.port.observeRun(fixture.ctx, { runRef: fixture.runRef });
     expect(observed.status).toBe('ready');
     expect(fixture.scripted.requests[0]?.tools.map(tool => tool.name)).not.toContain(READONLY_COMMAND_TOOL_NAME);
   } finally { await fixture.close(); }
@@ -857,29 +891,21 @@ it('KB-10 a non-zero exit maps to execution_failed with the captured output', as
   } finally { await platform.close(); }
 });
 
-it('KB-10 a subprocess timeout maps to timeout with the captured output', async () => {
-  sandbox.next = () => ({ exitCode: null, signal: null, timedOut: true, cancelled: false,
-    stdout: { text: 'partial result\n', totalBytes: 16, truncated: false },
-    stderr: { text: '', totalBytes: 0, truncated: false },
-    effects: { sideEffect: 'none', changedPaths: [], workspaceRevision: null, artifactRefs: [] },
-    sandboxProfileVersion: 'stub-v1', timings: { snapshotBeforeMs: 0, executionMs: 30_000, snapshotAfterMs: 0 } });
-  const { platform, scripted, state } = await queryPlatform({ replies: [readonlyCall({ command: 'sleep 999', timeoutMs: 1000 }), { kind: 'text', text: 'K map timeout answer' }] });
+/** SHT-1 S6: Q8 removes the 1 s floor and the 120 s cap; both values must reach the sandbox. */
+it('SHT-1 (S6) a below-one-second and a two-hour timeoutMs are both accepted and run', async () => {
+  const { platform, state } = await queryPlatform({ replies: [
+    readonlyCall({ command: 'echo small', timeoutMs: 500 }, 'k-sht1-small'),
+    readonlyCall({ command: 'echo large', timeoutMs: 7_200_000 }, 'k-sht1-large'),
+    { kind: 'text', text: 'K map range answer' },
+  ] });
   try {
-    await runQuery(platform, state);
-    const delivered = toolMessage(scripted, 'k-map-call');
-    expect(delivered?.role === 'tool' && delivered.result.status === 'error' ? delivered.result.error.code : undefined).toBe('timeout');
-    if (delivered?.role !== 'tool') throw new Error('no timeout read-only result');
-    expect(delivered.result.output.find(part => part.kind === 'text')).toMatchObject({ text: 'partial result\n' });
-  } finally { await platform.close(); }
-});
-
-it('KB-10 an out-of-range timeoutMs is invalid_arguments and never starts a command', async () => {
-  const { platform, scripted, state } = await queryPlatform({ replies: [readonlyCall({ command: 'echo never', timeoutMs: 500 }), { kind: 'text', text: 'K map range answer' }] });
-  try {
-    await runQuery(platform, state);
-    const delivered = toolMessage(scripted, 'k-map-call');
-    expect(delivered?.role === 'tool' && delivered.result.status === 'error' ? delivered.result.error.code : undefined).toBe('invalid_arguments');
-    expect(sandbox.commands).toEqual([]);
+    const { observed } = await runQuery(platform, state);
+    expect(sandbox.commands).toEqual(['echo small', 'echo large']);
+    for (const callId of ['k-sht1-small', 'k-sht1-large']) {
+      const stored = await storedToolResult(platform.runtime, hostCtx(), observed.session.ref, callId);
+      expect(stored?.status).toBe('success');
+    }
+    expect(observed.run.run.status).toBe('answered');
   } finally { await platform.close(); }
 });
 

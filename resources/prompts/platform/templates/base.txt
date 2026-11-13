@@ -13,7 +13,7 @@ Working method:
 {{#tool:shell}}
 {{#tool:read}}
 {{#tool:edit}}
-- Use shell only for commands, search, builds, and tests that read/edit cannot perform. Shell runs with the workspace mounted at /workspace, without network. Prefer one coherent command over many tiny shell calls.
+- Use shell only for commands, search, builds, and tests that read/edit cannot perform. Shell runs with the workspace mounted at /workspace; the shell tool description says what network it has. Prefer one coherent command over many tiny shell calls.
 {{/tool:edit}}
 {{/tool:read}}
 {{/tool:shell}}

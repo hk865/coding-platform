@@ -336,14 +336,15 @@ export function createInitialPlanAnswerReader(deps: InitialPlanAnswerDependencie
         return rejected('source_stale', 'the frozen request is not an initial_coordination preparation');
       }
     } else if (source.kind === 'request_followup') {
-      // The plan-round request followup: the manifest's Goal and frozen shape are the authority. The round need
-      // not carry `selectedIdea` itself; preparation already checked the request's full round list.
+      // A request round whose frozen tool list carries the planning submit: a plan-round followup, or a secretary
+      // round the preparation offered `submit_plan_round` beside its own submit. The round need not carry
+      // `selectedIdea` itself; preparation already checked the request's full round list.
       if (job.job.intent.execution.kind !== 'semantic_query'
-        || job.job.roundKind !== 'followup'
+        || (job.job.roundKind !== 'followup' && job.job.roundKind !== 'request')
         || job.job.requestRoot === null
         || job.job.goalId === null
-        || manifest.answerShape !== 'plan_round') {
-        return rejected('source_stale', 'the frozen Query is not a plan-round request followup');
+        || !manifest.promptSet.toolNames.includes('submit_plan_round')) {
+        return rejected('source_stale', 'the frozen Query is not a request round that could answer with a plan');
       }
       if (!isRecord(manifest.goal) || !isRecord(manifest.goal.ref)
         || manifest.goal.ref.projectId !== wanted.projectId || !nonEmpty(manifest.goal.ref.goalId)) {

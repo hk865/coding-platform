@@ -14,6 +14,28 @@
  * The Host and its real composition are exercised over real HTTP, real temp
  * directories with spaces/non-ASCII names, and a controlled provider/secret
  * seam. No real model, real credential or candidate project is used.
+ *
+ * 7D2 JIAT / the executor access switch (`settings/workspaces/access`):
+ * production for this package is absent on this tree, so its rows are EXPECTED
+ * RED; every one becomes green only when that route and the Host switch land.
+ *   - JIA-1 red today at step 2: `workspaces/access` answers 404 / not_found
+ *     ("unpublished settings route workspaces/access"), so the first save never
+ *     gets a write grant. Green when `applyAccess` hands the new prefixes to the
+ *     person's tools and the route answers `{settings, bootstrap}`.
+ *   - JIA-3 red today at its first switch (the same 404). Green when the
+ *     open-by-root restore path re-applies a saved switch and the route also
+ *     rewrites the workspace descriptor.
+ *   - JIA-4 red today on its first snapshot read: no workspace carries
+ *     `accessFixed`. Green when the snapshot publishes `startup_binding` for a
+ *     start-up runtime binding.
+ *   - JIA-5 red today at both entries: the unpublished route answers
+ *     `not_found` with the unpublished-route reason (entry 1 expects `invalid`,
+ *     entry 2 expects the not-registered reason). Green when the route validates
+ *     the input before it looks the scope up.
+ *   - JIA-6 red today at the switch (the same 404). Green when the route rolls
+ *     the Host back and answers `unavailable` after a failed settings write.
+ * The draft's named mutations a, e, f, g, h and i cannot be demonstrated on this
+ * tree: the implementation each would alter is absent.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { mkdir, mkdtemp, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
@@ -88,6 +110,7 @@ type StartOptions = {
   storageKind?: 'sqlite' | 'memory';
   emptyStartup?: boolean;
   runtimeConfiguration?: WorkbenchRuntimeConfiguration;
+  runtime?: LocalWorkbenchHostOptions['runtime'];
   runtimeProvider?: WorkbenchRuntimeProviderDependencies;
   kernelStores?: LocalWorkbenchHostOptions['kernelStores'];
 };
@@ -118,6 +141,7 @@ async function startHost(options: StartOptions = {}): Promise<Started> {
       settings: { settingsDirectory, models: structuredClone(STARTUP_MODELS) },
     }),
     ...(options.runtimeConfiguration === undefined ? {} : { runtimeConfiguration: options.runtimeConfiguration }),
+    ...(options.runtime === undefined ? {} : { runtime: options.runtime }),
     ...(options.runtimeProvider === undefined ? {} : { runtimeProvider: options.runtimeProvider }),
     ...(options.kernelStores === undefined ? {} : { kernelStores: options.kernelStores }),
   });
@@ -1067,6 +1091,219 @@ describe('rejects: HOST settings workspace check approval (R6 cold-start)', () =
       expect(await readSettingsSnapshot(started)).toEqual(before);
     } finally {
       await started.host.close().catch(() => { /* already closed */ });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 7D2 JIAT: the person's per-workspace access switch. These rows are EXPECTED
+// RED until `workspaces/access` and the Host switch land (the file header names
+// each row's red step); the draft's named mutations a, e, f, g, h and i cannot
+// be demonstrated on this tree because the implementation is absent.
+// ---------------------------------------------------------------------------
+
+/** The not-yet-published `workspaces/access` value; local because the route type does not exist yet. */
+type AccessValue = { settings: HostSettingsSnapshot; bootstrap: BootstrapResponse };
+
+const settingsWorkspaceOf = (snapshot: HostSettingsSnapshot, scope: CoreScope) =>
+  snapshot.workspaces.find(workspace => workspace.scope.projectId === scope.projectId
+    && workspace.scope.workspaceId === scope.workspaceId);
+
+const accessSaveBody = (path: string, content: string) =>
+  ({ path, content, expectedRevision: null });
+
+describe('HOST settings workspace access switch (7D2 JIAT)', () => {
+  it('JIA-1: the switches change the person\'s saves and commands at once', async () => {
+    const started = await startHost();
+    try {
+      const root = await mkdtemp(join(tmpdir(), 'host-settings-access-'));
+      temporary.push(root);
+      const opened = expectReady(await (await settingsPost(started.base, 'workspaces/open', started.token,
+        { path: root, writeAllowed: false, commandsAllowed: false })).json() as SettingsResponse<OpenValue>);
+      const scope = opened.scope;
+
+      // 1. Read-only: the exclusive create is refused.
+      expect(await (await corePost(started.base, 'files/save', started.token, scope,
+        accessSaveBody('a.txt', 'x'))).json()).toMatchObject({ status: 'rejected', code: 'forbidden' });
+
+      // 2. Write on, commands still off; the snapshot and bootstrap agree at once.
+      const granted = expectReady(await (await settingsPost(started.base, 'workspaces/access', started.token,
+        { scope, writeAllowed: true, commandsAllowed: false })).json() as SettingsResponse<AccessValue>);
+      expect(settingsWorkspaceOf(granted.settings, scope))
+        .toMatchObject({ writeAllowed: true, commandsAllowed: false, accessFixed: null });
+      expect(granted.bootstrap.workspaces.find(workspace =>
+        workspace.scope.projectId === scope.projectId && workspace.scope.workspaceId === scope.workspaceId)
+        ?.writeAllowed).toBe(true);
+
+      // 3. The same save now writes and reads back through the public route.
+      expect(await (await corePost(started.base, 'files/save', started.token, scope,
+        accessSaveBody('a.txt', 'x'))).json()).toMatchObject({ status: 'ready' });
+      expect(await (await corePost(started.base, 'files/read', started.token, scope,
+        { workspace: workspaceRef(scope), path: 'a.txt', maxBytes: 4096, version: { kind: 'working_tree' } })).json())
+        .toMatchObject({ status: 'ready', value: { content: 'x' } });
+
+      // 4. A write grant never implies a command grant.
+      expect(await (await corePost(started.base, 'commands/start', started.token, scope,
+        { requestId: 'host-settings-access-command', command: 'echo should-not-run', cwd: '.' })).json())
+        .toMatchObject({ status: 'rejected', code: 'forbidden' });
+
+      // 5. Both switches off again.
+      const closed = expectReady(await (await settingsPost(started.base, 'workspaces/access', started.token,
+        { scope, writeAllowed: false, commandsAllowed: false })).json() as SettingsResponse<AccessValue>);
+      expect(settingsWorkspaceOf(closed.settings, scope))
+        .toMatchObject({ writeAllowed: false, commandsAllowed: false, accessFixed: null });
+
+      // 6. The next save is refused again.
+      expect(await (await corePost(started.base, 'files/save', started.token, scope,
+        accessSaveBody('b.txt', 'y'))).json()).toMatchObject({ status: 'rejected', code: 'forbidden' });
+    } finally {
+      await started.host.close();
+    }
+  });
+
+  it('JIA-3 (SQLite only): a restart takes the saved switches for an unfixed start-up workspace', async () => {
+    const started = await startHost();
+    let restarted: Started | undefined;
+    try {
+      // The default start-up workspace is read-only, so 4-28 lets the settings
+      // switch it and lets a restart keep the stored value.
+      expect(settingsWorkspaceOf(await readSettingsSnapshot(started), STARTUP_SCOPE))
+        .toMatchObject({ writeAllowed: false });
+
+      const rootB = await mkdtemp(join(tmpdir(), 'host-settings-access-b-'));
+      temporary.push(rootB);
+      const b = expectReady(await (await settingsPost(started.base, 'workspaces/open', started.token,
+        { path: rootB, writeAllowed: false, commandsAllowed: false })).json() as SettingsResponse<OpenValue>);
+
+      const startupSwitch = expectReady(await (await settingsPost(started.base, 'workspaces/access', started.token,
+        { scope: STARTUP_SCOPE, writeAllowed: true, commandsAllowed: false })).json() as SettingsResponse<AccessValue>);
+      expect(settingsWorkspaceOf(startupSwitch.settings, STARTUP_SCOPE)).toMatchObject({ writeAllowed: true });
+      expectReady(await (await settingsPost(started.base, 'workspaces/access', started.token,
+        { scope: b.scope, writeAllowed: true, commandsAllowed: true })).json() as SettingsResponse<AccessValue>);
+
+      await started.host.close();
+      restarted = await startHost({
+        root: started.root, database: started.database, settingsDirectory: started.settingsDirectory,
+      });
+
+      const restored = await readSettingsSnapshot(restarted);
+      expect(settingsWorkspaceOf(restored, STARTUP_SCOPE)).toMatchObject({ writeAllowed: true });
+      expect(settingsWorkspaceOf(restored, b.scope)).toMatchObject({ writeAllowed: true, commandsAllowed: true });
+      expect(await (await corePost(restarted.base, 'files/save', restarted.token, STARTUP_SCOPE,
+        accessSaveBody('after-restart.txt', 'saved\n'))).json()).toMatchObject({ status: 'ready' });
+    } finally {
+      await restarted?.host.close().catch(() => { /* already closed */ });
+      await started.host.close().catch(() => { /* already closed */ });
+    }
+  });
+});
+
+describe('rejects: HOST settings workspace access', () => {
+  it('JIA-4: a start-up runtime binding fixes the access (unsupported) and changes no setting', async () => {
+    const started = await startHost({ runtimeConfiguration: hostRuntimeConfiguration() });
+    try {
+      const before = await readSettingsSnapshot(started);
+      expect(settingsWorkspaceOf(before, STARTUP_SCOPE))
+        .toMatchObject({ writeAllowed: false, accessFixed: 'startup_binding' });
+
+      // The one error: the start-up binding declares this scope's grant, so the
+      // settings route may not rebuild it; the body itself is complete.
+      expect(await (await settingsPost(started.base, 'workspaces/access', started.token,
+        { scope: STARTUP_SCOPE, writeAllowed: true, commandsAllowed: false })).json())
+        .toMatchObject({ status: 'rejected', code: 'unsupported' });
+      expect(settingsWorkspaceOf(await readSettingsSnapshot(started), STARTUP_SCOPE))
+        .toMatchObject({ writeAllowed: false });
+      expect(await (await corePost(started.base, 'files/save', started.token, STARTUP_SCOPE,
+        accessSaveBody('fixed.txt', 'x'))).json()).toMatchObject({ status: 'rejected', code: 'forbidden' });
+    } finally {
+      await started.host.close();
+    }
+  });
+
+  it('JIA-4 (programmatic runtime): a programmatic runtime fixes the access (unsupported) and changes no setting', async () => {
+    const started = await startHost({ runtime: {
+      resolveConfiguration: async () => ({ status: 'rejected', code: 'unsupported',
+        reason: 'this row never resolves a Work run' }),
+    } });
+    try {
+      const before = await readSettingsSnapshot(started);
+      expect(settingsWorkspaceOf(before, STARTUP_SCOPE))
+        .toMatchObject({ writeAllowed: false, accessFixed: 'programmatic_runtime' });
+
+      // The runtime is built in code, not rebuilt from the settings file, so
+      // the route may not change this workspace at all.
+      expect(await (await settingsPost(started.base, 'workspaces/access', started.token,
+        { scope: STARTUP_SCOPE, writeAllowed: true, commandsAllowed: false })).json())
+        .toMatchObject({ status: 'rejected', code: 'unsupported' });
+      expect(settingsWorkspaceOf(await readSettingsSnapshot(started), STARTUP_SCOPE))
+        .toMatchObject({ writeAllowed: false });
+      expect(await (await corePost(started.base, 'files/save', started.token, STARTUP_SCOPE,
+        accessSaveBody('programmatic.txt', 'x'))).json()).toMatchObject({ status: 'rejected', code: 'forbidden' });
+    } finally {
+      await started.host.close();
+    }
+  });
+
+  describe('JIA-5 refused inputs', () => {
+    let started!: Started;
+    let scope!: CoreScope;
+
+    beforeAll(async () => {
+      started = await startHost();
+      const root = await mkdtemp(join(tmpdir(), 'host-settings-access-reject-'));
+      temporary.push(root);
+      scope = expectReady(await (await settingsPost(started.base, 'workspaces/open', started.token,
+        { path: root, writeAllowed: false, commandsAllowed: false })).json() as SettingsResponse<OpenValue>).scope;
+    });
+
+    afterAll(async () => {
+      await started.host.close().catch(() => { /* already closed */ });
+    });
+
+    // One behaviour, two entries, one Host: entry 1 isolates the input rule and
+    // entry 2 the registration rule, so each fails alone when its own check goes
+    // away. Entry 2's reason is the draft's §2.3 not_found reason; it is also
+    // what separates a published route's rejection from today's unpublished-route
+    // 404, so this entry cannot pass vacuously.
+    it.each([
+      ['commands without write', 'invalid', 'commandsAllowed requires writeAllowed',
+        (known: CoreScope) => ({ scope: known, writeAllowed: false, commandsAllowed: true })],
+      ['an unknown scope', 'not_found', 'the workspace is not registered',
+        () => ({ scope: { projectId: 'no-such-project', workspaceId: 'no-such-workspace' },
+          writeAllowed: true, commandsAllowed: false })],
+    ] as [string, string, string, (known: CoreScope) => unknown][])(
+      'JIA-5 refuses %s and changes no setting', async (_label, code, reason, body) => {
+        const before = await readSettingsSnapshot(started);
+        expect(await (await settingsPost(started.base, 'workspaces/access', started.token, body(scope))).json())
+          .toEqual({ status: 'rejected', code, reason });
+        expect(await readSettingsSnapshot(started)).toEqual(before);
+        expect(await (await corePost(started.base, 'files/save', started.token, scope,
+          accessSaveBody('rejected.txt', 'x'))).json()).toMatchObject({ status: 'rejected', code: 'forbidden' });
+      });
+  });
+
+  it('JIA-6: a failed settings write rolls the switch back (unavailable) and changes no setting', async () => {
+    const started = await startHost();
+    try {
+      const root = await mkdtemp(join(tmpdir(), 'host-settings-access-writefail-'));
+      temporary.push(root);
+      const opened = expectReady(await (await settingsPost(started.base, 'workspaces/open', started.token,
+        { path: root, writeAllowed: false, commandsAllowed: false })).json() as SettingsResponse<OpenValue>);
+
+      // Replace the settings file with a non-empty directory: the atomic rename of
+      // the next write fails (the seam used by A2-settings-automation.test.ts:201).
+      await rm(join(started.settingsDirectory, 'host-settings.json'));
+      await mkdir(join(started.settingsDirectory, 'host-settings.json', 'blocked'), { recursive: true });
+
+      expect(await (await settingsPost(started.base, 'workspaces/access', started.token,
+        { scope: opened.scope, writeAllowed: true, commandsAllowed: false })).json())
+        .toEqual({ status: 'rejected', code: 'unavailable', reason: 'the settings file could not be written' });
+      expect(settingsWorkspaceOf(await readSettingsSnapshot(started), opened.scope))
+        .toMatchObject({ writeAllowed: false, commandsAllowed: false });
+      expect(await (await corePost(started.base, 'files/save', started.token, opened.scope,
+        accessSaveBody('rolled-back.txt', 'x'))).json()).toMatchObject({ status: 'rejected', code: 'forbidden' });
+    } finally {
+      await started.host.close();
     }
   });
 });

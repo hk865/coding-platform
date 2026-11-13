@@ -29,9 +29,14 @@ export type SettingsModel = {
   /** The reasoning-replay policy; absent means `all`. */
   reasoningReplay?: ReasoningReplayV1;
 };
+/** 121-106 / 4-28: whose two switches settings may change. A start-up runtime binding keeps the grant its start-up
+ *  configuration declares, so settings do not rebuild it; a programmatic runtime is never rebuilt from settings;
+ *  `null` means `workspaces/access` may switch this workspace. */
+export type SettingsAccessFixed = 'startup_binding' | 'programmatic_runtime';
 export type SettingsWorkspace = {
   scope: CoreScope; name: string; root: string; modelId: string | null;
   writeAllowed: boolean; commandsAllowed: boolean;
+  accessFixed: SettingsAccessFixed | null;
   /** R6: user-approved registered checks for exactly this workspace scope.
    * Absent for a scope that never approved any. The model's own suggestion is
    * never stored here; only an explicit Host user approval is. */
@@ -115,6 +120,9 @@ export type SaveAutomationSettings = { autoReworkLimit: number; resumeOnStartup:
 /** KLS-2 (route `knowledge-local`): keep the knowledge of the workspace's current checkout local, or stop. The Host
  *  finds the checkout itself; the body names no path. */
 export type SaveKnowledgeLocalSettings = { projectId: string; workspaceId: string; localOnly: boolean };
+/** 121-106 (route `workspaces/access`): switch one registered workspace's write and command access. Commands require
+ *  write. NET-B adds its network field here later. */
+export type SaveWorkspaceAccess = { scope: CoreScope; writeAllowed: boolean; commandsAllowed: boolean };
 export type DirectoryListing = {
   path: string; parent: string | null;
   directories: { name: string; path: string }[]; truncated: boolean;
@@ -193,6 +201,7 @@ export type SettingsRoutes = {
   'models/save': { input: SaveSettingsModel; value: HostSettingsSnapshot };
   'models/select': { input: { scope: CoreScope; modelId: string }; value: HostSettingsSnapshot };
   'workspaces/open': { input: OpenSettingsWorkspace; value: { settings: HostSettingsSnapshot; bootstrap: BootstrapResponse; scope: CoreScope } };
+  'workspaces/access': { input: SaveWorkspaceAccess; value: { settings: HostSettingsSnapshot; bootstrap: BootstrapResponse } };
   'checks/approve': { input: ApproveWorkspaceChecks; value: HostSettingsSnapshot };
   'automation/save': { input: SaveAutomationSettings; value: HostSettingsSnapshot };
   'resource-caps/save': { input: SaveResourceCapSettings; value: HostSettingsSnapshot };

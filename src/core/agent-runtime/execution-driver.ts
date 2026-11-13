@@ -80,7 +80,8 @@ import type {
 
 export type ExecutionDriverDependencies = Pick<RuntimeExecutionDependencies,
   | 'entry' | 'historyWriter' | 'executions' | 'sessionOperations' | 'kernelStores' | 'workspaceHost'
-  | 'sourceAuthority' | 'sourcePolicyFor' | 'sourceAnalyzers' | 'host' | 'kernel' | 'resourceCaps' | 'now' | 'newId'
+  | 'sourceAuthority' | 'sourcePolicyFor' | 'sourceAnalyzers' | 'host' | 'kernel' | 'resourceCaps' | 'commandSlots'
+  | 'commandSandbox' | 'now' | 'newId'
   | 'modelRequests' | 'roles' | 'materials' | 'bodies' | 'plans' | 'messages' | 'expiryCount' | 'decisionMessages' | 'applicationReceipt'
   | 'memberCreation' | 'handoffs' | 'maintainerAssignments' | 'roleSplit' | 'architectureProposals'
   | 'claims' | 'evidence'
@@ -551,7 +552,8 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
       // Ruling 16: the final list is recomputed from the same facts here; a
       // difference from the frozen list is `forbidden`, the PC-1 ruling 16 path.
       const readOnly = manifest.permissions.writeScope.length === 0;
-      const readonlyRequested = readOnly && manifest.permissions.tools.includes(READONLY_COMMAND_TOOL_NAME);
+      const readonlyRequested = !manifest.permissions.tools.includes('shell')
+        && manifest.permissions.tools.includes(READONLY_COMMAND_TOOL_NAME);
       let currentAuthorization: Awaited<ReturnType<typeof deps.workspaceHost.authorize>> | undefined;
       if (hasFileRead || readonlyRequested) {
         try {
@@ -567,7 +569,6 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         callKind: 'work',
         noteAdmission: { class: 'none' },
         selected: manifest.permissions.tools,
-        readOnly,
         reviewPhase: reviewPurpose?.phase ?? null,
         hasBlockedCommands: blockedBinding.length > 0,
         reviewSource: false,
@@ -582,6 +583,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
           graph: deps.graphContext !== undefined && deps.taskInputs !== undefined,
           notes: deps.notes?.write !== undefined && deps.notes?.check !== undefined,
           linkCheck: deps.notes?.check !== undefined,
+          webLookup: hostConfig.model.webLookup !== undefined,
           unknownCallReviews: deps.unknownCallReviews !== undefined,
           commandRerunRequests: deps.commandRerunRequests !== undefined,
           memberCreation: deps.memberCreation !== undefined,
@@ -643,6 +645,10 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         waitRegistered ??= { message };
         if (waitHandle !== null) waitHandle.waitMessage = structuredClone(message);
       };
+      // A missing or null binding is the entry guard's `invalid` later in this
+      // start. Reading the duty without dereferencing keeps this selection from
+      // throwing before that guard can answer the prepared manifest's verdict.
+      const contextDuty = manifest.contextAssembly?.duty;
       const coordination = selectWorkToolGroup({
         selected: manifest.permissions.tools,
         mailbox: deps.messages,
@@ -677,8 +683,13 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         ...(deps.architectureProposals === undefined ? {} : {
           architectureProposals: deps.architectureProposals,
         }),
-        ...(hostConfig.platformDuty === 'executor' || hostConfig.platformDuty === 'adviser'
-          ? { duty: hostConfig.platformDuty } : {}),
+        // The duty is the manifest's frozen effective duty (Role, Host, template
+        // in that order, `context-fact-text.ts:41-56`); the local workbench grant
+        // carries no `platformDuty`, so reading the Host configuration would
+        // leave every local writable Run without a hand-off duty.
+        ...(contextDuty === 'executor' || contextDuty === 'adviser'
+          ? { duty: contextDuty } : {}),
+        ...(hostConfig.model.webLookup === undefined ? {} : { webLookup: hostConfig.model.webLookup }),
         texts: toolTexts,
         extensionNames: new Set([READONLY_COMMAND_TOOL_NAME, RECORD_UNKNOWN_CALL_REVIEW_TOOL_NAME,
           PROPOSE_SAFER_METHOD_TOOL_NAME, REQUEST_COMMAND_RERUN_TOOL_NAME]),
@@ -1062,6 +1073,13 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
           prepared.envelope,
         );
       }
+      // NET-B (decision 121-112): a Run with a command tool gets its own route out through the Host proxy. A Run
+      // with `shell` always gets `network`: the Kernel's shell description follows it, so the Run starts and continues
+      // with the same one. The route opens right before the model call and closes when the Run ends.
+      const commandRoute = deps.commandSandbox !== undefined && (builtinTools.includes('shell') || readonlyRequested)
+        ? deps.commandSandbox.route(owned, runRef) : undefined;
+      const commandSandbox = deps.commandSandbox === undefined ? undefined : { toolchain: deps.commandSandbox.toolchain,
+        ...(commandRoute === undefined ? {} : { network: commandRoute.source }) };
       // U5: the ONE shared read-only command construction; the shared function
       // applies the same L18 layer-1 gate and keeps this Run's authorization
       // choice (the Host read re-check at every launch).
@@ -1072,6 +1090,8 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         workspaceRoot: rootResolved.value.root,
         processSandboxOptions: hostConfig.processSandboxOptions,
         ...(deps.resourceCaps === undefined ? {} : { resourceCaps: deps.resourceCaps }),
+        ...(deps.commandSlots === undefined ? {} : { commandSlots: deps.commandSlots }),
+        ...(commandSandbox === undefined ? {} : { commandSandbox }),
         authorizeCurrent: () => deps.workspaceHost.authorize(owned, workspace),
         texts: toolTexts,
       });
@@ -1283,8 +1303,11 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
               throughPosition: compaction?.status === 'compacted' ? compaction.position : historyDecision.throughPosition,
               ...(historyDecision.sourceSessionId === null ? {} : { sourceSessionId: historyDecision.sourceSessionId }) }
             : { version: 1 as const, mode: 'current_turn' as const };
+          if (enteredFailure === undefined) await commandRoute?.open();
           if (enteredFailure === undefined) await runObservedModel({
             ...shared,
+            // Only this call: the summary call that shares `shared` has no command tool.
+            ...(commandSandbox === undefined ? {} : { commandSandbox }),
             sessionId: record.session.kernel.kernelSessionId, input: manifest.input,
             sessionContext, executionIdentity: { runId: kernelBinding.runId, turnId: kernelBinding.turnId },
             ...(inputSupply === undefined ? {} : { inputSupply }),
@@ -1348,6 +1371,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         handle.settled = true;
         settleDone();
         owned.signal.removeEventListener('abort', abortFromCaller);
+        await commandRoute?.close();
       }
     },
   };

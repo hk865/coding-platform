@@ -64,7 +64,7 @@ export const SECRETARY_ROUND_TEMPLATE_V1 =
   '{{prelude}}\n\n{{role}}{{goal}}{{notes}}{{task_round}}{{task_batched}}{{task_earlier}}';
 
 /** The platform pack's versions of the two secretary templates (the answer mentions no tool at pack level). */
-export const SECRETARY_TEMPLATE_VERSIONS = { 'secretary-round': 2, 'secretary-answer': 3 } as const;
+export const SECRETARY_TEMPLATE_VERSIONS = { 'secretary-round': 2, 'secretary-answer': 4 } as const;
 
 /** `secretary-answer.txt` rendered for a `semantic_query` round: its one submit block. */
 export const SECRETARY_ANSWER_FORMAT_V1 =

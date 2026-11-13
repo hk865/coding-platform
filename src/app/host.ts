@@ -45,6 +45,8 @@ import {
 import { PLATFORM_PROMPT_PACK_V1 } from '../contracts/prompts/platform-pack.generated.js';
 import { renderTemplate } from '../contracts/prompts/render-template.js';
 import { COLD_START_STAGE_NOT_BOUND, openTargetPlatform, type TargetPlatformOptions } from '../composition/create-platform.js';
+import { createCommandSlots, PLATFORM_COMMAND_SLOTS } from '../core/agent-runtime/command-slots.js';
+import { commandToolchainOf, createCommandNetworkProxy, type CommandNetworkProvider } from './command-sandbox.js';
 import { createKnowledgeWriteQueue } from '../core/work-graph/knowledge/write-queue.js';
 import type { RecordCommitObserver } from '../composition/commit-observer.js';
 import {
@@ -111,6 +113,7 @@ import { renderAttentionChanges } from '../core/agent-runtime/context-assembler.
 import { READONLY_COMMAND_TOOL_NAME } from '../core/agent-runtime/readonly-command-tool.js';
 import { GRAPH_TOOL_NAMES } from '../core/agent-runtime/graph-tools.js';
 import { LINK_CHECK_TOOL_NAMES } from '../core/agent-runtime/link-check-tool.js';
+import { WEB_LOOKUP_TOOL_NAMES } from '../core/agent-runtime/web-lookup-tools.js';
 import { NOTE_TOOL_NAMES } from '../core/agent-runtime/note-tool.js';
 import { platformRoleProfile } from '../core/agent-runtime/role-profiles.js';
 import { plainSessionRefKey } from '../core/work-graph/sessions/session-record-codecs.js';
@@ -132,7 +135,7 @@ import {
   type ChecksAdoptionHostCallbacks,
 } from './host-settings.js';
 import type {
-  ChecksAdoptionEntryPort, HostSettingsPort, OpenSettingsWorkspace, SettingsResponse,
+  ChecksAdoptionEntryPort, HostSettingsPort, OpenSettingsWorkspace, SettingsAccessFixed, SettingsResponse,
 } from './host-settings-types.js';
 import {
   DEFAULT_WORK_RUN_TOKEN_BUDGET,
@@ -239,6 +242,9 @@ export type LocalWorkbenchHostOptions = {
   /** Host-internal controlled-provider seam for the normal-chain acceptance.
    * It is never a CLI or HTTP field and never changes the product default. */
   runtimeProvider?: WorkbenchRuntimeProviderDependencies;
+  /** NET-B: Host-internal stand-ins for the command proxy's resolver, `net.connect` and live interfaces (the public
+   * internet of an acceptance test). It is never a CLI or HTTP field and never changes the product default. */
+  networkProvider?: CommandNetworkProvider;
   /**
    * Explicit Host attention scopes. Each scope carries its own watched paths,
    * dual-graph Goal, target member, thresholds and heartbeat/coalesce window; no
@@ -430,24 +436,24 @@ function localWorkbenchBudget(model: HostSettingsStoredModel): typeof LOCAL_WORK
  * and link-check tools. The read tools every built-in duty starts from. */
 const LOCAL_READ_TOOL_NAMES: readonly string[] = ['read', ...GRAPH_TOOL_NAMES, ...LINK_CHECK_TOOL_NAMES];
 
-/** The local secretary's tools: the read tools (including `check_links`) plus the note writer and the six coordination
- *  names (the mailbox sender/ack/respond/withdraw, member creation and the request read). `record_note` writes
- *  WorkGraph notes only, so the grant below keeps the file write scope empty. */
-const LOCAL_SECRETARY_TOOL_NAMES: readonly string[] = [...LOCAL_READ_TOOL_NAMES, ...NOTE_TOOL_NAMES,
-  'send_session_message', 'ack_session_message', 'respond_session_message', 'withdraw_session_message',
-  'create_member', 'read_requests'];
+/** The local secretary's tools: the read tools (including `check_links`) and the read-only command, plus the note
+ *  writer and the four coordination names (the mailbox sender/withdraw, member creation and the request read).
+ *  `record_note` writes WorkGraph notes only, so the grant below keeps the file write scope empty. */
+const LOCAL_SECRETARY_TOOL_NAMES: readonly string[] = [...LOCAL_READ_TOOL_NAMES, READONLY_COMMAND_TOOL_NAME,
+  ...NOTE_TOOL_NAMES, 'send_session_message', 'withdraw_session_message', 'create_member', 'read_requests'];
 
 // Each built-in duty's tools (book §3.8 item 6; O5b rulings 4, 5, 7, 32): the names its two skill templates
 // (`platform-work` and its own) put in a tool block, the frozen v4 names and what the tested duty bindings grant,
 // every one a name a Work Run knows; the adviser's `read_requests` is for the cold start's exploration Query only
-// (a Work Run knows it and builds none); `read` brings `search` and `code_index` with it. The reviewer's are
-// read-only, without `record_note` (PL's rule).
-const LOCAL_ADVISER_TOOL_NAMES: readonly string[] = [...LOCAL_READ_TOOL_NAMES, ...NOTE_TOOL_NAMES,
-  'query_task_graph', 'query_ready_tasks', 'propose_future_plan', 'find_related_sessions', 'send_session_message',
-  'create_member', 'assign_module_maintainer', 'propose_role_split', 'propose_architecture_revision',
-  'read_requests'];
-const LOCAL_SCRIBE_TOOL_NAMES: readonly string[] = [...LOCAL_READ_TOOL_NAMES, ...NOTE_TOOL_NAMES,
-  'find_related_sessions', 'send_session_message'];
+// (a Work Run knows it and builds none); `read` brings `search` and `code_index` with it. Every duty runs the
+// platform read-only command (121-112 ruling 3); the reviewer's are read-only, without `record_note` (PL's rule).
+const LOCAL_ADVISER_TOOL_NAMES: readonly string[] = [...LOCAL_READ_TOOL_NAMES, READONLY_COMMAND_TOOL_NAME,
+  ...NOTE_TOOL_NAMES, 'query_task_graph', 'query_ready_tasks', 'propose_future_plan', 'find_related_sessions',
+  'send_session_message', 'create_member', 'assign_module_maintainer', 'propose_role_split',
+  'propose_architecture_revision', 'read_requests', 'request_rework', 'request_recheck', 'send_user_message',
+  'hand_off'];
+const LOCAL_SCRIBE_TOOL_NAMES: readonly string[] = [...LOCAL_READ_TOOL_NAMES, READONLY_COMMAND_TOOL_NAME,
+  ...NOTE_TOOL_NAMES, 'find_related_sessions', 'send_session_message', 'send_user_message'];
 const LOCAL_REVIEWER_TOOL_NAMES: readonly string[] = [...LOCAL_READ_TOOL_NAMES, 'run_readonly_command'];
 
 /** The local workbench secretary's binding identity. Its Role is the exact
@@ -467,8 +473,9 @@ function localDutyRoleBinding(duty: 'secretary' | 'adviser' | 'scribe' | 'review
 }
 
 /** The secretary grant's one generalization: the same fields, the duty's Role/behaviour and a passed tool list. The
- *  adviser's `create_member` needs the delegation (the member service admits a caller Run only with it); the
- *  reviewer keeps the workspace's read-only command access, already switched by `localWorkbenchGrant`. */
+ *  adviser's `create_member` needs the delegation (the member service admits a caller Run only with it); every duty
+ *  keeps the workspace's read-only command access, already switched by `localWorkbenchGrant`. The workspace model's
+ *  web lookup names follow the local grant, so every duty gets them only for a DeepSeek model. */
 function localDutyGrant(localGrant: WorkbenchRuntimeBinding['grant'],
   duty: 'secretary' | 'adviser' | 'scribe' | 'reviewer', tools: readonly string[]): WorkbenchRuntimeBinding['grant'] {
   const template = platformRoleProfile(duty).template;
@@ -476,12 +483,13 @@ function localDutyGrant(localGrant: WorkbenchRuntimeBinding['grant'],
     budget: structuredClone(localGrant.budget),
     hostTemplate: { templateId: template.templateId, revision: template.templateRevision,
       digest: sha256Hex(PLATFORM_PROMPT_PACK_V1.templates[`skill-platform-${duty}`]) },
-    tools: [...tools], writeScope: [], skills: { bundle: 'platform', behaviors: [duty] },
+    tools: [...tools, ...localGrant.tools.filter(name => (WEB_LOOKUP_TOOL_NAMES as readonly string[]).includes(name))],
+    writeScope: [], skills: { bundle: 'platform', behaviors: [duty] },
     systemInstruction: null, deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
     platformDuty: duty,
     ...(duty === 'adviser' ? { createMember: true } : {}),
-    ...(duty === 'reviewer' && localGrant.readonlyCommandAccess !== undefined
-      ? { readonlyCommandAccess: localGrant.readonlyCommandAccess } : {}),
+    ...(localGrant.readonlyCommandAccess === undefined ? {}
+      : { readonlyCommandAccess: localGrant.readonlyCommandAccess }),
     ...(localGrant.contextResidentBytes === undefined ? {} : { contextResidentBytes: localGrant.contextResidentBytes }),
   };
 }
@@ -521,15 +529,19 @@ export function localWorkbenchGrant(workspace: WorkbenchWorkspaceConfig, model: 
     // already-bound Runs and explicit callers; the read-only Query ceiling still
     // strips every mailbox name.
     // RW-1 (4C): `record_note` is a coordination tool that writes WorkGraph
-    // records, so it follows the same `writeAllowed` condition as the mailbox
-    // tools; a read-only or Query ceiling still strips it.
-    // The executor also requests rework/recheck but never acks, responds or withdraws: those stay on the
-    // secretary grant below.
+    // records, so it follows the same `writeAllowed` condition as the file
+    // write; a read-only or Query ceiling still strips it. The mailbox and the
+    // plan proposal write no workspace, so a read-only executor keeps them.
+    // The executor also requests rework/recheck/hand-off only when it can write:
+    // a hand-off starts by writing the current understanding.
     tools: [...LOCAL_READ_TOOL_NAMES,
+      // The platform web lookup follows the workspace model: only a DeepSeek binding has the port (121-112).
+      ...(model.provider === 'deepseek' ? WEB_LOOKUP_TOOL_NAMES : []),
       ...(readonlyCommandsAllowed ? [READONLY_COMMAND_TOOL_NAME] : []),
-      ...(writeAllowed ? ['write', 'record_note', 'send_session_message',
-        'read_session_inbox', 'read_session_message', 'read_session_message_body',
-        'request_rework', 'request_recheck'] : []),
+      ...(writeAllowed ? ['write', 'record_note'] : []),
+      'send_session_message', 'read_session_inbox', 'read_session_message', 'read_session_message_body',
+      'propose_future_plan',
+      ...(writeAllowed ? ['request_rework', 'request_recheck', 'hand_off'] : []),
       ...(commandsAllowed ? ['shell'] : [])],
     writeScope: writeAllowed ? ['.'] : [],
     skills: { resourceRoot: PLATFORM_SKILL_RESOURCE_ROOT, enabledIds: ['platform-work'] },
@@ -698,6 +710,15 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
    * keeps the budget in its own record. */
   let planLoopLimits: PlanLoopLimitsV1 = structuredClone(DEFAULT_PLAN_LOOP_LIMITS);
   const resourceCaps: ResourceCapSource = { current: () => ({ ...resourceCapsRequest }) };
+  // 121-112 ruling 3: the Host's ONE cap on platform-run commands, shared by every
+  // project's platform: read-only commands and registered checks wait for a slot.
+  const commandSlots = createCommandSlots(PLATFORM_COMMAND_SLOTS);
+  // NET-B (decision 121-112): the ONE command proxy and toolchain, shared by every project's platform and the
+  // workbench. Off Linux there is no bubblewrap and no command runs, so neither is built.
+  const commandSandbox = process.platform !== 'linux' ? undefined : {
+    toolchain: await commandToolchainOf(process.execPath),
+    proxy: createCommandNetworkProxy({ ...options.networkProvider, now: options.now ?? (() => new Date().toISOString()) }),
+  };
   /** The effective Work Run token budget. It is Host state, not part of a
    * runtime configuration version: an already claimed Run keeps its budget and
    * the next Work Run's trusted binding reads this value. */
@@ -726,6 +747,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   };
   const versionProvider = (secretSource: { get: (name: string) => string | undefined }): WorkbenchRuntimeProviderDependencies => ({
     ...(baseProvider.registry === undefined ? {} : { registry: baseProvider.registry }),
+    ...(baseProvider.webFetch === undefined ? {} : { webFetch: baseProvider.webFetch }),
     secretSource,
   });
   const initialBindings = options.runtime !== undefined
@@ -740,6 +762,12 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   // Settings may rebuild the runtime only from the serializable configuration;
   // a programmatic runtime keeps its original binding untouched.
   const rebuildRuntimeFromSettings = options.runtime === undefined && resolverRegistry !== undefined;
+  /** 121-106 / 4-28: whose two switches settings may change. A start-up runtime binding keeps the grant its start-up
+   *  configuration declares (a settings rebuild never replaces it); a programmatic runtime is never rebuilt from
+   *  settings. */
+  const accessFixedOf = (scope: CoreScope): SettingsAccessFixed | null =>
+    !rebuildRuntimeFromSettings ? 'programmatic_runtime'
+      : startupBindingsByScope.has(scopeKey(scope)) ? 'startup_binding' : null;
 
   const sourcePolicyFor: TargetPlatformOptions['sourcePolicyFor'] = async (projectId, workspaceId) => {
     const config = byScope.get(scopeKey({ projectId, workspaceId }));
@@ -919,6 +947,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       secretaryProfiles,
       sourcePolicyFor,
       resourceCaps,
+      commandSlots,
+      ...(commandSandbox === undefined ? {} : { commandSandbox }),
       operatorActor: actor,
       ...(promptsRoot === undefined ? {} : { promptPacks: createDiskPromptPackSource(promptsRoot) }),
       // PL §5.2.5/§6.7.1: the Host's own system-round wrapper over the ONE mailbox
@@ -1029,7 +1059,20 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     })),
     onCommandChange: change => changes.commandChanged(change, databaseHead(change.scope.projectId)),
     resourceCaps,
+    ...(commandSandbox === undefined ? {} : { commandSandbox }),
   });
+  /** 121-106 / 4-28: change one registered workspace's two switches in its live config, which the tools, the bootstrap
+   *  and the next runtime rebuild all read. Turning write off deletes the write prefixes; turning it on from off grants
+   *  the whole workspace, as an open does; a workspace that stayed writable keeps its start-up prefixes (possibly
+   *  narrower). Both values reach the person's tools at once; a prepared Run keeps the version it pinned. */
+  function applyAccess(config: WorkbenchWorkspaceConfig, access: { writeAllowed: boolean; commandsAllowed: boolean }): void {
+    const writable = (config.writePrefixes?.length ?? 0) > 0;
+    if (!access.writeAllowed) delete config.writePrefixes; else if (!writable) config.writePrefixes = ['.'];
+    if (access.commandsAllowed) config.allowCommands = true; else delete config.allowCommands;
+    workbenchTools.setAccess(config.scope, {
+      ...(config.writePrefixes === undefined ? {} : { writePrefixes: config.writePrefixes }),
+      ...(config.allowCommands === undefined ? {} : { allowCommands: config.allowCommands }) });
+  }
   // PL §5.5.1 steps 5–6: the driver registers a wait, drains the Host's one
   // goal-waits handler, then parks/sends. The handler is created below, beside
   // the wake loop; the closure runs only after this Host has returned.
@@ -1292,8 +1335,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     };
     /**
      * S1: each ended request round gets one plan-turn attempt. The Host reads only the round; the entry reads the
-     * answer. A non-plan followup answers `skipped/no_plan` and writes nothing. A failed turn stays for the next
-     * pass; a transient skip does too, every other outcome removes the entry.
+     * answer. A round whose frozen tool list has no planning submit answers `skipped/no_plan` and writes nothing. A
+     * failed turn stays for the next pass; a transient skip does too, every other outcome removes the entry.
      */
     const startPendingPlanTurns = async (platform: ProjectPlatform, ctx: CoreCallContext,
       failures: string[]): Promise<void> => {
@@ -1312,8 +1355,12 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
             continue;
           }
           const job = read.value.job;
-          if (!isRequestRound(job) || job.job.roundKind !== 'followup' || job.job.requestRoot === null
-            || job.job.goalId === null || job.job.status !== 'answered') {
+          // 121-112: a request's first round may carry the planning submit too;
+          // a later round without a selected idea still reaches the entry and
+          // answers `no_plan` there.
+          if (!isRequestRound(job)
+            || (job.job.roundKind !== 'followup' && job.job.roundKind !== 'request')
+            || job.job.requestRoot === null || job.job.goalId === null || job.job.status !== 'answered') {
             turns.delete(key);
             continue;
           }
@@ -2071,8 +2118,12 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     // returns the scope it already has.
     for (const workspace of workspaces) {
       if (requestedProjectId !== undefined && workspace.scope.projectId !== requestedProjectId) continue;
-      if (await canonicalExisting(workspace.root) === canonical)
+      if (await canonicalExisting(workspace.root) === canonical) {
+        // 4-28: a listed start-up workspace takes its saved switches on a restart, unless its access is fixed.
+        if (isRestore && workspace.scope.workspaceId === request.workspaceId && accessFixedOf(workspace.scope) === null)
+          applyAccess(workspace, { writeAllowed: request.writeAllowed, commandsAllowed: request.commandsAllowed });
         return { status: 'ready', value: { scope: { ...workspace.scope } } };
+      }
     }
     // R6 [2C2-10]: a root another project already has is joined, never copied: the projects share its `.workbench/`,
     // and this one reads that line's notes as needing verification. A restore is no join (it joined when first opened).
@@ -2209,10 +2260,22 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       modelId: null,
       writeAllowed: (workspace.writePrefixes?.length ?? 0) > 0,
       commandsAllowed: workspace.allowCommands === true,
+      accessFixed: accessFixedOf(workspace.scope),
       // U8: where the workspace's project store lives (no directory); a memory store or a project not open has none.
       storeLocation: storeLocationOf(workspace.scope.projectId),
       knowledgeRepoKey: knowledgeRepoKeys.get(scopeKey(workspace.scope)) ?? null,
     })),
+    setWorkspaceAccess: (scope, access) => {
+      const config = byScope.get(scopeKey(scope));
+      if (config === undefined) return { status: 'rejected', code: 'not_found', reason: 'the workspace is not registered' };
+      if (platformFor(scope.projectId) === null) return { status: 'rejected', code: 'unavailable', reason: 'the project store is not available' };
+      const fixed = accessFixedOf(scope);
+      if (fixed !== null) return { status: 'rejected', code: 'unsupported', reason: fixed === 'startup_binding'
+        ? "the start-up runtime configuration fixes this workspace's access" : "a programmatic runtime fixes this workspace's access" };
+      const previous = { writeAllowed: (config.writePrefixes?.length ?? 0) > 0, commandsAllowed: config.allowCommands === true };
+      applyAccess(config, access);
+      return { status: 'ready', value: previous };
+    },
     // KLS-2: the checkout through the one line resolution (the workspace must be the project's); the key the snapshot
     // reads is refreshed with it, so a folder made a git repository after it opened reads right from here on.
     knowledgeCheckout: async scope => {
@@ -3649,6 +3712,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         // Each runtime closes its platform, then releases its lease (HL-06: the lock file goes only while it still
         // names this instance; a Host that never held it never touches it).
         await registry.closeAll();
+        // Every Run and workbench command has ended: no route is left listening and no tunnel stays open.
+        await commandSandbox?.proxy.close();
       })();
       return closePromise;
     },

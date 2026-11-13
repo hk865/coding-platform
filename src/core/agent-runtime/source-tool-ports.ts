@@ -4,6 +4,7 @@ import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { WorkspaceRef } from '../../contracts/ledger.js';
 import type { WorkspaceToolsPort, WorkspaceResult } from '../workspace/ports.js';
 import type { ReasoningReplayV1 } from '../../contracts/prompts/prompt-set.js';
+import type { WebLookupPort } from './web-lookup-tools.js';
 
 /** Host-prepared capability for one model loop. This is not a Run admission API:
  * the trusted caller binds identity and live authorization before providing it.
@@ -24,4 +25,7 @@ export type BoundModel = {
    * always fills it; a model a test builds directly may omit it and then keeps
    * the revision, `platform` pack and `all` replay. */
   selection?: { modelId: string; promptPack: string; reasoningReplay: ReasoningReplayV1 };
+  /** The platform web lookup for a DeepSeek binding only; its key and address
+   * are this model's own and live inside the port (121-112). */
+  webLookup?: WebLookupPort;
 };

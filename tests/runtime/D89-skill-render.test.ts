@@ -2,7 +2,8 @@
  * Decision 89 small step: the five Skill templates render the locked paragraphs
  * and their tool blocks by the final grant. Every expected fragment below is
  * hand-written from the frozen draft's §3.1–§3.5 fences (the spec), never copied
- * from a render; the hand-computed blank-line count is the same for every grant.
+ * from a render; the hand-computed blank-line count is the same for every grant, plus the blank lines a
+ * gated section of its own carries when its tool is granted (`blankLinesWith`).
  * The six grant combinations are one pure table; two real calls on memory check
  * the final tools a Work and a Query end with and the paragraphs they render.
  */
@@ -17,7 +18,8 @@ import { committed, ready } from '../helpers/S1-runtime-scenario-fixture.js';
 import { createWP2Platform } from '../helpers/WP2-platform-support.js';
 
 const PACK = PLATFORM_PROMPT_PACK_V1;
-type Skill = { readonly outside: readonly string[]; readonly blocks: Readonly<Record<string, string>>; readonly blankLines: number };
+type Skill = { readonly outside: readonly string[]; readonly blocks: Readonly<Record<string, string>>; readonly blankLines: number;
+  readonly blankLinesWith?: Readonly<Record<string, number>> };
 
 /** Hand-written outside lines, block bodies (by name) and blank-line counts, from the draft. */
 const SKILLS: Readonly<Record<string, Skill>> = {
@@ -30,6 +32,8 @@ const SKILLS: Readonly<Record<string, Skill>> = {
       'work.question': "     发不出消息时，用 `record_note` 在那个模块上记一条 `open_question`（例如“X 归谁写？我先在某文件里写了一份不导出的”）。记下不等于对方已经收到。", 'work.convention': "   - 用 `record_note` 在那个模块锚点上记一条 `convention`：话题写它的名字，结论一句话（“X 只在某文件里，要用就引用它，不另写”），`basisFiles` 写那个文件（只写路径）。",
     },
     blankLines: 17,
+    // AGT+ (121-112, ruling Q5): the `run_readonly_command` section "## 跑命令和试一试" has one blank line under its heading.
+    blankLinesWith: { run_readonly_command: 1 },
   },
   'skill-platform-adviser': {
     outside: "## 拆并行任务：共享件先定归属\n原因见共同工作原则“共享的东西只写一份”。能在开工前定下“谁来写”的只有计划和接口约定，所以这一步在你这里。目的：每个共享件开工前就有唯一负责的任务，别的任务只用它。\n什么时候照做：做计划、改计划时，凡是会同时进行的任务；要派一个和正在做的任务改同一个模块的任务之前。\n1. 列共享件。对每组会同时做的任务问一句：“它们各自单干，会各写出哪些一样的东西？”常见的有数据结构和类型、校验规则和上限、格式和解析、状态怎么变、给人看的文字、测试的辅助和夹具。\n2. 每件定一个去处。已经有的，写进相关任务的说明：“用现成的 X（某文件）”。新的只交给一个任务写，写明名字、输入和输出、放在哪；其他任务的说明写“用任务 T 提供的 X”。几乎所有任务都要的一小块，可以排成一个先做的小任务。\n   为什么：说明里写明用谁的，执行者就不必猜。先做一小块会让并行晚开始，所以只在很多任务都依赖它时这样排。\n3. 分工要放在执行者会看的地方：每个任务的说明里，和模块上的接口约定（格式见共同工作原则）。\n   - 规划轮能写注记：细化时直接记，不写“之后有权写的那一轮落实”；只有这一轮确实不能写注记时，才把分工写进计划草案的任务说明。\n4. 有人请你定归属时尽快定。\n   - 这一轮确实不能写注记时，把定下的归属写进回答，交给之后有权写的那一轮。\n   为什么：问题挂着不答，对方只能先写一份。\n5. 收到完成说明或变化提醒时，对照里面新建的共享件和还在做的任务；有重叠，马上告诉还在做的一方改用现成的。\n   为什么：对方做完之前提醒，改一处就够；做完以后，两份都要审、都要合。".split('\n'),
@@ -91,7 +95,8 @@ describe('decision 89 Skill rendering', () => {
         if (visible.includes(name)) expect(text, `${name} present`).toContain(body);
         else expect(text, `${name} absent`).not.toContain(body);
       }
-      expect(text.split('\n').filter(line => line === ''), `${id} blank lines left`).toHaveLength(skill.blankLines + 1);
+      const gated = tools.reduce((sum, tool) => sum + (skill.blankLinesWith?.[tool] ?? 0), 0);
+      expect(text.split('\n').filter(line => line === ''), `${id} blank lines left`).toHaveLength(skill.blankLines + gated + 1);
     }
   });
 });

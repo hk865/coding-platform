@@ -13,8 +13,8 @@
  * The unified order (§4.3, §13.2 point 3), each step before the next IO:
  *   1. receipt lookup (a replay restores the original `requeued`/`refused`);
  *   2. principal admission and the actor class (`reworkActorClassOf`); an
- *      Agent through `authorizeDelegatedWrite(…, 'request_rework')` (no
- *      production Role grants the tool before its Agent entry, GAP-46);
+ *      Agent through `authorizeDelegatedWrite(…, 'request_rework')` (the
+ *      writable local executor and the adviser carry the name);
  *   3. one directed read window (Goal, active Plan, `readCanonicalTaskFacts`
  *      for this Task with its TaskRequeues and refusals, the selected Run's
  *      round chain) and the state preconditions (`taskRequeueStateProblem`),

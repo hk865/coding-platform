@@ -63,6 +63,28 @@ export function unknownCallEscalationPlainLine(cause: UnknownCallEscalationCause
   }
 }
 
+/**
+ * The review record's own name: the card summary and the notice object label
+ * share it, so the person sees one word for the record in both places.
+ */
+export function unknownCallReviewRecordName(record: UnknownCallReviewV1): string {
+  return `核对记录 ${record.runRef.runId.slice(0, 8)}`;
+}
+
+/**
+ * K3 layering (121-109): the plain line the person reads in 请知悉 when the adviser decided the record; null
+ * otherwise. The words are the card's own option labels; the adviser's `plain` follows when the last applied
+ * adviser answer carries one (an approval phase the person answered has none).
+ */
+export function unknownCallReviewAdvisedLine(record: UnknownCallReviewV1): string | null {
+  const disposition = record.disposition;
+  if (disposition === null || disposition.source !== 'adviser') return null;
+  const head = `中断时有 ${String(disposition.targets.length)} 步操作不知道做完没有，`
+    + `参谋定为“${UNKNOWN_CALL_REVIEW_OPTION_LABELS[disposition.choice]}”`;
+  const plain = record.advice?.answer?.plain;
+  return plain === undefined ? head : `${head}：${plain}`;
+}
+
 const ESCALATION_KIND_WORDS: Readonly<Record<UnknownCallAdviceEscalationKindV1, string>> = {
   requirement: '需求', product_tradeoff: '产品取舍', architecture: '架构选择',
 };
@@ -192,7 +214,7 @@ function suggestionLine(record: UnknownCallReviewV1): string | null {
 }
 
 export function unknownCallReviewSummary(record: UnknownCallReviewV1): string {
-  const base = `核对记录 ${record.runRef.runId.slice(0, 8)}：需要你决定`;
+  const base = `${unknownCallReviewRecordName(record)}：需要你决定`;
   const suggestion = suggestionLine(record);
   if (record.status === 'awaiting_approval') {
     const lines = suggestion === null ? [base] : [base, suggestion];

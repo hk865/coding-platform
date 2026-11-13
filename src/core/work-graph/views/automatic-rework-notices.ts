@@ -17,11 +17,16 @@
  * `TaskRequeueRef`/`VerificationRoundRef`, keeps only system/agent rework, and
  * projects the frozen `自动返工 · …` summary with the creation-time cap. It
  * never schedules work, wakes an agent or writes a Notification.
+ *
+ * A requeue that covers an unresolved-result review the adviser decided also
+ * carries the person's one plain sentence and the review record's pin, so the
+ * notice expands into the record itself (121-109).
  */
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import { rejected } from '../../../contracts/core/rejections.js';
+import type { DecisionObjectV1 } from '../../../contracts/goal-decisions.js';
 import type { TaskRequeueSnapshotV1 } from '../../../contracts/task-requeue.js';
 import type { RoundSnapshot, VerificationRoundRef } from '../../../contracts/verification.js';
 import type { RunRef, RunSnapshot, TaskTriple } from '../../../contracts/dispatch.js';
@@ -49,6 +54,14 @@ import {
   S2A_REQUEUE_BY_PROJECT_LOOKUP,
   taskRequeueRefKey,
 } from '../tasks/claim-record-codecs.js';
+import {
+  unknownCallReviewAdvisedLine,
+  unknownCallReviewRecordName,
+} from '../tasks/unknown-call-review-card.js';
+import {
+  decodeUnknownCallReview,
+  unknownCallReviewRefKey,
+} from '../tasks/unknown-call-review-codecs.js';
 import { priorRequeueAutoCount } from '../state/task-failure.js';
 import { roundChainHead } from '../state/verification-machine.js';
 import { compareNoticePositions } from './notice-position.js';
@@ -207,12 +220,15 @@ async function readAutomaticReworkPage(
         if (cap === null) return rejected('unavailable', `automatic rework requeue ${itemKey} has no automation cap`);
         summary = reworkSummary(requeue.task, requeue.automation.autoCount, cap);
       }
+      const advised = await advisedReviewFacts(records, requeue.afterRunRef);
+      if (!advised.ok) return advised.rejection;
+      if (advised.line !== null) summary = `${summary} · ${advised.line}`;
       items.push(withResourceCapHit({
         itemKey, category: 'automatic_rework',
         subject: { kind: 'goal', goalRef: { aggregateType: 'Goal', projectId: requeue.ref.projectId, goalId: requeue.ref.goalId } },
         position: noticePositionOf(since, itemKey),
         summary,
-        objects: [],
+        objects: advised.object === null ? [] : [advised.object],
         rework: { operation: 'requeue', actorClass, taskRef: requeue.task,
           count: requeue.automation.autoCount, cap: requeue.automation.cap, reason: requeue.reason,
           sourceRef: requeue.ref, requestedAt: requeue.requestedAt,
@@ -487,6 +503,38 @@ async function triggerRoundFacts(
     return { ok: false, rejection: rejected('unavailable', `automatic rework trigger round: ${decoded.reason}`) };
   }
   return { ok: true, hit: firstResourceCapHitOf(decoded.value), autoCount: decoded.value.chain.autoCount };
+}
+
+/**
+ * K3L-4 (121-109): the review record a requeue covers, keyed by its afterRun (the record is keyed by its own Run;
+ * `run-state-service.ts` reads the same key). No record is the common case; a damaged one is a read failure like
+ * the trigger round's.
+ */
+async function advisedReviewFacts(
+  records: DecisionReadRecordsPort,
+  runRef: RunRef,
+): Promise<{ ok: true; line: string | null; object: DecisionObjectV1 | null }
+  | { ok: false; rejection: { status: 'rejected'; code: 'unavailable'; reason: string } }> {
+  const key = unknownCallReviewRefKey({ aggregateType: 'UnknownCallReview',
+    projectId: runRef.projectId, goalId: runRef.goalId, runId: runRef.runId });
+  const read = await records.readMany([key]);
+  if (read.status !== 'ready') throw read;
+  const encoded = read.value.records.find((candidate) => candidate.refKey === key);
+  if (encoded === undefined) return { ok: true, line: null, object: null };
+  const decoded = decodeUnknownCallReview(encoded);
+  if (decoded.status !== 'decoded') {
+    return { ok: false, rejection: rejected('unavailable', `automatic rework review record: ${decoded.reason}`) };
+  }
+  const line = unknownCallReviewAdvisedLine(decoded.value);
+  return {
+    ok: true,
+    line,
+    object: line === null ? null : {
+      kind: 'aggregate',
+      pin: { ref: structuredClone(decoded.value.ref), revision: decoded.value.revision },
+      label: unknownCallReviewRecordName(decoded.value),
+    },
+  };
 }
 
 /**

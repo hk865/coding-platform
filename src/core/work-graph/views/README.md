@@ -81,7 +81,7 @@
 - `note-views.ts` — `NoteCheckPort`：注记的 freshness、changedFiles、冲突、配额等派生字段，联系的第一档读和第二档核对入口，以及每个 Host 一份的联系结论、存疑队列、断了的联系和解析答案。
 - `note-review-notices.ts` — `note_review` 请知悉来源：三类注记版本流；`goalId: null` 的版本是项目 subject 的行，按绑定的项目作用域读，Goal 过滤页不收。
 - `project-notice-notices.ts` — `project_notice` 请知悉来源：一项一条 `ProjectNotice@1` 记录，先读 watermark 作 `sourceCursor`，再按 `since` 从已看位置（含）读到尾；坏记录、缺 `since` 或位置低于已看位置为 `unavailable`；Goal 过滤页按通知存的 subject 筛（D-8），不折行。
-- `automatic-rework-notices.ts` — `automatic_rework` 请知悉来源：自动返工与复核轮。
+- `automatic-rework-notices.ts` — `automatic_rework` 请知悉来源：自动返工与复核轮；重排覆盖的记录是结果未知、由参谋定下的，那一条在摘要后接一句大白话，对象带这份记录的 pin（界面展开时按它读记录）。
 - `handoff-notices.ts` — `handoff` 请知悉来源：每个走到通知写的交接操作一项；位置由 `noticePositionOf` 从操作保存的 Host principal、workspace、通知键和 `advanceGeneration` 重建原写身份并读回执与事件，缺回执或校验不符为 `unavailable`，绝不给无位置条目。item 的 subject 直接调用 `communication/decision-source/handoff-approval.ts` 的 `handoffApprovalSubjectOf`（恰好一个 Goal 是 `{kind:'goal'}`，两个以上或没有 Task 是项目），审批卡和通知共用这一份规则；项目读只出项目 subject、Goal 读只出该 Goal 的条目，两读按构造不相交，合并不会重复同一个 `itemKey`。
 - `undelivered-reply-notices.ts` — `undelivered_reply` 请知悉来源：不可用 Session 的未送达回复。
 - `disconnect-notices.ts` — `disconnect` 请知悉来源：未消费等待的两侧与发往已归档/已停用线的消息各一项；`readDisconnectFacts` 是同一条纯事实读，Host 的断开通知构建器也用它。归档线的位置是原消息的 `since`，停用线的位置是绑定的 `unavailableSince`，时间只取该位置事件的 `occurredAt`；不存通知、不写、不取时钟。导出 `DISCONNECT_PAGE_LIMIT`、`disconnectOperationKeyOf`、`disconnectItemKey`；前两个只用于本来源的页宽和操作键，item key 由操作键、消息和被断开的一侧组成。
@@ -135,7 +135,7 @@
 | `parseMainReadInput` | `src/core/work-graph/views/main-surface-read-model.ts:215` | `main/read` 的输入：`goalId` 为 Goal id 或 null，`cursor` 为 null 或一页返回的游标形状 | 校验主对话读的输入时 |
 | `mainReadPhases`、`mainReadStart`、`mainPageStep` | `src/core/work-graph/views/main-surface-read-model.ts:123`、`src/core/work-graph/views/main-surface-read-model.ts:123`、`src/core/work-graph/views/main-surface-read-model.ts:123` | 主对话页的段（本 Goal 段，第一个 Goal 再接它之前的无 Goal 段）、游标从哪段续读、一页截到多少和下一页游标 | 改主对话分页时；不要另算段或游标 |
 | `requestCards`、`pageCards` | `src/core/work-graph/views/main-surface-read-model.ts:174`、`src/core/work-graph/views/main-surface-read-model.ts:174` | 一个请求的卡片（点名它的轮的卡，加它所在 Goal 自己的卡，即不点名任何请求的卡；同 Goal 别的请求的候选不算）；一页先列页面自己的卡（项目的和所选 Goal 的，保持决定队列顺序），再列各请求的，各列一次，请求按 key 引用 | 主对话页和 `requests/read` 挑卡时 |
-| `createAutomaticReworkNoticeSource` | `src/core/work-graph/views/automatic-rework-notices.ts:72` | `automatic_rework` 请知悉来源：返工与复核轮只留系统/Agent 返工 | 装配请知悉来源时 |
+| `createAutomaticReworkNoticeSource` | `src/core/work-graph/views/automatic-rework-notices.ts:86` | `automatic_rework` 请知悉来源：返工与复核轮只留系统/Agent 返工 | 装配请知悉来源时 |
 | `createNoteReviewNoticeSource` | `src/core/work-graph/views/note-review-notices.ts:51` | `note_review` 请知悉来源：三类版本流，按已看位置增量读；`goalId: null` 的版本是项目 subject 的行，Goal 过滤页不收 | 装配请知悉来源时 |
 | `createProjectNoticeSource` | `src/core/work-graph/views/project-notice-notices.ts:38` | `project_notice` 请知悉来源：一项一条 `ProjectNotice@1`，先读 watermark，再按 `since` 从已看位置（含）读到尾；坏记录/缺位置为 `unavailable` | 装配请知悉来源时；不要另写通知分页 |
 | `createUndeliveredReplyNoticeSource` | `src/core/work-graph/views/undelivered-reply-notices.ts:62` | `undelivered_reply` 请知悉来源：不可用 Session 的未送达回复 | 装配请知悉来源时 |
@@ -146,8 +146,8 @@
 | `createPlanAdoptionNoticeSource`、`planAdoptionSummaryOf`、`planNoticeGoalRefs`、`noticeUnavailableOf`、`idsTextOf` | `src/core/work-graph/views/plan-adoption-notices.ts:312`、`src/core/work-graph/views/plan-adoption-notices.ts:312`、`src/core/work-graph/views/plan-adoption-notices.ts:312`、`src/core/work-graph/views/plan-adoption-notices.ts:312`、`src/core/work-graph/views/plan-adoption-notices.ts:312` | 采用通知来源（每个已采用 PlanRevision 一项）、唯一的采用文本构造、两个来源共用的 Goal 枚举、非 ready 读的统一 `unavailable` 映射与 id 列表文本 | 装配采用通知与阶段通知、生成采用文本；不要另写枚举或失败映射 |
 | `renderTaskbookMarkdown`、`taskbookRelativePath` | `src/core/work-graph/views/taskbook-markdown.ts:95`、`src/core/work-graph/views/taskbook-markdown.ts:94` | 一个阶段的任务书 markdown（阶段不在 Plan 里为 `null`）与它在 `<settingsDirectory>/taskbooks` 下的相对路径 | `app/taskbook-export.ts` 写文件与探针算路径；不要另写渲染或路径 |
 | `readDisconnectFacts` | `src/core/work-graph/views/disconnect-notices.ts:77` | 唯一的断开事实读：一次消息窗口、一次后继读，返回两侧与停用时间；不写、不取时钟 | 请知悉来源与 Host 的断开通知构建器共用，不要另扫 wait |
-| `readOrderedToEnd` | `src/core/work-graph/views/automatic-rework-notices.ts:95` | 从保存的提交位置把有序索引读到尾（可选下界，分页） | 请知悉来源要按提交位置做增量读时 |
-| `paginateAssembled` | `src/core/work-graph/views/automatic-rework-notices.ts:310` | 把已组装的一页按页宽和游标切片，三个请知悉来源共用的分页正本 | 请知悉来源分页时；不要另写副本 |
+| `readOrderedToEnd` | `src/core/work-graph/views/automatic-rework-notices.ts:109` | 从保存的提交位置把有序索引读到尾（可选下界，分页） | 请知悉来源要按提交位置做增量读时 |
+| `paginateAssembled` | `src/core/work-graph/views/automatic-rework-notices.ts:327` | 把已组装的一页按页宽和游标切片，三个请知悉来源共用的分页正本 | 请知悉来源分页时；不要另写副本 |
 | `createNoticePositionComparator` | `src/core/work-graph/views/notice-position.ts:37` | 把唯一顺序注入决定读模型 | 组装决定读模型时 |
 | `compareNoticePositions` | `src/core/work-graph/views/notice-position.ts:42` | 按 ledger 游标再按 `itemKey` 比较两个位置 | 任何需要通知顺序时；唯一允许解析 ledger 游标的位置 |
 | `mergeNoticePages` | `src/core/work-graph/views/notice-position.ts:56` | 把各来源已过滤的页稳定合并，截到 limit，返回每类已显示位置 | 决定队列合并请知悉来源时 |

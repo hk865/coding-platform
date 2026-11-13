@@ -50,7 +50,8 @@ import type {
 } from '../../contracts/unknown-call-review.js';
 import type { ArtifactRef } from '../../contracts/artifact.js';
 import {
-  captureUnknownCallWorkspace, readUnknownCallReviewDraft, unknownCallInventoryProblem, type UnresolvedCallFactV1,
+  captureUnknownCallWorkspace, readUnknownCallReviewDraft, unknownCallInventoryProblem, type UnknownCallReviewDraftDeps,
+  type UnresolvedCallFactV1,
 } from './unknown-call-draft.js';
 import { containedByHostStop } from '../work-graph/state/unknown-call-kinds.js';
 import type { SessionHistoryCursorOwner, SessionHistoryEntry, SessionMappingProbe } from './session-operations.js';
@@ -71,7 +72,18 @@ export type RunReconcileClassifierDependencies = {
     Promise<WorkspaceCaptureV1>;
   /** K3 (G3/L4): the platform owners' committed-call lookup; absent = every platform item undetermined. */
   lookupToolCommit?: ToolCommitLookup;
+  /** NET-B: the Run's host record the review copies; absent = the review carries no `network`. */
+  readRunNetwork?: NonNullable<UnknownCallReviewDraftDeps['readRunNetwork']>;
 };
+
+/** The draft reader's optional dependencies, each passed on only when it is wired. */
+function reviewDraftDepsOf(
+  deps: Pick<RunReconcileClassifierDependencies, 'lookupToolCommit' | 'captureWorkspace' | 'readRunNetwork'>,
+): UnknownCallReviewDraftDeps {
+  return { ...(deps.lookupToolCommit === undefined ? {} : { lookupToolCommit: deps.lookupToolCommit }),
+    ...(deps.captureWorkspace === undefined ? {} : { captureWorkspace: deps.captureWorkspace }),
+    ...(deps.readRunNetwork === undefined ? {} : { readRunNetwork: deps.readRunNetwork }) };
+}
 
 /** One Run's line of the reconcile report (§12.1 step 7). */
 export type RunReconcileReport = {
@@ -454,8 +466,7 @@ async function autoCleanupOutcome(
   if (closure.status !== 'supported') return { blockedBy: 'closure_unsupported' };
   const head = input.probe.activeRunId;
   if (head === null || !sameRef(head, input.kernel.runId)) return { blockedBy: 'head_mismatch' };
-  const draftDeps = { ...(deps.lookupToolCommit === undefined ? {} : { lookupToolCommit: deps.lookupToolCommit }),
-    ...(deps.captureWorkspace === undefined ? {} : { captureWorkspace: deps.captureWorkspace }) };
+  const draftDeps = reviewDraftDepsOf(deps);
   const inventoryInput = { record: input.record, kernel: input.kernel, turnFound: true, kernelReadable: true,
     kernelUnreadableAtStop: false, unresolved: calls };
   // L25/G11: the PURE inventory check comes first; a Turn that fails it does no
@@ -748,7 +759,8 @@ export async function stopPausedRunInProcess(
  * `not_configured`).
  */
 export async function readReviewDraftAtEntry(
-  deps: Pick<RunReconcileClassifierDependencies, 'owner' | 'messages' | 'lookupToolCommit' | 'captureWorkspace'>,
+  deps: Pick<RunReconcileClassifierDependencies,
+    'owner' | 'messages' | 'lookupToolCommit' | 'captureWorkspace' | 'readRunNetwork'>,
   ctx: CoreCallContext,
   input: { record: TaskExecutionRecord; kernel: KernelExecutionBinding; startPosition: number | null },
 ): Promise<{ ok: true; kernelTurnOpen: boolean; inputsConfirmed: boolean | null; draft: UnknownCallReviewDraftV1 }
@@ -756,8 +768,7 @@ export async function readReviewDraftAtEntry(
   const observation = input.record.run.reconciliation?.observation;
   const unreadableAtStop = observation !== undefined && observation.kind === 'unresolved'
     && observation.reason === 'kernel_unreadable';
-  const draftDeps = { ...(deps.lookupToolCommit === undefined ? {} : { lookupToolCommit: deps.lookupToolCommit }),
-    ...(deps.captureWorkspace === undefined ? {} : { captureWorkspace: deps.captureWorkspace }) };
+  const draftDeps = reviewDraftDepsOf(deps);
   const base = { record: input.record, kernel: input.kernel, turnFound: true, kernelReadable: true,
     kernelUnreadableAtStop: unreadableAtStop } as const;
   const probe = await deps.owner.probe({ session: input.record.session, signal: ctx.signal });

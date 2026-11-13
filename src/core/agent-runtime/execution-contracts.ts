@@ -112,6 +112,13 @@ export type DeliverControlRequest = { intentRef: ControlIntentRef };
 /** R5b.2: the caller may only name the accepted QueryRun and its own request id.
  * It cannot supply a bundle, a role, a tool list, a Kernel identity or terminal
  * facts. */
+/** NET-B: one Run's way out (structurally the Host proxy's route). `close` stops it and ends its connections. */
+export type CommandRoute = {
+  readonly source: import('../../../vendor/coding-agent/dist/public-api.js').NetworkProxySource;
+  open(): Promise<void>;
+  close(): Promise<void>;
+};
+
 export type PrepareQueryExecutionRequest = { queryRunRef: QueryRunRef; requestId: string };
 export type StartQueryExecutionRequest = {
   prepared: PreparedQueryExecution;
@@ -322,6 +329,22 @@ export type RuntimeExecutionDependencies = {
    * prepared execution/digest. Absent keeps today's uncapped path.
    */
   resourceCaps?: import('../../../vendor/coding-agent/dist/public-api.js').ResourceCapSource;
+  /**
+   * The Host's one cap on platform commands (read-only commands, registered
+   * checks) running at once. Absent keeps today's uncapped path; it enters no
+   * configuration, authorization or prepared execution.
+   */
+  commandSlots?: import('./command-slots.js').CommandSlots;
+  /**
+   * NET-B (decision 121-112): the Host's additions to command sandboxes. The toolchain goes to the Kernel shell, the
+   * read-only command and the review probe; each Run or QueryRun with a command tool takes one route, opened before
+   * its model call and closed when it ends, and every host its commands reach is noted on that Run before the proxy
+   * connects. Absent keeps today's sandbox (no network, the default PATH).
+   */
+  commandSandbox?: {
+    readonly toolchain: import('./readonly-command-tool.js').CommandToolchain;
+    route(ctx: CoreCallContext, subject: RunRef | QueryRunRef): CommandRoute;
+  };
   /**
    * K3 L13/U5/R3 (`reviewCapability`): the Host's read-only command facts for
    * one workspace+Role, resolved by the composition root from the SAME Host

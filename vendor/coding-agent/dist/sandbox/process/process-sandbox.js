@@ -339,6 +339,25 @@ const READONLY_REMOUNT_SCRATCH = "/codex-readonly-canary";
 const READONLY_CWD_GUARD_MARKER = "__codex_readonly_cwd_guard__";
 const READONLY_CWD_GUARD = `case "$(pwd -P)" in /workspace|/workspace/*) ;; *) `
     + `printf '%s' '${READONLY_CWD_GUARD_MARKER}' >&2; exit 126 ;; esac`;
+/** SBX：联网命令在沙箱里的固定名字（代理 socket 和 Host 自己的 node 都绑到 /run/agent-net）。 */
+const NETWORK_NODE = "/run/agent-net/node";
+const NETWORK_SOCKET = "/run/agent-net/proxy.sock";
+const NETWORK_PROXY_URL = "http://127.0.0.1:3128";
+const NETWORK_NO_PROXY = "localhost,127.0.0.1,::1";
+/** SBX 转发器：沙箱的 127.0.0.1:3128 → 绑进来的代理 socket，两头都允许半关；监听好后打一行 r。 */
+const NETWORK_FORWARDER_JS = 'const net=require("node:net");process.stdout.on("error",()=>{});process.stderr.on("error",()=>{});'
+    + 'net.createServer({allowHalfOpen:true},c=>{const u=net.connect({path:process.argv[1],allowHalfOpen:true});'
+    + 'c.pipe(u);u.pipe(c);c.on("error",()=>u.destroy());u.on("error",()=>c.destroy());})'
+    + '.listen(3128,"127.0.0.1",()=>process.stdout.write("r\\n"));';
+/**
+ * SBX 起跑段：转发器在进程替换里再放后台（命令里不带参数的 `wait` 就不会等它），最多等 5 秒
+ * 它说 r；没等到就在 stderr 写一句，命令照跑（这条没有网；风险可逆，提示不拒，121-111）。
+ * 命令结束时 bwrap 的 pid 空间整个结束，转发器跟着结束。
+ */
+const NETWORK_FORWARDER_START = `exec 9< <(${NETWORK_NODE} -e ${shellSingleQuote(NETWORK_FORWARDER_JS)} ${NETWORK_SOCKET} 2>&1 &); `
+    + `IFS= read -r -t 5 __agent_net <&9; exec 9<&-; `
+    + `[ "$__agent_net" = r ] || printf '%s\\n' "[平台] 这条命令没有网络：联网转发没起来 $__agent_net" >&2; `
+    + `unset __agent_net`;
 /**
  * MF2：跑一条只取输出的辅助命令。给了 `signal` 时 spawn 成独立进程组，
  * 中止就 SIGKILL 整组，并等到 `close`（子进程已收尸）才 reject；标准错误
@@ -502,6 +521,8 @@ export class ProcessSandbox {
     #workspaceMode;
     #ipcWalkMaxEntries;
     #resourceCaps;
+    #hostMounts;
+    #network;
     constructor(profile, workspaceRoot, workspace, options = {}) {
         this.profile = profile;
         this.workspaceRoot = workspaceRoot;
@@ -516,6 +537,8 @@ export class ProcessSandbox {
         }
         this.#ipcWalkMaxEntries = ipcWalkMaxEntries;
         this.#resourceCaps = options.resourceCaps;
+        this.#hostMounts = [...(options.hostMounts ?? [])];
+        this.#network = options.network;
         this.#readOnlyPaths = options.readOnlyPaths ?? [];
         for (const relative of this.#readOnlyPaths) {
             if (!/^[A-Za-z0-9._-]+$/.test(relative) || !relative || relative.startsWith("/") || relative.split("/").some(p => p === ".." || p === "." || !p) || relative.includes("\\"))
@@ -540,6 +563,10 @@ export class ProcessSandbox {
             readOnlyPaths: [...this.#readOnlyPaths],
             executablePath: this.#executablePath,
         };
+    }
+    /** SBX：构造时给了 `network` 就是 true；shell 工具据此选说明。 */
+    get networkConfigured() {
+        return this.#network !== undefined;
     }
     static async probe(workspaceRoot, workspace, options = {}) {
         // MF2/L14/F7：公开 `probe` 的签名和行为不变；L5 的 10 秒 deadline 走下面的私有 helper。
@@ -743,6 +770,8 @@ export class ProcessSandbox {
             return this.#notStartedResult(true, false, request.outputLimitBytes, { status: "not_started" });
         }
         const caps = await this.#resolveResourceCaps();
+        // SBX：联网设置每次 execute 只读一次；探测和两种金丝雀不传，取 null（不联网）。
+        const net = this.#network?.current() ?? null;
         let cwd;
         if (this.#workspaceMode === "read_only") {
             cwd = await this.#resolveReadOnlyCwd(request.cwd);
@@ -751,7 +780,7 @@ export class ProcessSandbox {
         else {
             cwd = normalizeWorkspacePath(request.cwd, true);
         }
-        return this.#run(request, cwd, caps);
+        return this.#run(request, cwd, caps, undefined, net);
     }
     /** RL1：每次 `execute` 现读 `current()`；有缓存用缓存，没有就探测（L5）。 */
     async #resolveResourceCaps() {
@@ -776,10 +805,10 @@ export class ProcessSandbox {
             key: resourceCapCacheKey(systemdRunPath, bwrapPath),
         };
     }
-    async #run(request, cwd, caps = RESOURCE_CAP_NOT_CONFIGURED, context) {
+    async #run(request, cwd, caps = RESOURCE_CAP_NOT_CONFIGURED, context, net = null) {
         return caps.kind === "capped"
-            ? this.#runCapped(request, cwd, caps, context)
-            : this.#runUncapped(request, cwd, caps.report);
+            ? this.#runCapped(request, cwd, caps, net, context)
+            : this.#runUncapped(request, cwd, caps.report, net);
     }
     /**
      * L13/D-CWD：只读模式下 cwd 先做字面检查，再在主机侧解析真实路径。
@@ -836,6 +865,7 @@ export class ProcessSandbox {
             this.#executablePath,
             this.#readOnlyPaths,
             this.#protectedPaths,
+            this.#hostMounts,
         ]);
     }
     #readOnlyCanaryCommand() {
@@ -897,7 +927,7 @@ export class ProcessSandbox {
      * L1–L10：有上限的起跑。systemd-run 建 scope，`sh` 留看门进程后原地 exec bwrap，
      * 闸门放行前 Host 核身份、核上限、读基线、开始观察；结算由 `settleExecution` 给动作。
      */
-    async #runCapped(request, cwd, caps, context) {
+    async #runCapped(request, cwd, caps, net, context) {
         const captureWorkspaceEffects = request.captureWorkspaceEffects ?? true;
         const mountSnapshot = this.#workspaceMode === "read_only" ? await this.#classifyProtectedPaths() : null;
         const beforeStartedAt = performance.now();
@@ -1289,7 +1319,7 @@ export class ProcessSandbox {
         let outcome;
         try {
             const mountPlan = mountSnapshot === null ? null : planReadonlyMounts(mountSnapshot);
-            const bwrapArgs = await this.#arguments(request.command, cwd, rootCapability, mountPlan, GATE_SCRIPT);
+            const bwrapArgs = await this.#arguments(request.command, cwd, rootCapability, mountPlan, net, GATE_SCRIPT);
             // SF1/F2：准备期间被取消（快照、分类、参数构造），绝不 spawn；capped 路径
             // 也照 L10 报 not_started，不留结算、不作废缓存。
             if (request.signal.aborted) {
@@ -1468,7 +1498,7 @@ export class ProcessSandbox {
             },
         };
     }
-    async #runUncapped(request, cwd, report) {
+    async #runUncapped(request, cwd, report, net) {
         const captureWorkspaceEffects = request.captureWorkspaceEffects ?? true;
         // D-ONECHECK：在任何其他工作区调用和参数构造之前，只做一次受保护路径分类；
         // 挂载计划与 IPC 跳过决定都只来自这份快照。
@@ -1489,7 +1519,7 @@ export class ProcessSandbox {
         const executionStartedAt = performance.now();
         try {
             const mountPlan = mountSnapshot === null ? null : planReadonlyMounts(mountSnapshot);
-            const args = await this.#arguments(request.command, cwd, rootCapability, mountPlan);
+            const args = await this.#arguments(request.command, cwd, rootCapability, mountPlan, net);
             // Preparation awaits may outlive an accepted stop. No child exists yet.
             if (request.signal.aborted) {
                 // SF1/L10：启动前已取消的命令一律写 not_started，与上限是否可用无关。
@@ -1691,7 +1721,7 @@ export class ProcessSandbox {
         }
         return found.sort(byteOrder);
     }
-    async #arguments(command, cwd, rootCapability, mountPlan, gate) {
+    async #arguments(command, cwd, rootCapability, mountPlan, net, gate) {
         const readOnly = this.#workspaceMode === "read_only";
         const args = [
             "--die-with-parent",
@@ -1740,6 +1770,34 @@ export class ProcessSandbox {
             catch {
                 // 该可选运行时目录在当前发行版不存在。
             }
+        }
+        if (this.#hostMounts.length > 0) {
+            // SBX：每次生成参数时对源和工作区根各 realpath 一次；重叠就不跑（理由见选项注释）。
+            const workspaceReal = await realpath(this.workspaceRoot);
+            const within = (inner, outer) => inner === outer || inner.startsWith(outer.endsWith(path.sep) ? outer : `${outer}${path.sep}`);
+            for (const mount of this.#hostMounts) {
+                const source = await realpath(mount.source);
+                if (within(source, workspaceReal) || within(workspaceReal, source)) {
+                    throw new ProcessSandboxError("launch_failed", `宿主挂载和工作区重叠：${mount.source}`);
+                }
+                args.push(mount.writable ? "--bind" : "--ro-bind", source, mount.target);
+            }
+        }
+        if (net !== null) {
+            // SBX：保留 --unshare-net，唯一出口是绑进来的代理 socket；CA 证书目录宿主上有才挂。
+            try {
+                await access("/etc/ssl/certs");
+                args.push("--ro-bind", "/etc/ssl/certs", "/etc/ssl/certs");
+            }
+            catch {
+                // 这个发行版没有这个目录。
+            }
+            args.push("--ro-bind", process.execPath, NETWORK_NODE, "--bind", net.socketPath, NETWORK_SOCKET);
+            for (const name of ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"]) {
+                args.push("--setenv", name, NETWORK_PROXY_URL);
+            }
+            args.push("--setenv", "NO_PROXY", NETWORK_NO_PROXY, "--setenv", "no_proxy", NETWORK_NO_PROXY);
+            args.push("--setenv", "NODE_USE_ENV_PROXY", "1");
         }
         const parentRoot = `/proc/self/fd/${String(rootCapability.fd)}`;
         const childRoot = "/proc/self/fd/3";
@@ -1821,7 +1879,12 @@ export class ProcessSandbox {
         args.push("--chdir", cwd === "." ? "/workspace" : `/workspace/${cwd}`, "--", "/bin/bash", "--noprofile", "--norc");
         // D-CWD：主机侧解析过的目录仍可能在 --chdir 前被换掉；进入沙箱后先用
         // `pwd -P` 确认进程落在 /workspace 下，再运行用户命令。
-        const finalCommand = readOnly ? `${READONLY_CWD_GUARD}; ${command}` : command;
+        // SBX：顺序是 cwd 守卫 → 联网起跑段 → 命令；不联网时和以前逐字相同。
+        const finalCommand = [
+            ...(readOnly ? [READONLY_CWD_GUARD] : []),
+            ...(net === null ? [] : [NETWORK_FORWARDER_START]),
+            command,
+        ].join("; ");
         if (gate === undefined) {
             args.push("-lc", finalCommand);
         }

@@ -21,7 +21,7 @@ import {
 } from '../../contracts/query-job.js';
 import type { PreparedQueryManifestV1 } from '../../contracts/core/prepared-execution.js';
 import {
-  answerBoundBytes, answerSubmitNamesIn, buildAnswerText, submittedAnswerArgumentsOf,
+  answerBoundBytes, answerSubmitNamesIn, buildAnswerText, submitShapeOf, submittedAnswerArgumentsOf,
 } from './answer-tools.js';
 import type { ArtifactRef } from '../../contracts/artifact.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
@@ -507,15 +507,16 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
       // first successful submit's arguments; no accepted submit keeps the final
       // text reading, and any later assistant text is ignored.
       let final: FinalText;
+      const answerShape = submitted === null ? shape : submitShapeOf(shape!, submitted.name);
       if (submitted === null) {
         final = extractAnswer(runState);
       } else {
         // Rebuild the exact text the accepted handler built, bounded by shape.
-        const text = buildAnswerText(shape!, submitted, { projectId: queryRunRef.projectId });
-        final = Buffer.byteLength(text, 'utf8') > answerBoundBytes(shape)
+        const text = buildAnswerText(answerShape!, submitted.arguments, { projectId: queryRunRef.projectId });
+        final = Buffer.byteLength(text, 'utf8') > answerBoundBytes(answerShape)
           ? { kind: 'too_long' } : { kind: 'text', text };
       }
-      const formal = formalAnswerOf(final, shape, request);
+      const formal = formalAnswerOf(final, answerShape, request);
       if (formal.kind === 'gap') {
         outcome = 'gap';
       } else if (formal.kind === 'invalid') {

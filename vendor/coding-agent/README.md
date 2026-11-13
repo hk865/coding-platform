@@ -39,3 +39,11 @@ R4c.2b 在本目录保存 `SqliteStores.read` 的[补丁源码](patches/storage/
 ## 2026-11-10 跨轮重复的工具调用号
 
 [会话历史补丁源码](patches/core/ports/session_store/session-history.ts)从已落盘记录和恢复前缀收集调用号，并把 `assertTranscriptExchangeIntegrity` 的完整性拒绝翻成 `category: 'context'`、`code: 'history_rejected'`、`retryable: false` 的 `RunFailure`；`message` 带字面量 `history_rejected` 和 Kernel 的原始拒绝原因。[运行循环补丁源码](patches/core/runtime/loop/runtime-runner.ts)让同一 Session 里再次出现的调用号在记录时改成 `<id>@<turnId>`（第一次出现的原样），并在进入模型循环前把这个确定性失败写成真实的 `run.failed`。[组合根](patches/app/composition/composition-root.ts)和[恢复组合根](patches/app/composition/resume-composition.ts)读目标 Session 的已落盘调用号，把确定性历史拒绝转成 `historyFailure`。四个源的 16 份产物由构建脚本生成，不手改 `dist`。撞号只改后一个，整条历史的唯一性检查不变；旧数据不迁移，由 `history_rejected` 路径结束。
+
+## 2026-11-13 SBX 宿主挂载和联网选项
+
+[进程沙箱补丁源码](patches/sandbox/process/process-sandbox.ts)的 `ProcessSandboxOptions` 多两项可选的选项：`hostMounts`（宿主目录只读或可写挂进沙箱，和工作区重叠就以 `launch_failed` 拒绝，理由是安全）和 `network`（每次 `execute` 现读一次；给了 Host 代理的 unix socket，就绑进沙箱、起转发器、设代理变量，直连照旧只有沙箱自己的 lo）。两项都不进 `effectiveOptions` 和恢复约束；不给时行为逐字不变。`ProcessSandbox.networkConfigured` 决定 [shell 工具](patches/tools/builtin/shell/shell-tool.ts)用联网版还是原来的说明；[公开入口](patches/public-api.ts)导出 `HostMount`、`NetworkProxySource` 两个类型。源仍十九个、76 份产物；哈希和产物清单见[补丁维护说明](patches/README.md)。
+
+## 2026-11-13 CTXFIT 最新一段工具交换改为截断结果
+
+受管的[上下文选择补丁源码](patches/core/context/selection_policy/context-selection-policy.ts)把当前执行的最新一段工具交换从删除单位里拿掉；较早几段都删光后仍装不下时，按共同字节上限截断这一段的结果并写明截断，计入 `toolResultBody`；连空结果都装不下才报 `required_content_over_budget`。源仍十九个、76 份产物。来源与产物哈希、命令见[补丁维护说明](patches/README.md)。

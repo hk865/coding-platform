@@ -561,8 +561,10 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       // `PromptSetV1.toolNames`. The read-only command gate is the one fact that
       // needs the Host workspace authorization; a failure leaves the tool out
       // and the start decides its own unavailable/forbidden answer.
-      const readOnly = permissions.writeScope.length === 0;
-      const readonlyRequested = readOnly && permissions.tools.includes(READONLY_COMMAND_TOOL_NAME);
+      // A Run that has the shell uses it for commands; every other Run grants
+      // the read-only command (121-112 ruling 3, one command tool per round).
+      const readonlyRequested = !permissions.tools.includes('shell')
+        && permissions.tools.includes(READONLY_COMMAND_TOOL_NAME);
       // The production Runtime always wires the workspace host; a direct
       // preparation without one cannot read the read policy, so it freezes the
       // capability and the start (which requires the host) re-checks the gate.
@@ -582,7 +584,6 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
         // selected name (a rework tool with no registration here) is left to
         // the start, where the real selection and owners are still checked.
         selected: permissions.tools.filter(name => RUNTIME_TOOL_NAMES.has(name)),
-        readOnly,
         reviewPhase: reviewPurpose?.phase ?? null,
         hasBlockedCommands: (blockedBinding ?? []).length > 0,
         reviewSource: false,
@@ -841,6 +842,9 @@ export function snapshotRuntimeConfiguration(config: ResolvedRuntimeConfiguratio
     configuration: { ...config.model.configuration },
     client: config.model.client,
     ...(config.model.inputCounter === undefined ? {} : { inputCounter: config.model.inputCounter }),
+    // The platform web lookup port carries the model's own key; the snapshot
+    // must keep it or a selected web tool becomes unregisterable at start.
+    ...(config.model.webLookup === undefined ? {} : { webLookup: config.model.webLookup }),
     // Ruling 14 item 1: a field-by-field rebuild must not drop the selection.
     ...(config.model.selection === undefined ? {} : { selection: { ...config.model.selection } }),
   };

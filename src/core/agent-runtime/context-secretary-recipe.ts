@@ -336,9 +336,12 @@ export async function assembleSecretaryContext(
   ];
   const goalSection = [...goalLines, goalPayloadText].join('\n');
 
-  // The final tool list decides the answer format: a plan round carries the planning submit tool.
+  // The final tool list decides the answer format: a plan-round-only list carries
+  // the planning submit tool; a secretary round offered both keeps the secretary
+  // format, whose own `submit_plan_round` block renders beside its submit tool.
   const answerFormatText = renderTemplate(texts,
-    input.toolNames.includes('submit_plan_round') ? 'initial-planning-answer' : 'secretary-answer',
+    input.toolNames.includes('submit_plan_round') && !input.toolNames.includes('submit_secretary_answer')
+      ? 'initial-planning-answer' : 'secretary-answer',
     {}, input.toolNames).text;
   const answerFormat = secretary.executionKind === 'semantic_query'
     ? answerFormatText

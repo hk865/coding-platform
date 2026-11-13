@@ -988,6 +988,9 @@ it.each(['memory', 'sqlite'] as const)('K3 settle_review (%s): the owner receipt
     // K3 layering (HANDOFF 121-109, lead ruling 3): this world has no adviser, so the
     // adviser-layer reasons reach the person as the second layer, `no_adviser`.
     escalation: { cause: 'no_adviser', suggestion: null },
+    // NET-B (decision 121-112): the composed platform copies the Run's host record into the review; this Run's
+    // commands never asked the command proxy for a host, so the copy is empty.
+    network: { hosts: [], omitted: 0 },
     // RUN-22 created the record at the harness Host clock, minute 8
     // (`at(8)`, K3-continuation-pure-fixture); the settlement is written by the
     // K3 world's review owner, whose clock is the S5 fixture's T.

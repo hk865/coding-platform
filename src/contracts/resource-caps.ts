@@ -15,6 +15,9 @@ export const RESOURCE_CAP_MIN_MEMORY_MIB = 256;
 export const RESOURCE_CAP_MIN_TASKS = 64;
 export const RESOURCE_CAP_MAX_TASKS = 65_536;
 
+/** 121-112：命令不按时间停；Kernel 的工具定义和沙箱请求要正整数，用 Node 计时器的最大值。Kernel 的 `SHELL_NO_STOP_MS` 另有一份（Kernel 不能 import 平台代码）。 */
+export const COMMAND_NO_STOP_MS = 2_147_483_647;
+
 export type ResourceCapSettingsV1 = {
   schemaVersion: 1;
   memoryMaxMiB: number | null;

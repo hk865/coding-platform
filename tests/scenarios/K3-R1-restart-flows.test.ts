@@ -27,6 +27,8 @@
  *    of `input.origin`, so a committed send answers `not_committed`;
  *  - `runtime.ts` closeOpenTurn refuses a `takeover_unresolved` end, so the
  *    Kernel is not closed and the continuation goes to a new Session.
+ *
+ * K3L-4 N2 (121-109): the K3-01 recovery notice keeps its exact summary and an empty `objects`; green today as the guard row, and still green after §2.2 reads the `afterRunRef` record without an adviser disposition (no line, no pin).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ReadResult } from '../../src/contracts/core/results.js';
@@ -204,6 +206,8 @@ describe('K3 R1 restart flows', () => {
       const auto = notices.value.notices.filter(notice => notice.summary.includes('自动恢复'));
       expect(auto).toHaveLength(1);
       expect(auto[0]?.summary).toContain('不计次');
+      expect(auto[0]?.summary, 'the recovery summary is exact').toBe('自动恢复 · ag2b-work（不计次）');
+      expect(auto[0]?.objects, 'the record has no adviser disposition, so no object pin').toEqual([]);
     }
   }, 180_000);
 

@@ -43,7 +43,7 @@ export type SessionRecord = {
   archiveRequest?: SessionArchiveRequestV1 | null;
   /** The creator's accepted permissions for a member-created or inherited line; absent means no ceiling. */
   delegationCeiling?: { tools: string[]; writeScope: string[]; createMember: boolean };
-  /** Present only on a secretary-created executor; every later preparation pins `createMember` false. */
+  /** Present only on a secretary- or adviser-created executor; every later preparation pins `createMember` false. */
   secretaryCreated?: true;
   /**
    * Wiring package 2 (spec §2.3, L10): the commit cursor of the most recent

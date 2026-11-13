@@ -79,8 +79,8 @@ export function answerSubmitNamesIn(toolNames: readonly string[]): readonly Answ
 }
 
 /** The submit names one answer shape builds, in the frozen `ANSWER_TOOL_NAMES` order. */
-export function answerToolNamesOf(kind: AnswerToolKind | null): readonly AnswerToolName[] {
-  if (kind === 'secretary') return ['submit_secretary_answer'];
+export function answerToolNamesOf(kind: AnswerToolKind | null, smallPlan = false): readonly AnswerToolName[] {
+  if (kind === 'secretary') return smallPlan ? ['submit_secretary_answer', 'submit_plan_round'] : ['submit_secretary_answer'];
   if (kind === 'initial') return ['submit_initial_plan', 'submit_initial_questions'];
   if (kind === 'plan_round') return ['submit_plan_round'];
   if (kind === 'plan_review') return ['submit_plan_review'];
@@ -96,6 +96,11 @@ export function answerToolNamesOf(kind: AnswerToolKind | null): readonly AnswerT
 export function answerBoundBytes(shape: QueryAnswerShapeV1 | null, name?: string): number {
   return shape === 'plan_round' && (name === undefined || name === 'submit_plan_round')
     ? PLANNING_MAX_ANSWER_BYTES : MAX_ANSWER_BYTES;
+}
+
+/** 121-112: the planning submit of a secretary round answers in the planning shape; every other submit keeps the frozen one. */
+export function submitShapeOf(frozen: QueryAnswerShapeV1, name: string): QueryAnswerShapeV1 {
+  return name === 'submit_plan_round' ? 'plan_round' : frozen;
 }
 
 /** One form value the platform fills before writing the protocol text. */
@@ -674,7 +679,7 @@ export function createAnswerToolBarrier(acceptedCallIds: ReadonlySet<string>): T
 export function submittedAnswerArgumentsOf(
   state: Pick<RunState, 'transcript'>,
   names: readonly string[],
-): Readonly<Record<string, unknown>> | null {
+): { name: string; arguments: Readonly<Record<string, unknown>> } | null {
   const wanted = new Set(names);
   const declared = new Map<string, { name: string; arguments: Readonly<Record<string, unknown>> }>();
   for (const entry of state.transcript) {
@@ -686,7 +691,7 @@ export function submittedAnswerArgumentsOf(
     if (entry.result.status !== 'success') continue;
     const call = declared.get(entry.callId)!;
     if (!wanted.has(call.name)) continue;
-    return call.arguments;
+    return { name: call.name, arguments: call.arguments };
   }
   return null;
 }
@@ -695,15 +700,18 @@ export function createAnswerTools(config: AnswerToolsConfig): AnswerToolsHandle 
   const names = answerSubmitNamesIn(config.names);
   const fixedProjectId = config.context.projectId;
   const accepted = config.acceptedCallIds;
-  const requestShape = config.shape === 'secretary' || config.shape === 'initial';
 
   async function executeSubmit(
     call: Readonly<ToolCall>, signal: AbortSignal,
   ): Promise<ToolResult> {
     const callId = call.callId;
-    // 1. Build the frozen shape's protocol text and hold it to that shape's bound.
-    const text = buildAnswerText(config.shape, call.arguments, { projectId: fixedProjectId });
-    const bound = answerBoundBytes(config.shape, call.name);
+    // 121-112: a secretary round's planning submit answers in the planning
+    // shape while every other submit keeps the round's frozen shape.
+    const shape = submitShapeOf(config.shape, call.name);
+    const requestShape = shape === 'secretary' || shape === 'initial';
+    // 1. Build the shape's protocol text and hold it to that shape's bound.
+    const text = buildAnswerText(shape, call.arguments, { projectId: fixedProjectId });
+    const bound = answerBoundBytes(shape, call.name);
     if (Buffer.byteLength(text, 'utf8') > bound) {
       const kib = bound / 1024;
       return rejectedResult(callId, { status: 'rejected', code: 'capacity',
@@ -726,7 +734,7 @@ export function createAnswerTools(config: AnswerToolsConfig): AnswerToolsHandle 
       }
       factsValue = facts.value;
     }
-    const problems = answerProblems(config.shape, call.arguments as unknown as AnswerForm, text, factsValue);
+    const problems = answerProblems(shape, call.arguments as unknown as AnswerForm, text, factsValue);
     if (problems.length > 0) {
       return rejectedResult(callId, { status: 'rejected', code: 'invalid', problems },
         'the answer has problems; fix every one and call the tool again in this round');

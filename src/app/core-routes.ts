@@ -54,6 +54,7 @@ import type { SessionHandoffPort, SessionSecretaryArchivePort } from '../core/wo
 import type { SessionFactsPort } from '../core/work-graph/model/session-facts-contracts.js';
 import type { SessionResponsibilityPort } from '../core/work-graph/sessions/session-responsibility-service.js';
 import type { SessionAnomalyPort } from '../core/work-graph/tasks/session-anomaly-service.js';
+import type { RunNetworkPort } from '../core/work-graph/tasks/run-network-service.js';
 // K3 (§2 L7): the read-only UnknownCallReview owner of `unknown-call-reviews/read`.
 import type { UnknownCallReviewReadPort, UnknownCallReviewPort } from '../core/work-graph/model/unknown-call-review-contracts.js';
 import type { ExecutionReadPort } from '../core/work-graph/model/execution-read-contracts.js';
@@ -240,6 +241,8 @@ export type CoreRouteBindings = {
   readUncommittedWorkspaceFiles: WorkspaceToolsPort['readUncommittedFiles'];
   startCommand: WorkbenchToolsPort['startCommand'];
   readCommand: WorkbenchToolsPort['readCommand'];
+  /** NET-B (decision 121-112): the hosts one Run's commands connected to or were refused. */
+  readRunNetwork: RunNetworkPort['readRunNetwork'];
   stopCommand: WorkbenchToolsPort['stopCommand'];
   // A.2 step 5.4: the requeue owner (TD-6) and the continuation brief read (C3).
   requeueTask: NonNullable<TaskClaimPort['requeueTask']>;
@@ -490,6 +493,8 @@ export type CoreRoutePlatform = {
    * real composition publishes the read owner and the two human write owners. */
   unknownCallReviews?: Pick<UnknownCallReviewReadPort, 'readReview' | 'listReviews'>
     & Pick<UnknownCallReviewPort, 'holdReview' | 'releaseHold'>;
+  /** NET-B: optional so a narrow platform answers `unsupported`; the composed platform publishes it. */
+  runNetwork?: Pick<RunNetworkPort, 'readRunNetwork'>;
   /** A.2 step 5.6 (RUN-22): optional so a narrow platform answers `unsupported`. */
   resolveUnknownRun?(ctx: CoreCallContext, request: GraphWrite<ResolveUnknownRunRequestV1>): Promise<WriteResult<RunSnapshot>>;
   /** A.2 step 5.6 (QRR-06). */
@@ -697,6 +702,7 @@ export const CORE_ROUTE_SPECS: Record<
   'commands/start': { kind: 'plain', binding: 'startCommand', owner: 'workbench.startCommand' },
   'commands/read': { kind: 'plain', binding: 'readCommand', owner: 'workbench.readCommand' },
   'commands/stop': { kind: 'plain', binding: 'stopCommand', owner: 'workbench.stopCommand' },
+  'network/read': { kind: 'plain', binding: 'readRunNetwork', owner: 'runNetwork.readRunNetwork' },
   // A.2 step 5.4 (spec §4.3 "公开入口与操作者", §6.1 (e)).
   'tasks/requeue': { kind: 'graph_write', binding: 'requeueTask', owner: 'claims.requeueTask' },
   'executions/brief': { kind: 'plain', binding: 'readContinuationBrief', owner: 'runtime.readContinuationBrief' },
@@ -1203,6 +1209,9 @@ export function createPlatformCoreRouteBindings(
     stopCommand: workbenchTools === undefined
       ? unsupported('the Host does not publish workbench tools (stopCommand)')
       : workbenchTools.stopCommand.bind(workbenchTools),
+    readRunNetwork: platform.runNetwork === undefined
+      ? unsupported('the platform does not publish runNetwork.readRunNetwork')
+      : platform.runNetwork.readRunNetwork.bind(platform.runNetwork),
     requeueTask: platform.claims.requeueTask === undefined
       ? unsupported('the Host does not publish the requeue owner')
       : platform.claims.requeueTask.bind(platform.claims),
@@ -1759,6 +1768,7 @@ export async function dispatchCoreRoute(
       case 'commands/start': return bindings.startCommand(ctx, plain.input as never);
       case 'commands/read': return bindings.readCommand(ctx, plain.input as never);
       case 'commands/stop': return bindings.stopCommand(ctx, plain.input as never);
+      case 'network/read': return bindings.readRunNetwork(ctx, plain.input as never);
       case 'tasks/requeue': return bindings.requeueTask(ctx, graphWrite.request as never);
       case 'executions/brief': return bindings.readContinuationBrief(ctx, plain.input as never);
       case 'goals/control': return bindings.setGoalControl(ctx, graphWrite.request as never);

@@ -60,6 +60,17 @@ export interface ProcessSandboxOptions {
      * 准备好的执行、摘要和恢复约束。缺了照今天跑，结果写 `none`／`not_configured`。
      */
     readonly resourceCaps?: ResourceCapSource;
+    /**
+     * SBX：宿主目录按给的顺序挂进沙箱（`writable` 用 `--bind`，否则 `--ro-bind`）。和工作区
+     * 重叠（realpath 后相等或互为上下级）就不跑，理由是安全：挂出去的副本不受 `.git` 只读和
+     * 受保护遮蔽约束，只读命令也会经它写到真实工作区。不进 `effectiveOptions` 和恢复约束。
+     */
+    readonly hostMounts?: readonly HostMount[];
+    /**
+     * SBX：每次 `execute` 现读一次 `current()`，同 `resourceCaps`；不进 `effectiveOptions`
+     * 和恢复约束。给了 socket，命令经它和沙箱里的转发器联网；直连照旧只有沙箱自己的 lo。
+     */
+    readonly network?: NetworkProxySource;
 }
 export interface ResourceCapRequest {
     readonly memoryMaxBytes: number;
@@ -68,6 +79,21 @@ export interface ResourceCapRequest {
 /** 每次 execute 读一次；Host 持有，设置改了就变（L13）。 */
 export interface ResourceCapSource {
     current(): ResourceCapRequest;
+}
+/** SBX：宿主绝对路径 `source` 挂到沙箱里的绝对路径 `target`。 */
+export interface HostMount {
+    readonly source: string;
+    readonly target: string;
+    readonly writable: boolean;
+}
+/**
+ * SBX：每次 execute 读一次；Host 持有。null 表示这条命令不联网。`socketPath` 是 Host 侧
+ * HTTP 代理（收 `CONNECT host:port` 和绝对 URI 请求）的 unix socket 宿主路径。
+ */
+export interface NetworkProxySource {
+    current(): {
+        readonly socketPath: string;
+    } | null;
 }
 export type ResourceCapUnavailableReason = "not_linux" | "no_cgroup_v2" | "no_systemd_run" | "no_user_session" | "controllers_not_delegated" | "literal_arguments_not_preserved" | "sandbox_unavailable" | "probe_failed" | "not_configured";
 export type ResourceCapCapability = {
@@ -262,7 +288,9 @@ export declare class ProcessSandbox {
     static readonly PROFILE_VERSION = "bwrap-m3-v4";
     constructor(profile: ProcessSandboxProfile, workspaceRoot: string, workspace: WorkspaceSandbox, options?: ProcessSandboxOptions);
     /** 恢复约束快照使用构造后已规范化、过滤的实际选项。模式按每次调用定，不进恢复约束（L14）。 */
-    get effectiveOptions(): Required<Omit<ProcessSandboxOptions, "workspaceMode" | "ipcWalkMaxEntries" | "resourceCaps">>;
+    get effectiveOptions(): Required<Omit<ProcessSandboxOptions, "workspaceMode" | "ipcWalkMaxEntries" | "resourceCaps" | "hostMounts" | "network">>;
+    /** SBX：构造时给了 `network` 就是 true；shell 工具据此选说明。 */
+    get networkConfigured(): boolean;
     static probe(workspaceRoot: string, workspace: WorkspaceSandbox, options?: Readonly<{
         bwrapPath?: string;
         workspaceMode?: ProcessWorkspaceMode;

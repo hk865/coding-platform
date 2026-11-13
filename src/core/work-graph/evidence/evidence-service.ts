@@ -2229,8 +2229,8 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
      *   1. the receipt (a `reverified` and a `refused` value both replay);
      *   2. the caller and its class: a Host operator `human`, a platform
      *      automation actor `system`, an Agent `agent` of the same Goal through
-     *      `authorizeDelegatedWrite(…, 'request_recheck')` (no production Role
-     *      grants it before its Agent tool, GAP-46);
+     *      `authorizeDelegatedWrite(…, 'request_recheck')` (the writable local
+     *      executor and the adviser carry the name);
      *   3. the predecessor, its chain, the Goal and its current adopted Plan,
      *      the subject Run (gate: the anchored producer), work: its TaskRequeue
      *      cover and pointer intent; `reverifyAdmissionProblem` with steps 4–5

@@ -35,7 +35,7 @@ import { draftFrom } from '../scenarios/support/common.js';
 
 const EXECUTOR_ROLE = platformRoleProfile('executor').template;
 const WORK_TOOL_INPUT: Omit<FinalToolListInputV1, 'callKind' | 'selected'> = {
-  noteAdmission: { class: 'none' }, readOnly: false, reviewPhase: null, hasBlockedCommands: false,
+  noteAdmission: { class: 'none' }, reviewPhase: null, hasBlockedCommands: false,
   reviewSource: false, frozenSource: false, materialTools: false,
   owners: { mailbox: true, decisionMessages: true, applicationReceipt: true, sessions: true,
     plans: true, graph: true, notes: true, unknownCallReviews: true, commandRerunRequests: true,
@@ -48,6 +48,22 @@ const finalNames = (callKind: 'work' | 'query', selected: readonly string[]): st
   if (!result.ok) throw new Error(`the final tool list refused the selection: ${result.rejection.reason}`);
   return result.value;
 };
+
+/* AGTP-4 (AGT+ ruling §3; §1 item 2): one command tool per Run. A Run that selects `shell` does not also get the
+ * read-only command; a Run without `shell` does. Today red on the "without shell" row: `finalToolNamesOf` still
+ * gates the name on `FinalToolListInputV1.readOnly` (false here), so the writable/no-shell case gets nothing. The
+ * package deletes that field and gates only on `!wanted.has('shell')`. */
+describe('T-tool-sets: one command tool per Run', () => {
+  it.each([
+    ['without shell', ['read', 'run_readonly_command'], true],
+    ['with shell', ['read', 'run_readonly_command', 'shell'], false],
+  ] as const)('AGTP-4 %s: run_readonly_command is offered only when shell is absent', (_label, selected, expected) => {
+    const result = finalToolNamesOf({ ...WORK_TOOL_INPUT, callKind: 'work', selected,
+      readonlyCommand: { requested: true, access: 'all_except_denied', allowsReadWholeWorkspace: true } });
+    if (!result.ok) throw new Error(`AGTP-4 refused the selection: ${result.rejection.reason}`);
+    expect(result.value.includes('run_readonly_command')).toBe(expected);
+  });
+});
 
 describe('T-member-work: the fixed worker and the create_member grant', () => {
   it('refuses create_member without the createMember grant while the tool name stays offered', async () => {

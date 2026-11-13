@@ -586,6 +586,7 @@ function createReviewCapability(
       const options = readonlyCommandSandboxOptions({
         ...facts.processSandboxOptions,
         ...(deps.resourceCaps === undefined ? {} : { resourceCaps: deps.resourceCaps }),
+        ...(deps.commandSandbox === undefined ? {} : { commandSandbox: { toolchain: deps.commandSandbox.toolchain } }),
       });
       const profile = await ProcessSandbox.probe(resolved.value.root, handle, options);
       if (!profile.available) return unavailable(profile.reason ?? 'the read-only sandbox is unavailable');

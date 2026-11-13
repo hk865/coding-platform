@@ -61,6 +61,8 @@ type RLQueryFixtureOptions = {
   processSandboxOptions?: { readOnlyPaths?: string[]; executablePath?: string };
   /** L13 wiring: the platform-root resource-cap source the Runtime must read. */
   resourceCaps?: import('../../vendor/coding-agent/dist/public-api.js').ResourceCapSource;
+  /** The Host's one platform-command cap, passed through to the Runtime. */
+  commandSlots?: import('../../src/core/agent-runtime/command-slots.js').CommandSlots;
 };
 
 export async function createRLQueryFixture(options: RLQueryFixtureOptions): Promise<RLQueryFixture> {
@@ -101,6 +103,7 @@ export async function createRLQueryFixture(options: RLQueryFixtureOptions): Prom
       databasePath: join(directory, 'kernel.sqlite') }] },
     now: () => RL_QUERY_AT,
     ...(options.resourceCaps === undefined ? {} : { resourceCaps: options.resourceCaps }),
+    ...(options.commandSlots === undefined ? {} : { commandSlots: options.commandSlots }),
   });
   await bootstrap(platform, state);
   return {

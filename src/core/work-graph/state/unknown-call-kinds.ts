@@ -24,7 +24,7 @@ export const UNKNOWN_CALL_KIND_TABLE: readonly UnknownCallKindEntry[] = [
   // Row 2: platform read-only tools (these never look up a commit receipt).
   ...['read_session_inbox', 'read_session_message', 'read_session_message_body', 'read_user_decision',
     'query_task_graph', 'query_ready_tasks', 'find_related_sessions', 'read_session_card', 'look_graph', 'find_graph',
-    'check_links']
+    'check_links', 'web_search', 'web_fetch']
     .map((toolName) => ({ toolName, kind: 'read_only' as const, contained: true })),
   // Row 3: the read-only command.
   { toolName: 'run_readonly_command', kind: 'read_only', contained: true },

@@ -224,7 +224,12 @@ describe('L2-wiring', () => {
       plain(S6A_SCOPE, { ref: bundleRef, usage: 'historical_explanation' })), 'the wiring manifest');
     const manifest = JSON.parse(frozen.body) as PreparedTaskManifestV1;
     const names = manifest.permissions.tools;
-    expect(names).toEqual(expect.arrayContaining(['request_rework', 'request_recheck']));
+    // AGTP-12 (AGT+ ruling §3; §1 item 6/8): the writable executor's list also has the hand-off and the future-plan
+    // candidate tool. Today red at this assertion: the grant lists neither, and once the package adds `hand_off` the
+    // Run only starts because the Work duty is read from the frozen manifest (execution-driver.ts:680) instead of
+    // `hostConfig.platformDuty` (the local grant carries none). The bundle read above is the real started Run's. */
+    expect(names).toEqual(expect.arrayContaining(['request_rework', 'request_recheck', 'hand_off',
+      'propose_future_plan']));
     expect(names).not.toContain('ack_session_message');
     expect(names).not.toContain('respond_session_message');
   });

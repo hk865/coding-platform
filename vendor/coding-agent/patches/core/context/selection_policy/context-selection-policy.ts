@@ -94,6 +94,23 @@ export function estimateTokens(
 const TOOL_RESULT_PLACEHOLDER = (toolName: string, callId: string): string =>
   `内容因长度省略（工具 ${toolName}，调用 ${callId}），需要时重新读`;
 
+const TAIL_RESULT_TRUNCATED = (kept: number, total: number): string =>
+  `结果过长，本次上下文只放得下前 ${kept} 字节（原 ${total} 字节）；需要其余部分请缩小范围或分页再读`;
+
+function utf8Prefix(text: string, bytes: number): string {
+  if (bytes <= 0) return "";
+  const buffer = Buffer.from(text, "utf8");
+  let end = Math.min(bytes, buffer.length);
+  while (end > 0 && ((buffer[end] ?? 0) & 0xc0) === 0x80) end -= 1;
+  return buffer.subarray(0, end).toString("utf8");
+}
+
+function tailResultText(output: ToolResult["output"]): string {
+  return output.length === 1 && output[0]?.kind === "text"
+    ? output[0].text
+    : JSON.stringify(output);
+}
+
 type WorkingEntry = {
   readonly entry: TranscriptEntry;
   readonly history: boolean;
@@ -208,7 +225,7 @@ function buildRemovalUnits(
   input: Readonly<ContextBuilderInput>,
   entries: readonly WorkingEntry[],
   taskInputMessageId: string | null,
-): RemovalUnit[] {
+): { readonly units: RemovalUnit[]; readonly tail: readonly string[] | undefined } {
   const units: RemovalUnit[] = [];
 
   for (const memory of [...input.memories].sort(removalOrder)) {
@@ -229,6 +246,10 @@ function buildRemovalUnits(
     for (const call of value.entry.toolCalls) callNames.set(call.callId, call.name);
   }
   const scans = scanExchanges(entries);
+  const tailScan = scans.findLast((scan) =>
+    !entries[scan.assistantIndex]!.history && scan.closed &&
+    scan.resultIndexes[scan.resultIndexes.length - 1] === entries.length - 1,
+  );
   const partlyClosedResults = new Set<number>();
   for (const scan of scans) {
     if (scan.closed) continue;
@@ -300,6 +321,7 @@ function buildRemovalUnits(
 
   // 第 7 步：当前执行的完整工具交换；当前 user 与无调用 assistant 不在此列。
   for (const scan of scans) {
+    if (scan === tailScan) continue;
     if (entries[scan.assistantIndex]!.history || !scan.closed) continue;
     const assistant = entries[scan.assistantIndex]!.entry;
     if (assistant.kind !== "assistant_message") continue;
@@ -310,7 +332,7 @@ function buildRemovalUnits(
     });
   }
 
-  return units;
+  return { units, tail: tailScan?.callIds };
 }
 
 interface AppliedPrefix {
@@ -423,7 +445,7 @@ export async function selectContext(
     options.historyEntryCount,
     options.reasoningReplay,
   );
-  const units = buildRemovalUnits(
+  const { units, tail } = buildRemovalUnits(
     input,
     entries,
     options.taskInputMessageId,
@@ -448,45 +470,81 @@ export async function selectContext(
     report: report(outcome),
   });
 
+  const truncateTail = async (base: AppliedPrefix): Promise<PreviewOutcome | undefined> => {
+    if (tail === undefined) return undefined;
+    const targets = new Set(tail);
+    const texts = new Map<string, string>();
+    for (const entry of base.selected.transcript) {
+      if (entry.kind === "tool_result" && targets.has(entry.callId)) {
+        texts.set(entry.callId, tailResultText(entry.result.output));
+      }
+    }
+    let high = Math.max(0, ...[...texts.values()].map((text) => Buffer.byteLength(text, "utf8")));
+    const previewAt = async (cap: number): Promise<PreviewOutcome> => {
+      const transcript = base.selected.transcript.map((entry) => {
+        const text = entry.kind === "tool_result" ? texts.get(entry.callId) : undefined;
+        if (text === undefined || entry.kind !== "tool_result") return entry;
+        const kept = utf8Prefix(text, cap);
+        const output: ToolResult["output"] = [{
+          kind: "text",
+          text: `${kept}\n${TAIL_RESULT_TRUNCATED(Buffer.byteLength(kept, "utf8"), Buffer.byteLength(text, "utf8"))}`,
+        }];
+        return { ...entry, result: { ...entry.result, output } as ToolResult };
+      });
+      const selected = { ...base.selected, transcript };
+      const result = await options.previewRequest(options.build(selected));
+      return {
+        prefix: { selected, removed: { ...base.removed,
+          toolResultBody: base.removed.toolResultBody + texts.size } },
+        preview: result,
+      };
+    };
+    const zeroCap = await previewAt(0);
+    if (!zeroCap.preview.fits) return undefined;
+    let low = 0;
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2);
+      if ((await previewAt(middle)).preview.fits) low = middle;
+      else high = middle - 1;
+    }
+    return low === 0 ? zeroCap : previewAt(low);
+  };
+
   const zero = await preview(0);
   if (zero.preview.fits) return finish(zero);
-  if (units.length === 0) {
-    throw new ContextSelectionError(
-      "required_content_over_budget",
-      `不可裁剪 Context 需要 ${zero.preview.inputTokens} tokens，输入预算为 ${input.tokenBudget - zero.preview.outputReserve}`,
-    );
-  }
 
-  const all = await preview(units.length);
-  const cache = new Map<number, PreviewOutcome>([
-    [0, zero],
-    [units.length, all],
-  ]);
-  if (!all.preview.fits) {
-    throw new ContextSelectionError(
-      "required_content_over_budget",
-      `不可裁剪 Context 需要 ${all.preview.inputTokens} tokens，输入预算为 ${input.tokenBudget - all.preview.outputReserve}`,
-    );
-  }
-
-  let low = 1;
-  let high = units.length;
-  while (low < high) {
-    const middle = Math.floor((low + high) / 2);
-    let candidate = cache.get(middle);
-    if (candidate === undefined) {
-      candidate = await preview(middle);
-      cache.set(middle, candidate);
+  const all = units.length === 0 ? zero : await preview(units.length);
+  if (units.length > 0 && all.preview.fits) {
+    const cache = new Map<number, PreviewOutcome>([
+      [0, zero],
+      [units.length, all],
+    ]);
+    let low = 1;
+    let high = units.length;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      let candidate = cache.get(middle);
+      if (candidate === undefined) {
+        candidate = await preview(middle);
+        cache.set(middle, candidate);
+      }
+      if (candidate.preview.fits) high = middle;
+      else low = middle + 1;
     }
-    if (candidate.preview.fits) high = middle;
-    else low = middle + 1;
+    const chosen = cache.get(high)!;
+    if (!chosen.preview.fits) {
+      throw new ContextSelectionError(
+        "required_content_over_budget",
+        `不可裁剪 Context 需要 ${chosen.preview.inputTokens} tokens，输入预算为 ${input.tokenBudget - chosen.preview.outputReserve}`,
+      );
+    }
+    return finish(chosen);
   }
-  const chosen = cache.get(high)!;
-  if (!chosen.preview.fits) {
-    throw new ContextSelectionError(
-      "required_content_over_budget",
-      `不可裁剪 Context 需要 ${chosen.preview.inputTokens} tokens，输入预算为 ${input.tokenBudget - chosen.preview.outputReserve}`,
-    );
-  }
-  return finish(chosen);
+
+  const truncated = await truncateTail(all.prefix);
+  if (truncated !== undefined) return finish(truncated);
+  throw new ContextSelectionError(
+    "required_content_over_budget",
+    `不可裁剪 Context 需要 ${all.preview.inputTokens} tokens，输入预算为 ${input.tokenBudget - all.preview.outputReserve}`,
+  );
 }

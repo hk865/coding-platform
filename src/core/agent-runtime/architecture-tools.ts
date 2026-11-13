@@ -13,7 +13,7 @@ import { messageOf } from '../../contracts/error-message.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
 import type { ToolTextV1 } from '../../contracts/prompts/prompt-pack.js';
 import type { ArchitectureProposalService } from '../work-graph/architecture/proposal-service.js';
-import { failure, success } from './graph-tools.js';
+import { failure, rejectedResult, success } from './graph-tools.js';
 import { noneEffects } from './command-rerun-tools.js';
 import {
   toolSchema as z,
@@ -152,7 +152,10 @@ export function createArchitectureTools(config: ArchitectureToolsConfig): Archit
         commandId,
       };
       const result = await fixedPropose.proposeArchitectureRevision(context, input);
-      return success(callId, result);
+      // A refused proposal is a tool error like every other write tool's; the
+      // output keeps the whole result.
+      return result.status === 'invalid' || result.status === 'rejected'
+        ? rejectedResult(callId, result, result.reason) : success(callId, result);
     } catch (error) {
       return failure(callId, 'execution_failed',
         `the proposal call did not return a result: ${messageOf(error)}. Its outcome is unconfirmed and it may already be committed.`);

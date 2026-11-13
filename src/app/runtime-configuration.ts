@@ -45,6 +45,7 @@ import type {
 import { READONLY_COMMAND_TOOL_NAME } from '../core/agent-runtime/readonly-command-tool.js';
 import { PLATFORM_SKILL_RESOURCE_ROOT } from '../core/agent-runtime/platform-skill-root.js';
 import { reviewHostLayerOneAccess } from '../contracts/review-admission.js';
+import { createDeepSeekWebLookup } from './deepseek-web-lookup.js';
 import { validateSettingsBaseUrl } from './host-settings.js';
 
 /** One trusted model description. It carries the environment-variable NAME
@@ -225,6 +226,10 @@ export function narrowResolvedReadonlyCommands(
 export type WorkbenchRuntimeProviderDependencies = {
   registry?: Pick<ProviderRegistry, 'get' | 'create'>;
   secretSource?: SecretSource;
+  /** Host-internal seam for the platform web lookup's outbound request; a
+   * controlled test substitutes the external DeepSeek service. Never a CLI or
+   * HTTP field. */
+  webFetch?: typeof globalThis.fetch;
 };
 
 export type WorkbenchRuntimeConfigurationProblem = {
@@ -445,6 +450,7 @@ export function createWorkbenchRuntimeHostBindings(
   if (problem !== null) throw new Error(`workbench runtime configuration is ${problem.code}: ${problem.reason}`);
   const registry: Pick<ProviderRegistry, 'get' | 'create'> = dependencies.registry ?? createBuiltinProviderRegistry();
   const secretSource: SecretSource = dependencies.secretSource ?? { get: (name: string) => process.env[name] };
+  const webFetch = dependencies.webFetch ?? globalThis.fetch;
   const config = structuredClone(configuration);
   // slice-K2-SPEC: parsed once, each absent ratio filled, so a resolved configuration carries all three or none.
   const compaction: CompactionRatios | undefined = config.compaction === undefined ? undefined
@@ -521,6 +527,11 @@ export function createWorkbenchRuntimeHostBindings(
       client,
       // slice-K2-SPEC M3: one observed counter per binding, living as long as this BoundModel.
       inputCounter: createObservedInputCounter(),
+      // The platform web lookup uses this binding's own secret and address, and
+      // is built only for DeepSeek (121-112): another provider cannot call it.
+      ...(binding.model.provider === 'deepseek'
+        ? { webLookup: createDeepSeekWebLookup({ apiKey: secret, baseUrl, fetch: webFetch }) }
+        : {}),
       selection: {
         modelId,
         promptPack: binding.model.promptPack ?? 'platform',

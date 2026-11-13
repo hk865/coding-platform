@@ -2451,6 +2451,7 @@ function onReconcileUnknownAutoCleanup(
       proof: candidate.proof },
     inventory: candidate.draft.inventory, inventoryProblem: candidate.draft.inventoryProblem,
     items: candidate.draft.items, itemsOmitted: candidate.draft.itemsOmitted, workspace: candidate.draft.workspace,
+    ...(candidate.draft.network === undefined ? {} : { network: candidate.draft.network }),
     streak: { priorAutoCleanup: ctx.priorAutoCleanup === true, priorUnknownProcess: ctx.priorUnknownProcess === true,
       resetRunRef: ctx.streakResetRunRef ?? null, ...(ctx.priorAdvised === true ? { priorAdvised: true as const } : {}) },
     createdAt: event.recordedAt,

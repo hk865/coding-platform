@@ -10,6 +10,7 @@ import type { SessionRef } from './core/identity.js';
 import type { SessionMessageRef } from './core/session-message.js';
 import type { RunRef, TaskTriple } from './dispatch.js';
 import type { UnknownCallAdvicePhaseV1, UnknownCallAdviceV1 } from './unknown-call-advice.js';
+import type { RunNetworkReviewCopyV1 } from './run-network.js';
 
 export type UnknownCallReviewRef = {
   aggregateType: 'UnknownCallReview';
@@ -290,6 +291,13 @@ export type UnknownCallReviewV1 = {
    * (every step confirmed, stopped by the person, inventory incomplete).
    */
   escalation?: { cause: UnknownCallEscalationCauseV1; suggestion: UnknownCallAdviceV1 | null };
+  /**
+   * NET-B (decision 121-112): the hosts the Run's commands reached or were refused, copied from its `RunNetwork`
+   * record when the review was built (the proxy writes before it connects, so a crash keeps them). Absent means the
+   * record was not read (unreadable, or no reader wired), never "no host"; `{ hosts: [], omitted: 0 }` is a Run
+   * whose commands asked the proxy for none.
+   */
+  network?: RunNetworkReviewCopyV1;
   /** Derived: status is not resolved, or activeRound is not null -> yes (D4, writer-only). */
   open: 'yes' | 'no';
   decisionReasons: UnknownCallDecisionReasonV1[];
@@ -325,7 +333,7 @@ export type UnknownCallReviewV1 = {
 /** The draft handed to WorkGraph at settlement/attestation; platform items already resolved. */
 export type UnknownCallReviewDraftV1 = Pick<
   UnknownCallReviewV1,
-  'inventory' | 'inventoryProblem' | 'items' | 'itemsOmitted' | 'workspace'
+  'inventory' | 'inventoryProblem' | 'items' | 'itemsOmitted' | 'workspace' | 'network'
 >;
 
 // ------------------------------------------------------------------------ //

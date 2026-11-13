@@ -7,6 +7,14 @@
  * (S2B-be1-platform-fixture), both with the Kernel `ProcessSandbox` swapped by
  * the RL double. Results are read back through the public Runtime history.
  * Rows: RL-31.
+ *
+ * SHT-1 (test writer, 2026-11-13): the 130 s dispatcher row becomes S5 (a
+ * command past its filled duration is not stopped) and the handler's own
+ * `timedOut` row is deleted (§4: that branch goes with the sandbox timer). The
+ * invalid-argument row uses `timeoutMs: 0` instead of `500` because SHT-1 Q8
+ * removes the 1 s floor; `0` still proves the refusal path. RED today: the tool
+ * definition still says `defaultTimeoutMs: 130_000`, so the 2 h advance aborts
+ * the command. GREEN after SHT-1: `COMMAND_NO_STOP_MS`.
  */
 import { afterEach, expect, it, vi } from 'vitest';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
@@ -147,7 +155,7 @@ it('RL-31 two 32 KiB streams and 100 long paths bound the complete result at 128
 
 it('RL-31 an invalid argument refusal never starts a command and carries no resourceCaps', async () => {
   rlSandbox.next = () => defaultRLSandboxResult({ resourceCaps: APPLIED_NONE });
-  const f = await createRLQueryFixture({ replies: [readonlyCall('rl31-invalid', { command: 'echo never', timeoutMs: 500 }), text('RL-31 invalid done')] });
+  const f = await createRLQueryFixture({ replies: [readonlyCall('rl31-invalid', { command: 'echo never', timeoutMs: 0 }), text('RL-31 invalid done')] });
   queryFixtures.push(f);
   const result = await runQueryAndRead(f, 'rl31-invalid');
   expect(result?.status).toBe('error');
@@ -185,7 +193,8 @@ it('RL-31 a real Query cancellation maps to the dispatcher cancelled overlay wit
   expect(rlSandbox.aborted).toBeGreaterThan(0);
 });
 
-it('RL-31 the dispatcher timer past 130 s becomes the timeout overlay', async () => {
+/** SHT-1 S5: the Query dispatcher timer never reaches a read-only command filled at 30 s. */
+it('SHT-1 (S5) a read-only command past its filled duration is not aborted by the dispatcher timer', async () => {
   rlSandbox.settleOnAbort = true;
   rlSandbox.next = () => defaultRLSandboxResult({ resourceCaps: APPLIED_NONE });
   const f = await createRLQueryFixture({ replies: [readonlyCall('rl31-dispatcher'), text('RL-31 dispatcher done')] });
@@ -196,26 +205,13 @@ it('RL-31 the dispatcher timer past 130 s becomes the timeout overlay', async ()
     await vi.advanceTimersByTimeAsync(1);
   }
   expect(rlSandbox.commands.length).toBeGreaterThan(0);
-  await vi.advanceTimersByTimeAsync(130_000);
+  await vi.advanceTimersByTimeAsync(7_200_000);
+  expect(rlSandbox.aborted).toBe(0);
+  expect(rlSandbox.releases).toHaveLength(1);
+  rlSandbox.releases[0]!();
   const { observed } = await running;
   const result = await queryStored(f, observed.session.ref as SessionRef, 'rl31-dispatcher');
-  expect(result?.status).toBe('error');
-  if (result?.status !== 'error') throw new Error('no RL-31 dispatcher result');
-  expect(result.error.code).toBe('timeout');
-  expect(result.error.message).toBe('工具执行超时');
-  expect(result.output).toEqual([{ kind: 'text', text: '工具执行超时' }]);
-});
-
-it('RL-31 the handler own subprocess timeout is kept verbatim with its JSON', async () => {
-  rlSandbox.next = () => defaultRLSandboxResult({ exitCode: null, timedOut: true, resourceCaps: APPLIED_NONE });
-  const f = await createRLQueryFixture({ replies: [readonlyCall('rl31-timeout', { command: 'sleep 999', timeoutMs: 1000 }), text('RL-31 timeout done')] });
-  queryFixtures.push(f);
-  const result = await runQueryAndRead(f, 'rl31-timeout');
-  expect(result?.status).toBe('error');
-  if (result?.status !== 'error') throw new Error('no RL-31 timeout result');
-  expect(result.error.code).toBe('timeout');
-  expect(result.error.message).toBe('run_readonly_command 执行超时');
-  expect(rlJsonPart(result)?.['resourceCaps']).toEqual(APPLIED_NONE);
+  expect(result?.status).toBe('success');
 });
 
 // --------------------------------------------------------------------------- //

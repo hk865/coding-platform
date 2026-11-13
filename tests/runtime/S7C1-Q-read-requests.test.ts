@@ -112,7 +112,7 @@ async function expectNoWorkReadTool(): Promise<void> {
   // Query-only tool produces a final list without it.
   const final = finalToolNamesOf({
     callKind: 'work', noteAdmission: { class: 'none' }, selected: ['read', 'read_requests'],
-    readOnly: false, reviewPhase: null, hasBlockedCommands: false, reviewSource: false,
+    reviewPhase: null, hasBlockedCommands: false, reviewSource: false,
     frozenSource: false, materialTools: false,
     owners: { mailbox: true, decisionMessages: true, applicationReceipt: true, sessions: true,
       plans: true, graph: true, notes: true, unknownCallReviews: true, commandRerunRequests: true,

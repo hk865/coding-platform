@@ -61,8 +61,8 @@ export type PlanDelegatedWriteDependencies = Pick<ExecutionEntryDependencies,
 /**
  * The fixed delegated operations an Agent write may be admitted for (spec §4.1):
  * the whiteboard plan tool plus the two rework operations. Each must be in the
- * current Host/Role grant (`manifest.permissions.tools`); no production Role
- * grants the rework names before their Agent tools exist (GAP-46).
+ * current Host/Role grant (`manifest.permissions.tools`); the writable local
+ * executor and the adviser carry both rework names.
  */
 export type DelegatedWriteOperation = 'propose_future_plan' | 'request_rework' | 'request_recheck';
 /** The plan-write subset: the one remaining whiteboard write tool. */

@@ -38,7 +38,7 @@ export type LineCreationInput = {
   roleConfiguration: RoleConfigurationRef;
   /** The creator's accepted permissions for a member-created line; absent is no ceiling. */
   delegationCeiling?: { tools: string[]; writeScope: string[]; createMember: boolean };
-  /** Present only on a secretary-created executor; absent is not secretary-created. */
+  /** Present only on a secretary- or adviser-created executor; absent is neither. */
   secretaryCreated?: true;
   /** The source line this successor replaces; absent is null (ordinary creation normalizes to null). */
   replaces?: SessionRef | null;

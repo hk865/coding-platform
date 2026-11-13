@@ -66,7 +66,7 @@ export type { SessionRecord, SessionRecordDraft, SessionStorePort, } from "./cor
 export type { AppendCompactionRecordInput, AppendCompactionRecordResult, CloseOpenTurnInput, CloseOpenTurnResult, TurnBounds, } from "./storage/adapters/sqlite/sqlite-stores.js";
 export type { RecoveryAction, RecoveryEnvironment, RecoveryResult, } from "./core/runtime/recovery/recovery-coordinator.js";
 export type { RunLimits } from "./core/runtime/limits/limit-guard.js";
-export type { ResourceCapCapability, ResourceCapRequest, ResourceCapSource, ResourceCapsReport, ResourceCapUnavailableReason, } from "./sandbox/process/process-sandbox.js";
+export type { HostMount, NetworkProxySource, ResourceCapCapability, ResourceCapRequest, ResourceCapSource, ResourceCapsReport, ResourceCapUnavailableReason, } from "./sandbox/process/process-sandbox.js";
 export type { ToolDefinition, ToolEffectClass } from "./tools/schemas/tool-schemas.js";
 export * from "./m5-public-api.js";
 /** Tool schemas share the kernel registry schema version. */

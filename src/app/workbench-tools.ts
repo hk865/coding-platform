@@ -4,9 +4,9 @@
  *
  * Ownership: this file only adapts the Kernel. It owns no ledger, Session, Task
  * or Agent, and it never exposes a root or a prefix list to a browser DTO. The
- * trusted startup configuration (workspace root, read/write prefixes, command
- * authorization) comes from `host.ts`, is snapshotted before the first await and
- * is never request input.
+ * trusted Host facts (workspace root, read prefixes) come from `host.ts`, are
+ * snapshotted before the first await and are never request input; the write and
+ * command grants change only through `setAccess`.
  *
  * Permission boundaries:
  *   - an absent `writePrefixes` denies every write and an absent `allowCommands`
@@ -28,14 +28,16 @@ import { canonicalJson, type JsonValue } from '../contracts/fingerprint.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { MaterialSourceScope } from '../contracts/material-access.js';
 import { WORKSPACE_DENIED_PREFIXES } from '../core/workspace/denied-prefixes.js';
+import { withCommandSandbox, type CommandToolchain } from '../core/agent-runtime/readonly-command-tool.js';
+import type { CommandNetworkProxy, CommandNetworkRoute } from './command-sandbox.js';
 import { ensureKnowledgeDirectory } from '../core/workspace/knowledge-exclude.js';
 import { KNOWLEDGE_DIRECTORY } from '../contracts/knowledge.js';
 import { messageOf } from '../contracts/error-message.js';
 import type { WorkspaceError, WorkspaceResult } from '../core/workspace/ports.js';
 
-/** One trusted workspace this helper may write/execute in. `root`,
- * `readPrefixes`, `writePrefixes` and `allowCommands` are frozen startup facts,
- * never request input. */
+/** One trusted workspace this helper may write/execute in. `root` and
+ * `readPrefixes` are trusted Host facts; `writePrefixes` and `allowCommands`
+ * change only through `setAccess`, never request input. */
 export type WorkbenchToolsWorkspace = {
   scope: MaterialSourceScope;
   root: string;
@@ -61,6 +63,10 @@ export type WorkbenchToolsOptions = {
   /** L13: the Host's live resource-cap source, passed to the cached sandbox and
    * read once per command. Absence keeps today's uncapped path. */
   resourceCaps?: ResourceCapSource;
+  /** NET-B (decision 121-112): the Host's toolchain and command proxy. The person's own commands get both, network
+   * included and not recorded: they are not a Run, and the person is not held to an agent's limits. Absent keeps
+   * today's sandbox. */
+  commandSandbox?: { toolchain: CommandToolchain; proxy: Pick<CommandNetworkProxy, 'route'> };
 };
 
 export type SaveWorkbenchFileRequest = {
@@ -153,6 +159,9 @@ export type WorkbenchToolsHandle = {
    * scope; it never widens an existing workspace grant.
    */
   addWorkspace(workspace: WorkbenchToolsWorkspace): void;
+  /** 121-106: the person's settings switch replaces one registered workspace's write prefixes and command
+   *  authorization; the next save or command start reads them. A running command keeps running, readable and stoppable. */
+  setAccess(scope: MaterialSourceScope, access: Pick<WorkbenchToolsWorkspace, 'writePrefixes' | 'allowCommands'>): void;
   /** Refuses new starts, aborts every owned handle and awaits its real drain. */
   close(): Promise<void>;
 };
@@ -307,8 +316,24 @@ export function createWorkbenchTools(options: WorkbenchToolsOptions): WorkbenchT
     }
     byScope.set(key, { config: next, sandbox: null, process: null });
   }
+  /** 121-106: every workspace the Host opens is registered here before the settings switch can reach it, so an unknown
+   *  scope is a disagreement between the Host and its tools, not a normal empty result. */
+  function setAccess(scope: MaterialSourceScope,
+    access: Pick<WorkbenchToolsWorkspace, 'writePrefixes' | 'allowCommands'>): void {
+    const runtime = byScope.get(scopeKey(scope));
+    if (runtime === undefined) throw new Error(`unknown workbench tools workspace ${scopeKey(scope)}`);
+    runtime.config = {
+      scope: runtime.config.scope,
+      root: runtime.config.root,
+      readPrefixes: runtime.config.readPrefixes,
+      ...(access.writePrefixes === undefined ? {} : { writePrefixes: access.writePrefixes }),
+      ...(access.allowCommands === undefined ? {} : { allowCommands: access.allowCommands }),
+    };
+  }
   let closed = false;
   let closePromise: Promise<void> | undefined;
+  /** One route per workspace sandbox, open until the workbench closes. */
+  const routes: CommandNetworkRoute[] = [];
 
   /** Task E: announce a handle state change. Closing the tools announces
    * nothing; a notification failure never reaches the command. */
@@ -363,8 +388,12 @@ export function createWorkbenchTools(options: WorkbenchToolsOptions): WorkbenchT
       const sandbox = await workspaceSandbox(runtime);
       const profile = await ProcessSandbox.probe(runtime.config.root, sandbox);
       if (!profile.available) return null;
-      return new ProcessSandbox(profile, runtime.config.root, sandbox, { readOnlyPaths: [KNOWLEDGE_DIRECTORY],
-        ...(options.resourceCaps === undefined ? {} : { resourceCaps: options.resourceCaps }) });
+      const host = options.commandSandbox;
+      const route = host?.proxy.route(null);
+      if (route !== undefined) { routes.push(route); await route.open(); }
+      return new ProcessSandbox(profile, runtime.config.root, sandbox, withCommandSandbox({ readOnlyPaths: [KNOWLEDGE_DIRECTORY],
+        ...(options.resourceCaps === undefined ? {} : { resourceCaps: options.resourceCaps }) },
+        host === undefined || route === undefined ? undefined : { toolchain: host.toolchain, network: route.source }));
     })();
     return runtime.process;
   }
@@ -582,6 +611,7 @@ export function createWorkbenchTools(options: WorkbenchToolsOptions): WorkbenchT
   return {
     tools,
     addWorkspace,
+    setAccess,
     close(): Promise<void> {
       closePromise ??= (async () => {
         closed = true;
@@ -596,6 +626,7 @@ export function createWorkbenchTools(options: WorkbenchToolsOptions): WorkbenchT
         await Promise.allSettled(owned.map(handle => handle.execution));
         handlesById.clear();
         handlesByRequest.clear();
+        await Promise.all(routes.splice(0).map(route => route.close()));
         for (const runtime of byScope.values()) {
           runtime.sandbox = null;
           runtime.process = null;

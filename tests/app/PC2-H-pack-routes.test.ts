@@ -187,7 +187,7 @@ describe('PC-04 prompt-pack routes', () => {
     const directory = join(fixture.paths.promptsDirectory, 'pc2-null-templates');
     try {
       const saved = await snapshotPC2Step(directory, () => fixture.call('prompts/templates/save', {
-        packId: 'pc2-null-templates', templateId: 'base', expectedVersion: 2, text: 'REPAIRED', mentionsTools: [],
+        packId: 'pc2-null-templates', templateId: 'base', expectedVersion: 3, text: 'REPAIRED', mentionsTools: [],
       }));
       expect(saved.difference).toEqual({ equal: true, added: [], removed: [], changed: [] });
       expect(saved.after).toEqual(saved.before);

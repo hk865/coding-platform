@@ -167,6 +167,7 @@ import { decodeRun } from '../core/work-graph/materials/run-snapshot-decoder.js'
 import type { EvidencePort } from '../core/work-graph/model/evidence-contracts.js';
 import { VerificationWorkspaceReader } from '../core/workspace/verification-workspace-reader.js';
 import { createRegisteredCheckRunner, type RegisteredCheckRunner } from '../core/agent-runtime/check-execution.js';
+import { createCommandSlots, PLATFORM_COMMAND_SLOTS, type CommandSlots } from '../core/agent-runtime/command-slots.js';
 import type { TrustedCheckConfiguration } from '../contracts/verification.js';
 import { createExecutionHistoryService } from '../core/work-graph/tasks/execution-history-service.js';
 import { EXECUTION_HISTORY_RECORD_SCHEMAS } from '../core/work-graph/persistence/execution-history-codecs.js';
@@ -289,6 +290,7 @@ import type { KnowledgeWriteHoldPoint, KnowledgeWriteLease } from '../core/work-
 import type { CatalogPlanFactsV1 } from '../core/work-graph/model/catalog-revision-ports.js';
 import type { SessionRecord, SessionWorkLink } from '../contracts/core/session.js';
 import { SESSION_ACTIVITY_SCHEMAS, createSessionActivityReader } from '../core/work-graph/sessions/session-activity.js';
+import { RUN_NETWORK_SCHEMAS, createRunNetworkService } from '../core/work-graph/tasks/run-network-service.js';
 import { INITIALIZATION_BINDING_SCHEMAS } from '../core/work-graph/persistence/initialization-binding-codecs.js';
 // The initialization adoption operation owner and its bundle; the Host's adoption composite drives it.
 import { INITIALIZATION_ADOPTION_SCHEMAS } from '../core/work-graph/persistence/initialization-adoption-codecs.js';
@@ -368,9 +370,11 @@ import { canonicalJson, canonicalKey, sameJson, sha256Hex, type JsonValue } from
 import { isRecord } from '../contracts/validation/common.js';
 import type { RuntimeCapabilities } from '../core/agent-runtime/contracts.js';
 import type {
-  ContinuationWorkspaceSource, QueryRuntimeConfigurationInput, ReadonlyCommandAccessInput,
+  CommandRoute, ContinuationWorkspaceSource, QueryRuntimeConfigurationInput, ReadonlyCommandAccessInput,
   RuntimeExecutionDependencies, RuntimeHostBindings,
 } from '../core/agent-runtime/execution-contracts.js';
+import type { CommandToolchain } from '../core/agent-runtime/readonly-command-tool.js';
+import type { RunNetworkHostV1 } from '../contracts/run-network.js';
 import type {
   AuthorizeConfiguration, ExecutionEntryDependencies, ExecutionEntryPort,
 } from '../core/work-graph/model/execution-entry-contracts.js';
@@ -515,6 +519,22 @@ export type TargetPlatformOptions = {
    * that builds the platform directly). It adds no platform member.
    */
   resourceCaps?: ResourceCapSource;
+  /**
+   * The Host's one cap on platform commands (read-only commands, registered
+   * checks) running at once. Absent builds a platform-local cap, so a directly
+   * built platform keeps the same limit; the Host passes its one instance and
+   * every project's platform shares it.
+   */
+  commandSlots?: CommandSlots;
+  /**
+   * NET-B (decision 121-112): the Host's toolchain and command proxy. Each Run with a command tool takes a route
+   * whose recorder notes every host on that Run before the proxy connects; the registered check takes the toolchain
+   * only. Absent (a directly built platform, a Host off Linux): commands have no network and the default PATH.
+   */
+  commandSandbox?: {
+    toolchain: CommandToolchain;
+    proxy: { route(recorder: ((entry: RunNetworkHostV1) => Promise<void>) | null): CommandRoute };
+  };
   /** Trusted per-workspace source policy, consumed by the existing source factories. */
   sourcePolicyFor?: RuntimeExecutionDependencies['sourcePolicyFor'];
   /**
@@ -1107,7 +1127,8 @@ export function platformRecordSchemas() {
       ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.records,
       ...COMMAND_RERUN_REQUEST_RECORD_SCHEMAS.records,
       ...COMPLETION_RECORD_SCHEMAS.records, ...DECISION_RECORD_SCHEMAS.records, ...LINE_SETTINGS_RECORD_SCHEMAS.records,
-      ...NOTE_RECORD_SCHEMAS.records, ...SESSION_ACTIVITY_SCHEMAS.records, ...INITIALIZATION_BINDING_SCHEMAS.records,
+      ...NOTE_RECORD_SCHEMAS.records, ...SESSION_ACTIVITY_SCHEMAS.records, ...RUN_NETWORK_SCHEMAS.records,
+      ...INITIALIZATION_BINDING_SCHEMAS.records,
       ...DISPATCH_COUNTER_SCHEMAS.records, ...GOAL_CONFIRM_SCHEMAS.records, ...GOAL_COPY_RECORD_SCHEMAS.records,
       ...GOAL_INTERRUPTION_SCHEMAS.records,
       ...MODULE_OVERLAP_GATE_SCHEMAS.records,
@@ -1126,7 +1147,8 @@ export function platformRecordSchemas() {
       ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.events,
       ...COMMAND_RERUN_REQUEST_RECORD_SCHEMAS.events,
       ...COMPLETION_RECORD_SCHEMAS.events, ...DECISION_RECORD_SCHEMAS.events, ...LINE_SETTINGS_RECORD_SCHEMAS.events,
-      ...NOTE_RECORD_SCHEMAS.events, ...SESSION_ACTIVITY_SCHEMAS.events, ...INITIALIZATION_BINDING_SCHEMAS.events,
+      ...NOTE_RECORD_SCHEMAS.events, ...SESSION_ACTIVITY_SCHEMAS.events, ...RUN_NETWORK_SCHEMAS.events,
+      ...INITIALIZATION_BINDING_SCHEMAS.events,
       ...DISPATCH_COUNTER_SCHEMAS.events, ...GOAL_CONFIRM_SCHEMAS.events, ...GOAL_COPY_RECORD_SCHEMAS.events,
       ...GOAL_INTERRUPTION_SCHEMAS.events,
       ...MODULE_OVERLAP_GATE_SCHEMAS.events,
@@ -1145,7 +1167,8 @@ export function platformRecordSchemas() {
       ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.lookups ?? [],
       ...COMMAND_RERUN_REQUEST_RECORD_SCHEMAS.lookups ?? [],
       ...COMPLETION_RECORD_SCHEMAS.lookups ?? [], ...DECISION_RECORD_SCHEMAS.lookups ?? [], ...LINE_SETTINGS_RECORD_SCHEMAS.lookups ?? [],
-      ...NOTE_RECORD_SCHEMAS.lookups ?? [], ...SESSION_ACTIVITY_SCHEMAS.lookups ?? [], ...INITIALIZATION_BINDING_SCHEMAS.lookups ?? [],
+      ...NOTE_RECORD_SCHEMAS.lookups ?? [], ...SESSION_ACTIVITY_SCHEMAS.lookups ?? [], ...RUN_NETWORK_SCHEMAS.lookups ?? [],
+      ...INITIALIZATION_BINDING_SCHEMAS.lookups ?? [],
       ...DISPATCH_COUNTER_SCHEMAS.lookups ?? [], ...GOAL_CONFIRM_SCHEMAS.lookups ?? [],
       ...GOAL_INTERRUPTION_SCHEMAS.lookups ?? [],
       ...MODULE_OVERLAP_GATE_SCHEMAS.lookups ?? [],
@@ -1177,6 +1200,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     const fixed = { memoryMaxBytes: defaults.memoryMaxMiB * MIB, tasksMax: defaults.tasksMax };
     return { current: () => fixed };
   })();
+  const commandSlots = options.commandSlots ?? createCommandSlots(PLATFORM_COMMAND_SLOTS);
   const schemas = platformRecordSchemas();
   // Slice 1 (spec §2.8): every one of the six new indexes must be part of the
   // real record-store schema set this Host opens. The declared
@@ -2261,11 +2285,11 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     };
     const memberService = createMemberService({
       records: backend.records, commitIdentities: rawBackend.commitIdentities,
-      sessions: { findSessions: (ctx, input) => sessionDirectory.findSessions(ctx, input) },
+      sessions: { findSessions: (ctx, input) => sessionDirectory.findSessions(ctx, input), readSession: (ctx, ref, scope) => sessionDirectory.readSession(ctx, ref, scope) },
       lines: requestLineCreation,
       requests: { ownerOf: (ctx, input) => rawRequestFacts.ownerOf(ctx, input) },
       secretaryRuns: secretaryQueryRun,
-      duties: dutyRecipient,
+      duties: dutyRecipient, duty: sessionDutyResolver,
       // L42/D-18: the ONE L35 resolver (O4b-2's late binding) and the mailbox's own send for the adviser's one notice.
       advisers: lateRecipients,
       messages: mailbox,
@@ -2299,7 +2323,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     // A.2 step 5.9 (VR-14): the successor-round owner reads the same automation
     // policy as the requeue owner (VD-13 cap), a new input message through the
     // mailbox (ND-9), and admits an Agent through the same delegated-write
-    // admission (no production Role grants `reverify_round` yet, GAP-46).
+    // admission (the writable local executor and the adviser carry the recheck name).
     // Slice 5 §3.2/S5-AU-03: the SAME autonomy table the Workflow and requeue
     // owner use, over the effective Goal settings (the record-codecs default
     // reader the Goal-settings owner also applies), so an automatic reverify
@@ -2352,7 +2376,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       },
     };
     const rawCheckRunner = createRegisteredCheckRunner({ evidence: rawEvidence,
-      workspaceHost: options.workspace, kernel, resourceCaps, now });
+      workspaceHost: options.workspace, kernel, resourceCaps, commandSlots, now,
+      ...(options.commandSandbox === undefined ? {} : { toolchain: options.commandSandbox.toolchain }) });
     // A.2 step 5.6 (S8, A8): the reconcile owners share the ONE records/reader pair; the Runtime
     // classifier reads the Kernel through the same history owner the observer uses.
     const runReconcile: RunReconcileService = createRunReconcileService({ records: backend.records, reads: executionReader,
@@ -2362,6 +2387,24 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     // dependency; this owner is what the Workflow backfill and the activity
     // reads share (a single writer/reader pair, §0.4).
     const runActivity = createRunActivityService({ records: backend.records, now, eventId: randomUUID });
+    // NET-B (decision 121-112): the ONE owner of each Run's host record. The command proxy notes through it before
+    // it connects; the `network/read` route and the unknown-call review drafts read through it.
+    const runNetworkOwner = createRunNetworkService({ records: backend.records, now, eventId: randomUUID });
+    const readRunNetwork = runNetworkOwner.readRunNetwork.bind(runNetworkOwner);
+    // A note that is not committed throws, so the proxy answers 503 and never connects (safety: the record stands in
+    // for an allow-list). The note keeps the Run's trusted Host context with a signal of its own: a Run's cancel
+    // never cuts a note short.
+    const hostSandbox = options.commandSandbox;
+    const commandSandbox: RuntimeExecutionDependencies['commandSandbox'] = hostSandbox === undefined ? undefined : {
+      toolchain: hostSandbox.toolchain,
+      route: (ctx, subject) => {
+        const noteCtx = { ...ctx, signal: new AbortController().signal };
+        return hostSandbox.proxy.route(async entry => {
+          const written = await runNetworkOwner.noteRunNetworkHost(noteCtx, { subject, entry });
+          if (written.status !== 'committed') throw new Error(written.reason);
+        });
+      },
+    };
     // Slice 2B §2/L9–L12/L15: the ONE activity owner (calendar + per-Run views +
     // track bars) and the task-state timeline owner. Both read the SAME store the
     // end commits and the backfill write through, and reach the route layer as
@@ -2638,7 +2681,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
         requests: { readRequest: (...args) => rawRequestFacts.readRequest(...args) },
         ...(host.readonlyCommandAccess === undefined ? {}
           : { readonlyCommandAccess: (input: ReadonlyCommandAccessInput) => host.readonlyCommandAccess!(input) }),
-        host, kernel, resourceCaps, now, newId: randomUUID,
+        ...(commandSandbox === undefined ? {} : { commandSandbox }),
+        host, kernel, resourceCaps, commandSlots, now, newId: randomUUID,
       };
       runtime = createAgentRuntime(dependencies);
     }
@@ -4182,7 +4226,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
             entry: resultWriter, reconcile: runReconcile, now, newId: randomUUID,
             ...(runtime.port.turnClosureSupport === undefined
               ? {} : { turnClosureSupport: runtime.port.turnClosureSupport.bind(runtime.port) }),
-            captureWorkspace, lookupToolCommit: toolCommitLookup }, ctx, input);
+            captureWorkspace, lookupToolCommit: toolCommitLookup, readRunNetwork }, ctx, input);
         }, () => ({ runRef: input.record.run.ref, row: 'W-*', status: 'failed' as const, reason: 'platform is closing' })),
       reconcileQuery: (ctx: CoreCallContext, input: { record: QueryExecutionRecord; hostInstanceId: string; probe: SessionMappingProbe }) =>
         trackedCall(async () => {
@@ -4270,11 +4314,11 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       const kernel = auth.kernel;
       const facts = kernel === null
         ? { ok: true as const, kernelTurnOpen: false, inputsConfirmed: null,
-            draft: await readUnknownCallReviewDraft({ lookupToolCommit: toolCommitLookup, captureWorkspace }, ctx, { record,
-              kernel: { adapterId: '', kernelSessionId: '', runId: '', turnId: '' }, turnFound: false,
-              kernelReadable: false, kernelUnreadableAtStop: false, unresolved: [] }) }
+            draft: await readUnknownCallReviewDraft({ lookupToolCommit: toolCommitLookup, captureWorkspace, readRunNetwork },
+              ctx, { record, kernel: { adapterId: '', kernelSessionId: '', runId: '', turnId: '' }, turnFound: false,
+                kernelReadable: false, kernelUnreadableAtStop: false, unresolved: [] }) }
         : await readReviewDraftAtEntry({ owner: historyOwner, messages: classifierMessages,
-          lookupToolCommit: toolCommitLookup, captureWorkspace }, ctx, { record, kernel,
+          lookupToolCommit: toolCommitLookup, captureWorkspace, readRunNetwork }, ctx, { record, kernel,
           startPosition: record.run.executionHistory?.startPosition ?? null });
       if (!facts.ok) return facts.rejection;
       return runReconcile.resolveUnknownRun(ctx, { input: { runRef, reason: input.reason, kernelTurnOpen: facts.kernelTurnOpen,
@@ -4788,6 +4832,9 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       sessionFacts, responsibilities, sessionAnomalies,
       planReaders: publishedPlanReaders,
       runActivity, activity, timeline,
+      // NET-B: the `network/read` route's one read of a Run's host record; internal like the activity owners.
+      runNetwork: { readRunNetwork: (...args: Parameters<typeof readRunNetwork>) =>
+        trackedCall(() => readRunNetwork(...args), unavailable) },
       // Slice 4A P2: the note write/read owner; 4C's routes bind to it. It stays
       // non-enumerable like the other internal owner groups.
       notes, knowledge,
@@ -4976,7 +5023,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     // internal owners by the same rule; the frozen public key list stays exact.
     for (const key of ['sessionFacts', 'planReaders', 'responsibilities', 'sessionAnomalies', 'graphContext', 'taskInputs',
       'goalSettings', 'workspaceDecisionSettings', 'decisionMessages', 'decisions', 'requestCandidates',
-      'runActivity', 'activity', 'timeline',
+      'runActivity', 'activity', 'timeline', 'runNetwork',
       'workLines', 'workLineConversation', 'nodeDetail', 'lineSettings', 'notes', 'knowledge', 'trackDetached',
       'repairs', 'readArchitectureProposal', 'overlapGates',
       'requestIntake', 'requestRounds', 'requestFacts', 'secretaryProfiles', 'mainSurface', 'memberCreations', 'sessionHandoff',

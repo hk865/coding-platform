@@ -68,6 +68,14 @@ export type ProposalWorld = {
   readonly sourceLinks: readonly { link: SessionRef & { target: unknown }; linkRef: unknown }[];
   /** The executor source relations the trial world needs; `core` and `ui` are the two source links. */
   readonly executorLinks: { readonly core: unknown; readonly ui: unknown; readonly dest: unknown };
+  /** One real Work Run of the adviser line, with the model-visible status of each call's tool result. */
+  proposeWithStatus(calls: readonly { baseCatalogPin: ArchitectureCatalogPinV1; ops: unknown[];
+    responsibilityMoves?: unknown[]; reason: string }[]):
+    Promise<Array<{ result: ProposalResult; toolStatus: string }>>;
+  /** One real Work Run of an executor line, with the model-visible status of each call's tool result. */
+  proposeAsExecutorWithStatus(calls: readonly { baseCatalogPin: ArchitectureCatalogPinV1; ops: unknown[];
+    responsibilityMoves?: unknown[]; reason: string }[]):
+    Promise<Array<{ result: ProposalResult; toolStatus: string }>>;
   /** One real Work Run of the adviser line; each call is a real tool call of the frozen tool. */
   propose(calls: readonly { baseCatalogPin: ArchitectureCatalogPinV1; ops: unknown[];
     responsibilityMoves?: unknown[]; reason: string }[]): Promise<ProposalResult[]>;
@@ -355,7 +363,8 @@ export async function openProposalWorld(options: { backend?: 'memory' | 'sqlite'
     let runs = 0;
     async function proposeOn(line: S6ASession, role: RoleConfigurationRef, roleId: string,
       calls: readonly { baseCatalogPin: ArchitectureCatalogPinV1; ops: unknown[];
-        responsibilityMoves?: unknown[]; reason: string }[]): Promise<ProposalResult[]> {
+        responsibilityMoves?: unknown[]; reason: string }[]):
+      Promise<Array<{ result: ProposalResult; toolStatus: string }>> {
       const plan = await staff!.main.activePlan(staff!.goal);
       if (plan === null) throw new Error('S8C proposal world: the Goal has no active Plan');
       runs += 1;
@@ -393,23 +402,39 @@ export async function openProposalWorld(options: { backend?: 'memory' | 'sqlite'
       const receipts: unknown[] = [];
       await driveWorkflow(staff!.world.ag2b, claimInput, { stopBefore: 'open_checks', receipts: receipts as never });
       const requests = await staff!.world.scripted.requests(line);
-      return calls.map((_call, index) => jsonOf(requests, `s8c-proposal-call-${runs}-${index}`) as ProposalResult);
+      return calls.map((_call, index) => {
+        const callId = `s8c-proposal-call-${runs}-${index}`;
+        const delivered = requests.flatMap(request => request.messages)
+          .find(message => message.role === 'tool' && message.callId === callId);
+        return {
+          result: jsonOf(requests, callId) as ProposalResult,
+          toolStatus: delivered?.role === 'tool' ? delivered.result.status : 'not_delivered',
+        };
+      });
     }
-    const propose = (calls: readonly { baseCatalogPin: ArchitectureCatalogPinV1; ops: unknown[];
+    const proposeWithStatus = (calls: readonly { baseCatalogPin: ArchitectureCatalogPinV1; ops: unknown[];
       responsibilityMoves?: unknown[]; reason: string }[]) => proposeOn(staff!.lines.adviser!,
       platformRoleProfile('adviser').template as RoleConfigurationRef, 'adviser', calls);
-    const proposeAsExecutor = (calls: readonly { baseCatalogPin: ArchitectureCatalogPinV1; ops: unknown[];
+    const proposeAsExecutorWithStatus = (calls: readonly { baseCatalogPin: ArchitectureCatalogPinV1; ops: unknown[];
       responsibilityMoves?: unknown[]; reason: string }[]) => proposeOn(staff!.lines.noCreate,
       platformRoleProfile('executor').template as RoleConfigurationRef, 'executor', calls);
+    const propose = async (calls: readonly { baseCatalogPin: ArchitectureCatalogPinV1; ops: unknown[];
+      responsibilityMoves?: unknown[]; reason: string }[]) =>
+      (await proposeWithStatus(calls)).map(outcome => outcome.result);
+    const proposeAsExecutor = async (calls: readonly { baseCatalogPin: ArchitectureCatalogPinV1; ops: unknown[];
+      responsibilityMoves?: unknown[]; reason: string }[]) =>
+      (await proposeAsExecutorWithStatus(calls)).map(outcome => outcome.result);
 
     return {
       staff, platform, scope, projectId: scope.projectId, pin: basePin,
+      proposeWithStatus, proposeAsExecutorWithStatus,
       sourceLinks: [], executorLinks: { core: coreLink, ui: uiLink, dest: destLink },
       propose,
       proposeAsExecutor,
       proposeAsRoleSpec: (calls) => {
         if (roleSpecLine === null) throw new Error('S8C proposal world: the world has no role_spec adviser line');
-        return proposeOn(roleSpecLine, ROLE_SPEC_ADVISER_ROLE, ROLE_SPEC_ADVISER_ID, calls);
+        return proposeOn(roleSpecLine, ROLE_SPEC_ADVISER_ROLE, ROLE_SPEC_ADVISER_ID, calls)
+          .then(outcomes => outcomes.map(outcome => outcome.result));
       },
       freezeAttempt: (freezePin, refs) => owner.freezeArchitectureProposalBatch(ctx,
         { baseCatalogPin: freezePin, proposalRefs: [...refs] }),

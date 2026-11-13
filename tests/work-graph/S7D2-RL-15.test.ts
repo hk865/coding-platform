@@ -14,7 +14,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { WorkflowStepReceipt } from '../../src/business/workflow/contracts.js';
 import type { MemberRequestResultV1 } from '../../src/core/work-graph/tasks/member-service.js';
-import { advanceUntil, driveWorkflow, readExecution } from '../helpers/A2-restart-fixture.js';
+import { advanceUntil, driveWorkflow } from '../helpers/A2-restart-fixture.js';
 import { commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import type { S6ABackend } from '../helpers/S6A-request-fixture.js';
 import { committed } from '../helpers/S7A-fixture.js';
@@ -79,7 +79,7 @@ const cardKeyOf = (result: MemberRequestResultV1) => result.status === 'needs_de
 describe('RL-15: autonomy rules', () => {
   /* Named mutation: `create_member`'s judge never reads the rule set (the factory every-step default only):
      Q's and S's `{status:'created'}`, the notice counts and the empty card list turn red. */
-  it('base instance: E forbidden, Q and S direct with one notice each, E2 and Q’s child within bounds, update +1', async () => {
+  it('base instance: E forbidden, Q and S direct with one notice each, E2 within bounds, update +1', async () => {
     const world = await openPrior();
     expect(await askS7D2Member(world.world, { caller: world.lines.noCreate, goal: world.g,
       callerTask: world.gTask('rl15-e'), memberTask: world.gTask('rl15-me'), label: 'rl15-e' })).toEqual({
@@ -105,13 +105,8 @@ describe('RL-15: autonomy rules', () => {
       throw new Error(`RL-15: E2 did not prepare: ${JSON.stringify(e2Receipts)}`);
     }
     expect(e2Prepare.result.value.envelope.permissions.createMember).toBe(false);
-    // Q's child: its tools are a subset of Q's own accepted Run tools.
-    const qRun = await world.main.taskRun(world.g, 'rl15-q');
-    if (qRun === null) throw new Error('RL-15: Q’s Task holds no Run');
-    const qTools = (await readExecution(world.world.ag2b, qRun)).run.envelope?.permissions.tools;
-    const childTools = (await world.world.readSession(q.session)).record.delegationCeiling?.tools;
-    expect(childTools).toBeDefined();
-    expect(qTools).toEqual(expect.arrayContaining(childTools!));
+    // Lead Q3: the adviser-built child's executor grant is asserted once in JIA-7
+    // (`S7C-M-ceiling.test.ts`); this row keeps the rule and the two direct creations only.
 
     const before = await expire(world, 'rl15-update');
     const after = await world.readRules();

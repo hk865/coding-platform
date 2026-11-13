@@ -74,10 +74,13 @@ describe('R12: invalid proposals write nothing', () => {
     const calls = [{ baseCatalogPin: target.pin,
       ops: payload.ops as never[], responsibilityMoves: payload.moves as never[],
       reason: 'R12 invalid proposal' }];
-    const result = (await ('actor' in variant && variant.actor === 'executor'
-      ? target.proposeAsExecutor(calls) : target.propose(calls)))[0]!;
+    const outcome = (await ('actor' in variant && variant.actor === 'executor'
+      ? target.proposeAsExecutorWithStatus(calls) : target.proposeWithStatus(calls)))[0]!;
+    const result = outcome.result;
     const refused = 'actor' in variant && variant.actor === 'executor' ? forbidden(result) : invalid(result);
     expect(refused.reason).toBe(expected(target));
+    // AGTP-10: a refused proposal is a tool error (the output keeps the whole rejection result).
+    expect(outcome.toolStatus).toBe('error');
     // DR G4-04: the rejected call's own new ArchitectureProposal commits are zero.
     expect(target.proposalCommits()).toBe(0);
     expect((await target.readCatalog()).revision).toBe(before.revision);

@@ -8,6 +8,9 @@
  * loaded in this sandbox (the same vendor import that makes the scenario tests
  * in DSH-BASELINE section A fail). Group 2/3 can add that comparison where the
  * constants are consumed; see the group report.
+ *
+ * NET-A NA-9: `web_search` and `web_fetch` join L3 row 2. RED today because the
+ * table does not carry them yet (they fall to `process`, not `read_only`).
  */
 import { describe, expect, it } from 'vitest';
 import {
@@ -21,7 +24,7 @@ const READ_ONLY_NAMES = [
   // L3 row 2
   'read_session_inbox', 'read_session_message', 'read_session_message_body', 'read_user_decision',
   'query_task_graph', 'query_ready_tasks', 'find_related_sessions', 'read_session_card', 'look_graph', 'find_graph',
-  'check_links',
+  'check_links', 'web_search', 'web_fetch',
   // L3 row 3
   'run_readonly_command',
 ];

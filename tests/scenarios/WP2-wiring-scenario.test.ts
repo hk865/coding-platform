@@ -26,6 +26,7 @@ import {
 import {
   claimSuccessorRun, createWP2Platform, decisionRequestArgs, preparedBundleInput, requestText, type WP2PlatformFixture,
 } from '../helpers/WP2-platform-support.js';
+import type { ScriptedReply } from '../helpers/B2-runtime-fixture.js';
 import {
   cleanupScenarios, hostCtx, openHostScenario, type HostScenario, type ScenarioCommit,
 } from './harness.js';
@@ -267,3 +268,43 @@ it('Z01 automatic advancement through the scenario harness: a yielded wait is an
     await platform.close();
   }
 }, 120_000);
+
+/* AGTP-11 (AGT+ ruling §3; §1 item 10; 121-110): a card and a notice an adviser member sends through the real tools
+ * are both visible on the main conversation's own read. This is today's behaviour (a guard row): one
+ * `decision_request` becomes the message card, one `notify` becomes the member notice, and both name the adviser
+ * line as their sender. The package adds no code here; the named mutation removes the message-source card from the
+ * main-page assembly and this row is red. */
+it("AGTP-11 the main page shows an adviser member's decision card and its notify notice", async () => {
+  const replies: ScriptedReply[] = [];
+  const f = await createWP2Platform({ kind: 'memory', duty: 'adviser', scriptedReplies: replies });
+  fixtures.push(f);
+  if (f.runRef === null) throw new Error('AGTP-11 needs a claimed Run');
+  replies.push(
+    { kind: 'calls', calls: [
+      { callId: 'agtp-11-card', name: 'send_user_message',
+        args: decisionRequestArgs(f.goalRef, { text: 'AGTP-11 请决定是否继续' }) },
+      { callId: 'agtp-11-notice', name: 'send_user_message',
+        args: decisionRequestArgs(f.goalRef, { intent: 'notify', text: 'AGTP-11 请知悉' }) },
+    ] },
+    { kind: 'text', text: 'AGTP-11 main page answer' },
+  );
+  const prepared = await f.platform.runtime.prepareExecution(f.ctx,
+    { runRef: f.runRef, requestId: 'agtp-11-prepare' });
+  if (prepared.status !== 'ready') throw new Error(`AGTP-11 prepare failed: ${JSON.stringify(prepared)}`);
+  const started = await f.platform.runtime.startRun(f.ctx,
+    { prepared: prepared.value, consumerId: 'agtp-11-consumer', requestId: 'agtp-11-start' });
+  expect(started).toMatchObject({ status: 'ready' });
+  if (f.platform.mainSurface === undefined) throw new Error('AGTP-11 the platform publishes no mainSurface');
+  const page = await f.platform.mainSurface.readMainPage(f.ctx, { goalId: f.goalRef.goalId, cursor: null });
+  if (page.status !== 'ready') throw new Error(`AGTP-11 main/read failed: ${JSON.stringify(page)}`);
+  const cards = page.value.cards.filter(card => card.source.kind === 'message');
+  expect(cards).toHaveLength(1);
+  const source = JSON.parse(cards[0]!.source.key) as { kind: 'message'; messageRef: SessionMessageRef };
+  const message = await f.platform.messages.readMessage(f.ctx, source.messageRef);
+  if (message.status !== 'ready') throw new Error('AGTP-11 the card message was not readable');
+  expect(message.value.sender).toMatchObject({ kind: 'work_run', sessionRef: f.sessionRef });
+  const notices = page.value.notices.filter(notice => notice.category === 'member_notice');
+  expect(notices.some(notice => JSON.stringify(notice.subject) === JSON.stringify(
+    { kind: 'goal', goalRef: f.goalRef }))).toBe(true);
+});
+

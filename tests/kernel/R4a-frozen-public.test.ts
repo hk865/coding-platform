@@ -469,6 +469,18 @@ describe("R4a paused recovery environment", () => {
     expect(h.model.requests).toHaveLength(0);
     expect(await records(h.databasePath, h.common.sessionId)).toEqual(before);
   });
+
+  // SBX-09（SBX 开工裁定 §3、lead 裁定 SBX Q3）：联网和宿主挂载每次 execute 现读，不进 effectiveOptions 和恢复约束。
+  // 今天运行就绿（Kernel 忽略这两个未知选项），只有 typecheck 红；具名改坏：把它们放进 effectiveOptions、带进恢复约束 → conflict。
+  it("SBX-09 resumes the paused Run after the network and host mounts changed", async () => {
+    const h = await setup();
+    const source = h.root.resolve("sbx-mount-source");
+    await mkdir(source, { recursive: true });
+    const resumed = await resumeCodingAgent({ ...h.common, processSandboxOptions: { ...processSandboxOptions,
+      network: { current: () => ({ socketPath: "/nonexistent.sock" }) }, hostMounts: [{ source, target: "/opt/sbx", writable: false }] } });
+    expect(resumed.state.status).toBe("completed");
+    expect(resumed.state.runId).toBe(h.paused.state.runId);
+  });
 });
 
 });

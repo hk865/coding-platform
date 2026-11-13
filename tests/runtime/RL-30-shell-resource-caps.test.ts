@@ -6,6 +6,15 @@
  * Kernel `ProcessSandbox` swapped by `tests/helpers/RL-kernel-sandbox-double.ts`.
  * The tool result is read back through the public Runtime Session history.
  * Rows: RL-30.
+ *
+ * SHT-1 (test writer, 2026-11-13): (g) becomes S2 (a command past its filled
+ * duration is not stopped) and (h) is deleted (the handler's `timedOut` branch
+ * goes with the sandbox timer; §4); S3/S3b are new. RED today: the shell
+ * definition still says `defaultTimeoutMs: 30_000`, so the 2 h advance aborts
+ * the command, and the handler has no `fitOutput`, so two full 64 KiB streams
+ * serialize past 128 KiB and the dispatcher rejects the result as
+ * `invalid_result`. GREEN after SHT-1: `SHELL_NO_STOP_MS` and
+ * `fitOutput(output, SHELL_OUTPUT_LIMIT_BYTES)`.
  */
 import { afterEach, expect, it, vi } from 'vitest';
 import { createS2BBe1Platform, type S2BBe1PlatformFixture, type Be1Reply } from '../helpers/S2B-be1-platform-fixture.js';
@@ -110,7 +119,8 @@ it('RL-30 (f) a real cancellation maps to the dispatcher cancelled overlay with 
   expect(rlSandbox.aborted).toBeGreaterThan(0);
 });
 
-it('RL-30 (g) the dispatcher timer past the shell default timeout becomes the timeout overlay', async () => {
+/** SHT-1 S2: the dispatcher timer never reaches a command filled at 100 ms; 2 h later it is still running. */
+it('SHT-1 (S2) a shell past its filled duration is not aborted by the dispatcher timer', async () => {
   rlSandbox.settleOnAbort = true;
   rlSandbox.next = () => defaultRLSandboxResult({ resourceCaps: APPLIED_NONE });
   const f = await shellFixture([shellCall('rl30-g'), { kind: 'text', text: 'RL-30 g done' }]);
@@ -118,34 +128,89 @@ it('RL-30 (g) the dispatcher timer past the shell default timeout becomes the ti
   // The fake timers must be active BEFORE the dispatch starts (spec §7).
   vi.useFakeTimers();
   const running = f.run('rl30-g');
-  // Step the fake clock so the real async preparation can reach the dispatch;
-  // only once the handler runs does the dispatcher schedule its 30 s timer.
+  // Step the fake clock so the real async preparation can reach the dispatch.
   for (let step = 0; step < 2_000 && rlSandbox.commands.length === 0; step += 1) {
     await vi.advanceTimersByTimeAsync(1);
   }
   expect(rlSandbox.commands.length).toBeGreaterThan(0);
-  await vi.advanceTimersByTimeAsync(30_000);
+  await vi.advanceTimersByTimeAsync(7_200_000);
+  expect(rlSandbox.aborted).toBe(0);
+  expect(rlSandbox.releases).toHaveLength(1);
+  rlSandbox.releases[0]!();
   await running;
   const result = await stored(f, 'rl30-g');
-  expect(result?.status).toBe('error');
-  if (result?.status !== 'error') throw new Error('no RL-30 (g) error result');
-  expect(result.error.code).toBe('timeout');
-  expect(result.error.message).toBe('工具执行超时');
-  expect(result.output).toEqual([{ kind: 'text', text: '工具执行超时' }]);
-  expect(rlSandbox.aborted).toBeGreaterThan(0);
+  expect(result?.status).toBe('success');
+  expect(rlJsonPart(result)?.['resourceCaps']).toEqual(APPLIED_NONE);
 });
 
-it('RL-30 (h) the handler own subprocess timeout is kept verbatim with its JSON', async () => {
+/** SHT-1 S3: two full 64 KiB streams must be shrunk into the 128 KiB definition limit, not rejected. */
+it('SHT-1 (S3) two full 64 KiB streams are shrunk into the 128 KiB limit and the Run continues', async () => {
   rlSandbox.next = () => defaultRLSandboxResult({
-    exitCode: null, timedOut: true, resourceCaps: APPLIED_NONE,
+    stdout: { text: 'a'.repeat(64 * 1024), totalBytes: 64 * 1024, truncated: false },
+    stderr: { text: 'b'.repeat(64 * 1024), totalBytes: 64 * 1024, truncated: false },
+    resourceCaps: APPLIED_NONE,
   });
-  const f = await shellFixture([shellCall('rl30-h'), { kind: 'text', text: 'RL-30 h done' }]);
+  const f = await shellFixture([shellCall('rl30-s3'), { kind: 'text', text: 'SHT-1 S3 done' }]);
   opened.push(f);
-  await f.run('rl30-h');
-  const result = await stored(f, 'rl30-h');
-  expect(result?.status).toBe('error');
-  if (result?.status !== 'error') throw new Error('no RL-30 (h) error result');
-  expect(result.error.code).toBe('timeout');
-  expect(result.error.message).toBe('shell 执行超时');
-  expect(rlJsonPart(result)?.['resourceCaps']).toEqual(APPLIED_NONE);
+  await f.run('rl30-s3');
+  const result = await stored(f, 'rl30-s3');
+  expect(result?.status).toBe('success');
+  // Lead 11-13: the draft's §2 order cuts stderr first and stdout only if it still does not fit; here stderr alone is enough.
+  expect(rlJsonPart(result)?.['stderr']).toMatchObject({ truncated: true });
+  expect(Buffer.byteLength(JSON.stringify(result?.output), 'utf8')).toBeLessThanOrEqual(128 * 1024);
+  // The Run used the follow-up scripted reply, so the shrunk result was accepted.
+  expect(f.scripted.requests).toHaveLength(2);
+});
+
+/** SHT-1 S3b: one stream alone can serialize far past the limit (each control byte is 6 bytes). */
+it('SHT-1 (S3b) one full 64 KiB control-byte stream is shrunk on the stdout side', async () => {
+  rlSandbox.next = () => defaultRLSandboxResult({
+    stdout: { text: '\u0001'.repeat(64 * 1024), totalBytes: 64 * 1024, truncated: false },
+    resourceCaps: APPLIED_NONE,
+  });
+  const f = await shellFixture([shellCall('rl30-s3b'), { kind: 'text', text: 'SHT-1 S3b done' }]);
+  opened.push(f);
+  await f.run('rl30-s3b');
+  const result = await stored(f, 'rl30-s3b');
+  expect(result?.status).toBe('success');
+  expect(rlJsonPart(result)?.['stdout']).toMatchObject({ truncated: true });
+  expect(Buffer.byteLength(JSON.stringify(result?.output), 'utf8')).toBeLessThanOrEqual(128 * 1024);
+  expect(f.scripted.requests).toHaveLength(2);
+});
+
+/** SHT-1 S3c: the non-zero exit branch must also carry the shrunk output, not the pre-fit streams. */
+it('SHT-1 (S3c) two full 64 KiB streams on a non-zero exit are shrunk and the Run continues', async () => {
+  rlSandbox.next = () => defaultRLSandboxResult({
+    exitCode: 1,
+    stdout: { text: 'a'.repeat(64 * 1024), totalBytes: 64 * 1024, truncated: false },
+    stderr: { text: 'b'.repeat(64 * 1024), totalBytes: 64 * 1024, truncated: false },
+    resourceCaps: APPLIED_NONE,
+  });
+  const f = await shellFixture([shellCall('rl30-s3c'), { kind: 'text', text: 'SHT-1 S3c done' }]);
+  opened.push(f);
+  await f.run('rl30-s3c');
+  const result = await stored(f, 'rl30-s3c');
+  expect(result).toMatchObject({ status: 'error', error: { code: 'execution_failed' } });
+  expect(Buffer.byteLength(JSON.stringify(result?.output), 'utf8')).toBeLessThanOrEqual(128 * 1024);
+  expect(f.scripted.requests).toHaveLength(2);
+});
+
+/**
+ * SHT-1 S3d: the cancelled branch gets the same two full streams from the double's
+ * abort settlement. The dispatcher's aborted overlay persists an empty output, so the
+ * observable is the cancelled record itself: an unfitted result is rejected by the
+ * 128 KiB check before that overlay and no `tool.cancelled` event is written.
+ */
+it('SHT-1 (S3d) a cancellation with two full 64 KiB streams still records the cancelled result', async () => {
+  rlSandbox.settleOnAbort = true;
+  rlSandbox.next = () => defaultRLSandboxResult({
+    stdout: { text: 'a'.repeat(64 * 1024), totalBytes: 64 * 1024, truncated: false },
+    stderr: { text: 'b'.repeat(64 * 1024), totalBytes: 64 * 1024, truncated: false },
+  });
+  const f = await shellFixture([shellCall('rl30-s3d'), { kind: 'text', text: 'SHT-1 S3d done' }]);
+  opened.push(f);
+  await cancelRLRun(f, 0, 'rl30-s3d');
+  const result = await stored(f, 'rl30-s3d');
+  expect(result?.status).toBe('cancelled');
+  expect(result?.output).toEqual([]);
 });

@@ -75,6 +75,8 @@ import type {
 } from './run-reconcile-contracts.js';
 import { planRunActivityForCommit } from './run-activity-service.js';
 import type { RunActivityFactsV1 } from '../../../contracts/run-activity.js';
+import { RunNetworkReviewCopyShape, type RunNetworkReviewCopyV1 } from '../../../contracts/run-network.js';
+import { checkShape } from '../../../contracts/validation/data-format.js';
 
 type HostActor = { kind: 'human' | 'system'; id: string };
 type Operation = ExecutionRunReconciledEvent['operation'];
@@ -159,7 +161,8 @@ function attestationContent(input: AttestationRequest): unknown {
 // RUN-22 review draft (L8, UCR-02)
 // --------------------------------------------------------------------------
 
-const REVIEW_DRAFT_KEYS: readonly string[] = ['inventory', 'inventoryProblem', 'items', 'itemsOmitted', 'workspace'];
+const REVIEW_DRAFT_KEYS: readonly string[] = ['inventory', 'inventoryProblem', 'items', 'itemsOmitted', 'workspace',
+  'network'];
 const DRAFT_INVENTORY_PROBLEMS: readonly UnknownCallInventoryProblemV1[] = [
   'kernel_unreadable', 'kernel_unreadable_at_stop', 'turn_not_found', 'too_many_calls', 'too_large', 'undecodable_call',
 ];
@@ -171,6 +174,7 @@ type ValidatedReviewDraft = {
   inventoryProblem: UnknownCallInventoryProblemV1 | null;
   items: UnknownCallReviewItemV1[];
   itemsOmitted: number;
+  network?: RunNetworkReviewCopyV1;
 };
 
 /**
@@ -236,6 +240,9 @@ function validatedReviewDraft(
   if (!isRecord(workspace) || (workspace['status'] !== 'captured' && workspace['status'] !== 'unavailable')) {
     return { ok: false, reason: 'the review draft workspace is malformed' };
   }
+  const network = draft['network'];
+  const networkProblem = network === undefined ? null : checkShape(RunNetworkReviewCopyShape, network, 'stored');
+  if (networkProblem !== null) return { ok: false, reason: `the review draft network is malformed: ${networkProblem}` };
   if (inputsConfirmed === null && draft['inventory'] !== 'incomplete') {
     return { ok: false, reason: 'the Kernel is unreadable, so the review inventory cannot be complete' };
   }
@@ -278,6 +285,7 @@ function validatedReviewDraft(
       inventoryProblem: effectiveProblem,
       items: checked,
       itemsOmitted: omitted,
+      ...(network === undefined ? {} : { network: network as RunNetworkReviewCopyV1 }),
     },
   };
 }
@@ -986,6 +994,7 @@ export function createRunReconcileService(deps: RunReconcileDependencies): RunRe
           origin: { kind: 'human_attested', attestedBy: { kind: actor.kind, id: actor.id }, reason: input.reason },
           inventory: draft.inventory, inventoryProblem: draft.inventoryProblem, items: draft.items,
           itemsOmitted: draft.itemsOmitted, workspace: input.review.workspace,
+          ...(draft.network === undefined ? {} : { network: draft.network }),
           streak: { priorAutoCleanup: streakFacts?.priorAutoCleanup === true,
             priorUnknownProcess: streakFacts?.priorUnknownProcess === true,
             resetRunRef: streakFacts?.streakResetRunRef ?? null,

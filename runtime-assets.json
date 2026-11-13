@@ -13,7 +13,7 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "d5c8d01694df80ee001cafab95c24e955f921c3620585aa4b5106cf0bf21daa9"
+    "sha256": "837ab1cb6dfec97001632fe5469a52e86987fb01c9433af29b582320fa73fd93"
   },
   {
     "path": "resources/prompts/platform/strings.json",
@@ -101,7 +101,7 @@
   },
   {
     "path": "resources/prompts/platform/templates/secretary-answer.txt",
-    "sha256": "5c3e4e0ba48660bf4c95411991769d7945e21ae8830ab08e6226c0b5938d038a"
+    "sha256": "6de01c878a178ac3f108130eb73463d318eb8157ba7eeb24fb515240029ba3cf"
   },
   {
     "path": "resources/prompts/platform/templates/handoff-write-understanding-secretary.txt",
@@ -129,11 +129,11 @@
   },
   {
     "path": "resources/prompts/platform/templates/base.txt",
-    "sha256": "5a9fa326d215e82d8329a0ddce8ff2da29463430550dd8320695b760ef7f03b5"
+    "sha256": "cee15946501a2db933e00e1ea9954e8332542ab130268cd32c6962c91061958c"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-work.txt",
-    "sha256": "202fa0b83e3377a9dff1ccb3b189fe1c8ed6ea6c4e48ad4f20124e2757c4dab9"
+    "sha256": "fee248cc70c5ed0a07bc8e679bd8357fa6e678976818b121e6f837cdf29ec7b3"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-secretary.txt",
@@ -237,7 +237,7 @@
   },
   {
     "path": "resources/prompts/platform/tools/run_readonly_command.json",
-    "sha256": "1a04260adf9cc805e8b21d6cefac2f20e9510a5ec39fa524ddc964560f48fc61"
+    "sha256": "4c54e221ff5300e129f8c7d62be1e5c1bbf1ae538638aca35cd68e02348c496b"
   },
   {
     "path": "resources/prompts/platform/tools/request_command_rerun.json",
@@ -374,6 +374,14 @@
   {
     "path": "resources/prompts/platform/tools/check_links.json",
     "sha256": "bf8d74f844bdc1a70a542afe8a86c3001b76a791ef167c46edf43042044aad38"
+  },
+  {
+    "path": "resources/prompts/platform/tools/web_search.json",
+    "sha256": "fc67e6c7d68aecaea6237de84ec8be491928b79ac68fd6f4e51ee6fd0a84cbf1"
+  },
+  {
+    "path": "resources/prompts/platform/tools/web_fetch.json",
+    "sha256": "15aea49ae2e7c3761e43039f16cc1a6021430a075c25c37aa8eee1de57a0b653"
   },
   {
     "path": "resources/prompts/platform/templates/context-summary-request.txt",

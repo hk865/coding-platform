@@ -423,10 +423,11 @@ export function createS7C1MemberService(world: S6AHostWorld): MemberServiceV1 {
     }).reusable,
   };
   return createMemberService({ records, commitIdentities: identity,
-    sessions: { findSessions: world.platform.sessions.findSessions },
+    sessions: { findSessions: world.platform.sessions.findSessions,
+      readSession: world.platform.sessions.readSession },
     lines: { ensureLine: lineCreation.ensureLine }, requests: { ownerOf: world.platform.requestFacts.ownerOf },
     secretaryRuns: createSecretaryQueryRun({ records, duties: sessionDuty, bodies }),
-    duties: duty, executions: world.platform.executions,
+    duties: duty, duty: sessionDuty, executions: world.platform.executions,
     advisers: { resolveResponsibilityRecipient: (ctx, input) => world.platform.recipients.resolveRecipient(ctx, input) },
     messages: world.platform.messages,
     // The direct seam names the one explicit Role the M rows exercise; the platform's own member owner
@@ -472,11 +473,14 @@ export function jsonOf(requests: readonly ModelRequest[], callId: string): unkno
  * binding through the real `plans/propose` + `plans/apply` routes, so the accepted envelope carries
  * the four names; the envelope itself is the Run's, never a test-built one. The added `s7c-tool` task
  * carries the Run on the adviser line; the optional `task` only aims the member request (the tool
- * argument) at an existing adopted-Plan Task.
+ * argument) at an existing adopted-Plan Task. `caller: 'work'` runs the same call from the real Work
+ * line instead (7D2 JIA/Q3: an executor-built child takes the executor's ceiling); its `s7c-tool`
+ * task is assigned to the Work line's own Role, so its accepted envelope is the Work Run's.
  */
 export async function startS7C1ToolLine(target: S7C1World,
-  options: { task?: TaskTriple } = {}): Promise<S7C1ToolLine> {
-  const caller = target.lines.adviser;
+  options: { task?: TaskTriple; caller?: 'adviser' | 'work' } = {}): Promise<S7C1ToolLine> {
+  const callerKind = options.caller ?? 'adviser';
+  const caller = callerKind === 'work' ? target.lines.work : target.lines.adviser;
   if (caller === null) throw new Error('S7C tool line: the world was opened without its adviser caller line');
   const toolTask = { taskId: 's7c-tool', title: 'S7C tool line', requirementLevel: 'required' as const,
     taskKind: 'work' as const, disposition: 'active' as const, phase: 'pending' as const,
@@ -488,7 +492,8 @@ export async function startS7C1ToolLine(target: S7C1World,
   const draft = draftFrom(plan, 's7c-tool-plan', draftPlan => ({ ...draftPlan,
     tasks: [...draftPlan.tasks, toolTask],
     assignments: [...(draftPlan.assignments ?? []),
-      { taskId: toolTask.taskId, role: ADVISER_ROLE.templateId, instruction: 'S7C tool line' }],
+      { taskId: toolTask.taskId,
+        role: (callerKind === 'work' ? CREATOR_ROLE : ADVISER_ROLE).templateId, instruction: 'S7C tool line' }],
     obligations: draftPlan.obligations.map(obligation => ({ ...obligation,
       taskIds: [...obligation.taskIds, toolTask.taskId] })) }));
   const proposed = valueOf<{ ref: unknown; revision: number }>(await target.main.post('plans/propose', graphWrite(S6A_SCOPE, {

@@ -146,6 +146,8 @@ const PROTECTED_TYPES: readonly ProtectedType[] = [
     use: 'state/goal-machine.ts newGoalSnapshot, nextGoalPointer or nextGoalDesiredState' },
   { file: 'src/contracts/session-activity.ts', name: 'SessionActivityV1', kind: 'record',
     fields: ['revision', 'lastActivityAt', 'kind', 'source'], use: 'state/session-activity.ts nextSessionActivity' },
+  { file: 'src/contracts/run-network.ts', name: 'RunNetworkSnapshotV1', kind: 'record',
+    fields: ['revision', 'hosts', 'omitted'], use: 'state/run-network.ts nextRunNetwork' },
   { file: 'src/contracts/ledger.ts', name: 'WorkspaceSnapshot', kind: 'record',
     fields: ['decisionSettings', 'lineSettings'], use: WORKSPACE_USE },
   { file: 'src/contracts/goal-phase.ts', name: 'GoalPhaseSnapshot', kind: 'record',

@@ -19,6 +19,10 @@ import type { ArtifactRef } from '../../contracts/artifact.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
 import { containedByHostStop, unknownCallKindOf } from '../work-graph/state/unknown-call-kinds.js';
+import { runNetworkReviewCopy } from '../work-graph/state/run-network.js';
+import type { ReadResult } from '../../contracts/core/results.js';
+import type { RunRef } from '../../contracts/dispatch.js';
+import type { RunNetworkReviewCopyV1, RunNetworkSnapshotV1 } from '../../contracts/run-network.js';
 import type { KernelExecutionBinding } from '../work-graph/model/execution-entry-contracts.js';
 import type { TaskExecutionRecord } from '../work-graph/model/execution-read-contracts.js';
 import type {
@@ -61,6 +65,8 @@ export type UnknownCallReviewDraftDeps = {
   /** K3 L5: the workspace capture, wired by `create-platform.ts`. */
   captureWorkspace?: (ctx: CoreCallContext, input: { workspaceId: string; bundleRef: ArtifactRef })
     => Promise<WorkspaceCaptureV1>;
+  /** NET-B: the Run's host record, wired by `create-platform.ts`; copied into the draft's `network`. */
+  readRunNetwork?: (ctx: CoreCallContext, input: { subject: RunRef }) => Promise<ReadResult<RunNetworkSnapshotV1 | null>>;
 };
 
 const CALL_ID_MAX_BYTES = 512;
@@ -196,13 +202,26 @@ export async function readUnknownCallReviewDraft(
       observed: await observationOf(deps.lookupToolCommit, ctx, call, origin),
     });
   }
+  const network = await networkOf(deps, ctx, run.ref);
   return {
     inventory: problem === null ? 'complete' : 'incomplete',
     inventoryProblem: problem,
     items,
     itemsOmitted: listed.length - items.length,
     workspace: workspace ?? notConfiguredCapture(),
+    ...(network === undefined ? {} : { network }),
   };
+}
+
+/**
+ * NET-B: the copy of the Run's host record. A reader that is not wired or a read that fails leaves the member out,
+ * so the review never reads "no host" when the hosts are only unknown.
+ */
+async function networkOf(deps: UnknownCallReviewDraftDeps, ctx: CoreCallContext, runRef: RunRef):
+Promise<RunNetworkReviewCopyV1 | undefined> {
+  if (deps.readRunNetwork === undefined) return undefined;
+  const read = await deps.readRunNetwork(ctx, { subject: runRef });
+  return read.status === 'ready' ? runNetworkReviewCopy(read.value) : undefined;
 }
 
 /**

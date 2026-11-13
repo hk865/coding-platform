@@ -28,6 +28,10 @@ import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../co
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { CheckProcessObservation, RoundSnapshot, VerificationRoundRef } from '../../contracts/verification.js';
 import type { ResourceCapSource } from '../../../vendor/coding-agent/dist/public-api.js';
+import { KNOWLEDGE_DIRECTORY } from '../../contracts/knowledge.js';
+import { ensureKnowledgeDirectory } from '../workspace/knowledge-exclude.js';
+import type { CommandSlots } from './command-slots.js';
+import { withCommandSandbox, type CommandToolchain } from './readonly-command-tool.js';
 import type { WorkspaceHostBindings } from '../workspace/access.js';
 import type { AbandonCheckInput, EvidencePort } from '../work-graph/model/evidence-contracts.js';
 import type { GraphWrite } from '../work-graph/model/task-contracts.js';
@@ -54,6 +58,12 @@ export type RegisteredCheckRunnerDependencies = {
     kernel: RegisteredCheckKernel;
     /** L13: the Host's live resource-cap source, read once per check execute. */
     resourceCaps?: ResourceCapSource;
+    /** The Host's one platform-command cap; absent keeps the uncapped path. */
+    commandSlots?: CommandSlots;
+    /** NET-B: the Host's toolchain, mounted for the check and probed with it. A check never gets network
+     *  (coordination: its verdict depends on this workspace version only, and its definition was approved as one
+     *  that does not reach the network). */
+    toolchain?: CommandToolchain;
     now(): string;
 };
 
@@ -153,6 +163,18 @@ export function createRegisteredCheckRunner(deps: RegisteredCheckRunnerDependenc
                     'the current Host permission revision is not the trusted configuration binding'));
             }
             const root = resolved.value.root;
+            // The knowledge directory is mounted read-only below, so it must exist
+            // before the probe; the platform is the only writer of knowledge files.
+            try {
+                ensureKnowledgeDirectory(root);
+            } catch (error) {
+                return reject('unavailable', `making the knowledge directory failed: ${messageOf(error)}`);
+            }
+            // The check runs in the workspace but may not write the platform's
+            // knowledge files (KLS-2: one writer). The probe and the real command
+            // share this one options object.
+            const sandboxOptions = withCommandSandbox({ readOnlyPaths: [KNOWLEDGE_DIRECTORY] },
+                deps.toolchain === undefined ? undefined : { toolchain: deps.toolchain });
             let workspace;
             try {
                 workspace = await deps.kernel.WorkspaceSandbox.create(root, { deniedPrefixes: [...configuration.deniedPrefixes] });
@@ -161,7 +183,7 @@ export function createRegisteredCheckRunner(deps: RegisteredCheckRunnerDependenc
             }
             let profile;
             try {
-                profile = await deps.kernel.ProcessSandbox.probe(root, workspace);
+                profile = await deps.kernel.ProcessSandbox.probe(root, workspace, sandboxOptions);
             } catch (error) {
                 return reject('unsupported', `the process sandbox probe failed: ${messageOf(error)}`);
             }
@@ -220,17 +242,29 @@ export function createRegisteredCheckRunner(deps: RegisteredCheckRunnerDependenc
                     ? afterBegin : reject('unavailable', 'the begun round could not be read again; no process was started'));
             }
 
-            // Never start a new process once the original caller signal was
-            // already cancelled before execute.
-            if (ctx.signal.aborted) {
+            // 121-112 ruling 3: a registered check is a platform command and takes
+            // one Host slot before launch. Waiting is not a failure; a cancel while
+            // waiting is the same caller cancellation as a cancel before the start.
+            const release = deps.commandSlots === undefined
+                ? () => {}
+                : await deps.commandSlots.acquire(ctx.signal);
+            if (release === null) {
                 return await abandon(ctx, round.ref, check.checkId, invocationId, 'caller_cancelled',
                     reject('cancelled', 'the registered check was cancelled before the process started'));
             }
             const startedAt = deps.now();
             let observation: CheckProcessObservation;
             try {
-                const sandbox = new deps.kernel.ProcessSandbox(profile, root, workspace,
-                    deps.resourceCaps === undefined ? undefined : { resourceCaps: deps.resourceCaps });
+                // Never start a new process once the original caller signal was
+                // already cancelled before execute.
+                if (ctx.signal.aborted) {
+                    return await abandon(ctx, round.ref, check.checkId, invocationId, 'caller_cancelled',
+                        reject('cancelled', 'the registered check was cancelled before the process started'));
+                }
+                const sandbox = new deps.kernel.ProcessSandbox(profile, root, workspace, {
+                    ...sandboxOptions,
+                    ...(deps.resourceCaps === undefined ? {} : { resourceCaps: deps.resourceCaps }),
+                });
                 const result = await sandbox.execute({
                     command: ticket.definition.command, cwd: ticket.definition.cwd,
                     timeoutMs: ticket.definition.timeoutMs, outputLimitBytes: OUTPUT_LIMIT_BYTES,
@@ -253,6 +287,8 @@ export function createRegisteredCheckRunner(deps: RegisteredCheckRunnerDependenc
                 } else {
                     return reject('unavailable', `the registered check execution window is unknown: ${messageOf(error)}`);
                 }
+            } finally {
+                release();
             }
             // The process result is an occurred fact. The same Host identity/scope
             // and the original ticket/invocation/observation are committed under a

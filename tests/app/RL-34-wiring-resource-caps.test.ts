@@ -18,6 +18,7 @@ import type { HostSettingsPort } from '../../src/app/host-settings-types.js';
 import type { BootstrapResponse } from '../../src/app/core-http-types.js';
 import type { PreparedTaskExecution } from '../../src/contracts/core/prepared-execution.js';
 import { createTargetPlatform } from '../../src/composition/create-platform.js';
+import { createCommandSlots, type CommandSlots } from '../../src/core/agent-runtime/command-slots.js';
 import { createS2BBe1Platform, type S2BBe1PlatformFixture, type Be1Reply } from '../helpers/S2B-be1-platform-fixture.js';
 import { createRLQueryFixture } from '../helpers/RL-query-fixture.js';
 import { createR3eEvidenceFixture } from '../helpers/R3e-evidence-fixture.js';
@@ -41,6 +42,39 @@ vi.mock('../../src/composition/create-platform.js', async (importOriginal) => {
     actual.createTargetPlatform({ ...options, ...(injected.source === undefined ? {} : { resourceCaps: injected.source }) }) };
 });
 
+// AGTP-6: capture the platform's own default cap without a second factory.
+const slotFactory = vi.hoisted(() => ({
+  limits: [] as number[],
+  created: [] as Array<import('../../src/core/agent-runtime/command-slots.js').CommandSlots>,
+}));
+vi.mock('../../src/core/agent-runtime/command-slots.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/core/agent-runtime/command-slots.js')>();
+  return { ...actual, createCommandSlots: (limit: number) => {
+    const slots = actual.createCommandSlots(limit);
+    slotFactory.limits.push(limit);
+    slotFactory.created.push(slots);
+    return slots;
+  } };
+});
+
+/** Let every pending promise continuation run; the slots module uses no timer. */
+async function settle(times = 8): Promise<void> {
+  for (let index = 0; index < times; index += 1) await Promise.resolve();
+}
+
+function countingSlots(): { slots: CommandSlots; counts(): { acquired: number; released: number } } {
+  const inner = createCommandSlots(4);
+  let acquired = 0;
+  let released = 0;
+  return { slots: { acquire(signal) {
+    acquired += 1;
+    return inner.acquire(signal).then(release => {
+      if (release === null) return null;
+      return () => { released += 1; release(); };
+    });
+  } }, counts: () => ({ acquired, released }) };
+}
+
 const EXPECTED_SAVED = { memoryMaxBytes: 300 * 1_048_576, tasksMax: 100 };
 const EXPECTED_SECOND = { memoryMaxBytes: 400 * 1_048_576, tasksMax: 200 };
 
@@ -59,6 +93,8 @@ afterEach(async () => {
   for (const fixture of fixtures.splice(0).reverse()) await fixture.close();
   for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true });
   rlSandbox.reset();
+  slotFactory.limits = [];
+  slotFactory.created = [];
   vi.restoreAllMocks();
 });
 
@@ -197,4 +233,54 @@ it('RL-34 caps enter no prepared manifest before or after a live save', async ()
   // Run A read the pre-save value; the live mid-run read is covered by the
   // preceding two-call case.
   expect(rlSandbox.currentReads).toEqual([EXPECTED_SAVED]);
+});
+
+/* AGTP-6 (AGT+ ruling §3; §1 item 4): the platform option `commandSlots` is the
+ * Host's one cap. The same counting wrapper handed to the platform must see the
+ * Query read-only command and the registered check each acquire and release one
+ * slot; a platform with no option keeps `PLATFORM_COMMAND_SLOTS` (four) and the
+ * fifth waiter waits. */
+it('AGTP-6 one Host cap serves a Query read-only command and a registered check', async () => {
+  const counted = countingSlots();
+  rlSandbox.next = () => defaultRLSandboxResult({ resourceCaps: { status: 'none', reason: 'not_configured', text: 'x' } });
+  const f = await createRLQueryFixture({ commandSlots: counted.slots, replies: [
+    { kind: 'calls', calls: [{ callId: 'agtp-6-query', name: 'run_readonly_command', args: { command: 'ls' } }] },
+    { kind: 'text', text: 'AGTP-6 query done' },
+  ] });
+  fixtures.push(f);
+  await f.run();
+  expect(counted.counts()).toEqual({ acquired: 1, released: 1 });
+
+  const fixture = await createR3eEvidenceFixture('sqlite');
+  fixtures.push(fixture);
+  await fixture.b2.base.closeBackend();
+  const platform = await createTargetPlatform({ storage: { kind: 'sqlite', directory: fixture.b2.base.storeDirectory },
+    workspace: fixture.workspaceHost, checks: fixture.configuration, commandSlots: counted.slots, now: () => B2_AT });
+  fixtures.push({ close: () => platform.close() });
+  const opened = await platform.evidence.openVerification(fixture.ctx, fixture.openRequest());
+  if (opened.status !== 'committed') throw new Error('AGTP-6 open did not commit');
+  const run = await platform.checks.runRegisteredCheck(fixture.ctx, { input: {
+    roundRef: opened.value.ref, checkId: fixture.passCheck.checkId }, meta: { requestId: 'agtp-6-check',
+    expected: [{ ref: opened.value.ref, revision: opened.value.revision }] } });
+  if (run.status !== 'ready') throw new Error(`AGTP-6 check failed: ${JSON.stringify(run)}`);
+  expect(counted.counts()).toEqual({ acquired: 2, released: 2 });
+});
+
+it('AGTP-6 a Host that passes no cap keeps the four-slot default and the fifth waiter waits', async () => {
+  slotFactory.limits = [];
+  slotFactory.created = [];
+  const f = await createRLQueryFixture({ replies: [{ kind: 'text', text: 'AGTP-6 default' }] });
+  fixtures.push(f);
+  expect(slotFactory.limits).toEqual([4]);
+  const slots = slotFactory.created.at(-1)!;
+  const held = [0, 1, 2, 3].map(() => slots.acquire(new AbortController().signal));
+  let fifth: (() => void) | null | undefined;
+  void slots.acquire(new AbortController().signal).then(release => { fifth = release; });
+  await settle();
+  expect(fifth).toBeUndefined();
+  (await held[0]!)?.();
+  await settle();
+  expect(typeof fifth).toBe('function');
+  if (fifth !== null && fifth !== undefined) fifth();
+  for (const release of await Promise.all(held.slice(1))) release?.();
 });

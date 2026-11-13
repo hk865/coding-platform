@@ -372,7 +372,7 @@ describe('K3-48 (二) optional model text admission', () => {
     expect(accepted.value.revision).toBe(revision + 1);
   }, 120_000);
 
-  it.each([['memory', 349], ['sqlite', 349]] as const)('K3-48 (二) %s: the real near-budget proposal refuses 2,000 characters as capacity and admits 100', async (kind, cwdBytes) => {
+  it.each([['memory', 314], ['sqlite', 314]] as const)('K3-48 (二) %s: the real near-budget proposal refuses 2,000 characters as capacity and admits 100', async (kind, cwdBytes) => {
     const fx = await nearBudgetProposalFixture(kind);
     const reviewRef = fx.round.record.ref;
     const before = await fx.world.reviews.readReview(fx.round.context, { ref: reviewRef });
@@ -413,8 +413,8 @@ describe('K3-48 (二) optional model text admission', () => {
     // record is exactly B - 2,000 = 156,720 bytes BEFORE the rationale text.
     // The precondition is asserted against that fixed literal; the pre-write
     // size below is only the independent after-the-fact check of it:
-    //   memory: 156,097 + 274 + 349 = 156,720
-    //   sqlite: 156,097 + 274 + 349 = 156,720
+    //   memory: 156,132 + 274 + 314 = 156,720
+    //   sqlite: 156,132 + 274 + 314 = 156,720
     // W2b-21: the record Run's Session is now the real one. Its Kernel Session id
     // is the platform's `session-` + 64 hex = 72 bytes, where the handwritten
     // `s5-kernel-session-k3-48-2-near-<kind>` was 18 + 19 = 37 bytes; the record
@@ -446,6 +446,9 @@ describe('K3-48 (二) optional model text admission', () => {
     // carries `,"escalation":{"cause":"no_adviser","suggestion":null}` = 14 + 40 = 54
     // bytes on both backends, kept through safer_method (156,043 -> 156,097), so each
     // cwd is 54 bytes shorter (403 -> 349).
+    // NET-B B1 (HANDOFF 121-112, start ruling §4): the settled record carries the Run's host copy, here
+    // `,"network":{"hosts":[],"omitted":0}` = 1 + 9 + 1 + 24 = 35 bytes on both backends (156,097 -> 156,132),
+    // so each cwd is 35 bytes shorter (349 -> 314).
     const BEFORE_TEXT = 156_720;
     expect(B - 2_000).toBe(BEFORE_TEXT);
     expect(k3SerializedBytes(before.value) + REVISION_BYTES + PROPOSAL_JSON_BYTES + cwdBytes)

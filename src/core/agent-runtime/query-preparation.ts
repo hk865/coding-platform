@@ -42,6 +42,7 @@ import type { SecretaryPreparationFactsV1 } from '../work-graph/model/secretary-
 import type { SecretaryHandoffFactsPort } from '../work-graph/model/secretary-lifecycle-contracts.js';
 import type { RequestFactsPort } from '../work-graph/tasks/request-facts.js';
 import { planningNoteAdmission, secretaryNoteAdmission } from '../work-graph/state/secretary-note.js';
+import { decisionActionPolicy } from '../work-graph/state/decision-policy.js';
 import { SECRETARY_QUERY_MAILBOX_TOOL_NAMES, SESSION_MAILBOX_TOOL_NAMES } from './communication-tools.js';
 import { CREATE_MEMBER_TOOL_NAME } from './member-tools.js';
 import { READ_REQUESTS_TOOL_NAME } from './request-read-tools.js';
@@ -85,7 +86,7 @@ const FORBIDDEN_QUERY_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
   'write', 'edit', 'shell', ...SESSION_MAILBOX_TOOL_NAMES, ...WHITEBOARD_TOOL_NAMES, CREATE_MEMBER_TOOL_NAME,
   READ_REQUESTS_TOOL_NAME,
 ]);
-/** Only a secretary request round may select these six. */
+/** Only a secretary request round may select these four. */
 const SECRETARY_QUERY_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
   ...SECRETARY_QUERY_MAILBOX_TOOL_NAMES, CREATE_MEMBER_TOOL_NAME, READ_REQUESTS_TOOL_NAME,
 ]);
@@ -482,6 +483,14 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
             effectiveGoalId: secretaryFacts.request.effectiveGoalId,
             grantedGoalIds: secretaryFacts.request.understandingGrants,
           });
+      // 121-112: a secretary round on a Goal with an adopted Plan whose autonomy
+      // lets the platform refine it may also arrange a small change directly.
+      // The first plan stays the person's (no focusPlan, no tool); the Host only
+      // hands over request/followup rounds.
+      const answerPlanTool = shape === 'secretary' && goal !== null && focusPlan !== null
+        && (record.job.job.roundKind === 'request' || record.job.job.roundKind === 'followup')
+        && decisionActionPolicy({ autonomy: goal.settings.autonomy, action: 'refine_future',
+          actorClass: 'system', countedNext: null, cap: 0 }) === 'automatic';
       const finalNames = finalToolNamesOf({
         callKind: 'query',
         explorationRound,
@@ -489,7 +498,6 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         // Preparation freezes only the names this Runtime knows; the start
         // checks the real selection and rejects an unknown name first.
         selected: projected.permissions.tools.filter(tool => RUNTIME_TOOL_NAMES.has(tool)),
-        readOnly: true,
         reviewPhase: null,
         hasBlockedCommands: false,
         reviewSource: false,
@@ -498,6 +506,7 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         // The frozen answer shape follows the request round's own execution
         // kind, never the Host grant or the Role ceiling.
         answerTools: shape,
+        answerPlanTool,
         // Preparation freezes the CAPABILITY set; the actual owner wiring is
         // re-checked by the same function at start.
         // Query builds graph/read-only tools and secretary-admitted note tools.

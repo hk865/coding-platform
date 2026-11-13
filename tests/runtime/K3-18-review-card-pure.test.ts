@@ -7,6 +7,9 @@
  * port is imported (A5). The fixed mixed line is written here as its own text
  * instead of reading the production constant (F8); the four option labels have
  * the literal texts the spec fixes.
+ *
+ * K3L-4 N1 (121-109): the four cells at the end call the new `unknownCallReviewAdvisedLine`
+ * (red today at the missing export; green when §2.1 lands: adviser source, label, `targets.length`, optional `plain`).
  */
 import { describe, expect, it } from 'vitest';
 import type { RunSnapshot, RunRef } from '../../src/contracts/dispatch.js';
@@ -14,7 +17,7 @@ import type { GoalSnapshot } from '../../src/contracts/ledger.js';
 import type { UnknownCallReviewItemV1, UnknownCallReviewV1 } from '../../src/contracts/unknown-call-review.js';
 import { newUnknownCallReview } from '../../src/core/work-graph/state/unknown-call-review.js';
 import {
-  UNKNOWN_CALL_REVIEW_OPTION_LABELS, unknownCallReviewCardFacts,
+  UNKNOWN_CALL_REVIEW_OPTION_LABELS, unknownCallReviewAdvisedLine, unknownCallReviewCardFacts,
 } from '../../src/core/work-graph/tasks/unknown-call-review-card.js';
 
 const PROJECT = 'P';
@@ -176,5 +179,31 @@ describe('K3-18 (四) review card shape (pure)', () => {
     const inactive = unknownCallReviewCardFacts({ record: record({ items: [processItem()] }),
       goal: GOAL, run: RUN, taskActive: false, fileDigests: new Map() });
     expect(inactive.closedReason).toBe('source_resolved');
+  });
+
+  const disposedReview = (
+    choice: 'rerun_as_is' | 'skip_as_done', source: 'adviser' | 'card', targets: string[],
+  ): NonNullable<UnknownCallReviewV1['disposition']> => ({
+    choice, source, targets, answerMessageRef: null, answeredRevision: 2,
+    appliedBy: { kind: 'human', id: 'operator' }, appliedAt: AT, text: null,
+    annotations: [], approval: null, approvedMethods: null, hold: null,
+  });
+  const advisedReview = (
+    disposition: UnknownCallReviewV1['disposition'], advice: UnknownCallReviewV1['advice'],
+  ): UnknownCallReviewV1 => ({
+    ...record({ items: [processItem(), platformItem()] }), status: 'resolved', open: 'no', disposition,
+    ...(advice === undefined ? {} : { advice }),
+  });
+  const adviserPlain = (plain: string): UnknownCallReviewV1['advice'] => ({
+    phase: 'disposition',
+    answer: { phase: 'disposition', choice: 'rerun_as_is', escalationKind: null, rationale: 'k3l4', plain },
+  });
+  it.each<[string, UnknownCallReviewV1['disposition'], UnknownCallReviewV1['advice'], string | null]>([
+    ['the adviser reruns as is and leaves its plain sentence', disposedReview('rerun_as_is', 'adviser', ['call-1']), adviserPlain('只读命令，重跑没有副作用'), '中断时有 1 步操作不知道做完没有，参谋定为“照原样重跑”：只读命令，重跑没有副作用'],
+    ['the adviser skips two targets and the applied answer has no plain', disposedReview('skip_as_done', 'adviser', ['call-1', 'call-2']), { phase: 'disposition', answer: null }, '中断时有 2 步操作不知道做完没有，参谋定为“跳过，当作已做”'],
+    ['a card disposition is not the adviser line', disposedReview('rerun_as_is', 'card', ['call-1']), adviserPlain('只读命令，重跑没有副作用'), null],
+    ['a record without a disposition has no line', null, undefined, null],
+  ])('K3L-4 N1: %s', (_case, disposition, advice, expected) => {
+    expect(unknownCallReviewAdvisedLine(advisedReview(disposition, advice))).toBe(expected);
   });
 });

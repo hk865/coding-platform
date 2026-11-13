@@ -10,16 +10,19 @@
  * reports read-only must never unlock a process).
  *
  * Result status precedence (L16) and the two output caps (32 KiB per stream,
- * 128 KiB total serialized) are implemented here; the frozen dispatcher's
- * cancellation/timeout/sandbox overlays are outside this handler.
+ * 128 KiB total serialized) are implemented here. The platform does not stop a
+ * command by time: only a cancellation replaces the captured output, and the
+ * frozen dispatcher's cancellation/sandbox overlays stay outside this handler.
  */
 import { ProcessSandbox, ProcessSandboxError, normalizeWorkspacePath, toolSchema as z } from '../../../vendor/coding-agent/dist/public-api.js';
 import type {
-  ResourceCapSource, ResourceCapsReport, ToolDefinition, ToolResult, WorkspaceSandbox,
+  HostMount, NetworkProxySource, ResourceCapSource, ResourceCapsReport, ToolDefinition, ToolResult, WorkspaceSandbox,
 } from '../../../vendor/coding-agent/dist/public-api.js';
+import { COMMAND_NO_STOP_MS } from '../../contracts/resource-caps.js';
 import { KNOWLEDGE_DIRECTORY } from '../../contracts/knowledge.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
 import type { ToolTextV1 } from '../../contracts/prompts/prompt-pack.js';
+import type { CommandSlots } from './command-slots.js';
 
 /** Typed view: the generated pack's literal `tools` object has no string index signature. */
 const PLATFORM_TOOL_TEXTS: Readonly<Record<string, ToolTextV1>> = PLATFORM_PROMPT_PACK_V1.tools;
@@ -30,11 +33,6 @@ export const READONLY_COMMAND_TOOL_NAME = 'run_readonly_command';
  * serialized result at the Kernel tool definition's `outputLimitBytes`. */
 export const READONLY_OUTPUT_STREAM_LIMIT_BYTES = 32 * 1024;
 export const READONLY_OUTPUT_LIMIT_BYTES = 128 * 1024;
-export const READONLY_DEFAULT_TIMEOUT_MS = 30_000;
-export const READONLY_MIN_TIMEOUT_MS = 1_000;
-export const READONLY_MAX_TIMEOUT_MS = 120_000;
-/** The frozen dispatcher's own (non-hard) cancel point. */
-export const READONLY_DISPATCHER_TIMEOUT_MS = 130_000;
 /** L15: at most 100 external changed paths are named; the rest are counted. */
 export const READONLY_MAX_EXTERNAL_PATHS = 100;
 /**
@@ -66,8 +64,7 @@ function buildInputSchema(text: ToolTextV1) {
     .object({
       command: z.string().min(1).describe(parameters['command']!),
       cwd: z.string().optional().describe(parameters['cwd']!),
-      timeoutMs: z.number().int().min(READONLY_MIN_TIMEOUT_MS).max(READONLY_MAX_TIMEOUT_MS)
-        .describe(parameters['timeoutMs']!).optional(),
+      timeoutMs: z.number().int().positive().describe(parameters['timeoutMs']!).optional(),
     })
     .strict();
 }
@@ -90,6 +87,10 @@ export type ReadonlyCommandToolInput = {
   executablePath?: string;
   /** L13: the Host's live resource-cap source; read once per `execute`. */
   resourceCaps?: ResourceCapSource;
+  /** The Host's one platform-command cap; absent keeps the uncapped path. */
+  commandSlots?: CommandSlots;
+  /** NET-B: the Host's toolchain and this Run's route out; absent keeps today's sandbox. */
+  commandSandbox?: CommandSandboxAdditions;
   authorization: ReadonlyCommandAuthorization;
   /** The platform tools' model-facing texts; defaults to the generated pack. */
   texts?: Readonly<Record<string, ToolTextV1>>;
@@ -109,25 +110,61 @@ export type ReadonlyCommandSandboxOptions = {
   readOnlyPaths?: string[];
   executablePath?: string;
   resourceCaps?: ResourceCapSource;
+  hostMounts?: readonly HostMount[];
+  network?: NetworkProxySource;
 };
 
 export function readonlyCommandSandboxOptions(input: {
   readOnlyPaths?: readonly string[];
   executablePath?: string;
   resourceCaps?: ResourceCapSource;
+  commandSandbox?: CommandSandboxAdditions;
 }): ReadonlyCommandSandboxOptions {
-  return {
+  return withCommandSandbox({
     workspaceMode: 'read_only' as const,
     ...(input.readOnlyPaths === undefined ? {}
       : { readOnlyPaths: input.readOnlyPaths.filter(path => path !== KNOWLEDGE_DIRECTORY) }),
     ...(input.executablePath === undefined ? {} : { executablePath: input.executablePath }),
     ...(input.resourceCaps === undefined ? {} : { resourceCaps: input.resourceCaps }),
+  }, input.commandSandbox);
+}
+
+/** NET-B: the Host's own node prefix (`bin`, `lib`) mounted read-only, and the command PATH that puts it first. */
+export type CommandToolchain = { readonly hostMounts: readonly HostMount[]; readonly executablePath: string };
+/**
+ * NET-B (decision 121-112): what a command sandbox takes from the Host: the toolchain, and `network`, the Run's
+ * route out through the Host proxy. A registered check gets no `network` (coordination: its verdict depends on
+ * this workspace version only).
+ */
+export type CommandSandboxAdditions = { readonly toolchain: CommandToolchain; readonly network?: NetworkProxySource };
+
+/**
+ * NET-B: the ONE merge of the Host's additions into a command sandbox's options (the Kernel shell, the read-only
+ * command and its probe, the registered check, the workbench). A configured `executablePath` wins; the mounts are
+ * added either way. No additions: the options as they were (no network, the Kernel's default PATH).
+ */
+export function withCommandSandbox<T extends { readonly executablePath?: string; readonly readOnlyPaths?: readonly string[] }>(
+  options: T, additions: CommandSandboxAdditions | undefined,
+): T & { hostMounts?: readonly HostMount[]; network?: NetworkProxySource } {
+  if (additions === undefined) return options;
+  return {
+    ...options,
+    hostMounts: additions.toolchain.hostMounts,
+    executablePath: options.executablePath ?? additions.toolchain.executablePath,
+    ...(additions.network === undefined ? {} : { network: additions.network }),
   };
 }
 
-type ReadonlyToolErrorCode = Extract<ToolResult, { status: 'error' }>['error']['code'];
+type ReadonlyToolErrorCode = Exclude<Extract<ToolResult, { status: 'error' }>['error']['code'], 'timeout'>;
 
-/** L10：非 0 退出和自己超时的消息末尾按上限事件加尾注；成功、取消和 M10 固定消息不加。 */
+/** D-DESC/L16: the ONE cancelled result, shared by a cancelled launch and a command
+ *  cancelled while it waited for its slot. */
+function cancelledCommandResult(callId: string): ToolResult {
+  return { schemaVersion: 1, callId, status: 'cancelled',
+    reason: 'run_readonly_command 已取消', output: [], effects: NONE_EFFECTS };
+}
+
+/** L10：非 0 退出的消息末尾按上限事件加尾注；成功、取消和 M10 固定消息不加。 */
 function resourceCapTail(report: ResourceCapsReport | undefined): string {
   if (report === undefined || report.status !== 'applied') return '';
   return `${report.memory === 'cap_hit' ? '（超出内存上限）' : ''}${
@@ -139,7 +176,7 @@ function toolError(callId: string, code: ReadonlyToolErrorCode, message: string,
     schemaVersion: 1,
     callId,
     status: 'error',
-    error: { code, message, retryable: code === 'timeout' || code === 'execution_failed' },
+    error: { code, message, retryable: code === 'execution_failed' },
     output,
     effects: NONE_EFFECTS,
   };
@@ -283,6 +320,13 @@ export function createReadonlyCommandTool(input: ReadonlyCommandToolInput): Tool
         return boundResult(toolError(call.callId, 'permission_denied', FORBIDDEN_MESSAGE));
       }
 
+      // 121-112 ruling 3: a platform command takes one Host slot before it
+      // probes or launches, and a command that is cancelled while waiting is the
+      // same cancellation as one cancelled by the dispatcher.
+      const release = input.commandSlots === undefined
+        ? () => {}
+        : await input.commandSlots.acquire(options.signal);
+      if (release === null) return boundResult(cancelledCommandResult(call.callId));
       let result;
       try {
         // L13/L14, D-PROBE: the capability probe and the sandbox the command
@@ -296,7 +340,7 @@ export function createReadonlyCommandTool(input: ReadonlyCommandToolInput): Tool
         result = await process.execute({
           command: args.command,
           cwd,
-          timeoutMs: args.timeoutMs ?? READONLY_DEFAULT_TIMEOUT_MS,
+          timeoutMs: COMMAND_NO_STOP_MS,
           outputLimitBytes: READONLY_OUTPUT_STREAM_LIMIT_BYTES,
           signal: options.signal,
         });
@@ -309,6 +353,8 @@ export function createReadonlyCommandTool(input: ReadonlyCommandToolInput): Tool
           return boundResult(toolError(call.callId, code, error.message));
         }
         return boundResult(toolError(call.callId, 'execution_failed', 'run_readonly_command 执行失败'));
+      } finally {
+        release();
       }
 
       // S/L15: the read-only sandbox already reports the byte-sorted external
@@ -349,15 +395,10 @@ export function createReadonlyCommandTool(input: ReadonlyCommandToolInput): Tool
         return boundResult(changed);
       }
       if (result.cancelled) {
-        // D-DESC/L16: a cancellation replaces the captured output with an empty
-        // list (a subprocess timeout keeps it), matching the frozen dispatcher's
-        // cancellation overlay.
-        const cancelled: ToolResult = { schemaVersion: 1, callId: call.callId, status: 'cancelled',
-          reason: 'run_readonly_command 已取消', output: [], effects: NONE_EFFECTS };
-        return boundResult(cancelled);
-      }
-      if (result.timedOut) {
-        return boundResult(toolError(call.callId, 'timeout', `run_readonly_command 执行超时${tail}`, outputWith({ ...baseValue })));
+        // D-DESC/L16: the platform never stops the command by time; a
+        // cancellation replaces the captured output with an empty list,
+        // matching the frozen dispatcher's cancellation overlay.
+        return boundResult(cancelledCommandResult(call.callId));
       }
       if (result.exitCode !== 0) {
         return boundResult(toolError(call.callId, 'execution_failed', `命令退出码 ${String(result.exitCode)}${tail}`, outputWith({ ...baseValue })));
@@ -374,7 +415,7 @@ export function createReadonlyCommandTool(input: ReadonlyCommandToolInput): Tool
     effectClass: 'process',
     requiredCapabilities: ['workspace_read', 'isolated_process', 'network_isolated'],
     independentReadOnly: false,
-    defaultTimeoutMs: READONLY_DISPATCHER_TIMEOUT_MS,
+    defaultTimeoutMs: COMMAND_NO_STOP_MS,
     outputLimitBytes: READONLY_OUTPUT_LIMIT_BYTES,
     summarize: (argumentsValue: Readonly<Record<string, unknown>>) => ({
       paths: [],
@@ -407,6 +448,10 @@ export type ReadonlyCommandRegistrationInput = {
   workspaceRoot: string;
   processSandboxOptions: { readOnlyPaths?: string[]; executablePath?: string };
   resourceCaps?: ResourceCapSource;
+  /** The Host's one platform-command cap; absent keeps the uncapped path. */
+  commandSlots?: CommandSlots;
+  /** NET-B: the Host's toolchain and this Run's route out; absent keeps today's sandbox. */
+  commandSandbox?: CommandSandboxAdditions;
   /** Re-reads the current Host read grant at the handler boundary (layer 3). */
   authorizeCurrent: () => Promise<ReadonlyCommandCurrentAuthorization>;
   /** The platform tools' model-facing texts; defaults to the generated pack. */
@@ -431,6 +476,8 @@ export function registerReadonlyCommandTool(
     ? undefined : [...input.processSandboxOptions.readOnlyPaths];
   const executablePath = input.processSandboxOptions.executablePath;
   const resourceCaps = input.resourceCaps;
+  const commandSlots = input.commandSlots;
+  const commandSandbox = input.commandSandbox;
   const authorizeCurrent = input.authorizeCurrent;
   return (workspaceHandle: WorkspaceSandbox): ToolDefinition => createReadonlyCommandTool({
     workspace: workspaceHandle,
@@ -438,6 +485,8 @@ export function registerReadonlyCommandTool(
     ...(readOnlyPaths === undefined ? {} : { readOnlyPaths }),
     ...(executablePath === undefined ? {} : { executablePath }),
     ...(resourceCaps === undefined ? {} : { resourceCaps }),
+    ...(commandSlots === undefined ? {} : { commandSlots }),
+    ...(commandSandbox === undefined ? {} : { commandSandbox }),
     ...(input.texts === undefined ? {} : { texts: input.texts }),
     authorization: {
       permissionRevision,

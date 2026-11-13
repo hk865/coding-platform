@@ -9,6 +9,9 @@
  *
  * Expected values come from the frozen 6C book §1.1, §1.3, §1.7.2 and the S1 rows of §2.1; nothing is read from
  * the store.
+ * SEC (121-112, `sec-start-rulings-draft.md` §3): the secretary arranges a small request directly. Red today at
+ * the first package step: no secretary round offers `submit_plan_round` (SEC-1/SEC-2), and S1-4 still reads
+ * `not_followup`; SEC-3/SEC-4 are guards that pass because the tool and the waiting candidate already behave so.
  */
 import { join } from 'node:path';
 import { writeFile } from 'node:fs/promises';
@@ -16,13 +19,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import { canonicalJson } from '../../src/contracts/fingerprint.js';
 import type { PlanRevisionDraft, PlanRevisionSnapshot } from '../../src/contracts/plan.js';
-import type { QueryJobAnswerRef, QueryJobRef } from '../../src/contracts/query-job.js';
+import type { QueryJobAnswerRef, QueryJobIntentV1, QueryJobRef, QueryRunRef } from '../../src/contracts/query-job.js';
+import type { RuntimeBudget } from '../../src/contracts/runtime-budget.js';
 import type { QueryJobRecord } from '../../src/core/work-graph/queries/contracts.js';
 import type { TrustedCheckConfiguration } from '../../src/contracts/verification.js';
 import type { PlanProposal, PlanProposalRef } from '../../src/core/work-graph/model/plan-contracts.js';
 import { planProposalIdFor } from '../../src/core/work-graph/tasks/plan-service.js';
 import { graphWrite, permissionRevision, plain } from '../helpers/AG2b-collaboration-fixture.js';
-import { commitBarrier } from '../helpers/S6A-commit-barrier.js';
+import { byIdentityPrefix, commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import { openS6AHostWorld, type S6AHostWorld } from '../helpers/S6A-host-fixture.js';
 import {
   followUp, initializeProject, newRequest, secretaryAnswer, submitRound, threeIdeas, waitForRound,
@@ -31,8 +35,10 @@ import { S6A_GOAL_1, S6A_SCOPE, S6A_WORK_ROLE, OPERATOR, type S6ASession } from 
 import { s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
 import { committedValue } from '../helpers/S6A-memory-fixture.js';
 import { createS6BLine } from '../helpers/S6B1-fixture.js';
+import { createRLQueryFixture, rlQueryHostCtx, type RLQueryFixture } from '../helpers/RL-query-fixture.js';
 import { ready, sessionOf } from '../helpers/S7A-fixture.js';
 import { draftFrom } from '../scenarios/support/common.js';
+import { workTask } from '../scenarios/support/plan.js';
 import { waitFor } from '../scenarios/harness.js';
 
 vi.mock('../../src/core/record-store/in-memory-record-store.js', async (importOriginal) =>
@@ -150,6 +156,48 @@ function planCall(callId: string, summary: string, plan: PlanForm, reason?: Reco
   return { kind: 'calls' as const, calls: [{ callId, name: 'submit_plan_round', args: {
     answerKind: 'plan', summary, plan, ...(reason === undefined ? {} : { reason }),
   } }] };
+}
+
+// SEC (121-112): the precondition is the existing first-plan flow; the plan the secretary submits carries only
+// new work Tasks and the one obligation naming them.
+const SEC_BASE = 'sec-base';
+
+function segmentForm(tag: string, count: number): PlanForm {
+  const taskIds = Array.from({ length: count }, (_, index) => `${tag}-work-${index + 1}`);
+  // The plan-round tool's strict schema leaves `phase` to the platform (answer-tools.ts:313-338); a submitted
+  // segment must carry the work Task without it.
+  return { stages: [], tasks: taskIds.map(taskId => {
+    const { phase: _phase, ...task } = workTask(taskId, `${tag} ${taskId}`);
+    return task;
+  }),
+    assignments: taskIds.map(taskId => ({ taskId, role: S6A_WORK_ROLE.templateId, instruction: `${tag} instruction` })),
+    obligations: [{ obligationId: `${tag}-obligation`, title: `${tag} delivery`, requirementLevel: 'required', taskIds,
+      verificationRequirements: [{ requirementId: `${tag}-check`, requirementLevel: 'required', kind: 'static', description: `${tag} static check` }] }],
+    taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] }, taskRelations: [], inputRequirements: [] };
+}
+
+/** SEC-2's three not-small changes: four new Tasks, a changed old assignment, an old Task made to wait. */
+const SEC_2_CHANGE = segmentForm('sec-2-change', 1);
+const SEC_2_DEP = segmentForm('sec-2-dep', 1);
+const SEC_2_CELLS: Array<[string, PlanForm]> = [
+  ['four new Tasks', segmentForm('sec-2-four', 4)],
+  ['a changed old assignment', { ...SEC_2_CHANGE, assignments: [...SEC_2_CHANGE.assignments,
+    { taskId: `${SEC_BASE}-work`, role: S6A_WORK_ROLE.templateId, instruction: 'sec-2-change changed' }] }],
+  ['an old Task waiting on a new one', { ...SEC_2_DEP, executionDag: { dependsOn: [{ taskId: `${SEC_BASE}-work`,
+    dependsOnId: 'sec-2-dep-work-1', requires: { kind: 'output-contract', label: 'sec-2-dep output' } }] } }],
+];
+
+/** The shared precondition: goal 1 has an adopted plan v1 and the default `after_plan_confirmation` autonomy. */
+async function adoptedWorld(): Promise<{ world: S6AHostWorld; a: S6ASession }> {
+  const world = await openWorld();
+  const a = await world.createSecretary('a');
+  const { first } = await requestedWithSelection(world, a, SEC_BASE);
+  const candidate = (await waitForCandidate(world, first.requestRoot)).head!;
+  const goal = ready<{ goal: { revision: number } }>(await world.post('goals/read', plain(S6A_SCOPE, S6A_GOAL_1)), 'goals/read');
+  committedValue((await world.post('plans/apply', graphWrite(S6A_SCOPE, { proposalRef: candidate.ref,
+    expectedProposalRevision: candidate.revision, decisionRefs: [] }, 'sec-base-adopt',
+    [{ ref: S6A_GOAL_1, revision: goal.goal.revision }]))).body, 'the first plan');
+  return { world, a };
 }
 
 /** One request with three ideas and the selection of idea 1 that queues its follow-up. */
@@ -281,16 +329,19 @@ describe('S6C S1: a plan round becomes the request candidate', () => {
     expect((await candidateOf(world, first.requestRoot)).head?.ref).toEqual(secondCandidate.ref);
   }, 180_000);
 
-  it('S1-4: a non-follow-up, a follow-up with no Goal and a follow-up with no selected idea are skipped and write nothing', async () => {
+  it('S1-4: a first round with no planning tool, a follow-up with no Goal and a follow-up with no selected idea are skipped and write nothing', async () => {
     const world = await openWorld();
     const a = await world.createSecretary('a');
     const { first, followup } = await requestedWithSelection(world, a, 's6c-s1-skip');
     const entry = planTurnEntry(world);
     expect(entry).toBeTypeOf('function');
 
-    // The request round itself is not a follow-up.
+    // D8 (`HANDOFF.md:1834`): the first plan is the person's, so the first round is not offered the planning tool.
+    expect((await world.scripted.requests(a))[0]!.tools.map(tool => tool.name))
+      .not.toContain('submit_plan_round');
+    // The request first round carries no plan; the round-end entry writes nothing.
     expect(await entry!.call(world.platform.workflow, world.humanContext(),
-      turnOf(await jobOf(world, first.round), first.requestRoot))).toMatchObject({ status: 'skipped', reason: 'not_followup' });
+      turnOf(await jobOf(world, first.round), first.requestRoot))).toMatchObject({ status: 'skipped', reason: 'no_plan' });
     // A follow-up of a request with no selected idea is not a plan round.
     await world.scripted.script(a, [
       { kind: 'text', text: secretaryAnswer({ body: 's6c-s1-skip plain answer' }) },
@@ -414,6 +465,172 @@ describe('S6C S1: a plan round becomes the request candidate', () => {
       fault.release();
     }
   }, 180_000);
+});
+
+// ---------------------------------------------------------------------------
+// SEC (121-112): the secretary arranges a small request directly
+// ---------------------------------------------------------------------------
+
+describe('SEC (121-112): the secretary arranges a small request directly', () => {
+  it('SEC-1: a secretary request on a Goal with an adopted Plan submits three new Tasks; the platform adopts plan v2 and the adoption line names the three', async () => {
+    const { world, a } = await adoptedWorld();
+    await world.scripted.script(a, [planCall('sec-1-plan', 'sec-1 summary', segmentForm('sec-1', 3))]);
+    const request = await submitRound(world, newRequest('sec-1-request', a, 'sec-1 question'));
+    await waitForTerminal(world, request.requestRoot, request.round);
+    expect((await world.scripted.requests(a)).at(-1)!.tools.map(tool => tool.name))
+      .toEqual(expect.arrayContaining(['submit_secretary_answer', 'submit_plan_round']));
+    const graph = await waitFor(() => taskGraphOf(world), value => value.plan.planRevision === 2, 'plan v2');
+    expect(graph.plan.tasks.map(task => task.taskId)).toEqual(expect.arrayContaining(
+      ['sec-base-work', 'sec-base-gate', 'sec-1-work-1', 'sec-1-work-2', 'sec-1-work-3']));
+    const proposalId = planProposalIdFor({ projectId: S6A_SCOPE.projectId, workspaceId: S6A_SCOPE.workspaceId, goalId: S6A_GOAL_1.goalId, requestId: `request-candidate:${request.round.queryJobId}` });
+    expect(ready(await world.post('plans/proposal', plain(S6A_SCOPE, { aggregateType: 'PlanProposal',
+      projectId: S6A_SCOPE.projectId, workspaceId: S6A_SCOPE.workspaceId, proposalId })), 'plans/proposal')).toMatchObject({
+      status: 'accepted',
+      // The automatic adoption is the platform's, never the person who opened the request.
+      adoptedBy: { kind: 'system', id: 'workflow:auto-rework' },
+    });
+    const page = ready<{ notices: Array<{ category: string; summary: string }> }>(await world.post('main/read', plain(S6A_SCOPE, { goalId: S6A_GOAL_1.goalId, cursor: null })), 'main/read');
+    expect(page.notices.some(notice => notice.category === 'plan_adoption'
+      && notice.summary === '已采用 · 计划 v2 · 改 3 个任务（sec-1-work-1、sec-1-work-2、sec-1-work-3） · 影响 无 · 尚未审阅')).toBe(true);
+  }, 180_000);
+
+  it('SEC-5: a transient adoption refusal leaves the turn pending and the Host retries the same round into the adoption', async () => {
+    const { world, a } = await adoptedWorld();
+    // Hold the adoption at its store compare-and-swap. Moving the Goal settings in
+    // that window makes the prepared adoption a real, retryable revision conflict.
+    const adoption = commitBarrier.hold(byIdentityPrefix('plan-apply:'));
+    try {
+      await world.scripted.script(a, [planCall('sec-5-plan', 'sec-5 summary', segmentForm('sec-5', 1))]);
+      const request = await submitRound(world, newRequest('sec-5-request', a, 'sec-5 question'));
+      const proposalId = planProposalIdFor({ projectId: S6A_SCOPE.projectId, workspaceId: S6A_SCOPE.workspaceId,
+        goalId: S6A_GOAL_1.goalId, requestId: `request-candidate:${request.round.queryJobId}` });
+      await adoption.reached;
+      const revision = await goalRevisionOf(world);
+      committedValue((await world.post('goals/settings/set', graphWrite(S6A_SCOPE, {
+        goalRef: S6A_GOAL_1, autonomy: 'after_plan_confirmation', waitForGoalRef: null,
+      }, 'sec-5-settings', [{ ref: S6A_GOAL_1, revision }]))).body, 'the moved Goal settings');
+      // The conflict is retryable: plan v1 and the waiting candidate stay, and the
+      // Host's next pass re-reads the Goal before it adopts.
+      expect((await taskGraphOf(world)).plan.planRevision).toBe(1);
+      adoption.release();
+      const graph = await waitFor(() => taskGraphOf(world), value => value.plan.planRevision === 2,
+        'plan v2 after the retried adoption');
+      expect(graph.plan.tasks.map(task => task.taskId)).toEqual(expect.arrayContaining(['sec-base-work', 'sec-5-work-1']));
+      expect(ready(await world.post('plans/proposal', plain(S6A_SCOPE, { aggregateType: 'PlanProposal',
+        projectId: S6A_SCOPE.projectId, workspaceId: S6A_SCOPE.workspaceId, proposalId })), 'plans/proposal')).toMatchObject({
+        status: 'accepted', adoptedBy: { kind: 'system', id: 'workflow:auto-rework' },
+      });
+    } finally {
+      adoption.release();
+    }
+  }, 180_000);
+
+  it.each(SEC_2_CELLS)('SEC-2: %s is not small, so the candidate waits for the person and plan v1 stays active',
+    async (_variant, form) => {
+      const { world, a } = await adoptedWorld();
+      await world.scripted.script(a, [planCall('sec-2-plan', 'sec-2 summary', form)]);
+      const request = await submitRound(world, newRequest('sec-2-request', a, 'sec-2 question'));
+      await waitForTerminal(world, request.requestRoot, request.round);
+      const head = await waitForCandidate(world, request.requestRoot);
+      expect(await planTurnEntry(world)!.call(world.platform.workflow, world.humanContext(),
+        turnOf(await jobOf(world, request.round), request.requestRoot))).toEqual({ status: 'done' });
+      expect(await candidateOf(world, request.requestRoot)).toMatchObject({ status: 'candidate', head: { ref: head.head!.ref } });
+      expect((await taskGraphOf(world)).plan.planRevision).toBe(1);
+    }, 180_000);
+
+  it('SEC-3: 「每步确认」 does not offer the planning tool', async () => {
+    const { world, a } = await adoptedWorld();
+    const goal = ready<{ goal: { revision: number } }>(await world.post('goals/read', plain(S6A_SCOPE, S6A_GOAL_1)), 'goals/read');
+    committedValue((await world.post('goals/settings/set', graphWrite(S6A_SCOPE, { goalRef: S6A_GOAL_1,
+      autonomy: 'every_step', waitForGoalRef: null }, 'sec-3-every-step',
+      [{ ref: S6A_GOAL_1, revision: goal.goal.revision }]))).body, 'every_step');
+    await world.scripted.script(a, [{ kind: 'text', text: secretaryAnswer({ body: 'sec-3 answer' }) }]);
+    const request = await submitRound(world, newRequest('sec-3-request', a, 'sec-3 question'));
+    await waitForRound(world, request.requestRoot, request.round, 'ended');
+    expect((await world.scripted.requests(a)).at(-1)!.tools.map(tool => tool.name)).not.toContain('submit_plan_round');
+  }, 120_000);
+
+  it('SEC-4: a plan round after a selected idea writes a candidate that still waits for the person', async () => {
+    const { world, a } = await adoptedWorld();
+    const { first, followup } = await requestedWithSelection(world, a, 'sec-4');
+    const head = await waitForCandidate(world, first.requestRoot);
+    expect(await planTurnEntry(world)!.call(world.platform.workflow, world.humanContext(),
+      turnOf(await jobOf(world, followup), first.requestRoot))).toEqual({ status: 'done' });
+    expect((await candidateOf(world, first.requestRoot)).head?.ref).toEqual(head.head!.ref);
+    expect((await taskGraphOf(world)).plan.planRevision).toBe(1);
+  }, 180_000);
+});
+
+// ---------------------------------------------------------------------------
+// SEC startup roster (ruling 16): the S6A request world's workspace
+// authorization is a Host startup fact, so the public Query prepare/start
+// chain is the world where the start re-reads a live authorization fact.
+// Preparation freezes `run_readonly_command`; denying '.' before the start
+// changes the recomputed list and must answer `forbidden`.
+// ---------------------------------------------------------------------------
+
+const SEC6_SCOPE = { projectId: 'rl-query-project', workspaceId: 'rl-query-workspace' };
+const SEC6_JOB = { aggregateType: 'QueryJob' as const, ...SEC6_SCOPE, queryJobId: 'rl-query-job' };
+const SEC6_RUN: QueryRunRef = { aggregateType: 'QueryRun', ...SEC6_SCOPE, queryJobId: 'rl-query-job', runId: 'rl-query-run' };
+const SEC6_ROLE = { kind: 'legacy_template' as const, templateId: 'advisor', templateRevision: '1' };
+const SEC6_BUDGET: RuntimeBudget = { contextWindowTokens: 200_000, inputTokens: null, outputTokens: null,
+  maxRequests: 8, maxToolCalls: 8, timeoutMs: 30_000, perResponseTokens: 512 };
+
+/** The public Query submit/claim/prepare steps of the RL world, stopped after preparation. */
+async function preparedReadonlyQuery(fixture: RLQueryFixture) {
+  const ctx = rlQueryHostCtx();
+  const submitted = await fixture.platform.queries.submitQueryJob(ctx, {
+    input: { queryJobId: SEC6_JOB.queryJobId, runId: SEC6_RUN.runId, intent: {
+      schemaVersion: 1, intentId: SEC6_JOB.queryJobId, ...SEC6_SCOPE, goalId: 'rl-query-goal',
+      question: 'SEC-6 read the workspace', focusTaskRefs: [], budget: { maxTokens: null, deadline: null },
+      multiTurn: { maxRounds: 1 }, correlationId: 'sec-6',
+      execution: { kind: 'initial_coordination', roleBinding: { schemaVersion: 1, bindingId: 'rl-query-binding',
+        templateId: 'advisor', templateRevision: '1', bindingVersion: 1, policyRevision: '1' },
+        runtimeBudget: SEC6_BUDGET },
+    } as QueryJobIntentV1 },
+    meta: { requestId: 'sec-6-submit', expected: [
+      { ref: { aggregateType: 'Project', projectId: SEC6_SCOPE.projectId }, revision: 1 },
+      { ref: { aggregateType: 'Workspace', ...SEC6_SCOPE }, revision: 1 },
+      { ref: { aggregateType: 'Goal', ...SEC6_SCOPE, goalId: 'rl-query-goal' }, revision: 1 },
+      { ref: SEC6_JOB, revision: 0 }, { ref: SEC6_RUN, revision: 0 },
+    ] },
+  });
+  if (submitted.status !== 'committed') throw new Error(`SEC-6 submit: ${JSON.stringify(submitted)}`);
+  const created = await fixture.platform.runtime.createSession(ctx, { workspace: SEC6_SCOPE, role: SEC6_ROLE,
+    recommendedRefs: [], initialLinks: [], meta: { requestId: 'sec-6-session', expected: [] } });
+  if (created.status !== 'completed') throw new Error(`SEC-6 Session: ${JSON.stringify(created)}`);
+  const claimed = await fixture.platform.queries.claimQuery(ctx, {
+    input: { queryRunRef: SEC6_RUN, sessionRef: created.value.ref },
+    meta: { requestId: 'sec-6-claim', expected: [
+      { ref: SEC6_JOB, revision: 1 }, { ref: SEC6_RUN, revision: 1 },
+      { ref: created.value.ref, revision: created.value.revision },
+    ] },
+  });
+  if (claimed.status !== 'committed') throw new Error(`SEC-6 claim: ${JSON.stringify(claimed)}`);
+  const prepared = await fixture.platform.runtime.prepareQuery(ctx, { queryRunRef: SEC6_RUN, requestId: 'sec-6-prepare' });
+  if (prepared.status !== 'ready') throw new Error(`SEC-6 prepare: ${JSON.stringify(prepared)}`);
+  return { ctx, prepared: prepared.value };
+}
+
+describe('SEC startup roster (ruling 16)', () => {
+  it('SEC-6: a frozen tool list that the start recomputes differently is `forbidden`', async () => {
+    const fixture = await createRLQueryFixture({ replies: [{ kind: 'text', text: 'SEC-6 unused answer' }],
+      tools: ['read', 'run_readonly_command'], readonlyCommandAccess: true, allowWholeWorkspace: true });
+    try {
+      const { ctx, prepared } = await preparedReadonlyQuery(fixture);
+      // The preparation froze `run_readonly_command` because '.' was readable; the
+      // start reads the live authorization again and must refuse the changed list.
+      fixture.state.allowWholeWorkspace = false;
+      const started = await fixture.platform.runtime.startQuery(ctx, {
+        prepared, consumerId: 'sec-6', requestId: 'sec-6-start',
+      });
+      expect(started).toEqual({ status: 'rejected', code: 'forbidden',
+        reason: 'the prepared tool list no longer fits this Run' });
+      expect(fixture.scripted.calls(), 'no provider call').toBe(0);
+    } finally {
+      await fixture.close();
+    }
+  }, 60_000);
 });
 
 // ---------------------------------------------------------------------------
