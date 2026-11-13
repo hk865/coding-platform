@@ -314,6 +314,11 @@ export async function openXWS2AWorld(options: {
     ...(options.extraHostOptions === undefined ? {} : { extraHostOptions: options.extraHostOptions }) });
   let second: S7D2SecondWorkspace | null = null;
   try {
+    // 121-109: these rows read the join's structural cards, so the project asks before every structural change; the
+    // factory default ("auto") would apply a proposal as it freezes and its card would never stay.
+    const asked = await base.world.settings('structural-approval/save',
+      { projectId: base.world.scope.projectId, value: { proposals: 'ask', repairs: 'ask' } });
+    if (asked.status !== 'ready') throw new Error(`XWS2A: structural-approval/save: ${JSON.stringify(asked)}`);
     for (const [path, text] of Object.entries(options.mainFiles ?? {})) {
       const target = join(base.world.root, path);
       await mkdir(join(target, '..'), { recursive: true });

@@ -14,6 +14,7 @@ import type {
   ExecutionHistoryPage, ExecutionHistoryRequest, TaskExecutionHistoryRequest,
 } from './execution-history-contracts.js';
 import type {
+  CancelQueryExecutionRequest, CancelQueryExecutionResultV1,
   DeliverControlRequest, ObserveQueryExecutionRequest, ObserveTaskRunRequest,
   PrepareQueryExecutionRequest, PrepareTaskExecutionRequest, StartQueryExecutionRequest,
   StartTaskExecutionRequest, TaskExecutionRecord,
@@ -76,6 +77,12 @@ export interface RuntimeExecutionPort {
   prepareQuery?(ctx: CoreCallContext, request: PrepareQueryExecutionRequest): Promise<ReadResult<PreparedQueryExecution>>;
   startQuery?(ctx: CoreCallContext, request: StartQueryExecutionRequest): Promise<ReadResult<QueryExecutionRecord>>;
   observeQuery?(ctx: CoreCallContext, request: ObserveQueryExecutionRequest): Promise<ReadResult<QueryExecutionRecord>>;
+  /**
+   * 121-112 "人随时能停": stop the running model Turn of one QueryRun. The Kernel ends it `cancelled` (a running
+   * command is stopped through its sandbox) and the QueryRun settles `cancelled` through the normal observation.
+   * Optional like the Query members above; `createAgentRuntime` publishes it.
+   */
+  cancelQuery?(ctx: CoreCallContext, request: CancelQueryExecutionRequest): Promise<ReadResult<CancelQueryExecutionResultV1>>;
   /**
    * C3: the continuation brief pinned in a Run's saved manifest, checked
    * against `inputBinding.continuationBriefDigest`. `null` = a Run without

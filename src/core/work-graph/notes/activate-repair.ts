@@ -13,6 +13,8 @@ import { catalogForWorkspace } from '../../../contracts/workspace-catalog.js';
 import { isSafeProjectPath, normalizeProjectPath, resolveStoredProjectPath } from '../../../contracts/workspace-path.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+import type { OperationRef } from '../../../contracts/core/operations.js';
+import type { NotifyProjectInputV1 } from '../../../contracts/role-lines.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { ModuleRef, VersionPin } from '../../../contracts/core/identity.js';
 import type { SessionMessageRecord } from '../state/message-machine.js';
@@ -41,7 +43,9 @@ import { decodeArchitectureCatalogRevisedEvent, encodeArchitectureCatalogRevised
 import {
   draftCatalogRevision, finishCatalogRevision, type CatalogRevisionDependencies,
 } from '../architecture/revision-planner.js';
-import { repairBindingDigest, repairNeedsCard } from '../architecture/repair-ops.js';
+import { repairBindingDigest, repairCardLifted, repairNeedsCard } from '../architecture/repair-ops.js';
+import { autoApprovalBlockOf, autoApprovalDeclinedSummary } from '../architecture/proposal-service.js';
+import { projectNoticeIdentity } from '../state/project-notice.js';
 import { decodeEvidenceSnapshot } from '../persistence/evidence-record-codecs.js';
 import {
   NOTE_DISPOSITION_CHANGED_EVENT_TYPE, NOTE_EVENT_SCHEMA_VERSION, S4_NOTE_BY_REVIEW_STATUS_LOOKUP,
@@ -172,6 +176,31 @@ export async function readBoundRepairRound(
   if (chain.status !== 'ready') return chain;
   if (chain.value === null) return { status: 'ready', value: null };
   return boundRoundOf(head, chain.value);
+}
+
+/**
+ * 121-109, Q6 (a): the hold of a structural repair staged under the "auto" switch IS the "没有自动采用结构修补"
+ * project notice, found by its fixed identity (the note's Goal, `automatic_adjustment`, this note version's
+ * operation). The activation sends it when the protection holds the repair back; the card shows while it exists.
+ */
+export function repairAutoHoldOf(head: NoteHeadSnapshot): { refKey: string; operation: OperationRef; subject: DecisionSubjectV1 } {
+  const projectId = head.ref.projectId;
+  const subject: DecisionSubjectV1 = { kind: 'goal', goalRef: { aggregateType: 'Goal', projectId, goalId: head.goalId! } };
+  const operation: OperationRef = { aggregateType: 'CoreOperation', projectId,
+    operationId: `structural-auto-declined:note:${head.noteId}:${String(head.version)}` };
+  const { noticeId } = projectNoticeIdentity({ subject, kind: 'automatic_adjustment', operation });
+  return { refKey: canonicalJson({ aggregateType: 'ProjectNotice', projectId, noticeId } as unknown as JsonValue),
+    operation, subject };
+}
+
+/** Pure read shared by the activation and the card: one `readMany` of the hold; a repair staged without "auto" has none. */
+export async function readRepairAutoHold(records: Pick<RepairReadRecords, 'readMany'>, head: NoteHeadSnapshot):
+Promise<ReadResult<boolean>> {
+  if (head.structuralAutoApproved !== true) return { status: 'ready', value: false };
+  const { refKey } = repairAutoHoldOf(head);
+  const read = await records.readMany([refKey]);
+  if (read.status !== 'ready') return mapStoreFailure(read);
+  return { status: 'ready', value: read.value.records.some((record) => record.refKey === refKey) };
 }
 
 /**
@@ -372,10 +401,14 @@ async function activateRepairWith(
   if (prior !== null) return prior;
 
   const thrown = { message: null as string | null };
-  const activation = { result: null as ActivationPrepared | null };
+  const activation = { result: null as ActivationPrepared | null, declined: null as NotifyProjectInputV1 | null };
   const outcome = await writeKnowledge(deps.knowledge, ctx, lines => prepareActivation(deps, ctx, input,
     observationCache, { identityKey, fingerprint }, lines, thrown, activation));
-  if (outcome.kind === 'exit') return outcome.value;
+  if (outcome.kind === 'exit') {
+    // The hold notice goes out once the write queue let go of the lines; one not sent is judged and sent next pass.
+    if (activation.declined !== null) await deps.knowledge.write.notify(activation.declined);
+    return outcome.value;
+  }
   const result = activation.result;
   if (outcome.kind === 'rejected') {
     // DR-02: the withdrawal commits under its own identity and answers `withdrawn` once it landed.
@@ -421,7 +454,7 @@ async function prepareActivation(
   input: { commandId: string; noteId: string; expectedVersion: number },
   observationCache: ObservationCache, keys: { identityKey: string; fingerprint: string },
   lines: readonly LineKnowledge[], thrown: KnowledgeCommitThrow,
-  activation: { result: ActivationPrepared | null },
+  activation: { result: ActivationPrepared | null; declined: NotifyProjectInputV1 | null },
 ): Promise<KnowledgePrepared<ActivateRepairResult>> {
   const { identityKey, fingerprint } = keys;
   const exit = (value: ActivateRepairResult): KnowledgePrepared<ActivateRepairResult> => ({ kind: 'exit', value });
@@ -552,8 +585,14 @@ async function prepareActivation(
   const firstProblem = footprintProblem({ activity, catalog: runCatalog, declared, observation, ops: repair.ops,
     workspaceId: runWorkspaceId, mainWorkspaceId, approval: null });
   const renamed = repair.ops.some((op) => op.op === 'set_module_name');
-  const needsCard = repairNeedsCard({ structural: repair.structural, rename: renamed,
+  const held = await readRepairAutoHold(deps.records, head);
+  if (held.status !== 'ready') return exit(repairReadFailure(held));
+  const lifted = repairCardLifted(head, held.value);
+  const needsCard = repairNeedsCard({ structural: repair.structural && !lifted, rename: renamed && !lifted,
     autonomy: readGoalSettings(goal).autonomy, footprintUnknown: firstProblem?.kind === 'unknown' });
+  // 121-109: the platform applies it without the person; a card still needed (every step, unknown footprint) is the
+  // person's approval, which neither the protection nor the structural notice below second-guesses.
+  const automatic = lifted && !needsCard;
 
   let problem = firstProblem;
   let approvalMessage: SessionMessageRecord | null = null;
@@ -625,14 +664,27 @@ async function prepareActivation(
   if (plans.status !== 'ready') return exit(mapStoreFailure(plans));
   const notePlans = await noteFileWritesOf([activatedHead], lines);
   if (notePlans.status !== 'ready') return exit(mapStoreFailure(notePlans));
+  if (automatic) {
+    // 121-106 item 5: a structural proposal's protection, on the architecture plans, before the planner's ledger half
+    // (121-93). Held back, the hold notice (sent by the caller) brings the card; the person's approval then activates.
+    const block = await autoApprovalBlockOf(deps.records, ctx.projectId, plans.value);
+    if (block.status !== 'ready') return exit(block);
+    if (block.value !== null) {
+      const hold = repairAutoHoldOf(head);
+      activation.declined = { projectRef: { projectId: ctx.projectId }, subject: hold.subject,
+        kind: 'automatic_adjustment', summary: autoApprovalDeclinedSummary('结构修补', block.value), operation: hold.operation };
+      return exit({ status: 'not_ready', reason: 'approval_pending' });
+    }
+  }
   const planned = await finishCatalogRevision(revisionDeps, ctx, draft.value);
   if (planned.status !== 'ready') return activationRefused(planned);
   const contribution = planned.value;
 
   const now = deps.now();
+  // 121-109: a repair the platform applied itself shows in the notices as a structural change.
   const version = newNoteVersionRecord(activatedHead, {
     kind: 'activate', by: { kind: 'platform' }, reason: null, decisionMessageRef: null,
-  }, now, null);
+  }, now, automatic ? 'structural' : null);
   const headEvent = {
     schemaVersion: NOTE_EVENT_SCHEMA_VERSION, occurredAt: now, projectId: ctx.projectId,
     workspaceId: ctx.workspaceId ?? '',

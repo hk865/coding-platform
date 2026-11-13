@@ -33,7 +33,7 @@
 - `rework-request.ts` — `ReworkRequestRef`：返工请求（记录 3）的 ref；记录的值类型和字段表在 `core/work-graph/persistence/rework-request-codecs.ts`。
 - `task-envelope.ts` — `TaskEnvelopeV1`：有界执行绑定；`permissions.createMember` 是必填布尔（Work 的委托），两个 Query 配方只用三字段投影。
 - `task-failure.ts` — 任务失败/自动化停止/返工事实 DTO。
-- `task-requeue.ts` — `TaskRequeue`/返工拒绝、自动化 actor、策略默认、启动三档 `RESUME_ON_STARTUP_MODES`、`isAutomationActor`、`reworkActorClassOf`。
+- `task-requeue.ts` — `TaskRequeue`/返工拒绝、自动化 actor（含结构改动自动批准的固定身份 `STRUCTURAL_AUTO_APPROVAL_ACTOR`）、策略默认、启动三档 `RESUME_ON_STARTUP_MODES`、`isAutomationActor`、`reworkActorClassOf`。
 
 ### 执行与 Run
 做派发、Query、Run 活动/预算、续接简报与控制意图的去这组。
@@ -86,7 +86,7 @@
 - `architecture-catalog.ts` — 架构目录 DTO：`ModuleDefinition`、`AdoptedArchitecture`、`ArchitectureCatalogPinV1`、`isUndividedModule`（目录里只有这一个模块，且路径正好是 `.`）；捕获用的一份映射 `mappingsOf`（模块，加每个模块的接口，接口身份是 `canonicalJson([moduleId, interfaceId])`，没有路径的接口不列；`moduleMappingsOf` 是它的模块一半）和分两层的归属 `ownershipRuleOf`（一律在完整映射上判；文件先按最长合法路径归模块，再在这个模块的接口里取最长前缀；平手/无主都是 `null`；接口里的文件仍属于它的模块）、`ownerNodesOf`（归属对应的观测节点：`module:<id>`，在接口里再加 `interface:` + 身份串）；R1 字段表形状 `architectureBaselineRevisionRefShape`、`architectureCatalogRefShape`、`architectureCatalogPinShape`（pin 的 `catalogRef` 必须与 `baseline.ref` 同 project/baseline/revision）。
 - `architecture-inspection.ts` — 代码图/观察清单：`CodeGraphNode`、`CodeGraphEdge`（必填 `count`：冻结材料里同一对端点之间的引用条数，`>= 1`，不进 `structuralKey`/`edgeId`；`structuralKey = canonicalJson([fromNode, toNode])`）、`FormalObservedFindingV1`、`FileGraphPageV1`（`edges[].count` 同义）、`LanguageCoverageV1`、`COVERAGE_ISSUES_MAX`。
 - `architecture-observation.ts` — 自动捕获：`AUTO_CAPTURE_TRIGGERS`、`isAutoCaptureTrigger`、`ArchitectureAutoCaptureRecordV1`、`ArchitectureObservationStateV1`。
-- `architecture-proposal.ts` — 结构提案契约：提案/批的 ref 与记录 `ArchitectureProposalV1`/`ArchitectureProposalBatchV1`、输入 `ProposeArchitectureRevisionInputV1`、结果 `ProposalResult`/`ApplyBatchResult` 与读 `ProposalRead`；提案记录带可信来源 `operationRef` 和可空的 `queryRunRef`（具体探索轮，M6）；纯数据，不建 store、时钟、id 或路由。
+- `architecture-proposal.ts` — 结构提案契约：提案/批的 ref 与记录 `ArchitectureProposalV1`/`ArchitectureProposalBatchV1`、输入 `ProposeArchitectureRevisionInputV1`、结果 `ProposalResult`/`ApplyBatchResult` 与读 `ProposalRead`；提案记录带可信来源 `operationRef` 和可空的 `queryRunRef`（具体探索轮，M6）；`ProposalResult` 的 `applied` 一支（121-109，平台当场自动采用）只带新 pin。结构改动自动批准的设置形状 `StructuralApprovalModeV1`/`StructuralApprovalV1`、出厂默认 `DEFAULT_STRUCTURAL_APPROVAL`（两个都 `auto`）和唯一的形状核对 `structuralApprovalOf`（设置路由和设置文件共用）也在这里；纯数据和纯函数，不建 store、时钟、id 或路由。
 - `architecture-search.ts` — 架构搜索与当前工作集合的纯 DTO：`ArchitectureNodeRefV1`、`ArchitectureGroupV1`、文件/模块命中、`ArchitectureFindRequestV1`/`ArchitectureFindResultV1`、`ArchitectureWorkScopeV1` 与 `ArchitectureChangeScopeV1`（`architecture/change-scope`：当前目标实际改过的文件按唯一归属模块汇总，`files[].interfaceId`、模块自己的 `changed`/`possible`、`complete`）；不读记录。
 - `architecture-source.ts` — 架构源快照：`ArchitectureSourceSnapshotV1`、`compactUnresolvedLines`、`architectureSourceIssues`（另核每条边的 `count` 是 `>= 1` 的安全整数），并转出 `pathOwnershipOf`。
 - `artifact.ts` — 内容寻址正文：`ArtifactRef`、`ArtifactRecord`、`ARTIFACT_MAX_SIZE_BYTES`、`artifactBodyDigest`、`artifactBodySize`。
@@ -113,7 +113,7 @@
 - `ledger.ts` — 聚合引用/快照、`AggregateRef` 闭集、`makeCommitCursor`（`src/contracts/ledger.ts:131`）/ `seqOfCommitCursor`（`src/contracts/ledger.ts:137`）/ `compareCursors`（`src/contracts/ledger.ts:149`）；`GoalSnapshot` 带创建提交的 `since`，创建路径用预绑定的 `PendingGoalSnapshot`（`since` 为提交占位符）；每个 Goal 自带出生字段 `settings`、`continuedFrom`（`GoalContinuationV1` 或 null）和 `copiedInterventions`，缺字段的记录被拒绝。7A-1 加 `DispatchCounterRef`（`src/contracts/ledger.ts:159`）、`DispatchBasisV1`（`:152`）、`DispatchCurrentV1`（`:157`），`AggregateRef` 增 `DispatchCounterRef` 成员，并转出 `DispatchCounterV1`（`:159`）；7D2 的 `AggregateRef` 再增四个角色线记录 ref（`GoalAdviserQueueRef`/`AutonomyRuleRef`/`AutonomyRuleSetRef`/`RoleCapacityEpisodeRef`，`src/contracts/ledger.ts:53`）。
 - `line-delta.ts` — 真实文本行 diff 的唯一正本：`lineDelta`（`contentLines` 切行，返回 `added`/`deleted`/`totalLines`）、`lineEditCounts`（同一个算法，LCS 超过 250k 格改用 Myers，Myers 可以设编辑距离上限，过了答 null）、`gitLines`（git 的切法，任务图的“未提交”读用）；`MAX_LCS_CELLS` 私有；注意力、Run activity tally 和 WorkspaceTools 共用（`core` 不 import `app`）。
 - `memory.ts` — `MemoryPurpose`：记忆用途闭集。
-- `note.ts` — 注记 Head/Version/CurrentPointer、锚点、种类闭集 `NOTE_KINDS`（含 `understanding`/`repair`/`link`/`flow`）、通用子集 `NOTE_GENERAL_KINDS` 与 `isGeneral`、载荷字段表 `NOTE_PAYLOAD_KINDS`（`repair`/`link`/`flow`）与 `payloadKindProblem`、联系关系闭集的判断 `isSemanticRelation` 和证据角色闭集的判断 `isLinkEvidenceRole`、`renderNoteHeader`（旧种类、link 与 flow 三种形式）；Agent 来源带 `runRef`（Work Run）和 `queryRunRef`（秘书的 QueryRun），各自可为 null；书记范围 `NoteScopeV1`（project、一个 region 或一个 goal）的正本也在这里，`W/model/note-contracts.ts` 再导出，纯 state 直接引这里。
+- `note.ts` — 注记 Head/Version/CurrentPointer、锚点、种类闭集 `NOTE_KINDS`（含 `understanding`/`repair`/`link`/`flow`）、通用子集 `NOTE_GENERAL_KINDS` 与 `isGeneral`、载荷字段表 `NOTE_PAYLOAD_KINDS`（`repair`/`link`/`flow`）与 `payloadKindProblem`、联系关系闭集的判断 `isSemanticRelation` 和证据角色闭集的判断 `isLinkEvidenceRole`、`renderNoteHeader`（旧种类、link 与 flow 三种形式）；Agent 来源带 `runRef`（Work Run）和 `queryRunRef`（秘书的 QueryRun），各自可为 null；书记范围 `NoteScopeV1`（project、一个 region 或一个 goal）的正本也在这里，`W/model/note-contracts.ts` 再导出，纯 state 直接引这里。注记头可选 `structuralAutoApproved?: true`（121-109）：结构修补暂存时开关为“自动”，只在为真时写。
 - `semantic-layer.ts` — 语义链接与流程的纯类型：`SemanticEndV1`、`SemanticLinkV1`、`LinkReadPayloadV1`、`SemanticFlowStepV1`、`SemanticFlowV1`、`NoteFlowReadV1`、`SemanticScopeV1`、`SemanticPageV1<T>`；只声明形状，无运行时导出。
 - `opaque.ts` — `Opaque<Value, Brand>` 品牌类型。
 - `platform-duty.ts` — `PlatformDutyV1`：五种平台职责；`PLATFORM_DUTIES` 是它唯一的运行时列表。
@@ -213,8 +213,8 @@
 | `planningOutputReserveTokens` | `src/contracts/runtime-budget.ts:27` | 计划 Query 的唯一输出预留：131,072 token 与半个窗口取小，窗口本身不变。 | 计划 profile 与 Host 上限共用；不要另算一份。 |
 | `provenNotEnteredKernel` | `src/contracts/run-activity.ts:146` | 判定已结束 Run 是否可证明未进入 Kernel。 | 无进展/返工判断；running 必须当作不完整。 |
 | `unknownFacts` | `src/contracts/run-activity.ts:122` | 带规则版本的显式 unknown 活动读数，detail 截到 500 字；唯一构造。 | Runtime 读窗口失败、WorkGraph 收尾提交没拿到 tally 时；不要写 0，也不要另写构造。 |
-| `isAutomationActor` | `src/contracts/task-requeue.ts:57` | 判断 actor 是否为平台自动化 actor。 | 归因分类与权限判断。 |
-| `reworkActorClassOf` | `src/contracts/task-requeue.ts:75` | 由 principal 与 actor 定 agent/system/human。 | 返工/重跑归因；`query_run` 返回 null。 |
+| `isAutomationActor` | `src/contracts/task-requeue.ts:61` | 判断 actor 是否为平台自动化 actor。 | 归因分类与权限判断。 |
+| `reworkActorClassOf` | `src/contracts/task-requeue.ts:79` | 由 principal 与 actor 定 agent/system/human。 | 返工/重跑归因；`query_run` 返回 null。 |
 | `isReviewRoundPurpose` | `src/contracts/review-admission.ts:57` | 判断 Run 是否为审查/提案轮。 | 审查准入分支；缺失 purpose 是普通工作。 |
 | `reviewHostLayerOneAccess` | `src/contracts/review-admission.ts:96` | Host 第一层工具与只读命令访问判定。 | 准入与审查能力查询共用同一判据。 |
 | `reviewRoundAdmissionProblem` | `src/contracts/review-admission.ts:127` | 审查轮固定工具集、空写范围、角色与 Host 准入。 | 审查 Run 启动与执行前复核。 |
@@ -226,8 +226,8 @@
 | `approvedMethodLinesZh` | `src/contracts/continuation-brief-render.ts:839` | 渲染已批准方法的固定行。 | 简报审查段的必选块。 |
 | `continuationBriefShapeProblem` | `src/contracts/continuation-brief.ts:438` | 校验简报结构，返回首个问题或 null。 | 读回/接受简报时。 |
 | `ContinuationBriefCapacityError` | `src/contracts/continuation-brief-render.ts:920` | 简报强制段超出字节上限的错误。 | 调用方把它映射为 `capacity` 拒绝。 |
-| `renderNoteHeader` | `src/contracts/note.ts:313` | 渲染 `<类名>(<锚点>)<!>：<结论>` 标题。 | 展示注记；结构性问题才带 `!`。 |
-| `headerExtrasOf` | `src/contracts/note.ts:359` | link/flow 注记 header 的可选扩展片段（到/从锚点），供渲染用 | 渲染 link 或 flow 注记时；不要另写一份 header 拼接 |
+| `renderNoteHeader` | `src/contracts/note.ts:316` | 渲染 `<类名>(<锚点>)<!>：<结论>` 标题。 | 展示注记；结构性问题才带 `!`。 |
+| `headerExtrasOf` | `src/contracts/note.ts:362` | link/flow 注记 header 的可选扩展片段（到/从锚点），供渲染用 | 渲染 link 或 flow 注记时；不要另写一份 header 拼接 |
 | `isSemanticRelation` | `src/contracts/note.ts:117` | 值是不是六种联系关系之一 | 写注记的 link 门和注记文件的解析都用它；不要另写一份关系表 |
 | `isLinkEvidenceRole` | `src/contracts/note.ts:132` | 值是不是七种证据角色之一 | 写注记的 link 门和注记文件的解析都用它；按关系的角色表在 `link-evidence.ts` |
 | `planValidationError` | `src/contracts/plan.ts:318` | 构造 `{path,code,message}` 计划校验错误。 | 计划校验累积错误时。 |
@@ -268,7 +268,7 @@
 | `ROLE_SPEC_REVISION`、`ROLE_RESPONSIBILITIES`、`ROLE_MATERIAL_KINDS`、`ROLE_OUTPUT_KINDS` | `src/contracts/role-spec.ts:70` | 角色规格版本、职责、材料与输出闭集。 | 校验/生成角色规格。 |
 | `RUN_ACTIVITY_RULE_VERSION`、`ACTIVITY_QUARTER_CAP`、`RUN_CHANGED_FILES_CAP`、`RUN_USAGE_REQUESTS_CAP`、`ACTIVITY_RECENT_WINDOW_DAYS`、`ACTIVITY_READ_RECORD_CAP`、`RUN_ACTIVITY_MAX_PAGES`、`FILE_EDIT_TOOL_NAMES`、`ACTIVITY_AUTO_RETRY_REASONS` | `src/contracts/run-activity.ts:32` | 活动读数的规则版本、各项上限与自动重试原因。 | 计算/读取 Run 活动。 |
 | `DEFAULT_RUNTIME_BUDGET`、`MAX_RESPONSE_TOKENS` | `src/contracts/runtime-budget.ts:19`、`src/contracts/runtime-budget.ts:21` | 默认预算与单次响应 token 上限。 | 归一预算时。 |
-| `WORKFLOW_AUTOMATION_ACTOR`、`GOAL_FAN_OUT_ACTOR`、`SESSION_ARCHIVE_AUTOMATION_ACTOR`、`PLATFORM_AUTOMATION_ACTORS`、`REWORK_FAILURE_CLASSES`、`DEFAULT_AUTO_REWORK_LIMIT`、`MAX_AUTO_REWORK_LIMIT`、`DEFAULT_TASK_AUTOMATION_POLICY`、`TASK_REWORK_REASON_MAX_CHARS`、`TASK_REWORK_REFUSAL_CODES` | `src/contracts/task-requeue.ts:227` | 自动化 actor 闭集、返工失败分类、自动返工上限与默认策略。 | 归类 actor、校验返工与拒绝原因。 |
+| `WORKFLOW_AUTOMATION_ACTOR`、`GOAL_FAN_OUT_ACTOR`、`SESSION_ARCHIVE_AUTOMATION_ACTOR`、`STRUCTURAL_AUTO_APPROVAL_ACTOR`、`PLATFORM_AUTOMATION_ACTORS`、`REWORK_FAILURE_CLASSES`、`DEFAULT_AUTO_REWORK_LIMIT`、`MAX_AUTO_REWORK_LIMIT`、`DEFAULT_TASK_AUTOMATION_POLICY`、`TASK_REWORK_REASON_MAX_CHARS`、`TASK_REWORK_REFUSAL_CODES` | `src/contracts/task-requeue.ts:231` | 自动化 actor 闭集、返工失败分类、自动返工上限与默认策略。 | 归类 actor、校验返工与拒绝原因。 |
 | `UNKNOWN_CALL_APPROVED_METHODS_MAX_BYTES`、`UNKNOWN_CALL_REVIEW_T02_REASON` | `src/contracts/unknown-call-review.ts:210`、`src/contracts/unknown-call-review.ts:210` | 已批准方法文本上限与 T02 原因文本。 | 生成/展示审查记录时。 |
 | `CHANGE_SCOPE_MAX_FILES`、`ROUND_CHECK_INCOMPLETE_CAUSES`、`INTERRUPTED_CHECK_GAP_CODE`、`ROUND_CHAIN_MAX` | `src/contracts/verification.ts:159` | 变更范围上限、未完成原因闭集、中断缺口码与轮链上限。 | 验证轮校验。 |
 | `PLATFORM_WITNESS_CHECK_ID`、`isPlatformReservedCheckId` | `src/contracts/verification.ts:299`、`src/contracts/verification.ts:302` | 保留的平台见证检查 id（`platform:witness`）的唯一正本，以及它唯一的比较入口；Host 两道闸各调一次，别处不得再写这个字面量。 | 校验 Host 注册/提议的检查 id 时；不要另写字面量或第二份谓词。 |

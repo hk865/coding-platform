@@ -48,6 +48,7 @@ import { createS6BLine, governS6B, openS6BRoleLine } from './S6B1-fixture.js';
 import { catalogRevisionDeps } from './S8C-catalog-world.js';
 import { sessionOf } from './S7A-fixture.js';
 import { withConfiguredHost } from './S7C-member-fixture.js';
+import { settingsPost } from '../app/support/S8A-L8-host.js';
 
 type HostFactory = typeof import('../../src/app/host.js').createLocalWorkbenchHost;
 
@@ -430,6 +431,11 @@ export async function openS8CRepairWorld(options: { label: string; tasks?: reado
   }
   if (captured === null || decisionOwner === null) throw new Error('S8C: the platform did not build the captured owner');
   await world.setResumeOnStartup(false);
+  // 121-109: these rows read the repair_approval card of a structural or rename repair, so the project asks before
+  // every structural change; the factory default ("auto") would activate such a repair with no card.
+  const asked = await (await settingsPost(world.base, 'structural-approval/save', world.token,
+    { projectId: S6A_SCOPE.projectId, value: { proposals: 'ask', repairs: 'ask' } })).json() as { status: string };
+  if (asked.status !== 'ready') throw new Error(`S8C: structural-approval/save: ${JSON.stringify(asked)}`);
   const main = s6aCardsWorkspace(world, S6A_SCOPE);
   await governS6B(world, main, world.goals);
   const goal = (await main.createGoal(`s8c-${options.label}`, `S8C repair ${options.label}`)).ref;

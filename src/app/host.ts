@@ -142,6 +142,7 @@ import {
   DEFAULT_WORK_RUN_TOKEN_BUDGET,
 } from './host-settings-types.js';
 import { DEFAULT_PLAN_LOOP_LIMITS, type PlanLoopLimitsV1 } from '../contracts/plan-loop-limits.js';
+import { DEFAULT_STRUCTURAL_APPROVAL } from '../contracts/architecture-proposal.js';
 import { createInitializationAdoptionHost, type InitializationAdoptionDependencies } from './initialization-adoption.js';
 import {
   createWorkbenchRuntimeHostBindings,
@@ -761,7 +762,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         versionProvider(versionSecretSource(seedConfiguration, { models: [], selection: {}, checks: [],
           automation: { ...DEFAULT_TASK_AUTOMATION_POLICY }, resourceCaps: resourceCaps.current(),
           workRunTokenBudget, planLoopLimits: structuredClone(planLoopLimits),
-          commandReviewLineMinutes, knowledgeLocalOnly: {} })), runtimeNarrowing));
+          commandReviewLineMinutes, knowledgeLocalOnly: {},
+          structuralApproval: {} })), runtimeNarrowing));
   const resolverRegistry = initialBindings === undefined ? undefined : createHostRuntimeResolverRegistry(initialBindings);
   const runtime: TargetPlatformOptions['runtime'] = resolverRegistry ?? options.runtime;
   // Settings may rebuild the runtime only from the serializable configuration;
@@ -939,6 +941,9 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       ...(options.knowledgeWriteHold === undefined ? {} : { knowledgeWriteHold: options.knowledgeWriteHold }),
       // The knowledge "kept local" is by checkout, read live from the last settings snapshot pushed to the Host.
       knowledgeLocalOnly: repoKey => lastSnapshot?.knowledgeLocalOnly[repoKey] === true,
+      // 121-109: the project's structural auto-approval, read live from the last settings snapshot; the factory
+      // default ("auto") when the project saved none.
+      structuralApproval: projectId => lastSnapshot?.structuralApproval[projectId] ?? DEFAULT_STRUCTURAL_APPROVAL,
       commitObserver: commitObserverFor(input.projectId),
       hostInstance: { hostInstanceId: input.lease.hostInstanceId, lease: input.lease.lease, takeover: input.lease.takeover },
       hostClosing: hostClosing.signal,

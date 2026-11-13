@@ -169,7 +169,8 @@ export function createArchitectureTools(config: ArchitectureToolsConfig): Archit
       inputSchema: proposeSchema,
       effectClass: 'workspace_write',
       requiredCapabilities: [],
-      defaultTimeoutMs: 10000,
+      // The call may apply the frozen batch at once (structural auto-approval), a knowledge write.
+      defaultTimeoutMs: 60_000,
       outputLimitBytes: 64 * 1024,
       independentReadOnly: false,
       summarize: () => ({ paths: [], cwd: null, commandPreview: null }),

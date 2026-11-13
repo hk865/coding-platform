@@ -1429,9 +1429,12 @@ export function createUnknownCallReviewService(
       return adviserReadRefusal(rejected('incomplete', 'the adviser Query has not ended; the review waits'));
     }
     const execution = job.intent.execution;
-    if (execution.kind !== 'intervention_planning' || job.goalId !== current.ref.goalId
-      || refKeyOf(execution.sourceMessageRef) !== refKeyOf(messageRef)) {
-      return adviserReadRefusal(rejected('invalid', 'the adviser Query was not asked by this round\'s message'));
+    // Safety and the product rule (009): the answer is only what the round's submit tool wrote in the adviser answer
+    // shape, never a text a model wrote in another round's shape.
+    if (execution.kind !== 'intervention_planning' || execution.answerShape !== 'unknown_call_advice'
+      || job.goalId !== current.ref.goalId || refKeyOf(execution.sourceMessageRef) !== refKeyOf(messageRef)) {
+      return adviserReadRefusal(rejected('invalid',
+        'the adviser Query was not asked by this round\'s message in the adviser answer shape'));
     }
     const answerRef = job.answerRefs.at(-1);
     if (answerRef === undefined) return adviserReadRefusal(rejected('invalid', NO_ACCEPTED_ANSWER));

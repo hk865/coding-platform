@@ -16,6 +16,7 @@ import type {
 } from '../../../contracts/note.js';
 import { isGeneral, isLinkEvidenceRole, isSemanticRelation, NOTE_KINDS, payloadKindProblem } from '../../../contracts/note.js';
 import type { DecisionChangeProofV1 } from '../../../contracts/goal-decisions.js';
+import type { StructuralApprovalV1 } from '../../../contracts/architecture-proposal.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { PlanTaskPort } from '../model/plan-contracts.js';
@@ -147,6 +148,8 @@ export type NoteServiceDependencies = {
   /** F1's flow-only project quota (100): a soft quota that never refuses a write. */
   projectFlowQuota?: number;
   basisFileMaxBytes?: number;
+  /** 121-109: the project's structural auto-approval, read once when a note is written; absent never approves. */
+  structuralApproval?: (projectId: string) => StructuralApprovalV1;
 };
 
 type Rejected = { status: 'rejected'; code: NoteErrorCode; reason: string };
@@ -2233,8 +2236,18 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
     });
     const userNoteReplaced = draft.kind !== 'understanding'
       && [...replacedCurrent.values()].some(target => target.confirmedByUser);
+    // 121-109 / 62-6: the switches are read once, when the note is written or the repair staged; a later change never
+    // takes a waiting note or a staged repair.
+    const modes = deps.structuralApproval?.(ctx.projectId);
+    const structuralAutoApproved = !caller.isUser && draft.kind === 'understanding' && platformStructural
+      && modes?.proposals === 'auto';
+    // Q5: a rename-only repair counts as a structural one. Only an agent or a scribe stages a repair (the authority
+    // check above), and the head keeps the verdict for the activation and the card.
+    const autoRepair = repairPayload !== undefined && modes?.repairs === 'auto'
+      && (repairPayload.structural || repairPayload.ops.some(op => op.op === 'set_module_name'));
     const admission = admitNoteWrite({ kind: draft.kind, structural: platformStructural,
-      contradicts: liveContradicts, userNoteReplaced, anchorFull, goalFull, isUser: caller.isUser });
+      contradicts: liveContradicts, userNoteReplaced, anchorFull, goalFull, isUser: caller.isUser,
+      structuralAutoApproved });
 
     // L7/R6: the returned and replay-stored `overQuota` is the COMMITTED
     // population, so it always equals `readNote(noteId).overQuota` right after the
@@ -2312,6 +2325,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
         ? `${caller.source.runRef.goalId}/${caller.source.runRef.runId}` : null,
       reviewReasons: admission.reviewReasons, confirmedByUser: admission.confirmedByUser,
       anchorKeys: resolved.keys, createdAt: now, since: null,
+      ...(autoRepair ? { structuralAutoApproved: true as const } : {}),
     });
     const version1 = newNoteVersionRecord(head, { kind: 'write', by: caller.source, reason: null,
       decisionMessageRef: null }, now, noticeClassOf({
@@ -2319,6 +2333,7 @@ export function createNoteService(deps: NoteServiceDependencies): NoteService {
       state: head.state, kind: head.kind, structural: head.structural,
       userAffected: admission.state === 'accepted'
         && [...replacedCurrent.values()].some(target => target.confirmedByUser || target.source.kind === 'user'),
+      structuralAutoApproved: structuralAutoApproved && admission.state === 'accepted',
     }));
 
     const records: EncodedRecord[] = [encodeNoteHeadSnapshot(head), encodeNoteVersionSnapshot(version1)];

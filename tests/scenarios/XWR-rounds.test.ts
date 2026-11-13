@@ -118,6 +118,36 @@ async function aWorkLine(world: XWS2AWorld, label: string): Promise<S6ASession> 
   await runS7D2Work(host, { line, goal, task: task!, label, replies: [{ kind: 'text', text: `${label}: A done` }] });
   return line;
 }
+/**
+ * X1 and XWR-ON ⑧ share this world step: two Work Tasks of B on `second-mod`, both assigned to the scribe role,
+ * adopted through B's own `plans/propose`/`plans/apply`. `label` names the stage, plan, the two task ids and both
+ * request ids (`xwron` keeps X1's original ids).
+ */
+async function adoptTwoScribeTasks(world: XWS2AWorld, label: string) {
+  const b = world.second.workspace;
+  const goal = world.second.goal;
+  const stageId = `${label}-stage`;
+  const moduleId = xws2aModuleInProject(b.scope.workspaceId);
+  const taskIds = [`${label}-a`, `${label}-b`] as const;
+  const draft = {
+    schemaVersion: 2, planId: `${label}-plan`, planRevision: 1, goalId: goal.goalId,
+    stages: [{ stageId, title: 'XWR-ON stage' }],
+    tasks: taskIds.map(taskId => ({ taskId, title: taskId, requirementLevel: 'required', taskKind: 'work',
+      disposition: 'active', phase: 'pending', scope: { kind: 'module', stageId, moduleRef: XWS2A_MODULE_ID },
+      executionIntent: 'request_execution', sizeClass: 'small', estimatedLines: 10 })),
+    assignments: taskIds.map(taskId => ({ taskId, role: S6A_SCRIBE_ROLE.templateId,
+      instruction: `XWR-ON ${taskId}` })),
+    obligations: [], taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] }, taskRelations: [],
+    inputRequirements: [],
+  };
+  const proposed = valueOf<{ ref: unknown; revision: number }>(await b.post('plans/propose',
+    graphWrite(b.scope, { goalRef: goal, basedOn: null, draft,
+      reason: { text: 'XWR-ON plan', sources: [] } }, `${label}-propose`)), 'committed', 'the XWR-ON plan');
+  valueOf(await b.post('plans/apply', graphWrite(b.scope, { proposalRef: proposed.ref,
+    expectedProposalRevision: proposed.revision, decisionRefs: [] }, `${label}-apply`)), 'committed',
+  'the XWR-ON plan application');
+  return { moduleId, taskIds };
+}
 
 it('R1 refine across workspaces: the Query and candidate are B\'s, the main adviser\'s one round is replied', async () => {
   const world = await joined();
@@ -345,26 +375,7 @@ it('X1 a B Goal\'s overlap-note round reaches the main adviser, whose Query live
     goalRef: goal, adviser: world.adviser.ref, expectedRevision: queue.revision,
   }, 'xwron-assign')), 'committed', 'the B Goal adviser assignment');
   // Two Work Tasks on second-mod, both assigned to the scribe role (an open-duty line in A, R7).
-  const stageId = 'xwron-stage';
-  const moduleId = xws2aModuleInProject(b.scope.workspaceId);
-  const taskIds = ['xwron-a', 'xwron-b'] as const;
-  const draft = {
-    schemaVersion: 2, planId: 'xwron-plan', planRevision: 1, goalId: goal.goalId,
-    stages: [{ stageId, title: 'XWR-ON stage' }],
-    tasks: taskIds.map(taskId => ({ taskId, title: taskId, requirementLevel: 'required', taskKind: 'work',
-      disposition: 'active', phase: 'pending', scope: { kind: 'module', stageId, moduleRef: XWS2A_MODULE_ID },
-      executionIntent: 'request_execution', sizeClass: 'small', estimatedLines: 10 })),
-    assignments: taskIds.map(taskId => ({ taskId, role: S6A_SCRIBE_ROLE.templateId,
-      instruction: `XWR-ON ${taskId}` })),
-    obligations: [], taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] }, taskRelations: [],
-    inputRequirements: [],
-  };
-  const proposed = valueOf<{ ref: unknown; revision: number }>(await b.post('plans/propose',
-    graphWrite(b.scope, { goalRef: goal, basedOn: null, draft,
-      reason: { text: 'XWR-ON plan', sources: [] } }, 'xwron-propose')), 'committed', 'the XWR-ON plan');
-  valueOf(await b.post('plans/apply', graphWrite(b.scope, { proposalRef: proposed.ref,
-    expectedProposalRevision: proposed.revision, decisionRefs: [] }, 'xwron-apply')), 'committed',
-  'the XWR-ON plan application');
+  const { moduleId, taskIds } = await adoptTwoScribeTasks(world, 'xwron');
   // a starts on the scribe line through the person's action_request naming the ready B Task (R7's existing-Task
   // claim); the Host's driver then starts its real Work Run, which stops at this model request.
   const heldA = await host.gates.modelRequest(scribe);
@@ -442,6 +453,60 @@ it('X1 a B Goal\'s overlap-note round reaches the main adviser, whose Query live
     if (after.status === 'ready' && after.value.state === 'waiting') {
       expect(after.value.reason).not.toContain('overlap_gate_pending');
     }
+  } finally {
+    heldA.release();
+  }
+});
+
+/**
+ * XWR-ON ⑧ (draft §3 X1/X2 and its "没有行护住的" note; MVP-BEHAVIOR:331): the same joined world as X1, but B's Goal
+ * has NO responsible adviser (no `goals/adviser-queue/assign`): L35 answers `human` (a null adviser, not an error), so
+ * the gate's note request falls to the secretary branch. That branch must read the secretary BY PROJECT: role lines
+ * live in the main workspace A (`role-line-operations.ts:322-331`), so a joined Goal's request has to reach A's
+ * secretary even though the gate's Goal lives in B. Red under mutation ⑧ alone (today's code reads by project):
+ * `create-platform.ts:3640` changed to `{ workspace: workspaceOf(ctx), duty }` (+ the `workspaceOf` import) reads B's
+ * workspace, where no secretary line lives, and the gate saves `{ recipient: null, reason: 'no_adviser_or_secretary' }`
+ * (no round starts) instead of the secretary and a message in A.
+ */
+it('XWR-ON ⑧ a B Goal with no responsible adviser sends the note request to A\'s project secretary', async () => {
+  const world = await joined(false, false, true);
+  const host = world.base.world;
+  const b = world.second.workspace;
+  const goal = world.second.goal;
+  const scribe = world.base.lines.scribe;
+  const secretary = world.base.lines.secretary;
+  await world.approveCoarse();
+  // No Goal responsibility link: L35 reads no adviser for B's Goal and answers `human` (the secretary branch).
+  const { moduleId, taskIds } = await adoptTwoScribeTasks(world, 'xwron8');
+  // a starts on the scribe line through the person's action_request naming the ready B Task (R7's existing-Task
+  // claim); the Host's driver then starts its real Work Run, which stops at this model request.
+  const heldA = await host.gates.modelRequest(scribe);
+  await host.scripted.script(scribe, [{ kind: 'text', text: 'XWR-ON ⑧ a done' }]);
+  valueOf((await host.post('messages/send', graphWrite(S6A_SCOPE, {
+    recipient: scribe.ref, text: 'XWR-ON ⑧ a', intent: 'action_request', needsReply: true, goalRef: goal,
+    taskRef: { projectId: goal.projectId, goalId: goal.goalId, taskId: taskIds[0] },
+  }, 'xwron8-a-person'))).body, 'committed', 'the a person message');
+  try {
+    const claimsA = await heartbeatUntil(host, () => bClaimsOn(world, scribe),
+      items => items.some(claim => claim.task.taskId === taskIds[0]), 12);
+    expect(claimsA, 'XWR-ON ⑧: the scribe line claims a').toContainEqual(expect.objectContaining({
+      task: expect.objectContaining({ taskId: taskIds[0] }) }));
+    await heldA.reached;
+    // b shares a's module: its gate opens and sends the one note request; the saved gate is the same fact the open
+    // receipt reported (`sent` iff the noteRequest carries a recipient and a messageRef), as in X1.
+    await driveSecondWorkflow(b, { schemaVersion: 1, goalRef: goal, flowId: 'xwron8-b', sessionHint: null,
+      kind: 'select_work', taskId: taskIds[1] }, 'request_overlap_note');
+    const gates = valueOf<{ gates: ModuleOverlapGateV1[] }>(await b.route('goals/overlap-gates', {
+      goalRef: goal, page: { limit: 10 } }), 'ready', 'the B overlap gates');
+    const gate = gates.gates.find(candidate => candidate.ref.taskId === taskIds[1]);
+    if (gate === undefined) throw new Error('XWR-ON ⑧: the B overlap gate is not listed');
+    expect(gate.moduleId).toBe(moduleId);
+    // The secretary branch reads the project, not the Goal's workspace: A's one secretary line, duty secretary, a
+    // message in A's workspace.
+    expect(gate.noteRequest, 'XWR-ON ⑧: the gate saved no note request').toMatchObject({
+      recipient: secretary.ref, duty: 'secretary',
+      messageRef: expect.objectContaining({ workspaceId: S6A_SCOPE.workspaceId }),
+    });
   } finally {
     heldA.release();
   }

@@ -71,7 +71,8 @@ describe('Host setting automation (C8)', () => {
       expect.objectContaining({ memoryMaxMiB: null, tasksMax: null }),
       workRunTokenBudget: { saved: null, effective: 400_000_000, max: 600_000_000 },
       planLoopLimits: { saved: null, effective: PLAN_LOOP_DEFAULTS, defaults: PLAN_LOOP_DEFAULTS },
-      commandReviewLine: { saved: null, effective: 60, default: 60 } } });
+      commandReviewLine: { saved: null, effective: 60, default: 60 },
+      structuralApproval: { saved: {}, defaults: { proposals: 'auto', repairs: 'auto' } } } });
   });
 
   it('a Host without a settings file reads the defaults', async () => {
@@ -153,7 +154,8 @@ describe('automation/save (C8, LA-6; A.2 step 5.8)', () => {
         resourceCaps: expect.objectContaining({ memoryMaxMiB: null, tasksMax: null }),
         workRunTokenBudget: { saved: null, effective: 400_000_000, max: 600_000_000 },
         planLoopLimits: { saved: null, effective: PLAN_LOOP_DEFAULTS, defaults: PLAN_LOOP_DEFAULTS },
-        commandReviewLine: { saved: null, effective: 60, default: 60 } } });
+        commandReviewLine: { saved: null, effective: 60, default: 60 },
+        structuralApproval: { saved: {}, defaults: { proposals: 'auto', repairs: 'auto' } } } });
       expect(pushed).toHaveLength(before + 1);
       expect(pushed.at(-1)?.automation).toEqual(policy);
       expect((await storedFile(dir))['automation']).toEqual(policy);

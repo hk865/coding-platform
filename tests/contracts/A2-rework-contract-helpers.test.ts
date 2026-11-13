@@ -30,7 +30,8 @@ import {
 } from '../../src/contracts/no-progress.js';
 import {
   DEFAULT_AUTO_REWORK_LIMIT, DEFAULT_TASK_AUTOMATION_POLICY, GOAL_FAN_OUT_ACTOR, MAX_AUTO_REWORK_LIMIT,
-  PLATFORM_AUTOMATION_ACTORS, SESSION_ARCHIVE_AUTOMATION_ACTOR, WORKFLOW_AUTOMATION_ACTOR, isAutomationActor, reworkActorClassOf,
+  PLATFORM_AUTOMATION_ACTORS, SESSION_ARCHIVE_AUTOMATION_ACTOR, STRUCTURAL_AUTO_APPROVAL_ACTOR, WORKFLOW_AUTOMATION_ACTOR,
+  isAutomationActor, reworkActorClassOf,
 } from '../../src/contracts/task-requeue.js';
 import { PREPARED_MANIFEST_CONTENT_TYPE } from '../../src/core/agent-runtime/execution-preparation.js';
 import { QUERY_MANIFEST_CONTENT_TYPE as RUNTIME_QUERY_MANIFEST_CONTENT_TYPE } from '../../src/core/agent-runtime/query-preparation.js';
@@ -58,8 +59,11 @@ describe('rework actor classification (C1, TD-6)', () => {
 
   it('isAutomationActor accepts exactly the closed platform automation list, by value', () => {
     // Slice 1 §3.3 (S:596, lead update 2026-10-09): the session-archive automation actor joins the closed list.
-    expect(PLATFORM_AUTOMATION_ACTORS).toEqual([WORKFLOW_AUTOMATION_ACTOR, GOAL_FAN_OUT_ACTOR, SESSION_ARCHIVE_AUTOMATION_ACTOR]);
+    // 乙′ (contract §2.2, ruling 4-22): the platform's structural auto-approval actor joins it too.
+    expect(PLATFORM_AUTOMATION_ACTORS).toEqual([WORKFLOW_AUTOMATION_ACTOR, GOAL_FAN_OUT_ACTOR, SESSION_ARCHIVE_AUTOMATION_ACTOR,
+      STRUCTURAL_AUTO_APPROVAL_ACTOR]);
     expect(SESSION_ARCHIVE_AUTOMATION_ACTOR).toEqual({ kind: 'system', id: 'workflow:session-archive' });
+    expect(STRUCTURAL_AUTO_APPROVAL_ACTOR).toEqual({ kind: 'system', id: 'structural-auto-approval' });
     expect(WORKFLOW_AUTOMATION_ACTOR).toEqual({ kind: 'system', id: 'workflow:auto-rework' });
     expect(GOAL_FAN_OUT_ACTOR).toEqual({ kind: 'system', id: 'host:goal-fan-out' });
     expect(isAutomationActor(WORKFLOW_AUTOMATION_ACTOR)).toBe(true);

@@ -3,6 +3,9 @@
  * `repair` notes. A card exists exactly when the repair needs one
  * (`repairNeedsCard`: structural, every-step, rename) or when, after the
  * note's bound round is a settled PASS, the footprint is unknown/incomplete.
+ * 121-109: structural and rename are lifted for a repair staged under the
+ * "auto" switch, until its activation's hold notice exists (Q6: the card
+ * depends on that one record).
  * Nothing is written; a note version change is a new key, and a note that moved
  * (or needs no card) reads as no card.
  *
@@ -28,12 +31,12 @@ import type { ObservedArchitecturePort } from '../architecture/contracts.js';
 import {
   catalogGateRefused, readCatalogPointerRevision, readCurrentCatalogWindow, type CurrentCatalogWindow,
 } from '../architecture/catalog-service.js';
-import { repairNeedsCard } from '../architecture/repair-ops.js';
+import { repairCardLifted, repairNeedsCard } from '../architecture/repair-ops.js';
 import { REPAIR_APPROVAL_OPTIONS } from '../communication/decision-source-facts.js';
 import {
   DECISION_WINDOW_MOVED_REASON, type DecisionCardSourcePort, type DecisionCardV1, type S5RecordPort,
 } from '../model/decision-contracts.js';
-import { readBoundRepairRound, readObservation, footprintProblem } from '../notes/activate-repair.js';
+import { readBoundRepairRound, readObservation, readRepairAutoHold, footprintProblem } from '../notes/activate-repair.js';
 import { readAllHeads } from '../notes/note-base-reader.js';
 import { overlayFileKnowledge, prepareNoteFiles, preparedHeads } from '../notes/note-knowledge.js';
 import type { KnowledgeLines } from '../model/line-knowledge.js';
@@ -269,12 +272,14 @@ async function readFootprintFacts(
   return { status: 'ready', value: { footprintUnknown: problem !== null && problem.kind === 'unknown' } };
 }
 
+/** `held`: the repair's hold notice exists (`readRepairAutoHold`), so the card shows whatever the switch said (Q6). */
 function needsCard(head: NoteHeadSnapshot, autonomy: 'every_step' | 'after_plan_confirmation',
-  footprintUnknown: boolean): boolean {
+  footprintUnknown: boolean, held: boolean): boolean {
   const repair = head.repair;
   if (repair === undefined) return false;
-  return repairNeedsCard({ structural: repair.structural, autonomy,
-    rename: repair.ops.some((op) => op.op === 'set_module_name'), footprintUnknown });
+  const lifted = repairCardLifted(head, held);
+  return repairNeedsCard({ structural: repair.structural && !lifted, autonomy,
+    rename: repair.ops.some((op) => op.op === 'set_module_name') && !lifted, footprintUnknown });
 }
 
 function repairApprovalCard(head: NoteHeadSnapshot, goalRef: GoalRef): DecisionCardV1 {
@@ -373,7 +378,9 @@ export function createRepairApprovalSource(
           attempt.cache.set(REPAIR_GATE_REFUSED, true);
           return { status: 'ready', value: [] };
         }
-        if (needsCard(head, autonomy.value, facts.value.footprintUnknown)) notes.push(head);
+        const held = await readRepairAutoHold(deps.records, head);
+        if (held.status !== 'ready') return held;
+        if (needsCard(head, autonomy.value, facts.value.footprintUnknown, held.value)) notes.push(head);
       }
       return { status: 'ready', value: notes };
     },
@@ -403,7 +410,9 @@ export function createRepairApprovalSource(
       const facts = await readFootprintFacts(deps, ctx, note, undefined);
       if (facts.status !== 'ready') return facts;
       if ('catalogRefused' in facts.value) return facts.value.catalogRefused;
-      if (!needsCard(note, autonomy.value, facts.value.footprintUnknown)) {
+      const held = await readRepairAutoHold(deps.records, note);
+      if (held.status !== 'ready') return held;
+      if (!needsCard(note, autonomy.value, facts.value.footprintUnknown, held.value)) {
         return { status: 'ready', value: null };
       }
       return { status: 'ready', value: { item: note } };

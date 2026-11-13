@@ -1065,6 +1065,7 @@ export function createAgentRuntime(requestedDeps?: RuntimeExecutionDependencies)
     prepareQuery: (ctx, request) => queryPreparation.prepare(ctx, request),
     startQuery: (ctx, request) => queryDriver.start(ctx, request),
     observeQuery: (ctx, request) => queryObservation.observe(ctx, request),
+    cancelQuery: async (_ctx, request) => queryDriver.cancel(request),
     readAttentionGraph: (ctx, request) => contextAssembler.readAttentionGraph(ctx, request),
     countRunActivity: (ctx, input) => countRunActivity(ctx, input),
     countQueryActivity: (ctx, input) => countQueryActivity(ctx, input),

@@ -152,10 +152,12 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
       }
       // Window 3 (§5.5.2, slice 9 §3.7): the terminal settlement a settlement offer stands for runs BEFORE the Goal's
       // branches. An ended `execreview:` Query's source always settles here (a completed Goal's reviewer line is never
-      // routed to `requestNewGoal`); any other ended Query's source settles here once its Goal takes no new work for
-      // good (cancelled or COMPLETED), where the branches below would leave it open and its line unarchivable.
+      // routed to `requestNewGoal`), and so does an adviser's ended `ucr:` Query (K3 layering, 009: only the platform
+      // closes it; the round has no mailbox tools); any other ended Query's source settles here once its Goal takes no
+      // new work for good (cancelled or COMPLETED), where the branches below would leave it open and its line
+      // unarchivable.
       const goalOpen = goal !== null && goal.desiredState !== 'cancelled' && display?.phase !== 'COMPLETED';
-      if (!goalOpen || (systemRound && duty === 'reviewer')) {
+      if (!goalOpen || (systemRound && (duty === 'reviewer' || duty === 'adviser'))) {
         const settled = await closeSettledSource(goalOwned, message, goalOpen);
         if (settled !== null) return settled;
       }
@@ -200,7 +202,8 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
         { messageRef: input.messageRef, part: 'message' });
       if (body.status !== 'ready') return asRejection(body, 'the intervention message body');
       // The submit shape is frozen from the trusted sender, the recipient line's duty and the system round's head
-      // kind (slice 9: only `execreview:` makes a reviewer's shape `exec_review`); the body gives nothing else.
+      // kind (slice 9: only `execreview:` makes a reviewer's shape `exec_review`; K3L-2: only a Host `ucr:` makes an
+      // adviser's `unknown_call_advice`); the body gives nothing else.
       const answerShape: PlanningAnswerShapeV1 = duty === null ? 'text'
         : planningAnswerShapeOf(message, duty, systemRoundOfText(body.value.text)?.kind);
       return planOnIdleLine(goalOwned, input, message, goal, body.value.text, planningOnly, answerShape);
@@ -209,8 +212,9 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
        * Window 3's one terminal settlement, for every planning round: the source of an ended `intervention_planning`
        * Query that still has no reply closes through the Host's existing endings — the reply (`answer_ready`), or the
        * fixed notice and withdrawal (`no_answer`) when the ended Query has no answer that gives a reply. While the
-       * Goal is open only an exec review closes here (any other answer keeps `planOnIdleLine`, which may still write
-       * its candidate); on a Goal that takes no new work a review closes `answered`, an answer that is no plan
+       * Goal is open only an exec review or an adviser's unknown-call answer closes here (any other answer keeps
+       * `planOnIdleLine`, which may still write its candidate); on a Goal that takes no new work a review or an
+       * unknown-call answer closes `answered`, an answer that is no plan
        * `invalid_plan`, a plan whose candidate the person adopted before the Goal ended `adopted` (the reply
        * `planOnIdleLine` gives an accepted candidate), and any other plan `declined` (it can no longer be taken).
        * `null` keeps today's path: no Query yet, another Query, not ended, or the source already replied.
@@ -228,7 +232,7 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
           return null;
         }
         const shape = execution.answerShape ?? 'text';
-        if (goalOpen && shape !== 'exec_review') return null;
+        if (goalOpen && shape !== 'exec_review' && shape !== 'unknown_call_advice') return null;
         if (!reviewQueryEnded(job) || message.response !== null) return null;
         const answerRef = job.answerRefs.at(-1);
         if (answerRef === undefined) return { status: 'no_answer', branch: 'no_task' };
@@ -238,7 +242,7 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
         if (planningReplyTextOf({ shape, answerText, queryJobId: job.queryJobId }) === null) {
           return { status: 'no_answer', branch: 'no_task' };
         }
-        if (shape === 'exec_review' || shape === 'plan_review') {
+        if (shape === 'exec_review' || shape === 'plan_review' || shape === 'unknown_call_advice') {
           return { status: 'answer_ready', branch: 'no_task', answerRef: { ...answerRef }, reason: 'answered' };
         }
         if (parseInitialPlanningResponseV2(answerText).status !== 'parsed') {
@@ -505,8 +509,9 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
         if (facts.status !== 'ready') return asRejection(facts, 'the intervention planning answer');
         // A reviewer line writes no candidate, whoever asked: the goal loop reads a review round's conclusion from the
         // same Query. The message closes through the derived reply; a review that no longer parses has no reply and
-        // takes the existing `no_answer` close-out, whose fixed notice covers the missing conclusion.
-        if (duty === 'reviewer') {
+        // takes the existing `no_answer` close-out, whose fixed notice covers the missing conclusion. An adviser's
+        // unknown-call round closes the same way (009: the round is read-only, the Workflow reads its answer).
+        if (duty === 'reviewer' || answerShape === 'unknown_call_advice') {
           const reply = planningReplyTextOf({
             shape: facts.value.job.job.intent.execution.answerShape ?? 'text',
             answerText: facts.value.answerText,

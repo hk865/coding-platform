@@ -15,13 +15,23 @@
  * removes the 1 s floor; `0` still proves the refusal path. RED today: the tool
  * definition still says `defaultTimeoutMs: 130_000`, so the 2 h advance aborts
  * the command. GREEN after SHT-1: `COMMAND_NO_STOP_MS`.
+ *
+ * QSTOP (test writer, 2026-11-13): QS-1 calls the published Runtime port
+ * `runtime.cancelQuery` on the entered Turn. RED before QSTOP at the first
+ * cancel: the port member did not exist. GREEN after QSTOP: the entered Turn takes
+ * `AbortSignal.any([host signal, turn stop])`, the sandbox settles `cancelled`,
+ * the stored answer keeps `[]`, the QueryRun settles `cancelled`, and a second
+ * stop is `not_running`. Mutations: only the Host signal (the sandbox never
+ * aborts); no `enteredTurns.set` (first answer `not_running`); no `delete` in
+ * `finally` (second answer `stopping`); `cancel` without `abort()` (never aborts).
  */
 import { afterEach, expect, it, vi } from 'vitest';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
 import { createS2BBe1Platform, type S2BBe1PlatformFixture, type Be1Reply } from '../helpers/S2B-be1-platform-fixture.js';
-import { createRLQueryFixture, rlQueryHostCtx, type RLQueryFixture } from '../helpers/RL-query-fixture.js';
+import { createRLQueryFixture, rlQueryHostCtx, RL_Q_JOB_REF, RL_Q_RUN_REF, type RLQueryFixture } from '../helpers/RL-query-fixture.js';
 import { defaultRLSandboxResult, rlSandbox } from '../helpers/RL-kernel-sandbox-double.js';
 import { readRLStoredToolResult, rlJsonPart } from '../helpers/RL-re2-support.js';
+import { waitFor } from '../scenarios/harness.js';
 
 vi.mock('../../vendor/coding-agent/dist/sandbox/process/process-sandbox.js', async (importOriginal) => {
   const { mockRLKernelSandboxModule } = await import('../helpers/RL-kernel-sandbox-double.js');
@@ -191,6 +201,35 @@ it('RL-31 a real Query cancellation maps to the dispatcher cancelled overlay wit
   expect(result?.status).toBe('cancelled');
   expect(result?.output).toEqual([]);
   expect(rlSandbox.aborted).toBeGreaterThan(0);
+});
+
+/** QSTOP QS-1: the published Runtime port stops the entered Turn; a second stop finds no Turn. */
+it('QS-1 queries/cancel stops the entered Query Turn: stopping, the sandbox aborts, the QueryRun is cancelled', async () => {
+  rlSandbox.settleOnAbort = true;
+  rlSandbox.next = () => defaultRLSandboxResult({ resourceCaps: APPLIED_NONE });
+  const f = await createRLQueryFixture({ replies: [readonlyCall('qs1'), text('QS-1 never sent')] });
+  queryFixtures.push(f);
+  const running = f.run();
+  try {
+    await waitFor(async () => rlSandbox.releases.length, count => count === 1, 'the QS-1 command to start in the sandbox');
+    const first = await f.platform.runtime.cancelQuery!(rlQueryHostCtx(), { queryRunRef: RL_Q_RUN_REF });
+    expect(first).toEqual({ status: 'ready', value: { stop: 'stopping' } });
+    await waitFor(async () => rlSandbox.aborted, count => count === 1, 'the sandbox to settle the QS-1 command on abort');
+    const { observed } = await running;
+    const result = await queryStored(f, observed.session.ref as SessionRef, 'qs1');
+    expect(result?.status).toBe('cancelled');
+    expect(result?.output).toEqual([]);
+    const job = await f.platform.queries.readQueryJob(rlQueryHostCtx(), RL_Q_JOB_REF);
+    expect(job).toMatchObject({ status: 'ready', value: {
+      job: { job: { status: 'closed', closeReason: { code: 'cancelled' } } },
+      run: { run: { outcome: 'cancelled' } } } });
+    expect(f.scripted.requests).toHaveLength(1);
+    const second = await f.platform.runtime.cancelQuery!(rlQueryHostCtx(), { queryRunRef: RL_Q_RUN_REF });
+    expect(second).toEqual({ status: 'ready', value: { stop: 'not_running' } });
+  } finally {
+    for (const release of rlSandbox.releases.splice(0)) release();
+    await running.catch(() => undefined);
+  }
 });
 
 /** SHT-1 S5: the Query dispatcher timer never reaches a read-only command filled at 30 s. */

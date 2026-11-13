@@ -427,12 +427,18 @@ async function readProposerFacts(ctx: CoreCallContext, deps: PlanningQueryRunDep
     return rejected('forbidden', 'the QueryRun is not a role-exploration round');
   }
   const correlationId = read.job.intent.correlationId;
+  // 4-18 / PRODUCT §7: the round's segment, from the operation that opened it; a coarse split's proposal is the
+  // initial architecture, which the structural auto-approval leaves to the person.
+  const owner = await readExplorationOperation(deps, read.run.ref.projectId, read.run.ref.workspaceId, correlationId);
+  if (owner.status !== 'ready') return owner;
+  const segment = owner.value.action.explorations
+    .find(entry => entry.queryRunRef.runId === read.run.run.runId)?.segment ?? null;
   return { status: 'ready',
     value: { sessionRef: read.execution.sessionRef, role: read.execution.role, kind: 'role_exploration',
       // M6: the platform wrote this correlation id with the QueryJob; it is the operation that opened the round.
       operationRef: correlationId === undefined ? null
         : { aggregateType: 'CoreOperation', projectId: read.job.intent.projectId, operationId: correlationId },
-      queryRunRef: { ...queryRunRef } } };
+      queryRunRef: { ...queryRunRef }, segment } };
 }
 
 export function createPlanningQueryRun(

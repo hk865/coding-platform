@@ -21,6 +21,9 @@
  *   O8 the original commands read before the route is judged again -> unavailable, red.
  *   R1 the duty check removed -> applied, red.
  *   R2 the "Query not ended" check removed -> invalid NO_ACCEPTED_ANSWER, red.
+ *   R3 (K3L-3) the `answerShape` check removed -> the parsing answer is applied, red.
+ *   O9 (K3L-3) the Query read through a ref built from the request id in the review's workspace instead of
+ *      the send receipt's real ref -> invalid (another message asked the Query), red.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.js';
@@ -57,7 +60,15 @@ const ADVISER_REQUEST = 'ucr-adviser-round-1';
 const RERUN: UnknownCallAdviceV1 = { phase: 'disposition', choice: 'rerun_as_is', escalationKind: null,
   rationale: '构建命令可以安全重跑', plain: '这一步可以直接重做。' };
 
-type Served = { revision?: number; digest?: string; ended?: boolean; duty?: string; advice?: UnknownCallAdviceV1 };
+type Served = { revision?: number; digest?: string; ended?: boolean; duty?: string; advice?: UnknownCallAdviceV1;
+  shape?: string; lineWorkspace?: string };
+
+/** The round's real message: the id from the sender's (the review's) scope, the record in the adviser line's workspace. */
+function roundMessage(scope: { projectId: string; workspaceId: string }, requestId: string, served: Served) {
+  const built = systemRoundMessageRef(scope, requestId);
+  if (built.status !== 'ready' || served.lineWorkspace === undefined) return built;
+  return { status: 'ready' as const, value: { ...built.value, workspaceId: served.lineWorkspace } };
+}
 
 /** The owner over the world's records; `serve` decides what the adviser round's Query shows. */
 function adviserOwner(world: K3ReviewCardWorld, serve: () => Served & { record: UnknownCallReviewV1; goalDigest: string }) {
@@ -68,13 +79,14 @@ function adviserOwner(world: K3ReviewCardWorld, serve: () => Served & { record: 
       readQueryJob: async (_ctx, ref) => {
         const served = serve();
         // The round's own system message, so the Query is the one this requestId asked.
-        const message = systemRoundMessageRef({ projectId: ref.projectId, workspaceId: ref.workspaceId }, ADVISER_REQUEST);
+        const message = roundMessage({ projectId: ref.projectId, workspaceId: ref.workspaceId }, ADVISER_REQUEST, served);
         if (message.status !== 'ready') throw new Error('message ref');
         return { status: 'ready', value: { job: { job: {
           // A running Query has no answer yet; the answerRef comes with `answered`.
           status: served.ended === false ? 'running' : 'answered', goalId: served.record.ref.goalId,
           answerRefs: served.ended === false ? [] : [{ answerId: 'adviser-answer' }],
-          intent: { execution: { kind: 'intervention_planning', sourceMessageRef: message.value } },
+          intent: { execution: { kind: 'intervention_planning', sourceMessageRef: message.value,
+            answerShape: served.shape ?? 'unknown_call_advice' } },
         } }, run: { run: { executionState: { sessionRef: { projectId: ref.projectId, sessionId: 'adviser-session' } } } } } } as never;
       },
       readQueryAnswer: async () => {
@@ -89,7 +101,7 @@ function adviserOwner(world: K3ReviewCardWorld, serve: () => Served & { record: 
       dutyOfRole: async () => ({ status: 'ready', value: (serve().duty ?? 'adviser') as never }),
     },
     // The adviser round was sent: its receipt names the same message the Query above was asked by.
-    messages: { readHostSendMessageRef: async (_ctx, input) => systemRoundMessageRef(input.scope, input.requestId) },
+    messages: { readHostSendMessageRef: async (_ctx, input) => roundMessage(input.scope, input.requestId, serve()) },
     // A2: the original command read always fails, so no row here applies a skip.
     readKernelCommandFacts: async () => ({ status: 'rejected', code: 'unavailable', reason: 'the Kernel store is not readable' }),
     readWorkspace: { readWorkspace: async () => ({ status: 'rejected', code: 'not_found', reason: 'no package.json' }) },
@@ -149,6 +161,14 @@ describe('K3L-1 adviser answers at the owner', () => {
     Object.assign(state, { revision: state.record.revision - 1 });
     expect(await apply()).toMatchObject({ status: 'rejected', code: 'revision_conflict' });
     expect(await readK3Review(world, state.record)).toMatchObject({ status: 'awaiting_advice', revision: state.record.revision });
+  });
+
+  // The adviser line lives in another workspace (no public-path world reaches this yet), so the real ref the send
+  // receipt names differs from one built from the request id in the review's workspace.
+  it('K3L1-O9: the adviser line in another workspace; the answer is read through the send receipt and applied', async () => {
+    const { state, apply } = await awaitingAdvice('memory', { lineWorkspace: 'k3l1-adviser-workspace' });
+    expect(await apply()).toMatchObject({ status: 'committed', value: { status: 'resolved',
+      revision: state.record.revision + 1, disposition: { choice: 'rerun_as_is', source: 'adviser' } } });
   });
 
   it('K3L1-O7: after the person holds the record, the answer pinned to the older revision is a revision_conflict and writes nothing', async () => {
@@ -219,6 +239,14 @@ describe('rejects: adviser answers that are not the adviser\'s', () => {
   it('K3L1-R2: a Query that has not ended is incomplete and writes nothing', async () => {
     const { world, state, apply } = await awaitingAdvice('memory', { ended: false });
     expect(await apply()).toMatchObject({ status: 'rejected', code: 'incomplete' });
+    expect(await readK3Review(world, state.record)).toMatchObject({ status: 'awaiting_advice', revision: state.record.revision });
+  });
+
+  // Guards safety and the product rule (009): only the adviser round's submit tool writes the answer. The public path
+  // cannot build it (the Workflow reads only an `unknown_call_advice` Query before it applies).
+  it('K3L1-R3: a Query in another answer shape whose text parses is invalid and writes nothing', async () => {
+    const { world, state, apply } = await awaitingAdvice('memory', { shape: 'plan_round' });
+    expect(await apply()).toMatchObject({ status: 'rejected', code: 'invalid' });
     expect(await readK3Review(world, state.record)).toMatchObject({ status: 'awaiting_advice', revision: state.record.revision });
   });
 });

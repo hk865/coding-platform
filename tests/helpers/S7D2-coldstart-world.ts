@@ -416,6 +416,11 @@ export async function openS7D2ColdStartWorld(
     register?.mockRestore();
   }
   try {
+    // 121-109: these rows read the structural cards, so the project asks before every structural change; the
+    // factory default ("auto") would apply a proposal as it freezes and its card would never stay.
+    const asked = await world.settings('structural-approval/save',
+      { projectId: S6A_SCOPE.projectId, value: { proposals: 'ask', repairs: 'ask' } });
+    if (asked.status !== 'ready') throw new Error(`C1T: structural-approval/save: ${JSON.stringify(asked)}`);
     await writeColdStartSources(world);
     const lines = await openingLinesOf(world);
     const main = s6aCardsWorkspace(world, S6A_SCOPE);

@@ -253,8 +253,11 @@ export function createPlanningQuestionReader(
           const execution = job.job.intent.execution;
           let source: InterventionAnswerSourceV1 | undefined;
           if (execution.kind === 'intervention_planning') {
-            // A review round's answer is a verdict, never a v2 planning answer.
-            if (execution.answerShape === 'plan_review') continue;
+            // Only a planning answer shape (`plan_round`, or `text`, the default when absent) can hold a v2 planning
+            // answer; a verdict or form shape (`plan_review`, `exec_review`, `unknown_call_advice`) never does, and its
+            // source may already be withdrawn, so it is skipped before the answer is read.
+            const shape = execution.answerShape ?? 'text';
+            if (shape !== 'plan_round' && shape !== 'text') continue;
             // The QueryJob codec requires `sourceMessageRef` on every `intervention_planning` intent.
             source = { kind: 'intervention', messageRef: execution.sourceMessageRef as SessionMessageRef };
           } else if (execution.kind !== 'initial_coordination') continue;

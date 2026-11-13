@@ -642,8 +642,12 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         if (guideProblem !== null) return guideProblem;
       } else if (shape === 'unknown_call_advice') {
         // The adviser reads the same record a person's "I'll handle it" reads
-        // (`unknown-call-reviews/read`), at the revision this round froze; a
-        // record that moved is not this round's (the `plan_review` version rule).
+        // (`unknown-call-reviews/read`), as it is now. A record that moved after
+        // the round was sent (the person took it over) is still prepared: the
+        // answer names the frozen revision, so the Workflow no longer reads the
+        // round and the owner answers `revision_conflict`. Refusing here would
+        // leave the claimed Query holding the adviser line (`query-stage-driver.ts`
+        // blocks on a preparation `not_found`).
         const subject = unknownCallAdviceSubjectOfText(requestQuestion);
         if (subject === null) return rejected('invalid', 'the adviser round names no record subject');
         if (deps.unknownCallReviews === undefined) {
@@ -653,9 +657,6 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         try { reviewRead = await deps.unknownCallReviews.readReview(owned, { ref: subject.reviewRef }); }
         catch (error) { return rejected('unavailable', `the adviser round record read failed: ${messageOf(error)}`); }
         if (reviewRead.status !== 'ready') return reviewRead;
-        if (reviewRead.value.revision !== subject.revision) {
-          return rejected('not_found', 'the adviser round record is not the requested revision');
-        }
         const guideProblem = appendGuide('unknown-call-advice-input',
           { record: canonicalJson(reviewRead.value as unknown as JsonValue) });
         if (guideProblem !== null) return guideProblem;

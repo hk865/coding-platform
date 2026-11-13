@@ -36,6 +36,11 @@ export type NoteWriteFactsV1 = {
   goalFull: boolean;
   /** The trusted caller is the human user (L5); the user's write never waits on quota. */
   isUser: boolean;
+  /**
+   * 121-106 / 121-109: the project's structural auto-approval was on when this agent's structural understanding was
+   * written; one that would wait only because it is structural is accepted.
+   */
+  structuralAutoApproved: boolean;
 };
 
 export type NoteWriteAdmissionV1 =
@@ -73,6 +78,12 @@ export function admitNoteWrite(facts: NoteWriteFactsV1): NoteWriteAdmissionV1 {
   if (facts.contradicts.length > 0) reviewReasons.push('contradiction');
   if (facts.userNoteReplaced) reviewReasons.push('user_note_replaced');
   if (quotaFull) reviewReasons.push('quota_full');
+  // 121-106 "只因为结构性": any other reason still waits — a contradiction or a replaced note is the person's to
+  // judge, and a full quota is outside the switch.
+  if (facts.structuralAutoApproved && reviewReasons.length === 1 && reviewReasons[0] === 'structural') {
+    return { status: 'accepted', state: 'accepted', reviewReasons: [],
+      overQuota: facts.anchorFull || facts.goalFull, confirmedByUser: false };
+  }
   if (reviewReasons.length > 0) {
     return { status: 'pending_review', state: 'pending_review', reviewReasons,
       overQuota: facts.goalFull, confirmedByUser: false };
@@ -286,6 +297,8 @@ export type NewNoteHeadInputV1 = {
   createdAt: string;
   /** Pre-bind placeholder; the Store binds the creating commit cursor. */
   since: CommitCursor | null;
+  /** 121-109: a structural repair staged under the "auto" `repairs` switch (absent otherwise). */
+  structuralAutoApproved?: true;
 };
 
 /** S4-NOTE-01/02/03 constructor: version 1. */
@@ -308,6 +321,7 @@ export function newNoteHeadRecord(input: NewNoteHeadInputV1): PendingNoteHeadSna
     anchorKey4: input.anchorKeys[4],
     createdAt: input.createdAt,
     since: input.since,
+    ...(input.structuralAutoApproved === true ? { structuralAutoApproved: true as const } : {}),
   };
 }
 
@@ -329,6 +343,8 @@ export type NoteNoticeClassFactsV1 = {
   userAffected?: boolean;
   /** A side-effect version written for a superseded/withdrawn TARGET (never the acting version). */
   sideEffect?: boolean;
+  /** 121-106: the structural auto-approval accepted this structural understanding. */
+  structuralAutoApproved?: boolean;
 };
 
 /**
@@ -339,7 +355,7 @@ export type NoteNoticeClassFactsV1 = {
  *   the user-confirmed current understanding);
  * - `structural`: an agent's structural ordinary note accepted (either the
  *   accepted write itself or its accept disposition); an understanding/repair is
- *   never "ordinary";
+ *   never "ordinary", but one the structural auto-approval took counts too;
  * - `scribe_result`: any other disposition by a scribe (`accept`, `reject`,
  *   `withdraw`, `supersede`, `coexist`, `merge`; never `write`, never `review`);
  * - `null`: the user's own versions, reviews, the platform, and every side-effect
@@ -351,7 +367,7 @@ export function noticeClassOf(facts: NoteNoticeClassFactsV1): NoteVersionSnapsho
   if (facts.sideEffect === true) return null;
   if (facts.userAffected === true) return 'user_affected';
   const ordinary = facts.kind !== 'understanding' && facts.kind !== 'repair';
-  if (facts.structural && ordinary
+  if (facts.structural && (ordinary || facts.structuralAutoApproved === true)
     && (facts.change.kind === 'accept' || (facts.change.kind === 'write' && facts.state === 'accepted'))) {
     return 'structural';
   }

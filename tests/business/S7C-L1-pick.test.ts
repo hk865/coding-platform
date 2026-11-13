@@ -188,7 +188,8 @@ describe('L1-member-replay: the committed member operation is never performed ag
  * planning round. `openPLOverlapWorld`: the adviser binding grants `create_member`; m1 not started, m2 has no line.
  * Red today (fa5bc8e0): only the secretary's request round keeps `create_member` (`query-preparation.ts:86-100`,
  * `tool-group-assembly.ts:769`), so ADVQ-1 is red at the tool list and ADVQ-2 at `jsonOf` (`unknown_tool`, no JSON).
- * Green when ADVQ lands (ceiling, `adviser_query` caller, owner arm). Mutations: ADVQ-1 a-f; ADVQ-2 the comparison.
+ * Green when ADVQ lands (ceiling, `adviser_query` caller, owner arm). The created line then prepares with
+ * `createMember: false` (121-109). Mutations: ADVQ-1 a-f; ADVQ-2 the comparison.
  */
 const scriptMember = (target: PLOverlapWorld, callId: string, task: S7C1World['tasks'][number]) =>
   target.script(target.adviser, [{ kind: 'calls', calls: [{ callId, name: 'create_member', args: {
@@ -220,6 +221,17 @@ describe('ADVQ (121-114): the adviser builds the executor line in its planning r
     const next = await advance(target.world.ag2b, select(target, 'advq-1', m2.taskId));
     expect(next.next).toMatchObject({ kind: 'perform', operation: { kind: 'claim_task', request: { input: {
       sessionRef: { projectId: m2.projectId, sessionId: created.session.sessionId } } } } });
+    // 121-109: the adviser-created line is pinned like a secretary-created one, so its own
+    // preparation must not carry createMember even though its Host binding grants it.
+    const claim = next.next;
+    if (claim === null) throw new Error('ADVQ-1: the pass after creation did not ask to claim the Task');
+    const prepared: WorkflowStepReceipt[] = [];
+    await driveWorkflow(target.world.ag2b, claim, { stopBefore: 'start', receipts: prepared });
+    const prepare = prepared.find(receipt => receipt.kind === 'prepare');
+    if (prepare === undefined || prepare.result.status !== 'ready') {
+      throw new Error(`ADVQ-1: the created line did not prepare: ${JSON.stringify(prepared)}`);
+    }
+    expect(prepare.result.value.envelope.permissions.createMember).toBe(false);
   });
 });
 

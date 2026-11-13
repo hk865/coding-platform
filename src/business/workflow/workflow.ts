@@ -31,6 +31,10 @@ import { rejected as rejection } from '../../contracts/core/rejections.js';
 import { isRecord, nonEmpty } from '../../contracts/validation/common.js';
 import { type DecisionSelectionV1, type DecisionSourceV1 } from '../../contracts/goal-decisions.js';
 import { UNKNOWN_CALL_REVIEW_T02_REASON } from '../../contracts/unknown-call-review.js';
+import {
+  parseUnknownCallAdviceAnswer, unknownCallAdviceGoalBasisDigest, type UnknownCallAdvicePhaseV1,
+} from '../../contracts/unknown-call-advice.js';
+import { goalDecisionBasis } from '../../core/work-graph/tasks/goal-basis.js';
 import type { CreateSessionRequest } from '../../core/agent-runtime/session-operations.js';
 import type { PrepareTaskExecutionRequest, StartTaskExecutionRequest } from '../../core/agent-runtime/execution-contracts.js';
 import type { ClaimTaskInput, RequeueTaskInput } from '../../core/work-graph/model/claim-contracts.js';
@@ -56,7 +60,7 @@ import type { HandoffWorkflowDependencies } from './contracts.js';
 import { createSecretaryHandoffWorkflow } from './session-handoff.js';
 import { createConsultationConsumer, asRejection } from './consultation.js';
 import { createLineAsk } from './line-ask.js';
-import { createTaskGate, goalWaitBasisOf } from './task-gate.js';
+import { createTaskGate, goalWaitBasisOf, type ReviewGate } from './task-gate.js';
 import { planOnlyTargetOf, refinementRoundOf, systemRoundSendInput } from './plan-round.js';
 import { orderTasksByDependency } from './task-order.js';
 import { createSessionArchiveService } from './session-archive.js';
@@ -245,12 +249,29 @@ function closeOpenTurnStep(
  * the revisions in the commit; the Workflow names the record, the cause and the
  * record revision it read. The pin is part of the request: a retry replays its
  * receipt, and the next round's settlement pins a new revision (a new identity).
+ * K3 layering (121-109): `adviserAvailable` is the Workflow's finding that the
+ * record has a responsible adviser line; without one the request is today's,
+ * byte for byte (its identity is unchanged).
  */
 export function settleReviewStep(
   base: Base, review: Pick<UnknownCallReviewV1, 'ref' | 'revision'>, cause: 'round_ended' | 'review_unavailable',
+  adviserAvailable = false,
 ): WorkflowOperation {
   return { kind: 'settle_review', request: graphWrite(base, 'settle_review',
-    { reviewRef: review.ref, cause }, [{ ref: review.ref, revision: review.revision }]) };
+    { reviewRef: review.ref, cause, ...(adviserAvailable ? { adviserAvailable: true } : {}) },
+    [{ ref: review.ref, revision: review.revision }]) };
+}
+/** K3 layering (009): apply the answer of the adviser round `requestId` to the record at the revision read. */
+function applyAdviserAnswerStep(base: Base, review: Pick<UnknownCallReviewV1, 'ref' | 'revision'>, requestId: string,
+  phase: UnknownCallAdvicePhaseV1): WorkflowOperation {
+  return { kind: 'apply_adviser_answer', request: graphWrite(base, 'apply_adviser_answer',
+    { reviewRef: review.ref, requestId, phase }, [{ ref: review.ref, revision: review.revision }]) };
+}
+/** K3 layering: the Workflow's two escalations; one with a suggestion is the owner's own (K3L-1 machine). */
+function escalateReviewStep(base: Base, review: Pick<UnknownCallReviewV1, 'ref' | 'revision'>,
+  cause: 'no_adviser' | 'adviser_failed'): WorkflowOperation {
+  return { kind: 'escalate_review', request: graphWrite(base, 'escalate_review',
+    { reviewRef: review.ref, cause, suggestion: null }, [{ ref: review.ref, revision: review.revision }]) };
 }
 /**
  * K3 §3.4 UR3h (L21, ruling 3): the Workflow, as automation, cancels a review
@@ -354,6 +375,8 @@ const REVIEW_WAIT_KINDS = {
   no_review_line: ['Session', 'SessionMessage'],
   settlement_pending: ['SessionMessage'],
   exec_review_send_refused: ['Session', 'SessionMessage'],
+  /** K3 layering: the adviser round waits on its message and line, the record (a person's hold) and the Goal (T02). */
+  adviser_round_pending: ['SessionMessage', 'Session', 'UnknownCallReview', 'Goal'],
 } as const;
 function reviewWaitBasisOf(goalRef: GoalRef, reason: keyof typeof REVIEW_WAIT_KINDS): GoalWaitBasisV1 {
   return goalWaitBasisOf({ ref: goalRef }, [reason], REVIEW_WAIT_KINDS[reason]);
@@ -361,7 +384,7 @@ function reviewWaitBasisOf(goalRef: GoalRef, reason: keyof typeof REVIEW_WAIT_KI
 /** Slice 9 §3.2: the five review states of an open round's chain head (`readReviewState`). */
 type ReviewStateV1 =
   | { kind: 'not_sent'; recipient: SessionRef }
-  | { kind: 'waiting'; reason: 'exec_review_pending' | 'no_review_line'; basis: GoalWaitBasisV1 }
+  | { kind: 'waiting'; reason: 'exec_review_pending' | 'no_review_line' | 'adviser_round_pending'; basis: GoalWaitBasisV1 }
   | { kind: 'answered' }
   | { kind: 'closed' }
   | { kind: 'settlement_pending'; basis: GoalWaitBasisV1 };
@@ -1258,10 +1281,10 @@ export function createWorkflow(deps: WorkflowDependencies & {
    * `waiting/no_review_line` with none; a message whose Query is not created or not ended is
    * `waiting/exec_review_pending`; an ended Query is `answered` with an answer that parses, else `closed`; either is
    * `settlement_pending` while its source message has no reply and is not withdrawn. A failed read is its rejection.
+   * The sent half is `sentRoundStateOf`, shared with the adviser round of an unknown-call record.
    */
   async function readReviewState(owned: Owned, round: RoundSnapshot): Promise<ReviewStateV1 | CoreRejection> {
-    const consult = deps.consultations;
-    if (consult === undefined) return rejection('unsupported', 'the exec review reads (mailbox and Query) are not wired');
+    if (deps.consultations === undefined) return rejection('unsupported', 'the exec review reads (mailbox and Query) are not wired');
     const goalRef = roundGoalRef(round);
     const requestId = systemRoundRequestId({ kind: 'exec_review', goalRef, roundRef: round.ref });
     if (requestId.status !== 'ready') return requestId;
@@ -1274,23 +1297,39 @@ export function createWorkflow(deps: WorkflowDependencies & {
       return { kind: 'waiting', reason: 'no_review_line', basis: reviewWaitBasisOf(goalRef, 'no_review_line') };
     }
     if (sent.status !== 'ready') return readRejection(sent);
-    const message = await consult.messages.readMessage(ownedInWorkspace(owned, sent.value.workspaceId).ctx, sent.value);
+    return await sentRoundStateOf(owned, goalRef, sent.value, 'exec_review',
+      (text) => parseExecReviewAnswer(text).status === 'parsed', 'exec_review_pending');
+  }
+
+  /**
+   * The read half of a sent system round (`readReviewState`'s chain after the send receipt): the message, its
+   * intervention-planning Query and the answer. A Query not created or not ended is `waiting/<pending>`; an ended
+   * Query is `answered` when its frozen shape is `shape` and the answer `parses`, else `closed`; either is
+   * `settlement_pending` while the source message has no reply and is not withdrawn. A failed read is its rejection.
+   */
+  async function sentRoundStateOf(owned: Owned, goalRef: GoalRef, sent: SessionMessageRef,
+    shape: 'exec_review' | 'unknown_call_advice', parses: (answerText: string) => boolean,
+    pending: 'exec_review_pending' | 'adviser_round_pending',
+  ): Promise<Exclude<ReviewStateV1, { kind: 'not_sent' }> | CoreRejection> {
+    const consult = deps.consultations;
+    if (consult === undefined) return rejection('unsupported', 'the system round reads (mailbox and Query) are not wired');
+    const message = await consult.messages.readMessage(ownedInWorkspace(owned, sent.workspaceId).ctx, sent);
     if (message.status !== 'ready') return readRejection(message);
-    const pending: ReviewStateV1 = { kind: 'waiting', reason: 'exec_review_pending',
-      basis: reviewWaitBasisOf(goalRef, 'exec_review_pending') };
+    const waitingRound: Exclude<ReviewStateV1, { kind: 'not_sent' }> = { kind: 'waiting', reason: pending,
+      basis: reviewWaitBasisOf(goalRef, pending) };
     const read = await consult.queries.readQueryJob(owned.ctx,
-      interventionPlanningQueryRefs(sent.value, owned.workspaceId).queryJobRef);
-    if (read.status === 'not_found') return pending;
+      interventionPlanningQueryRefs(sent, owned.workspaceId).queryJobRef);
+    if (read.status === 'not_found') return waitingRound;
     if (read.status !== 'ready') return readRejection(read);
     const job = read.value.job.job;
-    if (!reviewQueryEnded(job)) return pending;
+    if (!reviewQueryEnded(job)) return waitingRound;
     const execution = job.intent.execution;
     const answerRef = job.answerRefs.at(-1);
     let answered = false;
-    if (answerRef !== undefined && execution.kind === 'intervention_planning' && execution.answerShape === 'exec_review') {
+    if (answerRef !== undefined && execution.kind === 'intervention_planning' && execution.answerShape === shape) {
       const answer = await consult.queries.readQueryAnswer(owned.ctx, answerRef);
       if (answer.status !== 'ready') return readRejection(answer);
-      answered = parseExecReviewAnswer(answer.value.answer.answer).status === 'parsed';
+      answered = parses(answer.value.answer.answer);
     }
     if (message.value.response === null && message.value.withdrawnAt === null) {
       return { kind: 'settlement_pending', basis: reviewWaitBasisOf(goalRef, 'settlement_pending') };
@@ -1491,7 +1530,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
   }
 
   const { reviewGate, automaticRequeue, automaticReverify, automationConfirmation, taskBlocks, gatePerform } = createTaskGate({
-    workflow: deps, bindingForRole, isUnadmittedStarting, claimContinuation,
+    workflow: deps, bindingForRole, isUnadmittedStarting, claimContinuation, reviewAdviserOf, adviserRound,
   });
 
   /** The delivery predicate's `taskBlocked`: the L46 block read, on the same field (book `:296–:299`). A failed read
@@ -1729,6 +1768,56 @@ export function createWorkflow(deps: WorkflowDependencies & {
     if (deps.messages === undefined) return rejection('unsupported', 'the mailbox does not publish its sent-message read');
     return sentSystemRoundRef(deps.messages, { projectId: owned.projectId, workspaceId: owned.workspaceId },
       requestId, owned.ctx.signal);
+  }
+
+  /**
+   * K3 layering (121-109 "the adviser responsible for that part"): the record's adviser line — the narrowest region
+   * adviser of the Task's module, else the Goal's (the one L35 read, `technical`, no asker). `null` is none; a failed
+   * read is returned, never "no adviser".
+   */
+  async function reviewAdviserOf(owned: Owned, review: Pick<UnknownCallReviewV1, 'ref'>, scope: TaskScope | null):
+  Promise<SessionRef | null | CoreRejection> {
+    const resolved = await resolveRecipient(owned, {
+      goalRef: { aggregateType: 'Goal', projectId: review.ref.projectId, goalId: review.ref.goalId },
+      moduleRef: scope?.kind === 'module' ? { projectId: review.ref.projectId, moduleId: scope.moduleRef } : null,
+      kind: 'technical', asker: null });
+    if ('status' in resolved) return resolved;
+    return resolved.kind === 'line' ? resolved.session : null;
+  }
+
+  /**
+   * K3 layering (009): one step of an `awaiting_advice` record's adviser round. The request id names the record, its
+   * revision, the phase and the Goal's content, so a moved record or Goal is a new round. Not sent: send it to the
+   * record's adviser, or put the record in front of the person when there is none. Sent: wait while the Query runs or
+   * its source is unsettled, then apply the answer, or escalate when the ended round has none. What the answer
+   * means (an escalation, an illegal choice, every-step confirmation) is the owner's judgment.
+   */
+  async function adviserRound(owned: Owned, base: Base, goal: GoalSnapshot, task: RuntimeTask,
+    review: UnknownCallReviewV1): Promise<ReviewGate> {
+    const phase = review.advice!.phase;              // the codec requires `advice` on an awaiting_advice record
+    const round: SystemRoundV1 = { kind: 'unknown_call', goalRef: goal.ref, subject: {
+      reviewRef: review.ref, revision: review.revision, phase,
+      goalBasisDigest: unknownCallAdviceGoalBasisDigest(goalDecisionBasis(goal)) } };
+    const requestId = systemRoundRequestId(round);
+    if (requestId.status !== 'ready') return { kind: 'rejection', rejection: requestId };
+    const sent = await sentRoundOf(owned, requestId.value);
+    if (sent.status === 'not_found') {
+      const adviser = await reviewAdviserOf(owned, review, task.scope);
+      if (adviser !== null && 'status' in adviser) return { kind: 'rejection', rejection: adviser };
+      if (adviser === null) return { kind: 'review', step: escalateReviewStep(base, review, 'no_adviser') };
+      return { kind: 'review', step: { kind: 'send_system_round', request: {
+        round, recipient: adviser, text: requestId.value, taskRef: { ...review.task } } } };
+    }
+    if (sent.status !== 'ready') return { kind: 'rejection', rejection: readRejection(sent) };
+    const state = await sentRoundStateOf(owned, goal.ref, sent.value, 'unknown_call_advice',
+      (text) => parseUnknownCallAdviceAnswer(text).status === 'parsed', 'adviser_round_pending');
+    if ('status' in state) return { kind: 'rejection', rejection: state };
+    switch (state.kind) {
+      case 'waiting': case 'settlement_pending':
+        return { kind: 'skip', source: 'awaiting_advice', waitBasis: reviewWaitBasisOf(goal.ref, 'adviser_round_pending') };
+      case 'answered': return { kind: 'review', step: applyAdviserAnswerStep(base, review, requestId.value, phase) };
+      case 'closed': return { kind: 'review', step: escalateReviewStep(base, review, 'adviser_failed') };
+    }
   }
 
   type PlanCandidateWait = { reason: string; basis: GoalWaitBasisV1; source?: DecisionSourceV1; inFlight?: true };
@@ -3078,7 +3167,16 @@ export function createWorkflow(deps: WorkflowDependencies & {
     try { read = await port.readReview(owned.ctx, { ref: purpose.reviewRef }); }
     catch { return waiting(receipt, 'the review record is not readable'); }
     if (read.status !== 'ready') return waiting(receipt, receiptReason(read, 'the review record is not readable'));
-    return advancing(receipt, makePerform(base, settleReviewStep(base, read.value, 'round_ended')));
+    const review = read.value;
+    // K3 layering (121-109): the settlement names whether the record has an adviser, by the gate's one read.
+    const graph = await deps.plans.queryTaskGraph(owned.ctx, { goalRef: base.goalRef });
+    if (graph.status !== 'ready') return waiting(receipt, receiptReason(graph, 'the Task graph is not readable'));
+    const scope = graph.value.plan.tasks.find((task) => task.taskId === review.task.taskId)?.scope ?? null;
+    const adviser = await reviewAdviserOf(owned, review, scope);
+    if (adviser !== null && 'status' in adviser) {
+      return waiting(receipt, receiptReason(adviser, 'the review adviser is not readable'));
+    }
+    return advancing(receipt, makePerform(base, settleReviewStep(base, review, 'round_ended', adviser !== null)));
   }
 
   /**
@@ -3480,6 +3578,24 @@ export function createWorkflow(deps: WorkflowDependencies & {
         }
         return waiting(receipt, `${result.code}: ${result.reason}`);
       }
+      case 'apply_adviser_answer': {
+        const owner = deps.unknownCallReviews;
+        if (owner === undefined) return rejection('unsupported', 'the UnknownCallReview owner is not installed');
+        // K3 layering (009): the platform automation applies the adviser's answer (never the operator); the owner
+        // reads and judges it. A commit or a moved record goes back to the selection, as `settle_review`.
+        const result = await owner.applyAdviserAnswer(automationContext(owned), operation.request);
+        const receipt: WorkflowStepReceipt = { kind: 'apply_adviser_answer', result };
+        if (result.status === 'committed' || result.code === 'revision_conflict') return advancing(receipt, selectWorkStep(base));
+        return waiting(receipt, `${result.code}: ${result.reason}`);
+      }
+      case 'escalate_review': {
+        const owner = deps.unknownCallReviews;
+        if (owner === undefined) return rejection('unsupported', 'the UnknownCallReview owner is not installed');
+        const result = await owner.escalateReview(automationContext(owned), operation.request);
+        const receipt: WorkflowStepReceipt = { kind: 'escalate_review', result };
+        if (result.status === 'committed' || result.code === 'revision_conflict') return advancing(receipt, selectWorkStep(base));
+        return waiting(receipt, `${result.code}: ${result.reason}`);
+      }
       case 'cancel_review_round': {
         const controls = deps.controls;
         if (controls === undefined) return rejection('unsupported', 'the control owner is not installed');
@@ -3674,10 +3790,11 @@ export function createWorkflow(deps: WorkflowDependencies & {
             return { ...selected, value: { ...selected.value, receipt } };
           }
           // Slice 9 §3.3: a refused review send (the line archived, busy or unreadable, a scope refusal) waits on the
-          // line facts; only a malformed request is returned. It writes no Evidence and finalizes nothing.
-          if (round.kind === 'exec_review' && result.code !== 'invalid') {
-            return waiting(receipt, `${result.code}: ${result.reason}`, undefined,
-              reviewWaitBasisOf(round.goalRef, 'exec_review_send_refused'));
+          // line facts; only a malformed request is returned. It writes no Evidence and finalizes nothing. The adviser
+          // round of an unknown-call record waits the same way (coordination: the line's facts, not the request).
+          if ((round.kind === 'exec_review' || round.kind === 'unknown_call') && result.code !== 'invalid') {
+            return waiting(receipt, `${result.code}: ${result.reason}`, undefined, reviewWaitBasisOf(round.goalRef,
+              round.kind === 'exec_review' ? 'exec_review_send_refused' : 'adviser_round_pending'));
           }
           return result;
         }

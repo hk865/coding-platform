@@ -16,6 +16,7 @@ const LINK: NoteWriteFactsV1 = {
   anchorFull: false,
   goalFull: false,
   isUser: false,
+  structuralAutoApproved: false,
 };
 
 type Case = { name: string; facts: NoteWriteFactsV1; expected: NoteWriteAdmissionV1 };

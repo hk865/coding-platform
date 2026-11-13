@@ -41,13 +41,13 @@ export type ExplorationControlViewV1 = {
   plannedRounds: number | null;
 };
 
-export type ExplorationCancelPort = (runs: readonly QueryRunRef[]) => void;
+export type ExplorationCancelPort = (ctx: CoreCallContext, runs: readonly QueryRunRef[]) => Promise<void>;
 
 export type ExplorationControlDeps = Pick<ColdStartServiceDeps,
   'records' | 'queries' | 'proposals' | 'sessions' | 'knowledge' | 'now'> & {
   /** The executor itself; the control passes its delayed `read`/`decide` and the shared commit shape. */
   write: typeof executeWriteCommand;
-  /** R-03: abort the rounds registered next to the Host's cold-start stage table, after the hold commit. */
+  /** R-03: abort the marked rounds through the Runtime's one entered-Turn table, after the hold commit. */
   cancel: ExplorationCancelPort;
 };
 
@@ -88,26 +88,6 @@ async function findTarget(deps: ExplorationControlDeps, workspace: WorkspaceInpu
     return { status: 'ready', value: { kind: 'cold_start', record: cold.value.record, action: cold.value.action } };
   }
   return rejected('invalid', 'this workspace has no unfinished exploration');
-}
-
-/**
- * L5 (a best-effort abort, list B): of the marked rounds, the ones whose Kernel Turn is already running. Aborting one
- * there is safe: the Kernel ends the Turn and the observer settles the QueryRun `cancelled`. Aborting a round that is
- * still starting is not: between `beginQueryEntry`'s `entering` commit and the Turn, the start returns on the
- * cancelled history read (`agent-runtime/query-execution.ts:888–891`) and leaves the QueryRun `entering` with nothing
- * in this Host to move it again, so `endingOf` waits on it until a restart. A starting round cannot tell which side
- * of that commit it is on, so the stop lets it finish; its `reopen` mark reopens it only if it closes unanswered.
- * Read after the hold commit, right before the abort; the phase only moves forward, so `entered` stays past the window.
- */
-async function enteredRounds(deps: ExplorationControlDeps, ctx: CoreCallContext,
-  refs: readonly ColdStartExplorationQueryRefV1[]): Promise<QueryRunRef[]> {
-  const entered: QueryRunRef[] = [];
-  for (const { queryRunRef: run } of refs) {
-    const read = await deps.queries.readQueryJob(ctx, queryJobRefFor(run.projectId, run.workspaceId, run.queryJobId));
-    if (read.status === 'ready' && sameJson(read.value.run.ref, run)
-      && read.value.run.run.executionState?.phase === 'entered') entered.push(run);
-  }
-  return entered;
 }
 
 /** The last round of every group that has not answered; those are the rounds a stop marks (R-04). */
@@ -175,7 +155,9 @@ export function createExplorationControl(deps: ExplorationControlDeps): {
     });
     if (written.status === 'refused') return rejected('invalid', 'the exploration command was refused');
     if (written.status !== 'committed') return written;
-    if (command === 'stop' && cancelRefs.length > 0) deps.cancel(await enteredRounds(deps, ctx, cancelRefs));
+    if (command === 'stop' && cancelRefs.length > 0) {
+      await deps.cancel(ctx, cancelRefs.map((ref) => ref.queryRunRef));
+    }
     // The committed view is the record the write left behind; a replayed receipt never ran `decide`, so the fresh
     // target read is also what answers the replay. The read happens after the receipt, never before it.
     const fresh = await findTarget(deps, workspace, written.replayed);

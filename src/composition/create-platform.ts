@@ -48,6 +48,7 @@ import { readGoalSettings as readEffectiveGoalSettings, decodeGoalSnapshot } fro
 import { createGoalExecutedFilesReader } from '../core/work-graph/tasks/goal-executed-files-reader.js';
 import { createDeviationFactsReader } from '../core/work-graph/tasks/goal-deviation-facts.js';
 import { DEFAULT_PLAN_LOOP_LIMITS, type PlanLoopLimitsV1 } from '../contracts/plan-loop-limits.js';
+import type { StructuralApprovalV1 } from '../contracts/architecture-proposal.js';
 import {
   createActivityReadModel, type ActivityReadPort,
 } from '../core/work-graph/views/activity-read-model.js';
@@ -482,6 +483,12 @@ export type TargetPlatformOptions = {
    * settings' `knowledgeLocalOnly`. A platform built without a Host leaves it out: never local.
    */
   knowledgeLocalOnly?: (repoKey: string) => boolean;
+  /**
+   * 121-109: a project's structural auto-approval, read when a structural proposal freezes and when a note is
+   * written. The Host reads its settings (the factory default "auto" when the project saved none). A platform built
+   * without a Host leaves it out: never approved automatically.
+   */
+  structuralApproval?: (projectId: string) => StructuralApprovalV1;
   now?: () => string;
   /** Trusted source route; defaults to TypeScript at tsconfig.json. No language inference.
    * `configPath: null` captures with no project configuration. */
@@ -1968,6 +1975,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       repropose: (ctx, input) => explorationControl.beginRepropose(ctx,
         { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '', batchRef: input.batchRef, reason: input.reason }),
       queryRunFacts: (ctx, ref) => noteQueryRun.readProposerFacts(ctx, ref),
+      ...(options.structuralApproval === undefined ? {} : { structuralApproval: options.structuralApproval }),
     });
     const repairActivation = createRepairActivationService({
       records: backend.records,
@@ -3117,6 +3125,9 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       observeQuery(...args: Parameters<NonNullable<typeof runtime.port.observeQuery>>) {
         return sessionCall(() => runtime.port.observeQuery!(...args));
       },
+      cancelQuery(...args: Parameters<NonNullable<typeof runtime.port.cancelQuery>>) {
+        return sessionCall(() => runtime.port.cancelQuery!(...args));
+      },
     };
     // R5c.1: the raw Runtime surface is the SAME `runtime.port` plus the
     // existing Session operations; no second Runtime/Store/Kernel is created.
@@ -3350,6 +3361,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       knowledge: knowledgeLines,
       now, eventId: randomUUID, newId: options.noteNewId ?? randomUUID,
       ...(options.noteLimits === undefined ? {} : options.noteLimits),
+      ...(options.structuralApproval === undefined ? {} : { structuralApproval: options.structuralApproval }),
     });
     // Slice 4B L22/P8: `views` owns the one derivation implementation and the
     // composition root injects it into the read model (`notes` never imports
@@ -4605,14 +4617,11 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     // D-1 / X-15: the cold start never waits on a round. The Host's stage driver runs it detached, one advance at a
     // time per QueryRun (the drain set waits for it at close); a settled round wakes the lifecycle pass, and a
     // backoff is answered once to the next drive, which the lifecycle loop's own backoff retries.
-    const coldStartRounds = new Map<string, { kind: 'running'; controller: AbortController }
-      | { kind: 'backoff'; reason: string }>();
-    // M1: the stop side aborts the rounds already registered here, after it has committed the hold and the reopens.
-    const cancelRegisteredRounds: ExplorationCancelPort = (runs) => {
-      for (const run of runs) {
-        const entry = coldStartRounds.get(canonicalKey(run));
-        if (entry?.kind === 'running') entry.controller.abort();
-      }
+    const coldStartRounds = new Map<string, { kind: 'running' } | { kind: 'backoff'; reason: string }>();
+    // M1: the stop side hands the marked runs to the one Runtime driver table, after it has committed the hold and
+    // the reopens.
+    const cancelRegisteredRounds: ExplorationCancelPort = async (ctx, runs) => {
+      for (const run of runs) await runtime.port.cancelQuery!(ctx, { queryRunRef: run });
     };
     /** M1's second read: the registration happens first, then the persistent record is read again before the drive. */
     async function coldStartRoundRunnable(ctx: CoreCallContext,
@@ -4642,8 +4651,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
           coldStartRounds.delete(key);
           return { status: 'blocked', retry: 'backoff', reason: entry.reason };
         }
-        const controller = new AbortController();
-        coldStartRounds.set(key, { kind: 'running', controller });
+        coldStartRounds.set(key, { kind: 'running' });
         const fresh = await coldStartRoundRunnable(ctx, input);
         if (fresh === 'held') {
           coldStartRounds.delete(key);
@@ -4653,13 +4661,11 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
           coldStartRounds.delete(key);
           return { status: 'blocked', retry: 'backoff', reason: 'the exploration operation cannot be re-read' };
         }
-        const stageCtx = ctx.signal === undefined ? { ...ctx, signal: controller.signal }
-          : { ...ctx, signal: AbortSignal.any([ctx.signal, controller.signal]) };
         const scope: WorkspaceScope = { projectId: input.queryJobRef.projectId, workspaceId: input.queryJobRef.workspaceId };
         void trackDetached((async () => {
           let outcome: QueryStageOutcome;
           try {
-            outcome = await bound.advance(stageCtx, input);
+            outcome = await bound.advance(ctx, input);
           } catch (error) {
             coldStartRounds.set(key, { kind: 'backoff', reason: messageOf(error) });
             bound.wake(scope);
@@ -4725,8 +4731,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       return sources.status === 'ready' && sources.value.length > 0;
     }
     // 7D2 EXC: the follow-up owner and the exploration control, over the same cold-start deps. The control's stop
-    // aborts the rounds registered in the one `coldStartRounds` table above; its repropose creates the follow-up
-    // through the same birth the deepen route uses.
+    // hands the marked runs to the one Runtime driver (`cancelRegisteredRounds`); its repropose creates the
+    // follow-up through the same birth the deepen route uses.
     const explorationFollowUp = createExplorationFollowUpService(coldStartDeps);
     const explorationControl = createExplorationControl({ records: backend.records, knowledge: knowledgeLines, queries: queryJobs,
       proposals: architectureProposals, sessions: sessionDirectory, now, write: executeWriteCommand,

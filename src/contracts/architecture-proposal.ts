@@ -58,6 +58,11 @@ export type ProposeArchitectureRevisionInputV1 = {
 export type ProposalResult =
   | { status: 'needs_decision'; proposalRef: ArchitectureProposalRef; cardKey: string }
   | { status: 'pending_batch'; proposalRef: ArchitectureProposalRef }
+  /**
+   * 121-109: the project's structural auto-approval applied the proposal's batch in the same call. Only the new pin
+   * comes back, never the revision: a tool output is capped at 64 KiB.
+   */
+  | { status: 'applied'; proposalRef: ArchitectureProposalRef; catalogPin: ArchitectureCatalogPinV1 }
   | { status: 'invalid'; reason: string }
   | CoreRejection;   // unavailable/idempotency_conflict/... through the existing rejection, no new string
 
@@ -73,3 +78,25 @@ export type ProposalRead = {
   batchRef: ArchitectureProposalBatchRef | null;
   cardKey: string | null;
 };
+
+/**
+ * 121-106 item 5, 121-109: a project's structural auto-approval, one switch for structural proposals (and the
+ * understanding notes that wait only because they are structural), one for structural repairs. `auto` lets the
+ * platform approve them itself and leave a notice; `ask` keeps the card. Each is decided at the moment the proposal
+ * freezes or the note is written or staged, never later.
+ */
+export type StructuralApprovalModeV1 = 'auto' | 'ask';
+export type StructuralApprovalV1 = { proposals: StructuralApprovalModeV1; repairs: StructuralApprovalModeV1 };
+/** 121-109: the factory default is automatic approval. */
+export const DEFAULT_STRUCTURAL_APPROVAL: Readonly<StructuralApprovalV1> = Object.freeze({ proposals: 'auto', repairs: 'auto' });
+
+/** The one shape check of the setting (the settings route and the settings file): exactly the two switches. */
+export function structuralApprovalOf(value: unknown): StructuralApprovalV1 | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const entries = value as Record<string, unknown>;
+  if (Object.keys(entries).length !== 2) return null;
+  const proposals = entries['proposals'];
+  const repairs = entries['repairs'];
+  if ((proposals !== 'auto' && proposals !== 'ask') || (repairs !== 'auto' && repairs !== 'ask')) return null;
+  return { proposals, repairs };
+}

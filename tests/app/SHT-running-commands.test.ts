@@ -21,6 +21,13 @@
  * W5 red at the 11-minute read; green when cancel reaches `end()`. Mutation: no `commandWatch.end()`.
  * W6 red at the 9-minute Query read (no route); green when the Query execution installs the watch.
  *    Mutation: no Query watch (the running read-only command never appears).
+ *
+ * QSTOP (test writer, 2026-11-13): QS-2 drives the same W6 world, takes the listed item's `run.queryRunRef`,
+ * posts `queries/cancel`, polls `queries/read` to `closed`/`cancelled` and reads the registration gone; QS-3
+ * posts an empty body and expects `invalid`. RED today at the two `queries/cancel` posts (unpublished route);
+ * GREEN after QSTOP: the route binds `runtime.cancelQuery`, the Kernel abort ends the Turn `cancelled` and
+ * SHT-2's `commandWatch.end()` clears the entry. Mutations: the switch bound elsewhere (today's 404); no Query
+ * `end()` (the cancelled command stays listed); no `isRecord` check in `cancel` (throws instead of `invalid`).
  */
 import { existsSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
@@ -29,7 +36,8 @@ import { describe, expect, it } from 'vitest';
 import { PLATFORM_TOKEN_HEADER } from '../../src/app/core-http-types.js';
 import { SETTINGS_API_PREFIX } from '../../src/app/host-settings-types.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
-import { answer, readExecution, submitControl } from '../helpers/A2-restart-fixture.js';
+import type { QueryRunRef } from '../../src/contracts/query-job.js';
+import { answer, readExecution, readQuery, submitControl } from '../helpers/A2-restart-fixture.js';
 import { AG2B_AT, AG2B_SCOPE, claimBusyQuery, createAG2bSession, plain, seedAG2bWorkGraph, startBusyQuery, type AG2bHost } from '../helpers/AG2b-collaboration-fixture.js';
 import { startKReadonlyRealHost } from '../helpers/K-readonly-host-support.js';
 import { openPLReadingsWorld, type PLReadingsWorld } from '../helpers/PL-readings-fixture.js';
@@ -41,7 +49,7 @@ const shellCommand = 'while [ ! -e sht-go ]; do : > sht-started; sleep 0.05; don
 const overLinePrefix = '命令跑过了预计时间：';
 type PL = PLReadingsWorld;
 type PLSession = Awaited<ReturnType<PLReadingsWorld['line']>>;
-type RunningRead = { status: string; value?: { items: Array<{ elapsedMs: number; run?: { kind: string; runRef: RunRef }; [key: string]: unknown }> } };
+type RunningRead = { status: string; value?: { items: Array<{ elapsedMs: number; run?: { kind: string; runRef: RunRef; queryRunRef?: QueryRunRef }; [key: string]: unknown }> } };
 
 const openWorld = (options: { backend?: 'memory' | 'sqlite' } = {}): Promise<PL> =>
   openPLReadingsWorld({ unlimitedRunLimits: true, extraHostOptions: { scribeReminderPeriodMs: 25 }, ...options });
@@ -70,12 +78,12 @@ async function snapshot(world: S6AHostWorld) {
 }
 
 /** The command's own first loop turn writes this file in the workspace root, polled host-side (bounded 10 s). */
-async function awaitStarted(world: { root: string }): Promise<void> {
+async function awaitStarted(world: { root: string }, marker = 'sht-started'): Promise<void> {
   for (let attempt = 0; attempt < 500; attempt += 1) {
-    if (existsSync(join(world.root, 'sht-started'))) return;
+    if (existsSync(join(world.root, marker))) return;
     await new Promise<void>(resolve => setTimeout(resolve, 20));
   }
-  throw new Error('SHT-2: the shell command never wrote sht-started');
+  throw new Error(`SHT-2: the shell command never wrote ${marker}`);
 }
 
 /** The busy Query's scripted model has started serving the reply that carries the command; the tool starts next. */
@@ -107,6 +115,42 @@ async function shellRow(flowId: string, args: Record<string, unknown>,
     await fixture.close().catch(() => undefined);
   }
 }
+it('M12 two sequential long commands in ONE Work Run each get their own notice', async () => {
+  const commandA = 'while [ ! -e sht-go-a ]; do : > sht-m12-a; sleep 0.05; done; echo a';
+  const commandB = 'while [ ! -e sht-go-b ]; do : > sht-m12-b; sleep 0.05; done; echo b';
+  const fixture = await openWorld();
+  const task = fixture.tasks[0]!;
+  const line = await fixture.line('sht2-m12', [task]);
+  const running = fixture.runTask({ line, taskId: task.taskId, flowId: 'sht2-m12', replies: [
+    { kind: 'calls', calls: [{ callId: 'm12-a', name: 'shell', args: { command: commandA } }] },
+    { kind: 'calls', calls: [{ callId: 'm12-b', name: 'shell', args: { command: commandB } }] },
+    { kind: 'text', text: 'SHT-2 M12 done' },
+  ] });
+  try {
+    await awaitStarted(fixture.world, 'sht-m12-a');
+    fixture.world.clock.advance(11 * 60_000);
+    const first = await waitFor(() => overLine(fixture), items => items.length >= 1, 'the first command notice');
+    expect(first).toHaveLength(1);
+    expect(first[0]!.summary.slice(0, (overLinePrefix + commandA).length)).toBe(overLinePrefix + commandA);
+    await writeFile(join(fixture.world.root, 'sht-go-a'), 'go');
+    await awaitStarted(fixture.world, 'sht-m12-b');
+    fixture.world.clock.advance(11 * 60_000);
+    const both = await waitFor(() => overLine(fixture), items => items.length >= 2, 'the second command notice');
+    expect(both).toHaveLength(2);
+    const summaries = both.map(notice => notice.summary);
+    expect(summaries.some(summary => summary.startsWith(overLinePrefix + commandA))).toBe(true);
+    expect(summaries.some(summary => summary.startsWith(overLinePrefix + commandB))).toBe(true);
+    // `itemKey` is `project_notice:<noticeId>` and the notice id IS the operation identity
+    // (state/project-notice.ts:27), so two keys are two operations, not one replay.
+    expect(new Set(both.map(notice => notice.itemKey)).size).toBe(2);
+  } finally {
+    await writeFile(join(fixture.world.root, 'sht-go-a'), 'go').catch(() => undefined);
+    await writeFile(join(fixture.world.root, 'sht-go-b'), 'go').catch(() => undefined);
+    await running.catch(() => undefined);
+    await fixture.close().catch(() => undefined);
+  }
+});
+
 it('W1 lists a command from 10 minutes on with its own expected duration and the line, and drops it after the Run ends', () =>
   shellRow('sht2-w1', { command: shellCommand }, async (fixture, line) => {
     fixture.world.clock.advance(9 * 60_000);
@@ -126,6 +170,16 @@ it('W1 lists a command from 10 minutes on with its own expected duration and the
     await waitFor(() => readExecution(fixture.world.ag2b, read.value!.items[0]!.run!.runRef),
       record => record.run.status === 'ended', 'the W1 Run to end');
     expect(await runningCommands(fixture.world)).toEqual({ status: 'ready', value: { items: [] } });
+  }));
+
+it('M16 exactly 10:00', () =>
+  shellRow('sht2-m16', { command: shellCommand }, async fixture => {
+    fixture.world.clock.advance(569_999);
+    expect(await runningCommands(fixture.world)).toEqual({ status: 'ready', value: { items: [] } });
+    fixture.world.clock.advance(1);
+    const read = await runningCommands(fixture.world);
+    expect(read.value?.items).toHaveLength(1);
+    expect(read.value?.items[0]).toMatchObject({ elapsedMs: 600_000, overLine: true });
   }));
 
 it('W2 writes one notice at the 60-minute review line and never a second one', () =>
@@ -235,4 +289,80 @@ it('W6 lists a Query run_readonly_command after 10 minutes with run.kind query',
     await running?.catch(() => undefined);
     await host.close().catch(() => undefined);
   }
+});
+
+/** W6's world: a real Host whose Query binding lists `run_readonly_command`.
+ * A command call is its own group, so the 17th tool call lands on the command's `before_group`: the watch registers
+ * it, then the frozen Kernel's `maxToolCalls` (16) stops the run with `run.limit_exceeded` before `after_group`.
+ * `mapOutcome` reports that non-cancelled terminal as the Query's `timeout`, and only the `finally`'s `end()`
+ * removes the registration. */
+it('M13 a failed (not cancelled) Query round clears the running-command registration', async () => {
+  let at = AG2B_AT;
+  const reads = Array.from({ length: 16 }, (_unused, index) => ({ callId: `sht2-m13-read-${index}`,
+    name: 'read', args: { path: 'src/module.ts' } }));
+  const host = await startKReadonlyRealHost({ replies: [], allowReadonlyCommands: true,
+    queryReplies: [{ kind: 'calls', calls: [
+      ...reads,
+      { callId: 'sht2-m13', name: 'run_readonly_command', args: { command: shellCommand } },
+    ] }],
+    queryTools: ['read', 'run_readonly_command'], queryReadonlyCommandAccess: true, now: () => at });
+  try {
+    await seedAG2bWorkGraph(host);
+    const session = await createAG2bSession(host, 'sht2-m13-line');
+    const refs = await claimBusyQuery(host, session, 'sht2-m13');
+    const started = await startBusyQuery(host, refs, 'sht2-m13');
+    expect(started.run.run).toMatchObject({ status: 'closed', outcome: 'timeout' });
+    at = new Date(Date.parse(at) + 11 * 60_000).toISOString();
+    expect(await queryCommands(host)).toEqual({ status: 'ready', value: { items: [] } });
+  } finally {
+    await host.close().catch(() => undefined);
+  }
+});
+
+/** QSTOP QS-2: the listed Query command's own ref stops the Turn and clears the registration. */
+it('QS-2 queries/cancel stops the listed Query command and clears its registration', async () => {
+  let at = AG2B_AT;
+  const host = await startKReadonlyRealHost({ replies: [], allowReadonlyCommands: true,
+    queryReplies: [{ kind: 'calls', calls: [{ callId: 'qs2', name: 'run_readonly_command',
+      args: { command: shellCommand } }] }, { kind: 'text', text: 'QS-2 never sent' }],
+    queryTools: ['read', 'run_readonly_command'], queryReadonlyCommandAccess: true, now: () => at });
+  let running: Promise<unknown> | undefined;
+  try {
+    await seedAG2bWorkGraph(host);
+    const session = await createAG2bSession(host, 'qs2-line');
+    const refs = await claimBusyQuery(host, session, 'qs2');
+    running = startBusyQuery(host, refs, 'qs2');
+    await awaitQueryCall(host);
+    const moveClock = (ms: number): void => { at = new Date(Date.parse(at) + ms).toISOString(); };
+    moveClock(30_000);
+    moveClock(9 * 60_000);
+    // Let the command's group barrier record its start before the last clock jump.
+    await queryCommands(host);
+    moveClock(2 * 60_000);
+    const before = await waitFor(() => queryCommands(host), read => (read.value?.items.length ?? 0) === 1,
+      'the QS-2 Query command');
+    const item = before.value!.items[0]!;
+    expect(item).toMatchObject({ tool: 'run_readonly_command', run: { kind: 'query' } });
+    expect(await answer(host, 'queries/cancel', plain(AG2B_SCOPE, { queryRunRef: item.run!.queryRunRef })))
+      .toMatchObject({ status: 'ready', value: { stop: 'stopping' } });
+    const job = await waitFor(() => readQuery(host, refs.queryJobRef),
+      read => read.job.job.status === 'closed', 'the cancelled Query to close');
+    expect(job).toMatchObject({ job: { job: { status: 'closed', closeReason: { code: 'cancelled' } } },
+      run: { run: { outcome: 'cancelled' } } });
+    expect(await queryCommands(host)).toEqual({ status: 'ready', value: { items: [] } });
+  } finally {
+    await writeFile(join(host.root, 'sht-go'), 'go').catch(() => undefined);
+    await running?.catch(() => undefined);
+    await host.close().catch(() => undefined);
+  }
+});
+
+describe('rejects: queries/cancel', () => {
+  it('refuses an input without queryRunRef', async () => {
+    const host = await startKReadonlyRealHost({ replies: [], allowReadonlyCommands: false });
+    try {
+      expect(await answer(host, 'queries/cancel', plain(AG2B_SCOPE, {})))
+        .toMatchObject({ status: 'rejected', code: 'invalid' });
+    } finally { await host.close().catch(() => undefined); }
+  });
 });

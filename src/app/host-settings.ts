@@ -26,6 +26,9 @@ import type {
   ChecksConfirmationPort, StoredChecksStateV1,
 } from '../core/work-graph/model/initialization-adoption-contracts.js';
 import type { RepoKey } from '../core/work-graph/model/line-knowledge.js';
+import {
+  DEFAULT_STRUCTURAL_APPROVAL, structuralApprovalOf, type StructuralApprovalV1,
+} from '../contracts/architecture-proposal.js';
 import { applyKnowledgeExclude } from '../core/workspace/knowledge-exclude.js';
 import {
   DEFAULT_TASK_AUTOMATION_POLICY, MAX_AUTO_REWORK_LIMIT, RESUME_ON_STARTUP_MODES,
@@ -95,7 +98,7 @@ export const SETTINGS_ROUTE_SUFFIXES = [
   'snapshot', 'directories', 'models/save', 'models/select', 'workspaces/open', 'workspaces/access', 'checks/approve',
   'automation/save',
   'resource-caps/save', 'run-budget/save', 'command-review/save', 'plan-loop-limits/save', 'prompts/packs/list', 'prompts/packs/create', 'prompts/templates/read',
-  'prompts/templates/save', 'prompts/tools/read', 'prompts/tools/save', 'knowledge-local',
+  'prompts/templates/save', 'prompts/tools/read', 'prompts/tools/save', 'knowledge-local', 'structural-approval/save',
 ] as const satisfies readonly SettingsRoute[];
 
 export function isSettingsRoute(value: string): value is SettingsRoute {
@@ -205,6 +208,9 @@ export type HostSettingsPrivateSnapshot = {
   /** KLS-2: the checkouts, by repository key, whose architecture and notes stay local and out of
    *  git. The Host keeps the last copy pushed to it; the knowledge status and commit read it there. */
   knowledgeLocalOnly: Readonly<Record<RepoKey, true>>;
+  /** 121-109: each project's saved structural auto-approval, by projectId; a project without one uses the factory
+   *  default. The Host reads its last copy when a proposal freezes or a note is written. */
+  structuralApproval: Readonly<Record<string, StructuralApprovalV1>>;
 };
 
 /** Trusted facts about one Host-registered workspace, read from the Host. */
@@ -446,6 +452,9 @@ type PersistedSettingsV1 = {
   /** KLS-2: the checkouts whose knowledge stays local, by repository key (not per project and not in a workspace
    *  entry). Absent in old files and while no checkout has it; absent reads as the empty table. */
   knowledgeLocalOnly?: Record<RepoKey, true>;
+  /** 121-109: each project's structural auto-approval, by projectId. Absent in old files and while no project has
+   *  one; absent reads as the empty table. */
+  structuralApproval?: Record<string, StructuralApprovalV1>;
 };
 
 const scopeKey = (scope: CoreScope): string => `${scope.projectId}\u0000${scope.workspaceId}`;
@@ -610,6 +619,18 @@ function parseStoredKnowledgeLocalOnly(value: unknown): Record<RepoKey, true> {
   return { ...value } as Record<RepoKey, true>;
 }
 
+/** 121-109: a present table maps each projectId to both switches; anything else fails Host start-up. */
+function parseStoredStructuralApproval(value: unknown): Record<string, StructuralApprovalV1> {
+  if (!isRecord(value)) throw new Error('the private host settings file is invalid');
+  const table: Record<string, StructuralApprovalV1> = {};
+  for (const [projectId, entry] of Object.entries(value)) {
+    const modes = structuralApprovalOf(entry);
+    if (projectId.length === 0 || modes === null) throw new Error('the private host settings file is invalid');
+    table[projectId] = modes;
+  }
+  return table;
+}
+
 /** The published/saved tables never share a mutable object with the defaults. */
 const copyPlanLoopLimits = (limits: Readonly<PlanLoopLimitsV1>): PlanLoopLimitsV1 => ({
   ...limits,
@@ -685,7 +706,9 @@ function parsePersisted(text: string): PersistedSettingsV1 {
     ...(raw['commandReviewLineMinutes'] === undefined
       ? {} : { commandReviewLineMinutes: parseStoredCommandReviewLineMinutes(raw['commandReviewLineMinutes']) }),
     ...(raw['knowledgeLocalOnly'] === undefined
-      ? {} : { knowledgeLocalOnly: parseStoredKnowledgeLocalOnly(raw['knowledgeLocalOnly']) }) };
+      ? {} : { knowledgeLocalOnly: parseStoredKnowledgeLocalOnly(raw['knowledgeLocalOnly']) }),
+    ...(raw['structuralApproval'] === undefined
+      ? {} : { structuralApproval: parseStoredStructuralApproval(raw['structuralApproval']) }) };
 }
 
 /** The settings file of one directory: null when it does not exist. A present but unreadable or corrupt file is an
@@ -755,6 +778,8 @@ export async function createHostSettings(
   let commandReviewLineSetting: number | undefined = persisted.commandReviewLineMinutes;
   /** KLS-2: the checkouts whose knowledge stays local, by repository key; `knowledge-local` changes it. */
   const knowledgeLocalOnly: Record<RepoKey, true> = { ...persisted.knowledgeLocalOnly };
+  /** 121-109: each project's structural auto-approval, by projectId; `structural-approval/save` changes it. */
+  const structuralApproval: Record<string, StructuralApprovalV1> = { ...persisted.structuralApproval };
   const effectiveWorkRunTokenBudget = (): number => workRunTokenBudget ?? DEFAULT_WORK_RUN_TOKEN_BUDGET;
   const effectivePlanLoopLimits = (): Readonly<PlanLoopLimitsV1> =>
     planLoopLimitSetting ?? DEFAULT_PLAN_LOOP_LIMITS;
@@ -799,6 +824,7 @@ export async function createHostSettings(
     planLoopLimits: copyPlanLoopLimits(effectivePlanLoopLimits()),
     commandReviewLineMinutes: effectiveCommandReviewLine(),
     knowledgeLocalOnly: { ...knowledgeLocalOnly },
+    structuralApproval: structuredClone(structuralApproval),
   });
 
   const persist = async (): Promise<void> => {
@@ -808,7 +834,8 @@ export async function createHostSettings(
       ...(workRunTokenBudget === undefined ? {} : { workRunTokenBudget }),
       ...(planLoopLimitSetting === undefined ? {} : { planLoopLimits: planLoopLimitSetting }),
       ...(commandReviewLineSetting === undefined ? {} : { commandReviewLineMinutes: commandReviewLineSetting }),
-      ...(Object.keys(knowledgeLocalOnly).length === 0 ? {} : { knowledgeLocalOnly }) };
+      ...(Object.keys(knowledgeLocalOnly).length === 0 ? {} : { knowledgeLocalOnly }),
+      ...(Object.keys(structuralApproval).length === 0 ? {} : { structuralApproval }) };
     await mkdir(settingsDirectory, { recursive: true, mode: 0o700 });
     const temporaryPath = join(settingsDirectory, `.host-settings.${randomUUID()}.tmp`);
     await writeFile(temporaryPath, JSON.stringify(payload), { mode: 0o600 });
@@ -939,6 +966,7 @@ export async function createHostSettings(
       effective: effectiveCommandReviewLine(),
       default: DEFAULT_COMMAND_REVIEW_LINE_MINUTES,
     },
+    structuralApproval: { saved: structuredClone(structuralApproval), defaults: { ...DEFAULT_STRUCTURAL_APPROVAL } },
   });
 
   // Restore every persisted directory registration through the real owners
@@ -1586,6 +1614,35 @@ export async function createHostSettings(
   }
 
   /**
+   * 121-106 item 5, 121-109: save one project's two structural switches (`null` goes back to the factory default),
+   * persisted and pushed to the Host like `automation/save`. The Host reads them when a proposal freezes or a note is
+   * written or staged; a card already waiting stays a card (62-6). The setting belongs to a project this Host has
+   * open, so a mistyped id is refused rather than shown as saved.
+   */
+  async function structuralApprovalRoute(input: unknown): Promise<SettingsResponse<HostSettingsSnapshot>> {
+    if (!isRecord(input) || !nonEmpty(input['projectId']) || !('value' in input))
+      return invalid('structural-approval/save requires a projectId and a value');
+    const value = input['value'] === null ? null : structuralApprovalOf(input['value']);
+    if (input['value'] !== null && value === null)
+      return invalid("value must be null or { proposals, repairs }, each 'auto' or 'ask'");
+    const projectId = input['projectId'];
+    if (!assembly.listWorkspaces().some(workspace => workspace.scope.projectId === projectId))
+      return notFound('the project is not open on this Host');
+    const previous = structuralApproval[projectId];
+    if (value === null) delete structuralApproval[projectId]; else structuralApproval[projectId] = value;
+    try { await persist(); }
+    catch {
+      if (previous === undefined) delete structuralApproval[projectId]; else structuralApproval[projectId] = previous;
+      return unavailable('the settings file could not be written');
+    }
+    try { await notify(); }
+    catch {
+      return unavailable('the setting was saved but the Host configuration was not confirmed; retry the same save');
+    }
+    return { status: 'ready', value: snapshotOf() };
+  }
+
+  /**
    * 121-106: switch one registered workspace's write and command access in place. The Host changes the two values it
    * already publishes, so the person's very next save/command reads them and an agent's next preparation does too; an
    * already prepared Run keeps the version it pinned. A write failure puts both the stored descriptor and the Host
@@ -1893,6 +1950,7 @@ export async function createHostSettings(
       case 'command-review/save': return await saveCommandReviewLineRoute(input);
       case 'plan-loop-limits/save': return await savePlanLoopLimitsRoute(input);
       case 'knowledge-local': return await knowledgeLocalRoute(input);
+      case 'structural-approval/save': return await structuralApprovalRoute(input);
       case 'prompts/packs/list': return await packsListRoute();
       case 'prompts/packs/create': return await packsCreateRoute(input);
       case 'prompts/templates/read': return await templateReadRoute(input);

@@ -126,6 +126,10 @@ export type StartQueryExecutionRequest = {
   requestId: string;
 };
 export type ObserveQueryExecutionRequest = { queryRunRef: QueryRunRef };
+/** 121-112 "人随时能停": stop one running Query round. */
+export type CancelQueryExecutionRequest = { queryRunRef: QueryRunRef };
+/** `stopping`: the entered Turn was told to stop. `not_running`: this Host runs no entered Turn of that QueryRun. */
+export type CancelQueryExecutionResultV1 = { stop: 'stopping' | 'not_running' };
 
 // ------------------------------------------------------------------------ //
 // Trusted Host bindings                                                      //

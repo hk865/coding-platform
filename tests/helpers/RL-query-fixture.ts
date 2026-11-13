@@ -24,8 +24,8 @@ const RL_Q_HOST = { kind: 'human' as const, id: 'rl-query-operator' };
 const RL_Q_PROJECT_REF = { aggregateType: 'Project' as const, projectId: RL_Q_PROJECT_ID };
 const RL_Q_WORKSPACE_REF = { aggregateType: 'Workspace' as const, projectId: RL_Q_PROJECT_ID, workspaceId: RL_Q_WORKSPACE_ID };
 const RL_Q_GOAL_REF = { aggregateType: 'Goal' as const, projectId: RL_Q_PROJECT_ID, goalId: 'rl-query-goal' };
-const RL_Q_JOB_REF = { aggregateType: 'QueryJob' as const, projectId: RL_Q_PROJECT_ID, workspaceId: RL_Q_WORKSPACE_ID, queryJobId: 'rl-query-job' };
-const RL_Q_RUN_REF: QueryRunRef = { aggregateType: 'QueryRun', projectId: RL_Q_PROJECT_ID,
+export const RL_Q_JOB_REF = { aggregateType: 'QueryJob' as const, projectId: RL_Q_PROJECT_ID, workspaceId: RL_Q_WORKSPACE_ID, queryJobId: 'rl-query-job' };
+export const RL_Q_RUN_REF: QueryRunRef = { aggregateType: 'QueryRun', projectId: RL_Q_PROJECT_ID,
   workspaceId: RL_Q_WORKSPACE_ID, queryJobId: 'rl-query-job', runId: 'rl-query-run' };
 const RL_Q_ROLE: RoleConfigurationRef = { kind: 'legacy_template', templateId: 'advisor', templateRevision: '1' };
 const RL_Q_ROLE_BINDING = { schemaVersion: 1 as const, bindingId: 'rl-query-binding', templateId: 'advisor',

@@ -9,7 +9,7 @@ import type { AdoptedArchitecture, CatalogInterfaceV1, ModuleDefinition } from '
 import type { ModuleRef } from '../../../contracts/core/identity.js';
 import type { GoalAutonomyV1 } from '../../../contracts/goal-decisions.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
-import type { CatalogRepairOpV1, NoteBodyV1, ResponsibilityMoveV1 } from '../../../contracts/note.js';
+import type { CatalogRepairOpV1, NoteBodyV1, NoteHeadSnapshot, ResponsibilityMoveV1 } from '../../../contracts/note.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import { isSafeProjectPath } from '../../../contracts/workspace-path.js';
 import { checkWorkLinkRef } from '../persistence/decision-record-codecs.js';
@@ -495,6 +495,15 @@ export function repairNeedsCard(input: {
   structural: boolean; rename: boolean; autonomy: GoalAutonomyV1; footprintUnknown: boolean;
 }): boolean {
   return input.structural || input.rename || input.autonomy === 'every_step' || input.footprintUnknown;
+}
+
+/**
+ * 121-109: the structural and rename reasons for the card are lifted when the repair was staged under the "auto"
+ * switch and its activation did not hold it back (`held`: the "没有自动采用结构修补" notice exists). Every-step
+ * autonomy and an unknown footprint still need the card (PRODUCT §7: the middle layer follows the two levels).
+ */
+export function repairCardLifted(head: Pick<NoteHeadSnapshot, 'structuralAutoApproved'>, held: boolean): boolean {
+  return head.structuralAutoApproved === true && !held;
 }
 
 /** Canonical-JSON digest of the whole stored body, including `repair`. */

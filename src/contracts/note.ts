@@ -266,7 +266,10 @@ export type NoteHeadSnapshot = NoteBodyV1 & { ref: NoteHeadRef; noteId: string; 
   goalId: string | null; source: NoteSourceV1; stagedRunKey: string | null;
   reviewReasons: NoteReviewReason[]; confirmedByUser: boolean;
   anchorKey0: string; anchorKey1: string | null; anchorKey2: string | null; anchorKey3: string | null; anchorKey4: string | null;
-  createdAt: string; since: CommitCursor };
+  createdAt: string; since: CommitCursor;
+  /** 121-109: a structural (or rename) repair staged while the project's `repairs` switch was "auto"; written only when
+   * true, so an older head reads as false. */
+  structuralAutoApproved?: true };
 
 export type NoteVersionSnapshot = NoteBodyV1 & { ref: NoteVersionRef; noteId: string; version: number; state: NoteState;
   goalId: string | null; source: NoteSourceV1; reviewReasons: NoteReviewReason[];

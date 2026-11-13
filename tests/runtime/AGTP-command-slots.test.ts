@@ -3,12 +3,9 @@
  * slot waits (FIFO); an abort while queued drops the waiter and resolves `null`; a release hands its slot to the
  * next waiter without changing the running count.
  *
- * Today red at the import: `src/core/agent-runtime/command-slots.ts` lands with AGT+; the `// @ts-ignore` keeps the
- * tree's typecheck at zero until then and is unused once the module exists (the ruling's frozen signature is
- * `createCommandSlots(limit)` and `acquire(signal): Promise<(() => void) | null>`).
+ * The ruling's frozen signature is `createCommandSlots(limit)` and `acquire(signal): Promise<(() => void) | null>`.
  */
 import { expect, it } from 'vitest';
-// @ts-ignore -- the module lands with AGT+.
 import { createCommandSlots } from '../../src/core/agent-runtime/command-slots.js';
 import { deferred, type Deferred } from '../helpers/A2-restart-fixture.js';
 /** Let every pending promise continuation run; the module only uses promises, never a timer. */

@@ -5,6 +5,7 @@ import type { RegisteredCommandCheck } from '../contracts/verification.js';
 import type { ResumeOnStartupMode, TaskAutomationPolicyV1 } from '../contracts/task-requeue.js';
 import type { ResourceCapUnavailableReasonV1 } from '../contracts/resource-caps.js';
 import type { PlanLoopLimitsV1 } from '../contracts/plan-loop-limits.js';
+import type { StructuralApprovalV1 } from '../contracts/architecture-proposal.js';
 import type {
   PromptPackProblemV1, TemplateSlotTableV1, ToolTextV1,
 } from '../contracts/prompts/prompt-pack.js';
@@ -87,6 +88,11 @@ export type HostSettingsSnapshot = {
    * is not re-noticed.
    */
   commandReviewLine: { saved: number | null; effective: number; default: number };
+  /**
+   * 121-106 item 5, 121-109: each project's structural auto-approval as stored (`saved`, keyed by projectId; a
+   * project without an entry uses `defaults`, the factory "auto" for both switches).
+   */
+  structuralApproval: { saved: Readonly<Record<string, StructuralApprovalV1>>; defaults: StructuralApprovalV1 };
 };
 /**
  * PL/§10.3: the whole `plan-loop-limits` setting. `null` clears the saved table
@@ -133,6 +139,9 @@ export type SaveAutomationSettings = { autoReworkLimit: number; resumeOnStartup:
 /** KLS-2 (route `knowledge-local`): keep the knowledge of the workspace's current checkout local, or stop. The Host
  *  finds the checkout itself; the body names no path. */
 export type SaveKnowledgeLocalSettings = { projectId: string; workspaceId: string; localOnly: boolean };
+/** 121-109 (route `structural-approval/save`): one project's two structural switches; `null` restores the factory
+ *  default. */
+export type SaveStructuralApprovalSettings = { projectId: string; value: StructuralApprovalV1 | null };
 /** 121-106 (route `workspaces/access`): switch one registered workspace's write and command access. Commands require
  *  write. NET-B adds its network field here later. */
 export type SaveWorkspaceAccess = { scope: CoreScope; writeAllowed: boolean; commandsAllowed: boolean };
@@ -222,6 +231,7 @@ export type SettingsRoutes = {
   'command-review/save': { input: SaveCommandReviewLineSettings; value: HostSettingsSnapshot };
   'plan-loop-limits/save': { input: SavePlanLoopLimitsSettings; value: HostSettingsSnapshot };
   'knowledge-local': { input: SaveKnowledgeLocalSettings; value: HostSettingsSnapshot };
+  'structural-approval/save': { input: SaveStructuralApprovalSettings; value: HostSettingsSnapshot };
   'prompts/packs/list': { input: Record<string, never>; value: PromptPackListV1 };
   'prompts/packs/create': { input: { packId: string }; value: PromptPackCreateV1 };
   'prompts/templates/read': { input: { packId: string; templateId: string }; value: PromptTemplateReadV1 };

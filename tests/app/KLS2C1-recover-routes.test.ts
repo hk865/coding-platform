@@ -325,3 +325,85 @@ it('U4 (KC-2, SQLite) a bad note rebuilt from its record head, with no file as a
   expect(await kls2cRecover(world, noticeId, 1)).toMatchObject({ status: 'committed', value: { path } });
   expect(world.read(path)?.toString('utf8')).toBe(W);
 });
+
+// KC-2 R1b: a readable snapshot and a usable HEAD version both exist; the newest snapshot wins (§2.6), so the file
+// comes back as V2 and not the committed V1.
+// 具名改坏「有 HEAD 时跳过快照」（reconcile.ts:286）→ 来源是 head、写回 V1，红在 recovery 那一句。
+it('R1b (KC-2) a readable snapshot beats a usable HEAD version; recover writes the snapshot', async () => {
+  const world = await hostWorld({ storage: 'memory', git: true });
+  await kls2cAdopt(world, ['core']);
+  const file = kls2cModuleFile(world, 'core');
+  const V1 = kls2cEditModule(world, file, { responsibility: 'r1b 提交过的 V1' });
+  world.git(['add', '--', '.workbench/architecture.json', '.workbench/modules']);
+  world.git(['commit', '-q', '-m', 'r1b committed V1']);
+  const V2 = kls2cEditModule(world, file, { responsibility: 'r1b 快照里的 V2' });
+  await world.idle();
+  world.edit(file, '{');
+  await world.idle();
+  const noticeId = (await world.notices('knowledge_conflict'))[0]?.noticeId ?? '';
+  const [row] = readyValue<{ problems: KLS2CProblem[] }>(await kls2cProblems(world, noticeId), 'knowledge/problems').problems;
+  expect(row?.kind).toBe('bad_file');
+  // HEAD 的 V1 和这份坏字节不同，提示仍然说上次提交里有能用的版本。
+  expect(row?.reason.endsWith(`。上次提交里有这个文件能用的版本，也可以在工作区根目录用 git restore ${file} 恢复`))
+    .toBe(true);
+  expect(row?.recovery).toEqual({ source: 'snapshot', takenAt: expect.stringMatching(ISO_TIME) });
+  expect(await kls2cRecover(world, noticeId, 1)).toMatchObject({ status: 'committed',
+    value: { path: file, blobSha: kls2cBlobSha(world, file) } });
+  expect(world.read(file)?.toString('utf8')).toBe(V2);
+  expect(world.read(file)?.toString('utf8')).not.toBe(V1);
+});
+
+// KC-2 R1c: across a SQLite reopen a readable snapshot and the platform record (the adopted module bytes M0) both
+// exist and HEAD has none; the snapshot wins (§2.6), so the file comes back as S and not M0.
+// 具名改坏「record 提到 snapshot 之前」（reconcile.ts:285-298）→ 来源是 record、写回 M0，红在 recovery 那一句。
+it('R1c (KC-2, SQLite) after a reopen a readable snapshot beats the platform record', async () => {
+  const first = await hostWorld({ storage: 'sqlite', git: true });
+  await kls2cAdopt(first, ['core']);
+  const file = kls2cModuleFile(first, 'core');
+  const M0 = first.read(file)?.toString('utf8') ?? '';
+  const S = kls2cEditModule(first, file, { responsibility: 'r1c 快照里的 S' });
+  await first.idle();
+  const { database, root } = first;
+  await worlds.pop()?.close();
+  first.edit(file, '{"id":"core"}');
+  const world = await hostWorld({ storage: 'sqlite', git: true, database, root, idleMs: KLS2C_NEVER_IDLE_MS });
+  const noticeId = (await world.notices('knowledge_conflict'))[0]?.noticeId ?? '';
+  const [row] = readyValue<{ problems: KLS2CProblem[] }>(await kls2cProblems(world, noticeId), 'knowledge/problems').problems;
+  expect(row?.kind).toBe('bad_file');
+  expect(row?.recovery).toEqual({ source: 'snapshot', takenAt: expect.stringMatching(ISO_TIME) });
+  expect(await kls2cRecover(world, noticeId, 1)).toMatchObject({ status: 'committed',
+    value: { path: file, blobSha: kls2cBlobSha(world, file) } });
+  expect(world.read(file)?.toString('utf8')).toBe(S);
+  expect(world.read(file)?.toString('utf8')).not.toBe(M0);
+});
+
+// KC-2 R2: HEAD holds exactly the bad bytes, so it is no usable version: the hint says so and the picker skips it,
+// leaving the platform record (the adopted module bytes M0) as the source.
+// 具名改坏 R2a「提示不排除与坏字节相同的 HEAD」（architecture-file.ts:412）→ 红在 hint 那一句；R2b「挑选不排除同一份坏字节」
+// （reconcile.ts:288）是等价的：HEAD 的坏字节也读不成知识，本行仍绿。
+it('R2 (KC-2) HEAD holding the bad bytes is no usable version; recover rebuilds the adopted record', async () => {
+  const world = await hostWorld({ storage: 'memory', git: true });
+  await kls2cAdopt(world, ['core']);
+  const file = kls2cModuleFile(world, 'core');
+  const M0 = world.read(file)?.toString('utf8') ?? '';
+  kls2cEditModule(world, file, { responsibility: 'r2 干净的 V1' });
+  world.git(['add', '--', '.workbench/architecture.json', '.workbench/modules']);
+  world.git(['commit', '-q', '-m', 'r2 clean V1']);
+  await world.idle();
+  await world.idle();   // 两轮之后快照都清掉，坏文件之前没有可读的快照
+  world.edit(file, '{');
+  world.git(['add', '--', '.workbench/architecture.json', '.workbench/modules']);
+  world.git(['commit', '-q', '-m', 'r2 bad bytes']);
+  expect(world.git(['rev-parse', `HEAD:${file}`]).trim()).toBe(kls2cBlobSha(world, file));
+  await world.idle();
+  const noticeId = (await world.notices('knowledge_conflict'))[0]?.noticeId ?? '';
+  const [row] = readyValue<{ problems: KLS2CProblem[] }>(await kls2cProblems(world, noticeId), 'knowledge/problems').problems;
+  expect(row?.kind).toBe('bad_file');
+  expect(row?.reason.endsWith('。上次提交里没有能用的版本')).toBe(true);
+  expect(row?.recovery?.source).not.toBe('head');
+  expect(row?.recovery).toEqual({ source: 'record', moduleId: 'core' });
+  expect(await kls2cRecover(world, noticeId, 1)).toMatchObject({ status: 'committed',
+    value: { path: file, blobSha: kls2cBlobSha(world, file) } });
+  expect(world.read(file)?.toString('utf8')).toBe(M0);
+  expect(world.read(file)?.toString('utf8')).not.toBe('{');
+});

@@ -114,7 +114,7 @@ const BODY_KEYS: readonly string[] = ['kind', 'topic', 'topicKey', 'conclusion',
   'extraAnchors', 'facts', 'basis', 'structural', 'replaces', 'contradicts', 'coexistWith'];
 const HEAD_KEYS: readonly string[] = [...BODY_KEYS, 'ref', 'noteId', 'version', 'state', 'goalId', 'source',
   'stagedRunKey', 'reviewReasons', 'confirmedByUser', 'anchorKey0', 'anchorKey1', 'anchorKey2', 'anchorKey3',
-  'anchorKey4', 'createdAt', 'since', 'revision'];
+  'anchorKey4', 'createdAt', 'since', 'revision', 'structuralAutoApproved'];
 const VERSION_KEYS: readonly string[] = [...BODY_KEYS, 'ref', 'noteId', 'version', 'state', 'goalId', 'source',
   'reviewReasons', 'change', 'at', 'since', 'revision', 'noticeClass'];
 /** 4C-2: the note classes a `NoteVersion` may carry; `null` is the explicit absence. */
@@ -358,6 +358,9 @@ function noteHeadBodyProblem(body: UnknownRecord, sinceMode: 'bound' | 'null', r
   const reasons = reviewReasonsProblem(body['reviewReasons'], 'NoteHead reviewReasons');
   if (reasons !== null) return reasons;
   if (typeof body['confirmedByUser'] !== 'boolean') return 'NoteHead confirmedByUser must be a boolean';
+  if (!(body['structuralAutoApproved'] === undefined || body['structuralAutoApproved'] === true)) {
+    return 'NoteHead structuralAutoApproved must be absent or true';
+  }
   for (const field of ['anchorKey0', 'anchorKey1', 'anchorKey2', 'anchorKey3', 'anchorKey4'] as const) {
     if (!(field === 'anchorKey0' ? nonEmpty(body[field]) : body[field] === null || nonEmpty(body[field]))) {
       return `NoteHead ${field} is invalid`;

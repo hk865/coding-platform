@@ -128,6 +128,10 @@ export type WorkflowCalls = {
    * `cancel_review_round` is declared beside it below.
    */
   settle_review: UnknownCallReviewPort['settleReview'];
+  /** K3 layering (121-109, 009): apply the adviser round's answer to an `awaiting_advice` record; the owner judges it. */
+  apply_adviser_answer: UnknownCallReviewPort['applyAdviserAnswer'];
+  /** K3 layering: put an `awaiting_advice` record in front of the person (no adviser line, or a round with no answer). */
+  escalate_review: UnknownCallReviewPort['escalateReview'];
   /**
    * K3 §3.4 UR3h / L21 (ruling 3): the Workflow's own automation cancels a
    * review round claimed but never entered (including one paused before entry),

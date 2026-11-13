@@ -12,6 +12,7 @@
  * the real duty reader sees as `adviser`, so the Host's own consume loop picks this line's profile.
  */
 import { vi } from 'vitest';
+import * as hostModule from '../../src/app/host.js';
 import * as workflowModule from '../../src/business/workflow/workflow.js';
 import type { WorkflowAdvanceInput, WorkflowAdvanceResult } from '../../src/business/workflow/contracts.js';
 import * as decisionService from '../../src/core/work-graph/communication/decision-service.js';
@@ -47,6 +48,8 @@ import { adoptS6BPlan, createS6BLine, governS6B } from './S6B1-fixture.js';
 import { sendS7BWaitingInquiry } from './S7B-fixture.js';
 import { approveS7A2Message, readS7A2DispatchBasis } from './S7A2-fixture.js';
 import { claimQuery, prepareAttempt, start } from './request-claim-steps.js';
+import { rememberHostStore } from './KLS1B-host-store.js';
+import { gitIn } from '../scenarios/support/git-workspace.js';
 import { bindingOf, committed, ready, sessionOf } from './S7A-fixture.js';
 
 export const PL_ADVISER_ROLE = platformRoleProfile('adviser').template;
@@ -143,17 +146,57 @@ const WORK_TOOLS: S6AExtraBinding = {
   mergeTools: ['send_session_message', 'respond_session_message'],
 };
 
-type HostFactory = typeof import('../../src/app/host.js').createLocalWorkbenchHost;
+type HostFactory = typeof hostModule.createLocalWorkbenchHost;
 
-/** PL-48/PL-51: the readings world's Work grant, installed for one real Host start. */
-function writeWorkHostFactory(original: HostFactory): HostFactory {
+/**
+ * PL-48/PL-51: the readings world's Work grant, installed for one real Host start. K3L-3's `readonlyCommands` adds
+ * the read-only command grant a proposal round needs (`run_readonly_command` over the whole workspace).
+ */
+function writeWorkHostFactory(original: HostFactory, readonlyCommands = false): HostFactory {
   return async hostOptions => {
     const work = hostOptions.runtimeConfiguration?.bindings.find(binding => binding.id === 's6a-work-binding');
     if (work === undefined) throw new Error('PL: the Host was opened without its Work binding');
-    work.grant = { ...work.grant, tools: [...new Set([...work.grant.tools, 'write', 'shell'])],
-      writeScope: ['.'], shellWorkspaceAccess: 'all_except_denied' };
+    work.grant = { ...work.grant, tools: [...new Set([...work.grant.tools, 'write', 'shell',
+      ...(readonlyCommands ? ['run_readonly_command'] : [])])],
+    writeScope: ['.'], shellWorkspaceAccess: 'all_except_denied',
+    ...(readonlyCommands ? { readonlyCommandAccess: 'all_except_denied' as const } : {}) };
     return await original(hostOptions);
   };
+}
+
+/**
+ * K3L-3: the Work grant on every Host start of the world (the first one and each crash restart) until it closes,
+ * the way `openConsumeHostWorld` keeps its Work profile: the factory stays installed under the world's own wrapper.
+ * `gitRoot`: before the first start the world's own root (Host input, A8) becomes a git work tree with one baseline
+ * commit, as `HostScenario`'s `gitWorkspace` does, and the store the Host then keeps under the git directory is the
+ * one the world's readers remember (`rememberHostStore`).
+ */
+async function withWriteOnEveryStart(open: () => Promise<S6AHostWorld>, readonlyCommands: boolean, gitRoot: boolean):
+Promise<S6AHostWorld> {
+  const original = hostModule.createLocalWorkbenchHost;
+  const write = writeWorkHostFactory(original, readonlyCommands);
+  let gitDone = !gitRoot;
+  const factory: HostFactory = async hostOptions => {
+    const workspace = hostOptions.workspaces[0];
+    if (!gitDone && workspace !== undefined && hostOptions.storage.kind === 'sqlite') {
+      for (const args of [['init', '-q', '-b', 'main'], ['add', '-A'], ['commit', '-q', '-m', 'PL git baseline']]) {
+        gitIn(workspace.root, ...args);
+      }
+      await rememberHostStore(hostOptions.storage.directory, workspace.scope.projectId, workspace.root);
+      gitDone = true;
+    }
+    return await write(hostOptions);
+  };
+  const restore = (): void => {
+    if (hostModule.createLocalWorkbenchHost !== factory) return;
+    Object.defineProperty(hostModule, 'createLocalWorkbenchHost', { value: original, configurable: true, writable: true });
+  };
+  Object.defineProperty(hostModule, 'createLocalWorkbenchHost', { value: factory, configurable: true, writable: true });
+  let world: S6AHostWorld;
+  try { world = await open(); } catch (error) { restore(); throw error; }
+  const close = world.close.bind(world);
+  world.close = async () => { try { await close(); } finally { restore(); } };
+  return world;
 }
 
 /**
@@ -162,8 +205,13 @@ function writeWorkHostFactory(original: HostFactory): HostFactory {
  */
 export async function openPLConsumptionWorld(options: {
   backend?: 'memory' | 'sqlite'; label?: string; contextWindowTokens?: number;
-  /** PL-48/PL-51: the real write/edit/shell grant on the Work binding (the readings world's rule). */
-  write?: boolean;
+  /** PL-48/PL-51: the real write/edit/shell grant on the Work binding (the readings world's rule); K3L-3's
+   *  `'every_start'` keeps it on each crash restart of the world too. */
+  write?: boolean | 'every_start';
+  /** K3L-3 (with `write: 'every_start'`): the Work binding also gets the read-only command grant. */
+  readonlyCommands?: boolean;
+  /** K3L-3 (with `write: 'every_start'`, SQLite): the root is a git work tree from the first Host start on. */
+  gitRoot?: boolean;
   /** A normally ended Work Run needs a trusted check configuration; an object replaces the readings default. */
   checks?: boolean | import('../../src/contracts/verification.js').TrustedCheckConfiguration;
 } = {}): Promise<S6AHostWorld> {
@@ -178,9 +226,10 @@ export async function openPLConsumptionWorld(options: {
         goalRef: { aggregateType: 'Goal' as const, projectId: S6A_SCOPE.projectId, goalId: `${label}-consumer` },
         queryProfileId: PL_ADVISER_PROFILE_ID, heartbeatMs: 25 }] },
   });
-  const world = options.write === true
-    ? await withConfiguredHost(openWorld, original => writeWorkHostFactory(original))
-    : await openWorld();
+  const world = options.write === 'every_start'
+    ? await withWriteOnEveryStart(openWorld, options.readonlyCommands === true, options.gitRoot === true)
+    : options.write === true ? await withConfiguredHost(openWorld, original => writeWorkHostFactory(original))
+      : await openWorld();
   try {
     await governS6B(world, s6aCardsWorkspace(world, S6A_SCOPE), world.goals);
     return world;

@@ -14,10 +14,14 @@
 import type {
   ArchitectureProposalBatchRef, ArchitectureProposalBatchV1, ArchitectureProposalRef,
   ArchitectureProposalV1, ApplyBatchResult, ProposalRead, ProposalResult,
-  ProposeArchitectureRevisionInputV1,
+  ProposeArchitectureRevisionInputV1, StructuralApprovalV1,
 } from '../../../contracts/architecture-proposal.js';
 import type { ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
-import { ARCHITECTURE_FILE_PATH, type ProposalBatchFileV1 } from '../../../contracts/knowledge.js';
+import {
+  ARCHITECTURE_FILE_PATH, type KnowledgeConflictV1, type ProposalBatchFileV1,
+} from '../../../contracts/knowledge.js';
+import { STRUCTURAL_AUTO_APPROVAL_ACTOR } from '../../../contracts/task-requeue.js';
+import { truncateUtf8 } from '../../../contracts/utf8.js';
 import type { CatalogRepairOpV1 } from '../../../contracts/note.js';
 import { qualifyProjectPath } from '../../../contracts/workspace-path.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
@@ -30,6 +34,7 @@ import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { RunRef } from '../../../contracts/dispatch.js';
 import type { QueryRunRef } from '../../../contracts/query-job.js';
+import type { NotifyProjectInputV1 } from '../../../contracts/role-lines.js';
 import type { DecisionChangeProofV1, DecisionSourceV1, UserDecisionBodyV1 } from '../../../contracts/goal-decisions.js';
 import { decisionSourceKey } from '../../../contracts/goal-decisions.js';
 import { messageOf } from '../../../contracts/error-message.js';
@@ -42,11 +47,12 @@ import type {
 } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { SessionMessage } from '../model/communication-contracts.js';
-import { platformCheckContext } from '../model/platform-check-context.js';
-import type { LineKnowledge } from '../model/line-knowledge.js';
+import { hostSystemContext, platformCheckContext } from '../model/platform-check-context.js';
+import type { KnowledgeDiskFileV1, LineKnowledge } from '../model/line-knowledge.js';
 import {
-  knowledgeCommit, knowledgeFilesNotWritten, writeKnowledge, type KnowledgePrepared,
+  knowledgeCommit, knowledgeFilesNotWritten, writeKnowledge, type KnowledgePrepared, type KnowledgeWritePlan,
 } from '../knowledge/knowledge-write.js';
+import type { RoleExplorationSegmentV1 } from '../state/role-exploration.js';
 import { commandKeys, type CommitFragment } from '../persistence/command-executor.js';
 import { lookupAll } from '../persistence/lookup-all.js';
 import { mergeGuards } from '../persistence/record-guards.js';
@@ -68,9 +74,9 @@ import {
 } from './catalog-record-codecs.js';
 import {
   architectureWritePlansOf, catalogPinOf, knowledgeBaselineOf, opsInProjectView, readCurrentCatalogWindow,
-  readRecordedCatalogWindow, reframeRepairOps,
+  readRecordedCatalogWindow, reframeRepairOps, type CurrentCatalogWindow,
 } from './catalog-service.js';
-import { architectureFilesOf, platformFileSource } from './architecture-file.js';
+import { architectureFilesOf, knowledgeConflictsOf, platformFileSource } from './architecture-file.js';
 import { exactKeys } from './architecture-service.js';
 import {
   catalogRevisionMovesProblem, catalogRevisionPinProblem, draftCatalogRevision, finishCatalogRevision,
@@ -103,10 +109,13 @@ export type ProposalBatchWindowPort = {
 export type ProposalRunFactResolver = (ctx: CoreCallContext, runRef: RunRef) =>
   Promise<ReadResult<{ sessionRef: SessionRef; role: RoleConfigurationRef }>>;
 
-/** The trusted QueryRun facts the composition resolves for a `query_run` proposer. */
+/**
+ * The trusted QueryRun facts the composition resolves for a `query_run` proposer; `segment` is the round's entry in
+ * the operation that opened it (null when the operation names no entry for it).
+ */
 export type ProposalQueryRunFactResolver = (ctx: CoreCallContext, queryRunRef: QueryRunRef) =>
   Promise<ReadResult<{ sessionRef: SessionRef; role: RoleConfigurationRef; kind: 'role_exploration';
-    operationRef: OperationRef | null; queryRunRef: QueryRunRef }>>;
+    operationRef: OperationRef | null; queryRunRef: QueryRunRef; segment: RoleExplorationSegmentV1 | null }>>;
 
 /** The decision-message owner's answer read; the answer's selection and captured pins are the approval's facts. */
 export type ProposalDecisionMessageRead = {
@@ -131,6 +140,8 @@ export type ProposalServiceDeps = CatalogRevisionDependencies & {
   /** R-16/R-17: the exploration control's repropose entry; the answer path creates the follow-up before closing. */
   repropose?: (ctx: CoreCallContext, input: { batchRef: ArchitectureProposalBatchRef; reason: string }) =>
     Promise<WriteResult<{ target: 'coarse_split' | 'followup'; operation: OperationRef }>>;
+  /** 121-109: the project's structural auto-approval, read once before a freeze; absent never approves. */
+  structuralApproval?: (projectId: string) => StructuralApprovalV1;
 };
 
 export type ArchitectureProposalService = {
@@ -449,6 +460,12 @@ async function replayPropose(deps: ProposalServiceDeps, receipt: CommittedReceip
     return rejected('unavailable', `the proposal event is damaged: ${decoded.reason}`);
   }
   if (decoded.value.batchRef === null) return { status: 'pending_batch', proposalRef: decoded.value.proposalRef };
+  // 121-109: a batch the structural auto-approval applied answers `applied` again, with the same pin.
+  const auto = await priorApproval(deps, autoApplyKeys(decoded.value.batchRef));
+  if (auto?.status === 'applied') {
+    return { status: 'applied', proposalRef: decoded.value.proposalRef, catalogPin: catalogPinOf(auto.revision) };
+  }
+  if (auto?.status === 'rejected' && 'code' in auto) return auto;
   return { status: 'needs_decision', proposalRef: decoded.value.proposalRef,
     cardKey: decisionSourceKey({ kind: 'structural_proposal', batch: decoded.value.batchRef }) };
 }
@@ -463,7 +480,7 @@ async function writeProposal(deps: ProposalServiceDeps, ctx: CoreCallContext,
   proposer: { sessionRef: SessionRef; operationRef: OperationRef | null; queryRunRef: QueryRunRef | null },
   keys: { identityKey: string; fingerprint: string },
   write: Clock, immediate: boolean,
-  guard: { operationRef: OperationRef; revision: number } | null): Promise<ProposalResult> {
+  guard: { operationRef: OperationRef; revision: number } | null, autoApply: boolean): Promise<ProposalResult> {
   const proposalId = sha256Hex(canonicalJson({ projectId: ctx.projectId, commandId: input.commandId } as unknown as JsonValue));
   const ref: ArchitectureProposalRef = {
     aggregateType: 'ArchitectureProposal', projectId: ctx.projectId, proposalId,
@@ -523,6 +540,10 @@ async function writeProposal(deps: ProposalServiceDeps, ctx: CoreCallContext,
   // A concurrent commit of the same command won the identity: its event is the original result.
   if (receipt.replayed) return replayPropose(deps, receipt);
   if (batch === null) return { status: 'pending_batch', proposalRef: ref };
+  // 121-109: the batch this commit froze is applied in the same call when the switch read before it was on.
+  const revision = autoApply ? await autoApplyBatch(deps, ctx, batch, 0) : null;
+  if (revision !== null && 'code' in revision) return revision;
+  if (revision !== null) return { status: 'applied', proposalRef: ref, catalogPin: catalogPinOf(revision) };
   return { status: 'needs_decision', proposalRef: ref,
     cardKey: decisionSourceKey({ kind: 'structural_proposal', batch: batch.ref }) };
 }
@@ -646,6 +667,9 @@ async function freezeProposals(deps: ProposalServiceDeps, ctx: CoreCallContext,
   const pending = read.value.filter(record => record.state === 'pending' && record.batchRef === null && samePin(record));
   if (pending.length === 0) return { status: 'ready', value: existingBatches };
   const planned = await freezePlan(deps, ctx, pin, pending);
+  if (planned.status === 'rejected' && planned.code === 'source_stale') {
+    return await closeStalePending(deps, ctx, pin, pending) ?? { status: 'ready', value: existingBatches };
+  }
   if (planned.status !== 'ready') return planned;
   const all = new Map<string, ArchitectureProposalBatchV1>();
   for (const batch of existingBatches) all.set(batch.ref.batchId, batch);
@@ -653,6 +677,8 @@ async function freezeProposals(deps: ProposalServiceDeps, ctx: CoreCallContext,
   const fresh = planned.value.filter(plan => !plan.existing);
   if (fresh.length === 0) return { status: 'ready', value: [...all.values()] };
 
+  // 121-109 / 62-6: the switch is read once, before the freeze; only the batches this commit freezes are tried.
+  const autoApply = deps.structuralApproval?.(ctx.projectId).proposals === 'auto';
   const clock: Clock = { now: deps.now(), eventId: deps.eventId() };
   const actor = hostActorOf(ctx) ?? TRIAL_ACTOR;
   const guards: RecordGuard[] = [];
@@ -704,17 +730,67 @@ async function freezeProposals(deps: ProposalServiceDeps, ctx: CoreCallContext,
     }
     return rejectionOf(committed);
   }
+  if (autoApply && !committed.replayed) {
+    // 4-20: in batch-id order, and one at most: once one is applied the catalog moved, so the others stay cards.
+    const order = fresh.map(plan => plan.batch)
+      .sort((left, right) => left.ref.batchId < right.ref.batchId ? -1 : left.ref.batchId > right.ref.batchId ? 1 : 0);
+    for (const batch of order) {
+      const applied = await autoApplyBatch(deps, ctx, batch, fresh.length - 1);
+      if (applied !== null && 'code' in applied) return applied;
+      if (applied !== null) break;
+    }
+  }
   return { status: 'ready', value: [...all.values()] };
+}
+
+/**
+ * The pin moved (a batch on it was applied: under the structural auto-approval, by the same freeze that froze the
+ * first batch), so these pending proposals can never freeze or apply on it. They close as `stale` in one commit rather
+ * than failing every later freeze, which would hold the cold start, the join or the follow-up at their freeze forever
+ * (coordination: a proposal is a change against one catalog pin; the adviser proposes again on the new one).
+ */
+async function closeStalePending(deps: ProposalServiceDeps, ctx: CoreCallContext, pin: ArchitectureCatalogPinV1,
+  pending: readonly ArchitectureProposalRecordV1[]): Promise<CoreRejection | null> {
+  const actor = hostActorOf(ctx) ?? TRIAL_ACTOR;
+  const guards: RecordGuard[] = [];
+  const records: EncodedRecord[] = [];
+  const events = [];
+  for (const member of pending) {
+    const closed = transitionArchitectureProposal(member, { kind: 'stale' });
+    if (!closed.ok) return rejected(closed.code, closed.detail);
+    guards.push({ refKey: canonicalKey(member.ref), expectedRevision: member.revision });
+    records.push(encodeArchitectureProposalRecord(closed.next));
+    events.push(encodeArchitectureProposalChangedEvent({
+      eventId: deps.eventId(), eventType: ARCHITECTURE_PROPOSAL_CHANGED_EVENT, schemaVersion: 1,
+      occurredAt: deps.now(), projectId: ctx.projectId, proposalRef: member.ref,
+      revision: closed.next.revision, state: closed.next.state, batchRef: null, actor,
+    }));
+  }
+  const keys = commandKeys({
+    operation: 'architecture-proposal-close-stale',
+    scope: { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? null },
+    principal: principalIdentity(ctx.principal),
+    commandId: canonicalJson(pending.map(record => record.ref.proposalId).sort() as unknown as JsonValue),
+    fingerprintInput: { pin } as unknown as JsonValue,
+  });
+  try {
+    const committed = await deps.records.commit({ identityKey: keys.identityKey, fingerprint: keys.fingerprint,
+      guards, records, claims: [], indexGuards: [], indexChanges: [], events });
+    return committed.status === 'committed' ? null : rejectionOf(committed);
+  } catch (error) {
+    return rejected('unavailable', `the stale proposal close outcome is unknown: ${messageOf(error)}`);
+  }
 }
 
 /** The one proposer gate: a Work Run, or a trusted role_exploration QueryRun. */
 async function proposerOf(deps: ProposalServiceDeps, ctx: CoreCallContext):
 Promise<ReadResult<{ sessionRef: SessionRef; role: RoleConfigurationRef;
-  operationRef: OperationRef | null; queryRunRef: QueryRunRef | null }> | CoreRejection> {
+  operationRef: OperationRef | null; queryRunRef: QueryRunRef | null; segment: RoleExplorationSegmentV1 | null }>
+  | CoreRejection> {
   if (ctx.principal.kind === 'work_run') {
     const facts = await deps.runFacts(ctx, ctx.principal.runRef);
     if (facts.status !== 'ready') return facts;
-    return { status: 'ready', value: { ...facts.value, operationRef: null, queryRunRef: null } };
+    return { status: 'ready', value: { ...facts.value, operationRef: null, queryRunRef: null, segment: null } };
   }
   if (ctx.principal.kind === 'query_run') {
     const facts = await deps.queryRunFacts(ctx, ctx.principal.queryRunRef);
@@ -722,7 +798,7 @@ Promise<ReadResult<{ sessionRef: SessionRef; role: RoleConfigurationRef;
     // The resolver's ready value is always a stored `role_exploration` round; it already checked the real Job.
     return { status: 'ready', value: { sessionRef: { ...facts.value.sessionRef }, role: structuredClone(facts.value.role),
       operationRef: facts.value.operationRef === null ? null : structuredClone(facts.value.operationRef),
-      queryRunRef: structuredClone(facts.value.queryRunRef) } };
+      queryRunRef: structuredClone(facts.value.queryRunRef), segment: facts.value.segment } };
   }
   return rejected('forbidden', 'a structural proposal is written by an adviser Work Run or a role_exploration QueryRun');
 }
@@ -791,6 +867,10 @@ export async function proposeArchitectureRevision(deps: ProposalServiceDeps, ctx
   if (duty.value !== 'adviser') {
     return rejected('forbidden', 'a structural proposal is written by an adviser');
   }
+  // 121-109 / 62-6: the switch is read once, before the window read and the freeze. A coarse split is the initial
+  // architecture and still asks the person (4-18, PRODUCT §7).
+  const autoApply = deps.structuralApproval?.(ctx.projectId).proposals === 'auto'
+    && facts.value.segment !== 'coarse_split';
 
   const trial = await trialCatalogRevision(deps, ctx, qualifiedInput.baseCatalogPin, qualifiedInput.ops,
     qualifiedInput.responsibilityMoves, qualifiedInput.reason, `${input.commandId}:trial`);
@@ -810,7 +890,7 @@ export async function proposeArchitectureRevision(deps: ProposalServiceDeps, ctx
     const guard = verdict.open && verdict.operationRef !== null && verdict.revision !== null
       ? { operationRef: verdict.operationRef, revision: verdict.revision } : null;
     return writeProposal(deps, ctx, qualifiedInput, facts.value,
-      keys, { now: deps.now(), eventId: deps.eventId() }, !verdict.open, guard);
+      keys, { now: deps.now(), eventId: deps.eventId() }, !verdict.open, guard, autoApply);
   };
   let window = await readBatchWindow();
   if ('status' in window) return window;
@@ -875,16 +955,20 @@ async function replayApproval(deps: ProposalServiceDeps, keys: { identityKey: st
   return { status: 'applied', receipt: answerReceipt, revision: decoded.value.revision };
 }
 
-async function readApprovalAnswer(deps: ProposalServiceDeps, ctx: CoreCallContext,
-  batchRef: ArchitectureProposalBatchRef, answerMessageRef: SessionMessageRef):
-Promise<ReadResult<{ message: SessionMessage; body: UserDecisionBodyV1 }>> {
-  const source: DecisionSourceV1 = {
+/** The batch's card as a decision source: the project's `structural_proposal` card for this batch. */
+function batchDecisionSource(batchRef: ArchitectureProposalBatchRef): DecisionSourceV1 {
+  return {
     kind: 'structural_proposal',
     key: decisionSourceKey({ kind: 'structural_proposal', batch: batchRef }),
     subject: { kind: 'project', projectRef: { projectId: batchRef.projectId } },
     pins: [],
   };
-  const read = await deps.decisionMessages.readDecisionAnswer(ctx, { source });
+}
+
+async function readApprovalAnswer(deps: ProposalServiceDeps, ctx: CoreCallContext,
+  batchRef: ArchitectureProposalBatchRef, answerMessageRef: SessionMessageRef):
+Promise<ReadResult<{ message: SessionMessage; body: UserDecisionBodyV1 }>> {
+  const read = await deps.decisionMessages.readDecisionAnswer(ctx, { source: batchDecisionSource(batchRef) });
   if (read.status !== 'ready') return read;
   if (read.value.message === null || read.value.body === null) {
     return rejected('invalid', 'the structural proposal batch has no saved answer');
@@ -1014,12 +1098,31 @@ Promise<ApplyBatchResult<ArchitectureRevision>> {
   if (option === 'reject') {
     return writeClosedMembers(deps, ctx, keys, batch.value, members.value, answer.value.message, 'rejected');
   }
+  return applyWith(deps, ctx, keys, `${input.batchRef.batchId}:${input.answerMessageRef.messageId}`, batch.value,
+    members.value, { kind: 'answer', message: answer.value.message });
+}
 
+/**
+ * Who approves a batch: the person's saved answer (its message is the change proof), or the platform under the
+ * project's structural auto-approval (121-109), which writes no answer and no proof. `out` tells the caller why the
+ * platform held the batch back (`blocked`), or what it applied (`summary`, the notice's counts and modules).
+ */
+type ApprovalAuthority =
+  | { kind: 'answer'; message: SessionMessage }
+  | { kind: 'auto'; out: { blocked: AutoApprovalBlockV1 | null; summary: string | null } };
+
+/**
+ * The one approval write, for the person and the platform alike: inside the knowledge write `prepareApproval` plans
+ * the batch on the current catalog and commits the revision with the members applied; then the files land. A copy of
+ * the same command that committed first answers the command's original result.
+ */
+async function applyWith(deps: ProposalServiceDeps, ctx: CoreCallContext,
+  keys: { identityKey: string; fingerprint: string }, commandId: string, batch: ArchitectureProposalBatchV1,
+  members: readonly ArchitectureProposalRecordV1[], authority: ApprovalAuthority): Promise<ApprovalResult> {
   const thrown = { message: null as string | null };
   const applied = { revision: null as ArchitectureRevision | null };
-  const commandId = `${input.batchRef.batchId}:${input.answerMessageRef.messageId}`;
-  const outcome = await writeKnowledge(deps.knowledge, ctx, lines => prepareApproval(deps, ctx, keys, commandId, batch.value,
-    members.value, answer.value.message, lines, thrown, applied));
+  const outcome = await writeKnowledge(deps.knowledge, ctx, lines => prepareApproval(deps, ctx, keys, commandId, batch,
+    members, authority, lines, thrown, applied));
   if (outcome.kind === 'exit') return outcome.value;
   if (outcome.kind === 'rejected') {
     if (thrown.message !== null) return rejected('unavailable', `the proposal application outcome is unknown: ${thrown.message}`);
@@ -1042,12 +1145,14 @@ type ApprovalResult = ApplyBatchResult<ArchitectureRevision>;
 /** The approval's current read, plan, records and file changes, prepared after the knowledge lines are taken. */
 async function prepareApproval(deps: ProposalServiceDeps, ctx: CoreCallContext,
   keys: { identityKey: string; fingerprint: string }, commandId: string, batch: ArchitectureProposalBatchV1,
-  members: readonly ArchitectureProposalRecordV1[], message: SessionMessage, lines: readonly LineKnowledge[],
+  members: readonly ArchitectureProposalRecordV1[], authority: ApprovalAuthority, lines: readonly LineKnowledge[],
   thrown: { message: string | null }, applied: { revision: ArchitectureRevision | null }):
   Promise<KnowledgePrepared<ApprovalResult>> {
   const exit = (value: ApprovalResult): KnowledgePrepared<ApprovalResult> => ({ kind: 'exit', value });
-  const closeStale = async (): Promise<KnowledgePrepared<ApprovalResult>> =>
-    exit(await writeClosedMembers(deps, ctx, keys, batch, members, message, 'stale'));
+  // A moved catalog closes the person's batch stale; the platform's approval only steps back and the card stays.
+  const closeStale = async (): Promise<KnowledgePrepared<ApprovalResult>> => authority.kind === 'answer'
+    ? exit(await writeClosedMembers(deps, ctx, keys, batch, members, authority.message, 'stale'))
+    : exit(rejected('source_stale', 'the catalog moved since the batch was frozen'));
   const window = await readCurrentCatalogWindow(deps.records, batch.ref.projectId, { lines: deps.knowledge, caller: ctx });
   if (window.status === 'rejected') return exit(window);
   if (window.status !== 'ready') return exit(rejected('unavailable', 'the current architecture catalog is not readable'));
@@ -1080,6 +1185,16 @@ async function prepareApproval(deps: ProposalServiceDeps, ctx: CoreCallContext,
   if (draft.status !== 'ready') return approvalRefused(draft);
   const plans = await architectureWritePlansOf(lines, draft.value.catalog, knowledgeBaselineOf(draft.value.content));
   if (plans.status !== 'ready') return exit(rejectionOf(plans));
+  if (authority.kind === 'auto') {
+    // 121-106 item 5: the files are read here, before the planner's ledger half, like the plan's own reads.
+    const block = await autoApprovalBlockOf(deps.records, ctx.projectId, plans.value);
+    if (block.status !== 'ready') return exit(block);
+    if (block.value !== null) {
+      authority.out.blocked = block.value;
+      return exit(rejected('invalid', 'the structural auto-approval held the batch back; the card stays'));
+    }
+    authority.out.summary = appliedChangesOf(plans.value, deps.knowledge.write.files);
+  }
   const planned = await finishCatalogRevision(deps, ctx, draft.value);
   if (planned.status !== 'ready') return approvalRefused(planned);
 
@@ -1091,7 +1206,7 @@ async function prepareApproval(deps: ProposalServiceDeps, ctx: CoreCallContext,
       after: activePinOf(ctx.projectId, window.activeRevision + 1) },
     ...proposalPins(members),
   ];
-  const proof = changeProof(message, changes);
+  const proof = authority.kind === 'answer' ? changeProof(authority.message, changes) : null;
 
   const appliedMembers: ArchitectureProposalRecordV1[] = [];
   for (const member of members) {
@@ -1113,7 +1228,8 @@ async function prepareApproval(deps: ProposalServiceDeps, ctx: CoreCallContext,
   if (decodedCatalog.status !== 'decoded') {
     return exit(rejected('unavailable', `the catalog revision event is damaged: ${decodedCatalog.reason}`));
   }
-  const catalogEvent = encodeArchitectureCatalogRevisedEvent({ ...decodedCatalog.value, proof });
+  // The platform's approval has no answer to prove: its catalog event stays as the planner wrote it.
+  const catalogEvent = proof === null ? lastCatalog : encodeArchitectureCatalogRevisedEvent({ ...decodedCatalog.value, proof });
   const events = [...catalogEvents.slice(0, -1), ...proposalEvents, catalogEvent];
   const memberGuards: RecordGuard[] = members.map(member => ({
     refKey: canonicalKey(member.ref), expectedRevision: member.revision,
@@ -1129,6 +1245,166 @@ async function prepareApproval(deps: ProposalServiceDeps, ctx: CoreCallContext,
     ...(fragment.commitCursorBindings === undefined ? {} : { commitCursorBindings: fragment.commitCursorBindings }),
   };
   return { kind: 'ready', plans: plans.value, commit: knowledgeCommit(commit => deps.records.commit(commit), prepared, thrown) };
+}
+
+// --------------------------------------------------------------------------
+// Structural auto-approval (121-106 item 5, 121-109, PRODUCT §7)
+// --------------------------------------------------------------------------
+
+/** Why the platform did not apply a structural change itself (the card stays). */
+export type AutoApprovalBlockV1 =
+  | { kind: 'not_platform_written'; paths: string[] }
+  | { kind: 'new_conflict'; conflicts: KnowledgeConflictV1[] };
+
+/** One line's files as read now, and the projection of the catalog the records last adopted (null when none). */
+async function lineFileFacts(recorded: Extract<CurrentCatalogWindow, { status: 'ready' }> | null,
+  plan: KnowledgeWritePlan): Promise<{ status: 'ready'; value: {
+    files: readonly KnowledgeDiskFileV1[];
+    projection: { architecture: Uint8Array; modules: readonly { moduleId: string; bytes: Uint8Array }[] } | null;
+  } } | CoreRejection> {
+  const disk = await plan.line.readKnowledgeFiles();
+  if (disk.status !== 'ready') return storeFailureToRejection(disk);
+  const current = disk.value.files.find(file => file.path === ARCHITECTURE_FILE_PATH)?.bytes ?? null;
+  const projected = recorded === null ? null
+    : architectureFilesOf(recorded.catalog.catalog, knowledgeBaselineOf(recorded.baseline.content), plan.line.scope, current);
+  // A recorded catalog is written by the same function (lists B), so an invalid projection is a programming error.
+  if (projected !== null && projected.status !== 'decoded') {
+    return rejected('unavailable', `the recorded catalog cannot be written as knowledge files: ${projected.reason}`);
+  }
+  return { status: 'ready', value: { files: disk.value.files, projection: projected === null ? null : projected.value } };
+}
+
+/**
+ * 121-106 item 5 / PRODUCT §7: whether the platform may apply these planned knowledge writes without the person. It
+ * may not when a write would overwrite a file the platform did not write (ruling 4-2 A's one verdict: a hand edit,
+ * committed or not, a merge) — an uncommitted edit overwritten is lost; nor when the module files after the write
+ * hold a conflict they did not hold before, which would feed the knowledge-conflict round that proposed it. A
+ * conflict that was there before the write is no reason. Structural proposals and structural repairs share it.
+ */
+export async function autoApprovalBlockOf(records: Pick<GoalRecordTransactionPort, 'readMany'>, projectId: string,
+  plans: readonly KnowledgeWritePlan[]): Promise<{ status: 'ready'; value: AutoApprovalBlockV1 | null } | CoreRejection> {
+  const recorded = await readRecordedCatalogWindow(records, projectId);
+  if (recorded.status !== 'ready' && recorded.status !== 'not_found') return recorded;
+  const paths: string[] = [];
+  const conflicts: KnowledgeConflictV1[] = [];
+  for (const plan of plans) {
+    if (plan.changes.length === 0) continue;
+    const facts = await lineFileFacts(recorded.status === 'ready' ? recorded : null, plan);
+    if (facts.status !== 'ready') return facts;
+    const byPath = new Map(facts.value.files.map(file => [file.path, file]));
+    for (const change of plan.changes) {
+      if (change.before !== null && platformFileSource(facts.value.projection,
+        { path: change.path, bytes: change.before, committed: byPath.get(change.path)!.committed }) !== 'platform') {
+        paths.push(change.path);
+      }
+    }
+    const before = facts.value.files.filter(file => file.kind === 'module');
+    const after = new Map(before.map(file => [file.path, file.bytes]));
+    for (const change of plan.changes) {
+      if (change.path === ARCHITECTURE_FILE_PATH) continue;
+      if (change.after === null) after.delete(change.path); else after.set(change.path, change.after);
+    }
+    // A conflict is new when its (kind, moduleId) was not there before or it now involves a file it did not; the same
+    // conflict with fewer files (a claimer removed) is the old one getting smaller.
+    const held = new Map(knowledgeConflictsOf(before, plan.line.scope)
+      .map(conflict => [`${conflict.kind}\u0000${conflict.moduleId}`, new Set(conflict.paths)]));
+    conflicts.push(...knowledgeConflictsOf([...after].map(([path, bytes]) => ({ path, bytes })), plan.line.scope)
+      .filter(conflict => {
+        const was = held.get(`${conflict.kind}\u0000${conflict.moduleId}`);
+        return was === undefined || conflict.paths.some(path => !was.has(path));
+      }));
+  }
+  if (paths.length > 0) return { status: 'ready', value: { kind: 'not_platform_written', paths: paths.sort() } };
+  return { status: 'ready', value: conflicts.length === 0 ? null : { kind: 'new_conflict', conflicts } };
+}
+
+/** The "没有自动采用" notice text (121-106 item 5); `what` names a structural proposal or a structural repair. */
+export function autoApprovalDeclinedSummary(what: '结构提案' | '结构修补', block: AutoApprovalBlockV1): string {
+  const why = block.kind === 'not_platform_written'
+    ? `会盖掉不是平台写的文件 ${block.paths.join('、')}`
+    : `写后会新增 ${String(block.conflicts.length)} 处冲突：${
+      [...new Set(block.conflicts.flatMap(conflict => conflict.paths))].sort().join('、')}`;
+  return truncateUtf8(`没有自动采用${what}：${why}；卡留着等你决定`, 512);
+}
+
+/** The applied notice's counts (created, changed, deleted knowledge files) and the modules they belong to. */
+function appliedChangesOf(plans: readonly KnowledgeWritePlan[],
+  files: ProposalServiceDeps['knowledge']['write']['files']): string {
+  let created = 0;
+  let changed = 0;
+  let deleted = 0;
+  const modules = new Set<string>();
+  for (const plan of plans) {
+    for (const change of plan.changes) {
+      if (change.before === null) created += 1; else if (change.after === null) deleted += 1; else changed += 1;
+      if (change.path === ARCHITECTURE_FILE_PATH) continue;
+      const moduleId = files.writeLogFileOf(plan.line.scope, change.path, (change.after ?? change.before)!).moduleId;
+      if (moduleId !== null) modules.add(moduleId);
+    }
+  }
+  const named = [...modules].sort();
+  return `新建 ${String(created)} 个、修改 ${String(changed)} 个、删除 ${String(deleted)} 个知识文件`
+    + (named.length === 0 ? '' : `；模块 ${named.join('、')}`);
+}
+
+/** The platform's one approval command per batch, whoever froze it: a crash or a second call replays it. */
+function autoApplyKeys(batchRef: ArchitectureProposalBatchRef): { identityKey: string; fingerprint: string } {
+  return commandKeys({
+    operation: 'architecture-proposal-auto-apply',
+    scope: { projectId: batchRef.projectId, workspaceId: null },
+    principal: principalIdentity({ kind: 'host', actor: STRUCTURAL_AUTO_APPROVAL_ACTOR }),
+    commandId: batchRef.batchId,
+    fingerprintInput: { batchRef } as unknown as JsonValue,
+  });
+}
+
+/** A project notice of the structural auto-approval (an `automatic_adjustment` on the project). */
+function autoApprovalNotice(projectId: string, operationId: string, summary: string): NotifyProjectInputV1 {
+  return { projectRef: { projectId }, subject: { kind: 'project', projectRef: { projectId } },
+    kind: 'automatic_adjustment', summary, operation: { aggregateType: 'CoreOperation', projectId, operationId } };
+}
+
+/**
+ * 121-109: apply one batch the freeze just committed, under the platform's fixed identity, through the same approval
+ * write the person's answer uses; the applied revision, or null when the card stays. No step retries: the command
+ * already ran, a member is no longer pending, the person already answered (decision 42: the person's answer comes
+ * first), the catalog moved, or the protection held it back — then one notice says why. The "已自动采用" notice
+ * goes out after the commit; a crash between the two loses only the notice, the revision stays in the history.
+ * A commit that landed with its files not written is that `unavailable` (the write log recovers the files).
+ */
+async function autoApplyBatch(deps: ProposalServiceDeps, ctx: CoreCallContext, batch: ArchitectureProposalBatchV1,
+  others: number): Promise<ArchitectureRevision | CoreRejection | null> {
+  const auto = hostSystemContext(ctx, STRUCTURAL_AUTO_APPROVAL_ACTOR);
+  const keys = autoApplyKeys(batch.ref);
+  const prior = await priorApproval(deps, keys);
+  if (prior !== null) return prior.status === 'applied' ? prior.revision : null;
+  const members = await readBatchMembers(deps, batch);
+  if (members.status !== 'ready' || members.value.some(member => member.state !== 'pending')) return null;
+  const answer = await deps.decisionMessages.readDecisionAnswer(auto, { source: batchDecisionSource(batch.ref) });
+  if (answer.status !== 'ready' || answer.value.message !== null) return null;
+  const out: { blocked: AutoApprovalBlockV1 | null; summary: string | null } = { blocked: null, summary: null };
+  const result = await applyWith(deps, auto, keys, `auto:${batch.ref.batchId}`, batch, members.value,
+    { kind: 'auto', out });
+  const projectId = batch.ref.projectId;
+  if (result.status === 'applied') {
+    // Null only when a copy of this command committed first; that copy sends the notice.
+    if (out.summary !== null) {
+      const reason = proposalBatchReason(members.value).split('\n')[0]!;
+      await deps.knowledge.write.notify(autoApprovalNotice(projectId, `structural-auto:${batch.ref.batchId}`,
+        truncateUtf8(`已自动采用结构提案（设置：结构提案自动批准）：${out.summary}；理由：${reason}`
+          + (others > 0 ? `；另有 ${String(others)} 份提案留在卡上` : ''), 512)));
+    }
+    return result.revision;
+  }
+  if (out.blocked !== null) {
+    await deps.knowledge.write.notify(autoApprovalNotice(projectId, `structural-auto-declined:${batch.ref.batchId}`,
+      autoApprovalDeclinedSummary('结构提案', out.blocked)));
+  }
+  // Its members are applied, so no card can show: the call answers as the person's approval would. Nothing committed
+  // (a busy lease, a read that failed): the card stays.
+  if ('code' in result && result.code === 'unavailable'
+    && (await lookupCommittedReceipt(deps.records, keys.identityKey, keys.fingerprint)).status === 'found') return result;
+  return null;
 }
 
 /**
@@ -1155,20 +1431,12 @@ export async function readProposalBatchFiles(deps: ProposalServiceDeps, ctx: Cor
   if (plans.status !== 'ready') return rejectionOf(plans);
   const recorded = await readRecordedCatalogWindow(deps.records, ctx.projectId);
   if (recorded.status !== 'ready' && recorded.status !== 'not_found') return recorded;
-  const recordedBaseline = recorded.status === 'ready' ? knowledgeBaselineOf(recorded.baseline.content) : null;
   const files: ProposalBatchFileV1[] = [];
   for (const plan of plans.value) {
-    const disk = await plan.line.readKnowledgeFiles();
-    if (disk.status !== 'ready') return storeFailureToRejection(disk);
-    const byPath = new Map(disk.value.files.map(file => [file.path, file]));
-    const current = disk.value.files.find(file => file.path === ARCHITECTURE_FILE_PATH)?.bytes ?? null;
-    const projected = recorded.status === 'ready' && recordedBaseline !== null
-      ? architectureFilesOf(recorded.catalog.catalog, recordedBaseline, plan.line.scope, current) : null;
-    // A recorded catalog is written by the same function (lists B), so an invalid projection is a programming error.
-    if (projected !== null && projected.status !== 'decoded') {
-      return rejected('unavailable', `the recorded catalog cannot be written as knowledge files: ${projected.reason}`);
-    }
-    const projection = projected === null ? null : projected.value;
+    const facts = await lineFileFacts(recorded.status === 'ready' ? recorded : null, plan);
+    if (facts.status !== 'ready') return facts;
+    const byPath = new Map(facts.value.files.map(file => [file.path, file]));
+    const projection = facts.value.projection;
     const lineFiles: ProposalBatchFileV1[] = plan.changes.map(change => {
       const moduleChange = change.path !== ARCHITECTURE_FILE_PATH;
       const moduleId = moduleChange

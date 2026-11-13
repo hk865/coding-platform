@@ -21,7 +21,7 @@ const V2_TEMPLATES = {
     'base': 'cee15946501a2db933e00e1ea9954e8332542ab130268cd32c6962c91061958c',
     'skill-platform-work': 'fee248cc70c5ed0a07bc8e679bd8357fa6e678976818b121e6f837cdf29ec7b3',
     'skill-platform-secretary': '0bb59d33dcba00898fbb35ca971580b3acfde7ccffc4b2ca168c3fb957e6780a',
-    'skill-platform-adviser': '4bc18a1ef3aa6004fd1d1d5a9945591c8ce581bf1b1e3162b7e6ec4a1c3051d3',
+    'skill-platform-adviser': 'b5d9eac0e054bbb12a8121d98508165e03de008a17fab17ef66c68bae126f776',
     'skill-platform-scribe': '7e7d2ea6b21f44f407d7dcd2d2847651e7b156306ae97fdc5a1bceb92ee4bd94',
     'skill-platform-reviewer': '7cd261e9a6611af0941f9ba42c3d0a6dbfe6e70d8a931fae88e1a4c7e03d8e9a',
 } as const;
@@ -50,7 +50,7 @@ describe('platform prompt pack v2 (rulings 17–18)', () => {
         for (const [id, expectedDigest] of Object.entries(V2_TEMPLATES)) {
             expect(manifest.templates[id], `manifest entry ${id}`).toEqual({
                 file: `templates/${id}.txt`,
-                version: id === 'base' ? 3 : id === 'skill-platform-adviser' ? 12 : id === 'skill-platform-work' ? 11
+                version: id === 'base' ? 3 : id === 'skill-platform-adviser' ? 13 : id === 'skill-platform-work' ? 11
                     : id === 'skill-platform-reviewer' ? 4 : id === 'skill-platform-secretary' ? 9 : 8,
                 mentionsTools: [],
             });
@@ -136,7 +136,7 @@ describe('platform prompt pack v2 (rulings 17–18)', () => {
             base: { packId: 'platform', version: 3, mentionsTools: [] },
             'skill-platform-work': { packId: 'platform', version: 11, mentionsTools: [] },
             'skill-platform-secretary': { packId: 'platform', version: 9, mentionsTools: [] },
-            'skill-platform-adviser': { packId: 'platform', version: 12, mentionsTools: [] },
+            'skill-platform-adviser': { packId: 'platform', version: 13, mentionsTools: [] },
             'skill-platform-scribe': { packId: 'platform', version: 8, mentionsTools: [] },
             'skill-platform-reviewer': { packId: 'platform', version: 4, mentionsTools: [] },
         });

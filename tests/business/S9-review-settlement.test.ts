@@ -144,5 +144,9 @@ describe('W4-settle: the review source settles before the completed-Goal branch'
     expect(result).toMatchObject({ status: 'no_answer' });
     expect((await waitForWithdrawn(review.world, query.messageRef)).withdrawnAt).not.toBeNull();
     expect(await notices(review.world, review.reviewLine!, NO_ANSWER_NOTICE)).toHaveLength(1);
+    // K3L-3 (Astra): the withdrawn exec_review round is a verdict shape; the planning question reader skips it, so
+    // the person's decision queue still reads instead of answering `source_stale` for the whole page.
+    expect((await review.world.post('decisions/queue', plain(S6A_SCOPE, { workspace: S6A_SCOPE,
+      sections: ['waiting_answer'], page: { limit: 100 } }))).body).toMatchObject({ status: 'ready' });
   }, 120_000);
 });

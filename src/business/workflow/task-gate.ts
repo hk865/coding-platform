@@ -1,7 +1,7 @@
 import type { RunRef, RunSnapshot, TaskBudgetV1, TaskTriple } from '../../contracts/dispatch.js';
 import type { AggregateRef, GoalSnapshot } from '../../contracts/ledger.js';
-import { revisionAssignments, type DependencyRequirement, type PlanRevisionRef, type PlanRevisionSnapshot, type RuntimeTask } from '../../contracts/plan.js';
-import type { VersionPin } from '../../contracts/core/identity.js';
+import { revisionAssignments, type DependencyRequirement, type PlanRevisionRef, type PlanRevisionSnapshot, type RuntimeTask, type TaskScope } from '../../contracts/plan.js';
+import type { SessionRef, VersionPin } from '../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
 import { canonicalJson, sameJson as sameCanonical, type JsonValue } from '../../contracts/fingerprint.js';
 import { rejected as rejection } from '../../contracts/core/rejections.js';
@@ -37,7 +37,9 @@ import {
 export type TaskGateSource = 'review_unreadable' | 'review_round_in_flight' | 'review_round_unknown' | 'review_session_busy'
   | 'review_binding_missing' | 'held' | 'needs_decision' | 'awaiting_approval'
   /** K3-46: this advance already failed this card's ②; never select it again in the same advance. */
-  | 'review_application_failed';
+  | 'review_application_failed'
+  /** K3 layering (121-109): the record waits for its adviser round. */
+  | 'awaiting_advice';
 export type TaskGate =
   | { kind: 'pass' }
   | { kind: 'skip'; source: TaskGateSource;
@@ -63,6 +65,12 @@ export type TaskGateDependencies = {
   claimContinuation(owned: Owned, base: Base, goal: GoalSnapshot, planRef: PlanRevisionRef, task: RuntimeTask,
     row: TaskRow, binding: Binding, afterRunRef: RunRef,
     continuation: { requeue?: WorkflowSessionRequeue; review?: WorkflowSessionReview }): Promise<WorkflowAdvanceResult | null>;
+  /** K3 layering (121-109): the record's responsible adviser line (the Workflow's one L35 read); `null` is none. */
+  reviewAdviserOf(owned: Owned, review: Pick<UnknownCallReviewV1, 'ref'>, scope: TaskScope | null):
+    Promise<SessionRef | null | CoreRejection>;
+  /** K3 layering (009): one step of an `awaiting_advice` record's adviser round. */
+  adviserRound(owned: Owned, base: Base, goal: GoalSnapshot, task: RuntimeTask, review: UnknownCallReviewV1):
+    Promise<ReviewGate>;
 };
 export type TaskGateFunctions = {
   reviewGate(owned: Owned, base: Base, config: WorkflowHostConfiguration, goal: GoalSnapshot,
@@ -182,7 +190,7 @@ export function goalWaitBasisOf(goal: Pick<GoalSnapshot, 'ref'>, reasons: readon
 
 export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
   const deps = gate.workflow;
-  const { bindingForRole, isUnadmittedStarting, claimContinuation } = gate;
+  const { bindingForRole, isUnadmittedStarting, claimContinuation, reviewAdviserOf, adviserRound } = gate;
 
   /** §3.13 item 4: the ONE terminal-state judgment shared by the rework and handoff block arms. */
   function blockCardReleased(state: DecisionCardV1['state']): boolean {
@@ -236,7 +244,9 @@ export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
    * the round's Run is read through the source authority and classified
    * starting (UR3a) / in flight (UR3) / ended (UR4) / unknown (UR5). UR3h, UR6,
    * UR7, UR7b and UR8 are group 4: a `held` record or a decided status falls
-   * through here and the owner guards still block the claim.
+   * through here and the owner guards still block the claim. K3 layering: both
+   * settlements name whether the record has an adviser, and an
+   * `awaiting_advice` record goes to its adviser round (`adviserRound`).
    */
   async function reviewGate(
     owned: Owned, base: Base, config: WorkflowHostConfiguration, goal: GoalSnapshot,
@@ -285,10 +295,12 @@ export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
       // UR5/UR4 (item C): one "known end" rule; an unknown outcome waits.
       if (!reviewRoundEndedKnown(run)) return { kind: 'skip', source: 'review_round_unknown' };
       // UR4: any known end (completed, crashed, failed, cancelled, budget, yielded).
-      return { kind: 'review', step: settleReviewStep(base, review, 'round_ended') };
+      return await settleGate(owned, base, task, review, 'round_ended');
     }
     // UR8 (L11): a `resolved`+held record is "I will handle it"; skip (AV-4c).
     if (review.disposition?.hold === 'held') return { kind: 'skip', source: 'held' };
+    // K3 layering (121-109, 009): the adviser answers first; one step per state of its round.
+    if (review.status === 'awaiting_advice') return await adviserRound(owned, base, goal, task, review);
     // UR7 (L19, L29 row 5): a card that is already answered applies its
     // disposition first; only an unanswered card reaches today's UR6 skip.
     // The current card's canonical source uses the record's CURRENT revision;
@@ -355,8 +367,16 @@ export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
         })).status === 'available';
       } catch { available = false; }
     }
-    if (!available) return { kind: 'review', step: settleReviewStep(base, review, 'review_unavailable') };
+    if (!available) return await settleGate(owned, base, task, review, 'review_unavailable');
     return await planReviewRound(owned, base, goal, plan, task, row, review, binding);
+  }
+
+  /** K3 layering (121-109 :8): UR4's and UR2's settlement, with the record's adviser read once; a failed read is returned. */
+  async function settleGate(owned: Owned, base: Base, task: RuntimeTask, review: UnknownCallReviewV1,
+    cause: 'round_ended' | 'review_unavailable'): Promise<ReviewGate> {
+    const adviser = await reviewAdviserOf(owned, review, task.scope);
+    if (adviser !== null && 'status' in adviser) return { kind: 'rejection', rejection: adviser };
+    return { kind: 'review', step: settleReviewStep(base, review, cause, adviser !== null) };
   }
 
   /**

@@ -243,6 +243,7 @@ export type CoreRouteSuffix =
   | 'queries/prepare'
   | 'queries/start'
   | 'queries/observe'
+  | 'queries/cancel'
   | 'queries/answer'
   | 'materials/open'
   | 'workflow/goal-input'
@@ -894,6 +895,13 @@ export type CoreStartWaitingV1 = { status: 'waiting'; reason: 'running_cap'; ref
 export type QueriesStartResponse = RouteResponse<NonNullable<RuntimeExecutionPort['startQuery']>> | CoreStartWaitingV1;
 export type QueriesObserveBody = PlainBody<NonNullable<RuntimeExecutionPort['observeQuery']>>;
 export type QueriesObserveResponse = RouteResponse<NonNullable<RuntimeExecutionPort['observeQuery']>>;
+export type QueriesCancelBody = PlainBody<NonNullable<RuntimeExecutionPort['cancelQuery']>>;
+export type QueriesCancelResponse = RouteResponse<NonNullable<RuntimeExecutionPort['cancelQuery']>>;
+/** QSTOP: the `queries/cancel` body/response pair; `CORE_ROUTE_SPECS`'s annotation names it, so both aliases are in
+ *  the production graph (the same type-only assembly the other route families use). */
+export type QueriesCancelCoreRouteDto = {
+  'queries/cancel': { body: QueriesCancelBody; response: QueriesCancelResponse };
+};
 export type QueriesAnswerBody = PlainBody<QueryJobPort['readQueryAnswer']>;
 export type QueriesAnswerResponse = RouteResponse<QueryJobPort['readQueryAnswer']>;
 export type MaterialsOpenBody = PlainBody<MaterialPort['openArtifact']>;

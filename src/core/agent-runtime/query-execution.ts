@@ -20,7 +20,7 @@ import { queryExecutionBindingOf, type QueryModelUsageV1, type QueryRunRef } fro
 import { unknownCallAdviceSubjectOfText } from '../../contracts/plan-round.js';
 import type { GoalRef } from '../../contracts/ledger.js';
 import type { HookPort, ToolCall } from '../../../vendor/coding-agent/dist/public-api.js';
-import { canonicalJson, sameJson as sameRef, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
+import { canonicalJson, canonicalKey, sameJson as sameRef, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
 import {
   decodePromptSetV1, promptSelectionOf, type ModelRequestPromptFactsV1, type PromptSetV1,
   type QueryRequestPromptFactsV1, type ReasoningReplayV1,
@@ -66,6 +66,7 @@ import { planningNoteAdmission, secretaryNoteAdmission } from '../work-graph/sta
 import { sessionHistoryDecision } from './context-history-facts.js';
 import type { RuntimeSourceCaptureFactory } from './source-tool-ports.js';
 import type {
+  CancelQueryExecutionRequest, CancelQueryExecutionResultV1,
   ResolvedRuntimeConfiguration, RuntimeExecutionDependencies, StartQueryExecutionRequest,
 } from './execution-contracts.js';
 import type {
@@ -77,6 +78,7 @@ import type { RawArtifactRecord } from '../record-store/body-ports.js';
 
 export type QueryExecutionDriverPort = {
   start(ctx: CoreCallContext, request: StartQueryExecutionRequest): Promise<ReadResult<QueryExecutionRecord>>;
+  cancel(request: CancelQueryExecutionRequest): ReadResult<CancelQueryExecutionResultV1>;
 };
 
 const BUILTIN_TOOL_NAMES = new Set<string>(['read', 'write', 'shell']);
@@ -230,6 +232,10 @@ function projectMeterEntry(entry: MeterEntry, promptFacts: Map<string, PromptFac
 
 export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): QueryExecutionDriverPort {
   const observation = createQueryObservation(deps);
+  // 121-112 "人随时能停": the stop of each Turn this driver has entered and not yet returned from, keyed by the
+  // QueryRunRef's canonical JSON; memory only. A Turn is listed from its `entered` write on: aborting a start before
+  // that would leave the QueryRun `entering` with nothing in this Host to move it again (exploration-control.ts L5).
+  const enteredTurns = new Map<string, AbortController>();
   return {
     async start(ctx: CoreCallContext, request: StartQueryExecutionRequest): Promise<ReadResult<QueryExecutionRecord>> {
       if (deps.queryExecution === undefined) return rejected('unsupported', 'startQuery requires the trusted QueryExecutionPort');
@@ -900,6 +906,8 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         return rejected('unavailable', `binding the Query input failed: ${messageOf(error)}`);
       }
 
+      const turnStop = new AbortController();
+      const turnKey = canonicalKey(queryRunRef);
       let enteredFailure: CoreRejection | undefined;
       let enteredDone = false;
       const shouldPause = (reason: string): { point: 'before_model'; kind: 'pause'; reason: string } => ({ point: 'before_model', kind: 'pause', reason });
@@ -921,6 +929,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
               return shouldPause('entered rejected');
             }
             enteredDone = true;
+            enteredTurns.set(turnKey, turnStop);
           }
           if (taskBudget.deadline !== null) {
             const nowMs = Date.parse(deps.now());
@@ -1036,6 +1045,8 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       try {
         await runObservedModel({
           ...shared,
+          // Only this Turn takes the stop; the summary call above keeps the Host signal.
+          signal: AbortSignal.any([signal, turnStop.signal]),
           // Only this call: the summary call that shares `shared` has no command tool.
           ...(commandSandbox === undefined ? {} : { commandSandbox }),
           sessionId: record.session.kernel.kernelSessionId,
@@ -1067,6 +1078,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         if (error instanceof RuntimeModelCallRejected) enteredFailure ??= rejected(error.code, error.message);
         else thrown = error;
       } finally {
+        enteredTurns.delete(turnKey);
         // A cancelled or failed round never passes the after_group barrier; the watch drops what is left, before the proxy (its close removes the socket file and can throw).
         commandWatch?.end();
         await commandRoute?.close();
@@ -1077,6 +1089,13 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       // A throw before the Turn entered leaves nothing to observe; after entry the observed result wins.
       if (thrown !== undefined && !enteredDone) return rejected('unavailable', `running the Query failed: ${messageOf(thrown)}`);
       return reconciled;
+    },
+    cancel(request) {
+      const ref = isRecord(request) ? request.queryRunRef : undefined;
+      if (!isRecord(ref)) return rejected('invalid', 'queries/cancel requires a queryRunRef');
+      const stop = enteredTurns.get(canonicalKey(ref));
+      stop?.abort();
+      return { status: 'ready', value: { stop: stop === undefined ? 'not_running' : 'stopping' } };
     },
   };
 }

@@ -49,9 +49,13 @@ export const GOAL_FAN_OUT_ACTOR: Readonly<{ kind: 'system'; id: 'host:goal-fan-o
 /** Slice 1: the automatic Session-archive maintenance rework actor. */
 export const SESSION_ARCHIVE_AUTOMATION_ACTOR: Readonly<{ kind: 'system'; id: 'workflow:session-archive' }> =
   Object.freeze({ kind: 'system', id: 'workflow:session-archive' });
-/** The ONLY actors classified `system`. Every other Host actor is an operator. */
+/** 121-109: the platform's own approval of a structural proposal under the project's structural auto-approval. */
+export const STRUCTURAL_AUTO_APPROVAL_ACTOR: Readonly<{ kind: 'system'; id: 'structural-auto-approval' }> =
+  Object.freeze({ kind: 'system', id: 'structural-auto-approval' });
+/** The platform's automation actors: the ONLY actors classified `system`. Every other Host actor is an operator. */
 export const PLATFORM_AUTOMATION_ACTORS: readonly Readonly<HostActorRef>[] =
-  Object.freeze([WORKFLOW_AUTOMATION_ACTOR, GOAL_FAN_OUT_ACTOR, SESSION_ARCHIVE_AUTOMATION_ACTOR]);
+  Object.freeze([WORKFLOW_AUTOMATION_ACTOR, GOAL_FAN_OUT_ACTOR, SESSION_ARCHIVE_AUTOMATION_ACTOR,
+    STRUCTURAL_AUTO_APPROVAL_ACTOR]);
 
 /** Canonical equality with one member of `PLATFORM_AUTOMATION_ACTORS`. */
 export function isAutomationActor(actor: ActorRef): boolean {

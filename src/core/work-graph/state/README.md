@@ -85,7 +85,7 @@
 
 做注记、消息、通知已读、命令、上下文守卫、未知调用、架构捕获与 ref 比较的去这组。
 
-- `note-machine.ts` — 注记状态机：写入准入、授权、处置目标、版本与现行指针；纯 `secretaryNoteScope`（普通注记取本轮冻结的有效 Goal，目标或 stage 理解停在有效 Goal 内，只有授权的 Goal 理解可用该 Goal 作主锚点，项目理解与修复拒绝）。
+- `note-machine.ts` — 注记状态机：写入准入、授权、处置目标、版本与现行指针；纯 `secretaryNoteScope`（普通注记取本轮冻结的有效 Goal，目标或 stage 理解停在有效 Goal 内，只有授权的 Goal 理解可用该 Goal 作主锚点，项目理解与修复拒绝）。写入事实 `structuralAutoApproved`（121-106、121-109）：开关开着时，智能体只因结构性待审的理解直接收下，还有别的原因的照旧待审；`noticeClassOf` 把这样收下的那一版也归到 `structural`。`newNoteHeadRecord` 照传修补头的 `structuralAutoApproved`（只在为真时写）。
 - `secretary-note.ts` — 纯的 Query 注记准入（`secretaryNoteAdmission`，`src/core/work-graph/state/secretary-note.ts:41`）：只有请求轮（有冻结的请求根）是秘书轮，给六个通用写入种类加 `understanding`、`link`、`flow`、`withdraw: true` 和被授权的 Goal id；普通 Query 与副本得到 `none`。`QueryNoteAdmissionV1` 唯一的声明在本文件，消费方经 `model/secretary-note-contracts.ts` 的再导出引用。
 - `message-machine.ts` — SessionMessage 机器：pending<read<responded、等待满足与记录构造；7A-1 的投递与证据值、秘书轮发送方记录、拒绝回复、四个生命周期变更与事件类型（M-1 已激活）；7B-1：等待事实 `waitFactsOfRecord` 与完整的接续判定 `messageSatisfiesWait`、唯一的到期决定 `decideExpiry`（含 `ExpirySkipReason`）、到期状态字段 `expiredAt`、事件 `MessageExpiredEventV1`/`SessionMessageEventType` 的 `SessionMessageExpired`、变更 `MessageExpiredChangeV1` 与迁移 `onExpired`；等待状态和投递资格（纯规则）。持久消息记录 `SessionMessageRecord` 和它的发送方、回复、投递值、已接受输入、派生等小类型的正本在 `contracts/mailbox.ts`，这里转出。
 - `copy-intervention.ts` — 复制取消的纯候选规则：`copyInterventionCandidateOf` 按书的表序（先两项排除，再投递/未投递）判一条消息是不是候选、可选/可撤回及原因；事实形状 `CopyInterventionFactsV1`，不读存储、不写、无游标。
@@ -180,12 +180,12 @@
 | `noProgressKey` | `src/core/work-graph/state/no-progress.ts:175` | requeue 的无进展键，存进 TaskRequeue.basis | 重排队守卫与比较 |
 | `reverifyBasis` | `src/core/work-graph/state/no-progress.ts:206` | successor 轮的重验证键 | VR-14 比较链上 basisDigests |
 | `roundFailureFacts` | `src/core/work-graph/state/no-progress.ts:96` | 一轮的非 PASS 检查与 gap codes | 两套键、失败事实读模型 |
-| `admitNoteWrite` | `src/core/work-graph/state/note-machine.ts:60` | 新注记的准入状态 | 写注记前 |
-| `transitionNote` | `src/core/work-graph/state/note-machine.ts:430` | 注记处置迁移 | 注记状态写入 |
-| `newNoteHeadRecord` | `src/core/work-graph/state/note-machine.ts:291` | 建 pending 注记头 | 新建注记 |
-| `newNoteVersionRecord` | `src/core/work-graph/state/note-machine.ts:366` | 建注记版本 | 追加注记版本 |
-| `userReasonsOf` | `src/core/work-graph/state/note-machine.ts:221` | 由处置关系算用户复查原因 | 注记复查 |
-| `secretaryNoteScope`、`SecretaryNoteScopeFactsV1` | `src/core/work-graph/state/note-machine.ts:131`、`src/core/work-graph/state/note-machine.ts:102` | 纯：一轮写入范围的唯一判定——普通注记的范围与 `storedGoalId` 跟本轮冻结的 `effectiveGoalId`（无 Goal 轮只能项目/模块/接口/文件锚点），目标或 stage 理解停在有效 Goal 内，只有被授权的 Goal 理解可用该 Goal 作主锚点，项目理解与修复拒绝；事实形状 `SecretaryNoteScopeFactsV1` | 注记 owner 判定 `query_run` 写入的 `storedGoalId` 与越界拒绝 |
+| `admitNoteWrite` | `src/core/work-graph/state/note-machine.ts:65` | 新注记的准入状态 | 写注记前 |
+| `transitionNote` | `src/core/work-graph/state/note-machine.ts:446` | 注记处置迁移 | 注记状态写入 |
+| `newNoteHeadRecord` | `src/core/work-graph/state/note-machine.ts:304` | 建 pending 注记头 | 新建注记 |
+| `newNoteVersionRecord` | `src/core/work-graph/state/note-machine.ts:382` | 建注记版本 | 追加注记版本 |
+| `userReasonsOf` | `src/core/work-graph/state/note-machine.ts:232` | 由处置关系算用户复查原因 | 注记复查 |
+| `secretaryNoteScope`、`SecretaryNoteScopeFactsV1` | `src/core/work-graph/state/note-machine.ts:142`、`src/core/work-graph/state/note-machine.ts:113` | 纯：一轮写入范围的唯一判定——普通注记的范围与 `storedGoalId` 跟本轮冻结的 `effectiveGoalId`（无 Goal 轮只能项目/模块/接口/文件锚点），目标或 stage 理解停在有效 Goal 内，只有被授权的 Goal 理解可用该 Goal 作主锚点，项目理解与修复拒绝；事实形状 `SecretaryNoteScopeFactsV1` | 注记 owner 判定 `query_run` 写入的 `storedGoalId` 与越界拒绝 |
 | `secretaryNoteAdmission` | `src/core/work-graph/state/secretary-note.ts:40` | 纯：一轮 Query 的注记准入——没有请求根（普通 Query、副本）是 `none`；秘书请求轮是 `secretary`，写入种类正好是六个通用种类加 `understanding`（`review` 不是写入种类，`repair` 被拒），带 `withdraw: true` 和只含 Goal id 的授权集 | 准备与开始检查都只经这条规则定类；工具声明和注记工具组只消费这个值，调用方不要各自判类 |
 | `planningNoteAdmission` | `src/core/work-graph/state/secretary-note.ts:64` | 纯：非请求的规划 Query 的注记准入——`plan_round`/`plan_review` 形状是 `planning`（六个通用写入种类、`withdraw: true`、不授 Goal）；`text` 形状只在冻结来源是 Host 系统 `action_request` 且有有效 Goal 时才是 `planning`，`planRef` 不决定类别；`roleExploration` 为真（冷启动的探索轮，没有 Goal）也是 `planning`，另加 `link`、`flow` 两种 | 规划轮的注记工具声明与写入；准备和开始两侧都传 `roleExploration`；不要另判轮次类别 |
 | `coldStartOperationRef`、`newColdStartAction`、`coldStartPhaseProblem`、`advanceColdStartPhase`、`ColdStartActionV1` | `src/core/work-graph/state/cold-start.ts:36`、`:36`、`:43`、`:54`、`:16` | 纯：项目唯一冷启动操作的派生 ref、新动作、相位核对、一次推进一个相位 | 冷启动 owner、批窗口、探索轮的注记来源读都用这一份；不要另拼 `cold_start:` ref 或另写相位推进 |

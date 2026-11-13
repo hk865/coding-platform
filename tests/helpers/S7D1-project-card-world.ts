@@ -20,6 +20,9 @@
  * The real project-notice source is W's wiring; this fixture only opens the world and writes through the
  * captured backend in step 6. No store is read, no card/notice/reader is built, nothing is hand-made.
  */
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { WorkbenchRuntimeBinding } from '../../src/app/runtime-configuration.js';
 import type { ModuleDefinition } from '../../src/contracts/architecture-catalog.js';
 import type { ModuleRef, SessionRef, WorkLinkTarget } from '../../src/contracts/core/identity.js';
@@ -30,6 +33,7 @@ import type { ArchitectureRevision } from '../../src/core/work-graph/architectur
 import type { DecisionCardV1, DecisionQueueReadV1, ResolveDecisionReadV1 } from '../../src/core/work-graph/model/decision-contracts.js';
 import type { SessionCard } from '../../src/core/work-graph/model/session-contracts.js';
 import { notifyProject } from '../../src/core/work-graph/communication/project-notice-service.js';
+import { settingsPost } from '../app/support/S8A-L8-host.js';
 import { graphWrite } from './AG2b-collaboration-fixture.js';
 import { s6aCardsWorkspace, type S6ACardsWorkspace } from './S6A-cards-fixture.js';
 import {
@@ -107,13 +111,24 @@ const S7D1_EXTRA_BINDINGS: S6AExtraBinding[] = [{
 
 export async function openS7D1ProjectCardWorld(options: { backend: S6ABackend }):
 Promise<S7D1ProjectCardWorld> {
+  // The switch below is a Host setting: the Host needs a settings directory (a memory Host has none by default).
+  const settingsDirectory = await mkdtemp(join(tmpdir(), 's7d1-settings-'));
   const opened = await openS6ATwoWorkspaceWorld({ backend: options.backend, scribe: true,
-    extraBindings: S7D1_EXTRA_BINDINGS });
+    extraBindings: S7D1_EXTRA_BINDINGS, extraHostOptions: { settings: { settingsDirectory } } });
   const { world } = opened;
+  const closeWorld = world.close.bind(world);
+  world.close = async () => {
+    try { await closeWorld(); } finally { await rm(settingsDirectory, { recursive: true, force: true }); }
+  };
   const a = s6aCardsWorkspace(world, S6A_SCOPE);
   const b = s6aCardsWorkspace(world, S6A_SECOND_SCOPE);
   const projectId = world.scope.projectId;
   try {
+    // 121-109: these rows read the scribe's structural understanding card, so the project asks before every structural
+    // change; the factory default ("auto") would accept such a note at once and its card would never show.
+    const asked = await (await settingsPost(world.base, 'structural-approval/save', world.token,
+      { projectId, value: { proposals: 'ask', repairs: 'ask' } })).json() as { status: string };
+    if (asked.status !== 'ready') throw new Error(`S7D1: structural-approval/save: ${JSON.stringify(asked)}`);
     // 2. The scribe's governance/Plan/line, the catalog with M > N, the two lines and their links.
     const scribe = await seedS6BScribe(world);
     await world.settleDetached();

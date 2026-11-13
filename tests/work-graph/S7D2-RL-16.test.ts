@@ -221,6 +221,8 @@ describe('RL-16 (8): the policy\'s layers 1–3 (pure)', () => {
     [1, 'confirm_goal (layer 1)', { ...MATCHED, action: 'confirm_goal' }, 'user_only'],
     [2, 'adopt_first_plan (layer 1)', { ...MATCHED, action: 'adopt_first_plan' }, 'user_only'],
     [3, 'remember_user_preference (layer 1)', { ...MATCHED, action: 'remember_user_preference' }, 'user_only'],
+    // Product rule (121-109): the structural switches are Host settings, never rules, so no rule releases a
+    // structural change; the structural auto-approval does not go through this policy.
     [4, 'structural_patch (layer 1)', { ...MATCHED, action: 'structural_patch' }, 'needs_decision'],
     [5, 'change_goal (layer 1)', { ...MATCHED, action: 'change_goal' }, 'needs_decision'],
     [6, 'exceed_budget (layer 1)', { ...MATCHED, action: 'exceed_budget' }, 'needs_decision'],

@@ -23,7 +23,12 @@
  * - The held round's first model request waits at the host world's model gate; the gate is released and the start
  *   awaited after the test's callback, also when the callback or the wait fails. Nothing else is installed here; the
  *   world's own `close` cleans up, and `openS6BProjectWorld` closes its world when a later step fails.
+ * - `openS6BProjectWorld` saves `{ proposals: 'ask', repairs: 'ask' }` for the project when it opens (121-109), through
+ *   the public settings route; its memory Host gets a settings directory for it, removed by the world's `close`.
  */
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { OperationRef } from '../../src/contracts/core/operations.js';
 import type { PreparedQueryExecution, PreparedQueryManifestV1 } from '../../src/contracts/core/prepared-execution.js';
 import type { RoleConfigurationRef, SessionAggregateRef, SessionRef, SessionWorkLinkRef, VersionPin, WorkLinkTarget } from '../../src/contracts/core/identity.js';
@@ -37,6 +42,7 @@ import type { NoteAnchorV1 } from '../../src/contracts/note.js';
 import { isRecord } from '../../src/contracts/validation/common.js';
 import type { DecisionCardV1 } from '../../src/core/work-graph/model/decision-contracts.js';
 import type { NoteItemV1, WriteNoteEnvelopeV1 } from '../../src/core/work-graph/model/note-contracts.js';
+import { settingsPost } from '../app/support/S8A-L8-host.js';
 import { driveWorkflow, readQuery } from './A2-restart-fixture.js';
 import { AG2B_CONSUMER_ID, ag2bPlanDraft, graphWrite, plain } from './AG2b-collaboration-fixture.js';
 import { claimWithSecretaryProfile } from './request-claim-steps.js';
@@ -251,8 +257,22 @@ export async function resolveS6BProjectNote(ws: S6ACardsWorkspace, input: { note
 
 /** The project world (see the header): the scribe in the main workspace, the second workspace with no goal. */
 export async function openS6BProjectWorld(options: { backend: S6ABackend; goalOnlyScribe?: boolean }) {
-  const { world } = await openS6ATwoWorkspaceWorld({ backend: options.backend, scribe: true });
+  // The switches below are a Host setting: a memory Host keeps settings only with a directory (SQLite has one).
+  const settingsDirectory = options.backend === 'memory' ? await mkdtemp(join(tmpdir(), 's6b-settings-')) : null;
+  const { world } = await openS6ATwoWorkspaceWorld({ backend: options.backend, scribe: true,
+    ...(settingsDirectory === null ? {} : { extraHostOptions: { settings: { settingsDirectory } } }) });
+  if (settingsDirectory !== null) {
+    const closeWorld = world.close.bind(world);
+    world.close = async () => {
+      try { await closeWorld(); } finally { await rm(settingsDirectory, { recursive: true, force: true }); }
+    };
+  }
   try {
+    // 121-109: these rows read the scribe's structural understanding card, so the project asks before every structural
+    // change; the factory default ("auto") would accept such a note at once and its card would never show.
+    const asked = await (await settingsPost(world.base, 'structural-approval/save', world.token,
+      { projectId: world.scope.projectId, value: { proposals: 'ask', repairs: 'ask' } })).json() as { status: string };
+    if (asked.status !== 'ready') throw new Error(`S6B: structural-approval/save: ${JSON.stringify(asked)}`);
     const scribe = await seedS6BScribe(world);
     // 01d: an explicitly requested step on the opened world; the default project scribe keeps project scope.
     let goalLink: { target: WorkLinkTarget; link: SessionWorkLink; pins: VersionPin[] } | null = null;

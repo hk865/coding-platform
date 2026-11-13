@@ -125,6 +125,7 @@ import {
   type MaintainerCoreRouteDto,
   type MessagesCoreRouteDto,
   type OverlapCoreRouteDto,
+  type QueriesCancelCoreRouteDto,
   type WaitsCoreRouteDto,
   type RequestCommandCoreRouteDto,
   type RoleLineCoreRouteDto,
@@ -217,6 +218,7 @@ export type CoreRouteBindings = {
   startQuery: (...args: Parameters<NonNullable<RuntimeExecutionPort['startQuery']>>) =>
     Promise<Awaited<ReturnType<NonNullable<RuntimeExecutionPort['startQuery']>>> | CoreStartWaitingV1>;
   observeQuery: NonNullable<RuntimeExecutionPort['observeQuery']>;
+  cancelQuery: NonNullable<RuntimeExecutionPort['cancelQuery']>;
   readQueryAnswer: QueryJobPort['readQueryAnswer'];
   openArtifact: MaterialPort['openArtifact'];
   handleGoalInput: WorkflowPort['handleGoalInput'];
@@ -466,7 +468,7 @@ export type CoreRoutePlatform = {
   runtime: Pick<RuntimeExecutionPort,
     'capabilities' | 'createSession' | 'readSessionHistory' | 'readTaskExecutionHistory' | 'startRun' | 'deliverControl'>
     & Required<Pick<RuntimeExecutionPort, 'prepareQuery' | 'startQuery' | 'observeQuery'>>
-    & Pick<RuntimeExecutionPort, 'readContinuationBrief'>;
+    & Pick<RuntimeExecutionPort, 'readContinuationBrief' | 'cancelQuery'>;
   /**
    * A.2 step 5.4: the requeue owner; a narrow platform without it answers
    * `unsupported`. K3 L21 D9: `readTaskRequeueByIdentity` is the optional
@@ -623,7 +625,8 @@ export const CORE_ROUTE_SPECS: Record<
   | keyof OverlapCoreRouteDto
   | keyof RequestCommandCoreRouteDto | keyof SecretaryLifecycleCoreRouteDto | keyof WaitsCoreRouteDto
   | keyof RoleLineCoreRouteDto | keyof MaintainerCoreRouteDto | keyof WorkspaceFilesCoreRouteDto | keyof ExecutionsCoreRouteDto
-  | keyof VerificationCoreRouteDto | keyof ExplorationCoreRouteDto | keyof KnowledgeCoreRouteDto,
+  | keyof VerificationCoreRouteDto | keyof ExplorationCoreRouteDto | keyof KnowledgeCoreRouteDto
+  | keyof QueriesCancelCoreRouteDto,
   CoreRouteSpec
 > = {
   'controls/submit': { kind: 'graph_write', binding: 'submitControl', owner: 'controls.submitControl' },
@@ -698,6 +701,7 @@ export const CORE_ROUTE_SPECS: Record<
   'queries/prepare': { kind: 'plain', binding: 'prepareQuery', owner: 'runtime.prepareQuery' },
   'queries/start': { kind: 'plain', binding: 'startQuery', owner: 'runtime.startQuery' },
   'queries/observe': { kind: 'plain', binding: 'observeQuery', owner: 'runtime.observeQuery' },
+  'queries/cancel': { kind: 'plain', binding: 'cancelQuery', owner: 'runtime.cancelQuery' },
   'queries/answer': { kind: 'plain', binding: 'readQueryAnswer', owner: 'queries.readQueryAnswer' },
   'materials/open': { kind: 'plain', binding: 'openArtifact', owner: 'materials.openArtifact' },
   'workflow/goal-input': { kind: 'plain', binding: 'handleGoalInput', owner: 'workflow.handleGoalInput' },
@@ -1196,6 +1200,7 @@ export function createPlatformCoreRouteBindings(
     startQuery: async (ctx, input) => publicStartResult(await platform.runtime.startQuery(ctx, input),
       () => input.prepared.queryRunRef),
     observeQuery: platform.runtime.observeQuery.bind(platform.runtime),
+    cancelQuery: (ctx, input) => platform.runtime.cancelQuery?.(ctx, input) ?? Promise.resolve({ status: 'rejected', code: 'unsupported', reason: 'Runtime Query stop unavailable' }),
     readQueryAnswer: platform.queries.readQueryAnswer.bind(platform.queries),
     openArtifact: platform.materials.openArtifact.bind(platform.materials),
     handleGoalInput: platform.workflow.handleGoalInput.bind(platform.workflow),
@@ -1781,6 +1786,7 @@ export async function dispatchCoreRoute(
       case 'queries/prepare': return bindings.prepareQuery(ctx, plain.input as never);
       case 'queries/start': return bindings.startQuery(ctx, plain.input as never);
       case 'queries/observe': return bindings.observeQuery(ctx, plain.input as never);
+      case 'queries/cancel': return bindings.cancelQuery(ctx, plain.input as never);
       case 'queries/answer': return bindings.readQueryAnswer(ctx, plain.input as never);
       case 'materials/open': return bindings.openArtifact(ctx, plain.input as never);
       case 'workflow/goal-input': return bindings.handleGoalInput(ctx, plain.input as never);

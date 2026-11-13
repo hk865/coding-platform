@@ -13,7 +13,7 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "d927e665593ae6cd555b360d19aa72dd4b2377de7c460c57d0f4f1be3b89cea3"
+    "sha256": "2faee57b0e880734df4a55b614e86fc2b38bd176f8b7f4725d4459b28238bffa"
   },
   {
     "path": "resources/prompts/platform/strings.json",
@@ -141,7 +141,7 @@
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-adviser.txt",
-    "sha256": "4bc18a1ef3aa6004fd1d1d5a9945591c8ce581bf1b1e3162b7e6ec4a1c3051d3"
+    "sha256": "b5d9eac0e054bbb12a8121d98508165e03de008a17fab17ef66c68bae126f776"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-scribe.txt",
@@ -193,7 +193,7 @@
   },
   {
     "path": "resources/prompts/platform/tools/propose_architecture_revision.json",
-    "sha256": "1ead056def4a3294cedfd6d4a85aea5bfa829e343489681f5f820910fd293a86"
+    "sha256": "661b92bc6a22ec1fded19e9da4434f7a95beebbbde5b0a00a72baa32d8fb4888"
   },
   {
     "path": "resources/prompts/platform/tools/propose_role_split.json",

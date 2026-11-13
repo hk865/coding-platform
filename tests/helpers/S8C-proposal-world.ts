@@ -329,6 +329,11 @@ export async function openProposalWorld(options: { backend?: 'memory' | 'sqlite'
     const platform = staff.world.platform;
     const ctx = staff.world.humanContext();
     const scope: WorkspaceScope = { projectId: S6A_SCOPE.projectId, workspaceId: S6A_SCOPE.workspaceId };
+    // 121-109: these rows read the structural cards, so the project asks before every structural change; the
+    // factory default ("auto") would apply a proposal as it freezes and its card would never stay.
+    const asked = await staff.world.settings('structural-approval/save',
+      { projectId: S6A_SCOPE.projectId, value: { proposals: 'ask', repairs: 'ask' } });
+    if (asked.status !== 'ready') throw new Error(`S8C proposal world: structural-approval/save: ${JSON.stringify(asked)}`);
     const roleSpecLine = options.roleSpecLine === true
       ? await openRoleSpecAdviserLine(platform, ctx, staff) : null;
     // The executor source relations for the move variants: two real executor lines, one each.
