@@ -17,6 +17,7 @@ import type { PreparedQueryExecution, PreparedQueryManifestV1 } from '../../cont
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
 import type { ModelCallAccess, RunRef } from '../../contracts/dispatch.js';
 import { queryExecutionBindingOf, type QueryModelUsageV1, type QueryRunRef } from '../../contracts/query-job.js';
+import { unknownCallAdviceSubjectOfText } from '../../contracts/plan-round.js';
 import type { GoalRef } from '../../contracts/ledger.js';
 import type { HookPort, ToolCall } from '../../../vendor/coding-agent/dist/public-api.js';
 import { canonicalJson, sameJson as sameRef, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
@@ -57,6 +58,7 @@ import {
   answerSubmitNamesIn, createAnswerToolBarrier, createAnswerTools, type AnswerToolsHandle,
 } from './answer-tools.js';
 import { createNoteTools, NOTE_TOOL_NAMES, type NoteToolsHandle } from './note-tool.js';
+import { createWhiteboardTools, WHITEBOARD_TOOL_NAMES } from './whiteboard-tools.js';
 import type { RunningAdmissionGrant } from './model-admission.js';
 import type { NoteCheckPort, NoteWritePort } from '../work-graph/model/note-contracts.js';
 import type { QueryNoteAdmissionV1 } from '../work-graph/model/secretary-note-contracts.js';
@@ -310,6 +312,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       const projected = projectQueryConfiguration({
         host: configured.value, requested: binding.runtimeBudget, roleResolution: state.roleResolution,
         secretaryRound: manifest.request !== null, explorationRound,
+        execution: intentExecution, sessionRole: state.role,
       });
       if (projected.configurationRevision !== manifest.hostConfigurationRevision
         || !sameRef(projected.permissions, manifest.permissions)
@@ -391,6 +394,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         reviewSource: false,
         frozenSource: hasFileRead && currentAuthorization?.status === 'ready',
         materialTools: false,
+        goalBound: manifest.goal !== null,
         answerTools: shape,
         // The planning submit is part of the answer format, read back from the
         // same frozen pack the preparation wrote; the whole list is compared
@@ -399,7 +403,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           && manifest.promptSet.toolNames.includes('submit_plan_round'),
         owners: {
           mailbox: false, decisionMessages: false, applicationReceipt: false,
-          sessions: false, plans: false,
+          sessions: false, plans: true,
           graph: deps.graphContext !== undefined && deps.taskInputs !== undefined,
           notes: noteAdmission.class !== 'none', unknownCallReviews: false, commandRerunRequests: false,
           linkCheck: deps.notes?.check !== undefined,
@@ -423,9 +427,9 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         && frozenToolNames.every((name, index) => name === startToolNames.value[index]);
       if (!sameToolList) return rejected('forbidden', 'the prepared tool list no longer fits this Run');
 
-      // The Query grant may name the two read-only graph tools, `check_links`,
-      // the two platform web tools and, for a secretary round, `record_note`.
-      // Those are the ONLY coordination tools a Query ever injects; the
+      // The Query grant may name the two read-only graph tools, the two whiteboard
+      // reads (`query_task_graph`/`query_ready_tasks`) of a Goal round, `check_links`, the
+      // two platform web tools and, for a secretary round, `record_note`; the
       // effective final set is the Host grant ∩ Role ceiling ∩ Query read
       // ceiling already projected into `manifest.permissions.tools` by
       // `projectQueryConfiguration`. The note group exposes only the note names
@@ -435,20 +439,33 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       const grantedLinkCheckNames = LINK_CHECK_TOOL_NAMES.filter(name => manifest.permissions.tools.includes(name));
       const grantedWebNames = WEB_LOOKUP_TOOL_NAMES.filter(name => manifest.permissions.tools.includes(name));
       const noteNames: readonly string[] = NOTE_TOOL_NAMES.filter(name => frozenToolNames.includes(name));
+      const whiteboardNames: readonly string[] = WHITEBOARD_TOOL_NAMES.filter(name => frozenToolNames.includes(name));
       // The answer tools follow the frozen request kind, never the Host grant.
       const submitNames = answerSubmitNamesIn(frozenToolNames);
       // The exec review's history read follows the frozen answer shape too
       // (slice 9). Its Run comes only from the packet frozen in the original
-      // question, never from the model.
+      // question, never from the model. The adviser round's subject and its
+      // history Run come only from the platform-written second line; the record
+      // is keyed by its own Run, so the three ids are the review ref's.
       const historyNames: readonly string[] = EXECUTION_HISTORY_TOOL_NAMES.filter(name => frozenToolNames.includes(name));
+      const adviceSubject = shape === 'unknown_call_advice'
+        ? unknownCallAdviceSubjectOfText(record.job.job.intent.question) : null;
+      if (shape === 'unknown_call_advice' && adviceSubject === null) {
+        return rejected('invalid', 'the adviser round names no record subject');
+      }
       let subjectRunRef: RunRef | null = null;
       if (historyNames.length > 0) {
-        const packet = execReviewPacketOfText(record.job.job.intent.question);
-        if (packet.status !== 'ready') return packet;
-        subjectRunRef = packet.value.packet.subjectRunRef;
+        if (adviceSubject !== null) {
+          const { projectId, goalId, runId } = adviceSubject.reviewRef;
+          subjectRunRef = { aggregateType: 'Run', projectId, goalId, runId };
+        } else {
+          const packet = execReviewPacketOfText(record.job.job.intent.question);
+          if (packet.status !== 'ready') return packet;
+          subjectRunRef = packet.value.packet.subjectRunRef;
+        }
       }
-      // Only a secretary request round selects the two mailbox names and the
-      // two platform tools; every other Query's frozen list carries none.
+      // Only a secretary request round selects the two mailbox names; `create_member` and `read_requests` follow the
+      // frozen list (the adviser's planning round also keeps the first, 121-114; an exploration round the second).
       const secretaryMailboxNames: readonly string[] = manifest.request === null ? []
         : SECRETARY_QUERY_MAILBOX_TOOL_NAMES.filter(name => frozenToolNames.includes(name));
       const memberNames = frozenToolNames.includes(CREATE_MEMBER_TOOL_NAME) ? [CREATE_MEMBER_TOOL_NAME] : [];
@@ -475,7 +492,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         || grantedWebNames.length > 0
         || noteAdmission.class !== 'none' || submitNames.length > 0
         || secretaryMailboxNames.length > 0 || memberNames.length > 0 || readRequestNames.length > 0
-        || architectureNames.length > 0) {
+        || architectureNames.length > 0 || whiteboardNames.length > 0) {
         // The original query_run tool context (spec §4.1: tool inputs never
         // obtain the Host context/reader). The narrow history proxy separately
         // uses the ORIGINAL initiator's same-scope Host context for RT8 only.
@@ -536,10 +553,16 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
             ...((secretary || exploration) && deps.notes?.memory !== undefined ? { notes: deps.notes.memory } : {}),
             texts: toolTexts,
             ...(subjectRunRef === null ? {} : { subjectRunRef }),
-            // The reviewer reads history only through its own tool (slice 9).
-            ...(shape === 'exec_review' ? { lookHistory: false as const } : {}),
+            // These rounds read history only through their own tool (slice 9).
+            ...(subjectRunRef !== null ? { lookHistory: false as const } : {}),
           });
         }
+        // The whiteboard reads read this Query's frozen Goal; the frozen list names them only when there is one.
+        const whiteboardTools = whiteboardNames.length === 0 || manifest.goal === null ? null : createWhiteboardTools({
+          plans: deps.plans, context: toolContext, goalRef: manifest.goal.ref,
+          requestIdForCall: (call: Readonly<ToolCall>): string => queryToolRequestIdForCall(queryRunRef, call),
+          texts: toolTexts,
+        });
         const linkCheckTools = grantedLinkCheckNames.length > 0
           ? createLinkCheckTools({ context: toolContext, check: deps.notes!.check!, texts: toolTexts })
           : null;
@@ -591,15 +614,19 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         let memberTools: CreateMemberToolsHandle | null = null;
         if (memberNames.length > 0) {
           if (memberPort === undefined) {
-            return rejected('unsupported', 'the secretary Query selected create_member but no member-creation owner is bound');
+            return rejected('unsupported', 'the Query selected create_member but no member-creation owner is bound');
           }
           memberTools = createMemberTools({
             members: memberPort,
             context: toolContext,
-            caller: {
-              kind: 'secretary_query', session: state.sessionRef, run: queryRunRef,
-              round: record.job.ref, requestRoot: manifest.request!.requestRoot,
-            },
+            // A request round is the secretary's; the only other Query that keeps the name is the adviser's
+            // planning round (121-114).
+            caller: manifest.request === null
+              ? { kind: 'adviser_query', session: state.sessionRef, run: queryRunRef }
+              : {
+                  kind: 'secretary_query', session: state.sessionRef, run: queryRunRef,
+                  round: record.job.ref, requestRoot: manifest.request.requestRoot,
+                },
             requestIdForCall: (call: Readonly<ToolCall>): string => queryToolRequestIdForCall(queryRunRef, call),
             texts: toolTexts,
           });
@@ -637,10 +664,12 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
             acceptedCallIds: acceptedAnswerCallIds,
             names: submitNames,
             texts: toolTexts,
+            ...(adviceSubject === null ? {} : { subject: adviceSubject }),
           });
         }
         const names = [
-          ...grantedGraphNames, ...historyNames, ...grantedLinkCheckNames, ...grantedWebNames, ...noteNames, ...architectureNames,
+          ...grantedGraphNames, ...historyNames, ...grantedLinkCheckNames, ...grantedWebNames, ...whiteboardNames,
+          ...noteNames, ...architectureNames,
           ...secretaryMailboxNames,
           ...memberNames, ...readRequestNames, ...submitNames,
         ];
@@ -651,6 +680,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
               ...(graphTools?.create(workspace) ?? []),
               ...(linkCheckTools?.create(workspace) ?? []),
               ...(webTools?.create() ?? []),
+              ...(whiteboardTools?.create(workspace) ?? []).filter(definition => whiteboardNames.includes(definition.name)),
               ...(noteTools?.create(workspace) ?? []).filter(definition => noteNames.includes(definition.name)),
               ...(architectureTools?.create(workspace) ?? []),
               ...(mailboxTools?.create(workspace) ?? []).filter(definition => secretaryMailboxNames.includes(definition.name)),
@@ -996,6 +1026,11 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           ...(historyDecision.sourceSessionId === null ? {} : { sourceSessionId: historyDecision.sourceSessionId }) }
         : { version: 1 as const, mode: 'current_turn' as const };
 
+      // SHT-2 (121-112): only a round that actually has the read-only command tool registers, so no other Query gains
+      // a barrier or a hook it does not use.
+      const commandWatch = readonlyCommandTool === undefined ? undefined : deps.runningCommands?.watch({
+        run: { kind: 'query', queryRunRef }, workspaceId: queryRunRef.workspaceId, sessionRef: state.sessionRef });
+      const modelBarrier = commandWatch?.barrier(answerBarrier) ?? answerBarrier;
       let thrown: unknown;
       await commandRoute?.open();
       try {
@@ -1021,13 +1056,19 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
               })),
           sessionContext,
           executionIdentity: { runId: kernel.runId, turnId: kernel.turnId },
-          controlHooks: hasFileRead ? [enteredHook, toolPathHook] : [enteredHook],
-          ...(answerBarrier === undefined ? {} : { toolGroupBarrier: answerBarrier }),
+          controlHooks: [
+            enteredHook,
+            ...(hasFileRead ? [toolPathHook] : []),
+            ...(commandWatch === undefined ? [] : [commandWatch.hook]),
+          ],
+          ...(modelBarrier === undefined ? {} : { toolGroupBarrier: modelBarrier }),
         });
       } catch (error) {
         if (error instanceof RuntimeModelCallRejected) enteredFailure ??= rejected(error.code, error.message);
         else thrown = error;
       } finally {
+        // A cancelled or failed round never passes the after_group barrier; the watch drops what is left, before the proxy (its close removes the socket file and can throw).
+        commandWatch?.end();
         await commandRoute?.close();
       }
       if (enteredFailure !== undefined) return enteredFailure;

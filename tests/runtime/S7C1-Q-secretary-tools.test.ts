@@ -43,9 +43,10 @@ const SECRETARY_TOOLS = [
 const SECRETARY_ONLY = [
   'send_session_message', 'withdraw_session_message', 'create_member', 'read_requests',
 ] as const;
+// `propose_future_plan` and the mailbox reads stay stripped; the two whiteboard reads follow the Goal.
 const STRIPPED = [
   'write', 'edit', 'shell', 'read_session_inbox', 'read_session_message', 'read_session_message_body',
-  'query_task_graph', 'query_ready_tasks', 'propose_future_plan',
+  'propose_future_plan',
   'ack_session_message', 'respond_session_message',
 ] as const;
 
@@ -127,7 +128,7 @@ describe('Q-secretary-tools-service: the secretary request round', () => {
       ] });
 
     // The Runtime's own offered list: the six lift for this secretary round,
-    // and the read-only/whiteboard names stay stripped.
+    // and `propose_future_plan` and the mailbox reads stay stripped.
     const offered = toolNames(round.requests[0]);
     expect(offered).toEqual(expect.arrayContaining([...SECRETARY_ONLY]));
     for (const name of STRIPPED) expect(offered).not.toContain(name);
@@ -340,3 +341,45 @@ describe('AGTP-9: a Query round cannot ask to wait after sending', () => {
   });
 });
 
+/* AGTX-5 (AGT-X §3): a Goal-bound Query round builds the two whiteboard reads and keeps the plan writer out. Today red
+ * at the offered-tools assertion: the ceiling still forbids both reads, so the first request's tools lack them. Green
+ * after the package lands: the ceiling leaves them and the list is frozen with goalBound true. Named mutations: ① the
+ * reads back in the ceiling → red; ② propose_future_plan out of it → red; ③ query-execution builds no whiteboard
+ * factory → the tool list and its products disagree, the round cannot start → red. */
+describe('AGTX-5: a Goal-bound secretary round reads the adopted Plan', () => {
+  it('offers query_task_graph and query_ready_tasks, not propose_future_plan, and the read answers the Plan', async () => {
+    const options: S6AWorldOptions & { secretaryTools: readonly string[] } =
+      { backend: 'memory', secretaryTools: SECRETARY_TOOLS, extraHostOptions: { requestDriver: 'off' } };
+    const { world } = await openS7B2RoundWorld(options);
+    worlds.push(world);
+    await adoptS6BPlan(s6aCardsWorkspace(world, S6A_SCOPE), world.goals.first, { label: 'agtx-5',
+      taskIds: ['agtx-5-task'], role: S6A_WORK_ROLE.templateId });
+    const round = await runRound(world, { label: 'agtx-5', goalId: world.goals.first.goalId, first: [
+      { kind: 'calls', calls: [{ callId: 'agtx-5-graph', name: 'query_task_graph', args: {} }] },
+      { kind: 'text', text: secretaryAnswer({ body: 'AGTX-5 answer' }) },
+    ] });
+    const offered = toolNames(round.requests[0]);
+    expect(offered).toEqual(expect.arrayContaining(['query_task_graph', 'query_ready_tasks']));
+    expect(offered).not.toContain('propose_future_plan');
+    const graph = jsonOf(round.requests, 'agtx-5-graph') as { status: string; value?: { tasks?: readonly { ref: { taskId: string } }[] } };
+    expect(graph).toMatchObject({ status: 'ready' });
+    expect(graph.value?.tasks?.map(task => task.ref.taskId)).toContain('agtx-5-task');
+  });
+});
+
+/* AGTX-6 (AGT-X §3): without a Goal there is no Plan to read, so the two whiteboard reads are not named. Green today
+ * because the Query ceiling still strips both. Green after the package lands because goalBound is false without a
+ * Goal. Named mutation: remove the goalBound condition → the names are listed but cannot be built, the round cannot start. */
+describe('AGTX-6: a request round without a Goal reads no whiteboard', () => {
+  it('offers neither query_task_graph nor query_ready_tasks', async () => {
+    const options: S6AWorldOptions & { secretaryTools: readonly string[] } =
+      { backend: 'memory', secretaryTools: SECRETARY_TOOLS, extraHostOptions: { requestDriver: 'off' } };
+    const { world } = await openS7B2RoundWorld(options);
+    worlds.push(world);
+    const round = await runRound(world, { label: 'agtx-6', goalId: null, first: [
+      { kind: 'text', text: secretaryAnswer({ body: 'AGTX-6 answer' }) },
+    ] });
+    const offered = toolNames(round.requests[0]);
+    for (const name of ['query_task_graph', 'query_ready_tasks']) expect(offered).not.toContain(name);
+  });
+});

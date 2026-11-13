@@ -20,8 +20,9 @@ CREATE TABLE IF NOT EXISTS knowledge_problem(notice_id TEXT, item_no INTEGER, li
 
 /** Copies kept per (line, path), besides those a recovery item points at. */
 const KEPT_PER_KEY = 20;
-/** A copy a recovery item points at. */
-const REFERENCED = `EXISTS (SELECT 1 FROM knowledge_recovery r WHERE r.kind = 'reverted' AND r.line_ref = snapshot_ref.line_ref
+/** A copy a recovery item points at: only an item that points at a snapshot has a `taken_at` (a `reverted` item, or an
+ *  `unreadable` one whose source is a snapshot). */
+const REFERENCED = `EXISTS (SELECT 1 FROM knowledge_recovery r WHERE r.line_ref = snapshot_ref.line_ref
   AND r.path = snapshot_ref.path AND r.taken_at = snapshot_ref.taken_at)`;
 
 type Row = Record<string, unknown>;

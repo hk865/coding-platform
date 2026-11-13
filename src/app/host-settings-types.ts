@@ -80,6 +80,13 @@ export type HostSettingsSnapshot = {
    * `plan-loop-limits/save`.
    */
   planLoopLimits: { saved: PlanLoopLimitsV1 | null; effective: PlanLoopLimitsV1; defaults: PlanLoopLimitsV1 };
+  /**
+   * SHT-2 (121-112): the project review line in minutes as stored (`saved:
+   * null` means none was saved), the effective value (`saved ?? 60`) and the
+   * default. The Host installs it at once; a command already over the old line
+   * is not re-noticed.
+   */
+  commandReviewLine: { saved: number | null; effective: number; default: number };
 };
 /**
  * PL/§10.3: the whole `plan-loop-limits` setting. `null` clears the saved table
@@ -109,6 +116,12 @@ export type SaveResourceCapSettings = { memoryMaxMiB: number | null; tasksMax: n
  * must be an integer 1..`MAX_WORK_RUN_TOKEN_BUDGET`.
  */
 export type SaveWorkRunTokenBudgetSettings = { workRunTokenBudget: number | null };
+/**
+ * SHT-2 (121-112): the whole project review-line setting, in minutes. `null`
+ * clears the stored value and restores `DEFAULT_COMMAND_REVIEW_LINE_MINUTES`;
+ * any other value must be a positive safe integer (no upper bound).
+ */
+export type SaveCommandReviewLineSettings = { commandReviewLineMinutes: number | null };
 /**
  * C8 / LA-6 Host setting `automation` (route `automation/save`): the whole
  * policy, `autoReworkLimit` an integer 0..10 (`MAX_AUTO_REWORK_LIMIT`; 0 allows
@@ -206,6 +219,7 @@ export type SettingsRoutes = {
   'automation/save': { input: SaveAutomationSettings; value: HostSettingsSnapshot };
   'resource-caps/save': { input: SaveResourceCapSettings; value: HostSettingsSnapshot };
   'run-budget/save': { input: SaveWorkRunTokenBudgetSettings; value: HostSettingsSnapshot };
+  'command-review/save': { input: SaveCommandReviewLineSettings; value: HostSettingsSnapshot };
   'plan-loop-limits/save': { input: SavePlanLoopLimitsSettings; value: HostSettingsSnapshot };
   'knowledge-local': { input: SaveKnowledgeLocalSettings; value: HostSettingsSnapshot };
   'prompts/packs/list': { input: Record<string, never>; value: PromptPackListV1 };

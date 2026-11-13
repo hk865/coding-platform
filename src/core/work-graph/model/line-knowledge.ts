@@ -17,7 +17,7 @@ import type {
 } from '../../../contracts/note.js';
 import type { NotifyProjectInputV1, ProjectNoticeV1 } from '../../../contracts/role-lines.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
-import type { DecodeResult, EncodedDomainEvent, GoalRecordTransactionPort, StoreResult } from '../../record-store/ports.js';
+import type { DecodeResult, EncodedDomainEvent, EncodedRecord, GoalRecordTransactionPort, StoreResult } from '../../record-store/ports.js';
 import type { KnowledgeFileKind, KnowledgeIndex, KnowledgeIndexTx } from '../../record-store/knowledge-index-ports.js';
 import type { KnowledgeSnapshots } from '../../record-store/knowledge-snapshot-ports.js';
 
@@ -161,6 +161,12 @@ export interface LineKnowledge {
    */
   commit(message: string | null): Promise<StoreResult<KnowledgeCommitResult>>;
   /**
+   * KC-2 (121-106 ④): this line's HEAD version of one knowledge file, by the blob `readKnowledgeFiles` saw there
+   * (`headBlob`), with the time of the last commit that changed it. Not git is `unsupported`; a blob git cannot give
+   * (gone, over 1 MiB) or a git failure is `unavailable`.
+   */
+  readHeadFile(path: string, blobSha: string): Promise<StoreResult<{ bytes: Uint8Array; committedAt: string }>>;
+  /**
    * L3 ([2C2-01]): this line's pin from its working-tree bytes, read once with git: the content hash of
    * `architecture.json` and `modules/*.json`, HEAD, and whether those files are all committed; when they are not (or
    * the folder is not git), the smallest fields of `usedModules` (project view, all on this line) from its own files.
@@ -197,6 +203,17 @@ export type KnowledgeFileRules = {
    */
   knowledgeFileOfEvent(event: EncodedDomainEvent, scope: KnowledgeLineScope, target: { path: string; moduleId: string | null },
     current: Uint8Array | null): DecodeResult<Uint8Array | null>;
+  /** KC-2: whether these bytes read as the knowledge file at `path` on this line: the indexer's own parse, one file, not the graph. */
+  readsAsKnowledge(scope: KnowledgeLineScope, path: string, bytes: Uint8Array): boolean;
+  /** KC-2: the record key of a note file's head (`NoteHead`); null for an architecture or module file. */
+  noteHeadKeyOf(projectId: string, path: string): string | null;
+  /**
+   * KC-2 (121-106 ④): a knowledge file from the records alone, a bad file's third source. architecture.json or the module
+   * whose raw id is the target's is this line's part of `architecture` (the rule `knowledgeFileOfEvent` uses, without an
+   * event); a note file is its head with no file as a base (ruling 4-13, only here). Null when the record has none.
+   */
+  recordedFileOf(scope: KnowledgeLineScope, target: { path: string; moduleId: string | null },
+    record: { architecture: KnowledgeRecordedArchitecture | null; noteHead: EncodedRecord | null }): DecodeResult<Uint8Array | null>;
 };
 /** The dependencies one knowledge write uses. */
 export type KnowledgeWriteDeps = {

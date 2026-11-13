@@ -4,9 +4,9 @@
  *
  * It is a read model, not an owner: one `GoalExecutedFilesPort` read (all of the
  * Goal's Runs and RunActivity at once, never one `graph/detail` per task), one
- * current-catalog read projected onto the bound workspace, then every rule in
- * memory. The facts are `RunActivity.changedFiles`: not the plan's
- * `plannedFiles`, and not the workspace's uncommitted files.
+ * project-scope Goal read for its own workspace (104-1) and one current-catalog
+ * read projected onto that workspace, then every rule in memory. The facts are
+ * `RunActivity.changedFiles`: not the plan's `plannedFiles`, and not the workspace's uncommitted files.
  */
 import { mappingsOf, ownershipRuleOf, type AdoptedArchitecture } from '../../../contracts/architecture-catalog.js';
 import type { ArchitectureChangeScopeV1 } from '../../../contracts/architecture-search.js';
@@ -18,9 +18,13 @@ import { catalogForWorkspace } from '../../../contracts/workspace-catalog.js';
 import type { ArchitectureCatalogPort } from '../architecture/catalog-contracts.js';
 import { mapExecutedFilesToModules } from '../model/architecture-footprint.js';
 import type { GoalExecutedFilesPort } from '../model/decision-contracts.js';
+import type { PlanTaskPort } from '../model/plan-contracts.js';
+import { hostContextIn } from '../tasks/plan-lineage.js';
 
 export type ArchitectureChangeScopeDependencies = {
   executedFiles: Pick<GoalExecutedFilesPort, 'readGoalExecutedFiles'>;
+  /** 104-1: the Goal is read in the project, and a Goal of another workspace is read in its own workspace. */
+  goals: Pick<PlanTaskPort, 'queryGoal'>;
   catalog: Pick<ArchitectureCatalogPort, 'readArchitectureRevision'>;
   /** The project's main workspace, as `architecture/work-scope` takes it; absent
    *  treats the read workspace as main. */
@@ -90,9 +94,12 @@ export function createArchitectureChangeScopeReader(
       return { status: 'rejected', code: 'forbidden',
         reason: 'architecture change scope requires a bound project/workspace context' };
     }
-    // The port checks that the Goal is in the bound project and workspace
-    // (`forbidden` otherwise) and that it exists (`not_found`).
-    const executed = await deps.executedFiles.readGoalExecutedFiles(ctx, { goalRef: input.goalRef });
+    // 104-1: reading platform data is not limited to the bound workspace. The Goal's executed files are its own
+    // workspace's paths, so they are read in that workspace and projected onto its part of the catalog.
+    const goal = await deps.goals.queryGoal(ctx, input.goalRef, { scope: 'project' });
+    if (goal.status !== 'ready') return goal;
+    const goalWorkspaceId = goal.value.goal.workspaceRef.workspaceId;
+    const executed = await deps.executedFiles.readGoalExecutedFiles(hostContextIn(ctx, goalWorkspaceId), { goalRef: input.goalRef });
     if (executed.status !== 'ready') return executed;
     // An unreadable fact is a failed read, never zero changed files.
     if (executed.value.availability === 'not_available') {
@@ -102,10 +109,10 @@ export function createArchitectureChangeScopeReader(
     let catalog: AdoptedArchitecture | null = null;
     if (revision.status === 'ready') catalog = revision.value.catalog.catalog;
     else if (revision.status !== 'not_found') return revision;
-    // The Runs changed this workspace's files: the project catalog is projected
-    // onto the same workspace before any ownership comparison.
+    // The Runs changed the Goal's workspace's files: the project catalog is
+    // projected onto that workspace before any ownership comparison.
     if (catalog !== null) {
-      let mainWorkspaceId = workspaceId;
+      let mainWorkspaceId = goalWorkspaceId;
       if (deps.mainWorkspaceOf !== undefined) {
         const main = await deps.mainWorkspaceOf(ctx.projectId);
         // A failed main read refuses the read as `unavailable`; a ready `null`
@@ -114,9 +121,9 @@ export function createArchitectureChangeScopeReader(
           return { status: 'rejected', code: 'unavailable',
             reason: main.status === 'rejected' ? main.reason : 'the main workspace cannot be read' };
         }
-        mainWorkspaceId = main.value ?? workspaceId;
+        mainWorkspaceId = main.value ?? goalWorkspaceId;
       }
-      catalog = catalogForWorkspace(catalog, workspaceId, mainWorkspaceId);
+      catalog = catalogForWorkspace(catalog, goalWorkspaceId, mainWorkspaceId);
     }
     // No adopted catalog: every file is listed with no module.
     const scope = changeScopeOf(catalog ?? { modules: [], dependencies: [], requireDag: true },

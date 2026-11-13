@@ -7,7 +7,8 @@
  * an approved/automatic request creates the child line through the injected
  * line-creation port in the Host's trusted system context, and a secretary
  * request first proves the adopted Plan, a responsible adviser and the request's
- * current owner. The child identity is the operation's own `<operationId>:create`
+ * current owner; an adviser's planning round proves the adopted Plan and that its
+ * line is the Task's responsible adviser. The child identity is the operation's own `<operationId>:create`
  * and the child Session's registration commit carries `MemberCreated`; the
  * receipt of that commit is the official proof receipt a message may cite.
  *
@@ -60,6 +61,7 @@ import { matchAutonomyRule } from '../state/autonomy-rules.js';
 import { openLimitOf, type createAllocationRead } from '../sessions/allocation-read.js';
 import type { AutonomyRulePort, AutonomyRuleViewV1 } from './autonomy-rule-service.js';
 import type { ResponsibilityRecipientPort } from './responsibility-recipient.js';
+import type { PlanningQueryRunPort } from './planning-query-run.js';
 import { commandIdentity, commandKeys, executeWriteCommand } from '../persistence/command-executor.js';
 import {
   agentActorOf, toolCommitLookupResult, toolCommitLookupUnknownTool, toolCommitRequestId,
@@ -162,6 +164,9 @@ export type MemberServiceDependenciesV1 = {
   lines: MemberLineCreationPortV1;
   requests: RequestOwnerReadPort;
   secretaryRuns: SecretaryQueryRunPort;
+  /** 121-114: the one planning-round resolver (`planning-query-run.ts`); an adviser's planning round names its line.
+   *  Absent leaves the adviser Query caller `unsupported`. */
+  planningRuns?: PlanningQueryRunPort;
   duties: DutyRecipientPort;
   /** L42/L35 (book :846): the one responsible-adviser read behind both checks; `asker: null` keeps out the creator
    *  and the person, so a `human` answer is `invalid/no_responsible_adviser`. */
@@ -368,7 +373,7 @@ type MemberRuleFactsV1 = {
 type RequestFacts =
   | (RequestFactsBase & { kind: 'host_pick'; ceiling?: undefined })
   | (RequestFactsBase & {
-      kind: 'work' | 'secretary';
+      kind: 'work' | 'secretary' | 'adviser';
       goal: GoalSnapshot;
       reused: SessionRef | null;
       ceiling?: MemberDelegationCeilingV1;
@@ -380,7 +385,7 @@ type RequestFacts =
 type ResolvedRequestCaller =
   | { kind: 'host_pick'; caller: MemberCallerV1 }
   | {
-      kind: 'work' | 'secretary';
+      kind: 'work' | 'secretary' | 'adviser';
       caller: MemberCallerV1;
       goal: GoalSnapshot;
       plan: PlanRevisionSnapshot;
@@ -501,6 +506,21 @@ export function createMemberService(deps: MemberServiceDependenciesV1): MemberSe
     return null;
   }
 
+  /** The Task's Goal and its adopted Plan, both in the caller's workspace (the Work and adviser callers' one read). */
+  async function adoptedPlanWindow(task: TaskTriple, workspace: WorkspaceScope):
+    Promise<{ goal: GoalSnapshot; plan: PlanRevisionSnapshot } | CoreRejection> {
+    const window = await readGoalPlanWindow(deps.records, goalRefFor(task.projectId, task.goalId));
+    if (window.status !== 'ready') {
+      return window.code === 'not_found'
+        ? rejected('invalid', window.reason) : rejected(window.code, window.reason);
+    }
+    const plan = window.plan;
+    if (plan === null) return rejected('invalid', 'the member Task is not in the adopted Plan');
+    const planProblem = adoptedPlanProblem(window.goal, plan, task, workspace);
+    if (planProblem !== null) return planProblem;
+    return { goal: window.goal, plan };
+  }
+
   async function resolveRequestCaller(
     ctx: CoreCallContext, input: MemberRequestInputV1, task: TaskTriple, workspace: WorkspaceScope,
   ): Promise<ResolvedRequestCaller | CoreRejection> {
@@ -520,19 +540,36 @@ export function createMemberService(deps: MemberServiceDependenciesV1): MemberSe
       }
       const work = await readWorkCaller(ctx, input.caller);
       if ('status' in work) return work;
-      const window = await readGoalPlanWindow(deps.records, goalRefFor(task.projectId, task.goalId));
-      if (window.status !== 'ready') {
-        return window.code === 'not_found'
-          ? rejected('invalid', window.reason) : rejected(window.code, window.reason);
-      }
-      const plan = window.plan;
-      if (plan === null) return rejected('invalid', 'the member Task is not in the adopted Plan');
-      const planProblem = adoptedPlanProblem(window.goal, plan, task, workspace);
-      if (planProblem !== null) return planProblem;
+      const adopted = await adoptedPlanWindow(task, workspace);
+      if ('status' in adopted) return adopted;
       return {
-        kind: 'work', caller: structuredClone(input.caller), goal: window.goal, plan,
-        guards: [goalGuard(window.goal), planGuard(plan), work.guard], ceiling: work.ceiling,
+        kind: 'work', caller: structuredClone(input.caller), goal: adopted.goal, plan: adopted.plan,
+        guards: [goalGuard(adopted.goal), planGuard(adopted.plan), work.guard], ceiling: work.ceiling,
         delegation: work.delegation,
+      };
+    }
+    if (input.caller.kind === 'adviser_query') {
+      if (deps.planningRuns === undefined) {
+        return rejected('unsupported', 'the adviser planning round resolver is not bound');
+      }
+      // The caller's identity is the stored, entered planning round its QueryRun principal names (the note owner's
+      // resolver); the Runtime-supplied session and run are not used.
+      const round = await deps.planningRuns.resolvePlanningQueryRun(ctx);
+      if (round.status !== 'ready') return round;
+      const adopted = await adoptedPlanWindow(task, workspace);
+      if ('status' in adopted) return adopted;
+      // Coordination (121-114): only the line that answers for the Task's Goal (L42: the Goal's adviser, else its
+      // module's region adviser) builds that Task's executor line. A responsible adviser is always an adviser line.
+      const adviser = await responsibleAdviserOf(ctx, task, adopted.plan);
+      if (adviser !== null && 'status' in adviser) return adviser;
+      if (adviser === null || plainSessionRefKey(adviser) !== plainSessionRefKey(round.value.session)) {
+        return rejected('forbidden', 'the round line is not the responsible adviser of the member Task');
+      }
+      return {
+        kind: 'adviser',
+        caller: { kind: 'adviser_query', session: structuredClone(round.value.session),
+          run: structuredClone(round.value.run) },
+        goal: adopted.goal, plan: adopted.plan, guards: [goalGuard(adopted.goal), planGuard(adopted.plan)],
       };
     }
     if (ctx.principal.kind !== 'query_run') {
@@ -871,9 +908,10 @@ export function createMemberService(deps: MemberServiceDependenciesV1): MemberSe
     ctx: CoreCallContext, operation: MemberOperationRecordV1, ceiling?: MemberDelegationCeilingV1,
   ): Promise<MemberLineCreationInputV1 | CoreRejection> {
     const caller = operation.action.input.caller;
-    // 121-109: an executor line an adviser builds takes the Host's executor grant (tools, write scope), not the
-    // adviser's own read-only envelope; like a secretary-built line it carries no ceiling and may not create members.
-    let coordinatorBuilt = caller.kind === 'secretary_query';
+    // 121-109: an executor line an adviser builds (in its Work Run or, 121-114, its planning round) takes the Host's
+    // executor grant (tools, write scope), not the adviser's own read-only envelope; like a secretary-built line it
+    // carries no ceiling and may not create members.
+    let coordinatorBuilt = caller.kind === 'secretary_query' || caller.kind === 'adviser_query';
     if (caller.kind === 'work') {
       const card = await deps.sessions.readSession(systemContext(ctx), caller.session, 'project');
       if (card.status !== 'ready') {

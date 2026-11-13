@@ -51,10 +51,13 @@ describe.each(BACKENDS)('%s', (_, open) => {
     expect(kept.map(ref => new TextDecoder().decode(ref.content))).toEqual(Array.from({ length: 20 }, (__, i) => `v${i + 3}`));
   });
 
-  it('KS2 a snapshot a recovery item names survives the committed-file prune, and goes once the item is gone', () => {
+  // U5 (KC-2, 计划 :136、:162): a snapshot either kind of recovery item names survives the prune; today the `unreadable`
+  // entry is red at the second `listRefs` (REFERENCED only knows `reverted`, so `deletePath` drops it).
+  it.each(['reverted', 'unreadable'] as const)('KS2 a snapshot a recovery item names survives the committed-file prune, '
+    + 'and goes once the item is gone: %s', kind => {
     const store = opened();
     store.put(LINE, MODULE_A, takenAt(5), utf8('w'));
-    store.recordRecovery([{ noticeId: 'kls2c-ks2', itemNo: 1, kind: 'reverted', writeId: null, lineRef: LINE,
+    store.recordRecovery([{ noticeId: 'kls2c-ks2', itemNo: 1, kind, writeId: null, lineRef: LINE,
       path: MODULE_A, takenAt: takenAt(5), expectedBlob: null }]);
     store.deletePath(LINE, MODULE_A);
     expect(store.listRefs(LINE, MODULE_A).map(ref => ref.takenAt)).toEqual([takenAt(5)]);

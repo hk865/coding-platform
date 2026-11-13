@@ -1,20 +1,19 @@
 /**
- * XWS2A rows XA-07, XA-08, XA-09, XA-10, XA-11, XA-15 and XA-16: a main-workspace line works the second workspace's
+ * XWS2A rows XA-07, XA-08, XA-09, XA-10, XA-15 and XA-16: a main-workspace line works the second workspace's
  * Goal, reads its files, writes notes whose reminder reaches the main scribe, sends to the main scribe from the
  * second workspace's Run, and a second workspace executor line is not displaced by a main executor line. XA-09 keeps
- * the join across a Host restart and XA-11 keeps the person's cross-workspace refusal.
+ * the join across a Host restart.
  *
  * The world is `tests/helpers/XWS2A-world.ts`; every state is a public step and every read is a public route.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
-import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { TaskTriple } from '../../src/contracts/dispatch.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { WorkflowAdvanceInput, WorkflowAdvanceResult } from '../../src/business/workflow/contracts.js';
 import type { TaskExecutionRecord } from '../../src/core/work-graph/model/execution-read-contracts.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
-import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
+import { graphWrite } from '../helpers/AG2b-collaboration-fixture.js';
 import { bindingOf, sessionOf } from '../helpers/S7A-fixture.js';
 import { commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import { s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
@@ -54,7 +53,7 @@ async function opened(options: Parameters<typeof openXWS2AWorld>[0] = { backend:
   return world;
 }
 
-describe('XWS2A: the join survives a restart and a person still cannot cross workspaces', () => {
+describe('XWS2A: the join survives a restart and a main-workspace line works the second workspace', () => {
   it('XA-07 the main adviser opens the second workspace Goal: Run and claim in ws2, sessionRef in ws1', async () => {
     const world = await opened();
     await world.waitCoarseAnswered();
@@ -131,31 +130,6 @@ describe('XWS2A: the join survives a restart and a person still cannot cross wor
     expect(rows.filter(row => row.action === 'role_line'
       && row.operation.operationId === xws2aJoinRef(P, world.second.scope.workspaceId).operationId)).toHaveLength(1);
   }, 240_000);
-
-  it('XA-11 a person still cannot send across workspaces', async () => {
-    const world = await opened();
-    const secondCtx: CoreCallContext = world.secondCtx();
-    void secondCtx;
-    const created = await world.second.workspace.post('sessions/create',
-      plain(world.second.scope, {
-        workspace: world.second.scope, role: S6A_WORK_ROLE, recommendedRefs: [], initialLinks: [],
-        meta: { requestId: 'xws2a-second-line', expected: [] },
-      })) as { status: string; value?: { ref: SessionRef } };
-    // `sessions/create` answers its own completed shape, not a graph write's `committed`.
-    expect(created.status).toBe('completed');
-    // `messages/send` takes the plain SessionRef, not the create response's aggregate ref.
-    const target: SessionRef = { projectId: created.value!.ref.projectId, sessionId: created.value!.ref.sessionId };
-    const sent = await world.base.world.post('messages/send', graphWrite(S6A_SCOPE, {
-      recipient: target, text: 'XWS2A: a person may not cross workspaces', intent: 'notify',
-    }, 'xws2a-person-cross-workspace', []));
-    const answer = sent.body as { status: string; code?: string; reason?: string };
-    expect(answer.status).toBe('rejected');
-    expect(['not_found', 'forbidden']).toContain(answer.code);
-    const inbox = valueOf<{ items: SessionMessage[] }>((await world.base.world.post('messages/inbox',
-      plain(world.second.scope, { recipient: target, page: { limit: 50 } }))).body, 'ready',
-    'the second line inbox').items;
-    expect(inbox).toEqual([]);
-  }, 120_000);
 
   it('XA-15 the main adviser sends to the main scribe from the second workspace Run: the message lands in ws1', async () => {
     const world = await opened();

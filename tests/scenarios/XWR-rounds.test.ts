@@ -20,6 +20,13 @@
  * (the line's newest Work gives way to the named Goal), R6 a ready B Task. The line answers through B's Query and
  * keeps no B claim (B's `sessions/executions` of the line; a claim lives with its Task's Goal). Mutation: the
  * `intervention.ts:174` `planningOnly` back to `planning` → R5 the post-adoption claim, R6 the existing-Task claim.
+ * X1 (XWR-ON): the joined workspace's Goal is the main adviser's responsibility; its second same-module Work opens the
+ * module gate, whose note request must reach that adviser in A while the planning Query and the module note stay in B.
+ * Red today at (a): the gate's recipient read runs in the Goal's workspace (`create-platform.ts:3637-3639`), where no
+ * role line lives, so the gate saves `noteRequest: 'none'` and no round starts. After the package the recipient is
+ * L35's Goal adviser (`lateRecipients.resolveResponsibilityRecipient`), the Host offers the system action_request to
+ * the idle main line, the null-answer-shape Query reads the source message across the two workspaces, and
+ * `record_note` writes the `second-mod` convention. Mutations ①-④ are listed at X1's own comment.
  */
 import { afterEach, expect, it, vi } from 'vitest';
 import type { SessionRef, WorkspaceScope } from '../../src/contracts/core/identity.js';
@@ -27,8 +34,11 @@ import type { SessionMessageRef } from '../../src/contracts/core/session-message
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import { interventionPlanningQueryRefs } from '../../src/contracts/query-job.js';
+import type { WorkflowAdvanceResult } from '../../src/business/workflow/contracts.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { PlanProposal } from '../../src/core/work-graph/model/plan-contracts.js';
+import type { ModuleOverlapGateV1 } from '../../src/core/work-graph/persistence/module-overlap-gate-codecs.js';
+import type { QueryJobRecord } from '../../src/core/work-graph/queries/contracts.js';
 import { sessionMessageRefKey } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { planProposalIdFor } from '../../src/core/work-graph/tasks/plan-service.js';
 import * as mailboxModule from '../../src/core/work-graph/communication/mailbox-service.js';
@@ -44,7 +54,8 @@ import { withConfiguredHost } from '../helpers/S7C-member-fixture.js';
 import { linkS7D2Scopes, runS7D2Work } from '../helpers/S7D2-role-line-world.js';
 import { openS9ReviewLine, s9ReviewerBinding } from '../helpers/S9-review-fixture.js';
 import {
-  adoptSecondPlan, openXWS2AOtherProject, openXWS2AWorld, refineRound, sendRoundOf, type XWS2AWorld,
+  adoptSecondPlan, driveSecondWorkflow, openXWS2AOtherProject, openXWS2AWorld, refineRound, sendRoundOf,
+  XWS2A_MODULE_ID, xws2aModuleInProject, type XWS2AWorld,
 } from '../helpers/XWS2A-world.js';
 
 const closers: Array<() => Promise<void>> = [];
@@ -306,3 +317,132 @@ it('R8 an answer ref of another project on the same Host is forbidden; the same 
   expect(await respond(answerRef, 'xwr-r8-same')).not.toMatchObject({
     status: 'rejected', reason: 'the Query answer ref is outside the bound project' });
 }, 300_000);
+
+/**
+ * X1 (XWR-ON draft §3; MVP-BEHAVIOR:331; O4b, o4b2 ruling 2): a joined workspace's Goal has the main adviser as its
+ * responsible adviser, and its second same-module Work Task opens the module gate. The gate asks that adviser, the
+ * Host offers the system `action_request` to the main line, the planning Query (whose answer shape is null) reads the
+ * source message across the workspaces, the adviser writes the module convention, and the gate stops blocking.
+ * Red today at (a): `create-platform.ts:3637-3639` resolves the recipient in the Goal's workspace, where role lines do
+ * not live, so the gate saves `noteRequest: 'none'` / `{ recipient: null, reason: 'no_adviser_or_secretary' }` and no
+ * round starts. The rest (b)-(e) cannot be reached until the recipient is the Goal's L35 adviser.
+ * Named mutations (§3): ① the recipient back to the workspace duty read -> (a) (this is today's state);
+ * ② `create-platform.ts:1556` reads the source with the caller's ctx -> (d) (`unavailable`);
+ * ③ `query-preparation.ts:465` reads the source with `owned` -> (c); ④ `query-execution.ts:351` likewise -> (c)/(d).
+ * ① is today's red; ②③④ were shown on a scratch copy with §2 applied (the row is red at (a) here).
+ */
+it('X1 a B Goal\'s overlap-note round reaches the main adviser, whose Query lives in B', async () => {
+  const world = await joined(false, false, true);
+  const host = world.base.world;
+  const b = world.second.workspace;
+  const goal = world.second.goal;
+  const scribe = world.base.lines.scribe;
+  await world.approveCoarse();
+  // L35's one read: the main adviser is this Goal's responsible adviser.
+  const queue = valueOf<{ revision: number }>(await world.base.main.route('goals/adviser-queue', {}), 'ready',
+    'the Goal adviser queue');
+  valueOf(await world.base.main.post('goals/adviser-queue/assign', graphWrite(S6A_SCOPE, {
+    goalRef: goal, adviser: world.adviser.ref, expectedRevision: queue.revision,
+  }, 'xwron-assign')), 'committed', 'the B Goal adviser assignment');
+  // Two Work Tasks on second-mod, both assigned to the scribe role (an open-duty line in A, R7).
+  const stageId = 'xwron-stage';
+  const moduleId = xws2aModuleInProject(b.scope.workspaceId);
+  const taskIds = ['xwron-a', 'xwron-b'] as const;
+  const draft = {
+    schemaVersion: 2, planId: 'xwron-plan', planRevision: 1, goalId: goal.goalId,
+    stages: [{ stageId, title: 'XWR-ON stage' }],
+    tasks: taskIds.map(taskId => ({ taskId, title: taskId, requirementLevel: 'required', taskKind: 'work',
+      disposition: 'active', phase: 'pending', scope: { kind: 'module', stageId, moduleRef: XWS2A_MODULE_ID },
+      executionIntent: 'request_execution', sizeClass: 'small', estimatedLines: 10 })),
+    assignments: taskIds.map(taskId => ({ taskId, role: S6A_SCRIBE_ROLE.templateId,
+      instruction: `XWR-ON ${taskId}` })),
+    obligations: [], taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] }, taskRelations: [],
+    inputRequirements: [],
+  };
+  const proposed = valueOf<{ ref: unknown; revision: number }>(await b.post('plans/propose',
+    graphWrite(b.scope, { goalRef: goal, basedOn: null, draft,
+      reason: { text: 'XWR-ON plan', sources: [] } }, 'xwron-propose')), 'committed', 'the XWR-ON plan');
+  valueOf(await b.post('plans/apply', graphWrite(b.scope, { proposalRef: proposed.ref,
+    expectedProposalRevision: proposed.revision, decisionRefs: [] }, 'xwron-apply')), 'committed',
+  'the XWR-ON plan application');
+  // a starts on the scribe line through the person's action_request naming the ready B Task (R7's existing-Task
+  // claim); the Host's driver then starts its real Work Run, which stops at this model request.
+  const heldA = await host.gates.modelRequest(scribe);
+  await host.scripted.script(scribe, [{ kind: 'text', text: 'XWR-ON a done' }]);
+  valueOf((await host.post('messages/send', graphWrite(S6A_SCOPE, {
+    recipient: scribe.ref, text: 'XWR-ON a', intent: 'action_request', needsReply: true, goalRef: goal,
+    taskRef: { projectId: goal.projectId, goalId: goal.goalId, taskId: taskIds[0] },
+  }, 'xwron-a-person'))).body, 'committed', 'the a person message');
+  try {
+    const claimsA = await heartbeatUntil(host, () => bClaimsOn(world, scribe),
+      items => items.some(claim => claim.task.taskId === taskIds[0]), 12);
+    expect(claimsA, 'X1: the scribe line claims a').toContainEqual(expect.objectContaining({
+      task: expect.objectContaining({ taskId: taskIds[0] }) }));
+    await heldA.reached;
+    // The adviser's text round writes the module convention the gate is waiting for.
+    const conclusion = 'XWR-ON: the second-mod interface';
+    await host.scripted.script(world.adviser, [
+      { kind: 'calls', calls: [{ callId: 'xwron-note', name: 'record_note', args: {
+        op: 'write', kind: 'convention', topic: 'xwron-interface', conclusion,
+        anchor: { kind: 'module', moduleId }, extraAnchors: [], facts: [], basisFiles: [],
+        replaces: [], contradicts: [], coexistWith: [], structural: false, body: 'XWR-ON interface note',
+      } }] },
+      { kind: 'text', text: 'XWR-ON interface note written' },
+    ]);
+    // b shares a's module: its gate opens and sends the one note request. The existing second-workspace drive
+    // stops before the retry step today and on the gate wait after the package; the saved gate is the same fact the
+    // open receipt reported (`sent` iff the noteRequest carries a recipient and a messageRef).
+    await driveSecondWorkflow(b, { schemaVersion: 1, goalRef: goal, flowId: 'xwron-b', sessionHint: null,
+      kind: 'select_work', taskId: taskIds[1] }, 'request_overlap_note');
+    // (a) the gate names the main adviser (L35) and a message in A.
+    const gates = valueOf<{ gates: ModuleOverlapGateV1[] }>(await b.route('goals/overlap-gates', {
+      goalRef: goal, page: { limit: 10 } }), 'ready', 'the B overlap gates');
+    const gate = gates.gates.find(candidate => candidate.ref.taskId === taskIds[1]);
+    if (gate === undefined) throw new Error('X1: the B overlap gate is not listed');
+    expect(gate.moduleId).toBe(moduleId);
+    expect(gate.noteRequest, 'X1: the gate saved no note request').toMatchObject({
+      recipient: { projectId: world.adviser.ref.projectId, sessionId: world.adviser.ref.sessionId },
+      duty: 'adviser', messageRef: expect.objectContaining({ workspaceId: S6A_SCOPE.workspaceId }),
+    });
+    const noteRequest = gate.noteRequest;
+    if (noteRequest === null || 'reason' in noteRequest) {
+      throw new Error(`X1: the gate saved no note request: ${JSON.stringify(noteRequest)}`);
+    }
+    const messageRef = noteRequest.messageRef;
+    if (messageRef === undefined) throw new Error('X1: the note request names no message');
+    // (b) exactly one Host system action_request for B's Goal, with N's body.
+    const requests = (await world.inbox(world.adviser)).filter(message => message.intent === 'action_request'
+      && message.sender.kind === 'host' && message.sender.actor.kind === 'system'
+      && message.goalRef?.goalId === goal.goalId);
+    expect(requests, 'X1: the adviser has one note request for B\'s Goal').toHaveLength(1);
+    const request = requests[0]!;
+    expect(request.sender).toMatchObject({ kind: 'host', actor: { kind: 'system', id: 'workflow:auto-rework' } });
+    expect(request.goalRef).toMatchObject({ projectId: goal.projectId, goalId: goal.goalId });
+    expect(request.ref).toEqual(messageRef);
+    expect(await world.messageText(request)).toBe(`模块被占用，请为这个模块写一条接口注记：${gate.moduleId}`);
+    // (c) the Query is B's; the main workspace has no such Query.
+    const queryRead = await heartbeatUntil<{ status: string; value?: QueryJobRecord }>(host,
+      async () => await b.route('queries/read', queryIn(messageRef, b.scope)) as { status: string; value?: QueryJobRecord },
+      read => read.status === 'ready' && read.value?.job.job.status === 'answered', 16);
+    expect(queryRead).toMatchObject({ status: 'ready', value: { job: { job: { status: 'answered' } } } });
+    const queryRunRef = queryRead.value?.run.ref;
+    if (queryRunRef === undefined) throw new Error('X1: the B planning Query has no run ref');
+    expect(await world.base.main.route('queries/read', interventionPlanningQueryRefs(messageRef).queryJobRef))
+      .toMatchObject({ status: 'not_found' });
+    // (d) the note is on the module anchor, sourced from that Query.
+    const notes = await heartbeatUntil(host, () => world.notes({ kind: 'module', moduleId: gate.moduleId }),
+      items => items.some(item => item.conclusion === conclusion), 16);
+    const written = notes.find(item => item.conclusion === conclusion);
+    expect(written).toMatchObject({ kind: 'convention', anchor: { kind: 'module', moduleId: gate.moduleId },
+      source: { kind: 'agent', duty: 'adviser', queryRunRef } });
+    // (e) the gate no longer blocks b.
+    const after = await b.route('workflow/advance', { schemaVersion: 1, goalRef: goal, flowId: 'xwron-b-after',
+      sessionHint: null, kind: 'select_work', taskId: taskIds[1] }) as WorkflowAdvanceResult;
+    expect(after.status).toBe('ready');
+    if (after.status === 'ready' && after.value.state === 'waiting') {
+      expect(after.value.reason).not.toContain('overlap_gate_pending');
+    }
+  } finally {
+    heldA.release();
+  }
+});

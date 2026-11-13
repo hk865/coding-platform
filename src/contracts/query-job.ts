@@ -80,13 +80,15 @@ export const MAX_ANSWER_BYTES = 16 * 1024;
 
 /**
  * The answer shape a Query was prepared with (spec §5.2.7). `secretary` and
- * `initial` are the two request-round shapes; the other three belong to a
+ * `initial` are the two request-round shapes; the other four belong to a
  * planning line and are frozen on its `intervention_planning` execution
- * (`exec_review` is the reviewer's execution-result round, slice 9).
+ * (`exec_review` is the reviewer's execution-result round, slice 9;
+ * `unknown_call_advice` is the adviser's unknown-outcome round).
  */
-export type QueryAnswerShapeV1 = 'secretary' | 'initial' | 'plan_round' | 'plan_review' | 'exec_review';
+export type QueryAnswerShapeV1 = 'secretary' | 'initial' | 'plan_round' | 'plan_review' | 'exec_review'
+  | 'unknown_call_advice';
 /** The planning-line subset written to `execution.answerShape`; `text` is the default. */
-export type PlanningAnswerShapeV1 = 'plan_round' | 'plan_review' | 'exec_review' | 'text';
+export type PlanningAnswerShapeV1 = 'plan_round' | 'plan_review' | 'exec_review' | 'unknown_call_advice' | 'text';
 
 /** The one shape mapping used by preparation and start-up (§5.2.7). */
 export function queryAnswerShapeOf(
@@ -103,6 +105,7 @@ export function queryAnswerShapeOf(
         if (execution.answerShape === 'plan_round') return 'plan_round';
         if (execution.answerShape === 'plan_review') return 'plan_review';
         if (execution.answerShape === 'exec_review') return 'exec_review';
+        if (execution.answerShape === 'unknown_call_advice') return 'unknown_call_advice';
         return null;
     }
     return null;
@@ -434,10 +437,10 @@ export function validQueryExecution(value: QueryJobIntentV1['execution']): boole
     if (value.repliesToMessageRef !== undefined
         && (value.kind !== 'intervention_planning' || !validSessionMessageRef(value.repliesToMessageRef)))
         return false;
-    // §5.2.7: answerShape belongs to intervention_planning only, from the four planning values.
+    // §5.2.7: answerShape belongs to intervention_planning only, from the five planning values.
     if (value.answerShape !== undefined
         && (value.kind !== 'intervention_planning'
-            || !['plan_round', 'plan_review', 'exec_review', 'text'].includes(value.answerShape)))
+            || !['plan_round', 'plan_review', 'exec_review', 'unknown_call_advice', 'text'].includes(value.answerShape)))
         return false;
     if (value.consultation !== undefined && (value.kind !== 'semantic_query' || !validConsultationBinding(value.consultation)))
         return false;

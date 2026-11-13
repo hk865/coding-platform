@@ -406,6 +406,12 @@ export function lineProblemsOf(input: {
   }
   const projected = projection === null ? null : projection.value;
   const modules = input.files.filter(file => file.kind === 'module').map(file => ({ path: file.path, bytes: file.bytes }));
+  // KC-2 (121-106 ④, PRODUCT :489): a bad file's place says whether the last commit has another version of it.
+  const headHint = (path: string): string => {
+    const file = byPath.get(path);
+    return file !== undefined && file.headBlob !== null && file.headBlob !== file.blobSha
+      ? `。上次提交里有这个文件能用的版本，也可以在工作区根目录用 git restore ${path} 恢复` : '。上次提交里没有能用的版本';
+  };
   return knowledgeProblemsOf({ architecture, modules, fileIssues: input.fileIssues, graphReason: input.graphReason,
     projectReason: input.projectReason, scope: input.scope }).map((place, index) => ({
     itemNo: index + 1, kind: place.kind,
@@ -415,7 +421,8 @@ export function lineProblemsOf(input: {
       return file === undefined ? { path, source: 'uncommitted' as const }
         : { path, source: platformFileSource(projected, file) };
     }),
-    moduleIds: place.moduleIds, reason: place.reason,
+    moduleIds: place.moduleIds,
+    reason: place.kind === 'bad_file' ? `${place.reason}${headHint(place.paths[0]!)}` : place.reason,
   }));
 }
 

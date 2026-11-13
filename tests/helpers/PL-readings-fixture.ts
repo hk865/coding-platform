@@ -52,6 +52,10 @@ export type PLReadingsOptions = {
   taskIds?: readonly string[];
   /** PL-19: clear `maxRequests`/`maxToolCalls`/`timeoutMs` (null = unlimited), never a number. */
   unlimitedRunLimits?: boolean;
+  /** The Host backend; default memory. */
+  backend?: 'memory' | 'sqlite';
+  /** Extra real Host options, spread over the fixture's own (these win). */
+  extraHostOptions?: Record<string, unknown>;
 };
 
 export type PLReadingsWorld = {
@@ -74,8 +78,8 @@ export type PLReadingsWorld = {
 export async function openPLReadingsWorld(options: PLReadingsOptions = {}): Promise<PLReadingsWorld> {
   const taskIds = options.taskIds ?? ['pl-task'];
   const world = await withConfiguredHost(
-    () => openS6AHostWorld({ backend: 'memory',
-      extraHostOptions: { checks: checkConfiguration({ ...OPERATOR, kind: 'human' }) } }),
+    () => openS6AHostWorld({ backend: options.backend ?? 'memory',
+      extraHostOptions: { checks: checkConfiguration({ ...OPERATOR, kind: 'human' }), ...options.extraHostOptions } }),
     original => configuredHostFactory(original, options.unlimitedRunLimits === true));
   try {
     const main = s6aCardsWorkspace(world, S6A_SCOPE);

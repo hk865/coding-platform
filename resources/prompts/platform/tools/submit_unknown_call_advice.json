@@ -1,0 +1,9 @@
+{
+  "description": "The only way to give this round's answer on an unknown-outcome record. Fill the fields and call it; the platform adds the record, revision, phase and Goal digest and stores the answer. Do not write the answer as text.",
+  "parameters": {
+    "choice": "This phase's choice: disposition is one of rerun_as_is, safer_method, skip_as_done, escalate; approval is one of approve, decline, escalate.",
+    "escalationKind": "Only when choice is escalate: requirement, product_tradeoff or architecture.",
+    "rationale": "The basis of the judgement, 1-2000 characters.",
+    "plain": "One plain sentence for the person, one line, 1-200 characters."
+  }
+}

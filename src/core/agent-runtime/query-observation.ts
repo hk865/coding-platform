@@ -38,6 +38,7 @@ import type {
   QueryEntryIdentity, QueryExecutionRecord, QueryHistoryObservation,
 } from '../work-graph/queries/contracts.js';
 import { parseSecretaryAnswer } from '../work-graph/queries/secretary-answer.js';
+import { unknownCallAdviceSubjectOfText } from '../../contracts/plan-round.js';
 
 export type QueryObservationPort = {
   observe(ctx: CoreCallContext, request: { queryRunRef: QueryRunRef }): Promise<ReadResult<QueryExecutionRecord>>;
@@ -483,7 +484,8 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
     // The frozen shape decides the accepted-answer bound and the formal reading.
     const shape = manifest.answerShape;
     if (!(shape === null || shape === 'secretary' || shape === 'initial'
-      || shape === 'plan_round' || shape === 'plan_review' || shape === 'exec_review')) {
+      || shape === 'plan_round' || shape === 'plan_review' || shape === 'exec_review'
+      || shape === 'unknown_call_advice')) {
       return rejected('unavailable', 'the persisted Query manifest has no valid answerShape');
     }
     // Only a round whose frozen list holds a submit tool can hold an accepted
@@ -503,6 +505,10 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
           ? null
           : { executionKind: manifest.request.executionKind, hasGoal: manifest.goal !== null }
         : null;
+      // The adviser round's subject comes only from the platform-written second
+      // line of the frozen question (never from the model).
+      const adviceSubject = shape === 'unknown_call_advice'
+        ? unknownCallAdviceSubjectOfText(record.value.job.job.intent.question) : null;
       // A round whose frozen list holds a submit tool takes the answer from the
       // first successful submit's arguments; no accepted submit keeps the final
       // text reading, and any later assistant text is ignored.
@@ -512,7 +518,10 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
         final = extractAnswer(runState);
       } else {
         // Rebuild the exact text the accepted handler built, bounded by shape.
-        const text = buildAnswerText(answerShape!, submitted.arguments, { projectId: queryRunRef.projectId });
+        const text = buildAnswerText(answerShape!, submitted.arguments, {
+          projectId: queryRunRef.projectId,
+          ...(adviceSubject === null ? {} : { subject: adviceSubject }),
+        });
         final = Buffer.byteLength(text, 'utf8') > answerBoundBytes(answerShape)
           ? { kind: 'too_long' } : { kind: 'text', text };
       }

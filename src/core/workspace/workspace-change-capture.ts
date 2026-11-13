@@ -168,6 +168,11 @@ export async function readHead(root: string): Promise<string | null> {
   }
 }
 
+/** KC-2: the committer time (ISO 8601) of the last commit on HEAD that changed `path`. Throws when git fails. */
+export async function readLastCommitTime(root: string, path: string): Promise<string> {
+  return (await git(root, ['log', '-1', '--format=%cI', 'HEAD', '--', path])).trim();
+}
+
 /** Git's view of a checkout's knowledge directory; every path relative to the checkout root. */
 export type KnowledgeGitState = {
   /** `git status --porcelain=v1 --untracked-files=all`: changed, staged and untracked paths (a rename's both sides). */

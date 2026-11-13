@@ -3,6 +3,9 @@
  * §5.2.3, §5.2.5, §5.2.7). Every expected literal is written from the spec or
  * hand-computed, never read back from the function under test. No store, no
  * Host, no fabricated context.
+ *
+ * K3L-2 §3 R5 (decisions 121-109/121-110): the `ucr:` round's request id, its platform-written `subject:` line and
+ * its `taskRef`; all three are red today (`unknown_call` is not a round yet) and green when K3L-2 §2.2/§2.3 lands.
  */
 import { describe, expect, it } from 'vitest';
 import {
@@ -105,6 +108,11 @@ describe('systemRoundSendInput: the payload shape of §5.2.3', () => {
       round: { kind: 'planresume', goalRef, queryJobId: 'query-1', originalMessageRef },
       requestId: 'planresume:goal-1:query-1',
     },
+    // R5 (K3L-2 §3; §2.2/§2.3): the adviser round's request id is the full subject, digest included.
+    { name: 'unknown_call', round: { kind: 'unknown_call', goalRef,
+      subject: { reviewRef: { aggregateType: 'UnknownCallReview', projectId: PROJECT, goalId: 'goal-1',
+        runId: 'run-1' }, revision: 3, phase: 'approval', goalBasisDigest: 'ab12' } },
+      requestId: 'ucr:run-1:3:approval:ab12' },
   ];
 
   it.each(rounds)('$name: request id on the first line and in meta', ({ round, requestId }) => {
@@ -129,7 +137,8 @@ describe('systemRoundSendInput: the payload shape of §5.2.3', () => {
     });
   });
 
-  it('carries taskRef only for deviation', () => {
+  // R5 named mutation: `taskRef` still only for `deviation` -> the unknown-call read has no taskRef, red.
+  it('carries taskRef for deviation and the unknown-call round', () => {
     const deviation = readyOf(systemRoundSendInput({
       round: rounds[1]!.round, recipient: { projectId: PROJECT, sessionId: 'session-1' },
       text: `${rounds[1]!.requestId}\nbody`, taskRef,
@@ -141,6 +150,12 @@ describe('systemRoundSendInput: the payload shape of §5.2.3', () => {
       text: `${rounds[0]!.requestId}\nbody`, taskRef,
     }));
     expect(refine.input.taskRef).toBeUndefined();
+
+    const advice = readyOf(systemRoundSendInput({
+      round: rounds[5]!.round, recipient: { projectId: PROJECT, sessionId: 'session-1' },
+      text: rounds[5]!.requestId, taskRef,
+    }));
+    expect(advice.input.taskRef).toEqual(taskRef);
   });
 
   it('carries followupOf only for planresume', () => {
@@ -168,6 +183,21 @@ describe('systemRoundSendInput: the payload shape of §5.2.3', () => {
       + 'originalQueryRef: {"aggregateType":"SessionMessage","messageId":"m-original",'
       + '"projectId":"proj-1","workspaceId":"ws-1"}\n'
       + '人已答完这一轮的问题卡；接着原规划轮写下一步：只输出这一段/这一版，平台会合并',
+    );
+  });
+
+  // R5 named mutation: copy the caller's text -> the body is only the request id, red.
+  it('writes the unknown-call subject line from the round', () => {
+    const value = readyOf(systemRoundSendInput({
+      round: rounds[5]!.round,
+      recipient: { projectId: PROJECT, sessionId: 'session-1' },
+      text: 'ucr:run-1:3:approval:ab12',
+    }));
+    expect(value.input.text).toBe(
+      'ucr:run-1:3:approval:ab12\n'
+      + 'subject: {"goalBasisDigest":"ab12","phase":"approval",'
+      + '"reviewRef":{"aggregateType":"UnknownCallReview","goalId":"goal-1","projectId":"proj-1","runId":"run-1"},'
+      + '"revision":3}',
     );
   });
 });

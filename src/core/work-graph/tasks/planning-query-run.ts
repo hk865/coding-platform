@@ -101,6 +101,11 @@ export type NoteQueryRunSourcePort = {
     | CoreRejection>;
 };
 
+/** 121-114: the member owner's read of an adviser's planning round; the same resolver the note owner reaches. */
+export type PlanningQueryRunPort = {
+  resolvePlanningQueryRun(ctx: CoreCallContext): Promise<{ status: 'ready'; value: PlanningQueryRunV1 } | CoreRejection>;
+};
+
 const unavailable = (reason: string): CoreRejection => rejected('unavailable', reason);
 
 /**
@@ -432,9 +437,10 @@ async function readProposerFacts(ctx: CoreCallContext, deps: PlanningQueryRunDep
 
 export function createPlanningQueryRun(
   deps: PlanningQueryRunDependencies,
-): NoteQueryRunSourcePort & { readProposerFacts: ProposalQueryRunFactResolver } {
+): NoteQueryRunSourcePort & PlanningQueryRunPort & { readProposerFacts: ProposalQueryRunFactResolver } {
   return {
     resolveNoteQueryRun: (ctx: CoreCallContext) => resolveNoteQueryRun(ctx, deps),
+    resolvePlanningQueryRun: (ctx: CoreCallContext) => resolvePlanningQueryRun(ctx, deps),
     readProposerFacts: (ctx, queryRunRef) => readProposerFacts(ctx, deps, queryRunRef),
   };
 }

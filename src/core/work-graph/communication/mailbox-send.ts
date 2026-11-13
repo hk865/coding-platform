@@ -27,10 +27,6 @@ import { sameBasis, dispatchCurrentOf, basisPinsOf, releasedMessageCompanions, b
 import { isGoalRef, mapReadResult, ownContext, ownWrite, normalizeText, guardRejection, judge, refusalOf, followupConnects, senderIdentityOf, identityKeyOf, fingerprintOf, messageIdOf, internalHostContext, loadMessage } from './mailbox-common.js';
 import { readWorkRunIdentity, deriveWorkRunSender, authorizeNewWorkRunAction, resolveSecretaryRound } from './mailbox-identity.js';
 import { replayMessage, recheckAfterMiss, refuse, writeMessage } from './mailbox-write.js';
-import { readOwnerRecord } from '../tasks/owner-record-read.js';
-import {
-  decodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey,
-} from '../sessions/session-record-codecs.js';
 
 // ---- slice-5 user-send helpers ------------------------------------------
 
@@ -422,37 +418,28 @@ export async function sendMessage(mailbox: MailboxContext, ctx: CoreCallContext,
     }
   }
 
-  // The target Session must exist in the same project; a Host system `notify`
-  // may receive in another workspace of that project. The record is written in
-  // the recipient line's workspace, while the replay identity stays in the
-  // sender's. Every other cross-workspace send keeps today's refusal.
-  // busy/archived never blocks durable mail.
+  // The target Session must exist in the same project (the directory's project read). Across workspaces of the
+  // project (121-109 C; XWS) the record is written in the recipient line's workspace and the replay identity stays
+  // the sender's. Across workspaces a send is a notify that needs no reply (any sender), or a Host system round's
+  // notify/action_request. Any other cross-workspace send is refused (coordination): its reply and its wait are read
+  // back in the sending line's workspace (outbox, wait continuation, consultation). busy/archived never blocks mail.
   let recipientScope: MessageGuardContext['recipientScope'] = null;
   let receivingWorkspaceId = lineWorkspaceId;
   if (authorized === null || authorized.ok) {
     if (owned.signal.aborted) return reject('cancelled', 'the send was cancelled before the target Session read');
-    const target = await mailbox.deps.sessions.readSession(lineCtx, send.recipient);
+    const target = await mailbox.deps.sessions.readSession(lineCtx, send.recipient, 'project');
     if (owned.signal.aborted) return reject('cancelled', 'the send was cancelled during the target Session read');
     if (target.status !== 'ready' && target.status !== 'not_found') return mapReadResult(target) as CoreRejection;
     if (target.status === 'ready') {
-      recipientScope = target.value.record.ref.projectId === owned.projectId
-        && target.value.record.workspaceId === lineWorkspaceId ? 'same_workspace' : 'other_workspace';
-    } else if (owned.principal.kind === 'host' && owned.principal.actor.kind === 'system'
-      && (send.intent === 'notify' || send.intent === 'action_request')) {
-      // The directory read compares the record's workspace with the caller's, so
-      // it answers not_found for another workspace's line. Read that line once
-      // by ref through the mailbox's own store.
-      const receiving = await readOwnerRecord({
-        store: mailbox.records,
-        refKey: sessionAggregateRefKey(plainSessionRefToAggregate(send.recipient)),
-        decode: decodeSessionRecord,
-        readError: () => reject('unavailable', 'the recipient Session could not be read'),
-      });
-      if (owned.signal.aborted) return reject('cancelled', 'the send was cancelled during the target Session read');
-      if (!receiving.ok && 'rejection' in receiving) return receiving.rejection;
-      if (receiving.ok) {
-        receivingWorkspaceId = receiving.value.workspaceId;
+      const targetWorkspaceId = target.value.record.workspaceId;
+      const hostSystem = owned.principal.kind === 'host' && owned.principal.actor.kind === 'system';
+      const mayCross = ((send.intent === null || send.intent === 'notify') && !send.needsReply)
+        || (hostSystem && (send.intent === 'notify' || send.intent === 'action_request'));
+      if (targetWorkspaceId === lineWorkspaceId || mayCross) {
         recipientScope = 'same_workspace';
+        receivingWorkspaceId = targetWorkspaceId;
+      } else {
+        recipientScope = 'other_workspace';
       }
     }
   }

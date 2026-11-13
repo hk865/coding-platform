@@ -645,12 +645,12 @@ describe('§10.4 forbidden transitions', () => {
       expectResult(send({ ...happy, principal: 'other' }), no('illegal', 'unsupported'));
     });
 
-    it('a recipient in another project is forbidden; outside the workspace or unresolved is not_found', () => {
+    it('a recipient in another project is forbidden; outside the workspace is invalid (coordination), unresolved is not_found', () => {
       expectResult(send({ ...happy, recipientScope: 'other_project' }), no('guard_failed', 'forbidden'));
-      expectResult(send({ ...happy, recipientScope: 'other_workspace' }), no('guard_failed', 'not_found'));
+      expectResult(send({ ...happy, recipientScope: 'other_workspace' }), no('guard_failed', 'invalid'));
       expectResult(send({ ...happy, recipientScope: null }), no('guard_failed', 'not_found'));
-      // Today's reasons: the workspace check, and `mapReadResult` of the missing Session.
-      expect(rejection(send({ ...happy, recipientScope: 'other_workspace' })).detail).toBe('the recipient Session is outside the bound workspace');
+      // Today's reasons: the coordination rule, and `mapReadResult` of the missing Session.
+      expect(rejection(send({ ...happy, recipientScope: 'other_workspace' })).detail).toBe('only a notify that needs no reply may go to a line in another workspace of the project: replies and waits are read back in the sender\'s workspace');
       expect(rejection(send({ ...happy, recipientScope: null })).detail).toBe('the requested record does not exist');
     });
 
@@ -662,7 +662,7 @@ describe('§10.4 forbidden transitions', () => {
       const denied: CoreRejection = { status: 'rejected', code: 'forbidden', reason: 'the Run is not running' };
       expect(rejection(send({ ...happy, principal: 'work_run', workRunAuthorization: denied, recipientScope: 'other_workspace' })).detail)
         .toBe('the Run is not running');
-      expect(rejection(transitionMessage(S.read, EVENTS.sent, { ...happy, recipientScope: 'other_workspace' })).code).toBe('not_found');
+      expect(rejection(transitionMessage(S.read, EVENTS.sent, { ...happy, recipientScope: 'other_workspace' })).code).toBe('invalid');
     });
 
     it('the accepted state is the release and pins the send already decided', () => {

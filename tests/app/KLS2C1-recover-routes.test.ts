@@ -8,6 +8,12 @@
  * follow-up round when the recovered files are a path-only conflict, like any other reconcile. The
  * world is `KLS2C-knowledge-host.ts` (idle threshold 0 unless a row says otherwise); notes come from `notes/list`,
  * blobs from real `git hash-object`.
+ *
+ * KC-2 U1–U4 (121-106 ④, rulings 4-12/4-13, `kc2-start-rulings-draft.md` §3): a bad file's "恢复" source. Today every
+ * one of U1–U4 is red at the problem row (`knowledge/problems` has no `recovery`) and at `knowledge/recovery-items`
+ * (`not_found` for a bad file); U5 is red at its `unreadable` entry (`listRefs` after `deletePath`). After the package
+ * lands they are green because the notice's rows are written with the source (`withRecoverySources`, snapshot → HEAD →
+ * record), each sourced row gets an `unreadable` recovery item, and `knowledge/recover` writes that source back.
  */
 import { appendFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -16,9 +22,9 @@ import type { CoreScope } from '../../src/app/core-http-types.js';
 import { cleanupRestart } from '../helpers/A2-restart-fixture.js';
 import { graphWrite, plain, startLinesEnded } from '../helpers/AG2b-collaboration-fixture.js';
 import {
-  kls2cAdopt, kls2cBlobSha, kls2cEditModule, kls2cListedNote, kls2cModuleFile, kls2cNoticesAtLeast, kls2cRecover,
-  kls2cRecoveryItems, kls2cReviseResponsibility, kls2cWrittenNote, KLS2C_NEVER_IDLE_MS, openKLS2CHost,
-  type KLS2CHost, type KLS2CNoticeKind, type KLS2COpenOptions,
+  kls2cAdopt, kls2cBlobSha, kls2cEditModule, kls2cListedNote, kls2cModuleFile, kls2cNoticesAtLeast, kls2cProblems,
+  kls2cRecover, kls2cRecoveryItems, kls2cReviseResponsibility, kls2cWrittenNote, KLS2C_NEVER_IDLE_MS, openKLS2CHost,
+  type KLS2CHost, type KLS2CNoticeKind, type KLS2COpenOptions, type KLS2CProblem,
 } from '../helpers/KLS2C-knowledge-host.js';
 import { readyValue } from '../helpers/S6A-memory-fixture.js';
 
@@ -43,6 +49,9 @@ async function oneNotice(world: KLS2CHost, kind: KLS2CNoticeKind): Promise<strin
   expect(found, kind).toHaveLength(1);
   return found[0]?.noticeId ?? '';
 }
+
+/** A snapshot's time as the reconcile's `now` writes it (`new Date().toISOString()`); the exact value is not the row's. */
+const ISO_TIME = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
 
 /** `core` adopted and committed by the person (HEAD's v0), revised through the route (v1), and one idle round on v1. */
 async function committedThenRevised(world: KLS2CHost, requestId: string): Promise<{ file: string; v1: Buffer | null }> {
@@ -204,3 +213,115 @@ it('V6 a recovery whose file makes two module files claim one path: the recovery
   expect(rows.filter(row => row.action === 'role_line' && row.followUp !== undefined && row.followUp !== null))
     .toHaveLength(1);
 }, 180_000);
+
+// KC-2 U1: the newest snapshot that reads as this file is the source; the bad bytes' own copies never are.
+// 具名改坏「取最新一份、不过滤能不能读」→ 写回 `{"id":"core"}`；「跳过快照」→ 来源是 record，写回采用时的字节；
+// 「恢复项写成 reverted」→ 恢复项的 kind 红。
+it('U1 (KC-2) a bad file with a readable snapshot is offered that snapshot, and recover writes it back', async () => {
+  const world = await hostWorld({ storage: 'memory', git: true });
+  await kls2cAdopt(world, ['core']);
+  const file = kls2cModuleFile(world, 'core');
+  const S = kls2cEditModule(world, file, { responsibility: 'kc2 人改过' });
+  await world.idle();
+  world.edit(file, '{"id":"core"}');
+  await world.idle();
+  const first = (await world.notices('knowledge_conflict'))[0]?.noticeId ?? '';
+  world.edit(file, '{');
+  await world.idle();
+  const notices = await world.notices('knowledge_conflict');
+  expect(notices).toHaveLength(2);
+  const noticeId = notices.find(notice => notice.noticeId !== first)?.noticeId ?? '';
+  const rows = readyValue<{ problems: KLS2CProblem[] }>(await kls2cProblems(world, noticeId), 'knowledge/problems').problems;
+  // The bad module file is row 1; architecture.json's `module_without_file` (it names a module whose file does not read)
+  // follows and gets no recovery item.
+  expect(rows[0]?.kind).toBe('bad_file');
+  expect(rows[0]?.reason.startsWith('文件读不出：')).toBe(true);
+  expect(rows[0]?.reason.endsWith('。上次提交里没有能用的版本')).toBe(true);
+  expect(rows[0]?.recovery).toEqual({ source: 'snapshot', takenAt: expect.stringMatching(ISO_TIME) });
+  expect(await kls2cRecoveryItems(world, noticeId)).toEqual({ status: 'ready',
+    value: { items: [{ itemNo: 1, kind: 'unreadable', path: file }] } });
+  expect(await kls2cRecover(world, noticeId, 1)).toMatchObject({ status: 'committed',
+    value: { path: file, blobSha: kls2cBlobSha(world, file) } });
+  expect(world.read(file)?.toString('utf8')).toBe(S);
+});
+
+// KC-2 U2: no snapshot is left after the person committed; HEAD's version and its last commit time are the source.
+// 具名改坏「跳过 HEAD」→ 来源是 record；「提示的条件反了」→ reason；「takenAt 给 null」→ recovery。
+it('U2 (KC-2) a bad file with a usable HEAD version is offered that version and its last commit time', async () => {
+  const world = await hostWorld({ storage: 'memory', git: true });
+  await kls2cAdopt(world, ['core']);
+  const file = kls2cModuleFile(world, 'core');
+  const C = kls2cEditModule(world, file, { responsibility: 'kc2 提交过' });
+  world.git(['add', '--', '.workbench']);
+  world.git(['commit', '-q', '-m', 'kc2 committed module']);
+  const committedAt = world.git(['log', '-1', '--format=%cI', 'HEAD', '--', file]).trim();
+  const headBlob = world.git(['rev-parse', `HEAD:${file}`]).trim();
+  await world.idle();
+  await world.idle();
+  world.edit(file, '{');
+  await world.idle();
+  const noticeId = (await world.notices('knowledge_conflict'))[0]?.noticeId ?? '';
+  const [row] = readyValue<{ problems: KLS2CProblem[] }>(await kls2cProblems(world, noticeId), 'knowledge/problems').problems;
+  expect(row?.kind).toBe('bad_file');
+  expect(row?.reason.endsWith(`。上次提交里有这个文件能用的版本，也可以在工作区根目录用 git restore ${file} 恢复`))
+    .toBe(true);
+  expect(row?.recovery).toEqual({ source: 'head', takenAt: committedAt, headBlob });
+  expect(await kls2cRecoveryItems(world, noticeId)).toEqual({ status: 'ready',
+    value: { items: [{ itemNo: 1, kind: 'unreadable', path: file }] } });
+  expect(await kls2cRecover(world, noticeId, 1)).toMatchObject({ status: 'committed',
+    value: { path: file, blobSha: kls2cBlobSha(world, file) } });
+  expect(world.read(file)?.toString('utf8')).toBe(C);
+});
+
+// KC-2 U3: no snapshot and no HEAD version; the records rebuild the two adopted files, the new bad file gets nothing.
+// 具名改坏「模块号在第 7 步之后才读」→ 第 2 行没有 recovery；「架构文件不给记录来源」→ 第 1 行；
+// 「没有来源也给一个」→ 第 3 行；「恢复时用行里的 moduleIds（空）」→ 第二次恢复。
+it('U3 (KC-2, SQLite) a bad architecture and module file rebuilt from the platform records; a new file has no source',
+  async () => {
+    const first = await hostWorld({ storage: 'sqlite', git: true, idleMs: KLS2C_NEVER_IDLE_MS });
+    await kls2cAdopt(first, ['core']);
+    const architecture = '.workbench/architecture.json';
+    const A0 = first.read(architecture)?.toString('utf8') ?? '';
+    const file = kls2cModuleFile(first, 'core');
+    const M0 = first.read(file)?.toString('utf8') ?? '';
+    const { database, root } = first;
+    await worlds.pop()?.close();
+    first.edit(architecture, '{');
+    first.edit(file, '{"id":"core"}');
+    first.edit('.workbench/modules/zz.json', '{');
+    const world = await hostWorld({ storage: 'sqlite', git: true, database, root, idleMs: KLS2C_NEVER_IDLE_MS });
+    const noticeId = (await world.notices('knowledge_conflict'))[0]?.noticeId ?? '';
+    const rows = readyValue<{ problems: KLS2CProblem[] }>(await kls2cProblems(world, noticeId), 'knowledge/problems').problems;
+    expect(rows.map(row => row.files[0]?.path)).toEqual([architecture, file, '.workbench/modules/zz.json']);
+    expect(rows[0]?.recovery).toEqual({ source: 'record', moduleId: null });
+    expect(rows[1]?.recovery).toEqual({ source: 'record', moduleId: 'core' });
+    expect(Object.hasOwn(rows[2] ?? {}, 'recovery')).toBe(false);
+    expect(await kls2cRecoveryItems(world, noticeId)).toEqual({ status: 'ready', value: { items: [
+      { itemNo: 1, kind: 'unreadable', path: architecture },
+      { itemNo: 2, kind: 'unreadable', path: file }] } });
+    expect(await kls2cRecover(world, noticeId, 1)).toMatchObject({ status: 'committed', value: { path: architecture } });
+    expect(world.read(architecture)?.toString('utf8')).toBe(A0);
+    expect(await kls2cRecover(world, noticeId, 2)).toMatchObject({ status: 'committed', value: { path: file } });
+    expect(world.read(file)?.toString('utf8')).toBe(M0);
+  });
+
+// KC-2 U4: a note's record head rebuilds it with no file as a base (4-13); the bytes are the ones notes/write wrote.
+// 具名改坏「用坏文件作底重建」→ 没有这一行或没有 recovery；「注记不给记录来源」→ 下一句。
+it('U4 (KC-2, SQLite) a bad note rebuilt from its record head, with no file as a base', async () => {
+  const first = await hostWorld({ storage: 'sqlite', git: true, idleMs: KLS2C_NEVER_IDLE_MS });
+  await kls2cAdopt(first, ['core']);
+  const { path } = await kls2cWrittenNote(first, 'kc2-u4', 'u4');
+  const W = first.read(path)?.toString('utf8') ?? '';
+  const { database, root } = first;
+  await worlds.pop()?.close();
+  first.edit(path, 'this is not a knowledge note\n');
+  const world = await hostWorld({ storage: 'sqlite', git: true, database, root, idleMs: KLS2C_NEVER_IDLE_MS });
+  const noticeId = (await world.notices('knowledge_conflict'))[0]?.noticeId ?? '';
+  const rows = readyValue<{ problems: KLS2CProblem[] }>(await kls2cProblems(world, noticeId), 'knowledge/problems').problems;
+  expect(rows).toHaveLength(1);
+  expect(rows[0]?.recovery).toEqual({ source: 'record', moduleId: null });
+  expect(await kls2cRecoveryItems(world, noticeId)).toEqual({ status: 'ready',
+    value: { items: [{ itemNo: 1, kind: 'unreadable', path }] } });
+  expect(await kls2cRecover(world, noticeId, 1)).toMatchObject({ status: 'committed', value: { path } });
+  expect(world.read(path)?.toString('utf8')).toBe(W);
+});

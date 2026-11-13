@@ -354,7 +354,7 @@ export async function crashAt(input: { point: KLS2CHoldPoint; database: string; 
 
 /** The answer of `knowledge/recovery-items` (a read: `ready` with the items by `itemNo`, or not found). */
 export type KLS2CRecoveryItems = { status: string; code?: string;
-  value?: { items: { itemNo: number; kind: 'write_unconfirmed' | 'reverted'; path: string }[] } };
+  value?: { items: { itemNo: number; kind: 'write_unconfirmed' | 'reverted' | 'unreadable'; path: string }[] } };
 /** The answer of `knowledge/recover` (a write: `committed` with the path and the written blob, or rejected). */
 export type KLS2CRecovered = { status: string; code?: string; reason?: string; value?: { path: string; blobSha: string | null } };
 
@@ -366,9 +366,11 @@ export const kls2cRecover = (world: KLS2CHost, noticeId: string, itemNo: number,
   world.call<KLS2CRecovered>('knowledge/recover', plain(scope, { noticeId, itemNo }));
 
 /** One place of a `knowledge_conflict` notice as `knowledge/problems` reads it (KC-1 G3: itemNo, kind, files with
- *  the file's source, module ids and the Chinese reason). */
+ *  the file's source, module ids and the Chinese reason; KC-2: a bad file's `recovery` source, absent when it has none). */
 export type KLS2CProblem = { itemNo: number; kind: string; files: { path: string; source: string }[];
-  moduleIds: string[]; reason: string };
+  moduleIds: string[]; reason: string;
+  recovery?: { source: 'snapshot'; takenAt: string } | { source: 'head'; takenAt: string; headBlob: string }
+    | { source: 'record'; moduleId: string | null } };
 /** The answer of `knowledge/problems` (a read: `ready` with the notice's places, or not found). */
 export type KLS2CProblems = { status: string; code?: string; reason?: string;
   value?: { problems: KLS2CProblem[] } };

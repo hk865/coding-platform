@@ -759,7 +759,8 @@ export function queryManifestProblem(value: unknown): string | null {
   // or unknown value is a damaged manifest, never an old format to infer.
   const answerShape = value['answerShape'];
   if (!(answerShape === null || answerShape === 'secretary' || answerShape === 'initial'
-    || answerShape === 'plan_round' || answerShape === 'plan_review' || answerShape === 'exec_review')) {
+    || answerShape === 'plan_round' || answerShape === 'plan_review' || answerShape === 'exec_review'
+    || answerShape === 'unknown_call_advice')) {
     return 'the Query manifest answerShape is not a valid answer shape';
   }
   const assembly = value['contextAssembly'];

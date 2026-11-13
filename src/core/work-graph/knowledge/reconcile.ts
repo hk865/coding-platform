@@ -3,8 +3,9 @@
  * files are the knowledge: the reconciliation never writes one. It completes the platform's own writes that landed,
  * hands those that did not to the person as recovery items, finds the person's reverts of uncommitted files,
  * re-indexes what changed and marks a note changed outside the platform for verification, tells the person of the
- * files that do not read as knowledge and the conflicts among them, then keeps the uncommitted files' snapshots. The disk and git reads are the line's (`readKnowledgeFiles`); the order and every
- * judgment are here.
+ * files that do not read as knowledge and offers each a source to restore it from, and the conflicts among them,
+ * then keeps the uncommitted files' snapshots. The disk and git reads are the line's (`readKnowledgeFiles`); the
+ * order and every judgment are here.
  */
 import { rejected } from '../../../contracts/core/rejections.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
@@ -16,10 +17,11 @@ import {
 import type { ProjectNoticeKindV1 } from '../../../contracts/role-lines.js';
 import { truncateUtf8 } from '../../../contracts/utf8.js';
 import type { KnowledgeRecoveryRow, KnowledgeSnapshots } from '../../record-store/knowledge-snapshot-ports.js';
+import type { EncodedRecord, StoreResult } from '../../record-store/ports.js';
 import { gitBlobId } from '../../workspace/workspace-change-capture.js';
 import {
-  lineRefKey, type KnowledgeArchitecture, type KnowledgeDiskFileV1, type KnowledgeLineScope, type KnowledgeWriteDeps,
-  type LineKnowledge,
+  lineRefKey, type KnowledgeArchitecture, type KnowledgeDiskFileV1, type KnowledgeLineScope, type KnowledgeRecordedArchitecture,
+  type KnowledgeWriteDeps, type LineKnowledge,
 } from '../model/line-knowledge.js';
 import {
   KNOWLEDGE_WRITES_BY_LINE_STATE_LOOKUP, knowledgeWriteCodec, type KnowledgeWriteV1,
@@ -127,6 +129,16 @@ async function reconcileLeased(write: KnowledgeWriteDeps, line: LineKnowledge, t
   await markKnowledgeWritesUnconfirmed(write, projectId, notLanded);   // a failure leaves them for the next round
   const newReverts = await notifyRecovery(write, snapshots, projectId, lineRef, 'knowledge_reverted', reverted);
 
+  // KC-2: the module each changed module file named last round, read before step 7 drops a bad file's index rows and
+  // maybe its blob: a bad module file's record source needs it, its bytes name none. The index keeps a module file's
+  // file-frame parse, which reads as a module file again (`writeLogFileOf`).
+  const namedBefore = new Map<string, string>();
+  for (const change of changes) {
+    const parsed = change.before === null || change.file?.kind !== 'module' ? null : index.readBlob(change.before);
+    if (parsed?.kind === 'module') namedBefore.set(change.path,
+      write.files.writeLogFileOf(line.scope, change.path, new TextEncoder().encode(parsed.parsedJson)).moduleId!);
+  }
+
   // Step 7: one index transaction; a file that cannot be read as knowledge is an issue (its rows are dropped). A note
   // the platform did not just write is marked for verification: `merged` when git has it committed.
   const issues: KnowledgeIssueV1[] = [];
@@ -174,9 +186,21 @@ async function reconcileLeased(write: KnowledgeWriteDeps, line: LineKnowledge, t
   if (conflictNotice !== null) {
     problems = write.problemsOf({ files: disk.value.files, fileIssues, graphReason, projectReason,
       scope: line.scope, recorded: recorded.value });
-    snapshots.recordProblems(conflictNotice.noticeId, lineRef, problems);   // rows first, then the notice
+    const { noticeId } = conflictNotice;
+    // KC-2 (121-106 ④): a notice's bad files get their source once, when its rows are first written; a later round of
+    // the same notice reads no snapshot, git or record again.
+    let rows = snapshots.readProblems(noticeId);
+    if (rows.length === 0) {
+      const sourced = await withRecoverySources(write, line, snapshots,
+        { lineRef, files, namedBefore, recorded: recorded.value }, problems);
+      if (sourced.status !== 'ready') return storeFailureToRejection(sourced);
+      rows = sourced.value;
+      snapshots.recordProblems(noticeId, lineRef, rows);                      // rows first,
+    }
+    // then each bad file's item under its row's itemNo (one a recovery removed comes back while the same problems stand),
+    snapshots.recordRecovery(unreadableItemsOf(noticeId, lineRef, rows, blobAt));
     await write.notify({ projectRef: { projectId }, subject: conflictNotice.subject, kind: 'knowledge_conflict',
-      summary: conflictNotice.summary, operation: conflictNotice.operation });
+      summary: conflictNotice.summary, operation: conflictNotice.operation });  // then the notice
   }
 
   // Step 9, last: a copy of every uncommitted file; a file clean, tracked and as last round was committed, so its
@@ -241,6 +265,65 @@ async function notifyRecovery(write: KnowledgeWriteDeps, snapshots: KnowledgeSna
   snapshots.recordRecovery(items.map((item, index) => ({ ...item, noticeId, itemNo: index + 1, lineRef })));
   await write.notify({ projectRef: subject.projectRef, subject, kind, summary: SUMMARIES[kind](items.length), operation });
   return items.length;
+}
+
+/**
+ * KC-2 (121-106 ④): each bad file's "恢复" source: the newest snapshot that reads as this file, else HEAD's version when
+ * it is not the bad bytes and reads, else the platform's record (a module file only when last round's index named its
+ * module). A HEAD git cannot give is a HEAD that does not read (the pick's own rule); a records read that fails is the
+ * round's `unavailable` (src/AGENTS §4). No source: the row keeps its reason only (plan :165).
+ */
+async function withRecoverySources(write: KnowledgeWriteDeps, line: LineKnowledge, snapshots: KnowledgeSnapshots,
+  at: { lineRef: string; files: ReadonlyMap<string, KnowledgeDiskFileV1>;
+    namedBefore: ReadonlyMap<string, string>; recorded: KnowledgeRecordedArchitecture | null },
+  problems: readonly KnowledgeProblemV1[]): Promise<StoreResult<KnowledgeProblemV1[]>> {
+  const rows: KnowledgeProblemV1[] = [];
+  for (const problem of problems) {
+    if (problem.kind !== 'bad_file') { rows.push(problem); continue; }
+    const path = problem.files[0]!.path;
+    const reads = (bytes: Uint8Array): boolean => write.files.readsAsKnowledge(line.scope, path, bytes);
+    const copy = snapshots.listRefs(at.lineRef, path).filter(ref => reads(ref.content)).at(-1);       // oldest first
+    if (copy !== undefined) { rows.push({ ...problem, recovery: { source: 'snapshot', takenAt: copy.takenAt } }); continue; }
+    const file = at.files.get(path)!;
+    if (file.headBlob !== null && file.headBlob !== file.blobSha) {
+      const head = await line.readHeadFile(path, file.headBlob);
+      if (head.status === 'ready' && reads(head.value.bytes)) {
+        rows.push({ ...problem, recovery: { source: 'head', takenAt: head.value.committedAt, headBlob: file.headBlob } });
+        continue;
+      }
+    }
+    const moduleId = at.namedBefore.get(path) ?? null;
+    const record = await recordedBytesOf(write, line, { path, moduleId }, at.recorded);
+    if (record.status !== 'ready') return record;
+    rows.push(record.value === null ? problem : { ...problem, recovery: { source: 'record', moduleId } });
+  }
+  return { status: 'ready', value: rows };
+}
+
+/** KC-2: the recovery item of each bad file with a source, under its row's itemNo; `expectedBlob` is the file now ([2C1-19]). */
+function unreadableItemsOf(noticeId: string, lineRef: string, rows: readonly KnowledgeProblemV1[],
+  blobAt: (path: string) => string | null): KnowledgeRecoveryRow[] {
+  return rows.flatMap(row => row.recovery === undefined ? [] : [{ noticeId, itemNo: row.itemNo, kind: 'unreadable' as const,
+    writeId: null, lineRef, path: row.files[0]!.path,
+    takenAt: row.recovery.source === 'snapshot' ? row.recovery.takenAt : null, expectedBlob: blobAt(row.files[0]!.path) }]);
+}
+
+/**
+ * KC-2 (121-106 ④): the platform's record of one knowledge file now, the third source; the recovery calls it again
+ * (“当场重算”). `knowledge/` reads the note head, the rule builds the bytes. A records read that fails, or a record the
+ * file format refuses, is `unavailable`.
+ */
+export async function recordedBytesOf(write: KnowledgeWriteDeps, line: LineKnowledge, target: { path: string; moduleId: string | null },
+  architecture: KnowledgeRecordedArchitecture | null): Promise<StoreResult<Uint8Array | null>> {
+  const key = write.files.noteHeadKeyOf(line.projectId, target.path);
+  let noteHead: EncodedRecord | null = null;
+  if (key !== null) {
+    const read = await write.records.readMany([key]);
+    if (read.status !== 'ready') return read;
+    noteHead = read.value.records.find(record => record.refKey === key) ?? null;
+  }
+  const built = write.files.recordedFileOf(line.scope, target, { architecture, noteHead });
+  return built.status === 'decoded' ? { status: 'ready', value: built.value } : rejected('unavailable', `${target.path}: ${built.reason}`);
 }
 
 /**

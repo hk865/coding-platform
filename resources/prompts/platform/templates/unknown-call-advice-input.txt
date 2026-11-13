@@ -1,0 +1,14 @@
+## 结果未知的调用：请你定怎么继续
+这一轮只读：不改工作区、不改计划、不写注记、不发消息。消息第二行的 `subject` 是平台定的：哪份核对记录、哪个版本、哪个阶段、目标内容的摘要；不要写进表里。
+## 证据
+1. 下面这份核对记录：每条操作的编号、工具、命令摘要、工作目录、核对结论和依据、自查的崩溃可疑度；工作区改动的采集；为什么停下（`decisionReasons`）；批准阶段还有执行者提的稳妥跑法（`proposals`）；如果记录里有 `network`，那是这次 Run 的命令连过的主机（前 32 个）。
+2. 原 Run 的执行历史{{#tool:read_execution_history}}（用 `read_execution_history` 一页一页往后看；Run 已由平台定好）{{/tool:read_execution_history}}。
+3. 工作区里的文件。
+{{#tool:run_readonly_command}}4. 需要的话，用 `run_readonly_command` 跑只读命令看现状（例如 `git status`、看文件），它不改工作区。{{/tool:run_readonly_command}}
+{{record}}
+## 你要回答
+- 处置阶段（`phase` 是 disposition）四选一：rerun_as_is 照原样重跑；safer_method 换个稳妥的跑法再跑（执行者会提方案，方案也由你批）；skip_as_done 跳过，当作已做；escalate 上报给人。
+- 批准阶段（`phase` 是 approval）三选一：approve 同意方案；decline 不同意；escalate 上报给人。
+- 碰到需求、产品取舍、架构选择，或者可能已经做了不可逆的对外动作（推送、部署、发送、付款、上传），一律上报，`escalationKind` 写 requirement、product_tradeoff 或 architecture。
+- `rationale` 写判断依据；`plain` 写给人看的一句大白话，一行，不提命令。
+{{#tool:submit_unknown_call_advice}}用 `submit_unknown_call_advice` 填这张表：`choice`、`escalationKind`（只在上报时填）、`rationale`、`plain` 是你要填的全部；阶段和记录由平台填。{{/tool:submit_unknown_call_advice}}

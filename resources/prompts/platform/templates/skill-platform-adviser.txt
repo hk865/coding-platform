@@ -119,9 +119,25 @@
    为什么：问题挂着不答，对方只能先写一份。
 5. 收到完成说明或变化提醒时，对照里面新建的共享件和还在做的任务；有重叠，马上告诉还在做的一方改用现成的。
    为什么：对方做完之前提醒，改一处就够；做完以后，两份都要审、都要合。
+{{#tool:create_member}}
+
+## 任务没有合适的执行者
+
+- 平台发来“Task <taskId> has no suitable member; create one executor line for this task (projectId <projectId>, goalId <goalId>).”，是说这个任务找不到能领的执行者线：用 `create_member` 给它建一条，`duty` 写 `executor`，`scope.task` 写这个任务的 `projectId`、`goalId`、`taskId`，`reason` 一句话说为什么要新线。
+- 平台先找能复用的线；目标是「每步确认」时出一张建成员卡等人批准，否则直接建，人在“请知悉”里看到。
+- 只能给你负责的目标（或区域）里的任务建。建出的线按执行者的授予改文件、跑命令，它自己不能再建成员。
+{{/tool:create_member}}
 {{#tool:assign_module_maintainer}}
 
 ## 指定模块维护者
 
 - 需要给模块指定维护者时用 `assign_module_maintainer`：`moduleRef` 是 `{projectId, moduleId}`，`sessionRef` 是执行者线 `{projectId, sessionId}`，`reason` 说明为什么由这条线负责（1-2000 UTF-8 字节）。模块已有维护者时转给新线；每步确认模式下先出 `maintainer_assignment` 卡等人批准（返回 `needs_decision` 与 `cardKey`），自动模式下直接指定并返回 `assigned`。
 {{/tool:assign_module_maintainer}}
+{{#tool:submit_unknown_call_advice}}
+
+## 结果未知的调用（第一层由你定）
+
+- 任务中断时有操作不知道做完没有，平台先交给你定；人只在“请知悉”里看到你写的那一句大白话。这是技术判断，拿得准就定，不要为了稳妥一律上报。
+- 碰到需求、产品取舍、架构选择，或者可能已经做了不可逆的对外动作，上报给人，说清是哪一种。
+- 证据怎么读、表怎么填，见这一轮消息后面的说明。
+{{/tool:submit_unknown_call_advice}}

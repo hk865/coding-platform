@@ -44,7 +44,14 @@ export type KnowledgeProblemV1 = {
   /** The project view; a dangling reference is `[R, T]`, the others are sorted. */
   moduleIds: readonly string[];
   reason: string;
+  /** KC-2: a bad_file row's source; absent when it has none or the row is another kind. */
+  recovery?: KnowledgeRecoverySourceV1;
 };
+/** KC-2 (121-106 ④): where a bad file's "恢复" takes its bytes from, picked once when its notice's rows are written. */
+export type KnowledgeRecoverySourceV1 =
+  | { source: 'snapshot'; takenAt: string }                       // 快照的 key
+  | { source: 'head'; takenAt: string; headBlob: string }         // 这个文件在 HEAD 里最后一次被提交的时间（§9-1）
+  | { source: 'record'; moduleId: string | null };                // 模块文件：坏之前那份写的模块（项目视角）；架构和注记为 null
 /** KC-1 G2: one file a structural proposal batch would change if approved now; a read-time hint (ruling 4-9). */
 export type ProposalBatchFileV1 = {
   workspaceId: string;
@@ -77,7 +84,7 @@ export type ReconcileResult = {
   reverted: number;
 };
 /** One recovery item of a knowledge notice as the page reads it: never the file's content. */
-export type KnowledgeRecoveryItemV1 = { itemNo: number; kind: 'write_unconfirmed' | 'reverted'; path: string };
+export type KnowledgeRecoveryItemV1 = { itemNo: number; kind: 'write_unconfirmed' | 'reverted' | 'unreadable'; path: string };
 /** What a recovery wrote: the file and its blob now; `blobSha` is null when the recovery deleted the file. */
 export type KnowledgeRecoverResult = { path: string; blobSha: string | null };
 

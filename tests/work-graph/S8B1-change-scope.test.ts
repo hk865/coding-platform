@@ -82,7 +82,7 @@ describe('S8B1 current goal actual changes', () => {
     expect(pathsOf(second)).not.toContain(world.firstFile);
   });
 
-  it('B1-15 (R20) the second workspace reads its own Work Run file as second-mod; the main workspace is forbidden', async () => {
+  it('B1-15 (R20) a Goal of another workspace is read in its own workspace: the main workspace reads second-mod', async () => {
     const world = await openS8B1SecondWorkspaceWorld();
     second.push(world);
     const answer = await postS8B1ChangeScope(world.world.base.world, world.ws2Scope, world.goal);
@@ -95,9 +95,21 @@ describe('S8B1 current goal actual changes', () => {
     const module = scope.modules.find(entry => (entry.moduleRef?.moduleId ?? entry.moduleId) === world.moduleId);
     expect(module).toMatchObject({ changed: 1 });
 
+    // AGTX-3 (104-1): reading platform data is not limited to the bound workspace. The Goal's executed files
+    // are its own workspace's paths, so they are read there and projected onto that part of the catalog: green
+    // after the package lands. Today (HEAD) the reader requires the Goal in the caller's workspace, so this row
+    // is RED at the route result below (expected 200/ready, actual rejected/forbidden). Named mutations: ① read
+    // the files without rebinding the workspace (`readGoalExecutedFiles(ctx, …)`) → forbidden; ② project onto
+    // the caller's workspace (`catalogForWorkspace(catalog, workspaceId, …)`) → moduleRef null.
     const main = await postS8B1ChangeScope(world.world.base.world, world.ws1Scope, world.goal);
     expect(main.httpStatus).toBe(200);
-    expect(main.body).toMatchObject({ status: 'rejected', code: 'forbidden' });
-    expect(JSON.stringify(main.body)).not.toContain(world.filePath);
+    expect(main.body, JSON.stringify(main.body)).toMatchObject({ status: 'ready' });
+    const mainScope = changeScopeOfBody(main.body);
+    expect(mainScope.files).toEqual(expect.arrayContaining([expect.objectContaining({
+      path: world.filePath, certainty: 'definite',
+      moduleRef: { projectId: world.ws2Scope.projectId, moduleId: world.moduleId },
+    })]));
+    const mainModule = mainScope.modules.find(entry => (entry.moduleRef?.moduleId ?? entry.moduleId) === world.moduleId);
+    expect(mainModule).toMatchObject({ changed: 1 });
   }, 180_000);
 });

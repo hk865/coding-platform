@@ -15,7 +15,7 @@ import { rejected } from './core/rejections.js';
 import type { CoreRejection } from './core/results.js';
 import { MAX_ANSWER_BYTES } from './query-job.js';
 import type { UnknownCallReviewRef } from './unknown-call-review.js';
-import { hasOnlyKeys, isRecord, nonEmpty, parseObject, utf8Bytes } from './validation/common.js';
+import { hasOnlyKeys, isPos, isRecord, nonEmpty, parseObject, utf8Bytes } from './validation/common.js';
 
 export type UnknownCallAdvicePhaseV1 = 'disposition' | 'approval';
 /** 需求、产品取舍、架构. */
@@ -52,7 +52,7 @@ export const UNKNOWN_CALL_ADVICE_CHOICES: Readonly<Record<UnknownCallAdvicePhase
   disposition: ['rerun_as_is', 'safer_method', 'skip_as_done', 'escalate'],
   approval: ['approve', 'decline', 'escalate'],
 };
-const ESCALATION_KINDS: readonly string[] = ['requirement', 'product_tradeoff', 'architecture'];
+export const UNKNOWN_CALL_ADVICE_ESCALATION_KINDS = ['requirement', 'product_tradeoff', 'architecture'] as const;
 const ADVICE_KEYS = ['phase', 'choice', 'escalationKind', 'rationale', 'plain'] as const;
 const ANSWER_KEYS = ['schemaVersion', 'kind', 'reviewRef', 'revision', 'phase', 'goalBasisDigest',
   'choice', 'escalationKind', 'rationale', 'plain'] as const;
@@ -73,7 +73,8 @@ export function unknownCallAdviceProblem(value: unknown): string | null {
     return `the advice choice is not one of the ${phase} choices`;
   }
   const kind = value['escalationKind'];
-  if (value['choice'] === 'escalate' ? !ESCALATION_KINDS.includes(kind as string) : kind !== null) {
+  if (value['choice'] === 'escalate'
+    ? !(UNKNOWN_CALL_ADVICE_ESCALATION_KINDS as readonly string[]).includes(kind as string) : kind !== null) {
     return 'the advice escalationKind is required exactly when the choice is escalate';
   }
   const rationale = value['rationale'];
@@ -82,6 +83,32 @@ export function unknownCallAdviceProblem(value: unknown): string | null {
   if (!nonEmpty(plain) || plain.length > PLAIN_MAX_UNITS || /[\r\n]/.test(plain)) {
     return 'the advice plain sentence must be one line of 1..200 characters';
   }
+  return null;
+}
+
+/**
+ * The ONE shape check of the frozen subject the platform writes beside the form
+ * (the request's second line and the answer's fixed members): exactly the four
+ * members, the complete review ref, a positive revision, a known phase and a
+ * non-empty Goal basis digest.
+ */
+export function unknownCallAdviceSubjectProblem(value: unknown): string | null {
+  if (!isRecord(value)
+    || !hasOnlyKeys(value, ['reviewRef', 'revision', 'phase', 'goalBasisDigest'])) {
+    return 'the advice subject is not { reviewRef, revision, phase, goalBasisDigest }';
+  }
+  const ref = value['reviewRef'];
+  if (!isRecord(ref) || !hasOnlyKeys(ref, ['aggregateType', 'projectId', 'goalId', 'runId'])
+    || ref['aggregateType'] !== 'UnknownCallReview'
+    || !nonEmpty(ref['projectId']) || !nonEmpty(ref['goalId']) || !nonEmpty(ref['runId'])) {
+    return 'the advice answer names no complete review ref';
+  }
+  if (!isPos(value['revision'])) return 'the advice answer revision is not a positive integer';
+  const phase = value['phase'];
+  if (typeof phase !== 'string' || !Object.keys(UNKNOWN_CALL_ADVICE_CHOICES).includes(phase)) {
+    return 'the advice subject phase is not disposition or approval';
+  }
+  if (!nonEmpty(value['goalBasisDigest'])) return 'the advice answer has no Goal basis digest';
   return null;
 }
 
@@ -109,16 +136,13 @@ export function parseUnknownCallAdviceAnswer(text: string): ParsedUnknownCallAdv
     return rejected('invalid', 'the advice answer is not unknown_call_advice v1');
   }
   const ref = parsed['reviewRef'];
-  if (!isRecord(ref) || !hasOnlyKeys(ref, ['aggregateType', 'projectId', 'goalId', 'runId'])
-    || ref['aggregateType'] !== 'UnknownCallReview'
-    || !nonEmpty(ref['projectId']) || !nonEmpty(ref['goalId']) || !nonEmpty(ref['runId'])) {
-    return rejected('invalid', 'the advice answer names no complete review ref');
-  }
-  const revision = parsed['revision'];
-  if (typeof revision !== 'number' || !Number.isInteger(revision) || revision < 1) {
-    return rejected('invalid', 'the advice answer revision is not a positive integer');
-  }
-  if (!nonEmpty(parsed['goalBasisDigest'])) return rejected('invalid', 'the advice answer has no Goal basis digest');
+  const subjectProblem = unknownCallAdviceSubjectProblem({
+    reviewRef: parsed['reviewRef'], revision: parsed['revision'],
+    phase: parsed['phase'], goalBasisDigest: parsed['goalBasisDigest'],
+  });
+  if (subjectProblem !== null) return rejected('invalid', subjectProblem);
+  const revision = parsed['revision'] as number;
+  const goalBasisDigest = parsed['goalBasisDigest'] as string;
   const advice = { phase: parsed['phase'], choice: parsed['choice'], escalationKind: parsed['escalationKind'],
     rationale: parsed['rationale'], plain: parsed['plain'] };
   const problem = unknownCallAdviceProblem(advice);
@@ -127,7 +151,7 @@ export function parseUnknownCallAdviceAnswer(text: string): ParsedUnknownCallAdv
   return {
     status: 'parsed',
     subject: { reviewRef: ref as unknown as UnknownCallReviewRef, revision, phase: value.phase,
-      goalBasisDigest: parsed['goalBasisDigest'] },
+      goalBasisDigest },
     advice: value,
   };
 }

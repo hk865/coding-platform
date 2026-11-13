@@ -1,5 +1,5 @@
 /**
- * The system-round contract: the six round shapes, their one request-id
+ * The system-round contract: the seven round shapes, their one request-id
  * format, the fixed Host sender and its message identity, and the pure reply /
  * read helpers (§5.2.2, §5.2.5–§5.2.6, §5.3.5, §5.6).
  *
@@ -21,6 +21,10 @@ import type { PlanningAnswerShapeV1, QueryJobRef } from './query-job.js';
 import { validSessionMessageRef } from './query-job.js';
 import { inList, isPos, nonEmpty, parseObject } from './validation/common.js';
 import type { VerificationRoundRef } from './verification.js';
+import {
+  parseUnknownCallAdviceAnswer, unknownCallAdviceSubjectProblem, UNKNOWN_CALL_ADVICE_CHOICES,
+  type UnknownCallAdvicePhaseV1, type UnknownCallAdviceSubjectV1,
+} from './unknown-call-advice.js';
 
 /** A `refine:` target: a stage, or the plan-only placeholder task at goal level. */
 export type RefinementTargetV1 =
@@ -37,7 +41,8 @@ export type SystemRoundV1 =
   | { kind: 'planfix'; goalRef: GoalRef; proposalId: string; proposalRevision: number }
   | { kind: 'planresume'; goalRef: GoalRef; queryJobId: string; originalMessageRef: SessionMessageRef }
   /** Slice 9: the reviewer's execution-result round of one open verification round. */
-  | { kind: 'exec_review'; goalRef: GoalRef; roundRef: VerificationRoundRef };
+  | { kind: 'exec_review'; goalRef: GoalRef; roundRef: VerificationRoundRef }
+  | { kind: 'unknown_call'; goalRef: GoalRef; subject: UnknownCallAdviceSubjectV1 };
 
 /** The read-side head of a round: only the first line's segments, never a guess. */
 export type SystemRoundHeadV1 =
@@ -47,7 +52,9 @@ export type SystemRoundHeadV1 =
   | { kind: 'planfix'; proposalId: string; proposalRevision: number }
   | { kind: 'planresume'; goalId: string; queryJobId: string }
   /** No `goalId` (the `planreview` precedent): the Goal comes from the source message's `goalRef`. */
-  | { kind: 'exec_review'; roundId: string };
+  | { kind: 'exec_review'; roundId: string }
+  | { kind: 'unknown_call'; runId: string; revision: number; phase: UnknownCallAdvicePhaseV1;
+    goalBasisDigest: string };
 
 /** The one system-round sender; a fixed id is what makes one request id one message. */
 export const SYSTEM_ROUND_ACTOR = Object.freeze({ kind: 'system' as const, id: 'host:plan-round' });
@@ -109,6 +116,13 @@ export function systemRoundRequestId(
   if (round.kind === 'exec_review') {
     if (round.roundRef.roundId.length === 0) return rejected('invalid', 'roundId is empty');
     return { status: 'ready', value: `execreview:${round.roundRef.roundId}` };
+  }
+  if (round.kind === 'unknown_call') {
+    const { reviewRef, revision, phase, goalBasisDigest } = round.subject;
+    if (reviewRef.runId.length === 0) return rejected('invalid', 'runId is empty');
+    if (!isPos(revision)) return rejected('invalid', 'revision must be a positive safe integer');
+    if (goalBasisDigest.length === 0) return rejected('invalid', 'goalBasisDigest is empty');
+    return { status: 'ready', value: `ucr:${reviewRef.runId}:${String(revision)}:${phase}:${goalBasisDigest}` };
   }
   if (round.queryJobId.length === 0) return rejected('invalid', 'queryJobId is empty');
   return { status: 'ready', value: `planresume:${round.goalRef.goalId}:${round.queryJobId}` };
@@ -179,6 +193,15 @@ export function systemRoundOfText(text: string): SystemRoundHeadV1 | null {
     if (!nonEmpty(roundId)) return null;
     return { kind: 'exec_review', roundId };
   }
+  if (prefix === 'ucr') {
+    if (segments.length !== 5) return null;
+    const [, runId, rev, phase, digest] = segments;
+    const revision = positivePlanRevisionOf(rev);
+    const phases = Object.keys(UNKNOWN_CALL_ADVICE_CHOICES) as UnknownCallAdvicePhaseV1[];
+    if (!nonEmpty(runId) || revision === null || !nonEmpty(digest)
+      || !inList(phase, phases)) return null;
+    return { kind: 'unknown_call', runId, revision, phase, goalBasisDigest: digest };
+  }
   return null;
 }
 
@@ -204,10 +227,27 @@ export function planResumeOriginalQueryOfText(text: string): SessionMessageRef |
 }
 
 /**
+ * The second line of a `ucr:` text: `subject: <canonicalJson>`. It is the ONLY
+ * source of the adviser round's subject (and of the Run its history tool reads);
+ * absent, malformed or disagreeing with the first line's request id -> `null`.
+ */
+export function unknownCallAdviceSubjectOfText(text: string): UnknownCallAdviceSubjectV1 | null {
+  const [first, second] = text.split('\n');
+  if (second === undefined || !second.startsWith('subject: ')) return null;
+  const parsed = parseObject(second.slice('subject: '.length));
+  if (parsed === null || unknownCallAdviceSubjectProblem(parsed) !== null) return null;
+  const subject = parsed as unknown as UnknownCallAdviceSubjectV1;
+  const head = systemRoundRequestId({ kind: 'unknown_call', subject,
+    goalRef: { aggregateType: 'Goal', projectId: subject.reviewRef.projectId, goalId: subject.reviewRef.goalId } });
+  return head.status === 'ready' && head.value === first ? subject : null;
+}
+
+/**
  * The short reply derived from the frozen answer shape (§5.3.5): a plan
- * summary, a review verdict, or the original text. Only a `plan_review` or
- * `exec_review` answer that no longer parses has no reply (`null` -> terminal
- * invalid). The exec review reply never carries the answer JSON (slice 9).
+ * summary, a review verdict, or the original text. Only a `plan_review`,
+ * `exec_review` or `unknown_call_advice` answer that no longer parses has no
+ * reply (`null` -> terminal invalid). The exec review reply never carries the
+ * answer JSON (slice 9); the adviser reply is its one plain sentence.
  */
 export function planningReplyTextOf(input: {
   shape: PlanningAnswerShapeV1;
@@ -226,6 +266,10 @@ export function planningReplyTextOf(input: {
     const parsed = parseExecReviewAnswer(input.answerText);
     if (parsed.status !== 'parsed') return null;
     return parsed.verdict === 'pass' ? '执行结果审阅通过' : `执行结果审阅要求返工：见 Query ${input.queryJobId}`;
+  }
+  if (input.shape === 'unknown_call_advice') {
+    const parsed = parseUnknownCallAdviceAnswer(input.answerText);
+    return parsed.status === 'parsed' ? `参谋已答复：${parsed.advice.plain}` : null;
   }
   const parsed = parseInitialPlanningResponseV2(input.answerText);
   if (parsed.status === 'parsed') return parsed.response.summary;

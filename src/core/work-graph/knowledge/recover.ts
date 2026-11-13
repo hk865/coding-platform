@@ -3,11 +3,12 @@
  * items ([2C1-23]). The items are this project's (its snapshots); the content never leaves here. A recovery writes
  * the item's file in the write queue and the line's cross-Host lease, only while the file is still what the notice
  * saw: an unconfirmed platform write is rebuilt from the one event that carries it and must come out as the bytes
- * the write logged; a revert writes back the snapshot it chose. It never re-runs a service or writes a business
- * event, and a failure is answered as it is, never retried. Only a recovery reads an event ([2C1-21]).
+ * the write logged; a revert writes back the snapshot it chose; a bad file is written back from the source it named.
+ * It never re-runs a service or writes a business event, and a failure is answered as it is, never retried. Only a
+ * recovery reads an event ([2C1-21]).
  */
 import { rejected } from '../../../contracts/core/rejections.js';
-import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import { canonicalJson } from '../../../contracts/fingerprint.js';
 import type { KnowledgeRecoverResult, KnowledgeRecoveryItemV1 } from '../../../contracts/knowledge.js';
 import type { KnowledgeRecoveryRow, KnowledgeSnapshots } from '../../record-store/knowledge-snapshot-ports.js';
@@ -19,7 +20,7 @@ import {
 import { knowledgeWriteCodec, type KnowledgeWriteV1 } from '../persistence/knowledge-record-codecs.js';
 import { storeFailureToRejection } from '../persistence/read-result-failures.js';
 import { indexLanded, withKnowledgeLeases } from './knowledge-write.js';
-import { withSnapshots } from './reconcile.js';
+import { recordedBytesOf, withSnapshots } from './reconcile.js';
 import { completeKnowledgeWrites } from './write-log.js';
 
 /** The bytes a recovery writes (null deletes) and, for an unconfirmed write, the log it completes. */
@@ -70,7 +71,7 @@ async function recoverLeased(write: KnowledgeWriteDeps, line: LineKnowledge, sna
   // The file must be exactly what the notice saw (both missing counts as the same), or a later change stays.
   if ((current?.blobSha ?? null) !== row.expectedBlob) return rejected('revision_conflict', '文件在通知之后又被改过');
   const recovered = row.kind === 'write_unconfirmed' ? await rebuiltWrite(write, line, row, current?.bytes ?? null)
-    : chosenSnapshotOf(snapshots, row);
+    : row.kind === 'reverted' ? chosenSnapshotOf(snapshots, row) : await unreadableSourceOf(write, line, snapshots, row);
   if (recovered.status !== 'ready') return storeFailureToRejection(recovered);
   const change = { path: row.path, before: current?.bytes ?? null, after: recovered.value.bytes };
   const applied = await line.applyChange(change);
@@ -113,4 +114,25 @@ function chosenSnapshotOf(snapshots: KnowledgeSnapshots, row: KnowledgeRecoveryR
   const copy = snapshots.listRefs(row.lineRef, row.path).find(ref => ref.takenAt === row.takenAt);
   return copy === undefined ? rejected('unavailable', `${row.path} 的快照不在了`)
     : { status: 'ready', value: { bytes: copy.content, log: null } };
+}
+
+/**
+ * KC-2 (121-106 ④): the source a bad file's item named when its notice went out, read now: the snapshot by its key,
+ * HEAD's blob, or the platform's record rebuilt now (ruling 4-13 for a note: no file as a base, the file is the bad one).
+ * A source that is gone is `unavailable`: the button named it, so no other is guessed.
+ */
+async function unreadableSourceOf(write: KnowledgeWriteDeps, line: LineKnowledge, snapshots: KnowledgeSnapshots,
+  row: KnowledgeRecoveryRow): Promise<StoreResult<Recovered> | CoreRejection> {
+  const recovery = snapshots.readProblems(row.noticeId).find(problem => problem.itemNo === row.itemNo)!.recovery!;
+  if (recovery.source === 'snapshot') return chosenSnapshotOf(snapshots, row);
+  if (recovery.source === 'head') {
+    const head = await line.readHeadFile(row.path, recovery.headBlob);
+    return head.status === 'ready' ? { status: 'ready', value: { bytes: head.value.bytes, log: null } } : head;
+  }
+  const recorded = await write.recordedArchitecture(line.projectId);
+  if (recorded.status !== 'ready') return recorded;
+  const bytes = await recordedBytesOf(write, line, { path: row.path, moduleId: recovery.moduleId }, recorded.value);
+  if (bytes.status !== 'ready') return bytes;
+  return bytes.value === null ? rejected('unavailable', `${row.path} 在平台记录里已经没有了`)
+    : { status: 'ready', value: { bytes: bytes.value, log: null } };
 }

@@ -23,7 +23,7 @@ export type DutyRecipientDependencies = {
   dutyOfRole: (ctx: CoreCallContext, role: RoleConfigurationRef) => Promise<ReadResult<PlatformDutyV1 | 'unknown'>>;
 };
 export interface DutyRecipientPort {
-  /** A scope without `workspaceId` reads the whole project; only `reviewLineOf` asks that, to name a missing line. */
+  /** A scope without `workspaceId` reads the whole project; `reviewLineOf` and the overlap-gate note's secretary branch ask that. */
   resolveDutyRecipient(ctx: CoreCallContext, input: {
     workspace: WorkspaceScope | ProjectScope; duty: 'adviser' | 'secretary' | 'scribe' | 'reviewer';
   }): Promise<ReadResult<SessionRef | null>>;

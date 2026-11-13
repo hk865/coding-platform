@@ -8,8 +8,8 @@
  * identity + requestId): the same requestId replays one message, a changed
  * recipient is `idempotency_conflict`, and the message id is the sender
  * workspace's hash (hand-computed below, never `hostMessageId`).
- * R3: apart from the Host system `notify` and `action_request`, every
- * cross-workspace send is refused exactly as today.
+ * R3: across workspaces only a `notify` that needs no reply is accepted, from
+ * any sender; the Host system `notify` and `action_request` cross as before.
  * R4 follows from R1 (the record's event lives with the record).
  *
  * XW-1 runs on memory and SQLite (S3: the recipient index and the receipt
@@ -45,6 +45,9 @@ const B_WORKSPACE = S6A_SECOND_SCOPE.workspaceId;
 const HOST_SYSTEM = { kind: 'system', id: 'host:plan-round' } as const;
 /** The world's human operator, handwritten (F8). */
 const OPERATOR = { kind: 'human', id: 's6a-operator' } as const;
+/** L1: the cross-workspace reply refusal, handwritten from the ruling (F8), never imported from `src`. */
+const L1 = 'only a notify that needs no reply may go to a line in another workspace of the project: '
+  + 'replies and waits are read back in the sender\'s workspace';
 
 /**
  * The frozen Host message-id formula (`src/contracts/plan-round.ts:112–:127`'s
@@ -150,34 +153,69 @@ describe('XWS a Host system action_request crosses', () => {
   });
 });
 
-type XW3Send = (world: S6ARequestWorld, b: S6ACardsWorkspace, lineA: SessionRef) => Promise<unknown>;
-type XW3Case = { label: string; messageId: string; send: XW3Send };
+type XW3Case = { label: string; requestId: string; messageId: string; input: Record<string, unknown> };
 
 const XW3_CASES: readonly XW3Case[] = [
-  /* Named mutation a: relax the actor check so any Host send is admitted and only the intent is read
-     (`src/core/work-graph/state/message-machine.ts:731–:734`, the recipient-scope refusal). The person's
-     notify then commits into A, so the `toMatchObject(not_found)` and `not.toContain` assertions below
-     go red. */
-  { label: "a person's messages/send notify", messageId: idOf(OPERATOR, 'xws-3a'),
-    send: async (_world, b, lineA) => b.post('messages/send', graphWrite(S6A_SECOND_SCOPE,
-      { recipient: lineA, intent: 'notify', text: 'XWS-3a' }, 'xws-3a', [])) },
+  /* AGTX-2 (i). Today red at the rejection shape: the old guard refuses the cross-workspace
+     inquiry `not_found` / `the requested record does not exist`. Green after the package because
+     `message-machine.ts:556–:560` answers `invalid` with L1. Named mutation: remove the intent
+     condition from `mayCross` (`src/core/work-graph/communication/mailbox-send.ts:425–:458`) →
+     the inquiry commits, so the `toMatchObject` goes red (if it were bypassed, only A's inbox
+     would hold the message). */
+  { label: 'an inquiry', requestId: 'xws-3a', messageId: idOf(OPERATOR, 'xws-3a'),
+    input: { intent: 'inquiry', text: 'XWS-3a' } },
+  /* AGTX-2 (ii). Today red at the same rejection shape. Green after the package for the same
+     reason: the notify still needs a reply, so it is `other_workspace` and L1 answers `invalid`.
+     Named mutation: remove `!send.needsReply` from `mayCross` (`mailbox-send.ts:425–:458`) →
+     the notify that needs a reply commits, so the `toMatchObject` goes red (if it were bypassed,
+     only A's inbox would hold the message). */
+  { label: 'a notify that needs a reply', requestId: 'xws-3b', messageId: idOf(OPERATOR, 'xws-3b'),
+    input: { intent: 'notify', needsReply: true, text: 'XWS-3b' } },
 ];
 
-describe('XWS the refusals stay as they are', () => {
-  it.each(XW3_CASES)('XW-3 refuses $label and writes nothing', async ({ messageId, send }) => {
-    const { world, a, b } = await openWorld('memory');
+describe('rejects: a cross-workspace send that asks for a reply (coordination)', () => {
+  it.each(XW3_CASES)('XW-3 refuses $label and writes nothing', async ({ requestId, messageId, input }) => {
+    const { a, b } = await openWorld('memory');
     const lineA = await createS6BLine(a, { label: 'xws-line-a', role: S6A_WORK_ROLE });
-    expect(await send(world, b, lineA.ref)).toMatchObject({ status: 'rejected', code: 'not_found',
-      reason: 'the requested record does not exist' });
+    expect(await b.post('messages/send', graphWrite(S6A_SECOND_SCOPE,
+      { recipient: lineA.ref, ...input }, requestId)))
+      .toMatchObject({ status: 'rejected', code: 'invalid', reason: L1 });
     for (const ws of [a, b]) {
       expect((await inboxIn(ws, lineA.ref)).map(item => item.ref.messageId)).not.toContain(messageId);
     }
   });
+});
 
-  it('XW-4 refuses an Agent Work Run notify into another workspace', async () => {
-    /* Named mutation: relax the sender check so a work_run notify is admitted across workspaces
-       (`message-machine.ts:731–:734`). The tool's JSON part is then a committed message, so the
-       `toMatchObject({ status: 'rejected', … })` assertion goes red. */
+describe('XWS a human notify crosses', () => {
+  it('XWS-3 lets a human notify another workspace without a reply', async () => {
+    /* AGTX-2b. Today red at (a): the old guard refuses the human cross-workspace notify
+       `not_found`. Green after the package because `mayCross`'s first clause accepts intent null
+       (or `notify`) with `!needsReply` for any sender (Q2 甲). Named mutations: (1) require intent
+       `notify` (drop `send.intent === null`) → (a) red; (2) restrict `mayCross` to Host-system
+       senders → (a) red. */
+    const { a, b } = await openWorld('memory');
+    const lineA = await createS6BLine(a, { label: 'xws-line-a', role: S6A_WORK_ROLE });
+    const sent = await b.post('messages/send', graphWrite(S6A_SECOND_SCOPE,
+      { recipient: lineA.ref, text: 'XWS-3-human' }, 'xws-3-human'));
+    expect(sent).toMatchObject({ status: 'committed',
+      value: { ref: { workspaceId: 'ag2b-collab-workspace' } } });
+    const received = await inboxIn(a, lineA.ref);
+    expect(received).toHaveLength(1);
+    expect(await bodyOf(a, received[0]!.ref)).toContain('XWS-3-human');
+    expect(await inboxIn(b, lineA.ref)).toEqual([]);
+  });
+});
+
+describe('XWS a Work Run notify crosses', () => {
+  it('XW-4 commits an Agent Work Run notify into the recipient workspace', async () => {
+    /* AGTX-1. Today red at step (a): the old recipient-scope guard refuses the cross-workspace
+       Work Run notify `not_found`, so the tool JSON part is a rejection. Green after the package
+       because `mailbox-send.ts:425–:458` admits any sender's notify that needs no reply and
+       records it in the recipient line's workspace, and `message-machine.ts:556–:560` has no
+       `other_workspace` refusal left for it. Named mutations: (1) narrow `mayCross` back to the
+       Host system only (`mailbox-send.ts:425–:458`) → (a) red (`not_found`, the pre-package
+       refusal); (2) keep `receivingWorkspaceId` on the sender workspace instead of the
+       recipient's (`mailbox-send.ts:425–:458`) → the record lands in A, so (b) goes red. */
     const { world, a, b } = await openWorld('memory',
       [S7A_REPLY_TOOLS, { ...S7A_REPLY_TOOLS, mergeTools: ['send_session_message'] }]);
     const lineB = await createS6BLine(b, { label: 'xws-line-b', role: S6A_WORK_ROLE });
@@ -207,12 +245,12 @@ describe('XWS the refusals stay as they are', () => {
       output = event.payload.result.output.find(part => part.kind === 'json')?.value as
         Record<string, unknown> | undefined;
     }
-    expect(output).toMatchObject({ status: 'rejected', code: 'not_found',
-      reason: 'the requested record does not exist' });
-    for (const ws of [a, b]) {
-      const texts: string[] = [];
-      for (const item of await inboxIn(ws, lineB.ref)) texts.push(await bodyOf(ws, item.ref));
-      expect(texts).not.toContain('XWS-4');
-    }
+    // (a) the tool commits, and the record lives in the recipient line's workspace.
+    expect(output).toMatchObject({ status: 'committed', value: { ref: { workspaceId: 's6a-second-workspace' } } });
+    // (b) the recipient's own workspace reads it back; (c) the sender's workspace has no copy.
+    const received = await inboxIn(b, lineB.ref);
+    expect(received).toHaveLength(1);
+    expect(await bodyOf(b, received[0]!.ref)).toContain('XWS-4');
+    expect(await inboxIn(a, lineB.ref)).toEqual([]);
   });
 });

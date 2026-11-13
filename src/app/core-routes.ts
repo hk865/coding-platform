@@ -55,6 +55,8 @@ import type { SessionFactsPort } from '../core/work-graph/model/session-facts-co
 import type { SessionResponsibilityPort } from '../core/work-graph/sessions/session-responsibility-service.js';
 import type { SessionAnomalyPort } from '../core/work-graph/tasks/session-anomaly-service.js';
 import type { RunNetworkPort } from '../core/work-graph/tasks/run-network-service.js';
+// SHT-2 (121-112): the read view of the Host's in-memory running commands.
+import type { RunningCommandsReadV1 } from '../core/agent-runtime/running-commands.js';
 // K3 (§2 L7): the read-only UnknownCallReview owner of `unknown-call-reviews/read`.
 import type { UnknownCallReviewReadPort, UnknownCallReviewPort } from '../core/work-graph/model/unknown-call-review-contracts.js';
 import type { ExecutionReadPort } from '../core/work-graph/model/execution-read-contracts.js';
@@ -127,6 +129,7 @@ import {
   type RequestCommandCoreRouteDto,
   type RoleLineCoreRouteDto,
   type VerificationCoreRouteDto,
+  type ExecutionsCoreRouteDto,
   type WorkspaceFilesCoreRouteDto,
   type SecretariesArchiveBody,
   type SecretariesArchiveResponse,
@@ -262,6 +265,8 @@ export type CoreRouteBindings = {
   resolveUnknownRun: NonNullable<CoreRoutePlatform['resolveUnknownRun']>;
   resolveUnknownQueryRun: NonNullable<CoreRoutePlatform['resolveUnknownQueryRun']>;
   readReconcileReport: HostReconcileReportPort['readReconcileReport'];
+  /** SHT-2 (121-112): the Host's in-memory running-command read. */
+  readRunningCommands: HostRunningCommandsPort['readRunningCommands'];
   // A.2 step 5.9 (VR-14): the successor round owner.
   reverifyRound: NonNullable<EvidencePort['reverifyRound']>;
   /** UI1: one formal verification round with its chain and delivery projection. */
@@ -429,6 +434,11 @@ export type CoreRouteBindings = {
 /** A.2 step 5.6 (§12.1 step 7, §12.8): this Host's instance lease and its start-up reconcile report. */
 export interface HostReconcileReportPort {
   readReconcileReport(ctx: CoreCallContext, input: unknown): Promise<ReadResult<HostReconcileReportV1>>;
+}
+
+/** SHT-2 (121-112): the Host's in-memory running-command read, published as `executions/running-commands`. */
+export interface HostRunningCommandsPort {
+  readRunningCommands(ctx: CoreCallContext, input: unknown): Promise<ReadResult<RunningCommandsReadV1>>;
 }
 
 /**
@@ -612,7 +622,7 @@ export const CORE_ROUTE_SPECS: Record<
   | keyof ArchitectureCoreRouteDto
   | keyof OverlapCoreRouteDto
   | keyof RequestCommandCoreRouteDto | keyof SecretaryLifecycleCoreRouteDto | keyof WaitsCoreRouteDto
-  | keyof RoleLineCoreRouteDto | keyof MaintainerCoreRouteDto | keyof WorkspaceFilesCoreRouteDto
+  | keyof RoleLineCoreRouteDto | keyof MaintainerCoreRouteDto | keyof WorkspaceFilesCoreRouteDto | keyof ExecutionsCoreRouteDto
   | keyof VerificationCoreRouteDto | keyof ExplorationCoreRouteDto | keyof KnowledgeCoreRouteDto,
   CoreRouteSpec
 > = {
@@ -698,6 +708,8 @@ export const CORE_ROUTE_SPECS: Record<
   'workflow/driver-stop': { kind: 'plain', binding: 'driverStop', owner: 'collaboration.stop' },
   'executions/read': { kind: 'plain', binding: 'readExecution', owner: 'executions.readExecution' },
   'executions/history': { kind: 'plain', binding: 'readTaskExecutionHistory', owner: 'runtime.readTaskExecutionHistory' },
+  // SHT-2 (121-112): the commands this Host is running now, ten minutes or older.
+  'executions/running-commands': { kind: 'plain', binding: 'readRunningCommands', owner: 'host.readRunningCommands' },
   // MVP UI connection: bounded execution list, narrow project read, Host CAS
   // save / existing-port compare, and the explicit command handle routes.
   'executions/list': { kind: 'plain', binding: 'listExecutions', owner: 'executions.listExecutions' },
@@ -964,6 +976,7 @@ export function createPlatformCoreRouteBindings(
   initialization?: InitializationAdoptionHostPort,
   armMessageRelease?: (scope: WorkspaceScope) => void,
   readArchitectureProposal?: ArchitectureProposalService['readArchitectureProposal'],
+  hostCommands?: HostRunningCommandsPort,
 ): CoreRouteBindings {
   // A Host that assembles no collaboration driver still publishes the exact
   // routes, but every one answers an explicit `unsupported` instead of a fake
@@ -1252,6 +1265,9 @@ export function createPlatformCoreRouteBindings(
     readReconcileReport: hostReport === undefined
       ? unsupported('the Host does not publish its reconcile report')
       : hostReport.readReconcileReport.bind(hostReport),
+    readRunningCommands: hostCommands === undefined
+      ? unsupported('the Host does not publish its running-command read')
+      : hostCommands.readRunningCommands.bind(hostCommands),
     reverifyRound: platform.evidence.reverifyRound === undefined
       ? unsupported('the Host does not publish the successor-round owner (reverifyRound)')
       : platform.evidence.reverifyRound.bind(platform.evidence),
@@ -1795,6 +1811,7 @@ export async function dispatchCoreRoute(
       case 'executions/resolve-unknown': return bindings.resolveUnknownRun(ctx, graphWrite.request as never);
       case 'queries/resolve-unknown': return bindings.resolveUnknownQueryRun(ctx, graphWrite.request as never);
       case 'host/reconcile-report': return bindings.readReconcileReport(ctx, plain.input as never);
+      case 'executions/running-commands': return bindings.readRunningCommands(ctx, plain.input as never);
       case 'verification/reverify': return bindings.reverifyRound(ctx, graphWrite.request as never);
       case 'verification/round': return bindings.readVerificationRound(ctx, plain.input as never);
       // Slice 1 (spec §4.4): explicit arms, one per new suffix.

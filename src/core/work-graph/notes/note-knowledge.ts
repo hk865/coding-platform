@@ -24,13 +24,12 @@ import {
   lineRefKey, type KnowledgeAnchorV1, type LineKnowledge, type LineNoteFileV1, type LineNoteV1,
   type NoteKnowledgeV1,
 } from '../model/line-knowledge.js';
-import { architectureFileOf, moduleFileOf } from '../architecture/architecture-file.js';
 import type { KnowledgeRead } from '../architecture/catalog-service.js';
 import type { DecisionSourceAttempt } from '../model/decision-contracts.js';
 import { pendingKnowledgeWrites } from '../knowledge/write-log.js';
-import { knowledgeFileKindOf } from './knowledge-files.js';
+import { knowledgeFileKindOf, knowledgeFileParseOf } from './knowledge-files.js';
 import { anchorKeyOf, topicKeyOf } from './note-anchors.js';
-import { isKnowledgeAnchor, noteIdFromFilePath, noteKnowledgeOf, noteOfFileBytes } from './note-file.js';
+import { isKnowledgeAnchor, noteIdFromFilePath, noteKnowledgeOf } from './note-file.js';
 
 export function noteDerivedRowsOf(knowledge: NoteKnowledgeV1): KnowledgeDerivedRows {
   const edges: { toRef: string; kind: KnowledgeEdgeKind }[] = [];
@@ -67,31 +66,14 @@ export function indexKnowledgeFile(tx: KnowledgeIndexTx, line: LineKnowledge, pa
     drop();
     return { status: 'decoded', value: { kind, blobSha: null } };
   }
-  // The blob's parse is kept in the file frame: one blob reads the same in every workspace.
-  const ownFrame = { workspaceId: line.scope.workspaceId, mainWorkspaceId: line.scope.workspaceId };
-  let parsed: unknown;
-  let rows: KnowledgeDerivedRows | null = null;
-  if (noteId !== null) {
-    const framed = noteOfFileBytes(bytes, ownFrame);
-    const viewed = noteOfFileBytes(bytes, line.scope);
-    if (framed.status !== 'decoded' || viewed.status !== 'decoded') {
-      drop();
-      return { status: 'invalid', reason: `${path}: ${framed.status !== 'decoded' ? framed.reason : (viewed as { reason: string }).reason}` };
-    }
-    parsed = framed.value;
-    rows = noteDerivedRowsOf(viewed.value);
-  } else {
-    const file = kind === 'architecture'
-      ? architectureFileOf(bytes, line.scope.workspaceId === line.scope.mainWorkspaceId) : moduleFileOf(path, bytes);
-    if (typeof file === 'string') {
-      drop();
-      return { status: 'invalid', reason: file.startsWith(path) ? file : `${path}: ${file}` };
-    }
-    parsed = file;
+  const parsed = knowledgeFileParseOf(line.scope, path, bytes);
+  if (parsed.status !== 'decoded') {
+    drop();
+    return parsed;
   }
   const blobSha = gitBlobId(bytes, line.objectFormat);
-  tx.setFile({ lineRef, path, blobSha, kind }, JSON.stringify(parsed));
-  if (noteId !== null && rows !== null) tx.replaceNoteRows(lineRef, noteId, rows);
+  tx.setFile({ lineRef, path, blobSha, kind }, JSON.stringify(parsed.value.parsed));
+  if (noteId !== null && parsed.value.viewed !== null) tx.replaceNoteRows(lineRef, noteId, noteDerivedRowsOf(parsed.value.viewed));
   return { status: 'decoded', value: { kind, blobSha } };
 }
 

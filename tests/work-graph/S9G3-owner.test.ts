@@ -4,6 +4,9 @@
  *
  * - O1 (pure, A5): the submit shape of a planning Query is `exec_review` only for a reviewer line answering the
  *   Host system round whose head is `execreview:`; without the head kind the same reviewer round stays `plan_review`.
+ *   K3L-2 §3 R4 adds the `unknown_call` head: the adviser line gets `unknown_call_advice`, a reviewer line and a
+ *   person's message stay as they were. TODAY the adviser cell is red (`unknown_call` is not a head kind yet) and
+ *   the reviewer/person cells are green guards; all three are green when K3L-2 §2.3 lands.
  * - O3 (SQLite, Host restart; lead ruling s9g3 after hand-back #1): a check a restart interrupted has no commit the
  *   notice can read by identity, so the no-line notice takes the newest finished check's result commit, or the
  *   opening commit when none finished; the decision queue still reads. The check is held by a marker file
@@ -39,6 +42,11 @@ describe('O1 the exec review answer shape', () => {
     ['reviewer, system round, planreview head', systemRound, 'reviewer', 'planreview', 'plan_review'],
     ['adviser, system round, execreview head', systemRound, 'adviser', 'exec_review', 'plan_round'],
     ['reviewer, a person, execreview head', person, 'reviewer', 'exec_review', 'text'],
+    // R4 named mutations: reading the head before the sender -> the person cell red; giving every duty the new
+    // shape -> the reviewer cell red.
+    ['adviser, system round, unknown_call head', systemRound, 'adviser', 'unknown_call', 'unknown_call_advice'],
+    ['reviewer, system round, unknown_call head', systemRound, 'reviewer', 'unknown_call', 'plan_review'],
+    ['adviser, a person, unknown_call head', person, 'adviser', 'unknown_call', 'plan_round'],
   ] as const)('%s', (_label, message, duty, roundKind, expected) => {
     expect(planningAnswerShapeOf(message, duty, roundKind)).toBe(expected);
   });

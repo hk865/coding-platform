@@ -685,6 +685,11 @@ export type FinalToolListInputV1 = {
   frozenSource: boolean;
   materialTools: boolean;
   /**
+   * A Query bound to a Goal (`manifest.goal !== null`): only then does it build the whiteboard reads, which read that
+   * Goal's Plan. Absent reads false; every Work call ignores it.
+   */
+  goalBound?: boolean;
+  /**
    * The submit tools this round's answer shape freezes. It follows the Run,
    * not `selected`, the way the review tool follows a review Run; absent is
    * null, so every Work call and every plain Query stays unchanged.
@@ -737,7 +742,7 @@ export function finalToolNamesOf(input: FinalToolListInputV1): ToolGroupResult<s
   }
   const wanted = new Set(input.selected);
   const owners = input.owners;
-  // Query builds graph/read-only tools and secretary-admitted note tools.
+  // Query builds graph reads, whiteboard reads, and secretary-admitted note tools.
   // Every other coordination family a Query's projected permissions may name
   // is neither built nor a rejection: it is outside this call kind's final list.
   const query = input.callKind === 'query';
@@ -749,15 +754,18 @@ export function finalToolNamesOf(input: FinalToolListInputV1): ToolGroupResult<s
   if (reviewToolName !== null && !owners.unknownCallReviews) {
     return { ok: false, rejection: rejected('unsupported', 'the review Run requires the unknownCallReviews owner to register its review tool') };
   }
-  // A secretary request round builds the two mailbox tools and
-  // `create_member`; every other Query keeps them out of its final list.
+  // A secretary request round builds the two mailbox tools; every other Query
+  // keeps them out of its final list. `create_member` follows `selected` only:
+  // which Query keeps it (the secretary's request round, the adviser's planning
+  // round) is decided once by `projectQueryConfiguration`.
   const secretary = input.noteAdmission.class === 'secretary';
   const mailboxNames = query
     ? secretary ? SECRETARY_QUERY_MAILBOX_TOOL_NAMES.filter(name => wanted.has(name)) : []
     : SESSION_MAILBOX_TOOL_NAMES.filter(name => wanted.has(name));
   const handoffNames = query ? [] : HANDOFF_TOOL_NAMES.filter(name => wanted.has(name));
   const decisionNames = query ? [] : USER_DECISION_TOOL_NAMES.filter(name => wanted.has(name));
-  const whiteboardNames = query ? [] : WHITEBOARD_TOOL_NAMES.filter(name => wanted.has(name));
+  // A Query builds the whiteboard names its ceiling left (the two reads) only with a Goal to read.
+  const whiteboardNames = query && input.goalBound !== true ? [] : WHITEBOARD_TOOL_NAMES.filter(name => wanted.has(name));
   const discoveryNames = query ? [] : SESSION_DISCOVERY_TOOL_NAMES.filter(name => wanted.has(name));
   const graphNames = GRAPH_TOOL_NAMES.filter(name => wanted.has(name));
   const linkCheckNames = LINK_CHECK_TOOL_NAMES.filter(name => wanted.has(name));
@@ -766,8 +774,8 @@ export function finalToolNamesOf(input: FinalToolListInputV1): ToolGroupResult<s
   // Only the Work Runtime and an exploration Query build the proposal tool; no other Query reaches its factory.
   const architectureNames = query && input.explorationRound !== true ? []
     : ARCHITECTURE_TOOL_NAMES.filter(name => wanted.has(name));
-  const memberNames = wanted.has(CREATE_MEMBER_TOOL_NAME) && (!query || secretary) ? [CREATE_MEMBER_TOOL_NAME] : [];
-  // Only the Work Runtime builds the maintainer tool; Query has no adviser duty.
+  const memberNames = wanted.has(CREATE_MEMBER_TOOL_NAME) ? [CREATE_MEMBER_TOOL_NAME] : [];
+  // Only the Work Runtime builds the maintainer tool; the adviser's planning Query keeps only `create_member` (121-114).
   const maintainerNames = !query && wanted.has(ASSIGN_MODULE_MAINTAINER_TOOL_NAME)
     ? [ASSIGN_MODULE_MAINTAINER_TOOL_NAME] : [];
   // Only the Work Runtime builds the split tool; a Query's projection never reaches its factory.

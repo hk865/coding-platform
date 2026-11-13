@@ -13,7 +13,7 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "7bbf7639ce9a2f631360cab4a67d63676ebad83bae18aac2be5086884fedbd6c"
+    "sha256": "d927e665593ae6cd555b360d19aa72dd4b2377de7c460c57d0f4f1be3b89cea3"
   },
   {
     "path": "resources/prompts/platform/strings.json",
@@ -141,7 +141,7 @@
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-adviser.txt",
-    "sha256": "6e649060d8e346d4b8d5c6cc579a85a7c29c50a470118cb3de3529fc5e38fb57"
+    "sha256": "4bc18a1ef3aa6004fd1d1d5a9945591c8ce581bf1b1e3162b7e6ec4a1c3051d3"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-scribe.txt",
@@ -165,7 +165,7 @@
   },
   {
     "path": "resources/prompts/platform/tools/create_member.json",
-    "sha256": "62c0c9d45ffd2a281df2acf5f8b5fb69e414127ec878322d5edac5c618290b8e"
+    "sha256": "5b4eb8fd5c4202b1f9fe16e7668b5b8995d2c7da7dbf4c836fbda366918571da"
   },
   {
     "path": "resources/prompts/platform/tools/assign_module_maintainer.json",
@@ -398,5 +398,13 @@
   {
     "path": "resources/prompts/platform/templates/exec-review-input.txt",
     "sha256": "0d0dd8a8654627bd832822adb103f8511e5d72baf06f66e6cc524ecb221aeaed"
+  },
+  {
+    "path": "resources/prompts/platform/templates/unknown-call-advice-input.txt",
+    "sha256": "cd199dbd13d4f5e19e3a2621775f82c4ccdffa76005b12c5043cbad46611d050"
+  },
+  {
+    "path": "resources/prompts/platform/tools/submit_unknown_call_advice.json",
+    "sha256": "a4b43e9b2f31b5265ab9223c7fc6bb88ff6dff34566e6c6d1c2af4f32b58570b"
   }
 ]

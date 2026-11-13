@@ -168,7 +168,7 @@ describe('PL-39: the planning note is older than A, so the adviser updates it', 
     expect(manifest.answerShape).toBeNull();
     expect(manifest.request).toBeNull();
 
-    // The tool table is the planning text table: record_note, no submit/mail/member tools.
+    // The tool table is the planning text table: record_note, no submit or mail tools (ADVQ keeps create_member).
     const turns = await target.world.world.scripted.requests(target.adviser);
     const noteTurn = turns.find(turn => turn.tools.some(tool => tool.name === 'record_note')
       && !turn.tools.some(tool => tool.name === 'submit_plan_round'));
@@ -178,7 +178,6 @@ describe('PL-39: the planning note is older than A, so the adviser updates it', 
     expect(tools).not.toContain('submit_plan_review');
     expect(tools).not.toContain('send_session_message');
     expect(tools).not.toContain('respond_session_message');
-    expect(tools).not.toContain('create_member');
 
     // The note owner dispatched the text round to the planning resolver: duty adviser, this QueryRun.
     const notes = await notesOnModule(target);

@@ -88,12 +88,13 @@ import type {
   PromptToolReadV1,
 } from './host-settings-types.js';
 import { DEFAULT_WORK_RUN_TOKEN_BUDGET, MAX_WORK_RUN_TOKEN_BUDGET } from './host-settings-types.js';
+import { DEFAULT_COMMAND_REVIEW_LINE_MINUTES } from '../contracts/resource-caps.js';
 
 /** The published settings route set. `SettingsRoutes` stays the type truth. */
 export const SETTINGS_ROUTE_SUFFIXES = [
   'snapshot', 'directories', 'models/save', 'models/select', 'workspaces/open', 'workspaces/access', 'checks/approve',
   'automation/save',
-  'resource-caps/save', 'run-budget/save', 'plan-loop-limits/save', 'prompts/packs/list', 'prompts/packs/create', 'prompts/templates/read',
+  'resource-caps/save', 'run-budget/save', 'command-review/save', 'plan-loop-limits/save', 'prompts/packs/list', 'prompts/packs/create', 'prompts/templates/read',
   'prompts/templates/save', 'prompts/tools/read', 'prompts/tools/save', 'knowledge-local',
 ] as const satisfies readonly SettingsRoute[];
 
@@ -197,6 +198,10 @@ export type HostSettingsPrivateSnapshot = {
    * the budget it started with. Every settings push carries them, and so does
    * the pre-settings seed snapshot (`host.ts`'s initial bindings). */
   planLoopLimits: PlanLoopLimitsV1;
+  /** SHT-2 (121-112): the effective project review line in minutes. The Host installs it from
+   *  `command-review/save`; the next heartbeat and the next read use it (a command already over the old line and
+   *  noticed is not noticed again, and one not yet noticed is judged by the new line). */
+  commandReviewLineMinutes: number;
   /** KLS-2: the checkouts, by repository key, whose architecture and notes stay local and out of
    *  git. The Host keeps the last copy pushed to it; the knowledge status and commit read it there. */
   knowledgeLocalOnly: Readonly<Record<RepoKey, true>>;
@@ -434,6 +439,10 @@ type PersistedSettingsV1 = {
    * another setting and reads as `DEFAULT_PLAN_LOOP_LIMITS`. A present but
    * invalid table refuses Host startup instead of reading the defaults. */
   planLoopLimits?: PlanLoopLimitsV1;
+  /** SHT-2 Host setting `commandReviewLineMinutes`. Absent in old files and in a file whose value was cleared; it
+   *  stays absent on the next save of another setting and reads as `DEFAULT_COMMAND_REVIEW_LINE_MINUTES`. A present
+   *  but invalid value refuses Host startup instead of reading the default. */
+  commandReviewLineMinutes?: number;
   /** KLS-2: the checkouts whose knowledge stays local, by repository key (not per project and not in a workspace
    *  entry). Absent in old files and while no checkout has it; absent reads as the empty table. */
   knowledgeLocalOnly?: Record<RepoKey, true>;
@@ -548,6 +557,13 @@ function parseStoredWorkRunTokenBudget(value: unknown): number {
   if (!isPos(value) || value > MAX_WORK_RUN_TOKEN_BUDGET) {
     throw new Error('the private host settings file is invalid');
   }
+  return value;
+}
+
+/** SHT-2: the stored project review line is one positive safe integer of minutes, with no upper bound; an absent
+ *  field is the default. A present but invalid value fails Host start-up, exactly like `resourceCaps`. */
+function parseStoredCommandReviewLineMinutes(value: unknown): number {
+  if (!isPos(value)) throw new Error('the private host settings file is invalid');
   return value;
 }
 
@@ -666,6 +682,8 @@ function parsePersisted(text: string): PersistedSettingsV1 {
       ? {} : { workRunTokenBudget: parseStoredWorkRunTokenBudget(raw['workRunTokenBudget']) }),
     ...(raw['planLoopLimits'] === undefined
       ? {} : { planLoopLimits: parseStoredPlanLoopLimits(raw['planLoopLimits']) }),
+    ...(raw['commandReviewLineMinutes'] === undefined
+      ? {} : { commandReviewLineMinutes: parseStoredCommandReviewLineMinutes(raw['commandReviewLineMinutes']) }),
     ...(raw['knowledgeLocalOnly'] === undefined
       ? {} : { knowledgeLocalOnly: parseStoredKnowledgeLocalOnly(raw['knowledgeLocalOnly']) }) };
 }
@@ -732,11 +750,16 @@ export async function createHostSettings(
   /** PL/§10.3: the plan-loop limits as stored (absent is the defaults) until
    * `plan-loop-limits/save` writes them; `null` on that route clears them. */
   let planLoopLimitSetting: PlanLoopLimitsV1 | undefined = persisted.planLoopLimits;
+  /** SHT-2: the project review line as stored (absent is the default) until `command-review/save` writes it; `null`
+   *  on that route clears it again. */
+  let commandReviewLineSetting: number | undefined = persisted.commandReviewLineMinutes;
   /** KLS-2: the checkouts whose knowledge stays local, by repository key; `knowledge-local` changes it. */
   const knowledgeLocalOnly: Record<RepoKey, true> = { ...persisted.knowledgeLocalOnly };
   const effectiveWorkRunTokenBudget = (): number => workRunTokenBudget ?? DEFAULT_WORK_RUN_TOKEN_BUDGET;
   const effectivePlanLoopLimits = (): Readonly<PlanLoopLimitsV1> =>
     planLoopLimitSetting ?? DEFAULT_PLAN_LOOP_LIMITS;
+  const effectiveCommandReviewLine = (): number =>
+    commandReviewLineSetting ?? DEFAULT_COMMAND_REVIEW_LINE_MINUTES;
   const totalMemoryBytes = totalmem();
   const capDefaults = defaultResourceCapSettings(totalMemoryBytes);
   const memoryUpperMiB = Math.floor(totalMemoryBytes / MIB);
@@ -774,6 +797,7 @@ export async function createHostSettings(
     },
     workRunTokenBudget: effectiveWorkRunTokenBudget(),
     planLoopLimits: copyPlanLoopLimits(effectivePlanLoopLimits()),
+    commandReviewLineMinutes: effectiveCommandReviewLine(),
     knowledgeLocalOnly: { ...knowledgeLocalOnly },
   });
 
@@ -783,6 +807,7 @@ export async function createHostSettings(
       ...(resourceCapSetting === undefined ? {} : { resourceCaps: resourceCapSetting }),
       ...(workRunTokenBudget === undefined ? {} : { workRunTokenBudget }),
       ...(planLoopLimitSetting === undefined ? {} : { planLoopLimits: planLoopLimitSetting }),
+      ...(commandReviewLineSetting === undefined ? {} : { commandReviewLineMinutes: commandReviewLineSetting }),
       ...(Object.keys(knowledgeLocalOnly).length === 0 ? {} : { knowledgeLocalOnly }) };
     await mkdir(settingsDirectory, { recursive: true, mode: 0o700 });
     const temporaryPath = join(settingsDirectory, `.host-settings.${randomUUID()}.tmp`);
@@ -908,6 +933,11 @@ export async function createHostSettings(
       saved: planLoopLimitSetting === undefined ? null : copyPlanLoopLimits(planLoopLimitSetting),
       effective: copyPlanLoopLimits(effectivePlanLoopLimits()),
       defaults: copyPlanLoopLimits(DEFAULT_PLAN_LOOP_LIMITS),
+    },
+    commandReviewLine: {
+      saved: commandReviewLineSetting ?? null,
+      effective: effectiveCommandReviewLine(),
+      default: DEFAULT_COMMAND_REVIEW_LINE_MINUTES,
     },
   });
 
@@ -1450,6 +1480,34 @@ export async function createHostSettings(
   }
 
   /**
+   * SHT-2 (121-112): the project review line. `null` removes the stored key and restores
+   * `DEFAULT_COMMAND_REVIEW_LINE_MINUTES`; any other value is a positive safe integer of minutes with no upper bound.
+   * The write is validated, persisted and pushed exactly like `run-budget/save`; the Host installs the effective value
+   * at once, and a command already over the old line is not re-noticed.
+   */
+  async function saveCommandReviewLineRoute(input: unknown): Promise<SettingsResponse<HostSettingsSnapshot>> {
+    if (!isRecord(input)) return invalid('command-review/save requires an object body');
+    const value = input['commandReviewLineMinutes'];
+    let next: number | undefined;
+    if (value !== null) {
+      if (!isPos(value)) return invalid('commandReviewLineMinutes must be null or a positive integer');
+      next = value;
+    }
+    const previous = commandReviewLineSetting;
+    commandReviewLineSetting = next;
+    try { await persist(); }
+    catch {
+      commandReviewLineSetting = previous;
+      return unavailable('the settings file could not be written');
+    }
+    try { await notify(); }
+    catch {
+      return unavailable('the command review line was saved but the Host configuration was not confirmed; retry the same save');
+    }
+    return { status: 'ready', value: snapshotOf() };
+  }
+
+  /**
    * PL/§10.3: the whole `planLoopLimits` setting. `null` removes the stored key
    * and restores `DEFAULT_PLAN_LOOP_LIMITS`. The write is validated, persisted
    * and pushed exactly like `run-budget/save`; a present but invalid table is
@@ -1832,6 +1890,7 @@ export async function createHostSettings(
       case 'automation/save': return await saveAutomationRoute(input);
       case 'resource-caps/save': return await saveResourceCapsRoute(input);
       case 'run-budget/save': return await saveRunBudgetRoute(input);
+      case 'command-review/save': return await saveCommandReviewLineRoute(input);
       case 'plan-loop-limits/save': return await savePlanLoopLimitsRoute(input);
       case 'knowledge-local': return await knowledgeLocalRoute(input);
       case 'prompts/packs/list': return await packsListRoute();

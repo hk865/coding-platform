@@ -39,6 +39,14 @@ export type KReadonlyRealHostOptions = {
   readonly tools?: readonly string[];
   /** The explicit grant field; defaults to the L18 whole-workspace grant. */
   readonly readonlyCommandAccess?: boolean;
+  /** The query-side scripted replies; default none. */
+  readonly queryReplies?: readonly ScriptedReply[];
+  /** The query binding's tool grant; default `['read']`. */
+  readonly queryTools?: readonly string[];
+  /** Adds the L18 whole-workspace read-only command grant to the query binding. */
+  readonly queryReadonlyCommandAccess?: boolean;
+  /** The Host clock; default `AG2B_AT`. */
+  readonly now?: () => string;
 };
 
 const toolsRoot = fileURLToPath(new URL('../../vendor/coding-agent/resources/skills', import.meta.url));
@@ -59,7 +67,7 @@ export async function startKReadonlyRealHost(options: KReadonlyRealHostOptions):
     `<meta name="${PLATFORM_TOKEN_META_NAME}" content="__PLATFORM_TOKEN__">`);
   const actor: WorkbenchActor = { kind: 'human', id: 'k-ro-real-operator' };
   const scripted = createScriptedModel(options.replies);
-  const queryScripted = createScriptedModel([]);
+  const queryScripted = createScriptedModel(options.queryReplies ?? []);
   const registry = new ProviderRegistry().register({
     id: 'deepseek', secretEnvironmentVariable: AG2B_SECRET_VAR, defaultBaseUrl: 'https://invalid.test',
     capabilities: { streaming: true, toolCalls: true, usage: true },
@@ -92,8 +100,9 @@ export async function startKReadonlyRealHost(options: KReadonlyRealHostOptions):
         grant: {
           budget: AG2B_RUNTIME_BUDGET,
           hostTemplate: { templateId: 'advisor', revision: '1', digest: sha256Hex(AG2B_QUERY_INSTRUCTION) },
-          tools: ['read'], writeScope: [], skills: { resourceRoot: toolsRoot, enabledIds: [] },
+          tools: [...(options.queryTools ?? ['read'])], writeScope: [], skills: { resourceRoot: toolsRoot, enabledIds: [] },
           systemInstruction: AG2B_QUERY_INSTRUCTION, deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
+          ...(options.queryReadonlyCommandAccess === true ? { readonlyCommandAccess: 'all_except_denied' as const } : {}),
         },
       },
     ],
@@ -121,7 +130,7 @@ export async function startKReadonlyRealHost(options: KReadonlyRealHostOptions):
     workflow,
     checks,
     publicDir,
-    now: () => AG2B_AT,
+    now: options.now ?? (() => AG2B_AT),
     runtimeProvider: { registry, secretSource: { get: (name: string) => name === AG2B_SECRET_VAR ? AG2B_SECRET_VALUE : undefined } },
   });
   const address = await host.listen();

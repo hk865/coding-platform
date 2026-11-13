@@ -343,7 +343,7 @@ export type NewSessionRecordInput = {
   provenance: SessionProvenanceV1;
   /** The creator's accepted permissions for a member-created or inherited line; absent is no ceiling. */
   delegationCeiling?: SessionRecord['delegationCeiling'];
-  /** Present only on a secretary-created executor; absent is not secretary-created. */
+  /** Present only on an executor a secretary or an adviser created; absent is not coordinator-created. */
   secretaryCreated?: SessionRecord['secretaryCreated'];
 };
 

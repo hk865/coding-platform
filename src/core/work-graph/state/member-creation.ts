@@ -9,7 +9,8 @@
  * `EncodedDomainEvent`.
  *
  * The member operation's Task is the child line's Task: it must belong to the operation's workspace and project, and
- * the caller must be in that same project. A secretary caller is a Query run; a Host pick has no run at all.
+ * the caller must be in that same project. A secretary caller or an adviser's planning round is a Query run; a Host
+ * pick has no run at all.
  */
 import type { ActorRef } from '../../../contracts/command-event.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
@@ -45,6 +46,8 @@ export const MEMBER_CREATION_VERDICTS = ['automatic_notice', 'needs_decision'] a
 export type MemberCallerV1 =
   | { kind: 'work'; actor: ActorRef; session: SessionRef; run: RunRef }
   | { kind: 'secretary_query'; session: SessionRef; run: QueryRunRef; round: QueryJobRef; requestRoot: QueryJobRef }
+  /** 121-114: the responsible adviser's own intervention planning round. */
+  | { kind: 'adviser_query'; session: SessionRef; run: QueryRunRef }
   | { kind: 'host_pick' };
 
 export type MemberCreateActionV1 = {
@@ -91,6 +94,7 @@ const MemberCallerShape = f.union('kind', {
     kind: f.literal('secretary_query'), session: f.ref(SessionRefShape), run: f.ref(QueryRunRefShape),
     round: f.ref(QueryJobRefShape), requestRoot: f.ref(QueryJobRefShape),
   },
+  adviser_query: { kind: f.literal('adviser_query'), session: f.ref(SessionRefShape), run: f.ref(QueryRunRefShape) },
   host_pick: { kind: f.literal('host_pick') },
 });
 
@@ -131,6 +135,11 @@ export function memberCreateInputProblem(value: unknown): string | null {
     if (!sameProject(caller['run'])) return 'the member secretary caller QueryRun belongs to another project';
     if (!sameProject(caller['round'])) return 'the member secretary round belongs to another project';
     if (!sameProject(caller['requestRoot'])) return 'the member secretary request root belongs to another project';
+    return null;
+  }
+  if (caller['kind'] === 'adviser_query') {
+    if (!sameProject(caller['session'])) return 'the member adviser caller Session belongs to another project';
+    if (!sameProject(caller['run'])) return 'the member adviser caller QueryRun belongs to another project';
     return null;
   }
   if (caller['kind'] === 'host_pick') return null;
@@ -330,7 +339,7 @@ export type MemberCreatedEventV1 = {
   sessionRef: SessionAggregateRef;
   /** The Session version written by this same commit; the proof's `after` is read back from the commit. */
   sessionRevision: number;
-  /** The Work Run that initiated the request; `null` for a secretary Query run or a Host pick. */
+  /** The Work Run that initiated the request; `null` for a secretary or adviser Query run or a Host pick. */
   initiatorRun: RunRef | null;
   actor: ActorRef;
   acknowledgement?: SessionMessageRef;

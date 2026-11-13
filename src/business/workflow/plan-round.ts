@@ -83,7 +83,9 @@ export function systemRoundSendInput(input: {
       `originalQueryRef: ${canonicalJson(input.round.originalMessageRef as unknown as JsonValue)}`,
       PLAN_RESUME_REQUEST_SENTENCE,
     ].join('\n')
-    : input.text;
+    : input.round.kind === 'unknown_call'
+      ? [requestId.value, `subject: ${canonicalJson(input.round.subject as unknown as JsonValue)}`].join('\n')
+      : input.text;
   return {
     status: 'ready',
     value: {
@@ -93,8 +95,8 @@ export function systemRoundSendInput(input: {
         intent: 'action_request',
         needsReply: true,
         goalRef: input.round.goalRef,
-        ...(input.round.kind === 'deviation' && input.taskRef !== undefined
-          ? { taskRef: input.taskRef } : {}),
+        ...((input.round.kind === 'deviation' || input.round.kind === 'unknown_call')
+          && input.taskRef !== undefined ? { taskRef: input.taskRef } : {}),
         ...(input.round.kind === 'planresume' && input.followupOf !== undefined
           ? { followupOf: input.followupOf } : {}),
       },
@@ -110,6 +112,8 @@ export function systemRoundSendInput(input: {
  * the ordinary text answer. Slice 9: the caller passes the system round's head
  * kind (`systemRoundOfText`), and only a reviewer answering an `execreview:`
  * round gets `exec_review`; every other reviewer round stays `plan_review`.
+ * The adviser's `ucr:` round (a Host system round only) gets
+ * `unknown_call_advice`; a human's same text stays `plan_round`.
  */
 export function planningAnswerShapeOf(
   message: {
@@ -127,6 +131,7 @@ export function planningAnswerShapeOf(
   if (sender.kind === 'host' && sender.actor.kind === 'system') {
     if (sender.actor.id !== SYSTEM_ROUND_ACTOR.id) return 'text';
     if (duty === 'reviewer') return roundKind === 'exec_review' ? 'exec_review' : 'plan_review';
+    if (duty === 'adviser' && roundKind === 'unknown_call') return 'unknown_call_advice';
     return duty === 'adviser' || duty === 'secretary' ? 'plan_round' : 'text';
   }
   if (sender.kind === 'host' && sender.actor.kind === 'human') {

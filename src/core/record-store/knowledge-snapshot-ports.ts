@@ -10,12 +10,13 @@ export type KnowledgeRecoveryRow = {
   noticeId: string;
   /** 1.. within the notice, by path. */
   itemNo: number;
-  kind: 'write_unconfirmed' | 'reverted';
-  /** The write log a `write_unconfirmed` item recovers; null for `reverted`. */
+  kind: 'write_unconfirmed' | 'reverted' | 'unreadable';
+  /** The write log a `write_unconfirmed` item recovers; only that kind has one. */
   writeId: string | null;
   lineRef: string;
   path: string;
-  /** The snapshot a `reverted` item writes back; null for `write_unconfirmed`. */
+  /** The snapshot a `reverted` item writes back, and the one an `unreadable` item whose source is a snapshot writes back;
+   *  null for the others. */
   takenAt: string | null;
   /** The file's git blob id when the notice went out; null when the file was missing. */
   expectedBlob: string | null;

@@ -1682,7 +1682,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
   async function suggestStep(owned: Owned, goal: GoalSnapshot, task: RuntimeTask,
     planRef: PlanRevisionRef): Promise<SuggestionStep> {
     const taskRef: TaskTriple = { projectId: owned.projectId, goalId: goal.ref.goalId, taskId: task.taskId };
-    const text = `Task ${task.taskId} has no suitable member; create one executor line for this task.`;
+    const text = `Task ${task.taskId} has no suitable member; create one executor line for this task (projectId ${owned.projectId}, goalId ${goal.ref.goalId}).`;
     const commandId = `pick-suggest:${task.taskId}:${planRef.planId}`;
     // The one adviser read (`adviserOf`); an unwired narrow double has no adviser to resolve.
     const adviser = await adviserOf(owned, goal, null);

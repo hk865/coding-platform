@@ -16,10 +16,13 @@ import { ARTIFACT_MAX_SIZE_BYTES } from '../../contracts/artifact.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { PreparedQueryExecution, PreparedQueryManifestV1 } from '../../contracts/core/prepared-execution.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
+import type { RoleConfigurationRef } from '../../contracts/core/identity.js';
+import type { PlatformDutyV1 } from '../../contracts/platform-duty.js';
 import {
   interventionPlanningQueryRefs, isRequestRound, queryAnswerShapeOf, queryExecutionBindingOf,
+  type QueryAnswerShapeV1, type QueryJobIntentV1,
 } from '../../contracts/query-job.js';
-import { planResumeOriginalQueryOfText, systemRoundOfText } from '../../contracts/plan-round.js';
+import { planResumeOriginalQueryOfText, systemRoundOfText, unknownCallAdviceSubjectOfText } from '../../contracts/plan-round.js';
 import { parseInitialPlanningResponseV2 } from '../../contracts/initial-planning-parse.js';
 import type { FrozenHandoffBriefV1 } from '../../contracts/handoff-brief.js';
 import type { RoleSpecResolutionV1 } from '../../contracts/role-spec-materials.js';
@@ -46,7 +49,6 @@ import { decisionActionPolicy } from '../work-graph/state/decision-policy.js';
 import { SECRETARY_QUERY_MAILBOX_TOOL_NAMES, SESSION_MAILBOX_TOOL_NAMES } from './communication-tools.js';
 import { CREATE_MEMBER_TOOL_NAME } from './member-tools.js';
 import { READ_REQUESTS_TOOL_NAME } from './request-read-tools.js';
-import { WHITEBOARD_TOOL_NAMES } from './whiteboard-tools.js';
 import type { ContextAssembler } from './context-assembler.js';
 import { createContextAssembler } from './context-assembler.js';
 import { queryPreparedSectionOrder, sectionOrderFor } from './context-rendering.js';
@@ -59,7 +61,7 @@ import type { PlanningQuestionReader } from '../work-graph/tasks/planning-questi
 import { hostContextIn } from '../work-graph/tasks/plan-lineage.js';
 import type { PlanProposal } from '../work-graph/model/plan-contracts.js';
 import { deriveFuturePlanDelta, type FuturePlanDelta } from '../work-graph/tasks/plan-validation.js';
-import { queryPlanSummary } from './context-fact-text.js';
+import { effectiveDuty, queryPlanSummary } from './context-fact-text.js';
 import {
   promptDeclarationProblem, promptRenderProblem, resolvePromptPack, selectPromptSkills,
   promptTemplatePart, promptTemplateVersion, storePromptTexts, templatesToFreeze,
@@ -78,13 +80,15 @@ export { QUERY_MANIFEST_CONTENT_TYPE };
 export const MAX_QUERY_MANIFEST_BYTES = ARTIFACT_MAX_SIZE_BYTES;
 
 /**
- * The read-only Query ceiling: no file mutation, no shell and no platform
- * communication/whiteboard writers, regardless of what the Host grant or the
- * Role ceiling declare. Declaring a name here grants nothing; it is the outer
- * intersection applied AFTER the Host grant and Role ceiling.
+ * The read-only Query ceiling: no file mutation, no shell, no mailbox writer and no plan or member writer,
+ * regardless of what the Host grant or the Role ceiling declare. `propose_future_plan` stays out (coordination):
+ * an agent plan write is admitted only for a work Run holding the Task lease (plan-write-admission.ts), and a
+ * planning round's candidate is written by the platform from the round's answer. The two whiteboard reads are
+ * reads and pass (121-114). Declaring a name here grants nothing; it is the outer intersection applied AFTER the
+ * Host grant and Role ceiling.
  */
 const FORBIDDEN_QUERY_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
-  'write', 'edit', 'shell', ...SESSION_MAILBOX_TOOL_NAMES, ...WHITEBOARD_TOOL_NAMES, CREATE_MEMBER_TOOL_NAME,
+  'write', 'edit', 'shell', ...SESSION_MAILBOX_TOOL_NAMES, 'propose_future_plan', CREATE_MEMBER_TOOL_NAME,
   READ_REQUESTS_TOOL_NAME,
 ]);
 /** Only a secretary request round may select these four. */
@@ -93,10 +97,33 @@ const SECRETARY_QUERY_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
 ]);
 /** A cold-start exploration round may also select `read_requests` (the request it explores from). */
 const EXPLORATION_QUERY_TOOL_NAMES: ReadonlySet<string> = new Set<string>([READ_REQUESTS_TOOL_NAME]);
-function forbiddenQueryToolNames(secretaryRound: boolean, explorationRound: boolean): ReadonlySet<string> {
-  if (!secretaryRound && !explorationRound) return FORBIDDEN_QUERY_TOOL_NAMES;
-  const allowed = secretaryRound ? SECRETARY_QUERY_TOOL_NAMES : EXPLORATION_QUERY_TOOL_NAMES;
+/** 121-114: the adviser's own planning round may create an executor line. */
+const ADVISER_QUERY_TOOL_NAMES: ReadonlySet<string> = new Set<string>([CREATE_MEMBER_TOOL_NAME]);
+/** The three rounds are exclusive: a request round, a `role_exploration` round, an `intervention_planning` round. */
+function forbiddenQueryToolNames(
+  secretaryRound: boolean, explorationRound: boolean, memberRound: boolean,
+): ReadonlySet<string> {
+  if (!secretaryRound && !explorationRound && !memberRound) return FORBIDDEN_QUERY_TOOL_NAMES;
+  const allowed = secretaryRound ? SECRETARY_QUERY_TOOL_NAMES
+    : explorationRound ? EXPLORATION_QUERY_TOOL_NAMES : ADVISER_QUERY_TOOL_NAMES;
   return new Set([...FORBIDDEN_QUERY_TOOL_NAMES].filter(name => !allowed.has(name)));
+}
+
+/**
+ * 121-114: the one Query besides the secretary's request round that keeps `create_member`: an adviser's
+ * intervention planning round in the planning shape or the Host-system text shape (null). A review round and
+ * every other system-round shape is not one. Every other Query keeps the name out for a product rule
+ * (MVP-BEHAVIOR:327): the secretary builds only in its request round, the scribe and the reviewer inherit no
+ * member creation, an executor needs an explicit delegation on its Work path, and a cold-start exploration round
+ * has no Goal yet (a member is built only for an adopted Plan's Task, L17).
+ */
+export function adviserMemberRound(round: {
+  executionKind: QueryJobIntentV1['execution']['kind'];
+  shape: QueryAnswerShapeV1 | null;
+  duty: PlatformDutyV1 | null;
+}): boolean {
+  return round.executionKind === 'intervention_planning' && round.duty === 'adviser'
+    && (round.shape === 'plan_round' || round.shape === null);
 }
 
 function ownContext(ctx: CoreCallContext): CoreCallContext | null {
@@ -206,13 +233,21 @@ export function projectQueryConfiguration(input: {
   secretaryRound: boolean;
   /** The Job's execution kind is `role_exploration`; absent reads false. */
   explorationRound?: boolean;
+  /** 121-114: the round's frozen execution and its Session's Role (`executionState.role`). */
+  execution: QueryJobIntentV1['execution'];
+  sessionRole: RoleConfigurationRef;
 }): {
   configurationRevision: string;
   permissions: { tools: string[]; writeScope: [] };
   hostTemplate: PreparedQueryManifestV1['hostTemplate'];
   budget: RuntimeBudget;
 } {
-  const forbidden = forbiddenQueryToolNames(input.secretaryRound, input.explorationRound === true);
+  // A non-request round's frozen shape is `queryAnswerShapeOf(execution, null)` (the preparation's own call). A duty
+  // the Host and the Role disagree on is not the adviser's; the context recipe refuses that round anyway.
+  const duty = effectiveDuty(input.roleResolution, input.host, input.sessionRole);
+  const memberRound = adviserMemberRound({ executionKind: input.execution.kind,
+    shape: queryAnswerShapeOf(input.execution, null), duty: 'duty' in duty ? duty.duty : null });
+  const forbidden = forbiddenQueryToolNames(input.secretaryRound, input.explorationRound === true, memberRound);
   const ceiling = input.roleResolution.status === 'resolved'
     ? new Set(input.roleResolution.spec.permissions.tools)
     : null;
@@ -342,6 +377,8 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         roleResolution: executionState.roleResolution,
         secretaryRound: requestRound,
         explorationRound,
+        execution,
+        sessionRole: executionState.role,
       });
       const hostTemplate = executionState.roleResolution.status === 'resolved' ? null : projected.hostTemplate;
       if (executionState.roleResolution.status === 'absent') {
@@ -506,6 +543,7 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         reviewSource: false,
         frozenSource: builtinTools.includes('read'),
         materialTools: false,
+        goalBound: goal !== null,
         // The frozen answer shape follows the request round's own execution
         // kind, never the Host grant or the Role ceiling.
         answerTools: shape,
@@ -601,6 +639,25 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         // The packet header is the request body itself; the guide adds only the
         // three inputs, the read-only rule and the three form members (slice 9).
         const guideProblem = appendGuide('exec-review-input', {});
+        if (guideProblem !== null) return guideProblem;
+      } else if (shape === 'unknown_call_advice') {
+        // The adviser reads the same record a person's "I'll handle it" reads
+        // (`unknown-call-reviews/read`), at the revision this round froze; a
+        // record that moved is not this round's (the `plan_review` version rule).
+        const subject = unknownCallAdviceSubjectOfText(requestQuestion);
+        if (subject === null) return rejected('invalid', 'the adviser round names no record subject');
+        if (deps.unknownCallReviews === undefined) {
+          return rejected('unsupported', 'the adviser round requires the unknown-call review read');
+        }
+        let reviewRead;
+        try { reviewRead = await deps.unknownCallReviews.readReview(owned, { ref: subject.reviewRef }); }
+        catch (error) { return rejected('unavailable', `the adviser round record read failed: ${messageOf(error)}`); }
+        if (reviewRead.status !== 'ready') return reviewRead;
+        if (reviewRead.value.revision !== subject.revision) {
+          return rejected('not_found', 'the adviser round record is not the requested revision');
+        }
+        const guideProblem = appendGuide('unknown-call-advice-input',
+          { record: canonicalJson(reviewRead.value as unknown as JsonValue) });
         if (guideProblem !== null) return guideProblem;
       } else if (!requestRound && execution.kind === 'initial_coordination') {
         const guideProblem = appendGuide('initial-planning-answer', {});

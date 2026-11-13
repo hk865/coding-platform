@@ -58,9 +58,9 @@ export const GRAPH_TOOL_NAMES = ['look_graph', 'find_graph'] as const;
 export const EXECUTION_HISTORY_TOOL_NAMES = ['read_execution_history'] as const;
 export type ExecutionHistoryToolName = (typeof EXECUTION_HISTORY_TOOL_NAMES)[number];
 
-/** The read tools one answer shape mounts beside its submit tool: only `exec_review` reads its subject Run's history. */
+/** The read tools one answer shape mounts beside its submit tool: `exec_review` and `unknown_call_advice` read their subject Run's history. */
 export function answerReadToolNamesOf(shape: QueryAnswerShapeV1 | null): readonly ExecutionHistoryToolName[] {
-  return shape === 'exec_review' ? EXECUTION_HISTORY_TOOL_NAMES : [];
+  return shape === 'exec_review' || shape === 'unknown_call_advice' ? EXECUTION_HISTORY_TOOL_NAMES : [];
 }
 
 export type GraphToolsConfig = {

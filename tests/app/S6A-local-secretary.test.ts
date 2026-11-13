@@ -405,10 +405,10 @@ describe('the local workbench publishes a secretary profile', () => {
    * list (duty, resident bytes 4096, scope, tools, write scope, model revision). Today red: the three duty lists have
    * no read-only command and the executor lists have neither the mailbox nor `propose_future_plan`, so both the
    * projection and the hash differ. The package makes the lists and grants exactly these literals. */
-  // Lead 11-13: every non-secretary Query strips the whiteboard names (query-preparation.ts FORBIDDEN_QUERY_TOOL_NAMES,
-  // WHITEBOARD_TOOL_NAMES); AGT+ does not change that ceiling, so the expected projection drops them too.
+  // AGT-X: the Query ceiling now lets the two whiteboard reads pass (query-preparation.ts FORBIDDEN_QUERY_TOOL_NAMES);
+  // the projection follows the ceiling, so only `propose_future_plan` is still dropped.
   const queryProjection = (tools: readonly string[]): string[] =>
-    tools.filter(name => !['query_task_graph', 'query_ready_tasks', 'propose_future_plan'].includes(name));
+    tools.filter(name => !['propose_future_plan'].includes(name));
   const executorWritableProjection = [...readTools, ...webTools, 'run_readonly_command', 'record_note',
     'propose_future_plan', 'request_rework', 'request_recheck', 'hand_off'];
   const dutyCases: ReadonlyArray<readonly [string, number, boolean, string, string, readonly string[],

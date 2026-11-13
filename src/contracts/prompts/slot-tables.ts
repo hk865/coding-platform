@@ -94,6 +94,10 @@ export const TEMPLATE_SLOTS: Readonly<Record<string, TemplateSlotTableV1>> = {
     // Slice 9: the exec review guide is fixed prose; the packet header is the
     // request body itself, so the guide takes no slot.
     'exec-review-input': {},
+    // The adviser guide carries the whole review record in one required slot.
+    'unknown-call-advice-input': {
+        record: { required: true },
+    },
     'initial-planning-answer': {},
     'continuation-brief': {
         marker: { required: true },

@@ -35,6 +35,11 @@ import {
 import {
   execReviewAnswerText, parseExecReviewAnswer, type ExecReviewFormV1,
 } from '../../contracts/exec-review.js';
+import {
+  parseUnknownCallAdviceAnswer, unknownCallAdviceAnswerText,
+  UNKNOWN_CALL_ADVICE_CHOICES, UNKNOWN_CALL_ADVICE_ESCALATION_KINDS,
+  type UnknownCallAdviceEscalationKindV1, type UnknownCallAdviceSubjectV1, type UnknownCallAdviceV1,
+} from '../../contracts/unknown-call-advice.js';
 import type { InitialPlanningSetupV2 } from '../../contracts/initial-planning.js';
 import type { ToolTextV1 } from '../../contracts/prompts/prompt-pack.js';
 import type {
@@ -65,7 +70,7 @@ import { PLANNING_MAX_ANSWER_BYTES } from './query-observation.js';
 /** The submit tool names, in the order the answer shapes freeze them. */
 export const ANSWER_TOOL_NAMES = [
   'submit_secretary_answer', 'submit_initial_plan', 'submit_initial_questions',
-  'submit_plan_round', 'submit_plan_review', 'submit_exec_review',
+  'submit_plan_round', 'submit_plan_review', 'submit_exec_review', 'submit_unknown_call_advice',
 ] as const;
 
 export type AnswerToolName = (typeof ANSWER_TOOL_NAMES)[number];
@@ -85,6 +90,7 @@ export function answerToolNamesOf(kind: AnswerToolKind | null, smallPlan = false
   if (kind === 'plan_round') return ['submit_plan_round'];
   if (kind === 'plan_review') return ['submit_plan_review'];
   if (kind === 'exec_review') return ['submit_exec_review'];
+  if (kind === 'unknown_call_advice') return ['submit_unknown_call_advice'];
   return [];
 }
 
@@ -104,7 +110,11 @@ export function submitShapeOf(frozen: QueryAnswerShapeV1, name: string): QueryAn
 }
 
 /** One form value the platform fills before writing the protocol text. */
-export type AnswerTextContext = { projectId: string };
+export type AnswerTextContext = {
+  projectId: string;
+  /** The adviser round's frozen subject; only `unknown_call_advice` uses it. */
+  subject?: UnknownCallAdviceSubjectV1;
+};
 
 /** One goal-card draft as the form carries it: bare module and goal ids only. */
 type ScreeningForm = Omit<GoalScreeningV1, 'modules' | 'conflictsWith' | 'dependsOn'> & {
@@ -129,9 +139,16 @@ export type InitialPlanForm = { summary: string; plan: PlanForm; setup: SetupFor
 /** The planning round's one-tool form: exactly one of `plan`/`questions` per `answerKind`. */
 export type PlanRoundForm = { answerKind: 'plan' | 'questions'; summary: string;
   plan?: PlanForm; questions?: string[]; reason?: { text: string; affectedTaskIds?: string[]; objective?: string } };
+/** The unknown-outcome round's form: the phase and frozen subject are never the model's. */
+export type UnknownCallAdviceForm = {
+  choice: UnknownCallAdviceV1['choice'];
+  escalationKind?: UnknownCallAdviceEscalationKindV1;
+  rationale: string;
+  plain: string;
+};
 /** One submit form as the Kernel parsed it against the per-Run schema. */
 export type AnswerForm = SemanticForm | QuestionsForm | InitialPlanForm | PlanRoundForm | PlanReviewFormV1
-  | ExecReviewFormV1;
+  | ExecReviewFormV1 | UnknownCallAdviceForm;
 
 function filledScreening(projectId: string, screening: ScreeningForm | null | undefined): Record<string, unknown> | null {
   if (screening === null || screening === undefined) return null;
@@ -199,6 +216,13 @@ export function buildAnswerText(
   }
   if (shape === 'plan_review') return planReviewAnswerText(form as PlanReviewFormV1);
   if (shape === 'exec_review') return execReviewAnswerText(form as ExecReviewFormV1);
+  if (shape === 'unknown_call_advice') {
+    const advice = form as UnknownCallAdviceForm;
+    return unknownCallAdviceAnswerText(ctx.subject!, {
+      phase: ctx.subject!.phase, choice: advice.choice,
+      escalationKind: advice.escalationKind ?? null, rationale: advice.rationale, plain: advice.plain,
+    });
+  }
   if (shape === 'plan_round') {
     const round = form as PlanRoundForm;
     if (round.answerKind === 'questions') {
@@ -483,6 +507,24 @@ function execReviewSchema(texts: ToolTextV1['parameters']): z.ZodType {
   }).strict();
 }
 
+/**
+ * The unknown-outcome round's form: the union of both phases' choices; the
+ * phase and the subject are the platform's and never appear here. Which choices
+ * fit which phase is the content check's (`unknownCallAdviceProblem`), so the
+ * schema only names the values.
+ */
+function unknownCallAdviceSchema(texts: ToolTextV1['parameters']): z.ZodType {
+  const choices = [...new Set([
+    ...UNKNOWN_CALL_ADVICE_CHOICES.disposition, ...UNKNOWN_CALL_ADVICE_CHOICES.approval,
+  ])] as [string, ...string[]];
+  return z.object({
+    choice: textField(z.enum(choices), texts, 'choice'),
+    escalationKind: textField(z.enum(UNKNOWN_CALL_ADVICE_ESCALATION_KINDS).optional(), texts, 'escalationKind'),
+    rationale: textField(z.string(), texts, 'rationale'),
+    plain: textField(z.string(), texts, 'plain'),
+  }).strict();
+}
+
 function answerSchemaFor(name: AnswerToolName, goalLess: boolean, texts: ToolTextV1['parameters']): z.ZodType {
   switch (name) {
     case 'submit_secretary_answer': return semanticSchema(goalLess, texts);
@@ -491,6 +533,7 @@ function answerSchemaFor(name: AnswerToolName, goalLess: boolean, texts: ToolTex
     case 'submit_plan_round': return planRoundSchema(texts);
     case 'submit_plan_review': return planReviewSchema();
     case 'submit_exec_review': return execReviewSchema(texts);
+    case 'submit_unknown_call_advice': return unknownCallAdviceSchema(texts);
   }
 }
 
@@ -535,6 +578,11 @@ export function answerProblems(
   }
   if (shape === 'exec_review') {
     const parsed = parseExecReviewAnswer(built);
+    if (parsed.status !== 'parsed') return [{ section: 'answer', reason: parsed.reason }];
+    return [];
+  }
+  if (shape === 'unknown_call_advice') {
+    const parsed = parseUnknownCallAdviceAnswer(built);
     if (parsed.status !== 'parsed') return [{ section: 'answer', reason: parsed.reason }];
     return [];
   }
@@ -641,6 +689,8 @@ export type AnswerToolsConfig = {
   queryRunRef: QueryRunRef;
   /** The frozen `manifest.answerShape`; it selects the tools and their bounds. */
   shape: QueryAnswerShapeV1;
+  /** The adviser round's frozen subject (read from the request's second line by the start). */
+  subject?: UnknownCallAdviceSubjectV1;
   /** The frozen `manifest.request.executionKind`; read only by the two request shapes. */
   kind?: SecretaryRequestManifestV1['executionKind'];
   /** `manifest.goal !== null`: the observer's own answer-format gate (request shapes). */
@@ -710,7 +760,10 @@ export function createAnswerTools(config: AnswerToolsConfig): AnswerToolsHandle 
     const shape = submitShapeOf(config.shape, call.name);
     const requestShape = shape === 'secretary' || shape === 'initial';
     // 1. Build the shape's protocol text and hold it to that shape's bound.
-    const text = buildAnswerText(shape, call.arguments, { projectId: fixedProjectId });
+    const text = buildAnswerText(shape, call.arguments, {
+      projectId: fixedProjectId,
+      ...(config.subject === undefined ? {} : { subject: config.subject }),
+    });
     const bound = answerBoundBytes(shape, call.name);
     if (Buffer.byteLength(text, 'utf8') > bound) {
       const kib = bound / 1024;

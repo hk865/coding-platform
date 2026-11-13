@@ -19,9 +19,10 @@ import { sha256Hex } from '../contracts/fingerprint.js';
 import { ARCHITECTURE_FILE_PATH, KNOWLEDGE_DIRECTORY, type KnowledgePinModuleV1 } from '../contracts/knowledge.js';
 import type { GoalRecordTransactionPort, StoreResult } from '../core/record-store/ports.js';
 import type { WorkspaceHostBindings } from '../core/workspace/access.js';
+import { readContinuationBaselineBlob } from '../core/workspace/continuation-diff-reads.js';
 import {
   commitKnowledgeFiles, gitBlobId, identifyCheckout, readCheckoutBranch, readHead, readKnowledgeChanges,
-  readKnowledgeGitState, type CheckoutProbe,
+  readKnowledgeGitState, readLastCommitTime, type CheckoutProbe,
 } from '../core/workspace/workspace-change-capture.js';
 import {
   architectureFilesOf, architectureOfFiles, moduleFileIdOf,
@@ -346,6 +347,16 @@ export async function openLineKnowledge(projectId: string, line: LineRef, scope:
       return unavailable(`git status of ${KNOWLEDGE_DIRECTORY}/ failed in ${line.folder}: ${messageOf(error)}`);
     }
   }
+  async function readHeadFile(path: string, blobSha: string): ReturnType<LineKnowledge['readHeadFile']> {
+    if (line.branch === '') return rejected('unsupported', `${line.folder} is not a git checkout`);
+    const read = await readContinuationBaselineBlob(line.folder, blobSha);
+    if (read.status !== 'ready') return unavailable(`${path} in HEAD cannot be read: ${read.reason}`);
+    try {
+      return ready({ bytes: new Uint8Array(read.bytes), committedAt: await readLastCommitTime(line.folder, path) });
+    } catch (error) {
+      return unavailable(`git log of ${path} failed in ${line.folder}: ${messageOf(error)}`);
+    }
+  }
   /** [2C2-07]: the default message counts the files `status` saw just before. */
   async function commitFiles(message: string | null): ReturnType<LineKnowledge['commit']> {
     const before = await status();
@@ -379,7 +390,7 @@ export async function openLineKnowledge(projectId: string, line: LineRef, scope:
       : graph;
   }
 
-  return ready({ projectId, line, scope, objectFormat, status, commit: commitFiles,
+  return ready({ projectId, line, scope, objectFormat, status, commit: commitFiles, readHeadFile,
     readArchitecture, readNoteFiles, readNotesById, writeModule, writeNote, applyChange, readKnowledgeFiles, pin,
     architectureOfDisk: files => architectureOf(files.find(file => file.path === ARCHITECTURE_FILE_PATH)?.bytes ?? null,
       files.filter(file => file.kind === 'module')) });

@@ -346,6 +346,12 @@ export type RuntimeExecutionDependencies = {
     route(ctx: CoreCallContext, subject: RunRef | QueryRunRef): CommandRoute;
   };
   /**
+   * SHT-2 (121-112): the Host's one in-memory registry of the commands a Run or QueryRun is running, read by the
+   * `executions/running-commands` route and the Host's over-line check. Absent means the Runtime registers nothing
+   * (an old direct `createAgentRuntime(deps)` caller), the same optional shape as `resourceCaps?`.
+   */
+  runningCommands?: import('./running-commands.js').RunningCommandsPort;
+  /**
    * K3 L13/U5/R3 (`reviewCapability`): the Host's read-only command facts for
    * one workspace+Role, resolved by the composition root from the SAME Host
    * binding a Run receives (`readonlyCommandAccess` and `processSandboxOptions`).

@@ -15,8 +15,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { driveWorkflow } from '../helpers/A2-restart-fixture.js';
 import { advance } from '../scenarios/support/common.js';
 import { createAG2bSession, graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
+import { awaitPlanningAnswer, heartbeatUntil } from '../helpers/IV-host-fixture.js';
+import { openPLOverlapWorld, type PLOverlapWorld } from '../helpers/PL-forms-fixture.js';
 import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
-import { openS7C1World, type S7C1World } from '../helpers/S7C-member-fixture.js';
+import { adoptS6BPlan } from '../helpers/S6B1-fixture.js';
+import { sendS7A2PersonMessage } from '../helpers/S7A2-fixture.js';
+import { assignGoalAdviserLine } from '../helpers/S7C-handoff-fixture.js';
+import { jsonOf, openS7C1World, type S7C1World } from '../helpers/S7C-member-fixture.js';
 import type { DecisionCardV1 } from '../../src/core/work-graph/model/decision-contracts.js';
 import type {
   WorkflowAdvanceInput, WorkflowStepReceipt,
@@ -136,8 +141,10 @@ describe('S-01: the pick basis and the adviser suggestion', () => {
     // The Goal-scope pass must skip the running m1; hold it before the merged pass.
     await world.holdFirst();
     const goal = await advance(world.world.ag2b, select(world, 's7c-l1-s01-goal', null));
+    // ADVQ Q1: the text names the Task's project and Goal; red today (workflow.ts:1685), green when ADVQ lands.
     expect(goal.next).toMatchObject({ kind: 'perform', operation: { kind: 'suggest_member', request: {
-      input: { text: 'Task s7c-n1 has no suitable member; create one executor line for this task.' },
+      input: { text: 'Task s7c-n1 has no suitable member; create one executor line for this task '
+        + '(projectId ag2b-collab-project, goalId s7c-goal).' },
       meta: { requestId: expect.stringMatching(/^pick-suggest:s7c-n1:/) },
     } } });
   });
@@ -173,6 +180,65 @@ describe('L1-member-replay: the committed member operation is never performed ag
       commandId: expect.stringMatching(/^pick-suggest:s7c-n1:/),
       scope: { kind: 'task', task: { taskId: 's7c-n1' } },
     } } });
+  });
+});
+
+/**
+ * ADVQ (121-114; advq-start-rulings-draft.md §3): the Goal's responsible adviser builds the executor line in its own
+ * planning round. `openPLOverlapWorld`: the adviser binding grants `create_member`; m1 not started, m2 has no line.
+ * Red today (fa5bc8e0): only the secretary's request round keeps `create_member` (`query-preparation.ts:86-100`,
+ * `tool-group-assembly.ts:769`), so ADVQ-1 is red at the tool list and ADVQ-2 at `jsonOf` (`unknown_tool`, no JSON).
+ * Green when ADVQ lands (ceiling, `adviser_query` caller, owner arm). Mutations: ADVQ-1 a-f; ADVQ-2 the comparison.
+ */
+const scriptMember = (target: PLOverlapWorld, callId: string, task: S7C1World['tasks'][number]) =>
+  target.script(target.adviser, [{ kind: 'calls', calls: [{ callId, name: 'create_member', args: {
+    duty: 'executor', scope: { kind: 'task', task }, reason: callId } }] }, { kind: 'text', text: `${callId} done` }]);
+
+describe('ADVQ (121-114): the adviser builds the executor line in its planning round', () => {
+  it('ADVQ-1: the suggestion round creates m2\'s executor line and the next pass claims it', async () => {
+    const opened = await openPLOverlapWorld({ firstRun: 'deferred' });
+    const target = world = opened.world;
+    const m2 = target.tasks[1]!;
+    const before = new Set((await target.world.listSessions()).map(card => card.record.ref.sessionId));
+    const receipts: WorkflowStepReceipt[] = [];
+    await driveWorkflow(target.world.ag2b, select(target, 'advq-1', m2.taskId), { receipts });
+    const sent = receipts.find(receipt => receipt.kind === 'suggest_member');
+    if (sent === undefined || sent.result.status !== 'committed') throw new Error('ADVQ-1: no suggestion was sent');
+    await scriptMember(opened, 'advq-1', m2);
+    await awaitPlanningAnswer(target.world, sent.result.value.ref);
+    const requests = await target.world.scripted.requests(opened.adviser);
+    expect(requests[0]?.tools.map(tool => tool.name)).toContain('create_member');
+    const created = jsonOf(requests, 'advq-1') as { status: string; session: { sessionId: string } };
+    expect(created).toMatchObject({ status: 'created' });
+    const added = (await target.world.listSessions()).filter(card => !before.has(card.record.ref.sessionId));
+    expect(added.map(card => ({ id: card.record.ref.sessionId, role: card.record.role,
+      secretaryCreated: card.record.secretaryCreated, ceiling: card.record.delegationCeiling }))).toEqual([{
+      id: created.session.sessionId, role: { kind: 'legacy_template', templateId: 's7c-executor', templateRevision: '1' },
+      secretaryCreated: true, ceiling: undefined }]);
+    expect(added[0]!.links.map(link => link.ref)).toContainEqual(expect.objectContaining({
+      relation: 'responsible', target: { kind: 'task', ref: m2 } }));
+    const next = await advance(target.world.ag2b, select(target, 'advq-1', m2.taskId));
+    expect(next.next).toMatchObject({ kind: 'perform', operation: { kind: 'claim_task', request: { input: {
+      sessionRef: { projectId: m2.projectId, sessionId: created.session.sessionId } } } } });
+  });
+});
+
+describe('rejects: ADVQ, a Task whose Goal the round line does not answer for (coordination, 121-114)', () => {
+  it('ADVQ-2: create_member for G2\'s Task is forbidden; no line, no member card', async () => {
+    const opened = await openPLOverlapWorld({ firstRun: 'deferred' });
+    const target = world = opened.world;
+    const g2 = (await target.main.createGoal('advq-g2', 'ADVQ second Goal')).ref;
+    const { tasks } = await adoptS6BPlan(target.main, g2, { label: 'advq-g2', taskIds: ['advq-g2-task'], role: 's7c-executor' });
+    // Q4: G2 has its own adviser line, so the comparison (not a missing adviser) is what refuses.
+    await assignGoalAdviserLine(target.world, { goal: g2, label: 'advq-g2-adviser', requestId: 'advq-g2-adviser' });
+    const before = (await target.world.listSessions()).map(card => card.record.ref.sessionId).sort();
+    await scriptMember(opened, 'advq-2', tasks[0]!);
+    await sendS7A2PersonMessage(target.world, { label: 'advq-2', recipient: opened.adviser.ref, goal: target.goal });
+    const requests = await heartbeatUntil(target.world, () => target.world.scripted.requests(opened.adviser),
+      turns => turns.some(turn => turn.messages.some(message => message.role === 'tool' && message.callId === 'advq-2')));
+    expect(jsonOf(requests, 'advq-2')).toMatchObject({ status: 'rejected', code: 'forbidden' });
+    expect((await target.world.listSessions()).map(card => card.record.ref.sessionId).sort()).toEqual(before);
+    expect((await target.main.readCards()).filter(card => card.source.kind === 'member_creation')).toEqual([]);
   });
 });
 

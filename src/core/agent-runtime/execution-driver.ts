@@ -81,7 +81,7 @@ import type {
 export type ExecutionDriverDependencies = Pick<RuntimeExecutionDependencies,
   | 'entry' | 'historyWriter' | 'executions' | 'sessionOperations' | 'kernelStores' | 'workspaceHost'
   | 'sourceAuthority' | 'sourcePolicyFor' | 'sourceAnalyzers' | 'host' | 'kernel' | 'resourceCaps' | 'commandSlots'
-  | 'commandSandbox' | 'now' | 'newId'
+  | 'commandSandbox' | 'runningCommands' | 'now' | 'newId'
   | 'modelRequests' | 'roles' | 'materials' | 'bodies' | 'plans' | 'messages' | 'expiryCount' | 'decisionMessages' | 'applicationReceipt'
   | 'memberCreation' | 'handoffs' | 'maintainerAssignments' | 'roleSplit' | 'architectureProposals'
   | 'claims' | 'evidence'
@@ -1117,6 +1117,11 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         return { kind: 'continue' };
       };
 
+      // SHT-2 (121-112): this Run's command tools register in the Host's in-memory running-command read. The watch
+      // turns the before_tool hook into the call's parameters and the tool-group barrier into its start/end.
+      const commandWatch = deps.runningCommands?.watch({ run: { kind: 'run', runRef, taskId: manifest.claim.task.taskId },
+        workspaceId: record.run.workspaceSnapshot.workspaceId, sessionRef });
+
       // The link-break source reads this Run's window at every safe point; it goes on from where
       // its last read stopped instead of reading the window again. Cleared when the Run ends.
       const linkActivity: RunActivityResume = { decoded: [], position: null, reduced: null };
@@ -1318,8 +1323,9 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
               enteredHook,
               ...(hasFileRead ? [toolPathHook] : []),
               ...(shellBlockedHook === undefined ? [] : [shellBlockedHook]),
+              ...(commandWatch === undefined ? [] : [commandWatch.hook]),
             ],
-            ...(toolGroupBarrier === undefined ? {} : { toolGroupBarrier }),
+            toolGroupBarrier: commandWatch?.barrier(toolGroupBarrier) ?? toolGroupBarrier,
             // The cleanup proof is published by the ONE existing finally after
             // every owned resource was attempted and awaited. It is a private
             // handle fact, never a public ack.
@@ -1337,6 +1343,8 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
             enteredFailure ??= rejected(error.code, error.message);
           }
         }
+        // A cancelled or failed Run never passes the after_group barrier; the watch drops what is left.
+        commandWatch?.end();
         // The already-occurred fact is reconciled along the ORIGINAL observer
         // even when the fresh action failed or the caller cancelled: the concrete
         // failure is chosen only after that reconciliation, never by skipping it.

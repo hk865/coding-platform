@@ -1443,37 +1443,7 @@
     },
     {
       "file": "src/contracts/unknown-call-advice.ts",
-      "name": "UnknownCallAdviceSubjectV1",
-      "reason": "kept-for",
-      "note": "kept for K3L-3 (decision 121-109/121-110): reached through UnknownCallReviewPort.applyAdviserAnswer / escalateReview, which the Workflow's adviser-round branch calls once the adviser round exists; until then only tests/work-graph/K3L1-owner.test.ts reaches it"
-    },
-    {
-      "file": "src/contracts/unknown-call-advice.ts",
-      "name": "ParsedUnknownCallAdviceAnswerV1",
-      "reason": "kept-for",
-      "note": "kept for K3L-3 (decision 121-109/121-110): reached through UnknownCallReviewPort.applyAdviserAnswer / escalateReview, which the Workflow's adviser-round branch calls once the adviser round exists; until then only tests/work-graph/K3L1-owner.test.ts reaches it"
-    },
-    {
-      "file": "src/contracts/unknown-call-advice.ts",
-      "name": "ANSWER_KEYS",
-      "reason": "kept-for",
-      "note": "kept for K3L-3 (decision 121-109/121-110): reached through UnknownCallReviewPort.applyAdviserAnswer / escalateReview, which the Workflow's adviser-round branch calls once the adviser round exists; until then only tests/work-graph/K3L1-owner.test.ts reaches it"
-    },
-    {
-      "file": "src/contracts/unknown-call-advice.ts",
       "name": "unknownCallAdviceGoalBasisDigest",
-      "reason": "kept-for",
-      "note": "kept for K3L-3 (decision 121-109/121-110): reached through UnknownCallReviewPort.applyAdviserAnswer / escalateReview, which the Workflow's adviser-round branch calls once the adviser round exists; until then only tests/work-graph/K3L1-owner.test.ts reaches it"
-    },
-    {
-      "file": "src/contracts/unknown-call-advice.ts",
-      "name": "unknownCallAdviceAnswerText",
-      "reason": "kept-for",
-      "note": "kept for K3L-2 (decision 121-109/121-110): the adviser's submit tool writes the answer text with it; K3L-1 froze the format and its owner-side reader"
-    },
-    {
-      "file": "src/contracts/unknown-call-advice.ts",
-      "name": "parseUnknownCallAdviceAnswer",
       "reason": "kept-for",
       "note": "kept for K3L-3 (decision 121-109/121-110): reached through UnknownCallReviewPort.applyAdviserAnswer / escalateReview, which the Workflow's adviser-round branch calls once the adviser round exists; until then only tests/work-graph/K3L1-owner.test.ts reaches it"
     },

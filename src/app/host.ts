@@ -30,7 +30,8 @@ import { createHash, randomBytes } from 'node:crypto';
 import { createBuiltinProviderRegistry, resourceCapStatus } from '../../vendor/coding-agent/dist/public-api.js';
 import type { ResourceCapSource } from '../../vendor/coding-agent/dist/public-api.js';
 import { totalmem } from 'node:os';
-import { MIB, defaultResourceCapSettings } from '../contracts/resource-caps.js';
+import { MIB, defaultResourceCapSettings, COMMAND_VISIBLE_AFTER_MS, DEFAULT_COMMAND_REVIEW_LINE_MINUTES, commandLineMs } from '../contracts/resource-caps.js';
+import { runningCommandKey, type RunningCommandV1 } from '../core/agent-runtime/running-commands.js';
 import { mkdirSync } from 'node:fs';
 import { mkdir, realpath, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
@@ -709,6 +710,9 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
    * push changes the next judgment without a restart; an already claimed Run
    * keeps the budget in its own record. */
   let planLoopLimits: PlanLoopLimitsV1 = structuredClone(DEFAULT_PLAN_LOOP_LIMITS);
+  /** SHT-2 (121-112): the project review line in minutes. The settings push installs the effective value; before the
+   * first push it is the default. */
+  let commandReviewLineMinutes = DEFAULT_COMMAND_REVIEW_LINE_MINUTES;
   const resourceCaps: ResourceCapSource = { current: () => ({ ...resourceCapsRequest }) };
   // 121-112 ruling 3: the Host's ONE cap on platform-run commands, shared by every
   // project's platform: read-only commands and registered checks wait for a slot.
@@ -756,7 +760,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       ? undefined : createWorkbenchRuntimeHostBindings(seedConfiguration,
         versionProvider(versionSecretSource(seedConfiguration, { models: [], selection: {}, checks: [],
           automation: { ...DEFAULT_TASK_AUTOMATION_POLICY }, resourceCaps: resourceCaps.current(),
-          workRunTokenBudget, planLoopLimits: structuredClone(planLoopLimits), knowledgeLocalOnly: {} })), runtimeNarrowing));
+          workRunTokenBudget, planLoopLimits: structuredClone(planLoopLimits),
+          commandReviewLineMinutes, knowledgeLocalOnly: {} })), runtimeNarrowing));
   const resolverRegistry = initialBindings === undefined ? undefined : createHostRuntimeResolverRegistry(initialBindings);
   const runtime: TargetPlatformOptions['runtime'] = resolverRegistry ?? options.runtime;
   // Settings may rebuild the runtime only from the serializable configuration;
@@ -1948,6 +1953,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     // PL §10.3: the same one holder for the plan-loop limits; the reader's getter
     // already points at it, so this push reaches the next judgment.
     planLoopLimits = structuredClone(snapshot.planLoopLimits ?? DEFAULT_PLAN_LOOP_LIMITS);
+    // SHT-2: the review line is read live by the heartbeat's over-line check and the running-command read.
+    commandReviewLineMinutes = snapshot.commandReviewLineMinutes;
     // The Work Run token budget is installed here, on the first settings push and
     // every later one, before each project registers its scopes' bindings with it.
     workRunTokenBudget = snapshot.workRunTokenBudget;
@@ -3311,6 +3318,45 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     }
   }
 
+  // SHT-2 (121-112): one over-line notice per command, written the first heartbeat after the command passes
+  // `min(expectedMs, the project review line)` (never earlier than ten minutes). The command is NOT stopped. The
+  // operation id is the run and the call, so a repeated heartbeat replays the same notice instead of writing a second
+  // one; the memory set only avoids re-reading/rewriting on every beat, and is pruned when the command ends. It is one
+  // set per workspace: a project-wide set pruned by another workspace's live list would forget (and rewrite) this
+  // workspace's keys on its next beat, and the changed "已 N 分钟" text is a second payload under the same identity.
+  const noticedCommands = new Map<string, Set<string>>();
+  /** 121-112's fixed text: at most 512 UTF-8 bytes (the command is cut to 80 code points). */
+  const commandOverLineText = (entry: RunningCommandV1, elapsedMs: number): string =>
+    `命令跑过了预计时间：${[...entry.commandPreview].slice(0, 80).join('')}，`
+    + `已 ${String(Math.floor(elapsedMs / 60_000))} 分钟，预计 ${String(Math.round(entry.expectedMs / 60_000))} 分钟。`
+    + '平台不会自动停它，需要时可以停掉。';
+  async function runCommandLineCheck(scope: CoreScope): Promise<void> {
+    const platform = projectPlatform(scope.projectId);
+    const atMs = clockMs();
+    const reviewLineMs = commandReviewLineMinutes * 60_000;
+    const live = platform.runtimeInFlight.commands().filter(entry => entry.workspaceId === scope.workspaceId);
+    const noticed = noticedCommands.get(scopeKey(scope)) ?? new Set<string>();
+    const liveKeys = new Set(live.map(entry => runningCommandKey(entry.run, entry.callId)));
+    for (const key of [...noticed]) if (!liveKeys.has(key)) noticed.delete(key);
+    for (const entry of live) {
+      const key = runningCommandKey(entry.run, entry.callId);
+      if (noticed.has(key)) continue;
+      const elapsedMs = atMs - Date.parse(entry.startedAt);
+      if (elapsedMs < commandLineMs(entry.expectedMs, reviewLineMs)) continue;
+      const written = await platform.projectNoticeWriter({ projectRef: { projectId: scope.projectId },
+        subject: entry.run.kind === 'run'
+          ? { kind: 'goal', goalRef: { aggregateType: 'Goal', projectId: scope.projectId, goalId: entry.run.runRef.goalId } }
+          : { kind: 'project', projectRef: { projectId: scope.projectId } },
+        kind: 'command_over_line', summary: commandOverLineText(entry, elapsedMs),
+        operation: { aggregateType: 'CoreOperation', projectId: scope.projectId,
+          operationId: `command-over-line:${key}` } });
+      if (written.status === 'committed') {
+        noticed.add(key);
+        noticedCommands.set(scopeKey(scope), noticed);
+      }
+    }
+  }
+
   // The background link batch: one batch per workspace at a time, run from the
   // heartbeat loop so only the lease-holding Host does it. A batch is due when
   // the platform has been idle for `linkBatchIdleMs`, or when `linkBatchBacklog`
@@ -3497,6 +3543,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         if (attentionAbort.signal.aborted) break;
         if (!ownedProject(workspace.scope.projectId)) continue;
         try { await runScribeReminderCheck(workspace.scope); } catch { /* retried next heartbeat */ }
+        try { await runCommandLineCheck(workspace.scope); } catch { /* retried next heartbeat */ }
         try { await runReworkNoticeCheck(workspace.scope); } catch { /* retried next heartbeat */ }
         try { await runLinkBatchCheck(workspace.scope); } catch { /* retried next heartbeat */ }
       }
@@ -3555,7 +3602,20 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   // The real route bindings over this project's platform; `host/reconcile-report` answers this project's report.
   const routeBindings = createPlatformCoreRouteBindings(platform, project.collaborationDriver, workbenchTools.tools,
     project.goalFanOut, { readReconcileReport: async () => ({ status: 'ready', value: structuredClone(project.report) }) },
-    adoptionHost, scope => { armMessageRelease?.(scope); }, platform.readArchitectureProposal);
+    adoptionHost, scope => { armMessageRelease?.(scope); }, platform.readArchitectureProposal,
+    // SHT-2 (121-112): the person's read of the commands this project is running, ten minutes or older. Work and
+    // QueryRun entries both carry `run.kind`, so the page knows which one it can stop.
+    { readRunningCommands: async () => {
+      const atMs = clockMs();
+      const reviewLineMs = commandReviewLineMinutes * 60_000;
+      const items = platform.runtimeInFlight.commands().map(entry => {
+        const elapsedMs = Math.max(0, atMs - Date.parse(entry.startedAt));
+        const lineMs = commandLineMs(entry.expectedMs, reviewLineMs);
+        return { ...entry, elapsedMs, lineMs, overLine: elapsedMs >= lineMs };
+      }).filter(item => item.elapsedMs >= COMMAND_VISIBLE_AFTER_MS)
+        .sort((a, b) => a.startedAt.localeCompare(b.startedAt) || a.callId.localeCompare(b.callId));
+      return { status: 'ready' as const, value: { items } };
+    } });
   // L8 (book ruling 1): the route-registration path uses the SAME shared step as
   // the settings flow, only after a NON-REPLAYED committed registration. The
   // step itself triggers only when `byScope` already holds the scope.

@@ -505,6 +505,9 @@ function first(...checks: ReadonlyArray<() => MessageTransition | null>): Messag
   return null;
 }
 
+/** Coordination: a reply or a wait is read back in the sender's workspace, never the recipient's. */
+const CROSS_WORKSPACE_SEND_REFUSAL = 'only a notify that needs no reply may go to a line in another workspace of the project: replies and waits are read back in the sender\'s workspace';
+
 // --------------------------------------------------------------------------
 // Rows
 // --------------------------------------------------------------------------
@@ -553,10 +556,11 @@ function onMessageSent(state: MessageMachineState, ctx: MessageGuardContext): Me
   }
   // :1126-1134 — busy or archived recipients still receive durable mail. An
   // unresolved recipient is today's `mapReadResult` refusal of the Session read.
-  if (ctx.recipientScope !== 'same_workspace') {
-    return reject('guard_failed', 'not_found', ctx.recipientScope === null
-      ? 'the requested record does not exist'
-      : 'the recipient Session is outside the bound workspace');
+  if (ctx.recipientScope === null) return reject('guard_failed', 'not_found', 'the requested record does not exist');
+  if (ctx.recipientScope === 'other_workspace') {
+    // Coordination: a reply or a wait is read back in the sender's workspace, and the message would live in the
+    // recipient's (121-109 C opens the notify that needs no reply; the rest waits for those readers).
+    return reject('guard_failed', 'invalid', CROSS_WORKSPACE_SEND_REFUSAL);
   }
   switch (state.status) {
     case 'absent': {

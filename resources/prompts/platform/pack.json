@@ -78,6 +78,11 @@
       "version": 1,
       "mentionsTools": []
     },
+    "unknown-call-advice-input": {
+      "file": "templates/unknown-call-advice-input.txt",
+      "version": 1,
+      "mentionsTools": []
+    },
     "scribe-reminder": {
       "file": "templates/scribe-reminder.txt",
       "version": 2,
@@ -181,7 +186,7 @@
     },
     "skill-platform-adviser": {
       "file": "templates/skill-platform-adviser.txt",
-      "version": 11,
+      "version": 12,
       "mentionsTools": []
     },
     "skill-platform-scribe": {
@@ -232,6 +237,7 @@
     "look_graph": "tools/look_graph.json",
     "read_execution_history": "tools/read_execution_history.json",
     "submit_exec_review": "tools/submit_exec_review.json",
+    "submit_unknown_call_advice": "tools/submit_unknown_call_advice.json",
     "find_graph": "tools/find_graph.json",
     "check_links": "tools/check_links.json",
     "web_search": "tools/web_search.json",

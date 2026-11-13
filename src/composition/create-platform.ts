@@ -135,7 +135,7 @@ import {
   createMainSurfaceReadModel, type MainSurfaceReadPort,
 } from '../core/work-graph/views/main-surface-read-model.js';
 import {
-  createRequestRoundService, workspaceOf, type RequestFactsReader, type RequestRoundPort,
+  createRequestRoundService, type RequestFactsReader, type RequestRoundPort,
 } from '../core/work-graph/tasks/request-service.js';
 import { createProjectSecretaryScope, createSecretarySelection } from '../core/work-graph/tasks/secretary-selection.js';
 import { createEffectiveScopeReader } from '../core/work-graph/views/role-scope-reader.js';
@@ -168,6 +168,7 @@ import type { EvidencePort } from '../core/work-graph/model/evidence-contracts.j
 import { VerificationWorkspaceReader } from '../core/workspace/verification-workspace-reader.js';
 import { createRegisteredCheckRunner, type RegisteredCheckRunner } from '../core/agent-runtime/check-execution.js';
 import { createCommandSlots, PLATFORM_COMMAND_SLOTS, type CommandSlots } from '../core/agent-runtime/command-slots.js';
+import { createRunningCommands } from '../core/agent-runtime/running-commands.js';
 import type { TrustedCheckConfiguration } from '../contracts/verification.js';
 import { createExecutionHistoryService } from '../core/work-graph/tasks/execution-history-service.js';
 import { EXECUTION_HISTORY_RECORD_SCHEMAS } from '../core/work-graph/persistence/execution-history-codecs.js';
@@ -1055,8 +1056,8 @@ function createAuthorizeQueryConfiguration(host: RuntimeHostBindings): Authorize
     // profile (what preparation froze), a plain Query's Job intent.
     return { status: 'ready', value: projectQueryConfiguration({
       host: configured.value, requested: queryExecutionBindingOf(input.job, input.run).runtimeBudget,
-      roleResolution: input.roleResolution, secretaryRound: isRequestRound(input.job),
-      explorationRound: input.job.job.intent.execution.kind === 'role_exploration',
+      roleResolution: input.roleResolution, sessionRole: input.sessionRole, secretaryRound: isRequestRound(input.job),
+      execution: input.job.job.intent.execution, explorationRound: input.job.job.intent.execution.kind === 'role_exploration',
     }) };
   };
 }
@@ -1202,6 +1203,9 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     return { current: () => fixed };
   })();
   const commandSlots = options.commandSlots ?? createCommandSlots(PLATFORM_COMMAND_SLOTS);
+  // SHT-2 (121-112): the ONE in-memory registry of the commands a Run or QueryRun is running. The Runtime registers
+  // and clears; the Host route and the over-line check read. It enters no record, configuration or prepared execution.
+  const runningCommands = createRunningCommands(now);
   const schemas = platformRecordSchemas();
   // Slice 1 (spec §2.8): every one of the six new indexes must be part of the
   // real record-store schema set this Host opens. The declared
@@ -2299,7 +2303,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       sessions: { findSessions: (ctx, input) => sessionDirectory.findSessions(ctx, input), readSession: (ctx, ref, scope) => sessionDirectory.readSession(ctx, ref, scope) },
       lines: requestLineCreation,
       requests: { ownerOf: (ctx, input) => rawRequestFacts.ownerOf(ctx, input) },
-      secretaryRuns: secretaryQueryRun,
+      secretaryRuns: secretaryQueryRun, planningRuns: noteQueryRun, // 121-114: the note owner's planning-round resolver
       duties: dutyRecipient, duty: sessionDutyResolver,
       // L42/D-18: the ONE L35 resolver (O4b-2's late binding) and the mailbox's own send for the adviser's one notice.
       advisers: lateRecipients,
@@ -2694,7 +2698,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
         ...(host.readonlyCommandAccess === undefined ? {}
           : { readonlyCommandAccess: (input: ReadonlyCommandAccessInput) => host.readonlyCommandAccess!(input) }),
         ...(commandSandbox === undefined ? {} : { commandSandbox }),
-        host, kernel, resourceCaps, commandSlots, now, newId: randomUUID,
+        host, kernel, resourceCaps, commandSlots, runningCommands, now, newId: randomUUID,
       };
       runtime = createAgentRuntime(dependencies);
     }
@@ -2845,8 +2849,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     };
     const architectureWorkScope = createArchitectureWorkScopeReader({ records: backend.records, catalog,
       mainWorkspaceOf: mainWorkspaceOf });
-    const architectureChangeScope = createArchitectureChangeScopeReader({ executedFiles: goalExecutedFiles, catalog,
-      mainWorkspaceOf: mainWorkspaceOf });
+    const architectureChangeScope = createArchitectureChangeScopeReader({ executedFiles: goalExecutedFiles, goals: planService,
+      catalog, mainWorkspaceOf: mainWorkspaceOf });
     const architecture: typeof observed & ArchitectureCatalogPort & ArchitectureWorkScopePort & ArchitectureChangeScopePort = {
       captureSourceChanges: (...args) => trackedCall(() => observed.captureSourceChanges(...args), unavailable),
       // L8 request record and the one public observation state (book rulings 3, 8, 12).
@@ -3628,15 +3632,15 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     decisionCardSources.push(createCollectionCardSource(reworkRequestCardSourceSpec({
       readRequest: reworkRequestService.readRequest, listByGoal: reworkRequestService.listByGoal,
     })));
-    // N's ONE module-overlap gate owner. Its recipient read is F1's single duty resolver bound to the Goal's
-    // workspace (the owner tries the adviser and then the secretary); its note-request text is the pack's one-line
-    // prefix, to which the owner appends the module id; its current-note read is the note read model's own
-    // `listCurrentVersions` over the module anchor, paged to the end. No second reader, codec or service exists.
-    const overlapGates = createOverlapGateService({
-      records: backend.records,
-      resolveRecipient: (ctx, _goalRef, duty) => dutyRecipient.resolveDutyRecipient(ctx, {
-        workspace: workspaceOf(ctx), duty,
-      }),
+    // N's ONE module-overlap gate owner. Its recipient read is the Goal's adviser by L35 (XWR-ON: role lines live in
+    // the main workspace, so a joined Goal reaches them; MVP-BEHAVIOR:331), with none the project's secretary line; its
+    // note-request text is the pack's prefix plus the module id; its current-note read is `listCurrentVersions`.
+    const overlapGates = createOverlapGateService({ records: backend.records,
+      resolveRecipient: async (ctx, goalRef, duty) => {
+        if (duty === 'secretary') return dutyRecipient.resolveDutyRecipient(ctx, { workspace: { projectId: goalRef.projectId }, duty });
+        const read = await lateRecipients.resolveResponsibilityRecipient(ctx, { projectId: goalRef.projectId, goalRef, moduleRef: null, kind: 'general', asker: null });
+        return read.status !== 'ready' ? read : { status: 'ready', value: read.value.kind === 'session' ? read.value.session : null };
+      },
       sendMessage: mailbox.sendMessage,
       readNotes: async (ctx, input) => {
         const notes: NoteVersionSnapshot[] = [];
@@ -4879,6 +4883,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
         idleSince: (): string => idleSince ??= now(),
         has: (ref: string): boolean => inFlight.has(ref),
         endedAt: (ref: string): string | null => endedAt.get(ref) ?? null,
+        // SHT-2 (121-112): the commands the Runtime is running now, for the Host's read route and over-line check.
+        commands: () => runningCommands.list(),
       },
       // Slice 3: the same owner instances the Runtime received; the graph routes
       // read through `graphContext` and a caller could reuse `taskInputs`.

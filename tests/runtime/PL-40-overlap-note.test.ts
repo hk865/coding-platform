@@ -5,7 +5,7 @@
  * the gate sends one Host system `action_request` whose body is the note
  * request, the Host's consume loop offers it to the idle adviser line, the
  * adviser's planning Query freezes the text shape and its tool table carries
- * `record_note` (no submit/mail/member tools), the real scripted model writes
+ * `record_note` (no submit or mail tools), the real scripted model writes
  * the new current module convention, the gate rechecks satisfied and the
  * second Task claims its Run. The system request is an `action_request`, not a
  * `notify` that opens no turn.
@@ -122,7 +122,7 @@ describe('PL-40: the idle adviser receives the overlap-note request', () => {
     expect(manifest.answerShape).toBeNull();
     expect(manifest.request).toBeNull();
 
-    // The tool table is the planning text table: record_note, no submit/mail/member tools.
+    // The tool table is the planning text table: record_note, no submit or mail tools (ADVQ keeps create_member).
     const turns = await target.world.world.scripted.requests(target.adviser);
     const tools = turns[0]?.tools.map(tool => tool.name) ?? [];
     expect(tools).toContain('record_note');
@@ -130,7 +130,6 @@ describe('PL-40: the idle adviser receives the overlap-note request', () => {
     expect(tools).not.toContain('submit_plan_review');
     expect(tools).not.toContain('send_session_message');
     expect(tools).not.toContain('respond_session_message');
-    expect(tools).not.toContain('create_member');
 
     // The note owner dispatched by the frozen shape, the Host-system source and the adviser duty.
     const notes = await notesOnModule(target);

@@ -104,7 +104,11 @@ it('B07 a second-workspace Run\'s record_note names its own module bare and it l
   ] });
   const receipt = jsonOf(await world.base.world.scripted.requests(line), 'kls2b-b07-note') as
     { write: { status: string; noteId?: string } };
-  expect(receipt.write.status, JSON.stringify(receipt)).not.toBe('rejected');
+  // AGTX-4 (B07): an agent-written `decision` note, not structural, no contradicts, a new anchor, quota not
+  // full → accepted with no review reasons (note-machine.ts:51-81, S4-NOTE-01..03). Green today and after the
+  // package lands (it does not touch note admission). Named mutation: `admitNoteWrite`'s accepted branch
+  // returning `pending_review` — the old `not.toBe('rejected')` would still pass, this line goes red.
+  expect(receipt.write).toMatchObject({ status: 'accepted', reasons: [] });
   const noteId = receipt.write.noteId!;
   const second = world.second.scope.workspaceId;
   expect((await world.notes({ kind: 'module', moduleId: xws2pModuleId(second, XWS2A_MODULE_ID) }))

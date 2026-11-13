@@ -40,7 +40,7 @@ import type { AutonomyRulePort } from '../core/work-graph/tasks/autonomy-rule-se
 import type { GoalAdviserQueuePort } from '../core/work-graph/tasks/goal-adviser-queue-service.js';
 import type { RoleLineReadPort } from '../core/work-graph/views/role-line-read.js';
 import type { VerificationRoundReadPort } from '../core/work-graph/views/verification-round-read.js';
-import type { CoreRouteBindings } from './core-routes.js';
+import type { CoreRouteBindings, HostRunningCommandsPort } from './core-routes.js';
 // Slice 1 (spec §4.4, §0.2 L5): the owner ports of the eleven new suffixes.
 import type { SessionLifecyclePort } from '../core/work-graph/sessions/lifecycle-contracts.js';
 import type { SessionFactsPort } from '../core/work-graph/model/session-facts-contracts.js';
@@ -253,6 +253,8 @@ export type CoreRouteSuffix =
   | 'workflow/driver-stop'
   | 'executions/read'
   | 'executions/history'
+  // SHT-2 (121-112): the in-memory running-command read.
+  | 'executions/running-commands'
   // MVP UI connection: bounded execution list, narrow project read, Kernel
   // workspace CAS save/compare and the explicit command handles.
   | 'executions/list'
@@ -927,6 +929,13 @@ export type ExecutionsReadBody = PlainBody<ExecutionReadPort['readExecution']>;
 export type ExecutionsReadResponse = RouteResponse<ExecutionReadPort['readExecution']>;
 export type ExecutionsHistoryBody = PlainBody<RuntimeExecutionPort['readTaskExecutionHistory']>;
 export type ExecutionsHistoryResponse = RouteResponse<RuntimeExecutionPort['readTaskExecutionHistory']>;
+// SHT-2 (121-112): the Host's in-memory running-command read; it carries no model/record shape of its own.
+export type ExecutionsRunningCommandsBody = PlainBody<HostRunningCommandsPort['readRunningCommands']>;
+export type ExecutionsRunningCommandsResponse = RouteResponse<HostRunningCommandsPort['readRunningCommands']>;
+/** SHT-2: the running-command read's typed assembly; `CORE_ROUTE_SPECS`'s annotation names it. */
+export type ExecutionsCoreRouteDto = {
+  'executions/running-commands': { body: ExecutionsRunningCommandsBody; response: ExecutionsRunningCommandsResponse };
+};
 
 // ---------------------------------------------------------------------------
 // MVP UI connection routes. Each alias derives from the exact owner method:

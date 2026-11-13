@@ -27,7 +27,7 @@ export type CreateMemberToolsConfig = {
   members: Pick<MemberRequestPortV1, 'requestMember'>;
   /** Trusted, already-bound context; snapshotted per call. */
   context: CoreCallContext;
-  /** The Work Run or the resolved secretary round. */
+  /** The Work Run, the resolved secretary round or the adviser's planning round. */
   caller: MemberCallerV1;
   /** Trusted command identity: Kernel `ToolCall.callId` + bound Run/operation. */
   requestIdForCall: (call: Readonly<ToolCall>) => string;
