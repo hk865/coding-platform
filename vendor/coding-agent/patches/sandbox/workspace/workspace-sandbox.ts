@@ -619,6 +619,14 @@ export class WorkspaceSandbox {
     if (!Number.isSafeInteger(maxEntries) || maxEntries < 1 || maxEntries > 60_000) throw new WorkspaceSandboxError("too_large", "文件枚举上限非法");
     const prefix = options.prefix ? this.#normalize(options.prefix) : "";
     const root = await this.#openRoot(), paths: string[] = [];
+    // 被拒前缀按 inode 身份跳过，不按名字大小写比较：不区分大小写的根上以 `.WORKBENCH`
+    // 打开 `.workbench` 时，子项和 `.workbench/local` 是同一个 inode；ext4 上真名
+    // `.WORKBENCH/local` 是另一个 inode，不会被误伤。缺席的前缀没有别名可命中，跳过。
+    const deniedIdentities = new Set<string>();
+    for (const denied of this.#deniedPrefixes) {
+      try { deniedIdentities.add(identity(await lstat(handlePath(root, denied)))); }
+      catch { /* 缺席的前缀没有东西可以被它的别名命中 */ }
+    }
     let scanned = 0, truncated = false, start = root;
     const cancelled = () => { if (options.signal?.aborted) throw new Error("文件枚举已取消"); };
     const visit = async (directory: FileHandle, relativeDirectory: string, depth: number): Promise<void> => {
@@ -628,10 +636,10 @@ export class WorkspaceSandbox {
         cancelled();
         if (++scanned > maxEntries) { truncated = true; return; }
         const relative = relativeDirectory ? relativeDirectory + "/" + entry.name : entry.name;
-        if (this.#deniedPrefixes.some(p => isWithin(relative, p))) continue;
         let child: FileHandle | undefined;
         try {
           const metadata = await lstat(handlePath(directory, entry.name));
+          if (deniedIdentities.has(identity(metadata))) continue;
           if (metadata.isSymbolicLink()) continue;
           if (metadata.isDirectory()) {
             child = await open(handlePath(directory, entry.name), constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);

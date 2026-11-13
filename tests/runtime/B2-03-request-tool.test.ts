@@ -60,6 +60,8 @@ describe.each(['memory', 'sqlite'] as const)('B2-03 request tool (%s)', kind => 
     const result = await runTool(w.tool, { command: 'npm run db:migrate', reason: '需要重新迁移' });
     expect(result).toMatchObject({ status: 'success' });
     expect(result.output[0]).toMatchObject({ kind: 'json', value: { status: 'requested' } });
+    // K3L-6 (121-110, ruling 1): this world has no adviser line, so the request is the person's at once and the tool
+    // says so; a request the adviser looks at first says 等答复（参谋先看…） (K3L6-crr-adviser R3).
     expect(result.output[1]).toMatchObject({ kind: 'text', text:
       '已请求，等人答复。这一轮不能跑这条命令；可以先做别的，或者结束这一轮并写明在等允许。' });
     const requests = await w.listRequests(w.ctx);

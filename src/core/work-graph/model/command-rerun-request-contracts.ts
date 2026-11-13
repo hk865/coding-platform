@@ -90,6 +90,20 @@ export interface CommandRerunRequestPort {
       rewriteOf?: { review: string; alias: number };
     }>,
   ): Promise<CommandRerunRequestReplyV1>;
+  /**
+   * 121-110: apply the answer of the adviser round `requestId` to an `awaiting_advice` request pinned at the revision
+   * the Workflow read. The owner reads the round's Query and answer, the answering Session's duty and the Goal, and
+   * judges the answer (allow once, deny this Run, or the person's card with the answer as the suggestion).
+   */
+  applyAdviserAnswer(
+    ctx: CoreCallContext,
+    request: GraphWrite<{ requestRef: CommandRerunRequestRef; requestId: string }>,
+  ): Promise<WriteResult<CommandRerunRequestV1>>;
+  /** 121-110: put an `awaiting_advice` request in front of the person (no adviser line, or a round with no answer). */
+  escalateRerun(
+    ctx: CoreCallContext,
+    request: GraphWrite<{ requestRef: CommandRerunRequestRef; cause: 'no_adviser' | 'adviser_failed' }>,
+  ): Promise<WriteResult<CommandRerunRequestV1>>;
   /** Card-answer application: identity from the answer message; the request@revision must still be pending (L19a). */
   applyAnswer(
     ctx: CoreCallContext,

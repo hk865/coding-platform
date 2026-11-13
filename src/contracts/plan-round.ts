@@ -1,5 +1,5 @@
 /**
- * The system-round contract: the seven round shapes, their one request-id
+ * The system-round contract: the nine round shapes, their one request-id
  * format, the fixed Host sender and its message identity, and the pure reply /
  * read helpers (§5.2.2, §5.2.5–§5.2.6, §5.3.5, §5.6).
  *
@@ -12,6 +12,9 @@ import type { CoreCallContext } from './core/call-context.js';
 import type { CoreRejection } from './core/results.js';
 import type { SessionMessageRef } from './core/session-message.js';
 import { canonicalJson, sha256Hex, type JsonValue } from './fingerprint.js';
+import {
+  commandRerunAdviceSubjectProblem, parseCommandRerunAdviceAnswer, type CommandRerunAdviceSubjectV1,
+} from './command-rerun-advice.js';
 import { parseInitialPlanningResponseV2 } from './initial-planning-parse.js';
 import { parseExecReviewAnswer } from './exec-review.js';
 import type { GoalRef } from './ledger.js';
@@ -19,7 +22,10 @@ import type { PlanRevisionDraft, PlanRevisionSnapshot } from './plan.js';
 import { parsePlanReviewAnswer } from './plan-review.js';
 import type { PlanningAnswerShapeV1, QueryJobRef } from './query-job.js';
 import { validSessionMessageRef } from './query-job.js';
-import { inList, isPos, nonEmpty, parseObject } from './validation/common.js';
+import {
+  commandReviewSubjectProblem, parseCommandReviewAnswer, type CommandReviewSubjectV1,
+} from './scribe-review.js';
+import { inList, isPos, isSha256Hex, nonEmpty, parseObject } from './validation/common.js';
 import type { VerificationRoundRef } from './verification.js';
 import {
   parseUnknownCallAdviceAnswer, unknownCallAdviceSubjectProblem, UNKNOWN_CALL_ADVICE_CHOICES,
@@ -42,7 +48,11 @@ export type SystemRoundV1 =
   | { kind: 'planresume'; goalRef: GoalRef; queryJobId: string; originalMessageRef: SessionMessageRef }
   /** Slice 9: the reviewer's execution-result round of one open verification round. */
   | { kind: 'exec_review'; goalRef: GoalRef; roundRef: VerificationRoundRef }
-  | { kind: 'unknown_call'; goalRef: GoalRef; subject: UnknownCallAdviceSubjectV1 };
+  | { kind: 'unknown_call'; goalRef: GoalRef; subject: UnknownCallAdviceSubjectV1 }
+  /** 121-112: the scribe's review of one long command of a Work Run of this Goal. */
+  | { kind: 'command_review'; goalRef: GoalRef; subject: CommandReviewSubjectV1 }
+  /** 121-110: the adviser's round on one `awaiting_advice` command rerun request. */
+  | { kind: 'command_rerun'; goalRef: GoalRef; subject: CommandRerunAdviceSubjectV1 };
 
 /** The read-side head of a round: only the first line's segments, never a guess. */
 export type SystemRoundHeadV1 =
@@ -54,7 +64,10 @@ export type SystemRoundHeadV1 =
   /** No `goalId` (the `planreview` precedent): the Goal comes from the source message's `goalRef`. */
   | { kind: 'exec_review'; roundId: string }
   | { kind: 'unknown_call'; runId: string; revision: number; phase: UnknownCallAdvicePhaseV1;
-    goalBasisDigest: string };
+    goalBasisDigest: string }
+  /** The command key is the sha256 of `subject.commandKey`, which itself holds `:`. */
+  | { kind: 'command_review'; projectId: string; reviewSeq: number; commandKeyDigest: string }
+  | { kind: 'command_rerun'; taskId: string; requestId: string; revision: number; goalBasisDigest: string };
 
 /** The one system-round sender; a fixed id is what makes one request id one message. */
 export const SYSTEM_ROUND_ACTOR = Object.freeze({ kind: 'system' as const, id: 'host:plan-round' });
@@ -123,6 +136,25 @@ export function systemRoundRequestId(
     if (!isPos(revision)) return rejected('invalid', 'revision must be a positive safe integer');
     if (goalBasisDigest.length === 0) return rejected('invalid', 'goalBasisDigest is empty');
     return { status: 'ready', value: `ucr:${reviewRef.runId}:${String(revision)}:${phase}:${goalBasisDigest}` };
+  }
+  if (round.kind === 'command_review') {
+    // No time in the id: a resend of the same review is the same message; the next review is the next `reviewSeq`.
+    const { projectId, reviewSeq, commandKey } = round.subject;
+    if (projectId.length === 0) return rejected('invalid', 'projectId is empty');
+    if (!isPos(reviewSeq)) return rejected('invalid', 'reviewSeq must be a positive safe integer');
+    if (commandKey.length === 0) return rejected('invalid', 'commandKey is empty');
+    return { status: 'ready', value: `scr:${projectId}:${String(reviewSeq)}:${sha256Hex(commandKey)}` };
+  }
+  if (round.kind === 'command_rerun') {
+    // A request is one per (Goal, Task, requestId); the requestId may itself hold `:` (a tool call's `c2-tool:`
+    // identity), so the Task id leads and the revision and digest close the line.
+    const { requestRef, revision, goalBasisDigest } = round.subject;
+    if (requestRef.taskId.length === 0) return rejected('invalid', 'taskId is empty');
+    if (requestRef.requestId.length === 0) return rejected('invalid', 'requestId is empty');
+    if (!isPos(revision)) return rejected('invalid', 'revision must be a positive safe integer');
+    if (goalBasisDigest.length === 0) return rejected('invalid', 'goalBasisDigest is empty');
+    return { status: 'ready',
+      value: `crr:${requestRef.taskId}:${requestRef.requestId}:${String(revision)}:${goalBasisDigest}` };
   }
   if (round.queryJobId.length === 0) return rejected('invalid', 'queryJobId is empty');
   return { status: 'ready', value: `planresume:${round.goalRef.goalId}:${round.queryJobId}` };
@@ -202,6 +234,22 @@ export function systemRoundOfText(text: string): SystemRoundHeadV1 | null {
       || !inList(phase, phases)) return null;
     return { kind: 'unknown_call', runId, revision, phase, goalBasisDigest: digest };
   }
+  if (prefix === 'scr') {
+    if (segments.length !== 4) return null;
+    const [, projectId, seq, digest] = segments;
+    const reviewSeq = positivePlanRevisionOf(seq);
+    if (!nonEmpty(projectId) || reviewSeq === null || !isSha256Hex(digest)) return null;
+    return { kind: 'command_review', projectId, reviewSeq, commandKeyDigest: digest };
+  }
+  if (prefix === 'crr') {
+    if (segments.length < 5) return null;
+    const taskId = segments[1];
+    const requestId = segments.slice(2, -2).join(':');
+    const revision = positivePlanRevisionOf(segments.at(-2));
+    const digest = segments.at(-1);
+    if (!nonEmpty(taskId) || !nonEmpty(requestId) || revision === null || !nonEmpty(digest)) return null;
+    return { kind: 'command_rerun', taskId, requestId, revision, goalBasisDigest: digest };
+  }
   return null;
 }
 
@@ -243,11 +291,43 @@ export function unknownCallAdviceSubjectOfText(text: string): UnknownCallAdviceS
 }
 
 /**
+ * The second line of a `scr:` text: `subject: <canonicalJson>`, the ONLY source
+ * of the scribe review's command facts (and of the Run its history tool reads);
+ * absent, malformed or disagreeing with the first line's request id -> `null`.
+ */
+export function commandReviewSubjectOfText(text: string): CommandReviewSubjectV1 | null {
+  const [first, second] = text.split('\n');
+  if (second === undefined || !second.startsWith('subject: ')) return null;
+  const parsed = parseObject(second.slice('subject: '.length));
+  if (parsed === null || commandReviewSubjectProblem(parsed) !== null) return null;
+  const subject = parsed as unknown as CommandReviewSubjectV1;
+  const head = systemRoundRequestId({ kind: 'command_review', subject,
+    goalRef: { aggregateType: 'Goal', projectId: subject.projectId, goalId: subject.goalId } });
+  return head.status === 'ready' && head.value === first ? subject : null;
+}
+
+/**
+ * The second line of a `crr:` text: `subject: <canonicalJson>`, the ONLY source of the rerun round's subject (and of
+ * the Run its history tool reads); absent, malformed or disagreeing with the first line's request id -> `null`.
+ */
+export function commandRerunAdviceSubjectOfText(text: string): CommandRerunAdviceSubjectV1 | null {
+  const [first, second] = text.split('\n');
+  if (second === undefined || !second.startsWith('subject: ')) return null;
+  const parsed = parseObject(second.slice('subject: '.length));
+  if (parsed === null || commandRerunAdviceSubjectProblem(parsed) !== null) return null;
+  const subject = parsed as unknown as CommandRerunAdviceSubjectV1;
+  const head = systemRoundRequestId({ kind: 'command_rerun', subject,
+    goalRef: { aggregateType: 'Goal', projectId: subject.requestRef.projectId, goalId: subject.requestRef.goalId } });
+  return head.status === 'ready' && head.value === first ? subject : null;
+}
+
+/**
  * The short reply derived from the frozen answer shape (§5.3.5): a plan
  * summary, a review verdict, or the original text. Only a `plan_review`,
- * `exec_review` or `unknown_call_advice` answer that no longer parses has no
- * reply (`null` -> terminal invalid). The exec review reply never carries the
- * answer JSON (slice 9); the adviser reply is its one plain sentence.
+ * `exec_review`, `unknown_call_advice`, `command_rerun_advice` or `scribe_review`
+ * answer that no longer parses has no reply (`null` -> terminal invalid). The exec
+ * review reply never carries the answer JSON (slice 9); the adviser and scribe
+ * replies are their one plain sentence.
  */
 export function planningReplyTextOf(input: {
   shape: PlanningAnswerShapeV1;
@@ -269,6 +349,14 @@ export function planningReplyTextOf(input: {
   }
   if (input.shape === 'unknown_call_advice') {
     const parsed = parseUnknownCallAdviceAnswer(input.answerText);
+    return parsed.status === 'parsed' ? `参谋已答复：${parsed.advice.plain}` : null;
+  }
+  if (input.shape === 'scribe_review') {
+    const parsed = parseCommandReviewAnswer(input.answerText);
+    return parsed.status === 'parsed' ? `书记已看：${parsed.answer.reason}` : null;
+  }
+  if (input.shape === 'command_rerun_advice') {
+    const parsed = parseCommandRerunAdviceAnswer(input.answerText);
     return parsed.status === 'parsed' ? `参谋已答复：${parsed.advice.plain}` : null;
   }
   const parsed = parseInitialPlanningResponseV2(input.answerText);

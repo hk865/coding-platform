@@ -16,9 +16,11 @@ import type {
 } from '../../../contracts/architecture-proposal.js';
 import type { ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
 import { readOwnerRecord } from '../persistence/owner-record-read.js';
+import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { SessionDirectoryPort } from '../model/session-contracts.js';
 import type { RoleLineOperationV1 } from '../model/session-contracts.js';
 import { catalogPinOf, readCurrentCatalogWindow } from '../architecture/catalog-service.js';
+import type { KnowledgeReadBaseV1 } from '../../../contracts/knowledge.js';
 import { decodeArchitectureProposalBatchRecord } from '../architecture/proposal-record-codecs.js';
 import type { ArchitectureProposalService } from '../architecture/proposal-service.js';
 import { roleExplorationQuestion } from '../state/role-exploration.js';
@@ -56,6 +58,34 @@ export type ReproposeSourceV1 = {
 };
 
 const EXPLORATION_ACTIONS = new Set(['cold_start', 'workspace_join', 'exploration_followup']);
+/** A knowledge_conflict follow-up's key is `conflict:<noticeId>` (`begin`, `explorationFollowUpOperationRef`). */
+const CONFLICT_KEY = 'conflict:';
+
+/**
+ * KC-3 (121-106 ②): the knowledge_conflict notice an exploration operation repairs, null for any other: a
+ * `knowledge_conflict` follow-up's own (its key), or the mark of the repair batch a “不对，重新提” follow-up re-proposes.
+ * A repair reads, tries, freezes and approves on the catalog the records last adopted (`base: 'recorded'`).
+ */
+export async function repairNoticeOf(records: Pick<GoalRecordTransactionPort, 'readMany'>,
+  operation: { ref: OperationRef; action: Pick<RoleLineActionV1, 'followUp'> }):
+  Promise<{ status: 'ready'; value: string | null } | CoreRejection> {
+  const followUp = operation.action.followUp;
+  if (followUp?.kind === 'knowledge_conflict') {
+    const prefix = explorationFollowUpOperationRef(operation.ref.projectId, CONFLICT_KEY).operationId;
+    return { status: 'ready', value: operation.ref.operationId.slice(prefix.length) };
+  }
+  if (followUp?.kind !== 'repropose' || followUp.sourceBatchRef === null) return { status: 'ready', value: null };
+  const batch = await readOwnerRecord({ store: records, refKey: canonicalKey(followUp.sourceBatchRef),
+    decode: decodeArchitectureProposalBatchRecord,
+    readError: () => rejected('unavailable', 'the re-proposed batch cannot be read') });
+  if (!batch.ok) return 'notFound' in batch ? rejected('invalid', 'the re-proposed batch does not exist') : batch.rejection;
+  return { status: 'ready', value: (batch.value as ArchitectureProposalBatchV1).knowledgeConflict?.noticeId ?? null };
+}
+
+/** KC-3: a repair's reads take the record as their base; every other read takes the files. */
+export function repairReadBase(noticeId: string | null): { base?: KnowledgeReadBaseV1 } {
+  return noticeId === null ? {} : { base: 'recorded' };
+}
 
 /**
  * The one “can this batch still be re-proposed” read (M6): member proposal → its `operationRef` → that operation →
@@ -192,7 +222,10 @@ export function createExplorationFollowUpService(deps: ExplorationFollowUpDeps):
     const { projectId } = at.input;
     const pin = at.action.baseCatalogPin;
     if (pin === null) return rejected('invalid', 'the follow-up operation has no base pin');
-    const window = await readCurrentCatalogWindow(deps.records, projectId, { lines: deps.knowledge, caller: at.ctx });
+    const notice = await repairNoticeOf(deps.records, at.op);
+    if (notice.status !== 'ready') return notice;
+    const window = await readCurrentCatalogWindow(deps.records, projectId,
+      { lines: deps.knowledge, caller: at.ctx, ...repairReadBase(notice.value) });
     if (window.status !== 'ready') return window;
     const lines = await deps.regionLines.readOpenRegionLines(at.ctx, { projectId });
     if (lines.status !== 'ready') return lines;
@@ -219,7 +252,7 @@ export function createExplorationFollowUpService(deps: ExplorationFollowUpDeps):
       if (chosen === null) {
         const opened = await deps.lines.openRegionLine(at.ctx, {
           commandId: `followup-region:${at.op.ref.operationId}:${module.moduleId}`,
-          parentOperation: at.op.ref, duty: 'adviser', module });
+          parentOperation: at.op.ref, duty: 'adviser', module, ...repairReadBase(notice.value) });
         if (opened.status === 'capacity_blocked' || opened.status === 'accepted') return stop(at);
         if (opened.status === 'rejected') return opened;
         chosen = opened.value.session!;
@@ -232,7 +265,7 @@ export function createExplorationFollowUpService(deps: ExplorationFollowUpDeps):
       const question = at.action.followUp.kind === 'knowledge_conflict' ? knowledgeConflictQuestion(module, reason ?? '')
         : reason === null ? base
           : `${base}\n\nA person rejected the previous proposal and asked for one more exploration round: ${reason}`;
-      const round = await openExploration(deps, at, { line: chosen, segment: 'region', region: module,
+      const round = await openExploration(deps, at, { ...repairReadBase(notice.value), line: chosen, segment: 'region', region: module,
         key: `followup:${module.moduleId}`, question,
         ids: { queryJobId: `followup-query:${at.op.ref.operationId}:${module.moduleId}`,
           runId: `followup-run:${at.op.ref.operationId}:${module.moduleId}` },
@@ -314,8 +347,11 @@ export function createExplorationFollowUpService(deps: ExplorationFollowUpDeps):
     const pending = await ownPending(at);
     if (pending.status !== 'ready') return pending;
     if (pending.value.length === 0) return write(at, completeFollowup(action), 'completed');
+    const notice = await repairNoticeOf(deps.records, record);
+    if (notice.status !== 'ready') return notice;
     const batch = await deps.proposals.freezeArchitectureProposalBatch(ctx,
-      { proposalRefs: pending.value, baseCatalogPin: action.baseCatalogPin! });
+      { proposalRefs: pending.value, baseCatalogPin: action.baseCatalogPin!,
+        ...(notice.value === null ? {} : { knowledgeConflict: { noticeId: notice.value } }) });
     if (batch.status !== 'ready') return batch;
     return write(at, saveBatchRefs(action, [...action.batchRefs, ...batch.value.map((entry) => ({ ...entry.ref }))]));
   }
@@ -327,9 +363,11 @@ export function createExplorationFollowUpService(deps: ExplorationFollowUpDeps):
   }): Promise<WriteResult<ExplorationFollowUpResultV1>> {
     const key = input.kind === 'repropose'
       ? `repropose:${input.sourceBatchRef?.batchId ?? input.requestId}`
-      : input.kind === 'deepen' ? `deepen:${input.requestId}` : `conflict:${input.requestId}`;
+      : input.kind === 'deepen' ? `deepen:${input.requestId}` : `${CONFLICT_KEY}${input.requestId}`;
+    // KC-3: a knowledge_conflict round's base pin is the last adopted catalog's (the conflict may keep the files unread).
     const window = input.baseCatalogPin === undefined
-      ? await readCurrentCatalogWindow(deps.records, input.projectId, { lines: deps.knowledge, caller: ctx }) : null;
+      ? await readCurrentCatalogWindow(deps.records, input.projectId, { lines: deps.knowledge, caller: ctx,
+        ...(input.kind === 'knowledge_conflict' ? { base: 'recorded' as const } : {}) }) : null;
     if (window !== null && window.status !== 'ready') {
       return window.status === 'rejected' ? window
         : rejected('invalid', 'the project has no current architecture window');

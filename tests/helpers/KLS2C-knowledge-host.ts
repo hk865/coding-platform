@@ -4,7 +4,7 @@
  * conflict `kls2cConflict`, the exported graph-write pins and the never-idle threshold; 2c-1c the Host clock `now`, a
  * second served project `alsoServe`, the adopt and revise bodies a crash child sends, the two recovery routes, the blob
  * id by `git hash-object` and a wait for a notice count; 2c-1d `armedSeam`, which platform rows hand to
- * `openKLS2AWorld`; KC-1 the `knowledge/problems` read of one notice's places). One real
+ * `openKLS2AWorld`; KC-1 the `knowledge/problems` read of one notice's places; KC-3 the scripted adviser world). One real
  * `createLocalWorkbenchHost` (memory or SQLite) with one workspace on the test's own root (a real git repository
  * through `initGitWorkspace` when `git`), the Project and Workspace records through the public routes. The Host
  * options are Host inputs only (A8): the root, the idle threshold `linkBatchIdleMs` (`idleMs`, 2c1#7), a short
@@ -19,11 +19,20 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, w
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createLocalWorkbenchHost, type LocalWorkbenchHost, type LocalWorkbenchHostOptions } from '../../src/app/host.js';
-import type { CoreScope } from '../../src/app/core-http-types.js';
+import { PLATFORM_TOKEN_HEADER, type CoreScope } from '../../src/app/core-http-types.js';
+import { SETTINGS_API_PREFIX } from '../../src/app/host-settings-types.js';
+import type { ArchitectureCatalogPinV1 } from '../../src/contracts/architecture-catalog.js';
+import type { StructuralApprovalV1 } from '../../src/contracts/architecture-proposal.js';
+import { sha256Hex } from '../../src/contracts/fingerprint.js';
+import { platformRoleProfile } from '../../src/core/agent-runtime/role-profiles.js';
+import type { DecisionCardV1 } from '../../src/core/work-graph/model/decision-contracts.js';
+import { ProviderRegistry, type ModelClientPort } from '../../vendor/coding-agent/dist/public-api.js';
 import { projectRef, workspaceRef } from '../app/support/S8A-L8-host.js';
 import { gitIn, initGitWorkspace } from '../scenarios/support/git-workspace.js';
 import { publicDirectory, tempDir } from './A2-restart-fixture.js';
-import { corePost, graphWrite, plain, readPageToken } from './AG2b-collaboration-fixture.js';
+import { AG2B_RUNTIME_BUDGET, corePost, graphWrite, plain, readPageToken, startLinesEnded } from './AG2b-collaboration-fixture.js';
+import { createScriptedModel, type ScriptedReply } from './B2-runtime-fixture.js';
+import { readyValue } from './S6A-memory-fixture.js';
 
 export type KLS2CHoldPoint = 'committed' | 'applied';
 export const KLS2C_SCOPE: CoreScope = { projectId: 'kls2c-p', workspaceId: 'kls2c-ws' };
@@ -63,6 +72,10 @@ export type KLS2CHost = {
   read(rel: string): Buffer | null;
   /** Real git in the root, like a person. */
   git(args: string[]): string;
+  /** KC-3 (`adviser: true`): queues one Run's replies; each new Run of the scripted adviser takes the next. */
+  script(replies: readonly ScriptedReply[]): void;
+  /** A Host settings route (`/api/real/settings/<route>`) as the Host's page; the answer decoded. */
+  settings<T>(route: string, input: unknown): Promise<T>;
   close(): Promise<void>;
 };
 
@@ -84,7 +97,34 @@ export type KLS2COpenOptions = {
   now?: () => string;
   /** One more project this Host serves, on a fresh root of its own (K37: two projects, one Host; not for a reopen). */
   alsoServe?: CoreScope;
+  /** KC-3: the scripted region adviser's runtime (needs `kernelStore`, since its lines are Sessions). */
+  adviser?: true;
 };
+
+const KLS2C_SECRET = 'KLS2C_SCRIPTED_ADVISER';
+const ADVISER_GUIDANCE = 'KLS2C scripted region adviser';
+
+/** KC-3 Host inputs (A8): a platform adviser binding with `propose_architecture_revision` (the tools the cold-start
+ *  world merges into its adviser), its Query profile, and a model provider whose client is the scripted one. */
+function adviserHost(scope: CoreScope, client: ModelClientPort):
+  Pick<LocalWorkbenchHostOptions, 'runtimeConfiguration' | 'runtimeProvider'> {
+  const role = platformRoleProfile('adviser').template;
+  return { runtimeConfiguration: { schemaVersion: 1, bindings: [{ id: 'kls2c-adviser', label: 'KLS2C adviser', scope, role,
+    configurationRevision: 'kls2c-adviser@1', model: { revision: 'kls2c-adviser@1', provider: 'deepseek',
+      model: 'kls2c-scripted-adviser', secretEnvironmentVariable: KLS2C_SECRET },
+    grant: { budget: AG2B_RUNTIME_BUDGET, hostTemplate: { templateId: role.templateId, revision: role.templateRevision,
+      digest: sha256Hex(ADVISER_GUIDANCE) }, tools: ['read', 'look_graph', 'find_graph', 'record_note',
+      'propose_architecture_revision'], writeScope: [], skills: { resourceRoot: fileURLToPath(new URL(
+      '../../vendor/coding-agent/resources/skills', import.meta.url)), enabledIds: [] }, systemInstruction: ADVISER_GUIDANCE,
+    deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null } }],
+  queryProfiles: [{ id: 'kls2c-adviser', label: 'KLS2C adviser', scope, runtimeBindingId: 'kls2c-adviser', sessionRole: role,
+    roleBinding: { schemaVersion: 1, bindingId: 'kls2c-adviser', templateId: role.templateId,
+      templateRevision: role.templateRevision, bindingVersion: 1, policyRevision: 'legacy-template' },
+    runtimeBudget: AG2B_RUNTIME_BUDGET, budget: { maxTokens: null, deadline: null }, consumerId: 'kls2c-consumer' }] },
+  runtimeProvider: { registry: new ProviderRegistry().register({ id: 'deepseek', secretEnvironmentVariable: KLS2C_SECRET,
+    defaultBaseUrl: 'https://invalid.test', capabilities: { streaming: true, toolCalls: true, usage: true },
+    create: () => client }), secretSource: { get: (name: string) => (name === KLS2C_SECRET ? 'kls2c-scripted' : undefined) } } };
+}
 
 /** The Host's workspace entry for one scope on one root (the in-process Host and the crash child give the same). */
 const workspaceEntry = (scope: CoreScope, root: string) =>
@@ -103,6 +143,15 @@ export async function openKLS2CHost(opts: KLS2COpenOptions): Promise<KLS2CHost> 
     if (opts.git) await initGitWorkspace(alsoRoot);
     served.push(workspaceEntry(opts.alsoServe, alsoRoot));
   }
+  // KC-3: each new Run takes the next queued script and keeps it; a Run with no reply left fails at that call.
+  const scripts: ScriptedReply[][] = [];
+  const runs = new Map<string, ScriptedReply[]>();
+  const adviserClient: ModelClientPort = { async *stream(request, streamOptions) {
+    if (!runs.has(request.runId)) runs.set(request.runId, scripts.shift() ?? []);
+    const reply = runs.get(request.runId)!.shift();
+    if (reply === undefined) throw new Error('KLS2C: the scripted adviser has no reply for this Run');
+    yield* createScriptedModel([reply]).client.stream(request, streamOptions);
+  } };
   const host = await createLocalWorkbenchHost({
     storage, actor: OPERATOR, publicDir: await publicDirectory(),
     workspaces: served,
@@ -113,6 +162,7 @@ export async function openKLS2CHost(opts: KLS2COpenOptions): Promise<KLS2CHost> 
     ...(opts.hold === undefined ? {} : { knowledgeWriteHold: opts.hold }),
     ...(opts.kernelStore === undefined ? {} : { kernelStores: { entries: [{ adapterId: 'kls2c-kernel',
       storeKey: 'kls2c-kernel-store', workspace: scope, databasePath: join(database, 'kernel.sqlite') }] } }),
+    ...(opts.adviser === undefined ? {} : adviserHost(scope, adviserClient)),
   });
   try {
     const { url } = await host.listen();
@@ -163,6 +213,10 @@ export async function openKLS2CHost(opts: KLS2COpenOptions): Promise<KLS2CHost> 
       remove: rel => { rmSync(underRoot(rel), { force: true }); },
       read: rel => (existsSync(underRoot(rel)) ? readFileSync(underRoot(rel)) : null),
       git: args => gitIn(root, ...args),
+      script: replies => { scripts.push([...replies]); },
+      settings: async <T>(route: string, input: unknown): Promise<T> => await (await fetch(new URL(`${SETTINGS_API_PREFIX}${route}`,
+        url), { method: 'POST', body: JSON.stringify(input), headers: { 'content-type': 'application/json',
+        [PLATFORM_TOKEN_HEADER]: token } })).json() as T,
       close: () => host.close(),
     };
   } catch (error) {
@@ -447,3 +501,73 @@ export function armedSeam(point: KLS2CHoldPoint): {
     fail() { next = () => Promise.reject(new Error(`KLS2C: the write stopped at '${point}'`)); },
   };
 }
+
+/** KC-3: the current architecture's pin (`architecture/read`); read before a person breaks a file, it is the recorded one. */
+export async function kls2cPin(world: KLS2CHost): Promise<ArchitectureCatalogPinV1> {
+  const view = readyValue<{ catalog: { ref: ArchitectureCatalogPinV1['catalogRef'] }; baseline: {
+    ref: ArchitectureCatalogPinV1['baseline']['ref']; contentDigest: string } }>(await world.call('architecture/read',
+    plain(world.scope, { selection: { kind: 'current' } })), 'architecture/read');
+  return { catalogRef: view.catalog.ref, baseline: { ref: view.baseline.ref, digest: view.baseline.contentDigest } };
+}
+
+/** KC-3's world (memory, the scripted adviser): `core` and `other` adopted, the structural switches saved (121-109; `ask`
+ *  unless given), a region adviser per `advisers` module, the pin read while every file is the platform's, then one
+ *  finished heartbeat, so the row's edits land before the next reconcile reads a file. `hold` is the Host's knowledge
+ *  write seam (`armedSeam`), for a row that stops a write after its records. */
+export async function openKC3World(value: StructuralApprovalV1 = { proposals: 'ask', repairs: 'ask' },
+  advisers: readonly string[] = ['core'], hold?: (point: KLS2CHoldPoint) => Promise<void>):
+  Promise<{ world: KLS2CHost; pin: ArchitectureCatalogPinV1 }> {
+  const world = await openKLS2CHost({ storage: 'memory', git: true, kernelStore: true, adviser: true,
+    ...(hold === undefined ? {} : { hold }) });
+  try {
+    await kls2cAdopt(world, ['core', 'other']);
+    const saved = await world.settings<{ status: string }>('structural-approval/save', { projectId: world.scope.projectId, value });
+    await startLinesEnded(async () => await world.call('role-lines/operations', plain(world.scope, { workspace: world.scope })));
+    for (const moduleId of advisers) {
+      const opened = await world.call<{ status: string }>('role-lines/open', graphWrite(world.scope, { duty: 'adviser',
+        scope: [{ kind: 'region', moduleRef: { projectId: world.scope.projectId, moduleId } }] }, `kc3-adviser-${moduleId}`));
+      if (saved.status !== 'ready' || opened.status !== 'committed') throw new Error(`KC-3 world: ${JSON.stringify([saved, opened])}`);
+    }
+    const pin = await kls2cPin(world);
+    await world.idle();
+    return { world, pin };
+  } catch (error) {
+    await world.close();
+    throw error;
+  }
+}
+
+/** One repair round's replies: `propose_architecture_revision` on `pin` with `ops`, then the reason as its answer. */
+export const kls2cProposal = (callId: string, pin: ArchitectureCatalogPinV1, ops: readonly unknown[],
+  reason: string): ScriptedReply[] => [{ kind: 'calls', calls: [{ callId, name: 'propose_architecture_revision',
+  args: { baseCatalogPin: pin, ops: [...ops], responsibilityMoves: [], reason } }] }, { kind: 'text', text: reason }];
+
+type KLS2CFollowUp = { kind: string; moduleRefs: { moduleId: string }[]; reason: string | null };
+/** The exploration follow-ups (`role-lines/operations`): their region blocks and the text their rounds carry. */
+export async function kls2cFollowUps(world: KLS2CHost): Promise<KLS2CFollowUp[]> {
+  return readyValue<{ action: string; followUp?: KLS2CFollowUp | null }[]>(await world.call('role-lines/operations',
+    plain(world.scope, { workspace: world.scope })), 'role-lines/operations')
+    .flatMap(row => (row.action === 'role_line' && row.followUp ? [row.followUp] : []));
+}
+
+/** The one waiting structural card (`decisions/queue`) within at most 60 idle heartbeats; any other count fails. */
+export async function kls2cProposalCard(world: KLS2CHost): Promise<DecisionCardV1> {
+  for (let round = 0; ; round += 1) {
+    const cards = readyValue<{ waitingAnswer: DecisionCardV1[] }>(await world.call('decisions/queue', plain(world.scope,
+      { workspace: world.scope, sections: ['waiting_answer'], page: { limit: 100 } })), 'decisions/queue')
+      .waitingAnswer.filter(card => card.source.kind === 'structural_proposal');
+    if (cards.length === 1) return cards[0]!;
+    if (cards.length > 1 || round >= 60) throw new Error(`KC-3: ${cards.length} structural cards after ${round} heartbeats`);
+    await world.idle();
+  }
+}
+
+/** `decisions/answer` of one option of a card, on the card's own source and pins. */
+export const kls2cAnswer = (world: KLS2CHost, card: DecisionCardV1, optionId: string, text: string, requestId: string) =>
+  world.call<{ status: string }>('decisions/answer', graphWrite(world.scope, { source: card.source,
+    selection: { kind: 'option', optionId }, text, annotations: [] }, requestId, card.source.pins));
+
+/** `architecture/proposal-batch-files` of a card's batch (its first object's pin, as KC1-batch-files reads it). */
+export const kls2cBatchFiles = async (world: KLS2CHost, card: DecisionCardV1): Promise<unknown[]> =>
+  readyValue<{ files: unknown[] }>(await world.call('architecture/proposal-batch-files', plain(world.scope,
+    { batchRef: (card.objects[0] as { pin: { ref: unknown } }).pin.ref })), 'architecture/proposal-batch-files').files;

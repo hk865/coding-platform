@@ -10,8 +10,8 @@
 
 ## 文件
 - `project-bootstrap-contracts.ts` — `ProjectRegistrationPort`、`CompletionPolicyConfigurationPort` 与 bootstrap 依赖/服务类型；`registerWorkspace` 的输入可带可选的 `explorationDepth`（1/2/3），`startLines`/`workspaceJoin` 回调也用同名字段接收，配置层不按运行时去猜这个字段。
-- `project-bootstrap-record-codecs.ts` — 四个初始化事件的 codec、CompletionPolicy 纯内容校验与 schema 注册。
-- `project-bootstrap-service.ts` — 四个 Host 写操作（建 Project、登记 Workspace、安装政策、激活政策）+ 三个精确读；一次 `PreparedCommit` 与 event replay。
+- `project-bootstrap-record-codecs.ts` — 四个初始化事件与 Workspace 移除的 codec（`PROJECT_WORKSPACE_REMOVED_EVENT`、`workspaceRemovedSnapshotFromValue`、`decodeProjectWorkspaceRemovedEvent`、`encodeProjectWorkspaceRemovedEvent`）、CompletionPolicy 纯内容校验与 `PROJECT_BOOTSTRAP_RECORD_SCHEMAS` 注册。
+- `project-bootstrap-service.ts` — 五个 Host 写操作（建 Project、登记 Workspace、安装政策、激活政策、移出 Workspace）+ 三个精确读；一次 `PreparedCommit` 与 event replay。
 - `role-record-codecs.ts` — role-spec / coordination-policy 的记录与事件 codec、ref/snapshot 解码。
 - `role-memory-service.ts` — 角色规格安装、精确读、激活与绑定解析；文件名仍带 memory，但记忆读写尚未实现（memory 是独立未完成族）。
 - `decision-settings-service.ts` — Workspace 决定设置的唯一 owner：`markNoticesSeen`（display token、seenThrough、一次 Workspace 提交）；带 Goal 的 token 只认主对话签发的，队列签发的照旧拒绝。
@@ -25,10 +25,10 @@
 | `createDecisionSettingsService` | `src/core/work-graph/configuration/decision-settings-service.ts:52` | `markNoticesSeen`：校验 display token/位置、走 notice-settings 状态机、提交 Workspace 快照 | 要推进请知悉 seenThrough 时；不要另写设置写入 |
 | `createLineSettingsService` | `src/core/work-graph/configuration/line-settings-service.ts:86` | `setLinePins`：校验操作者、`add`/`remove` 每项是完整 SessionRef（`sessionRefProblem`，不合格回 `invalid`）与新加 Session、走 line-pin 状态机、提交 Workspace | 要增删工作线 pin 时 |
 | `createMessageDutiesFactsAdapter` | `src/core/work-graph/configuration/message-duties-adapter.ts:47` | 解析 Role 绑定与 Session 自身角色，返回 duty、只读副本、独立评审与 guards | 消息路由/资格需要正式 duty 时；读失败不回落默认 duty |
-| `createProjectBootstrapServices` | `src/core/work-graph/configuration/project-bootstrap-service.ts:1156` | 返回 `projects` 与 `completionPolicies` 两组 Host 写/读（含冷启动读） | 新 Store 初始化、reopen 后取真实 revision 时 |
+| `createProjectBootstrapServices` | `src/core/work-graph/configuration/project-bootstrap-service.ts:1269` | 返回 `projects` 与 `completionPolicies` 两组 Host 写/读（含冷启动读） | 新 Store 初始化、reopen 后取真实 revision 时 |
 | `createRoleConfigurationService` | `src/core/work-graph/configuration/role-memory-service.ts:206` | `installRoleSpec`/`readRoleSpec`/`activateRoleSpec`/`resolveRoleBinding` 与内部 guards 版 | 角色规格与绑定解析的唯一入口 |
 | `ROLE_RECORD_SCHEMAS` | `src/core/work-graph/configuration/role-record-codecs.ts:491` | role-spec / coordination-policy 四类记录与两个事件的 backend schema 注册 | 组合根注册记录与事件 schema 时 |
-| `PROJECT_BOOTSTRAP_RECORD_SCHEMAS` | `src/core/work-graph/configuration/project-bootstrap-record-codecs.ts:425` | 四个初始化事件的 schema 注册 | 组合根注册事件 schema 时 |
+| `PROJECT_BOOTSTRAP_RECORD_SCHEMAS` | `src/core/work-graph/configuration/project-bootstrap-record-codecs.ts:498` | 四个初始化事件的 schema 注册 | 组合根注册事件 schema 时 |
 
 同一种能力的正本：`canonicalKey` 在 `src/contracts/fingerprint.ts`；`canonicalRefKey`（`src/core/work-graph/persistence/record-codecs.ts:81`）把对象 ref 交给它。`sameActorIdentity`（unknown 值）与 `sameActorKindAndId`（typed 形状）在 `src/contracts/actor-equality.ts`，本层用前者。
 

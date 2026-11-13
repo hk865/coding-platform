@@ -8,7 +8,8 @@ import type { TaskClaim } from '../../contracts/core/task-claim.js';
 import type { PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot, RuntimeTask } from '../../contracts/plan.js';
 import type { PlanningAnswerShapeV1, QueryJobAnswerRef, QueryJobIntentV1 } from '../../contracts/query-job.js';
 import { interventionPlanningQueryRefs, queryJobRefFor } from '../../contracts/query-job.js';
-import { planningReplyTextOf, systemRoundOfText } from '../../contracts/plan-round.js';
+import { commandReviewSubjectOfText, planningReplyTextOf, systemRoundOfText } from '../../contracts/plan-round.js';
+import { parseCommandReviewAnswer, type CommandReviewAnswerV1 } from '../../contracts/scribe-review.js';
 import { isRoleLineOpenDuty } from '../../contracts/role-lines.js';
 import { sameJson } from '../../contracts/fingerprint.js';
 import { parseInitialPlanningResponseV2 } from '../../contracts/initial-planning-parse.js';
@@ -23,9 +24,11 @@ import { reviewQueryEnded } from '../../core/work-graph/model/evidence-contracts
 import { interventionQueryWorkspaceOf, planSourceLineageOf } from '../../core/work-graph/tasks/plan-lineage.js';
 import { planProposalIdFor } from '../../core/work-graph/tasks/plan-service.js';
 import { mergeStageRefinement } from '../../core/work-graph/tasks/stage-segment.js';
+import { applyCommandReview } from './command-review.js';
 import { asRejection } from './consultation.js';
 import { planningAnswerShapeOf } from './plan-round.js';
 import { createQueryStageDriver, queryRunEndedWithoutAnswer } from './query-stage-driver.js';
+import type { QueryJobRecord } from '../../core/work-graph/queries/contracts.js';
 import type { HandleInterventionResultV1, InterventionInput, WorkflowDependencies } from './ports.js';
 import { automationContext, ownContext, ownedInWorkspace, type Base, type Owned } from './workflow.js';
 
@@ -37,7 +40,8 @@ const PROPOSE_RETRIED_CODES: ReadonlySet<CoreRejection['code']> = new Set([
 export type InterventionDependencies = {
   /** createWorkflow's own deps object, by reference, never spread (the task-gate rule, book `:258`). */
   workflow: Pick<WorkflowDependencies,
-    'consultations' | 'plans' | 'requestIntake' | 'runtime' | 'sessions' | 'sessionDuty' | 'sessionFacts'>;
+    'consultations' | 'plans' | 'requestIntake' | 'runtime' | 'sessions' | 'sessionDuty' | 'sessionFacts'
+    | 'controls' | 'executions' | 'messages' | 'recipients' | 'commandReview'>;
   /** The one ordinary claim builder, passed by createWorkflow (`buildClaimOperation`, workflow.ts:1041). */
   claimIntervention(owned: Owned, base: Base, goal: GoalSnapshot, plan: PlanRevisionSnapshot,
     task: RuntimeTask, row: TaskRow, session: SessionCard, messageRef: SessionMessageRef):
@@ -152,12 +156,13 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
       }
       // Window 3 (§5.5.2, slice 9 §3.7): the terminal settlement a settlement offer stands for runs BEFORE the Goal's
       // branches. An ended `execreview:` Query's source always settles here (a completed Goal's reviewer line is never
-      // routed to `requestNewGoal`), and so does an adviser's ended `ucr:` Query (K3 layering, 009: only the platform
-      // closes it; the round has no mailbox tools); any other ended Query's source settles here once its Goal takes no
+      // routed to `requestNewGoal`), and so does an adviser's ended `ucr:` or `crr:` Query (K3 layering, 009, 121-110:
+      // only the platform closes it; the round has no mailbox tools) and a scribe's ended `scr:` Query (121-112: the
+      // platform applies its conclusion); any other ended Query's source settles here once its Goal takes no
       // new work for good (cancelled or COMPLETED), where the branches below would leave it open and its line
       // unarchivable.
       const goalOpen = goal !== null && goal.desiredState !== 'cancelled' && display?.phase !== 'COMPLETED';
-      if (!goalOpen || (systemRound && (duty === 'reviewer' || duty === 'adviser'))) {
+      if (!goalOpen || (systemRound && (duty === 'reviewer' || duty === 'adviser' || duty === 'scribe'))) {
         const settled = await closeSettledSource(goalOwned, message, goalOpen);
         if (settled !== null) return settled;
       }
@@ -203,7 +208,8 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
       if (body.status !== 'ready') return asRejection(body, 'the intervention message body');
       // The submit shape is frozen from the trusted sender, the recipient line's duty and the system round's head
       // kind (slice 9: only `execreview:` makes a reviewer's shape `exec_review`; K3L-2: only a Host `ucr:` makes an
-      // adviser's `unknown_call_advice`); the body gives nothing else.
+      // adviser's `unknown_call_advice` and a Host `crr:` its `command_rerun_advice`; 121-112: only a Host `scr:`
+      // makes a scribe's `scribe_review`); the body gives nothing else.
       const answerShape: PlanningAnswerShapeV1 = duty === null ? 'text'
         : planningAnswerShapeOf(message, duty, systemRoundOfText(body.value.text)?.kind);
       return planOnIdleLine(goalOwned, input, message, goal, body.value.text, planningOnly, answerShape);
@@ -232,8 +238,12 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
           return null;
         }
         const shape = execution.answerShape ?? 'text';
-        if (goalOpen && shape !== 'exec_review' && shape !== 'unknown_call_advice') return null;
+        if (goalOpen && shape !== 'exec_review' && shape !== 'unknown_call_advice' && shape !== 'scribe_review'
+          && shape !== 'command_rerun_advice') {
+          return null;
+        }
         if (!reviewQueryEnded(job) || message.response !== null) return null;
+        if (shape === 'scribe_review') return settleCommandReview(owned, message, read.value);
         const answerRef = job.answerRefs.at(-1);
         if (answerRef === undefined) return { status: 'no_answer', branch: 'no_task' };
         const answer = await queryOwner.readQueryAnswer(owned.ctx, answerRef);
@@ -242,7 +252,8 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
         if (planningReplyTextOf({ shape, answerText, queryJobId: job.queryJobId }) === null) {
           return { status: 'no_answer', branch: 'no_task' };
         }
-        if (shape === 'exec_review' || shape === 'plan_review' || shape === 'unknown_call_advice') {
+        if (shape === 'exec_review' || shape === 'plan_review' || shape === 'unknown_call_advice'
+          || shape === 'command_rerun_advice') {
           return { status: 'answer_ready', branch: 'no_task', answerRef: { ...answerRef }, reason: 'answered' };
         }
         if (parseInitialPlanningResponseV2(answerText).status !== 'parsed') {
@@ -257,6 +268,33 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
         const adopted = proposal.status === 'ready' && proposal.value.status === 'accepted';
         return { status: 'answer_ready', branch: 'no_task', answerRef: { ...answerRef },
           reason: adopted ? 'adopted' : 'declined' };
+      }
+
+      /**
+       * 121-112: the scribe's ended long-command review. The platform applies the conclusion — or, with none that
+       * parses, tells the person the command keeps running — and then the source closes like every review round:
+       * the derived reply (`answered`) or the `no_answer` close-out. A refused step is returned, and the Host's next
+       * pass repeats it under the same identities. The round writes no candidate (009: it is read-only).
+       */
+      async function settleCommandReview(owned: Owned, message: SessionMessage, record: QueryJobRecord):
+      Promise<HandleInterventionResultV1> {
+        const job = record.job.job;
+        const subject = commandReviewSubjectOfText(job.intent.question);
+        if (subject === null) return rejected('invalid', 'the scribe review round names no command subject');
+        const answerRef = job.answerRefs.at(-1);
+        let answer: CommandReviewAnswerV1 | null = null;
+        if (answerRef !== undefined) {
+          const stored = await queryOwner.readQueryAnswer(owned.ctx, answerRef);
+          if (stored.status !== 'ready') return asRejection(stored, 'the ended review answer');
+          const parsed = parseCommandReviewAnswer(stored.value.answer.answer);
+          if (parsed.status === 'parsed') answer = parsed.answer;
+        }
+        const runOwned = ownedInWorkspace(owned, subject.workspaceId);
+        const applied = await applyCommandReview(automationContext(runOwned), deps.workflow, {
+          subject, answer, recipient: line, answeredBy: record.run.run.executionState?.sessionRef ?? null });
+        if (applied.status !== 'ready') return applied;
+        return answer === null || answerRef === undefined ? { status: 'no_answer', branch: 'no_task' }
+          : { status: 'answer_ready', branch: 'no_task', answerRef: { ...answerRef }, reason: 'answered' };
       }
 
       /** The intervention's one candidate address for its source: the propose identity `intervention:<key>:propose`. */
@@ -494,6 +532,7 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
           if (current.status !== 'ready') return asRejection(current, 'the intervention planning Query');
           record = current.value;
         }
+        if (answerShape === 'scribe_review') return settleCommandReview(owned, message, record);
         // Stage 9: the answer through the narrow intervention source.
         const answerRef = record.job.job.answerRefs.at(-1);
         // A formally ended Query with no saved Answer is the third ending: the Host sends the one fixed notice
@@ -511,7 +550,7 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
         // same Query. The message closes through the derived reply; a review that no longer parses has no reply and
         // takes the existing `no_answer` close-out, whose fixed notice covers the missing conclusion. An adviser's
         // unknown-call round closes the same way (009: the round is read-only, the Workflow reads its answer).
-        if (duty === 'reviewer' || answerShape === 'unknown_call_advice') {
+        if (duty === 'reviewer' || answerShape === 'unknown_call_advice' || answerShape === 'command_rerun_advice') {
           const reply = planningReplyTextOf({
             shape: facts.value.job.job.intent.execution.answerShape ?? 'text',
             answerText: facts.value.answerText,

@@ -34,11 +34,13 @@ import { UNKNOWN_CALL_REVIEW_T02_REASON } from '../../contracts/unknown-call-rev
 import {
   parseUnknownCallAdviceAnswer, unknownCallAdviceGoalBasisDigest, type UnknownCallAdvicePhaseV1,
 } from '../../contracts/unknown-call-advice.js';
+import { parseCommandRerunAdviceAnswer } from '../../contracts/command-rerun-advice.js';
 import { goalDecisionBasis } from '../../core/work-graph/tasks/goal-basis.js';
 import type { CreateSessionRequest } from '../../core/agent-runtime/session-operations.js';
 import type { PrepareTaskExecutionRequest, StartTaskExecutionRequest } from '../../core/agent-runtime/execution-contracts.js';
 import type { ClaimTaskInput, RequeueTaskInput } from '../../core/work-graph/model/claim-contracts.js';
 import type { TaskGraph, TaskRow } from '../../core/work-graph/model/plan-contracts.js';
+import type { ResponsibilityRecipientInputV1 } from '../../core/work-graph/tasks/responsibility-recipient.js';
 import type { GraphWrite } from '../../core/work-graph/model/task-contracts.js';
 import type { GoalDecisionCauseReadV1 } from '../../core/work-graph/model/decision-contracts.js';
 import type { SessionCard } from '../../core/work-graph/model/session-contracts.js';
@@ -53,7 +55,10 @@ import {
 } from '../../core/work-graph/state/verification-machine.js';
 import { reviewRoundEndedKnown } from '../../core/work-graph/state/review-lease.js';
 import type { ReverifyRoundInput } from '../../core/work-graph/model/evidence-contracts.js';
-import type { CommandRerunRequestRef } from '../../contracts/command-rerun-request.js';
+import type { CommandRerunRequestRef, CommandRerunRequestV1 } from '../../contracts/command-rerun-request.js';
+import type {
+  CommandRerunRequestPort, CommandRerunRequestReadPort,
+} from '../../core/work-graph/model/command-rerun-request-contracts.js';
 import type { ConsultationInput, ConsultationResult, FailedCardRefV1, GoalWaitBasisV1, InitialPlanningGoalInput, InitialPlanningGoalInputResult, ResolveDecisionInputV1, ResolveDecisionReadV1, WorkflowAdvanceInput, WorkflowAdvanceInternal, WorkflowAdvanceResult, WorkflowCalls, WorkflowOperation, WorkflowSessionRequeue, WorkflowSessionReview, WorkflowStepReceipt } from './contracts.js';
 import type { LineAskCommandV1, LineAskResultV1, WorkflowDependencies, WorkflowHostConfiguration, WorkflowPort } from './ports.js';
 import type { HandoffWorkflowDependencies } from './contracts.js';
@@ -80,6 +85,7 @@ import { systemRoundContext, systemRoundOfText, systemRoundRequestId, type Syste
 import { deviationRequestId, deviationText, deviationsOfGoal, taskRemindersOfGoal } from '../../contracts/plan-deviation.js';
 import { controlIntentRefFor } from '../../core/work-graph/tasks/control-service.js';
 import { reworkFenceOf } from '../../core/work-graph/state/task-failure.js';
+import { nodeInFlight } from '../../core/work-graph/state/task-node-commit.js';
 import type { ControlIntentSnapshotV1 } from '../../contracts/control-intent.js';
 import type { PlanProposal } from '../../core/work-graph/model/plan-contracts.js';
 import type { ActivityBackfillBatchV1 } from './contracts.js';
@@ -267,11 +273,35 @@ function applyAdviserAnswerStep(base: Base, review: Pick<UnknownCallReviewV1, 'r
   return { kind: 'apply_adviser_answer', request: graphWrite(base, 'apply_adviser_answer',
     { reviewRef: review.ref, requestId, phase }, [{ ref: review.ref, revision: review.revision }]) };
 }
+/**
+ * K3 layering (121-109 "the adviser responsible for that part"): the responsibility-recipient input of a record's or a
+ * command rerun request's adviser — the narrowest region adviser of the Task's module, else the Goal's (the one L35
+ * read, `technical`, no asker). The Workflow's `reviewAdviserOf` and the CRR owner's creation route (121-110, wired by
+ * the composition) share it.
+ */
+export function responsibleAdviserInputOf(ref: Pick<UnknownCallReviewRef, 'projectId' | 'goalId'>,
+  scope: TaskScope | null): Omit<ResponsibilityRecipientInputV1, 'projectId'> {
+  return { goalRef: { aggregateType: 'Goal', projectId: ref.projectId, goalId: ref.goalId },
+    moduleRef: scope?.kind === 'module' ? { projectId: ref.projectId, moduleId: scope.moduleRef } : null,
+    kind: 'technical', asker: null };
+}
 /** K3 layering: the Workflow's two escalations; one with a suggestion is the owner's own (K3L-1 machine). */
 function escalateReviewStep(base: Base, review: Pick<UnknownCallReviewV1, 'ref' | 'revision'>,
   cause: 'no_adviser' | 'adviser_failed'): WorkflowOperation {
   return { kind: 'escalate_review', request: graphWrite(base, 'escalate_review',
     { reviewRef: review.ref, cause, suggestion: null }, [{ ref: review.ref, revision: review.revision }]) };
+}
+/** 121-110: apply the answer of the rerun round `requestId` to the request at the revision read. */
+function applyRerunAdviserAnswerStep(base: Base, request: Pick<CommandRerunRequestV1, 'ref' | 'revision'>,
+  requestId: string): WorkflowOperation {
+  return { kind: 'apply_rerun_adviser_answer', request: graphWrite(base, 'apply_rerun_adviser_answer',
+    { requestRef: request.ref, requestId }, [{ ref: request.ref, revision: request.revision }]) };
+}
+/** 121-110: put an `awaiting_advice` rerun request in front of the person (no adviser line, or a round with no answer). */
+function escalateRerunStep(base: Base, request: Pick<CommandRerunRequestV1, 'ref' | 'revision'>,
+  cause: 'no_adviser' | 'adviser_failed'): WorkflowOperation {
+  return { kind: 'escalate_rerun', request: graphWrite(base, 'escalate_rerun',
+    { requestRef: request.ref, cause }, [{ ref: request.ref, revision: request.revision }]) };
 }
 /**
  * K3 §3.4 UR3h (L21, ruling 3): the Workflow, as automation, cancels a review
@@ -377,6 +407,8 @@ const REVIEW_WAIT_KINDS = {
   exec_review_send_refused: ['Session', 'SessionMessage'],
   /** K3 layering: the adviser round waits on its message and line, the record (a person's hold) and the Goal (T02). */
   adviser_round_pending: ['SessionMessage', 'Session', 'UnknownCallReview', 'Goal'],
+  /** 121-110: the rerun round waits on its message and line, the request (a form added, closed) and the Goal (T02). */
+  command_rerun_pending: ['SessionMessage', 'Session', 'CommandRerunRequest', 'Goal'],
 } as const;
 function reviewWaitBasisOf(goalRef: GoalRef, reason: keyof typeof REVIEW_WAIT_KINDS): GoalWaitBasisV1 {
   return goalWaitBasisOf({ ref: goalRef }, [reason], REVIEW_WAIT_KINDS[reason]);
@@ -384,7 +416,8 @@ function reviewWaitBasisOf(goalRef: GoalRef, reason: keyof typeof REVIEW_WAIT_KI
 /** Slice 9 §3.2: the five review states of an open round's chain head (`readReviewState`). */
 type ReviewStateV1 =
   | { kind: 'not_sent'; recipient: SessionRef }
-  | { kind: 'waiting'; reason: 'exec_review_pending' | 'no_review_line' | 'adviser_round_pending'; basis: GoalWaitBasisV1 }
+  | { kind: 'waiting'; reason: 'exec_review_pending' | 'no_review_line' | 'adviser_round_pending' | 'command_rerun_pending';
+      basis: GoalWaitBasisV1 }
   | { kind: 'answered' }
   | { kind: 'closed' }
   | { kind: 'settlement_pending'; basis: GoalWaitBasisV1 };
@@ -929,6 +962,13 @@ function initialPlanningBase(
 
 export function createWorkflow(deps: WorkflowDependencies & {
   sessionHandoff?: HandoffWorkflowDependencies;
+  /**
+   * 121-110: the SAME CommandRerunRequest owner the routes and the Runtime publish. The task gate reads a Task's
+   * `awaiting_advice` requests and performs the adviser round's two steps through it. Optional like
+   * `unknownCallReviews`: without it the gate has no rerun round to run.
+   */
+  commandRerunRequests?: Pick<CommandRerunRequestReadPort, 'listTaskRequests'>
+    & Pick<CommandRerunRequestPort, 'applyAdviserAnswer' | 'escalateRerun'>;
 }): WorkflowPort
   & Required<Pick<WorkflowPort, 'consumeConsultation' | 'resolveDecision' | 'orderGoalAdvances'
     | 'handleIntervention' | 'readDeliveryEligibilityFacts'>> {
@@ -1308,8 +1348,8 @@ export function createWorkflow(deps: WorkflowDependencies & {
    * `settlement_pending` while the source message has no reply and is not withdrawn. A failed read is its rejection.
    */
   async function sentRoundStateOf(owned: Owned, goalRef: GoalRef, sent: SessionMessageRef,
-    shape: 'exec_review' | 'unknown_call_advice', parses: (answerText: string) => boolean,
-    pending: 'exec_review_pending' | 'adviser_round_pending',
+    shape: 'exec_review' | 'unknown_call_advice' | 'command_rerun_advice', parses: (answerText: string) => boolean,
+    pending: 'exec_review_pending' | 'adviser_round_pending' | 'command_rerun_pending',
   ): Promise<Exclude<ReviewStateV1, { kind: 'not_sent' }> | CoreRejection> {
     const consult = deps.consultations;
     if (consult === undefined) return rejection('unsupported', 'the system round reads (mailbox and Query) are not wired');
@@ -1531,6 +1571,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
 
   const { reviewGate, automaticRequeue, automaticReverify, automationConfirmation, taskBlocks, gatePerform } = createTaskGate({
     workflow: deps, bindingForRole, isUnadmittedStarting, claimContinuation, reviewAdviserOf, adviserRound,
+    commandRerunRound,
   });
 
   /** The delivery predicate's `taskBlocked`: the L46 block read, on the same field (book `:296–:299`). A failed read
@@ -1773,14 +1814,12 @@ export function createWorkflow(deps: WorkflowDependencies & {
   /**
    * K3 layering (121-109 "the adviser responsible for that part"): the record's adviser line — the narrowest region
    * adviser of the Task's module, else the Goal's (the one L35 read, `technical`, no asker). `null` is none; a failed
-   * read is returned, never "no adviser".
+   * read is returned, never "no adviser". A command rerun request's adviser is found the same way (121-110).
    */
-  async function reviewAdviserOf(owned: Owned, review: Pick<UnknownCallReviewV1, 'ref'>, scope: TaskScope | null):
+  async function reviewAdviserOf(owned: Owned, review: { ref: Pick<UnknownCallReviewRef, 'projectId' | 'goalId'> },
+    scope: TaskScope | null):
   Promise<SessionRef | null | CoreRejection> {
-    const resolved = await resolveRecipient(owned, {
-      goalRef: { aggregateType: 'Goal', projectId: review.ref.projectId, goalId: review.ref.goalId },
-      moduleRef: scope?.kind === 'module' ? { projectId: review.ref.projectId, moduleId: scope.moduleRef } : null,
-      kind: 'technical', asker: null });
+    const resolved = await resolveRecipient(owned, responsibleAdviserInputOf(review.ref, scope));
     if ('status' in resolved) return resolved;
     return resolved.kind === 'line' ? resolved.session : null;
   }
@@ -1820,6 +1859,52 @@ export function createWorkflow(deps: WorkflowDependencies & {
     }
   }
 
+  /**
+   * 121-110: one step of the Task's oldest `awaiting_advice` command rerun request, on its own round kind. The request
+   * id names the request, its revision and the Goal's content, so a moved request or Goal is a new round. Not sent:
+   * send it to the responsible adviser, or put the request in front of the person when there is none. Sent: wait
+   * while the Query runs or its source is unsettled, then apply the answer, or escalate when the ended round has
+   * none. What the answer means (an escalation, every-step confirmation) is the owner's judgment.
+   */
+  async function commandRerunRound(owned: Owned, base: Base, goal: GoalSnapshot, task: RuntimeTask):
+  Promise<ReviewGate> {
+    const port = deps.commandRerunRequests;
+    if (port === undefined) return { kind: 'pass' };
+    // The Task's whole read derives `closed` once the Task ended (satisfied too), so no round goes out for it.
+    const read = await port.listTaskRequests(owned.ctx, {
+      workspace: { projectId: goal.workspaceRef.projectId, workspaceId: goal.workspaceRef.workspaceId },
+      filter: { goalId: goal.ref.goalId, taskId: task.taskId } });
+    if (read.status !== 'ready') return { kind: 'rejection', rejection: readRejection(read) };
+    const request = read.value.items.filter(item => item.state === 'awaiting_advice')
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt)
+        || left.ref.requestId.localeCompare(right.ref.requestId))[0];
+    if (request === undefined) return { kind: 'pass' };
+    const round: SystemRoundV1 = { kind: 'command_rerun', goalRef: goal.ref, subject: {
+      requestRef: request.ref, reviewRef: request.reviewRef, revision: request.revision,
+      goalBasisDigest: unknownCallAdviceGoalBasisDigest(goalDecisionBasis(goal)) } };
+    const requestId = systemRoundRequestId(round);
+    if (requestId.status !== 'ready') return { kind: 'rejection', rejection: requestId };
+    const sent = await sentRoundOf(owned, requestId.value);
+    if (sent.status === 'not_found') {
+      const adviser = await reviewAdviserOf(owned, request, task.scope);
+      if (adviser !== null && 'status' in adviser) return { kind: 'rejection', rejection: adviser };
+      if (adviser === null) return { kind: 'review', step: escalateRerunStep(base, request, 'no_adviser') };
+      return { kind: 'review', step: { kind: 'send_system_round', request: {
+        round, recipient: adviser, text: requestId.value, taskRef: { ...request.task } } } };
+    }
+    if (sent.status !== 'ready') return { kind: 'rejection', rejection: readRejection(sent) };
+    const state = await sentRoundStateOf(owned, goal.ref, sent.value, 'command_rerun_advice',
+      (text) => parseCommandRerunAdviceAnswer(text).status === 'parsed', 'command_rerun_pending');
+    if ('status' in state) return { kind: 'rejection', rejection: state };
+    switch (state.kind) {
+      case 'waiting': case 'settlement_pending':
+        return { kind: 'skip', source: 'awaiting_rerun_advice',
+          waitBasis: reviewWaitBasisOf(goal.ref, 'command_rerun_pending') };
+      case 'answered': return { kind: 'review', step: applyRerunAdviserAnswerStep(base, request, requestId.value) };
+      case 'closed': return { kind: 'review', step: escalateRerunStep(base, request, 'adviser_failed') };
+    }
+  }
+
   type PlanCandidateWait = { reason: string; basis: GoalWaitBasisV1; source?: DecisionSourceV1; inFlight?: true };
 
   /**
@@ -1842,6 +1927,8 @@ export function createWorkflow(deps: WorkflowDependencies & {
   async function selectOrdinary(
     owned: Owned, base: Base, config: WorkflowHostConfiguration, goal: GoalSnapshot, graph: TaskGraph,
     candidateWait: PlanCandidateWait | null,
+    /** N1: an `every_step` node still in its checks; no Task is claimed while it is set (its own chain still advances). */
+    claimHold: { reason: string; basis: GoalWaitBasisV1 } | null,
   ): Promise<WorkflowAdvanceResult> {
     // 1. The first eligible active ordinary work in required-first / plan order.
     const ordered = orderTasks(graph.plan.tasks, graph.plan.executionDag?.dependsOn ?? []);
@@ -2026,6 +2113,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
       if (row.requeueRef !== undefined && row.execution !== null) {
         if (row.failure?.automation.verdict.kind !== 'claim_requeued') continue;
         if (!row.eligibility.eligible) continue;
+        if (claimHold !== null) { rememberWaiting(claimHold.reason, claimHold.basis); continue; }
         const assignment = revisionAssignments(graph.plan).find((candidate) => candidate.taskId === task.taskId);
         if (assignment === undefined) continue;
         const binding = bindingForRole(config, owned.projectId, goal.workspaceRef.workspaceId, assignment.role);
@@ -2086,6 +2174,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
       if (row.execution !== null && row.effectivePhase !== 'ready') continue;
       if (row.effectivePhase === 'satisfied' || row.effectivePhase === 'failed') continue;
       if (!row.eligibility.eligible) continue;
+      if (claimHold !== null) { rememberWaiting(claimHold.reason, claimHold.basis); continue; }
       const assignment = revisionAssignments(graph.plan).find((candidate) => candidate.taskId === task.taskId);
       if (assignment === undefined) continue;
       const binding = bindingForRole(config, owned.projectId, goal.workspaceRef.workspaceId, assignment.role);
@@ -2631,6 +2720,31 @@ export function createWorkflow(deps: WorkflowDependencies & {
       && graph.completion.selectedPlanMatches && graph.completion.snapshot.phase === 'COMPLETED') {
       return completed(null, 'the Goal is formally COMPLETED');
     }
+    // Node-level review (121-45, N1): an `every_step` Goal takes one work node at a time. Its Goal loop selects
+    // nothing while a completed node waits for the person's commit. While a Run of its active Plan is live, a node is
+    // still under review (NR-24) or a node whose Run ended has not settled its checks, the loop only claims nothing
+    // new: that node's own review, checks and settlement still advance here (after a restart no watch drives them).
+    // A Task-scoped handle is not held: it ends once its own Task is satisfied.
+    let claimHold: { reason: string; basis: GoalWaitBasisV1 } | null = null;
+    if (base.taskId === null && goal.settings.autonomy === 'every_step' && deps.nodeCommits !== undefined) {
+      const rows = await deps.nodeCommits.readNodeRows(ownedInWorkspace(owned, goal.workspaceRef.workspaceId).ctx,
+        { goalRef: base.goalRef });
+      if (rows.status !== 'ready') return readRejection(rows);
+      const first = rows.value.pending[0];
+      if (first !== undefined) {
+        return waiting(null, `node_review_pending: the Task ${first.task.taskId} awaits the person's review and commit`,
+          undefined, goalWaitBasisOf(goal, [`node_review_pending:${first.task.taskId}`],
+            ['TaskNodeCommit', 'TaskReduction', 'Run']));
+      }
+      const inFlight = rows.value.rows.find(row =>
+        nodeInFlight({ taskKind: row.task.taskKind, effectivePhase: row.task.phase }));
+      if (rows.value.liveWork || inFlight !== undefined) {
+        claimHold = { reason: `live_work: ${inFlight === undefined ? 'the Goal has live work'
+          : `the Task ${inFlight.task.taskId} is still in its checks`}; no new work is claimed until it ends`,
+          basis: goalWaitBasisOf(goal, ['live_work'],
+            ['Run', 'TaskReduction', 'TaskNodeCommit', 'VerificationRound', 'Evidence', 'UnknownCallReview']) };
+      }
+    }
 
     // An explicit Task selection ends THIS work handle once that Task is
     // satisfied; it never silently switches to another Task of the same Goal.
@@ -2842,7 +2956,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
         if (candidateResult !== null) return candidateResult;
       }
     }
-    const selected = await selectOrdinary(owned, base, config, goal, graph, candidateWait);
+    const selected = await selectOrdinary(owned, base, config, goal, graph, candidateWait, claimHold);
     const withCandidateSource = (result: WorkflowAdvanceResult): WorkflowAdvanceResult =>
       result.status === 'ready' && candidateWait?.source !== undefined
         ? { ...result, value: { ...result.value, source: candidateWait.source } }
@@ -3596,6 +3710,24 @@ export function createWorkflow(deps: WorkflowDependencies & {
         if (result.status === 'committed' || result.code === 'revision_conflict') return advancing(receipt, selectWorkStep(base));
         return waiting(receipt, `${result.code}: ${result.reason}`);
       }
+      case 'apply_rerun_adviser_answer': {
+        const owner = deps.commandRerunRequests;
+        if (owner === undefined) return rejection('unsupported', 'the CommandRerunRequest owner is not installed');
+        // 121-110: the platform automation applies the adviser's answer (never the operator); the owner reads and
+        // judges it. A commit or a moved request goes back to the selection, as `apply_adviser_answer`.
+        const result = await owner.applyAdviserAnswer(automationContext(owned), operation.request);
+        const receipt: WorkflowStepReceipt = { kind: 'apply_rerun_adviser_answer', result };
+        if (result.status === 'committed' || result.code === 'revision_conflict') return advancing(receipt, selectWorkStep(base));
+        return waiting(receipt, `${result.code}: ${result.reason}`);
+      }
+      case 'escalate_rerun': {
+        const owner = deps.commandRerunRequests;
+        if (owner === undefined) return rejection('unsupported', 'the CommandRerunRequest owner is not installed');
+        const result = await owner.escalateRerun(automationContext(owned), operation.request);
+        const receipt: WorkflowStepReceipt = { kind: 'escalate_rerun', result };
+        if (result.status === 'committed' || result.code === 'revision_conflict') return advancing(receipt, selectWorkStep(base));
+        return waiting(receipt, `${result.code}: ${result.reason}`);
+      }
       case 'cancel_review_round': {
         const controls = deps.controls;
         if (controls === undefined) return rejection('unsupported', 'the control owner is not installed');
@@ -3795,6 +3927,11 @@ export function createWorkflow(deps: WorkflowDependencies & {
           if ((round.kind === 'exec_review' || round.kind === 'unknown_call') && result.code !== 'invalid') {
             return waiting(receipt, `${result.code}: ${result.reason}`, undefined, reviewWaitBasisOf(round.goalRef,
               round.kind === 'exec_review' ? 'exec_review_send_refused' : 'adviser_round_pending'));
+          }
+          // 121-110: a refused rerun round waits on the line's facts the same way (coordination).
+          if (round.kind === 'command_rerun' && result.code !== 'invalid') {
+            return waiting(receipt, `${result.code}: ${result.reason}`, undefined,
+              reviewWaitBasisOf(round.goalRef, 'command_rerun_pending'));
           }
           return result;
         }

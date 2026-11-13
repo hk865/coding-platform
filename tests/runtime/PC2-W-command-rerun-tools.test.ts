@@ -18,12 +18,13 @@ const specification = (tools: ToolDefinition[]) => tools.map(tool => ({ name: to
  * from `git show pc1-final:src/core/agent-runtime/command-rerun-tools.ts` (schema shape,
  * key order, constraints) and
  * `git show pc1-final:src/contracts/prompts/platform-pack.generated.ts`
- * (every description and parameter text).
+ * (every description and parameter text). K3L-6 (121-110) changed the first sentence (the adviser decides first);
+ * red today, green when the pack carries it.
  */
 const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
   {
     "name": "request_command_rerun",
-    "description": "Ask a person to allow one blocked command to run again. Give the exact command and a reason they can read; the platform discovers the blocked alias. If the platform does not recognise your rewrite of a blocked command, name its review run and alias with `rewriteOf`. The result says whether the request is waiting, allowed for one use, refused, or not recognised; it is not the command running.",
+    "description": "Ask the responsible adviser first; a person decides when the adviser escalates. Ask to allow one blocked command to run again: give the exact command and a reason they can read; the platform discovers the blocked alias. If the platform does not recognise your rewrite of a blocked command, name its review run and alias with `rewriteOf`. The result says whether the request is waiting, allowed for one use, refused, or not recognised; it is not the command running.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -34,7 +35,7 @@ const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
         },
         "reason": {
           "type": "string",
-          "description": "Why a person should allow it; 1-2000 code points"
+          "description": "Why the adviser or a person should allow it; 1-2000 code points"
         },
         "rewriteOf": {
           "description": "Only for a rewrite the platform did not recognise",

@@ -42,7 +42,8 @@ const shell = (command: string, cwd?: string): ToolCall => ({ schemaVersion: 1, 
   arguments: { command, ...(cwd === undefined ? {} : { cwd }) } });
 
 const WHERE = (runId: string) => `#1@${runId.slice(0, 8)}`;
-const TAIL = '要再跑，先用 `request_command_rerun` 写明原因，等人允许。平台没认出来的改写，也要用 `rewriteOf` 注明以后再请求。';
+// K3L-6 (121-110): the responsible adviser decides first; red today (the hook still says 等人允许).
+const TAIL = '要再跑，先用 `request_command_rerun` 写明原因，等人或参谋允许。平台没认出来的改写，也要用 `rewriteOf` 注明以后再请求。';
 
 describe.each(['memory', 'sqlite'] as const)('B2-01 blocked rows (%s)', kind => {
   it.each([
@@ -107,5 +108,24 @@ describe.each(['memory', 'sqlite'] as const)('B2-01 blocked rows (%s)', kind => 
       { text: 'echo hi', sha256: expect.any(String) },
     ]);
     expect(w.record.blockedCommands[0]!.reviewRunId).toBe(w.record.ref.runId);
+  });
+});
+
+// P5-1 is RED today: the name gate in execution-driver.ts (`!== 'shell'`) lets
+// run_readonly_command through as `continue`; it turns green once the gate
+// admits run_readonly_command. P5-2 guards that unlisted read-only commands
+// still continue. Memory only. P5-1 uses the world's stored blocked command
+// (the recognizer's subject), not the draft's `git push origin main`.
+describe('P5 run_readonly_command (memory)', () => {
+  const rows: Array<[string, string, (w: B2BlockedWorld) => unknown]> = [
+    ['P5-1', 'npm run db:migrate', w => ({ point: 'before_tool', kind: 'block',
+      reason: `平台拦下了这条命令：其中的 npm run db:migrate 是 ${WHERE(w.record.ref.runId)} 的一部分（核对以后处置是“跳过”）。${TAIL}` })],
+    ['P5-2', 'printf ok', () => ({ point: 'before_tool', kind: 'continue' })],
+  ];
+  it.each(rows)('%s: run_readonly_command %s', async (_id, command, expected) => {
+    const w = await world('memory');
+    const call: ToolCall = { schemaVersion: 1, callId: nextCall(), name: 'run_readonly_command',
+      arguments: { command, cwd: '.' } };
+    expect(await runHook(w.hook, call)).toEqual(expected(w));
   });
 });

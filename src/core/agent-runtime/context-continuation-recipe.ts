@@ -107,9 +107,11 @@ export async function readTaskBlockedCommands(
     // descending, then the request ref code-unit descending); the brief takes
     // the first of it, never a second locale/ascending copy.
     const newest = [...forAlias].sort(compareCommandRerunRequestNewestFirst)[0];
+    // 121-110: a request still with the adviser is waiting for its answer like the person's card ("请求等答复").
     const state = newest === undefined ? null
-      : newest.state === 'pending' || newest.state === 'allowed' || newest.state === 'denied'
-        || newest.state === 'denied_final' ? newest.state : null;
+      : newest.state === 'awaiting_advice' ? 'pending'
+        : newest.state === 'pending' || newest.state === 'allowed' || newest.state === 'denied'
+          || newest.state === 'denied_final' ? newest.state : null;
     // The card's ONE declaration-order/dedup rule, so the brief and the card
     // cannot disagree on the forms either.
     return { alias: command.alias, reviewRunId: record.ref.runId, requestState: state,

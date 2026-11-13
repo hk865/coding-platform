@@ -334,6 +334,8 @@ export interface NoteHeadCheckPort extends NoteCheckPort {
      */
     anchorsOnly?: { anchor: NoteAnchorV1; extraAnchors: NoteAnchorV1[] }[];
   }): Promise<ReadResult<{ items: NoteCheckV1[]; understanding: UnderstandingStatusV1[]; anchorsOnly: NoteAnchorCheckV1[] }>>;
+  /** 121-88: current notes whose main module or interface anchor is gone from the current catalog. */
+  removedModuleNotes(ctx: CoreCallContext): Promise<ReadResult<readonly NoteRemovedModuleItemV1[]>>;
   /** The Host-memory queue of head-version links read `refs_pending` with no conclusion yet, by `noteId`. */
   doubtfulLinks(scope: { projectId: string; workspaceId: string }, max: number): { noteId: string; version: number }[];
   /** The Host-memory register of accepted/reviewed head-version links last read `broken`. */
@@ -578,8 +580,20 @@ export interface NoteMemoryMaterialPort {
 
 export type NoteScribeTodoV1 = { identity: string; anchorKey: string; noteId: string | null; version: number | null;
   latestTriggerCursor: string | null; updateDue: boolean };
+/** 121-88: a current note whose main anchor is a module — or an interface on a module — the current catalog no longer has. */
+export type NoteModuleRemovedTodoV1 = {
+  readonly identity: string;  // `${noteId}@${version}` (same as pending)
+  readonly anchorKey: string; // `module:<moduleId>` or `interface:<moduleId>/<interfaceId>` (note-anchors.ts:408-416)
+  readonly noteId: string;
+  readonly version: number;
+};
+/** The check's read item before bucketing: one note, with its line and goal. */
+export type NoteRemovedModuleItemV1 = NoteModuleRemovedTodoV1 & {
+  readonly lineRef: string;
+  readonly goalId: string | null;
+};
 export type NoteScribeTodosV1 = { goalId: string | null; pending: NoteScribeTodoV1[]; updateDueTodos: NoteScribeTodoV1[];
-  immediate: boolean };
+  moduleRemoved: NoteModuleRemovedTodoV1[]; immediate: boolean };
 /** §11.5/U-4: the narrow port the Host reminder check uses. */
 export interface NoteScribeTodoPort {
   readScribeTodos(ctx: CoreCallContext, input: { goalIds: string[] }): Promise<ReadResult<NoteScribeTodosV1[]>>;

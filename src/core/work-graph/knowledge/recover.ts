@@ -102,7 +102,10 @@ async function rebuiltWrite(write: KnowledgeWriteDeps, line: LineKnowledge, row:
   if (log === null || log.status !== 'decoded') return rejected('unavailable', `${row.path} 的写日志读不出来`);
   const located = await write.records.eventAt(log.value.since);
   if (located.status !== 'ready') return located;
-  const rebuilt = write.files.knowledgeFileOfEvent(located.value.event, line.scope, log.value, current);
+  // KC-3 (Astra 1): a logged delete is its own result; a repair deletes a file whose module it keeps (a second file of
+  // one id, `writeModule`'s `replace`), so rebuilding by the module would bring that module's file back.
+  const rebuilt = log.value.afterBlob === null ? { status: 'decoded' as const, value: null }
+    : write.files.knowledgeFileOfEvent(located.value.event, line.scope, log.value, current);
   if (rebuilt.status !== 'decoded') return rejected('unavailable', `${row.path} 按事件重建不出来：${rebuilt.reason}`);
   const blob = rebuilt.value === null ? null : gitBlobId(rebuilt.value, line.objectFormat);
   if (blob !== log.value.afterBlob) return rejected('unavailable', `${row.path} 按事件重建的内容不是平台当时写的`);

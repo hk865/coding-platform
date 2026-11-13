@@ -28,7 +28,7 @@ import { PL_ADVISER_ROLE } from '../helpers/PL-consumption-fixture.js';
 import { byIdentityPrefix, commitBarrier, type CommitMatch } from '../helpers/S6A-commit-barrier.js';
 import type { S6AReply } from '../helpers/S6A-host-fixture.js';
 import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
-import { valueOf } from '../helpers/S6B3-fixture.js';
+import { readReady, valueOf } from '../helpers/S6B3-fixture.js';
 import { jsonOf } from '../helpers/S7C-member-fixture.js';
 import { S7D2_MODULE_IDS } from '../helpers/S7D2-role-line-world.js';
 import {
@@ -261,6 +261,15 @@ describe('RL-24: the frozen proposal batch, the late proposal and the changed pi
     // and the finished cold start's batchRefs do not change. Ls is free before the new task is adopted.
     await cold.waitFor('the Ls line free', async () =>
       (await cold.host.readSession(ls.ref)).record.occupancy === null);
+    // The sibling node's Run has ended but the node is still `verifying` until its TaskReduction lands; the Goal's
+    // `every_step` gate claims nothing while it is (`nodeInFlight`). Read the published node rows (nr adds no
+    // route; the `goals/delivery` page read is acc's, NR-16) and continue once that node no longer blocks a claim.
+    await cold.waitFor('the rl24-b node reduction', async () => {
+      const read = await cold.host.platform.nodeCommits.readNodeRows(cold.host.humanContext(), { goalRef: goal });
+      const sibling = readReady(read, 'the node rows').rows
+        .find(row => row.task.taskId === 'rl24-prop-b-work');
+      return sibling !== undefined && sibling.reduction !== null && !sibling.pending;
+    });
     const pinNow = await cold.pin();
     await cold.adoptWorkPlan({ goal, label: 'rl24-c', taskId: 'rl24-prop-c-work', line: ls, replies: [{
       kind: 'calls', calls: [{ callId: 'rl24-prop-c', name: 'propose_architecture_revision', args: {

@@ -22,8 +22,9 @@ import type {
 } from '../../../contracts/goal-decisions.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import {
-  K3_CRR_BY_GOAL_STATE_INDEX, K3_CRR_BY_TASK_ALIAS_INDEX, K3_CRR_BY_TASK_INDEX,
+  COMMAND_RERUN_ESCALATION_CAUSES, K3_CRR_BY_GOAL_STATE_INDEX, K3_CRR_BY_TASK_ALIAS_INDEX, K3_CRR_BY_TASK_INDEX,
 } from '../../../contracts/command-rerun-request.js';
+import { commandRerunAdviceProblem } from '../../../contracts/command-rerun-advice.js';
 import {
   canonicalOf, codePoints, hasOnlyKeys, inList, invalid, isObject, isPos, isSha256Hex,
   nonEmpty, parseObject, utf8Bytes, type UnknownRecord,
@@ -46,11 +47,12 @@ export const K3_CRR_BY_TASK_LOOKUP = K3_CRR_BY_TASK_INDEX;
 
 const CHANGE_KINDS: readonly CommandRerunRequestChangeV1[] = [
   'created', 'allowed', 'used', 'denied', 'denied_final', 'closed', 'forms_added',
+  'adviser_answer_applied', 'escalated',
 ];
 /** Lead ruling 2: the proof rides on the three card-application changes; it is absent on the rest. */
 const PROOF_CHANGES: readonly CommandRerunRequestChangeV1[] = ['allowed', 'denied', 'denied_final'];
 const STATES: readonly CommandRerunRequestStateV1[] = [
-  'pending', 'allowed', 'used', 'denied', 'denied_final', 'closed',
+  'awaiting_advice', 'pending', 'allowed', 'used', 'denied', 'denied_final', 'closed',
 ];
 const MATCH_KINDS = ['exact', 'action', 'declared'] as const;
 const MAX_ALIAS = 32;
@@ -129,7 +131,7 @@ function usedByProblem(value: unknown): string | null {
 
 const REQUEST_BODY_KEYS: readonly string[] = [
   'ref', 'schemaVersion', 'revision', 'workspaceId', 'task', 'reviewRef', 'runRef', 'alias',
-  'command', 'commandSha256', 'declared', 'declaredForms', 'match', 'reason', 'state',
+  'command', 'commandSha256', 'declared', 'declaredForms', 'match', 'reason', 'state', 'advice', 'escalation',
   'answerMessageRef', 'allowedAt', 'usedAt', 'usedBy', 'createdAt', 'updatedAt',
 ];
 
@@ -175,6 +177,21 @@ export function commandRerunRequestBodyProblem(value: unknown): string | null {
     return `request reason must be 1..${String(MAX_REASON_CODE_POINTS)} code points`;
   }
   if (!inList(body['state'], STATES)) return 'request state is not recognized';
+  // 121-110: the adviser's answer (or none yet) and the escalation to the person, each with the advice shape.
+  const advice = body['advice'];
+  if (advice !== undefined && (!isObject(advice) || !hasOnlyKeys(advice, ['answer'])
+    || !(advice['answer'] === null || commandRerunAdviceProblem(advice['answer']) === null))) {
+    return 'request advice must be { answer: null or a command rerun advice }';
+  }
+  if (body['state'] === 'awaiting_advice' && (advice === undefined || (advice as UnknownRecord)['answer'] !== null)) {
+    return 'an awaiting_advice request carries advice without an answer';
+  }
+  const escalation = body['escalation'];
+  if (escalation !== undefined && (!isObject(escalation) || !hasOnlyKeys(escalation, ['cause', 'suggestion'])
+    || !inList(escalation['cause'], COMMAND_RERUN_ESCALATION_CAUSES)
+    || !(escalation['suggestion'] === null || commandRerunAdviceProblem(escalation['suggestion']) === null))) {
+    return 'request escalation must be { cause, suggestion: null or a command rerun advice }';
+  }
   if (!(body['answerMessageRef'] === null
     || sessionMessageRefProblem(body['answerMessageRef'], 'request answerMessageRef') === null)) {
     return 'request answerMessageRef must be null or a complete SessionMessageRef';

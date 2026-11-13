@@ -337,7 +337,7 @@ it.each(KINDS)('item 4 %s: one pointer, one pointed-head and one target batch pl
     }
     expect(status).toBe('ready');
     expect(state.kinds).toEqual({ pointer: 1, pointedHead: 1, targetHead: 1, otherHead: 0, trigger: 2,
-      anchorSetLookup: 0, reviewStatusLookup: 3, plan: 2, catalog: 0 });
+      anchorSetLookup: 0, reviewStatusLookup: 3, plan: 2, catalog: 1 });
   } finally {
     await f.close();
   }
@@ -408,7 +408,7 @@ it.each(KINDS)('rework 4 item 1 %s: targets are read only for the counting bucke
     expect(state.kinds.pointedHead).toBe(1);
     expect(state.kinds.targetHead).toBe(1);
     expect(state.kinds.plan).toBe(1);
-    expect(state.kinds.catalog).toBe(1);
+    expect(state.kinds.catalog).toBe(2);
     expect(state.kinds.trigger).toBe(1);
   } finally {
     await f.close();

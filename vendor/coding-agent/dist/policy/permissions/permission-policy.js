@@ -82,9 +82,14 @@ export class DefaultPermissionPolicy {
         }
         return this.#decision("deny", "unknown_operation", "未知操作默认拒绝", operation);
     }
+    /**
+     * 受保护资源名按小写比较：凭据文件换大小写也绕不过去（安全；121-106 的凭据硬线）。
+     * 默认名本来就是小写。在区分大小写的文件系统上，真名 `.ENV` 也会被拒；这是有意的
+     * 小能力损失，理由是安全（同样的凭据边界不随文件系统大小写规则变化）。
+     */
     #isSensitive(paths) {
         return paths.some((path) => {
-            const basename = path.split("/").at(-1) ?? path;
+            const basename = (path.split("/").at(-1) ?? path).toLowerCase();
             return (this.#secretNames.has(basename) ||
                 this.#hiddenPrefixes.some((prefix) => isWithin(path, prefix)));
         });

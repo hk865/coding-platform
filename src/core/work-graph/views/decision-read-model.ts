@@ -687,8 +687,9 @@ export function createUnknownCallReviewCardSource(
  * collection adapter. It pages the Goal's `pending` requests to the end
  * (`k3-crr-by-goal-state`), then re-derives each card from the request, its
  * review record, the original Run and the Goal's current plan window. The card
- * is NEVER filtered by autonomy: the human must know and allow the rerun
- * (B2-07). `readByKey` reads the request directly, rejects a moved revision
+ * source never filters by autonomy: who sees a request first (the adviser or the
+ * person) is the CRR owner's creation route (121-110), and a `pending` request is
+ * always the person's card (B2-07). `readByKey` reads the request directly, rejects a moved revision
  * (a stale source key) and serves `closed` for a non-pending request or an
  * ended Task (B2-08).
  */

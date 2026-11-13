@@ -36,6 +36,7 @@ import type { GoalAdviserQueuePort } from '../../core/work-graph/tasks/goal-advi
 import type { ResponsibilityRecipientPort } from '../../core/work-graph/tasks/responsibility-recipient.js';
 import type { RunControlPort } from '../../core/work-graph/tasks/control-contracts.js';
 import type { TaskClaimPort } from '../../core/work-graph/model/claim-contracts.js';
+import type { TaskNodeCommitPort } from '../../core/work-graph/model/task-node-commit-contracts.js';
 import type {
   UnknownCallReviewPort, UnknownCallReviewReadPort,
 } from '../../core/work-graph/model/unknown-call-review-contracts.js';
@@ -68,6 +69,7 @@ import type { MemberRequestPortV1 } from '../../core/work-graph/tasks/member-ser
 import type { OverlapGatePort } from '../../core/work-graph/tasks/overlap-gates.js';
 import type { PickReadsV1 } from './session-chooser.js';
 import type { systemRoundSendInput } from './plan-round.js';
+import type { CommandReviewDeps } from './command-review.js';
 import type { RepairActivationService } from '../../core/work-graph/notes/activate-repair.js';
 
 /**
@@ -147,6 +149,11 @@ export type WorkflowDependencies = {
    * installs the same request-facts owner the Host and the Query preparation read.
    */
   requests?: Pick<RequestFactsPort, 'readRequest'>;
+  /**
+   * Node-level review (121-45): the `every_step` gate's read of pending nodes and live work. Optional so the old
+   * narrow doubles stay type-compatible and select as before; the real composition always installs it.
+   */
+  nodeCommits?: Pick<TaskNodeCommitPort, 'readNodeRows'>;
   sessions: SessionDirectoryPort;
   claims: TaskClaimPort;
   executions: ExecutionReadPort;
@@ -154,7 +161,7 @@ export type WorkflowDependencies = {
     'createSession' | 'readCompletedBoundary' | 'prepareExecution' | 'startRun' | 'observeRun'
     | 'prepareQuery' | 'startQuery' | 'observeQuery' | 'closeOpenTurn' | 'countRunActivity'
     | 'countQueryActivity'
-    | 'reviewCapability' | 'deliverControl' | 'readArchiveChangedFiles'>;
+    | 'reviewCapability' | 'deliverControl' | 'readArchiveChangedFiles' | 'cancelQuery'>;
   evidence: EvidencePort;
   checks: RegisteredCheckRunner;
   repairs?: Pick<RepairActivationService, 'attemptRepairsForGoal'>;
@@ -195,6 +202,11 @@ export type WorkflowDependencies = {
   goalAdviserQueue?: Pick<GoalAdviserQueuePort, 'allocate'>;
   /** 7D2 O4b: the one L35 recipient read of the platform's adviser sends and where that line lives; absent keeps the old workspace duty read. */
   recipients?: ResponsibilityRecipientPort;
+  /**
+   * 121-112: the scribe's long-command review close-out (`applyCommandReview`): the person's notice and the Host's
+   * "look again". Absent, a scribe review round's answer is not applied (`unsupported`).
+   */
+  commandReview?: CommandReviewDeps;
   /**
    * Slice 1 (L-g, S:597): every new time the Workflow archive/maintenance
    * supplies comes from this injected clock. Without injection the old

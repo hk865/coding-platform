@@ -228,6 +228,22 @@ export function isolateWrite<T>(request: GraphWrite<T>): OwnedWrite<T> {
   });
 }
 
+/**
+ * A person-only write (node review, decision 121-45: the platform commits FOR the person): only the Host's configured
+ * operator, never a platform automation actor. The refusal names the action; null admits the actor.
+ */
+export function operatorProblem(actor: HostActor,
+  configured: HostActor | undefined, action: string): CoreRejection | null {
+  if (configured === undefined) return reject('unsupported', `no configured operator exists to ${action}`);
+  if (actor.kind !== configured.kind || actor.id !== configured.id) {
+    return forbidden(`only the configured operator may ${action}`);
+  }
+  if (isAutomationActor(actor)) {
+    return forbidden(`a platform automation actor may not ${action}`);
+  }
+  return null;
+}
+
 export function checkRunPin(expected: readonly VersionPin[], runRef: RunRef): { ok: true; pin: VersionPin } | Rejected {
   if (expected.length !== 1) {
     return { ok: false, rejection: invalid('meta.expected must contain exactly one Run revision pin') };

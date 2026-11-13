@@ -40,6 +40,13 @@ import {
   UNKNOWN_CALL_ADVICE_CHOICES, UNKNOWN_CALL_ADVICE_ESCALATION_KINDS,
   type UnknownCallAdviceEscalationKindV1, type UnknownCallAdviceSubjectV1, type UnknownCallAdviceV1,
 } from '../../contracts/unknown-call-advice.js';
+import {
+  commandReviewAnswerText, parseCommandReviewAnswer, COMMAND_REVIEW_CONCLUSIONS, type CommandReviewAnswerV1,
+} from '../../contracts/scribe-review.js';
+import {
+  COMMAND_RERUN_ADVICE_CHOICES, commandRerunAdviceAnswerText, parseCommandRerunAdviceAnswer,
+  type CommandRerunAdviceSubjectV1, type CommandRerunAdviceV1,
+} from '../../contracts/command-rerun-advice.js';
 import type { InitialPlanningSetupV2 } from '../../contracts/initial-planning.js';
 import type { ToolTextV1 } from '../../contracts/prompts/prompt-pack.js';
 import type {
@@ -71,6 +78,8 @@ import { PLANNING_MAX_ANSWER_BYTES } from './query-observation.js';
 export const ANSWER_TOOL_NAMES = [
   'submit_secretary_answer', 'submit_initial_plan', 'submit_initial_questions',
   'submit_plan_round', 'submit_plan_review', 'submit_exec_review', 'submit_unknown_call_advice',
+  'submit_scribe_review',
+  'submit_command_rerun_advice',
 ] as const;
 
 export type AnswerToolName = (typeof ANSWER_TOOL_NAMES)[number];
@@ -91,6 +100,8 @@ export function answerToolNamesOf(kind: AnswerToolKind | null, smallPlan = false
   if (kind === 'plan_review') return ['submit_plan_review'];
   if (kind === 'exec_review') return ['submit_exec_review'];
   if (kind === 'unknown_call_advice') return ['submit_unknown_call_advice'];
+  if (kind === 'scribe_review') return ['submit_scribe_review'];
+  if (kind === 'command_rerun_advice') return ['submit_command_rerun_advice'];
   return [];
 }
 
@@ -114,6 +125,8 @@ export type AnswerTextContext = {
   projectId: string;
   /** The adviser round's frozen subject; only `unknown_call_advice` uses it. */
   subject?: UnknownCallAdviceSubjectV1;
+  /** The rerun round's frozen subject; only `command_rerun_advice` uses it. */
+  rerunSubject?: CommandRerunAdviceSubjectV1;
 };
 
 /** One goal-card draft as the form carries it: bare module and goal ids only. */
@@ -146,9 +159,17 @@ export type UnknownCallAdviceForm = {
   rationale: string;
   plain: string;
 };
+/** The scribe's long-command review form (121-112); the command facts are the platform's. */
+export type CommandReviewForm = {
+  conclusion: CommandReviewAnswerV1['conclusion'];
+  nextReviewInMs?: number;
+  reason: string;
+};
+/** The rerun round's form (121-110): the request and its revision are never the model's. */
+export type CommandRerunAdviceForm = Omit<UnknownCallAdviceForm, 'choice'> & { choice: CommandRerunAdviceV1['choice'] };
 /** One submit form as the Kernel parsed it against the per-Run schema. */
 export type AnswerForm = SemanticForm | QuestionsForm | InitialPlanForm | PlanRoundForm | PlanReviewFormV1
-  | ExecReviewFormV1 | UnknownCallAdviceForm;
+  | ExecReviewFormV1 | UnknownCallAdviceForm | CommandReviewForm | CommandRerunAdviceForm;
 
 function filledScreening(projectId: string, screening: ScreeningForm | null | undefined): Record<string, unknown> | null {
   if (screening === null || screening === undefined) return null;
@@ -221,6 +242,18 @@ export function buildAnswerText(
     return unknownCallAdviceAnswerText(ctx.subject!, {
       phase: ctx.subject!.phase, choice: advice.choice,
       escalationKind: advice.escalationKind ?? null, rationale: advice.rationale, plain: advice.plain,
+    });
+  }
+  if (shape === 'scribe_review') {
+    const review = form as CommandReviewForm;
+    return commandReviewAnswerText({ conclusion: review.conclusion,
+      nextReviewInMs: review.nextReviewInMs ?? null, reason: review.reason });
+  }
+  if (shape === 'command_rerun_advice') {
+    const advice = form as CommandRerunAdviceForm;
+    return commandRerunAdviceAnswerText(ctx.rerunSubject!, {
+      choice: advice.choice, escalationKind: advice.escalationKind ?? null,
+      rationale: advice.rationale, plain: advice.plain,
     });
   }
   if (shape === 'plan_round') {
@@ -508,20 +541,26 @@ function execReviewSchema(texts: ToolTextV1['parameters']): z.ZodType {
 }
 
 /**
- * The unknown-outcome round's form: the union of both phases' choices; the
- * phase and the subject are the platform's and never appear here. Which choices
- * fit which phase is the content check's (`unknownCallAdviceProblem`), so the
- * schema only names the values.
+ * An adviser round's form: its choices, the escalation kind, a rationale and the person's sentence. The subject (the
+ * unknown-outcome record and phase, or the rerun request and its revision) is the platform's and never appears here.
+ * Which choices fit which unknown-outcome phase is the content check's (`unknownCallAdviceProblem`), so the
+ * unknown-outcome form names the union of both phases' choices.
  */
-function unknownCallAdviceSchema(texts: ToolTextV1['parameters']): z.ZodType {
-  const choices = [...new Set([
-    ...UNKNOWN_CALL_ADVICE_CHOICES.disposition, ...UNKNOWN_CALL_ADVICE_CHOICES.approval,
-  ])] as [string, ...string[]];
+function adviceSchema(texts: ToolTextV1['parameters'], choices: readonly string[]): z.ZodType {
   return z.object({
-    choice: textField(z.enum(choices), texts, 'choice'),
+    choice: textField(z.enum(choices as [string, ...string[]]), texts, 'choice'),
     escalationKind: textField(z.enum(UNKNOWN_CALL_ADVICE_ESCALATION_KINDS).optional(), texts, 'escalationKind'),
     rationale: textField(z.string(), texts, 'rationale'),
     plain: textField(z.string(), texts, 'plain'),
+  }).strict();
+}
+
+/** The scribe's review form: which of the three, when to look again (normal only) and one sentence. */
+function commandReviewSchema(texts: ToolTextV1['parameters']): z.ZodType {
+  return z.object({
+    conclusion: textField(z.enum(COMMAND_REVIEW_CONCLUSIONS), texts, 'conclusion'),
+    nextReviewInMs: textField(z.number().int().min(1).optional(), texts, 'nextReviewInMs'),
+    reason: textField(z.string(), texts, 'reason'),
   }).strict();
 }
 
@@ -533,7 +572,10 @@ function answerSchemaFor(name: AnswerToolName, goalLess: boolean, texts: ToolTex
     case 'submit_plan_round': return planRoundSchema(texts);
     case 'submit_plan_review': return planReviewSchema();
     case 'submit_exec_review': return execReviewSchema(texts);
-    case 'submit_unknown_call_advice': return unknownCallAdviceSchema(texts);
+    case 'submit_unknown_call_advice': return adviceSchema(texts, [...new Set([
+      ...UNKNOWN_CALL_ADVICE_CHOICES.disposition, ...UNKNOWN_CALL_ADVICE_CHOICES.approval])]);
+    case 'submit_scribe_review': return commandReviewSchema(texts);
+    case 'submit_command_rerun_advice': return adviceSchema(texts, COMMAND_RERUN_ADVICE_CHOICES);
   }
 }
 
@@ -583,6 +625,16 @@ export function answerProblems(
   }
   if (shape === 'unknown_call_advice') {
     const parsed = parseUnknownCallAdviceAnswer(built);
+    if (parsed.status !== 'parsed') return [{ section: 'answer', reason: parsed.reason }];
+    return [];
+  }
+  if (shape === 'scribe_review') {
+    const parsed = parseCommandReviewAnswer(built);
+    if (parsed.status !== 'parsed') return [{ section: 'answer', reason: parsed.reason }];
+    return [];
+  }
+  if (shape === 'command_rerun_advice') {
+    const parsed = parseCommandRerunAdviceAnswer(built);
     if (parsed.status !== 'parsed') return [{ section: 'answer', reason: parsed.reason }];
     return [];
   }
@@ -691,6 +743,8 @@ export type AnswerToolsConfig = {
   shape: QueryAnswerShapeV1;
   /** The adviser round's frozen subject (read from the request's second line by the start). */
   subject?: UnknownCallAdviceSubjectV1;
+  /** The rerun round's frozen subject (read from the request's second line by the start). */
+  rerunSubject?: CommandRerunAdviceSubjectV1;
   /** The frozen `manifest.request.executionKind`; read only by the two request shapes. */
   kind?: SecretaryRequestManifestV1['executionKind'];
   /** `manifest.goal !== null`: the observer's own answer-format gate (request shapes). */
@@ -763,6 +817,7 @@ export function createAnswerTools(config: AnswerToolsConfig): AnswerToolsHandle 
     const text = buildAnswerText(shape, call.arguments, {
       projectId: fixedProjectId,
       ...(config.subject === undefined ? {} : { subject: config.subject }),
+      ...(config.rerunSubject === undefined ? {} : { rerunSubject: config.rerunSubject }),
     });
     const bound = answerBoundBytes(shape, call.name);
     if (Buffer.byteLength(text, 'utf8') > bound) {

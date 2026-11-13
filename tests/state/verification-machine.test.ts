@@ -557,7 +557,8 @@ describe('VR-07 guards', () => {
 
   it('then finalized (busy), executor (forbidden) and the pin (revision_conflict)', () => {
     expect(finalize(FINAL_PASS, {}, { callerIsExecutor: false, expectedRevision: 1 })).toMatchObject({ code: 'busy' });
-    expect(finalize(OPEN_SETTLED, {}, { callerIsExecutor: false, expectedRevision: 1 })).toMatchObject({ code: 'forbidden' });
+    expect(finalize(OPEN_SETTLED, { reviewerEvidenceCount: 1 }, { callerIsExecutor: false, expectedRevision: 1 }))
+      .toMatchObject({ code: 'forbidden' });
     expect(finalize(OPEN_SETTLED, {}, { expectedRevision: 4 })).toEqual({ ok: false, reason: 'stale',
       code: 'revision_conflict', detail: 'the round changed since the caller read it' });
     expect(finalize(OPEN_EXECUTING, {}, { expectedRevision: 1 })).toMatchObject({ code: 'revision_conflict' });

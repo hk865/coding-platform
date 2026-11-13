@@ -50,6 +50,19 @@ const rows: PlanningCase[] = [
     input: { answerShape: null, effectiveGoalId: null, planRef: PLAN_REF, hostSystemPlanningSource: true },
     expected: NONE,
   },
+  // SCRV S8 (start rulings draft §2.7; lead rulings Q3): the scribe's review round writes its general note in the round,
+  // also when the round is project-level (a Query round's command has no Goal). RED today: `scribe_review` is no shape
+  // yet, so both read `none` (today is the named mutation "scribe_review left out of the admission").
+  {
+    name: 'scribe_review is planning',
+    input: { answerShape: 'scribe_review', effectiveGoalId: 'goal-1', planRef: PLAN_REF, hostSystemPlanningSource: true },
+    expected: PLANNING,
+  },
+  {
+    name: 'scribe_review without a goal (a project-level round) is planning',
+    input: { answerShape: 'scribe_review', effectiveGoalId: null, planRef: null, hostSystemPlanningSource: true },
+    expected: PLANNING,
+  },
 ];
 
 describe('planningNoteAdmission', () => {

@@ -22,6 +22,7 @@ import type {
 } from '../../../contracts/governance.js';
 import type { ProjectSnapshot, WorkspaceSnapshot } from '../../../contracts/ledger.js';
 import type { EncodedRecord, GoalRecordTransactionPort } from '../../record-store/ports.js';
+import type { CommitFragment } from '../persistence/command-executor.js';
 import type { CompletionPolicyReadPort } from '../model/completion-policy-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 
@@ -44,6 +45,17 @@ export interface ProjectRegistrationPort {
     ctx: CoreCallContext,
     request: GraphWrite<{ workspace: WorkspaceScope; explorationDepth?: 1 | 2 | 3 }>,
   ): Promise<WriteResult<WorkspaceSnapshot>>;
+  /**
+   * WD-21: mark one Workspace removed on the same record at revision + 1 and
+   * commit the region fragment (closing claims and links) with it. The command
+   * identity is the workspace, so a second request for the same workspace
+   * replays the original receipt instead of writing a second effect.
+   */
+  removeWorkspace(
+    ctx: CoreCallContext,
+    request: GraphWrite<{ workspace: WorkspaceScope }>,
+    contribution: CommitFragment,
+  ): Promise<WriteResult<{ workspace: WorkspaceSnapshot; releasedClaims: number }>>;
   /**
    * R6 execution entry: one exact read of the already-registered Project and
    * Workspace snapshots so a reopened Host can build Query submit pins from the

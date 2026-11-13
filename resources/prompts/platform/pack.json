@@ -83,9 +83,14 @@
       "version": 1,
       "mentionsTools": []
     },
+    "command-rerun-advice-input": {
+      "file": "templates/command-rerun-advice-input.txt",
+      "version": 1,
+      "mentionsTools": []
+    },
     "scribe-reminder": {
       "file": "templates/scribe-reminder.txt",
-      "version": 2,
+      "version": 3,
       "mentionsTools": []
     },
     "continuation-brief": {
@@ -186,12 +191,12 @@
     },
     "skill-platform-adviser": {
       "file": "templates/skill-platform-adviser.txt",
-      "version": 13,
+      "version": 14,
       "mentionsTools": []
     },
     "skill-platform-scribe": {
       "file": "templates/skill-platform-scribe.txt",
-      "version": 8,
+      "version": 9,
       "mentionsTools": []
     },
     "skill-platform-reviewer": {
@@ -238,6 +243,8 @@
     "read_execution_history": "tools/read_execution_history.json",
     "submit_exec_review": "tools/submit_exec_review.json",
     "submit_unknown_call_advice": "tools/submit_unknown_call_advice.json",
+    "submit_scribe_review": "tools/submit_scribe_review.json",
+    "submit_command_rerun_advice": "tools/submit_command_rerun_advice.json",
     "find_graph": "tools/find_graph.json",
     "check_links": "tools/check_links.json",
     "web_search": "tools/web_search.json",

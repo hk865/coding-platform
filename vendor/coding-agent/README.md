@@ -47,3 +47,7 @@ R4c.2b 在本目录保存 `SqliteStores.read` 的[补丁源码](patches/storage/
 ## 2026-11-13 CTXFIT 最新一段工具交换改为截断结果
 
 受管的[上下文选择补丁源码](patches/core/context/selection_policy/context-selection-policy.ts)把当前执行的最新一段工具交换从删除单位里拿掉；较早几段都删光后仍装不下时，按共同字节上限截断这一段的结果并写明截断，计入 `toolResultBody`；连空结果都装不下才报 `required_content_over_budget`。源仍十九个、76 份产物。来源与产物哈希、命令见[补丁维护说明](patches/README.md)。
+
+## 2026-11-13 DSEC2 权限策略大小写和 listFiles 按 inode
+
+新增[权限策略补丁源码](patches/policy/permissions/permission-policy.ts)：secret 名比较不分大小写，`.ENV`、`Credentials` 等大小写变体照 `.env` 拒（`sensitive_path`），默认 secret 名和 `policyVersion` 不变；在区分大小写的文件系统上真名 `.ENV` 也被拒，是有意的能力损失，理由是安全（凭据）。受管的[工作区沙箱补丁源码](patches/sandbox/workspace/workspace-sandbox.ts)的 `listFiles` 把被拒前缀的 `dev:ino` 收成集合，按身份跳过别名条目，不按名字大小写；ext4 上真名 `.WORKBENCH/local` 是另一个 inode，不受影响。源现二十个、80 份产物；来源与产物哈希、命令见[补丁维护说明](patches/README.md)。

@@ -48,6 +48,11 @@ class BlockingLatch {
     this.openGate = null;
   }
 
+  /** New calls reach the real tool again; calls already held stay held until `release()`. */
+  stopHolding(): void {
+    this.armed = false;
+  }
+
   /** Resolves once at least one call has entered the stand-in handler. */
   async waitForCall(): Promise<void> {
     if (this.calls.length > 0) return;
@@ -72,6 +77,9 @@ class ShellSeam {
   arm(): void { this.latch.arm(); }
 
   release(): void { this.latch.release(); }
+
+  /** Runs composed from now on get the real `shell` (its result is the real execution's); held calls stay held. */
+  stopHolding(): void { this.latch.stopHolding(); }
 
   /** Resolves once at least one `shell` call has entered the stand-in handler. */
   waitForCall(): Promise<void> { return this.latch.waitForCall(); }

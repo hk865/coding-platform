@@ -55,7 +55,8 @@ const FILES = {
   'app/package.json': JSON.stringify({ scripts: { 'db:migrate': 'prisma migrate deploy' } }),
   'package.json': JSON.stringify({ scripts: { 'db:migrate': 'prisma migrate deploy' } }),
 };
-const TAIL = '要再跑，先用 `request_command_rerun` 写明原因，等人允许。平台没认出来的改写，也要用 `rewriteOf` 注明以后再请求。';
+// K3L-6 (121-110): the responsible adviser decides first; red today (the hook still says 等人允许).
+const TAIL = '要再跑，先用 `request_command_rerun` 写明原因，等人或参谋允许。平台没认出来的改写，也要用 `rewriteOf` 注明以后再请求。';
 const BLOCKED_UNCONFIRMED = '平台暂时确认不了这条命令有没有被拦，这次先不跑；稍后再试。';
 const shell = (command: string, callId = nextCall()): ToolCall => ({ schemaVersion: 1, callId, name: 'shell',
   arguments: { command } });

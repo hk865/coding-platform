@@ -1,4 +1,5 @@
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
+import type { KnowledgeReadBaseV1 } from '../../contracts/knowledge.js';
 import type { PreparedQueryManifestV1 } from '../../contracts/core/prepared-execution.js';
 import type { ReadResult } from '../../contracts/core/results.js';
 import type { ContextAssemblyBindingV1, PlatformDutyV1 } from '../../contracts/graph-context.js';
@@ -37,7 +38,7 @@ import type { ResolvedRuntimeConfiguration } from './execution-contracts.js';
  * catalog with no module answers `not_found`, which is no cards.
  */
 async function readProjectModuleCards(
-  deps: ContextAssemblerDependencies, ctx: CoreCallContext,
+  deps: ContextAssemblerDependencies, ctx: CoreCallContext, base: KnowledgeReadBaseV1 | undefined,
 ): Promise<ReadResult<NodeCardV1[]>> {
   if (deps.graphContext === undefined) {
     return rejected('unavailable', 'the exploration Query has no graph context reader');
@@ -49,6 +50,7 @@ async function readProjectModuleCards(
     try {
       read = await deps.graphContext.lookGraph(ctx, {
         goalRef: null, target: { kind: 'path', path: '.' }, relation: 'card', page: { afterCursor, limit: 100 },
+        ...(base === undefined ? {} : { base }),
       });
     } catch (error) {
       return rejected('unavailable', `the exploration project graph read failed: ${messageOf(error)}`);
@@ -75,6 +77,8 @@ export async function assembleQueryContext(
     toolNames: readonly string[];
     /** Ruling 14 C7: the Query's formal basis, or the real completed boundary. */
     history: ContextQueryHistoryInputV1;
+    /** KC-3: the role_exploration round's read base (`recorded` for a knowledge_conflict repair round). */
+    base?: KnowledgeReadBaseV1;
     /** The successor's frozen record 5, read once by preparation; the recipe renders it into the role section. */
     record5?: Pick<FrozenHandoffBriefV1, 'binding' | 'material'>;
     /** The one facts value preparation read; the secretary recipe renders it and reads no port. */
@@ -147,7 +151,7 @@ export async function assembleQueryContext(
   // rendered, so no note source is recorded.
   let projectCards: NodeCardV1[] | null = null;
   if (exploration) {
-    const read = await readProjectModuleCards(deps, ctx);
+    const read = await readProjectModuleCards(deps, ctx, input.base);
     if (read.status !== 'ready') return read;
     projectCards = read.value;
   }

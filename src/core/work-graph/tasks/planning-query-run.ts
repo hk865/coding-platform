@@ -58,12 +58,14 @@ import {
 import { sessionRoleFactsRef } from '../state/role-facts.js';
 import { readOwnerRecord } from '../persistence/owner-record-read.js';
 import type { ProposalQueryRunFactResolver } from '../architecture/proposal-service.js';
+import { repairNoticeOf } from '../sessions/exploration-followup-service.js';
 
 /** The frozen facts of one running planning QueryRun (spec §5.2.8(2)). */
 export type PlanningQueryRunV1 = {
   principal: Extract<CorePrincipal, { kind: 'query_run' }>;
   session: SessionRef;
-  duty: 'adviser' | 'secretary';
+  /** `scribe` only on its `scribe_review` round (121-112). */
+  duty: 'adviser' | 'secretary' | 'scribe';
   scope: WorkspaceScope;
   round: QueryJobRef;
   run: QueryRunRef;
@@ -202,7 +204,8 @@ async function resolvePlanningQueryRun(
   if (answerShape !== queryAnswerShapeOf(intent, null)) {
     return rejected('forbidden', 'the manifest answerShape does not fit the round');
   }
-  const trustedShape = answerShape === 'plan_round' || answerShape === 'plan_review';
+  const trustedShape = answerShape === 'plan_round' || answerShape === 'plan_review'
+    || answerShape === 'scribe_review';
   if (!trustedShape) {
     if (answerShape !== null) return rejected('forbidden', 'the QueryRun is not a planning note round');
     // The `overlap-note:` round: `answerShape` is `text` (manifest `null`) and
@@ -235,11 +238,17 @@ async function resolvePlanningQueryRun(
     return unavailable('the round Session duty cannot be read');
   }
   if (dutyRead.status !== 'ready') return unavailable('the round Session duty cannot be read');
-  if (dutyRead.value !== 'adviser' && dutyRead.value !== 'secretary') {
-    return rejected('forbidden', 'the round Session is not an adviser or secretary duty');
+  // Coordination: a note's source names its author's duty and scope, so the round's shape and the Session's duty
+  // must agree — the scribe writes only from its own review round, an adviser or secretary from a planning round.
+  const duty = dutyRead.value;
+  const admitted = answerShape === 'scribe_review' ? (duty === 'scribe' ? duty : null)
+    : duty === 'adviser' || duty === 'secretary' ? duty : null;
+  if (admitted === null) {
+    return rejected('forbidden', answerShape === 'scribe_review'
+      ? 'the review round Session is not a scribe' : 'the round Session is not an adviser or secretary duty');
   }
 
-  return { status: 'ready', value: toPlanningFacts(principal, read, dutyRead.value) };
+  return { status: 'ready', value: toPlanningFacts(principal, read, admitted) };
 }
 
 /** The round Session's stored role facts (the line's origin); a line without them has no exploration binding. */
@@ -266,7 +275,7 @@ async function readSessionRoleFacts(
  */
 type ExplorationOperationOwnerV1 = {
   operationRef: OperationRef;
-  action: { explorations: ColdStartExplorationQueryRefV1[] };
+  action: Pick<RoleLineActionV1, 'followUp'> & { explorations: ColdStartExplorationQueryRefV1[] };
 };
 
 async function readExplorationOperation(deps: PlanningQueryRunDependencies, projectId: string, workspaceId: string,
@@ -361,7 +370,7 @@ async function resolveExplorationQueryRun(
 
 /**
  * The note owner's one entry: dispatch only. A `role_exploration` round goes to
- * the exploration resolver; a `plan_round`/`plan_review` manifest shape, or a
+ * the exploration resolver; a `plan_round`/`plan_review`/`scribe_review` manifest shape, or a
  * `null` shape whose source message is a Host system `action_request`, goes to
  * the planning resolver; every other round goes to the unchanged secretary
  * resolver.
@@ -387,7 +396,7 @@ export async function resolveNoteQueryRun(
     }
     if (intent.kind === 'intervention_planning') {
       const shape = read.manifest.answerShape;
-      const planned = shape === 'plan_round' || shape === 'plan_review';
+      const planned = shape === 'plan_round' || shape === 'plan_review' || shape === 'scribe_review';
       if (planned) {
         const resolved = await resolvePlanningQueryRun(ctx, deps);
         if (resolved.status !== 'ready') return resolved;
@@ -433,12 +442,16 @@ async function readProposerFacts(ctx: CoreCallContext, deps: PlanningQueryRunDep
   if (owner.status !== 'ready') return owner;
   const segment = owner.value.action.explorations
     .find(entry => entry.queryRunRef.runId === read.run.run.runId)?.segment ?? null;
+  // KC-3: the notice a knowledge_conflict repair round (or its “不对，重新提”) repairs, from the operation that opened it.
+  const notice = await repairNoticeOf(deps.records, { ref: owner.value.operationRef, action: owner.value.action });
+  if (notice.status !== 'ready') return notice;
   return { status: 'ready',
     value: { sessionRef: read.execution.sessionRef, role: read.execution.role, kind: 'role_exploration',
       // M6: the platform wrote this correlation id with the QueryJob; it is the operation that opened the round.
       operationRef: correlationId === undefined ? null
         : { aggregateType: 'CoreOperation', projectId: read.job.intent.projectId, operationId: correlationId },
-      queryRunRef: { ...queryRunRef }, segment } };
+      queryRunRef: { ...queryRunRef }, segment,
+      followUp: notice.value === null ? null : { kind: 'knowledge_conflict', noticeId: notice.value } } };
 }
 
 export function createPlanningQueryRun(

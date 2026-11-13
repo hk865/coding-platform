@@ -38,7 +38,7 @@ import type {
   QueryEntryIdentity, QueryExecutionRecord, QueryHistoryObservation,
 } from '../work-graph/queries/contracts.js';
 import { parseSecretaryAnswer } from '../work-graph/queries/secretary-answer.js';
-import { unknownCallAdviceSubjectOfText } from '../../contracts/plan-round.js';
+import { commandRerunAdviceSubjectOfText, unknownCallAdviceSubjectOfText } from '../../contracts/plan-round.js';
 
 export type QueryObservationPort = {
   observe(ctx: CoreCallContext, request: { queryRunRef: QueryRunRef }): Promise<ReadResult<QueryExecutionRecord>>;
@@ -485,7 +485,7 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
     const shape = manifest.answerShape;
     if (!(shape === null || shape === 'secretary' || shape === 'initial'
       || shape === 'plan_round' || shape === 'plan_review' || shape === 'exec_review'
-      || shape === 'unknown_call_advice')) {
+      || shape === 'unknown_call_advice' || shape === 'scribe_review' || shape === 'command_rerun_advice')) {
       return rejected('unavailable', 'the persisted Query manifest has no valid answerShape');
     }
     // Only a round whose frozen list holds a submit tool can hold an accepted
@@ -509,18 +509,24 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
       // line of the frozen question (never from the model).
       const adviceSubject = shape === 'unknown_call_advice'
         ? unknownCallAdviceSubjectOfText(record.value.job.job.intent.question) : null;
+      const rerunSubject = shape === 'command_rerun_advice'
+        ? commandRerunAdviceSubjectOfText(record.value.job.job.intent.question) : null;
       // A round whose frozen list holds a submit tool takes the answer from the
       // first successful submit's arguments; no accepted submit keeps the final
       // text reading, and any later assistant text is ignored.
       let final: FinalText;
       const answerShape = submitted === null ? shape : submitShapeOf(shape!, submitted.name);
       if (submitted === null) {
-        final = extractAnswer(runState);
+        // Safety (121-112): the scribe's review conclusion can stop a command, so model text never stands in for
+        // its submit tool: without an accepted submit the round has no answer (the text stays in the history).
+        // K3L-6: a rerun advice is only what its submit tool wrote; its text is no answer (`gap`).
+        final = shape === 'scribe_review' || shape === 'command_rerun_advice' ? { kind: 'empty' } : extractAnswer(runState);
       } else {
         // Rebuild the exact text the accepted handler built, bounded by shape.
         const text = buildAnswerText(answerShape!, submitted.arguments, {
           projectId: queryRunRef.projectId,
           ...(adviceSubject === null ? {} : { subject: adviceSubject }),
+          ...(rerunSubject === null ? {} : { rerunSubject }),
         });
         final = Buffer.byteLength(text, 'utf8') > answerBoundBytes(answerShape)
           ? { kind: 'too_long' } : { kind: 'text', text };

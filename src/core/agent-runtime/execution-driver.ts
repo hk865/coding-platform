@@ -188,7 +188,8 @@ export type ShellBlockedHookConfig = {
   /** The three-field binding prepared for this Work Run (never empty here). */
   binding: NonNullable<PreparedTaskManifestV1['blockedCommands']>;
   reviews: Pick<UnknownCallReviewReadPort, 'readReview'>;
-  requests: CommandRerunRequestReadPort & CommandRerunRequestPort;
+  /** The hook reads the Task's requests and consumes an allowance; it writes nothing else. */
+  requests: Pick<CommandRerunRequestReadPort, 'listTaskRequests'> & Pick<CommandRerunRequestPort, 'consumeAllowance'>;
   recognizer?: CommandRecognizer;
 };
 
@@ -203,16 +204,19 @@ const PYTHON_SYNTAX_CHECK_ACTOR: { kind: 'system'; id: string } =
   Object.freeze({ kind: 'system', id: 'python-syntax-check' });
 
 /**
- * L19a "在哪拦": the `before_tool` control hook for `shell`. It is installed on
- * a Work Run whose prepared manifest carries a non-empty `blockedCommands`
- * binding; every other tool and every Run without a binding continues with
- * ZERO extra reads. For `shell` it reads the binding's records' current state
+ * L19a "在哪拦": the `before_tool` control hook for the command tool (`shell`
+ * and `run_readonly_command`). It is installed on a Work Run whose prepared
+ * manifest carries a non-empty `blockedCommands` binding; every other tool and
+ * every Run without a binding continues with ZERO extra reads. For either
+ * command tool it reads the binding's records' current state
  * and the Task's CRRs through the owner's one-closure pager (ONE Task-closure
  * read for the whole call, whatever the page count), then, in order: (i) an
  * unused one-time allowance is consumed before the call is allowed; (ii) an
  * approved method runs without a request; (iii) the ONE shared recognizer —
  * exact, action, current-`package.json` expansion and declared forms — names
  * the blocked alias with L19a's fixed text. There is no second matcher here.
+ * Both tools are gated because a blocked command re-run needs approval
+ * whichever command tool would run it (coordination; 121-110).
  *
  * A records/CRRs read failure fails closed. A recognizer rejection loses only
  * recognition (there is no local fallback) and the call continues; a missing
@@ -224,7 +228,7 @@ export function createShellBlockedHook(config: ShellBlockedHookConfig): HookPort
     hookId: 'b2-runtime-shell-blocked', point: 'before_tool', priority: 10,
     async execute(invocation): Promise<BeforeToolDecision> {
       if (config.binding.length === 0) return CONTINUE_TOOL;
-      if (invocation.call.name !== 'shell') return CONTINUE_TOOL;
+      if (invocation.call.name !== 'shell' && invocation.call.name !== READONLY_COMMAND_TOOL_NAME) return CONTINUE_TOOL;
       const args = invocation.call.arguments;
       const command = isRecord(args) ? args['command'] : undefined;
       if (typeof command !== 'string') return CONTINUE_TOOL;
@@ -273,7 +277,7 @@ export function createShellBlockedHook(config: ShellBlockedHookConfig): HookPort
         const head = kind === 'action' && actionText !== undefined
           ? `平台拦下了这条命令：其中的 ${actionText} 是 ${where} 的一部分（核对以后处置是“${choice}”）。`
           : `平台拦下了这条命令：${where}（核对以后处置是“${choice}”）。`;
-        return blockTool(head + '要再跑，先用 `request_command_rerun` 写明原因，等人允许。'
+        return blockTool(head + '要再跑，先用 `request_command_rerun` 写明原因，等人或参谋允许。'
           + '平台没认出来的改写，也要用 `rewriteOf` 注明以后再请求。');
       };
       // (i) One-time allowance, consumed BEFORE the command is allowed to run.
@@ -747,10 +751,12 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         commandRerunTool = (workspaceHandle: WorkspaceSandbox): ToolDefinition => rerunGroup.value.create(workspaceHandle)[0]!;
       }
 
-      // L19a "在哪拦": the `before_tool` shell gate for a Work Run with a
-      // non-empty binding. It reads the records' current state and the Task's
-      // CRRs per `shell` call; a task without a binding installs no hook and
-      // pays zero extra reads.
+      // L19a "在哪拦": the `before_tool` command-tool gate (`shell` and
+      // `run_readonly_command`) for a Work Run with a non-empty binding. It
+      // reads the records' current state and the Task's CRRs per command-tool
+      // call; a task without a binding installs no hook and pays zero extra
+      // reads. A re-run needs approval whichever command tool would run it
+      // (coordination; 121-110).
       const shellBlockedHook: HookPort | undefined = blockedBinding.length === 0 || deps.commandRerunRequests === undefined
         || deps.unknownCallReviews === undefined ? undefined : createShellBlockedHook({
         ctx: toolContext,

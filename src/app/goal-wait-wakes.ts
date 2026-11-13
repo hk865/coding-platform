@@ -44,6 +44,9 @@ export const GOAL_WAIT_WAKE_AGGREGATE_TYPES: readonly AggregateRef['aggregateTyp
   'CoreOperation',
   'NoteHead',
   'NoteVersion', 'CurrentPointer', 'ModuleOverlapGate',
+  // Node-level review (121-45): a node's review fact releases an `every_step` Goal's next node, and a TaskReduction
+  // commit is when a node becomes pending (NR-17); both wake this queue, not the lifecycle one.
+  'TaskNodeCommit', 'TaskReduction',
 ]);
 
 /** One marked Goal wait with its read cursor (frozen drain shape; no slice, no removal). */

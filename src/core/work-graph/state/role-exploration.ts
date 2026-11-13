@@ -11,17 +11,21 @@ import type { SessionMessageRef } from '../../../contracts/core/session-message.
 import type { QueryJobIntentV1, QueryRunRef } from '../../../contracts/query-job.js';
 import type { RoleBindingRefV1 } from '../../../contracts/dispatch.js';
 import type { RuntimeBudget } from '../../../contracts/runtime-budget.js';
+import type { KnowledgeReadBaseV1 } from '../../../contracts/knowledge.js';
 import type { ColdStartExplorationQueryRefV1 } from './role-line-action.js';
 
 export type RoleExplorationSegmentV1 = 'coarse_split' | 'region';
 export type RoleExplorationBindingV1 = { operationRef: OperationRef; systemMessageRef: SessionMessageRef };
 
-/** The one `goalId:null` execution arm: the QueryRun is the trusted principal (spec S7-RL-13). */
+/**
+ * The one `goalId:null` execution arm: the QueryRun is the trusted principal (spec S7-RL-13). `base` (KC-3) is a
+ * knowledge_conflict repair round's: its context reads the last adopted architecture.
+ */
 export function roleExplorationExecution(input: {
-  roleBinding: RoleBindingRefV1; runtimeBudget: RuntimeBudget;
+  roleBinding: RoleBindingRefV1; runtimeBudget: RuntimeBudget; base?: KnowledgeReadBaseV1;
 }): QueryJobIntentV1['execution'] {
   return { kind: 'role_exploration', roleBinding: structuredClone(input.roleBinding),
-    runtimeBudget: structuredClone(input.runtimeBudget) };
+    runtimeBudget: structuredClone(input.runtimeBudget), ...(input.base === undefined ? {} : { base: input.base }) };
 }
 
 export function roleExplorationQuestion(segment: RoleExplorationSegmentV1, region: ModuleRef | null,

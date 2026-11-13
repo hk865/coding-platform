@@ -18,6 +18,7 @@
  */
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext, MaterialReader } from '../../../contracts/core/call-context.js';
+import type { KnowledgeReadBaseV1 } from '../../../contracts/knowledge.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import { messageOf } from '../../../contracts/error-message.js';
@@ -381,7 +382,7 @@ function lookQueryKey(request: GraphLookRequestV1): string {
     ? { kind: 'path', path: request.target.path }
     : { kind: 'node', node: request.target.node };
   return sha256Hex(canonicalJson({
-    kind: 'look', relation: request.relation, target, limit: request.page.limit,
+    kind: 'look', relation: request.relation, target, limit: request.page.limit, base: request.base ?? 'current',
   } as unknown as JsonValue));
 }
 function findQueryKey(request: GraphFindRequestV1): string {
@@ -465,7 +466,8 @@ type GoalUniverse = Universe & { goal: GoalSnapshot };
 
 type ReadContexts = { sessionCtx: CoreCallContext; executionCtx: CoreCallContext };
 
-type UniverseOptions = { sessions: boolean; planHint?: PlanRevisionRef };
+/** `base` (KC-3): the architecture read, `lookGraph`'s own (a repair round's context reads the record). */
+type UniverseOptions = { sessions: boolean; planHint?: PlanRevisionRef; base?: KnowledgeReadBaseV1 };
 
 export function createGraphContextReader(deps: GraphContextReaderDependencies): GraphContextReadPort {
   /** The project's main workspace; a failed read is `unavailable`, never "the caller is main". */
@@ -791,8 +793,10 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
   };
 
   /** The current architecture exactly as `readAttentionFacts` reads it: `not_found` is no architecture. */
-  async function readCurrentArchitecture(ctx: CoreCallContext): Promise<ReadResult<CurrentArchitecture>> {
-    const archRead = await deps.architecture.readArchitectureRevision(ctx, { selection: { kind: 'current' } });
+  async function readCurrentArchitecture(ctx: CoreCallContext, base?: KnowledgeReadBaseV1):
+    Promise<ReadResult<CurrentArchitecture>> {
+    const archRead = await deps.architecture.readArchitectureRevision(ctx,
+      { selection: { kind: 'current', ...(base === undefined ? {} : { base }) } });
     if (archRead.status === 'ready') {
       return { status: 'ready', value: {
         architecture: archRead.value.catalog.catalog,
@@ -853,7 +857,7 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
         return propagate(graphRead);
       }
     }
-    const currentArchitecture = await readCurrentArchitecture(ctx);
+    const currentArchitecture = await readCurrentArchitecture(ctx, options.base);
     if (currentArchitecture.status !== 'ready') return propagate(currentArchitecture);
     const { architecture, baseline, baselineRevision, baselineDigest } = currentArchitecture.value;
     const contexts = await resolveReadContexts(ctx, goalRef);
@@ -883,7 +887,8 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
    * The project branch: the current architecture, the project's Sessions, its
    * memory material and no Goal, Plan, Run or Round.
    */
-  async function loadProjectUniverse(ctx: CoreCallContext, options: { sessions: boolean }): Promise<ReadResult<Universe>> {
+  async function loadProjectUniverse(ctx: CoreCallContext, options: Pick<UniverseOptions, 'sessions' | 'base'>):
+    Promise<ReadResult<Universe>> {
     let workspace: VersionedRef | null = null;
     if (ctx.workspaceId !== undefined) {
       const workspaceRef = { aggregateType: 'Workspace' as const, projectId: ctx.projectId, workspaceId: ctx.workspaceId };
@@ -893,7 +898,7 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
       const workspaceRecord = workspaceRead.value.present.get(workspaceKey);
       workspace = workspaceRecord === undefined ? null : { ref: workspaceRef, revision: workspaceRecord.revision };
     }
-    const currentArchitecture = await readCurrentArchitecture(ctx);
+    const currentArchitecture = await readCurrentArchitecture(ctx, options.base);
     if (currentArchitecture.status !== 'ready') return propagate(currentArchitecture);
     const { architecture, baseline, baselineRevision, baselineDigest } = currentArchitecture.value;
     let sessionCards: SessionCard[] = [];
@@ -1685,8 +1690,8 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
         if (verified.status !== 'ready') return propagate(verified);
         readCtx = verified.value;
       }
-      const loaded = await loadUniverse(readCtx, goalRef,
-        { sessions: true, ...(planHint === undefined ? {} : { planHint }) });
+      const loaded = await loadUniverse(readCtx, goalRef, { sessions: true,
+        ...(planHint === undefined ? {} : { planHint }), ...(request.base === undefined ? {} : { base: request.base }) });
       if (loaded.status !== 'ready') return propagate(loaded);
       const universe = loaded.value;
       const contexts = await resolveReadContexts(readCtx, goalRef);
@@ -1755,7 +1760,8 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
       return pageOfMatches(universe, relationNodes, indexes.value, scopeKey, queryKey, afterOffset, page.limit, basisKey, ctx, goalRef);
     }
 
-    const loaded = await loadProjectUniverse(ctx, { sessions: true });
+    const loaded = await loadProjectUniverse(ctx,
+      { sessions: true, ...(request.base === undefined ? {} : { base: request.base }) });
     if (loaded.status !== 'ready') return propagate(loaded);
     const universe = loaded.value;
     let relationNodes: GraphNodeRefV1[];

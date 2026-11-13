@@ -36,6 +36,7 @@ import type { ProjectRef, ProjectSnapshot, WorkspaceRef, WorkspaceSnapshot } fro
 import { isNonNeg, isPos, isRecord, isSha256Hex, nonEmpty } from '../../../contracts/validation/common.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import type {
+  CommitCursorBinding,
   DecodeResult,
   EncodedDomainEvent,
   EncodedRecord,
@@ -45,9 +46,12 @@ import type {
   RecordGuard,
   StoreCommitReceipt,
   StoreFailure,
+  UniqueClaimChange,
 } from '../../record-store/ports.js';
 import type { GraphWrite } from '../model/task-contracts.js';
+import type { CommitFragment } from '../persistence/command-executor.js';
 import { decodeProjectSnapshot, decodeWorkspaceSnapshot, encodeProjectSnapshot, encodeWorkspaceSnapshot, cloneActorRef } from '../persistence/record-codecs.js';
+import { nextWorkspaceRemoved } from '../state/workspace-removal.js';
 import type { CurrentCompletionPolicyRead, ProjectBootstrapDependencies, ProjectBootstrapServices } from './project-bootstrap-contracts.js';
 import type {
   ProjectBootstrapEventFact,
@@ -55,6 +59,7 @@ import type {
   ProjectCompletionPolicyInstalledEventV1,
   ProjectRegisteredEventV1,
   ProjectWorkspaceRegisteredEventV1,
+  ProjectWorkspaceRemovedEventV1,
 } from './project-bootstrap-record-codecs.js';
 import {
   PROJECT_BOOTSTRAP_EVENT_SCHEMA_VERSION,
@@ -62,19 +67,23 @@ import {
   PROJECT_COMPLETION_POLICY_INSTALLED_EVENT,
   PROJECT_REGISTERED_EVENT,
   PROJECT_WORKSPACE_REGISTERED_EVENT,
+  PROJECT_WORKSPACE_REMOVED_EVENT,
   completionPolicyContentProblem,
   decodeProjectCompletionPolicyActivatedEvent,
   decodeProjectCompletionPolicyInstalledEvent,
   decodeProjectRegisteredEvent,
   decodeProjectWorkspaceRegisteredEvent,
+  decodeProjectWorkspaceRemovedEvent,
   encodeProjectCompletionPolicyActivatedEvent,
   encodeProjectCompletionPolicyInstalledEvent,
   encodeProjectRegisteredEvent,
   encodeProjectWorkspaceRegisteredEvent,
+  encodeProjectWorkspaceRemovedEvent,
 } from './project-bootstrap-record-codecs.js';
 
 const CREATE_PROJECT_PREFIX = 'project-register:';
 const REGISTER_WORKSPACE_PREFIX = 'project-workspace-register:';
+const REMOVE_WORKSPACE_PREFIX = 'workspace-remove:';
 const INSTALL_POLICY_PREFIX = 'completion-policy-install:';
 const ACTIVATE_POLICY_PREFIX = 'completion-policy-activate:';
 const POLICY_REVISION_SCHEMA_ID = 'CompletionPolicyRevisionSnapshot@1';
@@ -287,7 +296,7 @@ function fingerprintOf(parts: Record<string, unknown>): { status: 'ok'; value: s
 }
 
 // --------------------------------------------------------------------------
-// Replay / commit seam shared by all four operations
+// Replay / commit seam shared by the bootstrap operations
 // --------------------------------------------------------------------------
 
 type ReplayBinding<T> = {
@@ -296,6 +305,8 @@ type ReplayBinding<T> = {
   requestId: string;
   actor: HostActor;
   decode: (event: EncodedDomainEvent) => DecodeResult<ProjectBootstrapEventFact<T>>;
+  /** WD-21: a workspace-removal receipt is workspace-scoped, so it replays across request ids and actors. */
+  requestScoped?: boolean;
 };
 
 async function restoreOriginal<T>(
@@ -324,8 +335,10 @@ async function restoreOriginal<T>(
   if (fact.eventId !== receipt.eventIds[0]) return unavailable('the receipt points at another event');
   if (fact.identityKey !== binding.identityKey) return unavailable('the original event carries another identity key');
   if (fact.projectId !== binding.projectId) return unavailable('the original event belongs to another project');
-  if (fact.requestId !== binding.requestId) return unavailable('the original event carries another request id');
-  if (!actorRefEquals(fact.actor, binding.actor)) return unavailable('the original event carries another actor');
+  if (binding.requestScoped !== false) {
+    if (fact.requestId !== binding.requestId) return unavailable('the original event carries another request id');
+    if (!actorRefEquals(fact.actor, binding.actor)) return unavailable('the original event carries another actor');
+  }
   return { status: 'committed', value: fact.value, replayed: true, cursor: receipt.cursor };
 }
 
@@ -409,6 +422,9 @@ type BootstrapCommit<T> = {
   fingerprint: string;
   guards: readonly RecordGuard[];
   records: readonly EncodedRecord[];
+  /** WD-21: a region fragment's claim closes and cursor bindings ride in the same commit. */
+  claims?: readonly UniqueClaimChange[];
+  commitCursorBindings?: readonly CommitCursorBinding[];
   event: EncodedDomainEvent;
   /** The freshly folded value returned only when THIS call performed the commit. */
   fresh: T;
@@ -423,10 +439,11 @@ async function commitBootstrap<T>(
     fingerprint: input.fingerprint,
     guards: input.guards,
     records: input.records,
-    claims: [],
+    claims: input.claims ?? [],
     indexGuards: [],
     indexChanges: [],
     events: [input.event],
+    ...(input.commitCursorBindings === undefined ? {} : { commitCursorBindings: input.commitCursorBindings }),
   };
   // The single last-seam cancellation check, using the signal bound before the
   // first await: a cancel during a necessary read commits nothing. A commit that
@@ -720,6 +737,102 @@ async function registerWorkspace(
       ...(joined === null ? [] : [joined])],
     event: encodeProjectWorkspaceRegisteredEvent(event),
     fresh: snapshot,
+  });
+}
+
+// --------------------------------------------------------------------------
+// removeWorkspace
+// --------------------------------------------------------------------------
+
+/**
+ * WD-21: mark one Workspace removed and close its region links in ONE commit.
+ * The identity is the workspace (not the request id), and the fingerprint is
+ * only the body scope: a second request for the same workspace replays the
+ * recorded receipt, while a different body scope under the same call context
+ * is the receipt's idempotency conflict. The service only encodes
+ * `nextWorkspaceRemoved`; it never assigns `removedAt` itself.
+ */
+async function removeWorkspaceRecord(
+  deps: ProjectBootstrapDependencies,
+  ctx: CoreCallContext,
+  request: GraphWrite<{ workspace: WorkspaceScope }>,
+  contribution: CommitFragment,
+): Promise<WriteResult<{ workspace: WorkspaceSnapshot; releasedClaims: number }>> {
+  const bound = bindContext(ctx);
+  if (bound.status !== 'ok') return bound;
+  const owned = ownJsonInput(request, 'removeWorkspace request');
+  if (owned.status === 'invalid') return invalid(owned.reason);
+  const body: { input?: unknown; meta?: unknown } = owned.value;
+  const rawInput = body.input;
+  const rawMeta = body.meta;
+  if (!isRecord(rawInput) || !isRecord(rawMeta)) return invalid('removeWorkspace requires an input and meta object');
+  if (!exactKeys(rawInput, ['workspace'])) return invalid('removeWorkspace.input must carry exactly workspace');
+  const workspace = rawInput['workspace'];
+  if (!isRecord(workspace) || !exactKeys(workspace, ['projectId', 'workspaceId'])
+    || !nonEmpty(workspace['projectId']) || !nonEmpty(workspace['workspaceId'])) {
+    return invalid('removeWorkspace requires a workspace scope with projectId and workspaceId');
+  }
+  const projectId = workspace['projectId'];
+  const workspaceId = workspace['workspaceId'];
+  const requestId = rawMeta['requestId'];
+  if (!nonEmpty(requestId)) return invalid('removeWorkspace requires meta.requestId');
+  const expected = parseExpected(rawMeta['expected'], { projectId, workspaceId });
+  if (expected.status !== 'ok') return expected;
+  if (contribution.events.length !== 0) {
+    return invalid('the workspace removal contribution must not carry its own events');
+  }
+  if (ctx.signal.aborted) return rejected('cancelled', 'the workspace removal was cancelled before admission');
+
+  // WD-21: the receipt identity is the requested workspace, not the public request id; the fingerprint
+  // carries the same body scope so the same workspace replays and a different scope conflicts.
+  const identityKey = REMOVE_WORKSPACE_PREFIX + `${projectId}:${workspaceId}`;
+  const fingerprint = fingerprintOf({ projectId, workspaceId });
+  if (fingerprint.status !== 'ok') return fingerprint;
+  const binding: ReplayBinding<{ workspace: WorkspaceSnapshot; releasedClaims: number }> = {
+    identityKey, projectId, requestId, actor: bound.actor, requestScoped: false,
+    decode: decodeProjectWorkspaceRemovedEvent,
+  };
+
+  const admission = await admitByIdentity(deps.records, identityKey, fingerprint.value, binding);
+  if (admission.status === 'result') return admission.result;
+  if (bound.signal.aborted) return rejected('cancelled', 'the workspace removal was cancelled before commit');
+
+  const registration = await readWorkspaceRegistration(deps, ctx, { projectId, workspaceId });
+  if (registration.status === 'not_found') {
+    return rejected('not_found', `workspace ${workspaceId} does not exist`);
+  }
+  if (registration.status === 'not_ready') {
+    return rejected('unavailable', 'the workspace removal registration read is not ready');
+  }
+  if (registration.status !== 'ready') return registration;
+  const current = registration.value.workspace;
+  const at = deps.now();
+  const next = nextWorkspaceRemoved(current, at);
+  const releasedClaims = contribution.claims.filter(
+    (claim) => claim.expectedOwner !== null && claim.nextOwner === null).length;
+  const event: ProjectWorkspaceRemovedEventV1 = {
+    eventId: deps.eventId(),
+    eventType: PROJECT_WORKSPACE_REMOVED_EVENT,
+    schemaVersion: PROJECT_BOOTSTRAP_EVENT_SCHEMA_VERSION,
+    occurredAt: at,
+    identityKey,
+    fingerprint: fingerprint.value,
+    projectId,
+    actor: cloneActorRef(bound.actor),
+    requestId,
+    payload: { value: next, releasedClaims },
+  };
+  const workspaceKey = canonicalJson(current.ref as unknown as JsonValue);
+  return commitBootstrap(deps.records, {
+    binding, signal: bound.signal, fingerprint: fingerprint.value,
+    guards: [...contribution.guards, { refKey: workspaceKey, expectedRevision: current.revision }],
+    records: [encodeWorkspaceSnapshot(next), ...contribution.records],
+    claims: contribution.claims,
+    ...(contribution.commitCursorBindings === undefined
+      ? {}
+      : { commitCursorBindings: contribution.commitCursorBindings }),
+    event: encodeProjectWorkspaceRemovedEvent(event),
+    fresh: { workspace: next, releasedClaims },
   });
 }
 
@@ -1159,6 +1272,8 @@ export function createProjectBootstrapServices(deps: ProjectBootstrapDependencie
     projects: {
       createProject: (ctx, request) => createProject(bootstrapDeps, ctx, request),
       registerWorkspace: (ctx, request) => registerWorkspace(bootstrapDeps, ctx, request),
+      // WD-21: the workspace removal command (one commit with the region fragment).
+      removeWorkspace: (ctx, request, contribution) => removeWorkspaceRecord(bootstrapDeps, ctx, request, contribution),
       // R6 execution-entry registration read: one exact Project/Workspace read
       // for the trusted Host; it writes nothing and returns the real revisions.
       readWorkspaceRegistration: (ctx, scope) => readWorkspaceRegistration(bootstrapDeps, ctx, scope),

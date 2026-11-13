@@ -83,6 +83,8 @@ export const ArchitectureProposalBatchFields = {
   ops: f.array(f.json(), { min: 1 }),
   responsibilityMoves: f.array(f.json()),
   digest: f.sha256(),
+  knowledgeConflict: f.optional(f.object({ noticeId: id })),
+  plannedFiles: f.optional(f.sha256()),
 };
 
 /** One project's proposals in proposal-id order, for the pending set and the read. */

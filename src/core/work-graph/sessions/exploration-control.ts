@@ -5,6 +5,7 @@
  * The region-batch repropose creates the follow-up operation via the one shared birth.
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+import type { OperationRef } from '../../../contracts/core/operations.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import type { GraphWrite } from '../model/task-contracts.js';
@@ -25,8 +26,11 @@ import { newExplorationFollowUpAction } from '../state/exploration-followup.js';
 import {
   readColdStartRecord, readWorkspaceJoinRecord, type ColdStartServiceDeps,
 } from './cold-start-service.js';
-import { ensureExplorationFollowUp, reproposeSourcesOf } from './exploration-followup-service.js';
-import { roleLineOperationCommit } from './role-line-operation-write.js';
+import {
+  ensureExplorationFollowUp, repairNoticeOf, repairReadBase, reproposeSourcesOf,
+} from './exploration-followup-service.js';
+import { failedRoleLineRecordOf } from './role-line-operations.js';
+import { roleLineOperationCommit, writeRoleLineOperation } from './role-line-operation-write.js';
 import { trustedContext } from './trusted-context.js';
 import type { executeWriteCommand } from '../persistence/command-executor.js';
 
@@ -105,15 +109,20 @@ async function unansweredGroupTails(deps: ExplorationControlDeps, ctx: CoreCallC
   return { status: 'ready', value: tails };
 }
 
-export function createExplorationControl(deps: ExplorationControlDeps): {
+export type ExplorationControlPort = {
   stop(ctx: CoreCallContext, request: GraphWrite<{ workspace: WorkspaceInput }>):
     Promise<WriteResult<ExplorationControlViewV1>>;
   resume(ctx: CoreCallContext, request: GraphWrite<{ workspace: WorkspaceInput }>):
     Promise<WriteResult<ExplorationControlViewV1>>;
   beginRepropose(ctx: CoreCallContext, input: {
     projectId: string; workspaceId: string; batchRef: ArchitectureProposalBatchRef; reason: string;
-  }): Promise<WriteResult<{ target: 'coarse_split' | 'followup'; operation: RoleLineOperationV1['ref'] }>>;
-} {
+  }): Promise<WriteResult<{ target: 'coarse_split' | 'followup'; operation: OperationRef }>>;
+  /** WD-03/04: mark the join failed and abort its entered rounds; no join or an already ended one is a rejection. */
+  endJoin(ctx: CoreCallContext, input: { projectId: string; workspaceId: string }):
+    Promise<WriteResult<{ operation: OperationRef; revision: number; ended: boolean }>>;
+};
+
+export function createExplorationControl(deps: ExplorationControlDeps): ExplorationControlPort {
   async function controlWrite(ctx: CoreCallContext, request: GraphWrite<{ workspace: WorkspaceInput }>,
     command: 'stop' | 'continue'): Promise<WriteResult<ExplorationControlViewV1>> {
     const trusted = trustedContext(ctx, 'an exploration control write');
@@ -169,6 +178,36 @@ export function createExplorationControl(deps: ExplorationControlDeps): {
       replayed: written.replayed, cursor: written.cursor };
   }
 
+  /** WD-03/04: the owner's one way to end a join a person withdrew. Only the real failed-record write is
+   *  committed; a missing or already ended join is a rejection, never a fake `committed` with a zero cursor. */
+  async function endJoin(ctx: CoreCallContext, input: { projectId: string; workspaceId: string }):
+    Promise<WriteResult<{ operation: OperationRef; revision: number; ended: boolean }>> {
+    const trusted = trustedContext(ctx, 'a join end write');
+    if (!trusted.ok) return trusted.rejection;
+    const join = await readWorkspaceJoinRecord(deps.records, input.projectId, input.workspaceId);
+    if (join.status === 'rejected') return join;
+    if (join.status === 'not_found') return rejected('not_found', 'this workspace has no join operation');
+    const prior = join.value.record;
+    if (prior.phase !== 'accepted' && prior.phase !== 'running') {
+      return rejected('invalid', 'the join operation already ended');
+    }
+    // WD-04: the same target read and unanswered-tail read `stop` uses; the Runtime only aborts entered rounds.
+    const target = await findTarget(deps, input, true);
+    if (target.status !== 'ready') return targetReadFailure(target);
+    const tails = await unansweredGroupTails(deps, ctx, target.value);
+    if (tails.status !== 'ready') return targetReadFailure(tails);
+    const next = failedRoleLineRecordOf(prior, prior.action,
+      rejected('cancelled', 'the join was withdrawn'), deps.now());
+    const written = await writeRoleLineOperation(deps, ctx, prior, next,
+      { commandId: `workspace-join-end:${input.workspaceId}`,
+        fingerprintInput: { workspaceId: input.workspaceId } });
+    if (written.status !== 'committed') return written;
+    if (tails.value.length > 0) await deps.cancel(ctx, tails.value.map((tail) => tail.queryRunRef));
+    return { status: 'committed',
+      value: { operation: { ...prior.ref }, revision: written.value.revision, ended: true },
+      replayed: written.replayed, cursor: written.cursor };
+  }
+
   async function beginRepropose(ctx: CoreCallContext, input: {
     projectId: string; workspaceId: string; batchRef: ArchitectureProposalBatchRef; reason: string;
   }): Promise<WriteResult<{ target: 'coarse_split' | 'followup'; operation: RoleLineOperationV1['ref'] }>> {
@@ -188,15 +227,21 @@ export function createExplorationControl(deps: ExplorationControlDeps): {
         if (source.region === null) return rejected('invalid', 'a region batch source names no region block');
         modules.set(source.region.moduleId, { ...source.region });
       }
+      // KC-3: “不对，重新提” on a repair batch is another repair of the same notice (its source round's operation says
+      // which): its base is the record, and its question carries the places that round was given (计划 :198).
+      const notice = await repairNoticeOf(deps.records, first.operation);
+      if (notice.status !== 'ready') return notice;
       // R-18: the follow-up's base pin is the window at its birth, not the rejected batch's older pin.
-      const window = await readCurrentCatalogWindow(deps.records, input.projectId, { lines: deps.knowledge, caller: ctx });
+      const window = await readCurrentCatalogWindow(deps.records, input.projectId,
+        { lines: deps.knowledge, caller: ctx, ...repairReadBase(notice.value) });
       if (window.status !== 'ready') {
         return window.status === 'rejected' ? window
           : rejected('invalid', 'the project has no current architecture window');
       }
+      const places = notice.value === null ? null : first.operation.action.followUp?.reason ?? null;
       const action = newExplorationFollowUpAction({ depth: explorationDepthOf(first.operation.action), kind: 'repropose',
-        moduleRefs: [...modules.values()], reason: input.reason, sourceBatchRef: input.batchRef,
-        baseCatalogPin: catalogPinOf(window) });
+        moduleRefs: [...modules.values()], reason: places === null ? input.reason : `${places}\n\n${input.reason}`,
+        sourceBatchRef: input.batchRef, baseCatalogPin: catalogPinOf(window) });
       const scopedCtx: CoreCallContext = ctx.workspaceId === first.round.queryRunRef.workspaceId
         ? ctx : { ...ctx, workspaceId: first.round.queryRunRef.workspaceId };
       const born = await ensureExplorationFollowUp({ records: deps.records, sessions: deps.sessions, now: deps.now },
@@ -251,5 +296,6 @@ export function createExplorationControl(deps: ExplorationControlDeps): {
     stop: (ctx, request) => controlWrite(ctx, request, 'stop'),
     resume: (ctx, request) => controlWrite(ctx, request, 'continue'),
     beginRepropose,
+    endJoin,
   };
 }

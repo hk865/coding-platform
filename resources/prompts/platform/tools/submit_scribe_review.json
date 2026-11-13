@@ -1,0 +1,8 @@
+{
+  "description": "The only way to give this round's conclusion on a long command. Fill the fields and call it; the platform adds the command facts and stores the answer. Do not write the answer as text.",
+  "parameters": {
+    "conclusion": "normal (it looks fine: write your note with record_note first), adviser (abnormal: the platform stops the command and tells the responsible adviser) or human (a person should look: the platform tells the person and does not stop the command).",
+    "nextReviewInMs": "Only when conclusion is normal: how long until the next look, in milliseconds (a positive integer).",
+    "reason": "One plain sentence for the adviser or the person; not empty."
+  }
+}

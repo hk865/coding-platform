@@ -17,7 +17,7 @@ import type { PreparedQueryExecution, PreparedQueryManifestV1 } from '../../cont
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
 import type { ModelCallAccess, RunRef } from '../../contracts/dispatch.js';
 import { queryExecutionBindingOf, type QueryModelUsageV1, type QueryRunRef } from '../../contracts/query-job.js';
-import { unknownCallAdviceSubjectOfText } from '../../contracts/plan-round.js';
+import { commandRerunAdviceSubjectOfText, unknownCallAdviceSubjectOfText } from '../../contracts/plan-round.js';
 import type { GoalRef } from '../../contracts/ledger.js';
 import type { HookPort, ToolCall } from '../../../vendor/coding-agent/dist/public-api.js';
 import { canonicalJson, canonicalKey, sameJson as sameRef, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
@@ -47,6 +47,7 @@ import { projectQueryConfiguration } from './query-preparation.js';
 import { createQueryObservation } from './query-observation.js';
 import { createQuerySourceCaptureFactory } from './source-capture-access.js';
 import { createSessionHistoryCursorOwner } from './session-operations.js';
+import { reconcileQueryRunAtStartup } from './run-reconcile.js';
 import {
   COMPACTION_DEFAULTS, compactionAtStart, runSummaryCall, type CompactionWriteResult, type SummaryCallOptions,
 } from './compaction.js';
@@ -459,10 +460,19 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       if (shape === 'unknown_call_advice' && adviceSubject === null) {
         return rejected('invalid', 'the adviser round names no record subject');
       }
+      // The rerun round's subject comes the same way; its history Run is the blocking record's Run (121-110).
+      const rerunSubject = shape === 'command_rerun_advice'
+        ? commandRerunAdviceSubjectOfText(record.job.job.intent.question) : null;
+      if (shape === 'command_rerun_advice' && rerunSubject === null) {
+        return rejected('invalid', 'the rerun round names no request subject');
+      }
       let subjectRunRef: RunRef | null = null;
       if (historyNames.length > 0) {
         if (adviceSubject !== null) {
           const { projectId, goalId, runId } = adviceSubject.reviewRef;
+          subjectRunRef = { aggregateType: 'Run', projectId, goalId, runId };
+        } else if (rerunSubject !== null) {
+          const { projectId, goalId, runId } = rerunSubject.reviewRef;
           subjectRunRef = { aggregateType: 'Run', projectId, goalId, runId };
         } else {
           const packet = execReviewPacketOfText(record.job.job.intent.question);
@@ -671,6 +681,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
             names: submitNames,
             texts: toolTexts,
             ...(adviceSubject === null ? {} : { subject: adviceSubject }),
+            ...(rerunSubject === null ? {} : { rerunSubject }),
           });
         }
         const names = [
@@ -757,6 +768,9 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       if (begun.status !== 'committed') return begun;
       if (begun.replayed) return observation.observe(owned, { queryRunRef });
       const ticket = begun.value;
+      let enteredFailure: CoreRejection | undefined;
+      let enteredDone = false;
+      try {
       if (ticket.consumerId !== consumerId || !sameRef(ticket.kernel, kernel)) {
         return rejected('unavailable', 'the committed Query entry ticket disagrees with the fresh begin');
       }
@@ -908,8 +922,6 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
 
       const turnStop = new AbortController();
       const turnKey = canonicalKey(queryRunRef);
-      let enteredFailure: CoreRejection | undefined;
-      let enteredDone = false;
       const shouldPause = (reason: string): { point: 'before_model'; kind: 'pause'; reason: string } => ({ point: 'before_model', kind: 'pause', reason });
       const enteredHook: HookPort = {
         hookId: 'r5b-query-entered', point: 'before_model', priority: 1_000_000,
@@ -1089,6 +1101,29 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       // A throw before the Turn entered leaves nothing to observe; after entry the observed result wins.
       if (thrown !== undefined && !enteredDone) return rejected('unavailable', `running the Query failed: ${messageOf(thrown)}`);
       return reconciled;
+      } finally {
+        // Only a begin that committed with no entered write and no entered failure: the classifier decides.
+        if (!enteredDone && enteredFailure === undefined) await settleUnentered(owned);
+      }
+
+      async function settleUnentered(ctx: CoreCallContext): Promise<void> {
+        if (deps.hostInstanceId === undefined) return;
+        const read = await queryExecution.readQueryExecution(ctx, queryRunRef);
+        if (read.status !== 'ready') return;
+        const signal = new AbortController().signal;
+        const owner = createSessionHistoryCursorOwner({ kernelStores: deps.kernelStores });
+        const probe = await owner.probe({ session: read.value.session, signal });
+        // Only a readable Kernel proves the entering Turn absent. A missing/damaged
+        // Kernel or a probe that proves nothing leaves the row to the start-up
+        // reconcile, the same fallback as an unreadable record.
+        if (probe.verdict !== 'ready') return;
+        await reconcileQueryRunAtStartup(
+          { owner, ...(deps.messages === undefined ? {} : { messages: deps.messages }),
+            queries: queryExecution, observeQuery: (ctx, request) => observation.observe(ctx, request) },
+          { ...ctx, signal },
+          { record: read.value, hostInstanceId: deps.hostInstanceId, probe,
+            notEnteredCloseMessage: 'aborted_before_entry' });
+      }
     },
     cancel(request) {
       const ref = isRecord(request) ? request.queryRunRef : undefined;

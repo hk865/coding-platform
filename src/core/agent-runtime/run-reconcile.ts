@@ -577,7 +577,8 @@ const QUERY_TERMINAL: readonly string[] = ['completed', 'failed', 'cancelled', '
  */
 export async function reconcileQueryRunAtStartup(
   deps: QueryReconcileClassifierDependencies, ctx: CoreCallContext,
-  input: { record: QueryExecutionRecord; hostInstanceId: string; probe: SessionMappingProbe },
+  input: { record: QueryExecutionRecord; hostInstanceId: string; probe: SessionMappingProbe;
+    notEnteredCloseMessage?: 'host_restart_before_entry' | 'aborted_before_entry' },
 ): Promise<QueryReconcileReport> {
   const { record, hostInstanceId, probe } = input;
   const queryRunRef = record.run.ref;
@@ -589,6 +590,7 @@ export async function reconcileQueryRunAtStartup(
     const reconcile = deps.queries.reconcileQueryRun;
     if (reconcile === undefined) return { queryRunRef, row, status: 'failed', reason: 'the Query reconcile writer is not configured' };
     const written = await reconcile(ctx, { input: { queryRunRef, hostInstanceId, probe: probe.verdict, inputsConfirmed, result,
+      ...(input.notEnteredCloseMessage === undefined ? {} : { notEnteredCloseMessage: input.notEnteredCloseMessage }),
       ...(activity === undefined ? {} : { activity }) },
       meta: { requestId: `a2-query-reconcile:${hostInstanceId}:${queryRunRef.runId}:${String(record.run.revision)}`,
         expected: [{ ref: queryRunRef, revision: record.run.revision }] } });

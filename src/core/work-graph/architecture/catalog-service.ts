@@ -49,6 +49,7 @@ import { KNOWLEDGE_WRITE_UNCONFIRMED, pendingKnowledgeWrites } from '../knowledg
 import type {
   KnowledgeArchitecture, KnowledgeBaselineV1, KnowledgeCaller, KnowledgeLineScope, KnowledgeLines, LineKnowledge,
 } from '../model/line-knowledge.js';
+import type { KnowledgeReadBaseV1 } from '../../../contracts/knowledge.js';
 import type {
   AdoptedArchitecture, AdoptInitialArchitectureInput, ArchitectureBaselineContentV1, ArchitectureBaselineRevisionSnapshot,
   ArchitectureCatalogPort, ArchitectureCatalogRecord, ArchitectureCatalogRef, ArchitectureRevision,
@@ -93,8 +94,11 @@ export type ArchitectureCatalogStores = {
   knowledge: KnowledgeLines;
 };
 
-/** The knowledge lines a current read takes and the caller it reads them for. */
-export type KnowledgeRead = { lines: KnowledgeLines; caller: KnowledgeCaller };
+/**
+ * The knowledge lines a current read takes and the caller it reads them for. `base: 'recorded'` (KC-3, only a
+ * knowledge_conflict repair passes it) reads the catalog the records last adopted instead of the files.
+ */
+export type KnowledgeRead = { lines: KnowledgeLines; caller: KnowledgeCaller; base?: KnowledgeReadBaseV1 };
 
 const ADOPT_IDENTITY_PREFIX = 'architecture-catalog-adopt:';
 const ADOPT_COMMAND_TYPE = 'AdoptInitialArchitecture';
@@ -408,8 +412,9 @@ export type CurrentCatalogWindow =
  * uses: the region adviser of a knowledge conflict (the composition root's
  * `regionAdvisersOf`, while a conflict keeps the file read unavailable), the
  * "written by the platform" verdict of a knowledge file (KC-1), KC-2's third
- * recovery source and KC-3's base. Every other read of the current architecture
- * is `readCurrentCatalogWindow`.
+ * recovery source and KC-3's base (`readCurrentCatalogWindow` with `base: 'recorded'`,
+ * a repair round's reads). Every other read of the current architecture is
+ * `readCurrentCatalogWindow`.
  */
 export async function readRecordedCatalogWindow(records: Pick<GoalRecordTransactionPort, 'readMany'>,
   projectId: string): Promise<CurrentCatalogWindow> {
@@ -464,6 +469,8 @@ export async function readRecordedCatalogWindow(records: Pick<GoalRecordTransact
  */
 export async function readCurrentCatalogWindow(records: Pick<GoalRecordTransactionPort, 'readMany'>,
   projectId: string, knowledge: KnowledgeRead): Promise<CurrentCatalogWindow> {
+  // KC-3 (121-106 ②): a repair round's base is the last adopted catalog; the same window, no file read.
+  if (knowledge.base === 'recorded') return readRecordedCatalogWindow(records, projectId);
   const recorded = await readRecordedCatalogWindow(records, projectId);
   if (recorded.status !== 'ready') return recorded;
   const { baseline, catalog, guards, activeRevision } = recorded;
@@ -523,12 +530,15 @@ export function knowledgeBaselineOf(content: ArchitectureBaselineContentV1): Kno
     ...(content.dependencyRules === undefined ? {} : { dependencyRules: content.dependencyRules }) };
 }
 
-/** Every line's architecture file changes for one project-view catalog (each line keeps its own workspace's part). */
+/**
+ * Every line's architecture file changes for one project-view catalog (each line keeps its own workspace's part).
+ * `replace` (KC-3: only a knowledge_conflict repair batch) lets the writer overwrite bad and same-id module files.
+ */
 export async function architectureWritePlansOf(lines: readonly LineKnowledge[], catalog: AdoptedArchitecture,
-  baseline: KnowledgeBaselineV1): Promise<StoreResult<KnowledgeWritePlan[]>> {
+  baseline: KnowledgeBaselineV1, replace = false): Promise<StoreResult<KnowledgeWritePlan[]>> {
   const plans: KnowledgeWritePlan[] = [];
   for (const line of lines) {
-    const changes = await line.writeModule(catalog, baseline);
+    const changes = await line.writeModule(catalog, baseline, replace);
     if (changes.status !== 'ready') return changes;
     plans.push({ line, changes: changes.value });
   }
@@ -944,8 +954,13 @@ export function createArchitectureCatalogService(stores: ArchitectureCatalogStor
     const projectId = ctx?.projectId;
     if (!nonEmpty(projectId)) return forbidden('a bound project call context is required');
     if (selection['kind'] === 'current') {
-      if (!exactKeys(selection, ['kind'])) return invalid('a current selection carries only kind');
-      const current = await readCurrentCatalogWindow(records, projectId, { lines: knowledge, caller: ctx });
+      const base = selection['base'];
+      if (!exactKeys(selection, base === undefined ? ['kind'] : ['kind', 'base']) || (base !== undefined
+        && base !== 'current' && base !== 'recorded')) {
+        return invalid('a current selection carries kind and an optional base of current or recorded');
+      }
+      const current = await readCurrentCatalogWindow(records, projectId,
+        { lines: knowledge, caller: ctx, ...(base === 'recorded' ? { base } : {}) });
       if (current.status !== 'ready') return current;
       return { status: 'ready', value: { baseline: current.baseline, catalog: current.catalog } };
     }

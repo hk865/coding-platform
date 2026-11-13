@@ -10,8 +10,8 @@
  * workspace's `architecture.json`; the baseline fields are written only in the
  * main workspace's, and a second workspace's read leaves them out (the same
  * checkout may be another project's main workspace). A read-back validates the raw catalog with the catalog's own
- * validator before it turns into the project view, and any bad file, duplicate
- * id or dangling reference makes the whole read invalid: never half a catalog.
+ * validator before it turns into the project view, and any problem `knowledgeProblemsOf` names but a path claimed
+ * by two modules makes the whole read invalid: never half a catalog.
  */
 import type { ModuleRef } from '../../../contracts/core/identity.js';
 import {
@@ -494,51 +494,24 @@ export function architectureFilesOf(project: AdoptedArchitecture, baseline: Know
 }
 
 /**
- * One line's architecture files back to the project view: exact keys, then the
- * conflicts that make the catalog unreadable, every module reachable from the
- * roots through `contains`, the catalog validator on the raw ids, and only then
- * the project view. A path claimed by two modules is not a read failure.
+ * One line's architecture files back to the project view. KC-3 (ruling 4-6, Q3): what makes the files unreadable is
+ * judged once, by `knowledgeProblemsOf` (the notice's own rows); every kind but a path claimed by two modules refuses
+ * the read, and the first such row in its order is the reason, with the files it names (the read names them, as it
+ * always did). The catalog validator's reason is its `other` row; only then the project view.
  */
 export function architectureOfFiles(architecture: Uint8Array, modules: readonly { path: string; bytes: Uint8Array }[],
   scope: KnowledgeLineScope, projectId: string): DecodeResult<KnowledgeArchitecture> {
   const { workspaceId, mainWorkspaceId } = scope;
   const invalid = (reason: string): DecodeResult<never> => ({ status: 'invalid', reason });
   const index = architectureFileOf(architecture, workspaceId === mainWorkspaceId);
-  if (typeof index === 'string') return invalid(index);
+  const fileIssues: KnowledgeIssueV1[] = typeof index === 'string' ? [{ path: ARCHITECTURE_FILE_PATH, reason: index }] : [];
   const parsed: { path: string; file: ModuleFileV1 }[] = [];
   for (const module of modules) {
     const file = moduleFileOf(module.path, module.bytes);
-    if (typeof file === 'string') return invalid(file);
-    parsed.push({ path: module.path, file });
+    if (typeof file === 'string') fileIssues.push({ path: module.path, reason: file });
+    else parsed.push({ path: module.path, file });
   }
-  // Duplicate ids are refused by `validateAdoptedArchitecture` below like every other structural fault; the
-  // conflict verdict adds only what it alone says: a dangling reference names the missing target id (ruling 1).
-  const dangling = knowledgeConflictsOf(modules, scope).filter(entry => entry.kind === 'dangling_reference');
-  if (dangling.length > 0) {
-    return invalid(dangling.map(entry => `${entry.kind} ${entry.moduleId} (missing): ${entry.paths.join(', ')}`).join('; '));
-  }
-  const undeclared = parsed.filter(entry => entry.file.contains === undefined).map(entry => entry.path);
-  if (undeclared.length > 0 && undeclared.length < parsed.length) {
-    return invalid(`either every module file or none carries contains: ${undeclared.sort(compare).join(', ')}`);
-  }
-  const declared = parsed.length > 0 && undeclared.length === 0;
-  const byId = new Map(parsed.map(entry => [entry.file.id, entry.file]));
-  const ownIds = [...index.modules, ...index.crossWorkspace.dependsOn.map(edge => edge.from),
-    ...index.crossWorkspace.contains.map(edge => edge.parent)];
-  const unknown = ownIds.find(id => !byId.has(id));
-  if (unknown !== undefined) return invalid(`${ARCHITECTURE_FILE_PATH}: the module ${unknown} has no module file`);
-  const reached = new Set<string>();
-  const queue = [...index.modules];
-  while (queue.length > 0) {
-    const id = queue.pop()!;
-    if (reached.has(id)) continue;
-    reached.add(id);
-    queue.push(...(byId.get(id)?.contains ?? []));
-  }
-  const unreached = parsed.filter(entry => !reached.has(entry.file.id)).map(entry => entry.path);
-  if (unreached.length > 0) {
-    return invalid(`not reachable from the roots of ${ARCHITECTURE_FILE_PATH}: ${unreached.sort(compare).join(', ')}`);
-  }
+  const declared = parsed.length > 0 && parsed.every(entry => entry.file.contains !== undefined);
   const ref = (id: string): ModuleRef => ({ projectId, moduleId: id });
   const checked = validateAdoptedArchitecture({
     modules: parsed.map(({ file }) => ({ ref: ref(file.id), name: file.name, responsibility: file.responsibility,
@@ -549,8 +522,18 @@ export function architectureOfFiles(architecture: Uint8Array, modules: readonly 
     ...(declared ? { containment: { parentOf: parsed.flatMap(({ file }) => (file.contains ?? [])
       .map(child => ({ parent: ref(file.id), child: ref(child) }))) } } : {}),
   }, projectId);
+  const refused = knowledgeProblemsOf({ architecture, modules, fileIssues,
+    graphReason: checked.status === 'ok' ? null : checked.reason, projectReason: null, scope })
+    .find(problem => problem.kind !== 'path_claimed_by_two_modules');
+  if (refused !== undefined && refused.kind !== 'other') {
+    return invalid(`${refused.reason}（文件：${refused.paths.join('、')}）`);
+  }
+  // A bad architecture.json is its bad_file row above (this only narrows the type).
+  if (typeof index === 'string') return invalid(index);
+  // The validator's reason is the `other` row's own (the notice prefixes it); a path claimed by two modules (it reads)
+  // hides that row (4-6: one fallback only when no place names a file), so the validator refuses here either way.
+  if (checked.status !== 'ok') return invalid(checked.reason);
   const allPaths = [ARCHITECTURE_FILE_PATH, ...parsed.map(entry => entry.path).sort(compare)].join(', ');
-  if (checked.status !== 'ok') return invalid(`${checked.reason}: ${allPaths}`);
   try {
     const viewRef = (id: string): ModuleRef => ref(projectModuleId(workspaceId, id, mainWorkspaceId));
     const fileRef = (id: string): ModuleRef => ref(projectModuleIdOfFile(id, workspaceId, mainWorkspaceId));

@@ -42,6 +42,7 @@ import { exactKeys } from './architecture-service.js';
 import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
 import type { CatalogPlanFactsPort, CatalogResponsibilityPort } from '../model/catalog-revision-ports.js';
 import type { KnowledgeLines } from '../model/line-knowledge.js';
+import type { KnowledgeReadBaseV1 } from '../../../contracts/knowledge.js';
 
 /** The catalog service imports the move check from here; its one definition is in repair-ops. */
 export { catalogRevisionMovesProblem };
@@ -52,6 +53,8 @@ export type CatalogRevisionInputV1 = {
   responsibilityMoves: ResponsibilityMoveV1[];
   reason: string;
   commandId: string;
+  /** KC-3: a knowledge_conflict repair batch plans on the last adopted catalog (`readCurrentCatalogWindow`'s base). */
+  base?: KnowledgeReadBaseV1;
 };
 
 export type CatalogRevisionContribution = CommitFragment & {
@@ -163,8 +166,9 @@ export async function draftCatalogRevision(deps: CatalogRevisionDependencies, ct
   input: CatalogRevisionInputV1): Promise<ReadResult<CatalogRevisionDraft>> {
   const actor = revisionHostActorOf(ctx);
   if ('status' in actor) return actor;
-  if (!isRecord(input) || !exactKeys(input, ['expected', 'ops', 'responsibilityMoves', 'reason', 'commandId'])) {
-    return invalid('a catalog revision requires expected, ops, responsibilityMoves, reason and commandId');
+  if (!isRecord(input) || !exactKeys(input, ['expected', 'ops', 'responsibilityMoves', 'reason', 'commandId',
+    ...(input.base === undefined ? [] : ['base'])])) {
+    return invalid('a catalog revision requires expected, ops, responsibilityMoves, reason, commandId and an optional base');
   }
   if (!nonEmpty(input.commandId)) return invalid('a catalog revision requires a commandId');
   if (typeof input.reason !== 'string' || input.reason.length === 0) return invalid('a catalog revision requires a reason');
@@ -182,7 +186,8 @@ export async function draftCatalogRevision(deps: CatalogRevisionDependencies, ct
   if (!parsed.ok) return invalid(parsed.problem.reason);
   const ops = parsed.ops;
 
-  const current = await readCurrentCatalogWindow(deps.records, projectId, { lines: deps.knowledge, caller: ctx });
+  const current = await readCurrentCatalogWindow(deps.records, projectId, { lines: deps.knowledge, caller: ctx,
+    ...(input.base === undefined ? {} : { base: input.base }) });
   if (current.status === 'not_found') return rejected('incomplete', 'the project has no active architecture baseline to revise');
   if (current.status !== 'ready') return current;
   if (canonicalJson(catalogPinOf(current) as unknown as JsonValue)

@@ -1,5 +1,6 @@
 import type { ArchitectureReminderFactsV1 } from '../../contracts/architecture-observation.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
+import type { KnowledgeReadBaseV1 } from '../../contracts/knowledge.js';
 import type { WorkspaceScope } from '../../contracts/core/identity.js';
 import type {
   PreparedQueryManifestV1, PreparedTaskManifestV1, UnknownCallReviewInputV1,
@@ -168,6 +169,8 @@ export interface ContextAssembler {
     texts?: PromptTextsV1;
     toolNames: readonly string[];
     history: ContextQueryHistoryInputV1;
+    /** KC-3: the role_exploration round's read base (`recorded` for a knowledge_conflict repair round). */
+    base?: KnowledgeReadBaseV1;
     /** The successor's frozen record 5, read once by preparation; the recipe renders it into the role section. */
     record5?: Pick<FrozenHandoffBriefV1, 'binding' | 'material'>;
     /** The one facts value preparation read before the final tool list; the recipe never reads the port. */

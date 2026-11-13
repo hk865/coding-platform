@@ -39,7 +39,9 @@ export type TaskGateSource = 'review_unreadable' | 'review_round_in_flight' | 'r
   /** K3-46: this advance already failed this card's ②; never select it again in the same advance. */
   | 'review_application_failed'
   /** K3 layering (121-109): the record waits for its adviser round. */
-  | 'awaiting_advice';
+  | 'awaiting_advice'
+  /** 121-110: a command rerun request of the Task waits for its adviser round. */
+  | 'awaiting_rerun_advice';
 export type TaskGate =
   | { kind: 'pass' }
   | { kind: 'skip'; source: TaskGateSource;
@@ -71,6 +73,8 @@ export type TaskGateDependencies = {
   /** K3 layering (009): one step of an `awaiting_advice` record's adviser round. */
   adviserRound(owned: Owned, base: Base, goal: GoalSnapshot, task: RuntimeTask, review: UnknownCallReviewV1):
     Promise<ReviewGate>;
+  /** 121-110: one step of the Task's `awaiting_advice` command rerun request's adviser round; `pass` when none. */
+  commandRerunRound(owned: Owned, base: Base, goal: GoalSnapshot, task: RuntimeTask): Promise<ReviewGate>;
 };
 export type TaskGateFunctions = {
   reviewGate(owned: Owned, base: Base, config: WorkflowHostConfiguration, goal: GoalSnapshot,
@@ -190,7 +194,7 @@ export function goalWaitBasisOf(goal: Pick<GoalSnapshot, 'ref'>, reasons: readon
 
 export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
   const deps = gate.workflow;
-  const { bindingForRole, isUnadmittedStarting, claimContinuation, reviewAdviserOf, adviserRound } = gate;
+  const { bindingForRole, isUnadmittedStarting, claimContinuation, reviewAdviserOf, adviserRound, commandRerunRound } = gate;
 
   /** §3.13 item 4: the ONE terminal-state judgment shared by the rework and handoff block arms. */
   function blockCardReleased(state: DecisionCardV1['state']): boolean {
@@ -246,7 +250,8 @@ export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
    * UR7, UR7b and UR8 are group 4: a `held` record or a decided status falls
    * through here and the owner guards still block the claim. K3 layering: both
    * settlements name whether the record has an adviser, and an
-   * `awaiting_advice` record goes to its adviser round (`adviserRound`).
+   * `awaiting_advice` record goes to its adviser round (`adviserRound`). A
+   * command rerun request waiting for its adviser comes first (121-110).
    */
   async function reviewGate(
     owned: Owned, base: Base, config: WorkflowHostConfiguration, goal: GoalSnapshot,
@@ -254,6 +259,10 @@ export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
   ): Promise<ReviewGate> {
     const port = deps.unknownCallReviews;
     if (port === undefined || row.execution === null) return { kind: 'pass' };
+    // 121-110: the Task's rerun request waiting for its adviser, whichever Run's record blocked the command (usually
+    // an earlier Run's, not the selected one).
+    const rerun = await commandRerunRound(owned, base, goal, task);
+    if (rerun.kind !== 'pass') return rerun;
     let read;
     try { read = await port.readReview(owned.ctx, { runRef: row.execution }); }
     catch { return { kind: 'skip', source: 'review_unreadable' }; }

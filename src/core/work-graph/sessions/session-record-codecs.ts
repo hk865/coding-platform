@@ -442,8 +442,11 @@ export function checkSecretaryCreated(value: unknown): Problem {
 export function checkSessionCreationIntent(value: unknown): Problem {
   if (value === null) return null;
   if (!isRecord(value) || !hasOnlyKeys(value, ['duty', 'scope', 'reason', 'creator',
-    'delegationCeiling', 'secretaryCreated', 'name'])) {
-    return 'creation must be null or {duty,scope,reason,creator,delegationCeiling?,secretaryCreated?}';
+    'delegationCeiling', 'secretaryCreated', 'name', 'base'])) {
+    return 'creation must be null or {duty,scope,reason,creator,delegationCeiling?,secretaryCreated?,name?,base?}';
+  }
+  if (value['base'] !== undefined && value['base'] !== 'current' && value['base'] !== 'recorded') {
+    return 'creation base must be current or recorded';
   }
   if (!(PLATFORM_DUTIES as readonly string[]).includes(String(value['duty']))) return 'creation duty is not recognized';
   const scope = value['scope'];

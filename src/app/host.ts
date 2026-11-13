@@ -90,6 +90,7 @@ import {
 } from '../contracts/goal-decisions.js';
 import type { NoticeItemV1 } from '../core/work-graph/model/decision-contracts.js';
 import { compareNoticePositions } from '../core/work-graph/views/notice-position.js';
+import { missingQueryActivityGoalOf } from '../core/work-graph/views/activity-read-helpers.js';
 import { createChangeFeed } from './change-feed.js';
 import type { WorkflowAdvanceResult } from '../business/workflow/contracts.js';
 import { createCollaborationDriver } from './collaboration-driver.js';
@@ -121,7 +122,8 @@ import { plainSessionRefKey } from '../core/work-graph/sessions/session-record-c
 import { sessionMessageRefKey } from '../core/work-graph/sessions/message-record-codecs.js';
 import { EXPIRY_PAGE, type DueWaitPageInputV1 } from '../core/work-graph/communication/message-expiry.js';
 import type { ReadonlyCommandAccessInput, RuntimeHostBindings, ResolvedRuntimeConfiguration } from '../core/agent-runtime/execution-contracts.js';
-import type { ReadResult } from '../contracts/core/results.js';
+import type { CoreError, ReadResult } from '../contracts/core/results.js';
+import { messageOf } from '../contracts/error-message.js';
 import type { BootstrapExecution, BootstrapResponse, BootstrapReviewMaterial, CoreScope, WorkbenchActor } from './core-http-types.js';
 import {
   createHostRuntimeResolverRegistry,
@@ -134,6 +136,7 @@ import {
   type HostSettingsPrivateSnapshot,
   type HostSettingsStoredModel,
   type ChecksAdoptionHostCallbacks,
+  WORKSPACE_REMOVED_REASON,
 } from './host-settings.js';
 import type {
   ChecksAdoptionEntryPort, HostSettingsPort, OpenSettingsWorkspace, SettingsAccessFixed, SettingsResponse,
@@ -166,6 +169,8 @@ import { createWorkbenchServer, type WorkbenchAddress, type WorkbenchServer } fr
 import { createDiskPromptPackSource, isPathWithin } from './prompt-packs.js';
 import { createSecretaryProfiles } from './secretary-profiles.js';
 import { sendSystemRound } from './system-round.js';
+import { systemRoundContext, systemRoundRequestId, type SystemRoundV1 } from '../contracts/plan-round.js';
+import type { CommandReviewSubjectV1 } from '../contracts/scribe-review.js';
 import { exportBooks as readTaskbookExport, exportTaskbooksForPlan } from './taskbook-export.js';
 import { createSessionDutyResolver } from '../composition/session-duty.js';
 import type { SessionDutyResolver } from '../business/workflow/ports.js';
@@ -986,6 +991,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       // landed in; the sink is bound once the loop exists, and the platform
       // never drives a round by itself.
       requestWake: (scope, source) => { requestWakeSink?.(scope, source); },
+      // 121-112: the scribe's "look again" lands in this Host's review memory (`reviewedCommands`).
+      commandReviewNext: (subject, nextReviewInMs) => { scheduleCommandReview(subject, nextReviewInMs); },
       // C1: the cold start's exploration rounds run on the stage driver of the context's project; without it (no
       // request driver, no lease) those rounds wait where they are.
       coldStartStages: {
@@ -1699,7 +1706,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
 
   const buildBootstrap = (): BootstrapResponse => {
     const execution: BootstrapExecution = {
-      queryProfiles: runtimeProfiles.map(profile => ({
+      queryProfiles: runtimeProfiles.filter(profile => byScope.has(scopeKey(profile.scope))).map(profile => ({
         id: profile.id,
         label: profile.label,
         scope: { projectId: profile.scope.projectId, workspaceId: profile.scope.workspaceId },
@@ -2084,6 +2091,25 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     }
   }
 
+  /**
+   * WD-18: the Host's side of a committed withdrawal/removal. The registration, Kernel store, workflow binding and
+   * check configuration have no unregister API and are not read once the lists below drop the scope; nothing else is
+   * written. Admission cursors have no per-workspace entry and stay (E7).
+   */
+  function unmountWorkspace(scope: CoreScope): void {
+    const key = scopeKey(scope);
+    const workspaceIndex = workspaces.findIndex(workspace => scopeKey(workspace.scope) === key);
+    if (workspaceIndex >= 0) workspaces.splice(workspaceIndex, 1);
+    byScope.delete(key);
+    knowledgeRepoKeys.delete(key);
+    const workflowIndex = workflowScopes.findIndex(candidate => scopeKey(candidate) === key);
+    if (workflowIndex >= 0) workflowScopes.splice(workflowIndex, 1);
+    const goalWaitIndex = goalWaitRegistries.findIndex(candidate => scopeKey(candidate.scope) === key);
+    if (goalWaitIndex >= 0) goalWaitRegistries.splice(goalWaitIndex, 1);
+    workbenchTools.removeWorkspace(scope);
+    wakeLoop?.removeWorkspace(scope);
+  }
+
   async function openWorkspaceImpl(request: OpenSettingsWorkspace & { workspaceId?: string }): Promise<SettingsResponse<HostSettingsOpenedHost>> {
     const requestedProjectId = request.projectId;
     const isRestore = request.workspaceId !== undefined;
@@ -2199,6 +2225,12 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         projectRevision = projectRead.value.revision;
       }
       const existingRegistration = await platform.projects.readWorkspaceRegistration(ctx, scope);
+      // WD-19: a private restore of an already removed registration is not an open. A public open (no internal
+      // `workspaceId`) carries a new one and registers a new workspace id instead of reusing the removed one.
+      if (existingRegistration.status === 'ready' && existingRegistration.value.workspace.removedAt !== undefined
+        && isRestore) {
+        return { status: 'rejected', code: 'not_found', reason: WORKSPACE_REMOVED_REASON };
+      }
       // L8 (book ruling 1): only a registration THIS call wrote triggers a
       // capture. A start-up restore finds the existing registration ready and
       // is handled by `retryPending` alone.
@@ -2263,6 +2295,16 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     const location = registry.get(projectId)?.storeLocation ?? null;
     return location === null ? null : { place: location.place, reason: location.reason };
   };
+  /** WD-29: `busy` reads as a request conflict, the five settings codes keep their name and every other core code
+   *  (capacity, cancelled, ...) is unavailable; the reason is never rewritten. */
+  function settingsFailureOf(failure: { code: CoreError; reason: string }): SettingsResponse<never> {
+    const code: 'invalid' | 'forbidden' | 'not_found' | 'revision_conflict' | 'unavailable' =
+      failure.code === 'busy' ? 'invalid'
+        : failure.code === 'invalid' || failure.code === 'forbidden' || failure.code === 'not_found'
+          || failure.code === 'revision_conflict' || failure.code === 'unavailable' ? failure.code
+          : 'unavailable';
+    return { status: 'rejected', code, reason: failure.reason };
+  }
   const hostAssembly: HostSettingsAssembly = {
     listWorkspaces: () => workspaces.map(workspace => ({
       scope: { projectId: workspace.scope.projectId, workspaceId: workspace.scope.workspaceId },
@@ -2287,6 +2329,34 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       const previous = { writeAllowed: (config.writePrefixes?.length ?? 0) > 0, commandsAllowed: config.allowCommands === true };
       applyAccess(config, access);
       return { status: 'ready', value: previous };
+    },
+    // WD-28: core first, then the settings save (temporarily dropping the descriptor and selection, persist, notify),
+    // then unmount. A failed save keeps the mount so a retry reaches the core's `removedAt` branch.
+    removeWorkspace: async (scope, kind, save) => {
+      const platform = platformFor(scope.projectId);
+      if (platform === null) {
+        return { status: 'rejected', code: 'unavailable', reason: 'the project runtime is not available' };
+      }
+      const removals: (typeof platform.workspaces) | undefined = platform.workspaces;
+      if (removals === undefined) {
+        return { status: 'rejected', code: 'unsupported',
+          reason: 'the project platform does not publish workspace withdrawal and removal' };
+      }
+      const descriptor = workspaces.find(workspace => scopeKey(workspace.scope) === scopeKey(scope));
+      const request = {
+        input: { workspace: { ...scope }, name: descriptor?.name ?? scope.workspaceId },
+        meta: { requestId: `host-workspaces-${kind}:${scope.workspaceId}`, expected: [] },
+      };
+      const result = kind === 'withdraw'
+        ? await removals.withdraw(settingsContext(scope), request)
+        : await removals.remove(settingsContext(scope), request);
+      if (result.status !== 'committed') return settingsFailureOf(result);
+      try { await save(); }
+      catch (error) {
+        return { status: 'rejected', code: 'unavailable', reason: messageOf(error) };
+      }
+      unmountWorkspace(scope);
+      return { status: 'ready', value: result.value };
     },
     // KLS-2: the checkout through the one line resolution (the workspace must be the project's); the key the snapshot
     // reads is refreshed with it, so a folder made a git repository after it opened reads right from here on.
@@ -2835,6 +2905,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     identities: Set<string>; anchorNames: Set<string>;
     brokenIdentities: Set<string>;
     brokenCount: number; agedCount: number;
+    moduleRemoved: string[];
   };
   type ScribeReminderState = {
     lastCheckAtMs: number;
@@ -3208,15 +3279,18 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       if (todos.status !== 'ready') return null;
       const byScope = new Map<string, ScribeReminderBucket>();
       for (const group of todos.value) {
-        for (const [todo, updateDue] of [...group.pending.map((t) => [t, false] as const),
-          ...group.updateDueTodos.map((t) => [t, true] as const)]) {
+        for (const [todo, kind] of [...group.pending.map((t) => [t, 'pending'] as const),
+          ...group.updateDueTodos.map((t) => [t, 'updateDue'] as const),
+          ...group.moduleRemoved.map((t) => [t, 'moduleRemoved'] as const)]) {
           const scopeRead = await platform.notes.managingScopeOf(ctx, { todo, goalId: group.goalId });
           if (scopeRead.status !== 'ready') return null;
           const key = canonicalJson(scopeRead.value as never);
           const bucket = byScope.get(key) ?? { scope: scopeRead.value, pendingCount: 0, updateDueCount: 0,
             immediate: false, identities: new Set<string>(), anchorNames: new Set<string>(),
-            brokenIdentities: new Set<string>(), brokenCount: 0, agedCount: 0 };
-          if (updateDue) bucket.updateDueCount += 1; else bucket.pendingCount += 1;
+            brokenIdentities: new Set<string>(), brokenCount: 0, agedCount: 0, moduleRemoved: [] };
+          if (kind === 'moduleRemoved') bucket.moduleRemoved.push(todo.identity);
+          else if (kind === 'updateDue') bucket.updateDueCount += 1;
+          else bucket.pendingCount += 1;
           if (group.immediate) bucket.immediate = true;
           bucket.identities.add(todo.identity);
           bucket.anchorNames.add(todo.anchorKey);
@@ -3264,7 +3338,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       const bucket: ScribeReminderBucket = todoBucket === undefined
         ? { scope: brokenBucket!.scope, pendingCount: 0, updateDueCount: 0, immediate: false,
           identities: new Set<string>(), anchorNames: new Set<string>(),
-          brokenIdentities: new Set<string>(), brokenCount: 0, agedCount: 0 }
+          brokenIdentities: new Set<string>(), brokenCount: 0, agedCount: 0, moduleRemoved: [] }
         : { ...todoBucket };
       if (brokenBucket !== undefined) {
         for (const id of brokenBucket.ids) bucket.brokenIdentities.add(`broken:${id}`);
@@ -3295,7 +3369,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       if (disposition === 'unhandled') continue;
       if (!(bucket.immediate || bucket.pendingCount >= SCRIBE_PENDING_THRESHOLD
         || bucket.updateDueCount >= SCRIBE_UPDATE_DUE_THRESHOLD
-        || bucket.brokenCount >= SCRIBE_BROKEN_LINK_THRESHOLD || bucket.agedCount > 0)) continue;
+        || bucket.brokenCount >= SCRIBE_BROKEN_LINK_THRESHOLD || bucket.agedCount > 0
+        || bucket.moduleRemoved.length > 0)) continue;
       const identities = [...bucket.identities];
       if (bucket.brokenCount > 0) identities.push(...bucket.brokenIdentities);
       const requestId = 'scribe-reminder:' + scope.workspaceId + ':' + recipientRef.sessionId + ':'
@@ -3306,6 +3381,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         pendingCount: String(bucket.pendingCount),
         updateDueCount: String(bucket.updateDueCount),
         brokenCount: String(bucket.brokenCount),
+        moduleRemovedCount: String(bucket.moduleRemoved.length),
         anchors: [...bucket.anchorNames].slice(0, 20).join('、'),
       }, []).text;
       const pending = systemNotifyRequest({ recipient: recipientRef, text, requestId });
@@ -3360,6 +3436,103 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         noticedCommands.set(scopeKey(scope), noticed);
       }
     }
+    await runCommandReviews(scope, live, noticed, atMs, reviewLineMs);
+  }
+
+  /**
+   * 121-112 (the scribe's review): after a command's over-line notice is committed, the Host sends the scribe line
+   * of the command's scope one system round (`scr:`) through the same mailbox and wrapper the Workflow's rounds use.
+   * The Query, the answer and its effects belong to the intervention close-out; the Host only remembers which
+   * review of each running command is sent and, after a `normal`, when to send the next one. The memory is one map
+   * per workspace, pruned with the live list like `noticedCommands`; a Host restart forgets it with the commands.
+   */
+  type CommandReviewMemory = {
+    reviewSeq: number;
+    /** The built round while it is not committed: a refused send goes out again unchanged next beat. */
+    unsent: { round: Extract<SystemRoundV1, { kind: 'command_review' }>; recipient: SessionRef } | null;
+    /** Set once by the scribe's `normal` of this review. */
+    nextAt: number | null;
+  };
+  const reviewedCommands = new Map<string, Map<string, CommandReviewMemory>>();
+  async function runCommandReviews(scope: CoreScope, live: readonly RunningCommandV1[], noticed: ReadonlySet<string>,
+    atMs: number, reviewLineMs: number): Promise<void> {
+    const platform = projectPlatform(scope.projectId);
+    const ctx = hostContext(scope);
+    const reviewed = reviewedCommands.get(scopeKey(scope)) ?? new Map<string, CommandReviewMemory>();
+    reviewedCommands.set(scopeKey(scope), reviewed);
+    const liveKeys = new Set(live.map(entry => runningCommandKey(entry.run, entry.callId)));
+    for (const key of [...reviewed.keys()]) if (!liveKeys.has(key)) reviewed.delete(key);
+    for (const entry of live) {
+      const key = runningCommandKey(entry.run, entry.callId);
+      if (!noticed.has(key)) continue;
+      const memory = reviewed.get(key);
+      const due = memory === undefined ? 1
+        : memory.unsent !== null ? memory.reviewSeq
+        : memory.nextAt !== null && atMs >= memory.nextAt ? memory.reviewSeq + 1 : null;
+      if (due === null) continue;
+      let unsent = memory?.unsent ?? null;
+      if (unsent === null) {
+        // The round's Query belongs to the command's Goal: the Work Run's, or the Query round's own. Product rule
+        // (lead ruling on SCRV): a Query round with no Goal keeps the over-line notice only, with no scribe round.
+        let goalId: string;
+        if (entry.run.kind === 'run') {
+          goalId = entry.run.runRef.goalId;
+        } else {
+          const { projectId, workspaceId, queryJobId } = entry.run.queryRunRef;
+          const job = await platform.queries.readQueryJob(ctx, { aggregateType: 'QueryJob', projectId, workspaceId, queryJobId });
+          if (job.status !== 'ready') continue;             // a failed read is not "no Goal": next beat
+          // A request round runs under the Goal frozen at its preparation (it may have been attributed after the
+          // submit); any other Query under its own.
+          const queryGoalId = missingQueryActivityGoalOf(job.value.job, job.value.run);
+          if (queryGoalId === null) {
+            reviewed.set(key, { reviewSeq: due, unsent: null, nextAt: null });
+            continue;
+          }
+          goalId = queryGoalId;
+        }
+        const goalRef = { aggregateType: 'Goal' as const, projectId: scope.projectId, goalId };
+        // The scribe of the command's scope: the same rule as a goal-anchored to-do, then the same recipient read.
+        const managing = await platform.notes.managingScopeOfAnchors(ctx, [{ kind: 'goal', goalId: goalRef.goalId }]);
+        if (managing.status !== 'ready') continue;          // a failed read is not "no scribe": next beat
+        const recipient = await resolveScribeRecipient(ctx, managing.value);
+        if (recipient.status !== 'ready') continue;
+        if (recipient.value === null) {
+          // Product rule (121-112): the over-line notice already told the person; no other line stands in for the
+          // scribe, and no second notice is written.
+          reviewed.set(key, { reviewSeq: due, unsent: null, nextAt: null });
+          continue;
+        }
+        const subject: CommandReviewSubjectV1 = { projectId: scope.projectId, workspaceId: entry.workspaceId,
+          goalId, commandKey: key,
+          run: entry.run.kind === 'run' ? { kind: 'run', runRef: { ...entry.run.runRef }, taskId: entry.run.taskId }
+            : { kind: 'query', queryRunRef: { ...entry.run.queryRunRef } },
+          tool: entry.tool, commandPreview: entry.commandPreview, expectedMs: entry.expectedMs,
+          lineMs: commandLineMs(entry.expectedMs, reviewLineMs), startedAt: entry.startedAt,
+          elapsedMs: atMs - Date.parse(entry.startedAt), reviewSeq: due };
+        unsent = { round: { kind: 'command_review', goalRef, subject },
+          recipient: { projectId: recipient.value.projectId, sessionId: recipient.value.sessionId } };
+        reviewed.set(key, { reviewSeq: due, unsent, nextAt: null });
+      }
+      const requestId = systemRoundRequestId(unsent.round);
+      if (requestId.status !== 'ready') continue;
+      const run = unsent.round.subject.run;
+      const sent = await sendSystemRound(systemRoundContext(scope, attentionAbort.signal), { messages: platform.messages },
+        { round: unsent.round, recipient: unsent.recipient, text: requestId.value,
+          ...(run.kind === 'run' ? { taskRef: { projectId: scope.projectId, goalId: unsent.round.subject.goalId,
+            taskId: run.taskId } } : {}) });
+      // A refused send (the line busy, archived or unreadable) keeps the same round for the next beat.
+      if (sent.status === 'rejected') continue;
+      reviewed.set(key, { reviewSeq: due, unsent: null, nextAt: null });
+    }
+  }
+  /** The scribe's `normal` of one review: the next one is due `nextReviewInMs` later. Only the answered review of a
+   *  command still running moves, and only once (a repeated close-out keeps the first time). */
+  function scheduleCommandReview(subject: CommandReviewSubjectV1, nextReviewInMs: number): void {
+    const memory = reviewedCommands.get(scopeKey({ projectId: subject.projectId, workspaceId: subject.workspaceId }))
+      ?.get(subject.commandKey);
+    if (memory === undefined || memory.reviewSeq !== subject.reviewSeq || memory.unsent !== null
+      || memory.nextAt !== null) return;
+    memory.nextAt = clockMs() + nextReviewInMs;
   }
 
   // The background link batch: one batch per workspace at a time, run from the

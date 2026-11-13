@@ -485,6 +485,11 @@ export type RuntimeExecutionDependencies = {
    */
   runReconcile?: import('../work-graph/tasks/run-reconcile-contracts.js').RunReconcilePort;
   /**
+   * The in-process not-entered Query reconcile needs this Host's instance id;
+   * narrow test doubles omit it and keep today's start-up fallback.
+   */
+  hostInstanceId?: string;
+  /**
    * K slice M1: the optional dangling-Turn closure dependency. It carries the
    * SES-13 health owner and this Host instance's lease. Without it the Runtime
    * does not publish `closeOpenTurn` (the Workflow takes today's fallback) and

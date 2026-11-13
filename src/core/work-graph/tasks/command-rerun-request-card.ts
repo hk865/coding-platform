@@ -122,7 +122,17 @@ function answerWordOf(request: CommandRerunRequestV1): string {
     case 'used': return '已用';
     case 'closed': return '已关闭';
     case 'pending': return '等答复';
+    case 'awaiting_advice': return '等参谋定';
   }
+}
+
+/**
+ * 121-110: the adviser's suggestion on a request that reached the person (its plain sentence), or null when it carries
+ * none. The three options stay the person's; the line only says what the adviser thought.
+ */
+function rerunSuggestionLine(request: CommandRerunRequestV1): string | null {
+  const suggestion = request.escalation?.suggestion ?? null;
+  return suggestion === null ? null : `参谋的建议：${suggestion.plain}`;
 }
 
 /** Creation time first, then requestId: the stored order of one alias's requests. */
@@ -170,6 +180,8 @@ export function commandRerunRequestSummary(input: CommandRerunRequestCardInputV1
       && candidate.alias === request.alias));
   if (declared.length > 0) lines.push(`注明过的写法：${declared.join('；')}`);
   lines.push(`原因：${request.reason}`);
+  const suggestion = rerunSuggestionLine(request);
+  if (suggestion !== null) lines.push(suggestion);
   const earlier = aliasRequests
     // "Earlier" is created BEFORE this request (strictly), never "all except
     // this one": a sibling created later is not an earlier request/answer.

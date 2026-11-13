@@ -1,1 +1,2 @@
-{{marker}}待审 {{pendingCount}} 条，该更新 {{updateDueCount}} 条，断了的联系 {{brokenCount}} 条。锚点：{{anchors}}
+{{marker}}待审 {{pendingCount}} 条，该更新 {{updateDueCount}} 条，断了的联系 {{brokenCount}} 条，已删模块 {{moduleRemovedCount}} 条。锚点：{{anchors}}
+在接手的模块写替代注记，或撤下原注记并在删除它的目标/项目上写一条作废注记，理由写修订号。

@@ -2,11 +2,12 @@
  * KLS-2c-1 bad and conflicting knowledge files through a real Host (K06, K06b, K07; KC-1 K08/V1–V5; [2C1-15],
  * [2C1-17], b2 ruling F-3, 121-106 ①②, 4-7, 4-8). A person breaks a module file, or makes two module files conflict,
  * under a running Host. The idle reconcile leaves the architecture read unavailable with the file named, tells the
- * person once in the decision queue (`knowledge_conflict`; the same problems never twice), and (KC-1) when the only
- * conflict is one path claimed by two modules it opens one `knowledge_conflict` exploration follow-up per region and
- * hands each region its places in the round's question — the adviser gets the round's `action_request`, whose text
- * carries the region question and a line per place (the old "please propose a revision" letter is gone; a duplicate
- * id, a dangling reference, a bad file or an unreadable graph does not open a round). It makes no card. While the
+ * person once in the decision queue (`knowledge_conflict`; the same problems never twice), and (KC-1, KC-3) when the
+ * notice has a path claimed by two modules, a duplicate id, a dangling reference or a bad architecture or module file
+ * it opens one `knowledge_conflict` exploration follow-up per region and hands each region its places in the round's
+ * question — the adviser gets the round's `action_request`, whose text carries the region question and a line per
+ * place (the old "please propose a revision" letter is gone; the notice's other places and a bad note stay in the
+ * notice only). It makes no card. While the
  * conflict stands the decision queue still reads (stk16 ruling 1–2: only the conflict cards go, `goal_conflict`
  * not_available). The world is `KLS2C-knowledge-host.ts` (idle threshold 0, so every heartbeat reconciles); the
  * adviser comes from `role-lines/open`, its follow-up from `role-lines/operations` (the `followUp` field), its
@@ -17,9 +18,9 @@
  * V4 are red at the request count** (the old tree asks the adviser about a duplicate id and about a path conflict with
  * an issue too: 1 instead of 0), **V5 is red in the request body** (the old letter has neither the region question nor
  * `……`), **V3 is green today as a guard** (no adviser already sends nothing, and the notice is one). After the package lands
- * V1–V5 are green by the draft's §2.2: `openConflictRepair` opens the follow-up only for a path-only, issue-free
- * conflict, one place per module-id set, one region per place, and the round's text is the region question plus the
- * truncated place list.
+ * V1–V5 are green by the draft's §2.2: one place per module-id set, one region per place, and the round's text is the
+ * region question plus the truncated place list. KC-3 (121-106 ②, kc3 draft §4 A) turned V2, V4 and V4b: a duplicate
+ * id opens the round, and the issues beside a path claim no longer keep it shut.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanupRestart } from '../helpers/A2-restart-fixture.js';
@@ -206,7 +207,7 @@ it('V1b one place is handed to the first module\'s region adviser only, even whe
     moduleRefs: [{ projectId: world.scope.projectId, moduleId: 'core' }], sourceBatchRef: null }]);
 }, 120_000);
 
-it('V2 a duplicate module id is not a path-only conflict: one notice, no follow-up and no request (121-106 ②)',
+it('V2 a duplicate module id opens the repair round too: one notice, one follow-up and one request (121-106 ②, KC-3)',
   async () => {
     const world = await adoptedWorld('memory', true);
     const adviser = (await settledLines(world, 'kc1t-v2-adviser'))!;
@@ -219,9 +220,9 @@ it('V2 a duplicate module id is not a path-only conflict: one notice, no follow-
     expect([queue.waitingAnswer.filter(card => card.source.kind === 'structural_proposal'),
       queue.notices.filter(item => item.summary.includes('知识文件有')).length,
       queue.capabilities.find(entry => entry.source === 'goal_conflict')?.availability]).toEqual([[], 1, 'not_available']);
-    // 具名改坏：去掉“只有双认领才开”的条件 → 1 个续轮 / 1 条请求。今天红在请求数：旧树对重号也发信（1 条）。
+    // KC-3（121-106 ②）：重号也开修复轮，交给 core 所在区域的参谋。具名改坏：恢复“只有双认领才开”的条件 → 0 个续轮 / 0 条请求。
     expect([(await followUps(world)).length, (await everyActionRequest(world)).length,
-      (await actionRequests(world, adviser)).length]).toEqual([0, 0, 0]);
+      (await actionRequests(world, adviser)).length]).toEqual([1, 1, 1]);
   }, 120_000);
 
 it('V3 no region adviser: the notice still comes, nobody gets a follow-up or a request ([2C1-17])', async () => {
@@ -236,7 +237,7 @@ it('V3 no region adviser: the notice still comes, nobody gets a follow-up or a r
 
 // b2 Astra 1（lead 收）：“从没采用过”看平台记录里的采用事实，不看磁盘和上一轮索引；已采用的工作区缺图，每一轮都是同一处问题。
 it('V4 adopted, then architecture.json deleted and a path claimed by two modules: the notice stays one (its identity '
-  + 'does not move) and the issues in it keep the repair round shut (包计划 §3.4-5)', async () => {
+  + 'does not move) and the round opens for the path claim once (包计划 §3.4-5; KC-3)', async () => {
   const world = await adoptedWorld('memory', true);
   const adviser = (await settledLines(world, 'kc1t-v4-adviser'))!;
   await world.idle();
@@ -245,21 +246,20 @@ it('V4 adopted, then architecture.json deleted and a path claimed by two modules
   const [core, other] = kls2cConflict(world, 'same_path');
   await world.idle();
   // 具名改坏：第 8 步改回“磁盘或上一轮索引里有 architecture.json 才记”→ 第二轮只剩路径冲突、身份变了，红在这一句（2 条）。
-  // 今天红在请求数：旧树在这两处改动下也发 1 条请求（它不看 issues）；上面的通知身份那句今天是护栏。
   const notices = await world.notices('knowledge_conflict');
   expect(notices.map(notice => ['.workbench/architecture.json', core, other]
     .every(path => notice.summary.includes(path)))).toEqual([true]);
-  expect([(await followUps(world)).length, (await actionRequests(world, adviser)).length]).toEqual([0, 0]);
+  // KC-3：缺图这一处只留在通知里，不再挡住路径冲突的修复轮。
+  expect([(await followUps(world)).length, (await actionRequests(world, adviser)).length]).toEqual([1, 1]);
   await world.idle();
-  // 具名改坏：去掉 `issues.length > 0` 的条件 → 1 个续轮 / 1 条请求，红在这里。
+  // 同一个通知只开一轮：第二次心跳仍是一条通知、一个续轮、一条请求。
   expect([await world.notices('knowledge_conflict'), (await followUps(world)).length,
-    (await actionRequests(world, adviser)).length]).toEqual([notices, 0, 0]);
+    (await actionRequests(world, adviser)).length]).toEqual([notices, 1, 1]);
 }, 120_000);
 
-// KC-1 G3: a bad file is an issue even when the only conflict is a path claimed by two modules; the repair round
-// stays shut (V4's `issues.length > 0`). The bad note does not make the graph unreadable, so the downstream
-// `beginConflictRepair` would open the round without this check.
-it('V4b a path conflict plus a bad note file: the issues keep the repair round shut', async () => {
+// KC-3: a bad note is not a repair target; the round opens for the path claim beside it, and the note stays a
+// recovery item of the notice only (kc3 draft §1, §4 A).
+it('V4b a path conflict plus a bad note file: the round opens for the path conflict, the note is not in its text', async () => {
   const world = await adoptedWorld('memory', true);
   const adviser = (await settledLines(world, 'kc1t-v4b-adviser'))!;
   const note = `.workbench/notes/${world.scope.workspaceId}/not-a-note.md`;
@@ -267,11 +267,14 @@ it('V4b a path conflict plus a bad note file: the issues keep the repair round s
   await world.idle();   // the bad note alone is one notice; it has no conflict to repair
   const [core, other] = kls2cConflict(world, 'same_path');
   await world.idle();
-  // 具名改坏：删掉 `result.issues.length > 0` → 下游整图读得通，开 1 个续轮、1 条请求，红在这里。
   const notices = await world.notices('knowledge_conflict');
   const withBoth = notices.filter(notice => [note, core, other].every(path => notice.summary.includes(path)));
   expect(withBoth).toHaveLength(1);
-  expect([(await followUps(world)).length, (await actionRequests(world, adviser)).length]).toEqual([0, 0]);
+  // 具名改坏：坏注记也算修复目标 → 问题文字里出现注记路径，红在最后一句。
+  expect([(await followUps(world)).length, (await actionRequests(world, adviser)).length]).toEqual([1, 1]);
+  const request = (await actionRequests(world, adviser))[0];
+  const body = await readRoute<{ text: string }>(world, 'messages/body', { messageRef: request?.ref, part: 'message' });
+  expect([body.text.includes('src/core'), body.text.includes(note)]).toEqual([true, false]);
 }, 120_000);
 
 // b2 Astra 2（lead 收）：路径多到一条消息装不下时，正文按邮箱上限截断，区域问句、省略号和工具名都在。

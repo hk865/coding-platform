@@ -1384,7 +1384,9 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       // provider and fails explicitly instead of writing a fake association.
       const targetGuards = new Map<string, RecordGuard>();
       const pendingLinks: PendingSessionWorkLink[] = [];
-      const modules = catalogModuleFactsOnce(records, ctx, { lines: stores.knowledge, caller: ctx });
+      // KC-3 (Astra 2): a repair round's new line checks its region on the record (the files may not read).
+      const modules = catalogModuleFactsOnce(records, ctx, { lines: stores.knowledge, caller: ctx,
+        ...(createAction.creation?.base === undefined ? {} : { base: createAction.creation.base }) });
       for (const link of createAction.initialLinks) {
         // The one shared formal target check: a Task through Goal + active Plan
         // membership, a Module through the current adopted catalog, WorkContext

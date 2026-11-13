@@ -13,10 +13,17 @@
  * the request persists CRR-06. Every task-scoped list derives the Task closure
  * exactly ONCE per call; the shell hook's `listTaskRequests` pages the whole
  * set under that ONE read instead of re-reading it per page.
+ *
+ * Two layers (121-110): a new request goes to the responsible adviser first
+ * (`awaiting_advice`) unless the Goal confirms every step, the blocking record
+ * is the second consecutive interruption or the request has no adviser (then
+ * the person's card shows at once); the Workflow sends the adviser round and
+ * applies its answer here (`applyAdviserAnswer`), or puts the request in front
+ * of the person (`escalateRerun`).
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
-import type { VersionPin } from '../../../contracts/core/identity.js';
+import type { SessionRef, VersionPin } from '../../../contracts/core/identity.js';
 import type { WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CommandRerunRequestRef, CommandRerunRequestStateV1, CommandRerunRequestV1 } from '../../../contracts/command-rerun-request.js';
@@ -37,6 +44,13 @@ import type {
   CommandRerunRequestPort, CommandRerunRequestReadPort, CommandRerunRequestReplyV1, TaskClosureReadV1,
 } from '../model/command-rerun-request-contracts.js';
 import type { BlockedCommandMatchV1, CommandRecognizer } from '../model/command-recognition-contracts.js';
+import type { SessionMailboxPort } from '../model/communication-contracts.js';
+import type { ReviewQueryReads, ReviewSessionDuty } from '../model/evidence-contracts.js';
+import { parseCommandRerunAdviceAnswer } from '../../../contracts/command-rerun-advice.js';
+import { unknownCallAdviceGoalBasisDigest } from '../../../contracts/unknown-call-advice.js';
+import { readGoalSettings } from '../persistence/record-codecs.js';
+import { goalDecisionBasis } from './goal-basis.js';
+import { readAdviserRoundAnswer } from './plan-lineage.js';
 import { readGoal } from './plan-readers.js';
 import { isolateWrite, mergeGuards } from './execution-entry-service.js';
 import { replayCommittedReceipt } from './receipt-replay.js';
@@ -48,7 +62,7 @@ import { commandSha256 } from '../state/command-normalization.js';
 import { codePoints, utf8Bytes } from './codec-fields.js';
 import { truncateUtf8 } from '../../../contracts/utf8.js';
 import {
-  newCommandRerunRequest, openRequestForAlias, transitionCommandRerunRequest,
+  commandRerunAdviserStageOf, newCommandRerunRequest, openRequestForAlias, transitionCommandRerunRequest,
   type CommandRerunRequestContextV1, type CommandRerunRequestEventV1,
 } from '../state/command-rerun-request.js';
 import {
@@ -80,8 +94,22 @@ export type CommandRerunRequestServiceDependencies = {
     Promise<ReadResult<{ closed: boolean; cause: 'satisfied' | 'cancelled' | 'superseded' | null }>>;
   /** The ONE recognizer (N's command-recognition.ts); absent -> requestRerun is unavailable. */
   recognize?: CommandRecognizer;
+  /**
+   * 121-110: the request's responsible adviser line, by the Workflow's `reviewAdviserOf` rule (the one L35 read,
+   * `technical`, the Task's module, no asker; `null` is none). Absent is no adviser line, exactly as the Workflow's
+   * recipient read without a resolver: the request goes to the person's card at once.
+   */
+  adviserOf?: (ctx: CoreCallContext, task: TaskTriple) => Promise<ReadResult<SessionRef | null>>;
   /** The page width of the task's request reads (hook list and request tool); default 200. */
   taskRequestPageLimit?: number;
+  /**
+   * 121-110: the adviser round's Query and answer reads, the answering Session's duty, and the round's message
+   * through the Host's own send receipt (the unknown-call record owner's three reads). Absent ->
+   * `applyAdviserAnswer` is `unavailable`.
+   */
+  queries?: ReviewQueryReads;
+  sessionDuty?: ReviewSessionDuty;
+  messages?: Pick<SessionMailboxPort, 'readHostSendMessageRef'>;
   now: () => string;
   eventId: () => string;
 };
@@ -96,7 +124,7 @@ const MAX_COMMAND_BYTES = 4_000;
 const MAX_REASON_CODE_POINTS = 2_000;
 const MAX_FORM_TEXT_BYTES = 512;
 const STATES: readonly CommandRerunRequestStateV1[] = [
-  'pending', 'allowed', 'used', 'denied', 'denied_final', 'closed',
+  'awaiting_advice', 'pending', 'allowed', 'used', 'denied', 'denied_final', 'closed',
 ];
 
 const rejected = rejectedWithCurrent;
@@ -210,7 +238,8 @@ export function createCommandRerunRequestService(
   /**
    * `forms_added` keeps the record state; `created` is always `requested`.
    * A replayed `pending` names the record's own (waiting) command, never the
-   * caller's input, so the tool needs no point read.
+   * caller's input, so the tool needs no point read; a request still with the
+   * adviser is waiting the same way.
    */
   function replyOutcomeOf(decoded: {
     change: string; request: CommandRerunRequestV1;
@@ -221,6 +250,7 @@ export function createCommandRerunRequestService(
       return { status: 'requested', requestId: decoded.request.ref.requestId };
     }
     switch (decoded.request.state) {
+      case 'awaiting_advice':
       case 'pending': return { status: 'pending', requestId: decoded.request.ref.requestId,
         command: decoded.request.command };
       case 'denied': return { status: 'refused', reason: 'denied_in_this_run' };
@@ -522,8 +552,8 @@ export function createCommandRerunRequestService(
     }
     const window = decoded.slice(0, limit);
     const items = closed
-      ? window.map(request => request.state === 'pending' || request.state === 'allowed'
-        ? { ...request, state: 'closed' as const } : request)
+      ? window.map(request => request.state === 'awaiting_advice' || request.state === 'pending'
+        || request.state === 'allowed' ? { ...request, state: 'closed' as const } : request)
       : window;
     const hasMore = decoded.length > limit || page.next !== null;
     const last = window[window.length - 1];
@@ -802,7 +832,7 @@ export function createCommandRerunRequestService(
       { task, reviewRef: targetReview.ref, alias });
     const form = { sha256: commandSha256(command), text: truncateUtf8(command, MAX_FORM_TEXT_BYTES) };
     if (open !== null) {
-      if (open.state === 'pending') {
+      if (open.state === 'pending' || open.state === 'awaiting_advice') {
         if (!declared) return { status: 'not_written', outcome: {
           status: 'pending', requestId: open.ref.requestId, command: open.command } };
         const appended = await appendForm(ctx, open, form, identityKey, fingerprint, false);
@@ -839,7 +869,23 @@ export function createCommandRerunRequestService(
           status: 'refused', reason: 'denied_in_this_run' } } };
     }
 
-    // CRR-01: create the pending request.
+    // CRR-01: create the request. 121-110: the adviser answers first unless the Goal confirms every step, the
+    // blocking record is the second consecutive interruption or there is no adviser. The first two go to the person
+    // without reading the adviser; otherwise a failed Goal or adviser read is returned, never "the
+    // person".
+    const goalRead = await readGoal(store, goalRef);
+    if (goalRead.status !== 'ready') return rejected(goalRead.code, goalRead.reason);
+    const rerunStageWith = (adviserAvailable: boolean) => commandRerunAdviserStageOf({
+      autonomy: readGoalSettings(goalRead.goal).autonomy, streak: targetReview.streak, adviserAvailable });
+    let stage = rerunStageWith(true);
+    if (stage !== 'person') {
+      const adviserRead = deps.adviserOf === undefined ? null : await deps.adviserOf(ctx, task);
+      if (adviserRead !== null && adviserRead.status !== 'ready') {
+        return adviserRead.status === 'rejected' ? adviserRead
+          : rejected('unavailable', 'the responsible adviser is not readable');
+      }
+      stage = rerunStageWith(adviserRead !== null && adviserRead.value !== null);
+    }
     const createdAt = now();
     const requestRef: CommandRerunRequestRef = {
       aggregateType: 'CommandRerunRequest', projectId: runRef.projectId, goalId: runRef.goalId,
@@ -848,7 +894,7 @@ export function createCommandRerunRequestService(
     const created = newCommandRerunRequest({
       ref: requestRef, workspaceId, task, reviewRef: structuredClone(targetReview.ref),
       runRef: fourRunFields(runRef) as unknown as RunRef, alias,
-      command, commandSha256: commandSha256(command), match, reason, createdAt,
+      command, commandSha256: commandSha256(command), match, reason, createdAt, stage,
       ...(declared ? { declaredForm: form } : {}),
     });
     if (!created.ok) return rejected(created.code, created.detail);
@@ -1048,6 +1094,150 @@ export function createCommandRerunRequestService(
     });
   }
 
+  // ---- applyAdviserAnswer / escalateRerun (121-110) -------------------------
+
+  function currentPin(current: CommandRerunRequestV1): VersionPin {
+    return { ref: structuredClone(current.ref), revision: current.revision } as unknown as VersionPin;
+  }
+
+  async function applyAdviserAnswer(
+    ctx: CoreCallContext,
+    request: Parameters<CommandRerunRequestPort['applyAdviserAnswer']>[1],
+  ): Promise<WriteResult<CommandRerunRequestV1>> {
+    if (ctx.principal.kind !== 'host') {
+      return rejected('forbidden', 'applyAdviserAnswer is written by the Workflow (a host principal)');
+    }
+    const owned = isolateWrite(request);
+    if (!owned.ok) return owned.rejection;
+    const input = owned.input as unknown as Record<string, unknown>;
+    const refProblemText = requestRefProblem(input['requestRef']);
+    if (refProblemText !== null) return rejected('invalid', `applyAdviserAnswer requires ${refProblemText}`);
+    const requestId = input['requestId'];
+    if (!nonEmpty(requestId)) return rejected('invalid', 'applyAdviserAnswer requires the adviser round requestId');
+    const requestRef = input['requestRef'] as CommandRerunRequestRef;
+    if (ctx.projectId !== requestRef.projectId) return rejected('forbidden', 'the request belongs to another project');
+    const identity = canonicalJson({ requestRef: fourRequestFields(requestRef), requestId } as never);
+    const identityKey = `crr-adviser-answer:${sha256Hex(identity)}`;
+    const fingerprint = sha256Hex(identity);
+    let existing;
+    try {
+      existing = await store.lookupCommit({ identityKey, fingerprint });
+    } catch (error) {
+      return rejected('unavailable',
+        `the request receipt could not be looked up: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (existing.status === 'ready') return replayRequest(existing.value, identityKey, fingerprint);
+    if (existing.code !== 'not_found') return ownerWriteStoreFailureToRejection(existing);
+
+    const refKey = commandRerunRequestRefKey(requestRef);
+    const loaded = await loadRequest(refKey);
+    if ('rejection' in loaded) return loaded.rejection;
+    if ('notFound' in loaded) return rejected('not_found', 'the request record does not exist');
+    let current = loaded.value;
+    if (ctx.workspaceId !== undefined && ctx.workspaceId !== current.workspaceId) {
+      return rejected('forbidden', 'the request belongs to another workspace');
+    }
+    const pinnedRevision = pinRevision(owned.expected, requestRef);
+    if (pinnedRevision === null) return rejected('invalid', 'meta.expected must pin the request ref exactly once');
+    // The pin is compared before the state, as the person's card answer is: a round pinned to an older revision (a
+    // form added meanwhile) is a conflict, never `invalid`.
+    if (pinnedRevision !== current.revision) {
+      return rejected('revision_conflict', 'the request moved since the adviser round was pinned', [currentPin(current)]);
+    }
+    // CRR-06: an ended Task closes the request first; the answer is then not legal from `closed`.
+    const closure = await taskClosed(ctx, current.task);
+    if (!closure.ok) return closure.rejection;
+    if (closure.closed && current.state === 'awaiting_advice') {
+      const closedWrite = await persistClosed(ctx, current, ctx.principal.actor);
+      if (closedWrite.status === 'rejected') return closedWrite;
+      current = closedWrite.value;
+    }
+    if (current.state !== 'awaiting_advice') {
+      return rejected('invalid', `an adviser answer is not legal from ${current.state}`);
+    }
+    // The round's message lands in the adviser line's workspace; the request's workspace sent it and keeps its Query.
+    const answer = await readAdviserRoundAnswer(deps, ctx, { scope: { projectId: current.ref.projectId,
+      workspaceId: current.workspaceId }, goalId: current.ref.goalId, requestId, shape: 'command_rerun_advice',
+    parse: parseCommandRerunAdviceAnswer });
+    if (!answer.ok) return answer.rejection;
+    const { subject, advice } = answer.value;
+    if (refKeyOf(fourRequestFields(subject.requestRef)) !== refKeyOf(fourRequestFields(requestRef))) {
+      return rejected('invalid', 'the adviser answered another request');
+    }
+    // The round froze the request revision: an answer to an older one is a conflict, never applied.
+    if (subject.revision !== current.revision) {
+      return rejected('revision_conflict', 'the request moved since the adviser was asked', [currentPin(current)]);
+    }
+    const goalRef: GoalRef = { aggregateType: 'Goal', projectId: requestRef.projectId, goalId: requestRef.goalId };
+    const goalRead = await readGoal(store, goalRef);
+    if (goalRead.status !== 'ready') return rejected(goalRead.code, goalRead.reason);
+    const goal = goalRead.goal;
+    if (goal.desiredState !== 'active') return rejected('busy', 'the Goal is not active; the adviser answer waits for resume');
+    // T02: the answer was given on this Goal content.
+    if (subject.goalBasisDigest !== unknownCallAdviceGoalBasisDigest(goalDecisionBasis(goal))) {
+      return rejected('revision_conflict', UNKNOWN_CALL_REVIEW_T02_REASON);
+    }
+    const decided = transitionCommandRerunRequest(current, {
+      kind: 'adviser_answer_applied', identityKey, fingerprint, answer: advice,
+      everyStep: readGoalSettings(goal).autonomy === 'every_step',
+    }, { expectedRevision: current.revision, updatedAt: now(), receipt: null,
+      cardMatches: true, taskActive: true, sameRun: false });
+    if (!decided.ok) return rejected(decided.code, decided.detail);
+    return commitRequest({
+      identityKey, fingerprint, requestId: owned.requestId,
+      guards: [{ refKey, expectedRevision: current.revision }, { refKey: refKeyOf(goalRef), expectedRevision: goal.revision }],
+      next: decided.next, change: 'adviser_answer_applied', actor: ctx.principal.actor, signal: ctx.signal,
+    });
+  }
+
+  async function escalateRerun(
+    ctx: CoreCallContext,
+    request: Parameters<CommandRerunRequestPort['escalateRerun']>[1],
+  ): Promise<WriteResult<CommandRerunRequestV1>> {
+    if (ctx.principal.kind !== 'host') return rejected('forbidden', 'escalateRerun is written by the Workflow (a host principal)');
+    const owned = isolateWrite(request);
+    if (!owned.ok) return owned.rejection;
+    const input = owned.input as unknown as Record<string, unknown>;
+    const refProblemText = requestRefProblem(input['requestRef']);
+    if (refProblemText !== null) return rejected('invalid', `escalateRerun requires ${refProblemText}`);
+    const cause = input['cause'];
+    if (cause !== 'no_adviser' && cause !== 'adviser_failed') {
+      return rejected('invalid', 'escalateRerun cause is no_adviser or adviser_failed');
+    }
+    const requestRef = input['requestRef'] as CommandRerunRequestRef;
+    if (ctx.projectId !== requestRef.projectId) return rejected('forbidden', 'the request belongs to another project');
+    const pinnedRevision = pinRevision(owned.expected, requestRef);
+    if (pinnedRevision === null) return rejected('invalid', 'meta.expected must pin the request ref exactly once');
+    const identity = canonicalJson({ requestRef: fourRequestFields(requestRef), revision: pinnedRevision, cause } as never);
+    const identityKey = `crr-escalate:${sha256Hex(identity)}`;
+    const fingerprint = sha256Hex(identity);
+    let existing;
+    try {
+      existing = await store.lookupCommit({ identityKey, fingerprint });
+    } catch (error) {
+      return rejected('unavailable',
+        `the request receipt could not be looked up: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (existing.status === 'ready') return replayRequest(existing.value, identityKey, fingerprint);
+    if (existing.code !== 'not_found') return ownerWriteStoreFailureToRejection(existing);
+    const refKey = commandRerunRequestRefKey(requestRef);
+    const loaded = await loadRequest(refKey);
+    if ('rejection' in loaded) return loaded.rejection;
+    if ('notFound' in loaded) return rejected('not_found', 'the request record does not exist');
+    const current = loaded.value;
+    if (ctx.workspaceId !== undefined && ctx.workspaceId !== current.workspaceId) {
+      return rejected('forbidden', 'the request belongs to another workspace');
+    }
+    const decided = transitionCommandRerunRequest(current, { kind: 'escalated', identityKey, fingerprint, cause },
+      { expectedRevision: pinnedRevision, updatedAt: now(), receipt: null, cardMatches: true, taskActive: true, sameRun: false });
+    if (!decided.ok) return rejected(decided.code, decided.detail);
+    return commitRequest({
+      identityKey, fingerprint, requestId: owned.requestId,
+      guards: [{ refKey, expectedRevision: current.revision }],
+      next: decided.next, change: 'escalated', actor: ctx.principal.actor, signal: ctx.signal,
+    });
+  }
+
   // ---- consumeAllowance (CRR-03) ------------------------------------------
 
   async function consumeAllowance(
@@ -1174,7 +1364,8 @@ export function createCommandRerunRequestService(
     // A closure read failure is `unavailable`, never "valid".
     const closure = await taskClosed(ctx, current.task);
     if (!closure.ok) return closure.rejection;
-    if (closure.closed && (current.state === 'pending' || current.state === 'allowed')) {
+    if (closure.closed
+      && (current.state === 'awaiting_advice' || current.state === 'pending' || current.state === 'allowed')) {
       return { status: 'ready', value: { ...current, state: 'closed' } };
     }
     return { status: 'ready', value: current };
@@ -1219,6 +1410,8 @@ export function createCommandRerunRequestService(
     listTaskRequests,
     requestRerun,
     applyAnswer,
+    applyAdviserAnswer,
+    escalateRerun,
     consumeAllowance,
     lookupToolCommit,
   };

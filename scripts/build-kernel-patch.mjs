@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 // declarations. No original Kernel source or generated platform build is read.
 const project = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const vendor = resolve(project, 'vendor/coding-agent');
-const relativeSources = ['storage/adapters/sqlite/sqlite-stores.ts', 'public-api.ts', 'app/composition/control-hooks.ts', 'app/composition/composition-contracts.ts',
+const relativeSources = ['storage/adapters/sqlite/sqlite-stores.ts', 'public-api.ts', 'policy/permissions/permission-policy.ts', 'app/composition/control-hooks.ts', 'app/composition/composition-contracts.ts',
   'core/runtime/loop/runtime-runner.ts', 'app/composition/composition-root.ts', 'app/composition/resume-composition.ts',
   // MR (lead ruling 2026-11-02): the provider error classifier is restored from the frozen
   // map so a status-less connection failure is retryable; dist is only produced here.

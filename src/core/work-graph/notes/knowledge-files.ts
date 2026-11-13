@@ -96,16 +96,16 @@ function headNoteIdOf(event: EncodedDomainEvent): unknown {
 
 /**
  * A write log's kind and module: a module file's own raw id from its bytes (the bytes written, or the bytes deleted)
- * turned into the project view in the line's workspace, as the read-back does; null for the other kinds. The platform
- * only writes module files it built and deletes ones it parsed, so bytes that do not parse are a programming error and throw.
+ * turned into the project view in the line's workspace, as the read-back does; null for the other kinds, and for a
+ * module file whose bytes name no module (KC-3: a repair deletes such a file; ruling Q4).
  */
 function writeLogFileOf(scope: KnowledgeLineScope, path: string, bytes: Uint8Array):
 { kind: KnowledgeFileKind; moduleId: string | null } {
   const kind = knowledgeFileKindOf(path);
   if (kind !== 'module') return { kind, moduleId: null };
   const fileId = moduleFileIdOf(path, bytes);
-  if (fileId.status !== 'decoded') throw new Error(`the module file ${path} does not name its module: ${fileId.reason}`);
-  return { kind, moduleId: projectModuleId(scope.workspaceId, fileId.value, scope.mainWorkspaceId) };
+  return { kind, moduleId: fileId.status === 'decoded'
+    ? projectModuleId(scope.workspaceId, fileId.value, scope.mainWorkspaceId) : null };
 }
 
 /**

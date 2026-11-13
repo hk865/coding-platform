@@ -45,6 +45,13 @@ export type ArchitectureProposalBatchV1 = {
   ops: CatalogRepairOpV1[];
   responsibilityMoves: ResponsibilityMoveV1[];
   digest: string;
+  /** KC-3: this batch was frozen by a knowledge_conflict repair round; `noticeId` is that notice. */
+  knowledgeConflict?: { noticeId: string };
+  /**
+   * KC-3 (lead 11-13): a repair batch's card files when it was frozen, one digest (each file's path, module, action,
+   * willRevert and the bytes it would replace); its approval refuses a plan that moved since. Absent on other batches.
+   */
+  plannedFiles?: string;
 };
 
 export type ProposeArchitectureRevisionInputV1 = {

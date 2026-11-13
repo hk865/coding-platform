@@ -3,6 +3,7 @@
  * because they need owner types; pure DTOs come from `contracts/graph-context.ts`.
  */
 import type { AdoptedArchitecture, ModuleDefinition } from '../../../contracts/architecture-catalog.js';
+import type { KnowledgeReadBaseV1 } from '../../../contracts/knowledge.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
@@ -80,6 +81,8 @@ export type GraphLookRequestV1 = {
   target: { kind: 'node'; node: GraphNodeRefV1 } | { kind: 'path'; path: string };
   relation: 'card' | 'children' | 'neighbours' | 'executions' | 'checks';
   page: { afterCursor: string | null; limit: number };
+  /** KC-3: the architecture read; `recorded` (a knowledge_conflict repair round's context) is the last adopted one. */
+  base?: KnowledgeReadBaseV1;
 };
 export type GraphFindRequestV1 = {
   /** `null` is the project branch (no goal); find has no Goal-owned argument. */

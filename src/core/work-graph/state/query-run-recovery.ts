@@ -159,7 +159,7 @@ export type QueryRecoveryEvent =
   /** R: the start-up reconcile (QRR-03). */
   | { kind: 'query_reconcile_terminal'; hostInstanceId: string; terminal: QueryTerminalFact }
   /** R: QRR-01 (claimed/prepared) and QRR-02 (entering without a fixed Turn). 新增. */
-  | { kind: 'query_reconcile_not_entered'; hostInstanceId: string }
+  | { kind: 'query_reconcile_not_entered'; hostInstanceId: string; notEnteredCloseMessage?: 'host_restart_before_entry' | 'aborted_before_entry' }
   /** R: QRR-04. 新增. */
   | { kind: 'query_reconcile_interrupted_clean'; hostInstanceId: string; kernelStatus: QueryInterruptedKernelStatus; history: RunExecutionHistoryV1 }
   /** R: QRR-05; `history` is null when the Kernel is not readable (SD-3). 新增. */
@@ -221,7 +221,7 @@ export function transitionQueryRunRecovery(
   switch (event.kind) {
     case 'query_terminal_observed': return terminalObserved(state, event.terminal, ctx);
     case 'query_reconcile_terminal': return reconcileTerminal(state, event.terminal, ctx);
-    case 'query_reconcile_not_entered': return reconcileNotEntered(state, ctx);
+    case 'query_reconcile_not_entered': return reconcileNotEntered(state, event, ctx);
     case 'query_reconcile_interrupted_clean': return reconcileInterrupted(state, event, ctx);
     case 'query_reconcile_unknown': return reconcileUnknown(state, event, ctx);
     case 'query_unknown_attested': return unknownAttested(state, ctx);
@@ -250,7 +250,7 @@ function releaseKeepingCursor(ctx: QueryRecoveryGuardContext, kernelTurnOpen: bo
  * Turn in the Kernel Store, D-5 by analogy): closed `not_entered`, never
  * re-entered; the Session is released keeping its cursor (SES-09).
  */
-function reconcileNotEntered(state: QueryRecoveryState, ctx: QueryRecoveryGuardContext): QueryRecoveryTransition {
+function reconcileNotEntered(state: QueryRecoveryState, event: Extract<QueryRecoveryEvent, { kind: 'query_reconcile_not_entered' }>, ctx: QueryRecoveryGuardContext): QueryRecoveryTransition {
   const admitted = reconcileAdmission(state, 'query_reconcile_not_entered', ctx);
   if (admitted !== null) return admitted;
   if (state.phase === 'entering' && (ctx.probe !== 'ready' || ctx.kernel === null || ctx.kernel.turn !== 'absent')) {
@@ -268,7 +268,7 @@ function reconcileNotEntered(state: QueryRecoveryState, ctx: QueryRecoveryGuardC
       : accept({ ...settledState('not_entered'), jobStatus: 'pending' }, [{ kind: 'new_attempt' }, ...releaseKeepingCursor(ctx, false)]);
   }
   return accept(settledState('not_entered'), [
-    { kind: 'settle_query', settlement: { outcome: 'not_entered', closeMessage: 'host_restart_before_entry' }, history: { kind: 'unchanged' } },
+    { kind: 'settle_query', settlement: { outcome: 'not_entered', closeMessage: event.notEnteredCloseMessage ?? 'host_restart_before_entry' }, history: { kind: 'unchanged' } },
     ...releaseKeepingCursor(ctx, false),
   ]);
 }

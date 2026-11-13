@@ -55,7 +55,8 @@ export function secretaryNoteAdmission(input: {
 /**
  * A non-request planning Query may write the six general note kinds (slice-PL-SPEC
  * §5.2.8). A round whose submit-tool shape is `plan_round`/`plan_review` is a
- * planning round; a `text`-shaped overlap note is stored as `null` in the
+ * planning round, and so is the scribe's long-command review (`scribe_review`,
+ * 121-112: a normal conclusion is kept as the scribe's own note); a `text`-shaped overlap note is stored as `null` in the
  * manifest and enters only when its frozen source message is a Host system
  * `action_request` and the round has an effective Goal. `planRef` is part of the
  * frozen input but does not decide the class. A `role_exploration` round (the
@@ -75,7 +76,8 @@ export function planningNoteAdmission(input: {
     // planning branch below keeps `NOTE_GENERAL_KINDS` unchanged, and both go through the same S4 scope admission.
     return { class: 'planning', kinds: [...NOTE_GENERAL_KINDS, 'link', 'flow'], withdraw: true, grantedGoalIds: [] };
   }
-  const planningShape = input.answerShape === 'plan_round' || input.answerShape === 'plan_review';
+  const planningShape = input.answerShape === 'plan_round' || input.answerShape === 'plan_review'
+    || input.answerShape === 'scribe_review';
   const hostTextRound = input.answerShape === null && input.hostSystemPlanningSource
     && input.effectiveGoalId !== null;
   if (!planningShape && !hostTextRound) return { class: 'none' };

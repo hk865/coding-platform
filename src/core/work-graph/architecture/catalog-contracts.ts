@@ -18,6 +18,7 @@ import type { ArchitectureCatalogPinV1 } from '../../../contracts/architecture-c
 import type { ArchitectureBaselineRevisionRef } from '../../../contracts/governance.js';
 import type { CatalogRepairOpV1, ResponsibilityMoveV1 } from '../../../contracts/note.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+import type { KnowledgeReadBaseV1 } from '../../../contracts/knowledge.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { RecordGuard } from '../../record-store/ports.js';
 import type { GraphWrite } from '../model/task-contracts.js';
@@ -107,7 +108,8 @@ export type ReviseArchitectureCatalogOpsInput = {
 };
 
 export type ReadArchitectureRevisionInput =
-  | { selection: { kind: 'current' } }
+  /** `base: 'recorded'` (KC-3): the catalog the records last adopted, a repair round's context read. */
+  | { selection: { kind: 'current'; base?: KnowledgeReadBaseV1 } }
   | { selection: { kind: 'revision'; ref: ArchitectureBaselineRevisionRef } };
 
 /**

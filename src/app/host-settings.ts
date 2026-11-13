@@ -92,10 +92,12 @@ import type {
 } from './host-settings-types.js';
 import { DEFAULT_WORK_RUN_TOKEN_BUDGET, MAX_WORK_RUN_TOKEN_BUDGET } from './host-settings-types.js';
 import { DEFAULT_COMMAND_REVIEW_LINE_MINUTES } from '../contracts/resource-caps.js';
+import type { WorkspaceRemovalKindV1, WorkspaceRemovalViewV1 } from '../contracts/workspace-removal.js';
 
 /** The published settings route set. `SettingsRoutes` stays the type truth. */
 export const SETTINGS_ROUTE_SUFFIXES = [
-  'snapshot', 'directories', 'models/save', 'models/select', 'workspaces/open', 'workspaces/access', 'checks/approve',
+  'snapshot', 'directories', 'models/save', 'models/select', 'workspaces/open', 'workspaces/access',
+  'workspaces/withdraw', 'workspaces/remove', 'checks/approve',
   'automation/save',
   'resource-caps/save', 'run-budget/save', 'command-review/save', 'plan-loop-limits/save', 'prompts/packs/list', 'prompts/packs/create', 'prompts/templates/read',
   'prompts/templates/save', 'prompts/tools/read', 'prompts/tools/save', 'knowledge-local', 'structural-approval/save',
@@ -252,6 +254,11 @@ export interface HostSettingsAssembly {
    *  not_found: unregistered; unsupported: access fixed (the reason names which); unavailable: project store not open. */
   setWorkspaceAccess?(scope: CoreScope, access: { writeAllowed: boolean; commandsAllowed: boolean }):
     SettingsResponse<{ writeAllowed: boolean; commandsAllowed: boolean }>;
+  /** 7D2 WD: withdraw a workspace that never entered the graph or remove one that did. The settings module passes
+   *  the save that temporarily drops the descriptor and selection entry, persists and notifies; the assembly calls
+   *  it after the core commit and unmounts only once it returned. Absence means unsupported. */
+  removeWorkspace?(scope: CoreScope, kind: WorkspaceRemovalKindV1, save: () => Promise<void>):
+    Promise<SettingsResponse<WorkspaceRemovalViewV1>>;
   openWorkspace(request: OpenSettingsWorkspace & { workspaceId?: string }): Promise<SettingsResponse<HostSettingsOpenedHost>>;
   bootstrap(): BootstrapResponse;
   /** Boolean-only probe: whether the trusted Host can resolve the named secret.
@@ -743,6 +750,8 @@ function toStoredModel(model: HostSettingsModelDefinition): HostSettingsStoredMo
   };
 }
 
+export const WORKSPACE_REMOVED_REASON = 'the workspace was removed';
+
 export async function createHostSettings(
   options: HostSettingsOptions,
   callbacks: HostSettingsCallbacks,
@@ -974,13 +983,24 @@ export async function createHostSettings(
   // Each entry is handled by its own project: an unavailable project keeps its
   // listed scope (a root that still resolves is checked; a gone one has no proof
   // to make), and an open project's root is checked before it registers.
-  for (const entry of workspaces) {
+  let droppedRemoved = false;
+  for (const entry of [...workspaces]) {
     const opened = await assembly.openWorkspace({
       path: entry.root, projectId: entry.scope.projectId, workspaceId: entry.scope.workspaceId,
       name: entry.name, writeAllowed: entry.writeAllowed, commandsAllowed: entry.commandsAllowed,
     });
-    if (opened.status !== 'ready') throw new Error(opened.reason);
+    if (opened.status === 'ready') continue;
+    // WD-19: a registration the core already marked removed is dropped, not a start failure; the one persist after
+    // the loop is what keeps it from coming back on the next start.
+    if (opened.code === 'not_found' && opened.reason === WORKSPACE_REMOVED_REASON) {
+      const index = workspaces.findIndex(listed => scopeKey(listed.scope) === scopeKey(entry.scope));
+      if (index >= 0) workspaces.splice(index, 1);
+      droppedRemoved = true;
+      continue;
+    }
+    throw new Error(opened.reason);
   }
+  if (droppedRemoved) await persist();
   // V12: the start-up workspaces the Host declares join the list in one write, so the next start opens their project
   // from the list.
   const declared = (options.declareWorkspaces ?? [])
@@ -1671,6 +1691,53 @@ export async function createHostSettings(
     return { status: 'ready', value: { settings: snapshotOf(), bootstrap: assembly.bootstrap() } };
   }
 
+  /**
+   * 7D2 WD: the two settings routes over the Host's one withdraw/remove owner. Both first prove the descriptor is in
+   * this Host, then let the assembly commit through the core before the save temporarily drops the descriptor and the
+   * scope's model selection, persists and notifies. A failed save restores both in memory and keeps the mount, so the
+   * same-session retry still reaches the core's `removedAt` branch (WD-21, WD-28).
+   */
+  async function workspaceRemovalRoute(kind: WorkspaceRemovalKindV1, input: unknown):
+    Promise<SettingsResponse<SettingsRoutes['workspaces/withdraw']['value']>> {
+    if (!isRecord(input) || !validScope(input['scope'])) {
+      return invalid(`workspaces/${kind} requires a complete project/workspace scope`);
+    }
+    const scope = { projectId: input['scope'].projectId, workspaceId: input['scope'].workspaceId };
+    if (!workspaces.some(entry => scopeKey(entry.scope) === scopeKey(scope))) {
+      return notFound('the workspace is not open in this Host');
+    }
+    if (assembly.removeWorkspace === undefined) {
+      return { status: 'rejected', code: 'unsupported',
+        reason: 'the Host does not publish workspace withdrawal and removal' };
+    }
+    const save = async (): Promise<void> => {
+      const key = scopeKey(scope);
+      const index = workspaces.findIndex(entry => scopeKey(entry.scope) === key);
+      const descriptor = workspaces[index]!;
+      const previousSelection = selection[key];
+      workspaces.splice(index, 1);
+      delete selection[key];
+      const restore = (): void => {
+        workspaces.splice(index, 0, descriptor);
+        if (previousSelection !== undefined) selection[key] = previousSelection;
+      };
+      try { await persist(); }
+      catch (error) {
+        restore();
+        throw new Error(`the settings file could not be written: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      try { await notify(); }
+      catch (error) {
+        restore();
+        throw new Error('the workspace was saved but the Host configuration was not confirmed: '
+          + `${error instanceof Error ? error.message : String(error)}; retry the same request`);
+      }
+    };
+    const removed = await assembly.removeWorkspace(scope, kind, save);
+    if (removed.status !== 'ready') return removed;
+    return { status: 'ready', value: { settings: snapshotOf(), bootstrap: assembly.bootstrap() } };
+  }
+
   // -------------------------------------------------------------------------
   // Prompt-pack editing routes. They read the disk tree at
   // `<settings directory>/prompts`, validate the whole resulting chain before
@@ -1943,6 +2010,8 @@ export async function createHostSettings(
       case 'models/select': return await selectModelRoute(input);
       case 'workspaces/open': return await openWorkspaceRoute(input);
       case 'workspaces/access': return await workspaceAccessRoute(input);
+      case 'workspaces/withdraw': return await workspaceRemovalRoute('withdraw', input);
+      case 'workspaces/remove': return await workspaceRemovalRoute('remove', input);
       case 'checks/approve': return await approveChecksRoute(input);
       case 'automation/save': return await saveAutomationRoute(input);
       case 'resource-caps/save': return await saveResourceCapsRoute(input);

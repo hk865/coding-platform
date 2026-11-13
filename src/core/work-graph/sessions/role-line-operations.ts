@@ -17,6 +17,7 @@ import { rejected, rejectedWithCurrent } from '../../../contracts/core/rejection
 import type { SessionProvenanceV1 } from '../../../contracts/core/session.js';
 import { canonicalKey, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
+import type { KnowledgeReadBaseV1 } from '../../../contracts/knowledge.js';
 import type { DecisionApplicationReceiptV1, SessionMessageRef } from '../../../contracts/core/session-message.js';
 import { decisionSourceKey, type DecisionSelectionV1, type DecisionSourceV1 } from '../../../contracts/goal-decisions.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
@@ -95,8 +96,9 @@ export type RoleLineOpenCommandV1 = { commandId: string; duty: RoleLineOpenDutyV
 export type RoleLineChangeScopeCommandV1 = { commandId: string; session: SessionRef; scope: RoleScopeV1[] };
 export type RoleLineReuseCommandV1 = { commandId: string; session: SessionRef; scope: RoleScopeV1[] };
 /** d05: C1's region open (v4 :8049–:8058): one adviser line on one top-level module under the cold-start parent. */
+/** `base` (KC-3): a knowledge_conflict repair round's line checks its region on the last adopted catalog. */
 export type RoleLineRegionOpenInputV1 = { commandId: string; parentOperation: OperationRef;
-  duty: 'adviser'; module: ModuleRef };
+  duty: 'adviser'; module: ModuleRef; base?: KnowledgeReadBaseV1 };
 export type RoleLineRegionOpenResultV1 =
   | { status: 'created' | 'replayed'; value: RoleLineLineV1 }
   | Exclude<RoleLineCreateResultV1, { status: 'created' | 'replayed' }>;
@@ -821,7 +823,8 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
     const line = await deps.createLine.ensureLine(lineCtx.value, { commandId: input.commandId, duty: input.duty,
       scope: { kind: 'project' }, reason: 'cold_start', provenance: { schemaVersion: 1, kind: 'new' },
       roleConfiguration: deps.platformRole(input.duty), name: null,
-      roleScopes: [{ kind: 'region', moduleRef: input.module }], parentOperation });
+      roleScopes: [{ kind: 'region', moduleRef: input.module }], parentOperation,
+      ...(input.base === undefined ? {} : { base: input.base }) });
     if (line.status === 'accepted' || line.status === 'capacity_blocked' || line.status === 'rejected') return line;
     // The line's own operation is its creation (the cold-start message names it, v4 :7933).
     const child = stableSessionCreationIdentity(trusted.actor, ctx.projectId, input.commandId).operationRef;

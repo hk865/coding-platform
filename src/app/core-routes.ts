@@ -111,6 +111,7 @@ import type {
   WriteNoteEnvelopeV1, NoteWritePort, VersionListPageV1,
 } from '../core/work-graph/model/note-contracts.js';
 import type { SemanticLinksReader } from '../core/work-graph/notes/semantic-layer-read.js';
+import type { TaskNodeCommitPort } from '../core/work-graph/model/task-node-commit-contracts.js';
 import {
   type CoreRouteKind,
   type CoreRouteSuffix,
@@ -126,6 +127,7 @@ import {
   type MessagesCoreRouteDto,
   type OverlapCoreRouteDto,
   type QueriesCancelCoreRouteDto,
+  type NodesCoreRouteDto,
   type WaitsCoreRouteDto,
   type RequestCommandCoreRouteDto,
   type RoleLineCoreRouteDto,
@@ -431,6 +433,8 @@ export type CoreRouteBindings = {
   // commit of it (the input carries the message only).
   readKnowledgeStatus: (ctx: CoreCallContext, input: unknown) => ReturnType<KnowledgeOpsPort['status']>;
   commitKnowledge: (ctx: CoreCallContext, input: unknown) => ReturnType<KnowledgeOpsPort['commit']>;
+  /** Node-level review (121-45): the person's commit or acknowledgement of a node; the owner admits the operator only. */
+  commitNode: TaskNodeCommitPort['commitNode'];
 };
 
 /** A.2 step 5.6 (§12.1 step 7, §12.8): this Host's instance lease and its start-up reconcile report. */
@@ -586,6 +590,8 @@ export type CoreRoutePlatform = {
   knowledge?: Pick<KnowledgeOpsPort, 'problems' | 'recover' | 'recoveryItems' | 'status' | 'commit'>;
   /** KC-1 G2: the proposal owner's batch file list, internal like the plain proposal read. */
   readProposalBatchFiles?: ArchitectureProposalService['readProposalBatchFiles'];
+  /** Node-level review (121-45): the node review owner; internal, so a narrow platform answers `unsupported`. */
+  nodeCommits?: Pick<TaskNodeCommitPort, 'commitNode'>;
 };
 
 /** `executions/resolve-unknown` input (RUN-22): the unknown Run and the operator's reason. */
@@ -626,7 +632,7 @@ export const CORE_ROUTE_SPECS: Record<
   | keyof RequestCommandCoreRouteDto | keyof SecretaryLifecycleCoreRouteDto | keyof WaitsCoreRouteDto
   | keyof RoleLineCoreRouteDto | keyof MaintainerCoreRouteDto | keyof WorkspaceFilesCoreRouteDto | keyof ExecutionsCoreRouteDto
   | keyof VerificationCoreRouteDto | keyof ExplorationCoreRouteDto | keyof KnowledgeCoreRouteDto
-  | keyof QueriesCancelCoreRouteDto,
+  | keyof QueriesCancelCoreRouteDto | keyof NodesCoreRouteDto,
   CoreRouteSpec
 > = {
   'controls/submit': { kind: 'graph_write', binding: 'submitControl', owner: 'controls.submitControl' },
@@ -784,6 +790,7 @@ export const CORE_ROUTE_SPECS: Record<
   'knowledge/problems': { kind: 'plain', binding: 'readKnowledgeProblems', owner: 'knowledge.problems' },
   'knowledge/status': { kind: 'plain', binding: 'readKnowledgeStatus', owner: 'knowledge.status' },
   'knowledge/commit': { kind: 'plain', binding: 'commitKnowledge', owner: 'knowledge.commit' },
+  'nodes/commit': { kind: 'graph_write', binding: 'commitNode', owner: 'nodeCommits.commitNode' },
   'plans/request-candidate': { kind: 'plain', binding: 'readRequestCandidate', owner: 'requestCandidates.readRequestCandidate' },
   'plans/abandon': { kind: 'graph_write', binding: 'abandonPlanProposal', owner: 'requestCandidates.abandonPlanProposal' },
   'decisions/queue': { kind: 'plain', binding: 'queryDecisionQueue', owner: 'decisions.queryDecisionQueue' },
@@ -1598,6 +1605,8 @@ export function createPlatformCoreRouteBindings(
     commitKnowledge: platform.knowledge === undefined ? unsupported('the platform does not publish knowledge.commit')
       : personEntry((ctx, input: unknown) => platform.knowledge!.commit(ctx,
         (isPlainObject(input) ? { ...input, workspaceId: ctx.workspaceId ?? '' } : input) as never)),
+    commitNode: platform.nodeCommits === undefined ? unsupported('the platform does not publish nodeCommits.commitNode')
+      : platform.nodeCommits.commitNode.bind(platform.nodeCommits),
   };
 }
 
@@ -1916,6 +1925,7 @@ export async function dispatchCoreRoute(
       case 'knowledge/problems': return bindings.readKnowledgeProblems(ctx, plain.input as never);
       case 'knowledge/status': return bindings.readKnowledgeStatus(ctx, plain.input);
       case 'knowledge/commit': return bindings.commitKnowledge(ctx, plain.input);
+      case 'nodes/commit': return bindings.commitNode(ctx, graphWrite.request as never);
     }
   })();
   // A GraphWrite rejection is a failed command: preserve its exact body but let

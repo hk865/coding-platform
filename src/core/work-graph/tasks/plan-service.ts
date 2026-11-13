@@ -2602,7 +2602,7 @@ function proposalRevisionPinOf(expected: unknown, proposalRef: PlanProposalRef):
 }
 
 /** §2.3 受影响集合: the `starting|running` Runs of the active Plan's Tasks, in plan task order. */
-function liveRunsOf(plan: PlanRevisionSnapshot, facts: CanonicalTaskFacts): RunSnapshot[] {
+export function liveRunsOf(plan: PlanRevisionSnapshot, facts: CanonicalTaskFacts): RunSnapshot[] {
   return plan.tasks.flatMap((task) => facts.runsByTaskId.get(task.taskId) ?? [])
     .filter((run) => run.status === 'starting' || run.status === 'running');
 }

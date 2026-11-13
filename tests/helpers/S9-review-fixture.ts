@@ -114,8 +114,14 @@ export function s9ReviewerBinding(): S6AExtraBinding {
     binding: bindingOf(REVIEWER_BINDING_ID, reviewer, 'S9 reviewer', ['read', 'look_graph', 'find_graph']) };
 }
 
+/**
+ * G5 (S9 R2/R3): a caller-supplied, public-shape Plan draft for the one adopted Plan. It receives the Goal the world
+ * created; `checks` stays the default draft's switch and is not passed here. The draft must keep the `s9-work` Task
+ * (the world's `task` and its Work line) so the recipe's one subject Run stays the caller's.
+ */
 export async function openS9ReviewWorld(options: {
   backend?: S6ABackend; reviewLine?: 'open' | 'none'; checks?: 'command' | 'none';
+  draft?: (goal: GoalRef) => PlanRevisionDraft;
 } = {}): Promise<S9ReviewWorld> {
   const world = await openS6AHostWorld({ backend: options.backend ?? 'memory',
     extraBindings: [s9ReviewerBinding()],
@@ -133,7 +139,8 @@ export async function openS9ReviewWorld(options: {
     await governance.activatePolicy({ content: { schemaVersion: 1, requirementKinds: ['static', 'reviewer'],
       minimumRequiredRequirementsPerObligation: 1 } });
     const goal = world.goals.first;
-    await adoptPLPlanDraft(main, goal, s9ReviewDraft(goal, options.checks), 's9-review');
+    await adoptPLPlanDraft(main, goal, options.draft === undefined
+      ? s9ReviewDraft(goal, options.checks) : options.draft(goal), 's9-review');
     const task: TaskTriple = { projectId: goal.projectId, goalId: goal.goalId, taskId: 's9-work' };
     const workLine = await sessionOf(world, await createS6BLine(main, { label: 's9-work-line', role: S6A_WORK_ROLE,
       tasks: [task] }));

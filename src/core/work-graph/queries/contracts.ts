@@ -197,6 +197,8 @@ export type QueryReconcileInput = {
    * records an explicit `unknown`. The other rows write no activity.
    */
   activity?: RunActivityFactsV1;
+  /** Q-02's close message; absent means the start-up reconcile's `host_restart_before_entry`; the in-process settle of an aborted entry passes `aborted_before_entry`. */
+  notEnteredCloseMessage?: 'host_restart_before_entry' | 'aborted_before_entry';
   result:
     /** Q-01 (claimed/prepared) and Q-02 (entering, the readable Kernel holds no fixed Turn). */
     | { kind: 'not_entered' }

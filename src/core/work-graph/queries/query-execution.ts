@@ -2794,7 +2794,8 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       switch (result.kind) {
         case 'not_entered':
           // Q-01 needs no probe (begin commits `entering` before the Kernel starts); Q-02 needs a readable Kernel.
-          return { event: { kind: 'query_reconcile_not_entered', hostInstanceId: input.hostInstanceId },
+          return { event: { kind: 'query_reconcile_not_entered', hostInstanceId: input.hostInstanceId,
+            ...(input.notEnteredCloseMessage === undefined ? {} : { notEnteredCloseMessage: input.notEnteredCloseMessage }) },
             guard: { ...base, probe: state.phase === 'entering' ? input.probe : null, kernel: state.phase === 'entering' && input.probe === 'ready'
               ? { turn: 'absent', mappedOutcome: null, boundaryComplete: false, unresolvedToolCallIds: [] } : null },
             cause: 'query_reconcile_not_entered', turnSeen: false };

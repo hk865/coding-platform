@@ -39,6 +39,7 @@ import type { DecisionChangeProofV1, DecisionSourceV1, UserDecisionBodyV1 } from
 import { decisionSourceKey } from '../../../contracts/goal-decisions.js';
 import { messageOf } from '../../../contracts/error-message.js';
 import { canonicalJson, canonicalKey, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { gitBlobId } from '../../workspace/workspace-change-capture.js';
 import { checkShape } from '../../../contracts/validation/data-format.js';
 import { OperationRefShape } from '../../../contracts/data-format-refs.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
@@ -80,7 +81,7 @@ import { architectureFilesOf, knowledgeConflictsOf, platformFileSource } from '.
 import { exactKeys } from './architecture-service.js';
 import {
   catalogRevisionMovesProblem, catalogRevisionPinProblem, draftCatalogRevision, finishCatalogRevision,
-  planCatalogRevision, type CatalogRevisionDependencies,
+  planCatalogRevision, type CatalogRevisionDependencies, type CatalogRevisionDraft,
 } from './revision-planner.js';
 import { parseRepairOps } from './repair-ops.js';
 
@@ -111,11 +112,24 @@ export type ProposalRunFactResolver = (ctx: CoreCallContext, runRef: RunRef) =>
 
 /**
  * The trusted QueryRun facts the composition resolves for a `query_run` proposer; `segment` is the round's entry in
- * the operation that opened it (null when the operation names no entry for it).
+ * the operation that opened it (null when the operation names no entry for it). `followUp` (KC-3) names the
+ * knowledge_conflict notice the round repairs (`repairNoticeOf`), null for any other round.
  */
 export type ProposalQueryRunFactResolver = (ctx: CoreCallContext, queryRunRef: QueryRunRef) =>
   Promise<ReadResult<{ sessionRef: SessionRef; role: RoleConfigurationRef; kind: 'role_exploration';
-    operationRef: OperationRef | null; queryRunRef: QueryRunRef; segment: RoleExplorationSegmentV1 | null }>>;
+    operationRef: OperationRef | null; queryRunRef: QueryRunRef; segment: RoleExplorationSegmentV1 | null;
+    followUp: { kind: 'knowledge_conflict'; noticeId: string } | null }>>;
+
+/** KC-3: a batch's mark that a knowledge_conflict repair round froze it. */
+type KnowledgeConflictMark = ArchitectureProposalBatchV1['knowledgeConflict'];
+
+/**
+ * KC-3 (121-106 ②): a repair batch is tried, planned and approved on the catalog the records last adopted, never on
+ * the files a conflict keeps unreadable; every other batch reads the files.
+ */
+function repairBase(mark: KnowledgeConflictMark): { base?: 'recorded' } {
+  return mark === undefined ? {} : { base: 'recorded' };
+}
 
 /** The decision-message owner's answer read; the answer's selection and captured pins are the approval's facts. */
 export type ProposalDecisionMessageRead = {
@@ -147,8 +161,10 @@ export type ProposalServiceDeps = CatalogRevisionDependencies & {
 export type ArchitectureProposalService = {
   proposeArchitectureRevision(ctx: CoreCallContext,
     input: ProposeArchitectureRevisionInputV1 & { commandId: string }): Promise<ProposalResult>;
+  /** `knowledgeConflict` (KC-3): the repair round's notice, marked on every batch this freeze makes. */
   freezeArchitectureProposalBatch(ctx: CoreCallContext,
-    input: { baseCatalogPin: ArchitectureCatalogPinV1; proposalRefs: ArchitectureProposalRef[] }):
+    input: { baseCatalogPin: ArchitectureCatalogPinV1; proposalRefs: ArchitectureProposalRef[];
+      knowledgeConflict?: { noticeId: string } }):
     Promise<ReadResult<ArchitectureProposalBatchV1[]>>;
   applyArchitectureProposalBatch(ctx: CoreCallContext,
     input: { batchRef: ArchitectureProposalBatchRef; answerMessageRef: SessionMessageRef }):
@@ -377,7 +393,7 @@ function proposalBatchReason(members: readonly ArchitectureProposalRecordV1[]): 
 }
 
 function batchOf(projectId: string, members: readonly ArchitectureProposalRecordV1[],
-  baseCatalogPin: ArchitectureCatalogPinV1): ArchitectureProposalBatchV1 {
+  baseCatalogPin: ArchitectureCatalogPinV1, knowledgeConflict: KnowledgeConflictMark): ArchitectureProposalBatchV1 {
   const memberRefs = members.map(member => structuredClone(member.ref));
   const ops = members.flatMap(member => member.ops.map(op => structuredClone(op)));
   const responsibilityMoves = members.flatMap(member => member.responsibilityMoves.map(move => structuredClone(move)));
@@ -388,18 +404,20 @@ function batchOf(projectId: string, members: readonly ArchitectureProposalRecord
   return {
     ref: { aggregateType: 'ArchitectureProposalBatch', projectId, batchId },
     members: memberRefs, baseCatalogPin: structuredClone(baseCatalogPin), ops, responsibilityMoves, digest,
+    ...(knowledgeConflict === undefined ? {} : { knowledgeConflict: { noticeId: knowledgeConflict.noticeId } }),
   };
 }
 
 async function trialCatalogRevision(deps: ProposalServiceDeps, ctx: CoreCallContext,
   pin: ArchitectureCatalogPinV1, ops: readonly unknown[], moves: readonly unknown[], reason: string,
-  commandId: string): Promise<CoreRejection | null> {
+  commandId: string, mark: KnowledgeConflictMark): Promise<CoreRejection | null> {
   const input = {
     expected: pin,
     ops: ops as ProposeArchitectureRevisionInputV1['ops'],
     responsibilityMoves: moves as ProposeArchitectureRevisionInputV1['responsibilityMoves'],
     reason,
     commandId,
+    ...repairBase(mark),
   };
   let planned;
   try {
@@ -480,7 +498,8 @@ async function writeProposal(deps: ProposalServiceDeps, ctx: CoreCallContext,
   proposer: { sessionRef: SessionRef; operationRef: OperationRef | null; queryRunRef: QueryRunRef | null },
   keys: { identityKey: string; fingerprint: string },
   write: Clock, immediate: boolean,
-  guard: { operationRef: OperationRef; revision: number } | null, autoApply: boolean): Promise<ProposalResult> {
+  guard: { operationRef: OperationRef; revision: number } | null, autoApply: boolean,
+  mark: KnowledgeConflictMark): Promise<ProposalResult> {
   const proposalId = sha256Hex(canonicalJson({ projectId: ctx.projectId, commandId: input.commandId } as unknown as JsonValue));
   const ref: ArchitectureProposalRef = {
     aggregateType: 'ArchitectureProposal', projectId: ctx.projectId, proposalId,
@@ -502,7 +521,12 @@ async function writeProposal(deps: ProposalServiceDeps, ctx: CoreCallContext,
   let record = created;
   let batch: ArchitectureProposalBatchV1 | null = null;
   if (immediate) {
-    batch = batchOf(ctx.projectId, [created], input.baseCatalogPin);
+    batch = batchOf(ctx.projectId, [created], input.baseCatalogPin, mark);
+    if (mark !== undefined) {
+      const files = await batchFiles(deps, ctx, batch);
+      if (files.status !== 'ready') return readFailure(files);
+      batch = { ...batch, plannedFiles: cardFilesDigest(files.value) };
+    }
     const entered = transitionArchitectureProposal(created, { kind: 'enter_batch', batchRef: batch.ref });
     if (!entered.ok) return rejected(entered.code, entered.detail);
     record = entered.next;
@@ -559,7 +583,7 @@ type FreezePlan = {
 };
 
 async function freezePlan(deps: ProposalServiceDeps, ctx: CoreCallContext,
-  pin: ArchitectureCatalogPinV1, proposals: readonly ArchitectureProposalRecordV1[]):
+  pin: ArchitectureCatalogPinV1, proposals: readonly ArchitectureProposalRecordV1[], mark: KnowledgeConflictMark):
 Promise<ReadResult<FreezePlan[]>> {
   const sorted = [...proposals].sort((left, right) => left.ref.proposalId < right.ref.proposalId ? -1
     : left.ref.proposalId > right.ref.proposalId ? 1 : 0);
@@ -572,7 +596,7 @@ Promise<ReadResult<FreezePlan[]>> {
     const nextMoves = [...accumulatedMoves, ...proposal.responsibilityMoves];
     const reason = proposalBatchReason([...current, proposal]);
     const trial = await trialCatalogRevision(deps, ctx, pin, nextOps, nextMoves, reason,
-      `freeze-trial:${proposal.ref.proposalId}`);
+      `freeze-trial:${proposal.ref.proposalId}`, mark);
     if (trial === null) {
       current.push(proposal);
       accumulatedOps = nextOps;
@@ -588,7 +612,7 @@ Promise<ReadResult<FreezePlan[]>> {
       accumulatedMoves = [];
     }
     const alone = await trialCatalogRevision(deps, ctx, pin, proposal.ops, proposal.responsibilityMoves,
-      proposal.reason, `freeze-trial:${proposal.ref.proposalId}`);
+      proposal.reason, `freeze-trial:${proposal.ref.proposalId}`, mark);
     if (alone !== null) return alone.status === 'rejected' ? alone : rejected('unavailable', 'the proposal trial is not ready');
     current.push(proposal);
     accumulatedOps = [...proposal.ops];
@@ -598,7 +622,7 @@ Promise<ReadResult<FreezePlan[]>> {
 
   const plans: FreezePlan[] = [];
   for (const members of compatible) {
-    const batch = batchOf(pin.catalogRef.projectId, members, pin);
+    const batch = batchOf(pin.catalogRef.projectId, members, pin, mark);
     const existing = await readBatch(deps, batch.ref);
     if (existing.status === 'rejected') return existing;
     if (existing.status === 'not_found') {
@@ -643,8 +667,8 @@ Promise<ReadResult<ArchitectureProposalBatchV1[]>> {
   return { status: 'ready', value: batches };
 }
 
-async function freezeProposals(deps: ProposalServiceDeps, ctx: CoreCallContext,
-  pin: ArchitectureCatalogPinV1, refs: readonly ArchitectureProposalRef[]): Promise<ReadResult<ArchitectureProposalBatchV1[]>> {
+async function freezeProposals(deps: ProposalServiceDeps, ctx: CoreCallContext, pin: ArchitectureCatalogPinV1,
+  refs: readonly ArchitectureProposalRef[], mark: KnowledgeConflictMark): Promise<ReadResult<ArchitectureProposalBatchV1[]>> {
   const read = await readProposals(deps, refs);
   if (read.status !== 'ready') return read;
   const samePin = (record: ArchitectureProposalRecordV1): boolean => sameCatalogPin(record.baseCatalogPin, pin);
@@ -666,18 +690,25 @@ async function freezeProposals(deps: ProposalServiceDeps, ctx: CoreCallContext,
   }
   const pending = read.value.filter(record => record.state === 'pending' && record.batchRef === null && samePin(record));
   if (pending.length === 0) return { status: 'ready', value: existingBatches };
-  const planned = await freezePlan(deps, ctx, pin, pending);
+  const planned = await freezePlan(deps, ctx, pin, pending, mark);
   if (planned.status === 'rejected' && planned.code === 'source_stale') {
     return await closeStalePending(deps, ctx, pin, pending) ?? { status: 'ready', value: existingBatches };
   }
   if (planned.status !== 'ready') return planned;
+  // KC-3 (lead 11-13): a repair card's files are taken when it is frozen; its approval refuses a plan that moved.
+  for (const plan of mark === undefined ? [] : planned.value.filter(entry => !entry.existing)) {
+    const files = await batchFiles(deps, ctx, plan.batch);
+    if (files.status !== 'ready') return files;
+    plan.batch = { ...plan.batch, plannedFiles: cardFilesDigest(files.value) };
+  }
   const all = new Map<string, ArchitectureProposalBatchV1>();
   for (const batch of existingBatches) all.set(batch.ref.batchId, batch);
   for (const plan of planned.value) all.set(plan.batch.ref.batchId, plan.batch);
   const fresh = planned.value.filter(plan => !plan.existing);
   if (fresh.length === 0) return { status: 'ready', value: [...all.values()] };
 
-  // 121-109 / 62-6: the switch is read once, before the freeze; only the batches this commit freezes are tried.
+  // 121-109 / 62-6: the switch is read once, before the freeze; only the batches this commit freezes are tried. A KC-3
+  // repair batch is a structural proposal batch too (lead 11-13, second ruling).
   const autoApply = deps.structuralApproval?.(ctx.projectId).proposals === 'auto';
   const clock: Clock = { now: deps.now(), eventId: deps.eventId() };
   const actor = hostActorOf(ctx) ?? TRIAL_ACTOR;
@@ -717,14 +748,14 @@ async function freezeProposals(deps: ProposalServiceDeps, ctx: CoreCallContext,
       guards: merged.guards, records, claims: [], indexGuards: [], indexChanges: [], events,
     });
   } catch (error) {
-    const again = await freezePlan(deps, ctx, pin, pending);
+    const again = await freezePlan(deps, ctx, pin, pending, mark);
     if (again.status === 'ready' && again.value.every(plan => plan.existing)) {
       return { status: 'ready', value: again.value.map(plan => plan.batch) };
     }
     return rejected('unavailable', `the batch freeze outcome is unknown: ${messageOf(error)}`);
   }
   if (committed.status !== 'committed') {
-    const again = await freezePlan(deps, ctx, pin, pending);
+    const again = await freezePlan(deps, ctx, pin, pending, mark);
     if (again.status === 'ready' && again.value.every(plan => plan.existing)) {
       return { status: 'ready', value: again.value.map(plan => plan.batch) };
     }
@@ -785,12 +816,14 @@ async function closeStalePending(deps: ProposalServiceDeps, ctx: CoreCallContext
 /** The one proposer gate: a Work Run, or a trusted role_exploration QueryRun. */
 async function proposerOf(deps: ProposalServiceDeps, ctx: CoreCallContext):
 Promise<ReadResult<{ sessionRef: SessionRef; role: RoleConfigurationRef;
-  operationRef: OperationRef | null; queryRunRef: QueryRunRef | null; segment: RoleExplorationSegmentV1 | null }>
+  operationRef: OperationRef | null; queryRunRef: QueryRunRef | null; segment: RoleExplorationSegmentV1 | null;
+  followUp: { kind: 'knowledge_conflict'; noticeId: string } | null }>
   | CoreRejection> {
   if (ctx.principal.kind === 'work_run') {
     const facts = await deps.runFacts(ctx, ctx.principal.runRef);
     if (facts.status !== 'ready') return facts;
-    return { status: 'ready', value: { ...facts.value, operationRef: null, queryRunRef: null, segment: null } };
+    return { status: 'ready', value: { ...facts.value, operationRef: null, queryRunRef: null, segment: null,
+      followUp: null } };
   }
   if (ctx.principal.kind === 'query_run') {
     const facts = await deps.queryRunFacts(ctx, ctx.principal.queryRunRef);
@@ -798,7 +831,8 @@ Promise<ReadResult<{ sessionRef: SessionRef; role: RoleConfigurationRef;
     // The resolver's ready value is always a stored `role_exploration` round; it already checked the real Job.
     return { status: 'ready', value: { sessionRef: { ...facts.value.sessionRef }, role: structuredClone(facts.value.role),
       operationRef: facts.value.operationRef === null ? null : structuredClone(facts.value.operationRef),
-      queryRunRef: structuredClone(facts.value.queryRunRef), segment: facts.value.segment } };
+      queryRunRef: structuredClone(facts.value.queryRunRef), segment: facts.value.segment,
+      followUp: facts.value.followUp === null ? null : { ...facts.value.followUp } } };
   }
   return rejected('forbidden', 'a structural proposal is written by an adviser Work Run or a role_exploration QueryRun');
 }
@@ -867,13 +901,16 @@ export async function proposeArchitectureRevision(deps: ProposalServiceDeps, ctx
   if (duty.value !== 'adviser') {
     return rejected('forbidden', 'a structural proposal is written by an adviser');
   }
+  // KC-3: a knowledge_conflict repair round's proposal is tried on the last adopted catalog and its batch is marked.
+  const mark: KnowledgeConflictMark = facts.value.followUp === null ? undefined
+    : { noticeId: facts.value.followUp.noticeId };
   // 121-109 / 62-6: the switch is read once, before the window read and the freeze. A coarse split is the initial
-  // architecture and still asks the person (4-18, PRODUCT §7).
+  // architecture and still asks the person (4-18, PRODUCT §7). A KC-3 repair batch is a structural proposal batch too.
   const autoApply = deps.structuralApproval?.(ctx.projectId).proposals === 'auto'
     && facts.value.segment !== 'coarse_split';
 
   const trial = await trialCatalogRevision(deps, ctx, qualifiedInput.baseCatalogPin, qualifiedInput.ops,
-    qualifiedInput.responsibilityMoves, qualifiedInput.reason, `${input.commandId}:trial`);
+    qualifiedInput.responsibilityMoves, qualifiedInput.reason, `${input.commandId}:trial`, mark);
   if (trial !== null) return trial.code === 'invalid' ? { status: 'invalid', reason: trial.reason } : trial;
 
   const readBatchWindow = async (): Promise<ProposalBatchWindowReadV1 | CoreRejection> => {
@@ -890,7 +927,7 @@ export async function proposeArchitectureRevision(deps: ProposalServiceDeps, ctx
     const guard = verdict.open && verdict.operationRef !== null && verdict.revision !== null
       ? { operationRef: verdict.operationRef, revision: verdict.revision } : null;
     return writeProposal(deps, ctx, qualifiedInput, facts.value,
-      keys, { now: deps.now(), eventId: deps.eventId() }, !verdict.open, guard, autoApply);
+      keys, { now: deps.now(), eventId: deps.eventId() }, !verdict.open, guard, autoApply, mark);
   };
   let window = await readBatchWindow();
   if ('status' in window) return window;
@@ -907,7 +944,8 @@ export async function proposeArchitectureRevision(deps: ProposalServiceDeps, ctx
 }
 
 export async function freezeArchitectureProposalBatch(deps: ProposalServiceDeps, ctx: CoreCallContext,
-  input: { baseCatalogPin: ArchitectureCatalogPinV1; proposalRefs: ArchitectureProposalRef[] }):
+  input: { baseCatalogPin: ArchitectureCatalogPinV1; proposalRefs: ArchitectureProposalRef[];
+    knowledgeConflict?: { noticeId: string } }):
 Promise<ReadResult<ArchitectureProposalBatchV1[]>> {
   if (!isRecord(input)) return rejected('invalid', 'a batch freeze requires an input object');
   const pinProblem = catalogRevisionPinProblem(input.baseCatalogPin);
@@ -921,7 +959,7 @@ Promise<ReadResult<ArchitectureProposalBatchV1[]>> {
     if (problem !== null) return rejected('invalid', problem);
     if (ref.projectId !== ctx.projectId) return rejected('forbidden', 'a proposal ref is outside the call context project');
   }
-  return freezeProposals(deps, ctx, input.baseCatalogPin, input.proposalRefs);
+  return freezeProposals(deps, ctx, input.baseCatalogPin, input.proposalRefs, input.knowledgeConflict);
 }
 
 async function replayApproval(deps: ProposalServiceDeps, keys: { identityKey: string; fingerprint: string },
@@ -1105,7 +1143,10 @@ Promise<ApplyBatchResult<ArchitectureRevision>> {
 /**
  * Who approves a batch: the person's saved answer (its message is the change proof), or the platform under the
  * project's structural auto-approval (121-109), which writes no answer and no proof. `out` tells the caller why the
- * platform held the batch back (`blocked`), or what it applied (`summary`, the notice's counts and modules).
+ * platform held the batch back (`blocked`), or what it applied (`summary`, the notice's counts and modules). KC-3
+ * (4-14): a repair batch is planned on the record with the writer's `replace` either way (`batchWritePlans`); the
+ * platform's approval still goes through `autoApprovalBlockOf` first, so a repair that overwrites or deletes a file the
+ * platform did not write is held back with the card and its notice, and only the person's answer writes it (lead 11-13).
  */
 type ApprovalAuthority =
   | { kind: 'answer'; message: SessionMessage }
@@ -1153,7 +1194,9 @@ async function prepareApproval(deps: ProposalServiceDeps, ctx: CoreCallContext,
   const closeStale = async (): Promise<KnowledgePrepared<ApprovalResult>> => authority.kind === 'answer'
     ? exit(await writeClosedMembers(deps, ctx, keys, batch, members, authority.message, 'stale'))
     : exit(rejected('source_stale', 'the catalog moved since the batch was frozen'));
-  const window = await readCurrentCatalogWindow(deps.records, batch.ref.projectId, { lines: deps.knowledge, caller: ctx });
+  const base = repairBase(batch.knowledgeConflict);
+  const window = await readCurrentCatalogWindow(deps.records, batch.ref.projectId,
+    { lines: deps.knowledge, caller: ctx, ...base });
   if (window.status === 'rejected') return exit(window);
   if (window.status !== 'ready') return exit(rejected('unavailable', 'the current architecture catalog is not readable'));
   const sameBaseline = canonicalKey(batch.baseCatalogPin.baseline.ref)
@@ -1173,29 +1216,29 @@ async function prepareApproval(deps: ProposalServiceDeps, ctx: CoreCallContext,
     }
     return exit(planned);
   };
-  const reason = proposalBatchReason(members);
   // Stack review 1: the files are read and their changes computed before the planner's ledger half reads the basis.
-  const draft = await draftCatalogRevision(deps, ctx, {
-    expected: batch.baseCatalogPin,
-    ops: batch.ops,
-    responsibilityMoves: batch.responsibilityMoves,
-    reason,
-    commandId,
-  });
-  if (draft.status !== 'ready') return approvalRefused(draft);
-  const plans = await architectureWritePlansOf(lines, draft.value.catalog, knowledgeBaselineOf(draft.value.content));
-  if (plans.status !== 'ready') return exit(rejectionOf(plans));
+  const batchPlan = await batchWritePlans(deps, ctx, batch, lines, proposalBatchReason(members), commandId);
+  if (batchPlan.status === 'draft') return approvalRefused(batchPlan.refused);
+  if (batchPlan.status === 'plans') return exit(batchPlan.refused);
+  const { draft, plans } = batchPlan.value;
+  if (batch.plannedFiles !== undefined) {
+    // KC-3 (lead 11-13; user 问 3 甲): the person approves the files the card listed; a plan that moved since (a hand
+    // edit, a new bad file) closes stale like a moved catalog, and no file is written.
+    const files = await batchFileRows(deps, window, plans, true);
+    if (files.status !== 'ready') return exit(files);
+    if (cardFilesDigest(files.value) !== batch.plannedFiles) return closeStale();
+  }
   if (authority.kind === 'auto') {
     // 121-106 item 5: the files are read here, before the planner's ledger half, like the plan's own reads.
-    const block = await autoApprovalBlockOf(deps.records, ctx.projectId, plans.value);
+    const block = await autoApprovalBlockOf(deps.records, ctx.projectId, plans);
     if (block.status !== 'ready') return exit(block);
     if (block.value !== null) {
       authority.out.blocked = block.value;
       return exit(rejected('invalid', 'the structural auto-approval held the batch back; the card stays'));
     }
-    authority.out.summary = appliedChangesOf(plans.value, deps.knowledge.write.files);
+    authority.out.summary = appliedChangesOf(plans, deps.knowledge.write.files);
   }
-  const planned = await finishCatalogRevision(deps, ctx, draft.value);
+  const planned = await finishCatalogRevision(deps, ctx, draft);
   if (planned.status !== 'ready') return approvalRefused(planned);
 
   const actor = hostActorOf(ctx);
@@ -1244,7 +1287,27 @@ async function prepareApproval(deps: ProposalServiceDeps, ctx: CoreCallContext,
     ...(fragment.ledgerHorizon === undefined ? {} : { ledgerHorizon: fragment.ledgerHorizon }),
     ...(fragment.commitCursorBindings === undefined ? {} : { commitCursorBindings: fragment.commitCursorBindings }),
   };
-  return { kind: 'ready', plans: plans.value, commit: knowledgeCommit(commit => deps.records.commit(commit), prepared, thrown) };
+  return { kind: 'ready', plans, commit: knowledgeCommit(commit => deps.records.commit(commit), prepared, thrown) };
+}
+
+/**
+ * KC-3: the one plan of a frozen batch's writes, for its approval and its card's file list alike, so the two cannot
+ * drift: drafted on the batch's base (the record for a repair batch, `repairBase`) and written with the writer's
+ * `replace` for a repair batch. The draft's refusal and the writer's are told apart: the approval answers them
+ * differently.
+ */
+async function batchWritePlans(deps: ProposalServiceDeps, ctx: CoreCallContext, batch: ArchitectureProposalBatchV1,
+  lines: readonly LineKnowledge[], reason: string, commandId: string): Promise<
+  | { status: 'ready'; value: { draft: CatalogRevisionDraft; plans: KnowledgeWritePlan[] } }
+  | { status: 'draft'; refused: Exclude<ReadResult<CatalogRevisionDraft>, { status: 'ready' }> }
+  | { status: 'plans'; refused: CoreRejection }> {
+  const draft = await draftCatalogRevision(deps, ctx, { expected: batch.baseCatalogPin, ops: batch.ops,
+    responsibilityMoves: batch.responsibilityMoves, reason, commandId, ...repairBase(batch.knowledgeConflict) });
+  if (draft.status !== 'ready') return { status: 'draft', refused: draft };
+  const plans = await architectureWritePlansOf(lines, draft.value.catalog, knowledgeBaselineOf(draft.value.content),
+    batch.knowledgeConflict !== undefined);
+  if (plans.status !== 'ready') return { status: 'plans', refused: rejectionOf(plans) };
+  return { status: 'ready', value: { draft: draft.value, plans: plans.value } };
 }
 
 // --------------------------------------------------------------------------
@@ -1410,7 +1473,9 @@ async function autoApplyBatch(deps: ProposalServiceDeps, ctx: CoreCallContext, b
 /**
  * KC-1 G2 (ruling 4-9): the files this batch would change if approved now, from a read-only trial of its ops on the
  * current pin (never queued, leased or committed). Each line's files are read for the source verdict (ruling 4-2 A);
- * a new module file has no name yet (`path: null`), because `writeModule` picks one at approval.
+ * a new module file has no name yet (`path: null`), because `writeModule` picks one at approval. KC-3: the plan is
+ * its approval's own (`batchWritePlans`: a repair batch on the record with the writer's `replace`); `willRevert`
+ * marks a file the platform did not write that it changes back (user 问 3 甲); a bad file it deletes names no module.
  */
 export async function readProposalBatchFiles(deps: ProposalServiceDeps, ctx: CoreCallContext,
   input: { batchRef: ArchitectureProposalBatchRef }): Promise<ReadResult<{ files: readonly ProposalBatchFileV1[] }>> {
@@ -1420,41 +1485,64 @@ export async function readProposalBatchFiles(deps: ProposalServiceDeps, ctx: Cor
   if (input.batchRef.projectId !== ctx.projectId) return rejected('forbidden', 'the batch is outside the call context project');
   const batch = await readBatch(deps, input.batchRef);
   if (batch.status !== 'ready') return batch;
+  const files = await batchFiles(deps, ctx, batch.value);
+  if (files.status !== 'ready') return files;
+  return { status: 'ready', value: { files: files.value.map(row => row.file) } };
+}
+
+/** One card row and the bytes its change would replace (the frozen digest takes both). */
+type BatchFileRowV1 = { file: ProposalBatchFileV1; before: Uint8Array | null };
+
+/** A frozen batch's card rows now: its own plan (`batchWritePlans`) on read-only lines, sourced against the record. */
+async function batchFiles(deps: ProposalServiceDeps, ctx: CoreCallContext, batch: ArchitectureProposalBatchV1):
+  Promise<{ status: 'ready'; value: BatchFileRowV1[] } | Exclude<ReadResult<never>, { status: 'ready' }>> {
   const trial = platformCheckContext(ctx, TRIAL_ACTOR);
-  const draft = await draftCatalogRevision(deps, trial, { expected: batch.value.baseCatalogPin, ops: batch.value.ops,
-    responsibilityMoves: batch.value.responsibilityMoves, reason: 'proposal batch files',
-    commandId: `files:${batch.value.ref.batchId}` });
-  if (draft.status !== 'ready') return draft;
   const lines = await deps.knowledge.project(trial);
   if (lines.status !== 'ready') return rejectionOf(lines);
-  const plans = await architectureWritePlansOf(lines.value, draft.value.catalog, knowledgeBaselineOf(draft.value.content));
-  if (plans.status !== 'ready') return rejectionOf(plans);
-  const recorded = await readRecordedCatalogWindow(deps.records, ctx.projectId);
+  const batchPlan = await batchWritePlans(deps, trial, batch, lines.value, 'proposal batch files',
+    `files:${batch.ref.batchId}`);
+  if (batchPlan.status !== 'ready') return batchPlan.refused;
+  const recorded = await readRecordedCatalogWindow(deps.records, batch.ref.projectId);
   if (recorded.status !== 'ready' && recorded.status !== 'not_found') return recorded;
-  const files: ProposalBatchFileV1[] = [];
-  for (const plan of plans.value) {
-    const facts = await lineFileFacts(recorded.status === 'ready' ? recorded : null, plan);
+  return batchFileRows(deps, recorded.status === 'ready' ? recorded : null, batchPlan.value.plans,
+    batch.knowledgeConflict !== undefined);
+}
+
+/** The rows of planned writes, each line's in path order (a new module file, nameless, last by module). */
+async function batchFileRows(deps: ProposalServiceDeps, recorded: Extract<CurrentCatalogWindow, { status: 'ready' }> | null,
+  plans: readonly KnowledgeWritePlan[], repair: boolean): Promise<{ status: 'ready'; value: BatchFileRowV1[] } | CoreRejection> {
+  const rows: BatchFileRowV1[] = [];
+  for (const plan of plans) {
+    const facts = await lineFileFacts(recorded, plan);
     if (facts.status !== 'ready') return facts;
     const byPath = new Map(facts.value.files.map(file => [file.path, file]));
     const projection = facts.value.projection;
-    const lineFiles: ProposalBatchFileV1[] = plan.changes.map(change => {
+    const lineRows: BatchFileRowV1[] = plan.changes.map(change => {
       const moduleChange = change.path !== ARCHITECTURE_FILE_PATH;
       const moduleId = moduleChange
         ? deps.knowledge.write.files.writeLogFileOf(plan.line.scope, change.path, (change.after ?? change.before)!).moduleId
         : null;
-      return { workspaceId: plan.line.scope.workspaceId,
-        path: change.before === null && moduleChange ? null : change.path, moduleId,
-        action: change.before === null ? 'create' as const : change.after === null ? 'delete' as const : 'modify' as const,
-        source: change.before === null ? null : platformFileSource(projection,
-          { path: change.path, bytes: change.before, committed: byPath.get(change.path)!.committed }) };
+      const action = change.before === null ? 'create' as const : change.after === null ? 'delete' as const : 'modify' as const;
+      const source = change.before === null ? null : platformFileSource(projection,
+        { path: change.path, bytes: change.before, committed: byPath.get(change.path)!.committed });
+      return { before: change.before, file: { workspaceId: plan.line.scope.workspaceId,
+        path: change.before === null && moduleChange ? null : change.path, moduleId, action, source,
+        willRevert: repair && action === 'modify' && source !== 'platform' } };
     });
-    lineFiles.sort((left, right) => left.path === null
+    lineRows.sort(({ file: left }, { file: right }) => left.path === null
       ? right.path === null ? (left.moduleId ?? '') < (right.moduleId ?? '') ? -1
         : (left.moduleId ?? '') > (right.moduleId ?? '') ? 1 : 0 : 1
       : right.path === null ? -1 : left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
-    files.push(...lineFiles);
+    rows.push(...lineRows);
   }
-  return { status: 'ready', value: { files } };
+  return { status: 'ready', value: rows };
+}
+
+/** KC-3: the digest of what a repair card lists (the source, which a git commit changes, is left out). */
+function cardFilesDigest(rows: readonly BatchFileRowV1[]): string {
+  return sha256Hex(canonicalJson(rows.map(({ file, before }) => ({ workspaceId: file.workspaceId, path: file.path,
+    moduleId: file.moduleId, action: file.action, willRevert: file.willRevert,
+    before: before === null ? null : gitBlobId(before, 'sha256') })) as unknown as JsonValue));
 }
 
 export async function readArchitectureProposal(deps: ProposalServiceDeps, ctx: CoreCallContext,

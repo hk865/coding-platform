@@ -18,6 +18,7 @@ import type { CoreRejection, OperationReceipt, ReadResult } from '../../contract
 import type { SessionProvenanceV1, SessionRecord } from '../../contracts/core/session.js';
 import type { TaskTriple } from '../../contracts/dispatch.js';
 import type { PlatformDutyV1 } from '../../contracts/platform-duty.js';
+import type { KnowledgeReadBaseV1 } from '../../contracts/knowledge.js';
 import {
   roleScopeOfTarget, workLinkTargetOf, type CapacityAtCapDetailV1, type RoleScopeV1,
 } from '../../contracts/role-lines.js';
@@ -48,6 +49,8 @@ export type LineCreationInput = {
   roleScopes?: RoleScopeV1[];
   /** L27: the stored name; forwarded only when the caller gives it (O1b-08). */
   name?: string | null;
+  /** KC-3: a knowledge_conflict repair round's line checks its region on the last adopted catalog (`recorded`). */
+  base?: KnowledgeReadBaseV1;
 };
 
 export type LineCreationResultV1 =
@@ -112,6 +115,7 @@ export function createLineCreation(deps: LineCreationDependencies): LineCreation
           ...(input.delegationCeiling === undefined ? {} : { delegationCeiling: input.delegationCeiling }),
           ...(input.secretaryCreated === undefined ? {} : { secretaryCreated: input.secretaryCreated }),
           ...(input.name === undefined ? {} : { name: input.name }),
+          ...(input.base === undefined ? {} : { base: input.base }),
         },
         // The parent operation is the runtime request's own optional member; `replaces` is not, so it rides as the
         // one extra member the admission reads.

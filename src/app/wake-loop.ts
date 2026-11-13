@@ -105,6 +105,9 @@ export interface WakeLoop {
   committed(notice: RecordCommitNotice): void;
   start(workspaces: WorkspaceScope[], input: { resumeOnStartup: boolean }): Promise<void>;
   addWorkspace(scope: WorkspaceScope): Promise<void>;
+  /** 7D2 WD: forget one workspace's entry; a chain already running finishes this pass and is not woken again. The
+   *  global controller is untouched (other workspaces keep running) and a repeated removal does nothing. */
+  removeWorkspace(scope: WorkspaceScope): void;
   close(): Promise<void>;
 }
 
@@ -430,6 +433,10 @@ export function createWakeLoop(deps: WakeLoopDependencies): WakeLoop {
       await rebuildWorkspace(workspace);
       if (!workspace.armed) return;
       for (const queueKey of handlers.keys()) wake(scope, queueKey, 'start');
+    },
+
+    removeWorkspace(scope) {
+      workspaces.delete(workspaceKeyOf(scope));
     },
 
     async close() {

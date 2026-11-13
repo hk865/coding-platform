@@ -78,13 +78,13 @@ it('V18 a modify\'s source is the recorded projection first, then uncommitted af
   // 具名改坏：来源只看 git 状态、不比记录里的投影 → 第一次就读成 uncommitted，红在第一行；来源恒为 platform → 红在第二行。
   // 今天红在 `batchFiles`：`architecture/proposal-batch-files` 还没发布（Host 回 not_found）。
   expect(await batchFiles(cold, batchOf(card))).toEqual([{ workspaceId: S6A_SCOPE.workspaceId,
-    path: modulePath, moduleId: 'src', action: 'modify', source: 'platform' }]);
+    path: modulePath, moduleId: 'src', action: 'modify', source: 'platform', willRevert: false }]);
   const absolute = join(cold.host.root, modulePath);
   const file = JSON.parse(await readFile(absolute, 'utf8')) as Record<string, unknown>;
   file['responsibility'] = 'KC1T changed by a person';
   await writeFile(absolute, `${JSON.stringify(file, null, 2)}\n`);
   expect(await batchFiles(cold, batchOf(card))).toEqual([{ workspaceId: S6A_SCOPE.workspaceId,
-    path: modulePath, moduleId: 'src', action: 'modify', source: 'uncommitted' }]);
+    path: modulePath, moduleId: 'src', action: 'modify', source: 'uncommitted', willRevert: false }]);
   // 读两次不改任何记录：current pin 前后一样（4-9：读那一刻的提示，不钉住）。
   expect(await cold.pin()).toEqual(pin);
 }, 300_000);
@@ -102,10 +102,10 @@ it('V19 a new module is a create with path: null and its new id, and the changed
   // 具名改坏：create 写成 modify（或带上随机取到的文件名）→ 红在下面两行。今天红在 `batchFiles`（路由未发布）。
   const files = await batchFiles(cold, batchOf(card));
   expect(files.find(file => file.moduleId === 'extra')).toEqual({ workspaceId: S6A_SCOPE.workspaceId,
-    path: null, moduleId: 'extra', action: 'create', source: null });
+    path: null, moduleId: 'extra', action: 'create', source: null, willRevert: false });
   expect(files.find(file => file.path === '.workbench/architecture.json')).toEqual({
     workspaceId: S6A_SCOPE.workspaceId, path: '.workbench/architecture.json', moduleId: null,
-    action: 'modify', source: 'platform' });
+    action: 'modify', source: 'platform', willRevert: false });
 }, 300_000);
 
 describe('rejects: architecture/proposal-batch-files input', () => {

@@ -41,6 +41,7 @@ import { answer, readExecution, readQuery, submitControl } from '../helpers/A2-r
 import { AG2B_AT, AG2B_SCOPE, claimBusyQuery, createAG2bSession, plain, seedAG2bWorkGraph, startBusyQuery, type AG2bHost } from '../helpers/AG2b-collaboration-fixture.js';
 import { startKReadonlyRealHost } from '../helpers/K-readonly-host-support.js';
 import { openPLReadingsWorld, type PLReadingsWorld } from '../helpers/PL-readings-fixture.js';
+import { scrRoundsInEverySession } from '../helpers/K3L3-adviser-world.js';
 import type { S6AHostWorld, S6AReply } from '../helpers/S6A-host-fixture.js';
 import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
 import { waitFor } from '../scenarios/harness.js';
@@ -198,6 +199,26 @@ it('W2 writes one notice at the 60-minute review line and never a second one', (
     fixture.world.clock.advance(64 * 60_000);
     await wakeLoops(fixture.world);
     expect(await overLine(fixture)).toHaveLength(1);
+  }));
+
+/**
+ * SCRV S4 (next1113c lead rulings, SCRV 7: no scribe line, no round and no second notice; SHT-2 W2 unchanged). This
+ * world opens no role line, so past the line SHT-2's notice stays the only project notice and the command runs on.
+ * GREEN today and after SCRV; it guards SCRV's no-scribe arm, which W2 cannot see (W2 counts the over-line prefix only).
+ * Mutation shown on 7c862a02: a second notice written past the line (the person told when there is no scribe) -> red.
+ */
+it('S4 (SCRV) without a scribe line the over-line notice stays the only project notice and the command runs on', () =>
+  shellRow('scrv-s4', { command: shellCommand, timeoutMs: 7_200_000 }, async fixture => {
+    fixture.world.clock.advance(61 * 60_000);
+    await waitFor(() => overLine(fixture), items => items.length >= 1, 'the command_over_line notice');
+    for (const minutes of [0, 10]) {
+      fixture.world.clock.advance(minutes * 60_000);
+      await wakeLoops(fixture.world);
+      const notices = (await fixture.main.readNotices({ categories: ['project_notice'] })).notices;
+      expect(notices.map(notice => notice.summary.slice(0, overLinePrefix.length))).toEqual([overLinePrefix]);
+      expect(await scrRoundsInEverySession(fixture.world)).toEqual([]);
+      expect((await runningCommands(fixture.world)).value?.items).toHaveLength(1);
+    }
   }));
 
 it('W3 floors a short expected duration at 10 minutes for both the read and the notice', () =>

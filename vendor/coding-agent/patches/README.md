@@ -11,7 +11,7 @@ node scripts/build-kernel-patch.mjs --check
 node scripts/build-kernel-patch.mjs --write
 ```
 
-默认及 `--check` 只在临时目录编译，再逐字比较明确受管源的当前产物（现六源24项；下文四项为初始SQLite批次）；不一致返回非零。只有主审确认补丁后才用 `--write` 发布 `sqlite-stores.js`、`sqlite-stores.d.ts` 及两份 map。构建脚本将冻结 `dist` 复制到临时源码布局，依靠邻近 `.d.ts` 编译这个源文件；复用已安装的 TypeScript、Node 类型和 Zod，不读取或修改原 Kernel 源码，不安装依赖。两份 map 都重新嵌入本次源码，避免产物与调试来源失配。
+默认及 `--check` 只在临时目录编译，再逐字比较明确受管源的当前产物（现二十源80项；下文四项为初始SQLite批次）；不一致返回非零。只有主审确认补丁后才用 `--write` 发布 `sqlite-stores.js`、`sqlite-stores.d.ts` 及两份 map。构建脚本将冻结 `dist` 复制到临时源码布局，依靠邻近 `.d.ts` 编译这个源文件；复用已安装的 TypeScript、Node 类型和 Zod，不读取或修改原 Kernel 源码，不安装依赖。两份 map 都重新嵌入本次源码，避免产物与调试来源失配。
 
 2026-09-25 的初始施工基线已用上述 `--check` 运行通过：TypeScript 6.0.3 生成的 JS、声明及两份 map 均与原冻结产物逐字相同。map 保留最初迁移采用的紧凑 ASCII 转义 JSON 序列化；这项一致性不是只比较解析后的 JSON。
 
@@ -117,3 +117,11 @@ node scripts/build-kernel-patch.mjs --write
 改前源 SHA-256 `203d319e92cb197a795cfd81206f7dc65c41712d880bd89b5bcdc8a11201088d`，改后 `8a6b2a0582f51b8ad8c7e0bf0c3fa0b79adf6be1dc8901113a0eb9508ad6847b`；产物为 `10d6ef27bc0278a9a9883244d9b824020e010f588b491acd2f97d93da9d87c76`（js）、`0778434eecd88cb58fb6e4ee8844156eb8bdc6b09f0fa11596a3cc3df57b37be`（js.map）、`900f98c0c4c89d28235f18a13790db1d6a07d4ab736c1d91e97280e5e05bdfe9`（d.ts，未变）、`8e01fadc0d558578a4d7d843d76436497c4ab389b3b662b01159e381901ad268`（d.ts.map）。
 
 命令不变：`node scripts/build-kernel-patch.mjs --check`（0，十九个源、76 份产物）与 `--write`；`--write` 只改 `dist/core/context/selection_policy/context-selection-policy.*` 的 js、js.map、d.ts.map 三份，d.ts 不变，其余产物不变。
+
+## 2026-11-13 DSEC2 secret 名不分大小写和 listFiles 按 inode 跳前缀
+
+新增受管 `policy/permissions/permission-policy.ts`：内容精确提取自冻结 `dist/policy/permissions/permission-policy.js.map` 的 `sourcesContent[0]`（170 行），初始 SHA-256 `c14c3b93030c737fce91dcac49572a59816a4d9213e1371fbf3cfbe13697bd51`。`DefaultPermissionPolicy.#isSensitive` 只在取 basename 时转小写，默认 secret 名和 `policyVersion` 不变；`.ENV`、`.Env`、`.ENV.LOCAL`、`Credentials`、`CREDENTIALS`、`CREDENTIALS.JSON` 照 `.env`、`credentials` 一样回 `deny`/`sensitive_path`。在区分大小写的文件系统上真名 `.ENV` 也被拒，这是有意的能力损失，理由是安全（凭据；121-106）。改后源 SHA-256 `87941c1f6f27f2009be5542fef9f241f1e5b7702e052298963d0f724f6165eb2`；四份产物为 `fefecdb500274836a6391b89a9128b28e7752500e7d34e44e39c88d3dc2a8834`（js）、`bb2ba857947833df9ba087e870fb1598f190226f26b8c330250bffab1fbc1aed`（js.map）、`7eda379ec6ef845f11bfb04a3bedf807fc068839f7eee25a2e26533507edcd2f`（d.ts，未变）、`d7afaf2dff1f5a9e50d4f972114385113082fa25778e1460200780f573d5ed54`（d.ts.map）。
+
+受管 `sandbox/workspace/workspace-sandbox.ts` 的 `listFiles` 开根后把 `#deniedPrefixes` 里存在的项 `lstat` 成 `dev:ino` 集合，遍历子项时 `lstat` 命中该集合的条目照旧跳过；不按名字大小写比较，所以不区分大小写的根上以 `.WORKBENCH` 打开 `.workbench` 时漏出的同 inode 子项被跳过，ext4 上真名 `.WORKBENCH/local` 是另一个 inode，不受影响。`#gitSnapshot`、`snapshot`、`#normalize` 和现有条目级拒绝不变。改前源 SHA-256 `ba2cdb5de2902cbbd795dc71812e7e79a0afece1418c24357be6352f8e5a149d`，改后 `8bc526683f44f160d1bf52a7ae28b802fedb57f578ce260f87057e2afbeb6ea6`；四份产物为 `afee5a99dea51abe4e5df4be0ee7d6fb1ec0fc55f40f76766399bfd8d5dbcd93`（js）、`99b8b822061b20aff1fece038afccec04e9740b410a0b892df6511a8be47b5d5`（js.map）、`fda42ff92ca6140a09a0fe99c99a9a792a34f7b95348185aa23e5f155e52f7e2`（d.ts，未变）、`1d22829391bf0664c8c941f9d27e9e26de8f5ebc380b46c8c9e13a7498c13de9`（d.ts.map）。
+
+命令：`node scripts/build-kernel-patch.mjs --check`（二十个源、80 份产物）与 `--write`；`--write` 退出 0，重写 `permission-policy` 的 js、js.map、d.ts.map 和 `workspace-sandbox` 的 js、js.map、d.ts.map（两份 d.ts 未变），其余产物不变。

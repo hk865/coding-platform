@@ -581,19 +581,21 @@ export function goalSnapshotValueProblem(value: unknown): string | null {
 
 /**
  * Full `WorkspaceSnapshot` value check for the write events: the exact
- * `ref`/`revision` plus an optional, validated `decisionSettings` and an
- * optional, validated `lineSettings`; a field that is absent stays absent (never
- * defaulted in).
+ * `ref`/`revision` plus an optional, validated `decisionSettings`, an optional,
+ * validated `lineSettings` and an optional, non-empty `removedAt`; a field that
+ * is absent stays absent (never defaulted in).
  */
 export function workspaceSnapshotValueProblem(value: unknown): string | null {
   if (!isRecord(value)) return "Workspace value must be an object";
   const hasSettings = Object.prototype.hasOwnProperty.call(value, "decisionSettings");
   const hasLineSettings = Object.prototype.hasOwnProperty.call(value, "lineSettings");
+  const hasRemovedAt = Object.prototype.hasOwnProperty.call(value, "removedAt");
   const keys = ["ref", "revision"];
   if (hasSettings) keys.push("decisionSettings");
   if (hasLineSettings) keys.push("lineSettings");
+  if (hasRemovedAt) keys.push("removedAt");
   if (!hasExactKeys(value, keys)) {
-    return "Workspace value must carry exactly its ref, revision and the optional decisionSettings/lineSettings";
+    return "Workspace value must carry exactly its ref, revision and the optional decisionSettings/lineSettings/removedAt";
   }
   const ref = workspaceRefFromValue(value["ref"]);
   if (ref === null) return "Workspace value has no valid WorkspaceRef";
@@ -605,6 +607,9 @@ export function workspaceSnapshotValueProblem(value: unknown): string | null {
   if (hasLineSettings) {
     const lineProblem = workspaceLineSettingsProblem(value["lineSettings"]);
     if (lineProblem !== null) return lineProblem;
+  }
+  if (hasRemovedAt && !nonEmpty(value["removedAt"])) {
+    return "Workspace value removedAt must be a non-empty string";
   }
   return null;
 }
@@ -785,6 +790,7 @@ export function decodeWorkspaceSnapshot(record: EncodedRecord): DecodeResult<Wor
   const ref = workspaceRefFromValue(parsed.ref)!;
   const decisionSettings = parsed.decisionSettings;
   const lineSettings = parsed.lineSettings;
+  const removedAt = parsed.removedAt;
   return {
     status: "decoded",
     value: {
@@ -793,6 +799,7 @@ export function decodeWorkspaceSnapshot(record: EncodedRecord): DecodeResult<Wor
       // Present stays byte-identical; absent stays absent (no default is stored).
       ...(decisionSettings === undefined ? {} : { decisionSettings }),
       ...(lineSettings === undefined ? {} : { lineSettings }),
+      ...(removedAt === undefined ? {} : { removedAt }),
     },
   };
 }

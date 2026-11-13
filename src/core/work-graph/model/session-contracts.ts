@@ -11,6 +11,7 @@ import type { OperationRef } from '../../../contracts/core/operations.js';
 import type { SessionRecord, SessionProvenanceV1, SessionWorkLink } from '../../../contracts/core/session.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
+import type { KnowledgeReadBaseV1 } from '../../../contracts/knowledge.js';
 import type { RoleLineAllocationRef, RoleLineAllocationReportV1, RoleLineDutyV1, SessionRoleFactsV1 } from '../../../contracts/role-lines.js';
 import type { HandoffActionV1, RoleLineActionV1, SecretaryArchiveActionV1 } from './session-operation-arms.js';
 import type { MemberCreateActionV1 } from '../state/member-creation.js';
@@ -33,6 +34,11 @@ export type SessionCreationIntentV1 = {
   secretaryCreated?: true;
   /** L27: the only name writer; absent/null means no stored name. */
   name?: string | null;
+  /**
+   * KC-3 (Astra 2): a line a knowledge_conflict repair round opens checks its module links on the catalog the records
+   * last adopted (`recorded`); absent is the current files, as every other creation.
+   */
+  base?: KnowledgeReadBaseV1;
 };
 /** The admission saves what it decided once, on the create operation; registration reads it and never re-resolves. */
 export type CreateSeatDecisionV1 = {

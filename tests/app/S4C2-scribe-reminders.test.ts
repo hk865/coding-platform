@@ -235,6 +235,56 @@ Promise<RealScribe> {
   });
 }
 
+/** 121-88: one plain note on module `B` of the S4A fixture's adopted catalog. */
+function moduleNote(topic: string): NoteDraftV1 {
+  return { kind: 'pitfall', topic, conclusion: `结论 ${topic}`, body: `正文 ${topic}`,
+    anchor: { kind: 'module', moduleId: 'B' }, extraAnchors: [], facts: [], basisFiles: [], structural: false,
+    replaces: [], contradicts: [], coexistWith: [] };
+}
+
+/** The real public `architecture/revise` deleting one module; returns the new catalog revision. */
+async function removeModuleFromCatalog(f: S4ANoteFixture, moduleId: string): Promise<number> {
+  const ctx = f.ctx();
+  const current = await f.platform.architecture.readArchitectureRevision(ctx, { selection: { kind: 'current' } });
+  const registration = await f.platform.projects.readWorkspaceRegistration(ctx, f.scope);
+  if (current.status !== 'ready' || current.value.catalog === null || registration.status !== 'ready') throw new Error('the catalog or registration is not readable');
+  const revised = await f.platform.architecture.reviseArchitectureCatalog(ctx, {
+    meta: { requestId: `mdn-remove-${moduleId}`, expected: [
+      { ref: registration.value.project.ref, revision: registration.value.project.revision },
+      { ref: registration.value.workspace.ref, revision: registration.value.workspace.revision }] },
+    input: { expected: { catalogRef: current.value.catalog.ref,
+      baseline: { ref: current.value.baseline.ref, digest: current.value.baseline.contentDigest } },
+      ops: [{ op: 'remove_module', moduleId }], responsibilityMoves: [], reason: `mdn: remove ${moduleId}` } });
+  if (revised.status !== 'committed') throw new Error(`the module removal did not commit: ${JSON.stringify(revised)}`);
+  return revised.value.catalog.ref.revision;
+}
+
+type RemovedModuleScribe = RealScribe & { noteId: string; noteVersion: number; pendingNoteId: string | null };
+/** A real Host over accepted (and optionally pending) agent notes on module `B`, after the public revision removed `B`. */
+async function startRemovedModuleScribe(options: { pending?: boolean } = {}): Promise<RemovedModuleScribe> {
+  const f = await createS4ANoteFixture('sqlite', { anchorQuota: 1 });
+  await writeFile(join(f.root, 'README.md'), 's4c2 mdn workspace\n');
+  const scribeCreated = await f.createSession('scribe-mdn', 'scribe');
+  const writer = f.workCtx(await f.claimRun('mdn-writer'));
+  const accepted = await f.write(writer, moduleNote('mdn-accepted'), null);
+  if (accepted.status !== 'accepted') throw new Error(`the module note must be accepted: ${JSON.stringify(accepted)}`);
+  let pendingNoteId: string | null = null;
+  if (options.pending === true) {
+    const pending = await f.write(writer, moduleNote('mdn-pending'), null);
+    if (pending.status !== 'pending_review') throw new Error(`the second module note must be pending: ${JSON.stringify(pending)}`);
+    pendingNoteId = pending.noteId;
+  }
+  const scribeRef: SessionRef = { projectId: f.scope.projectId, sessionId: scribeCreated.sessionRef.sessionId };
+  await removeModuleFromCatalog(f, 'B');
+  const started = await startHostOn(f, scribeRef, { writer });
+  return { ...started, noteId: accepted.noteId, noteVersion: accepted.version, pendingNoteId };
+}
+
+/** The package's §2 member, read through a local intersection until `NoteModuleRemovedTodoV1` exists. */
+type RemovedTodo = { identity: string; anchorKey: string; noteId: string; version: number };
+const removedOf = (entry: NoteScribeTodosV1): readonly RemovedTodo[] =>
+  (entry as NoteScribeTodosV1 & { moduleRemoved: readonly RemovedTodo[] }).moduleRemoved;
+
 /**
  * Two real scribe Sessions on one SQLite fixture plus a real Host. The fixture
  * gets a deterministic note id generator (`s4c2-note-01`, `s4c2-note-02`, ...),
@@ -514,6 +564,7 @@ it('S4C2 D-03 sends the literal requestId, then re-owner to the remaining scribe
     await waitFor(() => started.sent.length === 1);
     expect(started.sent).toHaveLength(1);
     expect(started.sent[0]!.text).toContain('待审 10 条');
+    expect(started.sent[0]!.text).toContain('已删模块 0 条');
 
     // The deterministic fixture names match the pinned literals.
     expect(started.lowest.sessionId).toBe(D03_LOWEST_SESSION);
@@ -636,6 +687,7 @@ it('S4C2 item 2: a public completion + one new pending note, one failed Run read
     expect(second.sent[0]!.requestId).toContain(scribeRef.sessionId);
     expect(second.sent[0]!.requestId).not.toBe(oldRequestId);
     expect(second.sent[0]!.text).toContain('待审 11 条');
+    expect(second.sent[0]!.text).toContain('已删模块 0 条');
     // The recipient's inbox (not the send wrapper alone) shows exactly one new
     // persisted message.
     const inbox = await fullInboxOf(f, scribeRef);
@@ -878,6 +930,7 @@ it('S4C2 missed 2: a public archive with no later understanding is immediate; th
       await waitFor(() => started.sent.length === 1);
       expect(started.sent).toHaveLength(1);
       expect(started.sent[0]!.text).toContain('待审 0 条');
+      expect(started.sent[0]!.text).toContain('已删模块 0 条');
       expect(started.sent[0]!.text).toContain('该更新 2 条');
       // The REAL persisted message, not the send wrapper alone.
       expect(await inboxOf(started)).toHaveLength(1);
@@ -956,3 +1009,41 @@ it('S4C2 D-03 claimed archive requeue: the real Host sends nothing (claim filter
     } finally { await started.host.close(); }
   } finally { await f.close(); }
 }, 60_000);
+
+// --------------------------------------------------------------------------
+// DMDN (121-88, lead 11-13 §9): the module-removed scribe to-do and its reminder,
+// on the S4A fixture's real catalog world (`B` is one of its modules).
+// --------------------------------------------------------------------------
+// Today red: `sent` stays empty (the Host does not read moduleRemoved); green after the package sends on the first heartbeat.
+it('DMDN-1 a module deletion sends the reminder with the removed-module count and anchor', async () => {
+  const started = await startRemovedModuleScribe();
+  try {
+    // A 3 s bound keeps today's red inside the default test limit; after the package the first heartbeat sends at once.
+    for (let i = 0; i < 300 && started.sent.length === 0; i += 1) await sleep(10);
+    expect(started.sent).toHaveLength(1);
+    expect(started.sent[0]!.text).toContain('已删模块 1 条');
+    expect(started.sent[0]!.text).toContain('module:B');
+    const inbox = await inboxOf(started);
+    expect(inbox).toHaveLength(1);
+    expect(inbox[0]!.intent).toBe('notify');
+    const entries = await scribeRead(started.f, started.f.goalRef.goalId);
+    expect(removedOf(entries.find(entry => entry.goalId === started.f.goalRef.goalId)!)).toEqual([{
+      identity: `${started.noteId}@${String(started.noteVersion)}`, anchorKey: 'module:B',
+      noteId: started.noteId, version: started.noteVersion,
+    }]);
+  } finally { await started.close(); }
+});
+
+// Today red: moduleRemoved is undefined; green after the package lists only the accepted note (pending stays pending).
+it('DMDN-2 a pending note stays in pending and only the accepted one joins moduleRemoved', async () => {
+  const started = await startRemovedModuleScribe({ pending: true });
+  try {
+    const bucket = (await scribeRead(started.f, started.f.goalRef.goalId))
+      .find(entry => entry.goalId === started.f.goalRef.goalId)!;
+    expect(bucket.pending.map(todo => todo.identity)).toEqual([`${started.pendingNoteId!}@1`]);
+    expect(removedOf(bucket)).toEqual([{
+      identity: `${started.noteId}@${String(started.noteVersion)}`, anchorKey: 'module:B',
+      noteId: started.noteId, version: started.noteVersion,
+    }]);
+  } finally { await started.close(); }
+});

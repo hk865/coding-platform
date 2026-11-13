@@ -135,8 +135,14 @@ export interface LineKnowledge {
   readNoteFiles(noteIds: readonly string[], unreadable?: 'unavailable' | 'leave_out'): Promise<StoreResult<LineNoteFileV1[]>>;
   /** `readNoteFiles` with this project's runtime state (one record `readMany`); an id with no file is left out (the caller judges it). */
   readNotesById(noteIds: readonly string[]): Promise<StoreResult<LineNoteV1[]>>;
-  /** Before the commit: from the whole project view, the architecture file changes of this line (the partition and the file names are decided here). Writes nothing. */
-  writeModule(input: AdoptedArchitecture, baseline: KnowledgeBaselineV1): Promise<StoreResult<KnowledgeFileChange[]>>;
+  /**
+   * Before the commit: from the whole project view, the architecture file changes of this line (the partition and the
+   * file names are decided here). Writes nothing. A module file that does not parse, or a second file of one id, is
+   * `unavailable`; with `replace` (KC-3, a knowledge_conflict repair batch) a bad file's name goes to a module that has
+   * no file and every other bad or second file is deleted.
+   */
+  writeModule(input: AdoptedArchitecture, baseline: KnowledgeBaselineV1,
+    replace?: boolean): Promise<StoreResult<KnowledgeFileChange[]>>;
   /** Before the commit: this note's file change (an empty list when the bytes are unchanged). Writes nothing. */
   writeNote(input: NoteKnowledgeV1, noteId: string): Promise<StoreResult<KnowledgeFileChange[]>>;
   /** After the commit: apply one change (write or delete). */
@@ -195,7 +201,7 @@ export type KnowledgeWriteHoldPoint = 'committed' | 'applied';
 export type KnowledgeFileRules = {
   /** The index in `events` of the event that carries this file's content; throws when none does (a programming error). */
   carrierEventIndex(events: readonly EncodedDomainEvent[], path: string): number;
-  /** A write log's kind and, for a module file, the module (project view) its bytes name. */
+  /** A write log's kind and, for a module file, the module (project view) its bytes name; null when they name none. */
   writeLogFileOf(scope: KnowledgeLineScope, path: string, bytes: Uint8Array): { kind: KnowledgeFileKind; moduleId: string | null };
   /**
    * [2C1-02]: a logged file (`target.moduleId` is the log's) rebuilt from the event that carries it, on the current

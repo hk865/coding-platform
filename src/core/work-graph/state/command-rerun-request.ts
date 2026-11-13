@@ -9,11 +9,17 @@
  * Replay (B2-09, L19): the caller hands the last applied receipt in
  * `ctx.receipt`; the same identity with the same fingerprint replays
  * unchanged, and a different fingerprint is `idempotency_conflict`.
+ *
+ * Two layers (121-110): a request goes to the responsible adviser first
+ * (`awaiting_advice`), whose answer allows one rerun, denies it for this Run or
+ * escalates; the person's card (`pending`) is the second layer.
  */
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
+import type { CommandRerunAdviceV1 } from '../../../contracts/command-rerun-advice.js';
 import type { CommandRerunRequestV1 } from '../../../contracts/command-rerun-request.js';
 import type { TaskTriple } from '../../../contracts/dispatch.js';
-import type { UnknownCallReviewRef } from '../../../contracts/unknown-call-review.js';
+import type { GoalAutonomyV1 } from '../../../contracts/goal-decisions.js';
+import type { UnknownCallReviewRef, UnknownCallReviewV1 } from '../../../contracts/unknown-call-review.js';
 import { accept, reject, type Transition } from './transition.js';
 
 /** L19a: a request record holds at most 8 declared forms. */
@@ -26,8 +32,10 @@ export type CommandRerunRequestFormV1 = { sha256: string; text: string };
 export type NewCommandRerunRequestInputV1 = Omit<
   CommandRerunRequestV1,
   | 'schemaVersion' | 'revision' | 'state' | 'declared' | 'declaredForms'
-  | 'answerMessageRef' | 'allowedAt' | 'usedAt' | 'usedBy' | 'updatedAt'
+  | 'answerMessageRef' | 'allowedAt' | 'usedAt' | 'usedBy' | 'updatedAt' | 'advice' | 'escalation'
 > & {
+  /** Who answers first (`commandRerunAdviserStageOf`); absent is the person (`pending@1`). */
+  stage?: 'adviser' | 'person' | 'no_adviser';
   /** The declared, unrecognised rewrite the record starts with (CRR-01); max 8 in total. */
   declaredForm?: CommandRerunRequestFormV1;
   /** A seed list of declared forms (defaults to none); capacity is checked on the whole list. */
@@ -38,7 +46,8 @@ export type NewCommandRerunRequestInputV1 = Omit<
 
 /** The one `CommandRerunRequestChanged@1` change per accepted transition. */
 export type CommandRerunRequestChangeV1 =
-  | 'created' | 'allowed' | 'used' | 'denied' | 'denied_final' | 'closed' | 'forms_added';
+  | 'created' | 'allowed' | 'used' | 'denied' | 'denied_final' | 'closed' | 'forms_added'
+  | 'adviser_answer_applied' | 'escalated';
 
 export type CommandRerunRequestEffectV1 =
   | { kind: 'write_request'; request: CommandRerunRequestV1 }
@@ -56,7 +65,11 @@ export type CommandRerunRequestEventV1 =
   | { kind: 'denied'; identityKey: string; fingerprint: string; answerMessageRef: SessionMessageRef }
   | { kind: 'denied_final'; identityKey: string; fingerprint: string; answerMessageRef: SessionMessageRef }
   | { kind: 'closed'; identityKey: string; fingerprint: string }
-  | { kind: 'forms_added'; identityKey: string; fingerprint: string; form: CommandRerunRequestFormV1 };
+  | { kind: 'forms_added'; identityKey: string; fingerprint: string; form: CommandRerunRequestFormV1 }
+  /** `everyStep`: the Goal confirms every step now, so the answer only becomes the person's suggestion. */
+  | { kind: 'adviser_answer_applied'; identityKey: string; fingerprint: string; answer: CommandRerunAdviceV1;
+      everyStep: boolean }
+  | { kind: 'escalated'; identityKey: string; fingerprint: string; cause: 'no_adviser' | 'adviser_failed' };
 
 /** The service supplies every guard fact the table needs; the machine reads no Task, Run or review record itself. */
 export type CommandRerunRequestContextV1 = {
@@ -74,11 +87,30 @@ export type CommandRerunRequestContextV1 = {
   sameRun: boolean;
 };
 
-/** CRR-01 (L19a): builds the `pending@1` record; `declaredForms` starts with the declared rewrite when one is given. */
+/**
+ * 121-110: who answers a new rerun request first, all four cases in one place. Every-step confirmation and the review
+ * record's second consecutive interruption (its streak) go to the person at once; a request with no responsible
+ * adviser goes to the person with the cause `no_adviser`; everything else goes to the adviser.
+ */
+export function commandRerunAdviserStageOf(input: {
+  autonomy: GoalAutonomyV1;
+  streak: UnknownCallReviewV1['streak'];
+  adviserAvailable: boolean;
+}): 'adviser' | 'person' | 'no_adviser' {
+  if (input.autonomy === 'every_step') return 'person';
+  if (input.streak.priorUnknownProcess || input.streak.priorAdvised === true) return 'person';
+  return input.adviserAvailable ? 'adviser' : 'no_adviser';
+}
+
+/**
+ * CRR-01 (L19a): builds the `pending@1` record, or `awaiting_advice@1` when the adviser answers first (121-110; with
+ * no adviser the person's `pending@1` carries the escalation cause `no_adviser`); `declaredForms` starts with the
+ * declared rewrite when one is given.
+ */
 export function newCommandRerunRequest(
   input: NewCommandRerunRequestInputV1,
 ): Transition<CommandRerunRequestV1, CommandRerunRequestEventV1, CommandRerunRequestEffectV1> {
-  const { declaredForm, declaredForms, updatedAt, ...fields } = input;
+  const { declaredForm, declaredForms, updatedAt, stage, ...fields } = input;
   const forms = declaredForm === undefined
     ? [...(declaredForms ?? [])]
     : [declaredForm, ...(declaredForms ?? [])];
@@ -90,7 +122,9 @@ export function newCommandRerunRequest(
     ...fields,
     schemaVersion: 1,
     revision: 1,
-    state: 'pending',
+    state: stage === 'adviser' ? 'awaiting_advice' : 'pending',
+    ...(stage === 'adviser' ? { advice: { answer: null } } : {}),
+    ...(stage === 'no_adviser' ? { escalation: { cause: 'no_adviser' as const, suggestion: null } } : {}),
     declared: declaredForm !== undefined || fields.match.kind === 'declared',
     declaredForms: forms,
     answerMessageRef: null,
@@ -105,7 +139,13 @@ export function newCommandRerunRequest(
   ]);
 }
 
-/** CRR-01..CRR-07 (spec §3.2b): the pure transition table. */
+/** CRR-01..CRR-07 (spec §3.2b): the pure transition table. The adviser's two events (121-110) start from a stored
+ *  record, so their result is the record's next. */
+export function transitionCommandRerunRequest(current: CommandRerunRequestV1,
+  event: Extract<CommandRerunRequestEventV1, { kind: 'adviser_answer_applied' | 'escalated' }>,
+  ctx: CommandRerunRequestContextV1): Transition<CommandRerunRequestV1, CommandRerunRequestEventV1, CommandRerunRequestEffectV1>;
+export function transitionCommandRerunRequest(current: CommandRerunRequestState, event: CommandRerunRequestEventV1,
+  ctx: CommandRerunRequestContextV1): Transition<CommandRerunRequestState, CommandRerunRequestEventV1, CommandRerunRequestEffectV1>;
 export function transitionCommandRerunRequest(
   current: CommandRerunRequestState,
   event: CommandRerunRequestEventV1,
@@ -133,6 +173,8 @@ export function transitionCommandRerunRequest(
     case 'used': return used(current, event, ctx);
     case 'closed': return closed(current, ctx);
     case 'forms_added': return formsAdded(current, event, ctx);
+    case 'adviser_answer_applied': return rerunAdviserAnswer(current, event, ctx);
+    case 'escalated': return rerunEscalated(current, event, ctx);
     case 'created':
       return reject('illegal', 'invalid', 'created is only legal before the request exists');
   }
@@ -147,15 +189,16 @@ export type OpenCommandRerunRequestForAliasInputV1 = {
 
 /**
  * The invariant "one alias has at most one open request" (L19a, K8-7 item 3):
- * the first `pending` or `allowed` record for the same (task, review record,
- * alias), or `null`. `denied`/`denied_final`/`used`/`closed` are never open.
+ * the first `awaiting_advice`, `pending` or `allowed` record for the same (task,
+ * review record, alias), or `null`. `denied`/`denied_final`/`used`/`closed` are
+ * never open.
  */
 export function openRequestForAlias(
   records: readonly CommandRerunRequestV1[],
   input: OpenCommandRerunRequestForAliasInputV1,
 ): CommandRerunRequestV1 | null {
   for (const record of records) {
-    if (record.state !== 'pending' && record.state !== 'allowed') continue;
+    if (record.state !== 'awaiting_advice' && record.state !== 'pending' && record.state !== 'allowed') continue;
     if (record.alias !== input.alias) continue;
     if (!sameTask(record.task, input.task)) continue;
     if (!sameReviewRef(record.reviewRef, input.reviewRef)) continue;
@@ -196,12 +239,47 @@ function used(
   return write(current, { state: 'used', usedAt: event.usedAt, usedBy: event.usedBy }, 'used', ctx);
 }
 
+/**
+ * 121-110: the adviser's answer to an `awaiting_advice` request. `allow_rerun` is the one-time allowance (CRR-03
+ * consumes it as a person's), `deny` refuses this Run, `escalate` and every-step confirmation put the request in front
+ * of the person with the answer as the suggestion. The answer is kept either way.
+ */
+function rerunAdviserAnswer(
+  current: CommandRerunRequestV1,
+  event: Extract<CommandRerunRequestEventV1, { kind: 'adviser_answer_applied' }>,
+  ctx: CommandRerunRequestContextV1,
+): Transition<CommandRerunRequestState, CommandRerunRequestEventV1, CommandRerunRequestEffectV1> {
+  if (current.state !== 'awaiting_advice') {
+    return reject('illegal', 'invalid', `an adviser answer is not legal from ${current.state}`);
+  }
+  const advice = { answer: event.answer };
+  const cause = event.everyStep ? 'every_step' as const
+    : event.answer.choice === 'escalate' ? 'adviser_escalated' as const : null;
+  const patch: Partial<CommandRerunRequestV1> = cause !== null
+    ? { state: 'pending', advice, escalation: { cause, suggestion: event.answer } }
+    : event.answer.choice === 'allow_rerun' ? { state: 'allowed', advice, allowedAt: ctx.updatedAt }
+      : { state: 'denied', advice };
+  return write(current, patch, 'adviser_answer_applied', ctx);
+}
+
+/** 121-110: an `awaiting_advice` request goes to the person without a suggestion (no adviser, or no answer). */
+function rerunEscalated(
+  current: CommandRerunRequestV1,
+  event: Extract<CommandRerunRequestEventV1, { kind: 'escalated' }>,
+  ctx: CommandRerunRequestContextV1,
+): Transition<CommandRerunRequestState, CommandRerunRequestEventV1, CommandRerunRequestEffectV1> {
+  if (current.state !== 'awaiting_advice') {
+    return reject('illegal', 'invalid', `escalated is not legal from ${current.state}`);
+  }
+  return write(current, { state: 'pending', escalation: { cause: event.cause, suggestion: null } }, 'escalated', ctx);
+}
+
 /** CRR-06: the Task ended; only an unfinished request is closed. */
 function closed(
   current: CommandRerunRequestV1,
   ctx: CommandRerunRequestContextV1,
 ): Transition<CommandRerunRequestState, CommandRerunRequestEventV1, CommandRerunRequestEffectV1> {
-  if (current.state !== 'pending' && current.state !== 'allowed') {
+  if (current.state !== 'awaiting_advice' && current.state !== 'pending' && current.state !== 'allowed') {
     return reject('illegal', 'invalid', `closed is not legal from ${current.state}`);
   }
   return write(current, { state: 'closed' }, 'closed', ctx);
@@ -213,7 +291,8 @@ function formsAdded(
   event: Extract<CommandRerunRequestEventV1, { kind: 'forms_added' }>,
   ctx: CommandRerunRequestContextV1,
 ): Transition<CommandRerunRequestState, CommandRerunRequestEventV1, CommandRerunRequestEffectV1> {
-  if (current.state !== 'pending' && current.state !== 'denied' && current.state !== 'denied_final') {
+  if (current.state !== 'awaiting_advice' && current.state !== 'pending' && current.state !== 'denied'
+    && current.state !== 'denied_final') {
     return reject('illegal', 'invalid', `forms_added is not legal from ${current.state}`);
   }
   if (current.state === 'denied' && !ctx.sameRun) {

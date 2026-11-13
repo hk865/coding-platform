@@ -25,8 +25,9 @@
  *   targets are read in ONE head batch. Their live user-reason facts come from
  *   the note service's `userReasonFacts` — the SAME function the note card
  *   source and the disposition guard use (§11.6/L23) — seeded with the reader's
- *   plan windows. Read-era "is it retired for a non-file reason" is never
- *   re-derived here.
+ *   plan windows. The retired-module class comes from the check's
+ *   `removedModuleNotes`; this port only buckets it. Read-era "is it retired for
+ *   a non-file reason" is never re-derived here.
  * Any read failure (including `unsupported`) is `unavailable`, never a silently
  * shorter list.
  */
@@ -36,7 +37,8 @@ import { rejected } from '../../../contracts/core/rejections.js';
 import type { NoteHeadSnapshot } from '../../../contracts/note.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
-import type { NoteScribeTodoPort, NoteScribeTodoV1, NoteScribeTodosV1 } from '../model/note-contracts.js';
+import type { NoteHeadCheckPort, NoteModuleRemovedTodoV1, NoteScribeTodoPort, NoteScribeTodoV1,
+  NoteScribeTodosV1 } from '../model/note-contracts.js';
 import type { NotePlanWindowFactsV1, NoteUserReasonFactsPort } from './note-service.js';
 import { actualDispositionTargets, pendingUnderstandingOverridden, userReasonsOf,
   type NoteUserReasonTargetV1 } from '../state/note-machine.js';
@@ -49,6 +51,8 @@ import { readAllHeads } from './note-base-reader.js';
 export type NoteScribeTodosDeps = {
   records: GoalRecordTransactionPort & RecordLookupPort;
   userReasonFacts: NoteUserReasonFactsPort['userReasonFacts'];
+  /** 121-88: the one check's removed-module read; the port only buckets its answer. */
+  check: Pick<NoteHeadCheckPort, 'removedModuleNotes'>;
 };
 
 type Outcome<T> = { ok: true; value: T } | { ok: false; reason: string };
@@ -137,6 +141,18 @@ export function createNoteScribeTodos(deps: NoteScribeTodosDeps): NoteScribeTodo
       // OWN anchors join the ONE shared reader below.
       const allBuckets: PendingBucket[] = [...new Set(input.goalIds)];
       allBuckets.push(null); // EXACTLY ONE goal-less bucket.
+      // 121-88: one read of the current notes on removed modules; the check owns the rule, this port buckets.
+      const removed = await deps.check.removedModuleNotes(ctx);
+      if (removed.status !== 'ready') {
+        return rejected('unavailable', removed.status === 'rejected' ? removed.reason
+          : 'the removed-module notes are not available');
+      }
+      const removedByGoal = new Map<string | null, NoteModuleRemovedTodoV1[]>();
+      for (const item of removed.value) {
+        const list = removedByGoal.get(item.goalId) ?? [];
+        list.push({ identity: item.identity, anchorKey: item.anchorKey, noteId: item.noteId, version: item.version });
+        removedByGoal.set(item.goalId, list);
+      }
       const pendingHeads = await readPendingHeads(ctx, allBuckets);
       if (!pendingHeads.ok) return rejected('unavailable', pendingHeads.reason);
       const pendingAnchorKeys = [...new Set(pendingHeads.value.map(entry => entry.head.anchorKey0))];
@@ -190,7 +206,7 @@ export function createNoteScribeTodos(deps: NoteScribeTodosDeps): NoteScribeTodo
       for (const goalId of input.goalIds) {
         const row = byGoal.get(goalId)!;
         if (row.goal.desiredState === 'cancelled' || row.plan === null) {
-          results.push({ goalId, pending: [], updateDueTodos: [], immediate: false });
+          results.push({ goalId, pending: [], updateDueTodos: [], moduleRemoved: [], immediate: false });
           continue;
         }
         const updateDueTodos: NoteScribeTodoV1[] = [];
@@ -206,9 +222,11 @@ export function createNoteScribeTodos(deps: NoteScribeTodosDeps): NoteScribeTodo
           : foldInputOf(goalAnchor.anchorKey, goalAnchor.head, row.plan).baseline;
         const immediate = row.triggers.some(trigger => trigger.kind === 'archive'
           && !row.claimedArchiveKeys.has(trigger.key) && (baseline === null || trigger.at > baseline));
-        results.push({ goalId, pending: pending.value.get(goalId) ?? [], updateDueTodos, immediate });
+        results.push({ goalId, pending: pending.value.get(goalId) ?? [], updateDueTodos,
+          moduleRemoved: removedByGoal.get(goalId) ?? [], immediate });
       }
-      results.push({ goalId: null, pending: pending.value.get(null) ?? [], updateDueTodos: [], immediate: false });
+      results.push({ goalId: null, pending: pending.value.get(null) ?? [], updateDueTodos: [],
+        moduleRemoved: removedByGoal.get(null) ?? [], immediate: false });
       return { status: 'ready', value: results };
     },
 

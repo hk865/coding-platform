@@ -32,7 +32,8 @@
 - `role-line-operation.ts` — `role_line` 操作的纯步骤机：`START_LINES_PHASES`、`ROLE_LINE_CHANGE_SCOPE_PHASE`、操作身份 `roleLineOperationRef`、子创建命令号 `roleLineChildCommandId`、步骤迁移 `roleLineStepTransition`（`pending→reserved→created→registered→linked→done`，每个非终态都可到 `failed`；`planned` 的拆线在步骤到 `reserved` 的同一次写里把阶段推到 `admitted`，O2B-R1-04）；只 import contracts 和 `role-line-action.ts`。
 - `cold-start.ts` — 冷启动操作在 `role_line` 那一臂上的窄视图 `ColdStartActionV1` 和纯的六相位机：派生的操作身份 `coldStartOperationRef`（每个项目一条，按项目派生、不扫）、新动作 `newColdStartAction`、相位核对 `coldStartPhaseProblem`（相位指针是第一个没做完的相位；完成的操作相位留在 `proposals`、`lastCompleted` 也是 `proposals`）、一次推进一个相位 `advanceColdStartPhase`，以及跳过 region 的 `skipRegions`；记录由 `sessions/cold-start-service.ts` 写。
 - `workspace-join.ts` — 7D2 XA 的第二个工作区加入动作在 `role_line` 那一臂上的窄视图和纯三相位机：派生身份 `workspaceJoinOperationRef`（每个 `(project, workspace)` 一条，按 id 派生、不扫）、新动作 `newWorkspaceJoinAction`、相位核对 `workspaceJoinPhaseProblem`（`lastCompleted` 必须是前一相，`proposals` 完成时两处都是 `proposals`）、一次推进一相 `advanceWorkspaceJoinPhase`、跳过 region 的 `skipJoinRegions` 和登记出生的记录 `newWorkspaceJoinOperation`；记录由 `sessions/workspace-join-service.ts` 写。
-- `role-exploration.ts` — 冷启动探索 Query 的纯部分：唯一的无目标执行臂 `roleExplorationExecution`、“请动手”问句 `roleExplorationQuestion`、Host 系统 `action_request` 的判定 `hostSystemActionRequest`（正本；规划来源和探索消息共用）、注记 owner 核对探索轮可信绑定的 `roleExplorationBindingOf`（线的角色事实来源、冷启动的探索项、Host 系统消息三者对上）。
+- `workspace-removal.ts` — WD-25 的唯一纯构造器：`nextWorkspaceRemoved` 把当前 Workspace 快照标为已删除，revision 递增并写 `removedAt`；不读存储、不自己取时间。
+- `role-exploration.ts` — 冷启动探索 Query 的纯部分：唯一的无目标执行臂 `roleExplorationExecution`（KC-3：知识冲突修复轮开轮时带 `base: 'recorded'`，这一轮组上下文的 `lookGraph` 照它读记录作底）、“请动手”问句 `roleExplorationQuestion`、Host 系统 `action_request` 的判定 `hostSystemActionRequest`（正本；规划来源和探索消息共用）、注记 owner 核对探索轮可信绑定的 `roleExplorationBindingOf`（线的角色事实来源、冷启动的探索项、Host 系统消息三者对上）。
 - `role-line-allocation.ts` — 保留名额记录的唯一初始化器 `allocationNext`：六个分支（reserve/convert/add_holder/cancel_reservation/release_holder/move_holder）各自按对象键幂等，`revision` 递增，新条目的游标为 `null`、搬 holder 保留原 `since`。
 - `role-facts.ts` — Session 角色事实记录的唯一构造 `sessionRoleFactsRecord`：由 `SessionRecord`、`roleFactsOf` 已决定的 `creator`/`openedBy` 和创建操作 ref 生成整条 `SessionRoleFactsV1`（`name` 为 null，revision 1）；不读存储、不另判 duty 或只读副本。角色事实记录的 ref 只由 `sessionRoleFactsRef` 构造。
 - `role-limits.ts` — 项目额度记录的唯一构造 `projectRoleLimitsNext`：核对 `expectedRevision`，按部分更新合并 `running`/`open`，递增 revision 并返回完整 `ProjectRoleLimitsV1`；`RoleLimitsLevelsV1`、`RoleLimitsChangeV1` 和 `RoleLimitsDecisionV1` 是它的输入/输出形状。降低 `open` 不撤销任何名额。
@@ -63,6 +64,8 @@
 
 做 Task/Goal/Plan、验证轮、决策策略与工作线派生的去这组。
 
+- `task-node-commit.ts` — 节点级审核（决定 121-45）的纯规则：`nodeReviewProblem`（哪个节点要人审：`every_step`、非 plan-only 的 work、适用的归约已 satisfied、有文件；不审时给原因）、`taskNodePending`（要审且该归约修订号还没有审核事实）、`taskNodeFilesOf`（节点自己 Run 的执行文件，去掉 `.workbench/`，definite 在前、按路径去重）、`taskAwaitsReview`（NR-24：S9 的 review-packet 开轮且检查都结了、K3 的 `awaiting_advice`/`awaiting_approval`/`needs_decision`，都算 live）、`nodeInFlight`（work 节点 Run 已结束、检查和完成还没落成归约，即 `verifying`：`every_step` 期间不领新 Task，它自己的轮次链照推）、`reviewedContentProblem`（人读到的路径集和 blob 与现在逐个比）和唯一构造 `taskNodeCommitOf`/`taskNodeCommitRefOf`。
+
 - `task-machine.ts` — Task 机器：相位投影（P1..P20）与写入合法性（TASK-01..30）、缩减/重排队记录。
 - `task-failure.ts` — Task 失败事实：失败分类、重做权限与围栏、自动化裁决、refusal 记录、`modelServiceOf` 与 `permissionInterruptionOf`。
 - `goal-confirm.ts` — `goals/confirm-draft` 的纯规则：`decideGoalConfirm` 的拒绝顺序（不是最新已答轮 → `revision_conflict`；草稿下标越界 → `invalid`；同一 `(answerRef, draftIndex)` 已确认 → `revision_conflict`）、确认后的 objective 文本 `confirmObjectiveText`（正文与每条完成标准都经 `normalizeObjective`），以及不可变 `InitializationBinding@1` 的唯一构造 `newInitializationBinding`（ref 指 answer+draft，revision 与 goalRevision 都是 1，顺序和重复原样保留）。无 I/O、无时钟、无 id；服务只编码它并放进自己的一次提交。
@@ -92,7 +95,7 @@
 - `goal-interruption.ts` — 目标中断记录的地址 `interruptionRefOf`（每个目标一条）和两个纯迁移：`pendingGoalInterruption`（缺失/`resumed` → revision+1 的 `pending`，已 `pending` → null 保留）与 `resumedGoalInterruption`（`pending` → `resumed`，缺失/已 `resumed` → null）；返回记录与 `expectedRevision`，不构造 guard。
 - `dispatch-counter.ts` — 派工计数器的纯构造：`firstDispatch` 从缺失生成 sequence/revision 1，`nextDispatch` 递增两者；返回记录与 `expectedRevision`，不构造 RecordStore guard。
 - `notice-settings-machine.ts` — Workspace 通知已读位置机器。
-- `command-rerun-request.ts` — `CommandRerunRequest` 机器与“同一别名只开一个请求”的 helper。
+- `command-rerun-request.ts` — `CommandRerunRequest` 机器与“同一别名只开一个请求”的 helper。121-110：新请求先交负责的参谋（`awaiting_advice@1`；`commandRerunAdviserStageOf` 一处判四种：每步确认、核对记录的连续第二次中断直接到人，没有参谋到人并记 `no_adviser`）；`adviser_answer_applied` 把参谋的答复落成一次性允许、这一轮不允许，或带建议的人卡（参谋上报、改成每步确认）；`escalated` 不带建议到人（没有参谋、参谋没答）；`awaiting_advice` 也算开着的请求，能追加改写、能关闭。参谋的这两个事件从已存的记录出发，`transitionCommandRerunRequest` 对它们的返回类型收窄成记录，owner 直接提交 `next`。
 - `rework-request.ts` — `ReworkRequest`（record 3）的唯一字段表与格式：`REWORK_REQUEST_FIELDS`/`REWORK_REQUEST_FORMAT`（`REWORK_REQUEST_ACTOR_FIELDS`/`REWORK_REQUEST_OUTCOME_FIELDS` 是与事件共用的两个子表），`rework-request-by-goal` 只有三个等值键（不含 `state`）并按 `since` 排序；`newReworkRequest` 返回未绑定 `since` 的 pending 记录，`applyReworkRequest`/`closeReworkRequestRecord` 产出下一版 pending 记录（revision、state、outcome、closedBy），`since` 只由提交的 `commitCursorBindings` 绑定。输入类型从字段表派生，本文件不 import `model/`，两个 owner 的 `RequeueTaskInput`/`ReverifyRoundInput` 留在调用侧。
 - `command-normalization.ts` — 命令文本规范化、sha256、action key 与 shell 动作解析（纯）。
 - `context-input.ts` — 上下文/声明输入的纯守卫：冻结段序、结构、渲染区间、字节数、Goal 段、平台职责；`secretary` 调用必须有 `goal` 和 `task` 两段（没有目标时 `goal` 段照旧渲染 Workspace、目标列表和 `secretary.noGoal`）。
@@ -106,6 +109,8 @@
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
 | `firstDispatch`、`nextDispatch`、`DispatchCounterWriteV1` | `src/core/work-graph/state/dispatch-counter.ts:10`、`src/core/work-graph/state/dispatch-counter.ts:28`、`src/core/work-graph/state/dispatch-counter.ts:4` | 首次与后续派工的计数器记录和版本期待 | 发送 owner 在同一次提交中写计数器并构造 guard 时 |
+| `nodeInFlight` | `src/core/work-graph/state/task-node-commit.ts:92` | `every_step` 下 work 节点还在检查/完成途中（`verifying`） | Workflow 的领取挡（`selectOrdinary` 的 `claimHold`）；不要另写这条判断 |
+| `nodeReviewProblem`、`taskNodePending`、`taskNodeFilesOf`、`taskAwaitsReview`、`reviewedContentProblem`、`taskNodeCommitOf`、`taskNodeCommitRefOf` | `src/core/work-graph/state/task-node-commit.ts:55`、`src/core/work-graph/state/task-node-commit.ts:64`、`src/core/work-graph/state/task-node-commit.ts:27`、`src/core/work-graph/state/task-node-commit.ts:76`、`src/core/work-graph/state/task-node-commit.ts:100`、`src/core/work-graph/state/task-node-commit.ts:129`、`src/core/work-graph/state/task-node-commit.ts:116` | 节点审核的判定、节点文件、等审阅算 live、blob 比对和审核事实的构造 | 节点审核 owner 的读和写；不要另写“哪些节点要审”或第二个构造 |
 | `interruptionRefOf`、`pendingGoalInterruption`、`resumedGoalInterruption`、`GoalInterruptionWriteV1` | `src/core/work-graph/state/goal-interruption.ts:9`、`src/core/work-graph/state/goal-interruption.ts:22`、`src/core/work-graph/state/goal-interruption.ts:38`、`src/core/work-graph/state/goal-interruption.ts:9` | 目标中断记录的地址，pending/resumed 迁移与版本期待（已 pending 保留、已 resumed 不再写） | 启动对账记录候选、驱动开始时结清、显示读记录时；不要另写记录地址，不要绕过状态层写记录 |
 | `projectNoticeIdentity`、`projectNoticeNext`、`projectNoticePending`、`projectNoticeBound` | `src/core/work-graph/state/project-notice.ts:65`、`:37`、`:61`、`:65` | 项目通知的操作身份/记录 id、写入前的决定、待提交记录与回执游标绑定后的投影 | 项目通知写入与来源读取；不要另写身份、校验或字段 |
 | `decideActivityOutcome` | `src/core/work-graph/state/activity-replacement.ts:23` | 按 L4 判定本次活动写是 created/replaced/unchanged | 回填或 Run 结束要写 Run.activity 时 |
@@ -128,8 +133,9 @@
 | `transitionDispatchOutbox` | `src/core/work-graph/state/attempt-machine.ts:792` | DispatchOutboxEntry 迁移 | Run 事件同一提交 |
 | `commandSha256` | `src/core/work-graph/state/command-normalization.ts:34` | 命令摘要，走 contracts 的 sha256 | 记录/比较命令指纹 |
 | `parseShellActionsDetailed` | `src/core/work-graph/state/command-normalization.ts:522` | 解析一条命令里的 shell 动作，保留词边界 | 命令分类、重跑与审查 |
-| `newCommandRerunRequest` | `src/core/work-graph/state/command-rerun-request.ts:78` | 建 CommandRerunRequest 记录 | 收到一次重跑请求 |
-| `transitionCommandRerunRequest` | `src/core/work-graph/state/command-rerun-request.ts:109` | 重跑请求迁移，含同身份同指纹重放 | 处理/重放重跑请求 |
+| `commandRerunAdviserStageOf` | `src/core/work-graph/state/command-rerun-request.ts:95` | 新重跑请求谁先定：参谋、人，或没有参谋的人（121-110） | CRR owner 建请求前 |
+| `newCommandRerunRequest` | `src/core/work-graph/state/command-rerun-request.ts:108` | 建 CommandRerunRequest 记录 | 收到一次重跑请求 |
+| `transitionCommandRerunRequest` | `src/core/work-graph/state/command-rerun-request.ts:141` | 重跑请求迁移，含同身份同指纹重放 | 处理/重放重跑请求 |
 | `frozenSectionOrderProblem` | `src/core/work-graph/state/context-input.ts:98` | 检查冻结的段序 | 校验 ContextAssemblyBinding |
 | `contextAssemblyProblem` | `src/core/work-graph/state/context-input.ts:286` | G-CTX 总检查：结构、区间、字节、段、来源 | 读取或写入上下文绑定时 |
 | `pointerAfterSubmit` | `src/core/work-graph/state/control-intent-machine.ts:185` | 提交后 Run 控制指针的变化 | 与意图同一提交写 Run 指针 |
@@ -187,9 +193,9 @@
 | `userReasonsOf` | `src/core/work-graph/state/note-machine.ts:232` | 由处置关系算用户复查原因 | 注记复查 |
 | `secretaryNoteScope`、`SecretaryNoteScopeFactsV1` | `src/core/work-graph/state/note-machine.ts:142`、`src/core/work-graph/state/note-machine.ts:113` | 纯：一轮写入范围的唯一判定——普通注记的范围与 `storedGoalId` 跟本轮冻结的 `effectiveGoalId`（无 Goal 轮只能项目/模块/接口/文件锚点），目标或 stage 理解停在有效 Goal 内，只有被授权的 Goal 理解可用该 Goal 作主锚点，项目理解与修复拒绝；事实形状 `SecretaryNoteScopeFactsV1` | 注记 owner 判定 `query_run` 写入的 `storedGoalId` 与越界拒绝 |
 | `secretaryNoteAdmission` | `src/core/work-graph/state/secretary-note.ts:40` | 纯：一轮 Query 的注记准入——没有请求根（普通 Query、副本）是 `none`；秘书请求轮是 `secretary`，写入种类正好是六个通用种类加 `understanding`（`review` 不是写入种类，`repair` 被拒），带 `withdraw: true` 和只含 Goal id 的授权集 | 准备与开始检查都只经这条规则定类；工具声明和注记工具组只消费这个值，调用方不要各自判类 |
-| `planningNoteAdmission` | `src/core/work-graph/state/secretary-note.ts:64` | 纯：非请求的规划 Query 的注记准入——`plan_round`/`plan_review` 形状是 `planning`（六个通用写入种类、`withdraw: true`、不授 Goal）；`text` 形状只在冻结来源是 Host 系统 `action_request` 且有有效 Goal 时才是 `planning`，`planRef` 不决定类别；`roleExploration` 为真（冷启动的探索轮，没有 Goal）也是 `planning`，另加 `link`、`flow` 两种 | 规划轮的注记工具声明与写入；准备和开始两侧都传 `roleExploration`；不要另判轮次类别 |
+| `planningNoteAdmission` | `src/core/work-graph/state/secretary-note.ts:64` | 纯：非请求的规划 Query 的注记准入——`plan_round`/`plan_review`/`scribe_review`（书记的长命令审查，121-112）形状是 `planning`（六个通用写入种类、`withdraw: true`、不授 Goal）；`text` 形状只在冻结来源是 Host 系统 `action_request` 且有有效 Goal 时才是 `planning`，`planRef` 不决定类别；`roleExploration` 为真（冷启动的探索轮，没有 Goal）也是 `planning`，另加 `link`、`flow` 两种 | 规划轮的注记工具声明与写入；准备和开始两侧都传 `roleExploration`；不要另判轮次类别 |
 | `coldStartOperationRef`、`newColdStartAction`、`coldStartPhaseProblem`、`advanceColdStartPhase`、`ColdStartActionV1` | `src/core/work-graph/state/cold-start.ts:36`、`:36`、`:43`、`:54`、`:16` | 纯：项目唯一冷启动操作的派生 ref、新动作、相位核对、一次推进一个相位 | 冷启动 owner、批窗口、探索轮的注记来源读都用这一份；不要另拼 `cold_start:` ref 或另写相位推进 |
-| `roleExplorationExecution`、`roleExplorationQuestion`、`hostSystemActionRequest`、`roleExplorationBindingOf` | `src/core/work-graph/state/role-exploration.ts:43`、`:27`、`:37`、`:43` | 纯：探索轮唯一的无目标执行臂、“请动手”问句、Host 系统 `action_request` 判定、探索轮可信绑定的核对 | 冷启动提交探索 Query 和发消息、规划来源和探索轮的注记来源核对 |
+| `roleExplorationExecution`、`roleExplorationQuestion`、`hostSystemActionRequest`、`roleExplorationBindingOf` | `src/core/work-graph/state/role-exploration.ts:47`、`:31`、`:41`、`:47` | 纯：探索轮唯一的无目标执行臂、“请动手”问句、Host 系统 `action_request` 判定、探索轮可信绑定的核对 | 冷启动提交探索 Query 和发消息、规划来源和探索轮的注记来源核对 |
 | `sessionRoleFactsRef` | `src/core/work-graph/state/role-facts.ts:31` | Session 角色事实记录的 ref | 读或写 `SessionRoleFacts` 时用它；不要手写这个 refKey |
 | `decidePlanCandidate`、`diagnosePlanCandidate` | `src/core/work-graph/state/plan-candidate.ts:124`、`src/core/work-graph/state/plan-candidate.ts:124` | 计划候选的唯一决定表（请求审阅/请求修复/采用/出卡/等待，首次匹配即返回）与机械诊断（必需验证要求必须有已注册检查覆盖；`checks: null` 是覆盖未知、`checks: []` 是全部诊断） | 规划环的候选推进与出卡；不要另写决定顺序或覆盖规则 |
 | `transitionNoticeSettings` | `src/core/work-graph/state/notice-settings-machine.ts:45` | 通知已读位置迁移；无前进更新则不写记录 | 标记通知已读 |
@@ -324,5 +330,5 @@
 - 不要在服务里 spread 一条 Run/Session/Task 改字段或另写一套迁移；受保护字段写入一律走本层构造器与 `transition*`（M1-05、M1-06）。
 - 不要手抄 Session 的 lifecycle/health/occupancy 判定：领用走 `occupancyAdmissionProblem`，只共享 lifecycle/health 的候选筛选走 `sessionAvailabilityAdmissionProblem` 并把 busy 单列（FP-09、M1-04）。
 - 不要把 Query 的 claimed/prepared 当成不可达，也不要只结清 Job/Run 的一半（M1-01、M1-36、CS-03）。
-- 不要手搓 Attempt/Lease/Outbox，或假设 Run 完成等于 Task/Goal 完成；effects 交 `claimEffectRecords`（`src/core/work-graph/tasks/execution-entry-service.ts:919`）翻译。
+- 不要手搓 Attempt/Lease/Outbox，或假设 Run 完成等于 Task/Goal 完成；effects 交 `claimEffectRecords`（`src/core/work-graph/tasks/execution-entry-service.ts:935`）翻译。
 - 不要在本层 import 时钟、随机数、计时器、网络、进程或任何 store；时间与 id 由调用方传入。

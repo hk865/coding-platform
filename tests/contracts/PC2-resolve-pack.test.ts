@@ -154,7 +154,7 @@ const PLATFORM_TEMPLATES = {
         '{{workspaceLines}}\n{{writtenLines}}{{targets}}{{personNote}}{{annotations}}{{platformTargets}}',
     'consultation-received-input': '{{messageId}}\n{{sourceJson}}',
     'user-decision-response': '{{bodyJson}}',
-    'scribe-reminder': '{{marker}}\n{{pendingCount}}\n{{updateDueCount}}{{anchors}}\n{{brokenCount}}',
+    'scribe-reminder': '{{marker}}\n{{pendingCount}}\n{{updateDueCount}}{{anchors}}\n{{brokenCount}}\n{{moduleRemovedCount}}',
     'stale-files-reminder': 'STALE',
     'skill-platform-work': 'WORK',
     'skill-platform-secretary': 'SECRETARY',

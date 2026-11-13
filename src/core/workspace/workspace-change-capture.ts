@@ -13,12 +13,16 @@
  * read-only and runs no repository filter, hook or external diff. Blob
  * identities are computed by the platform from raw bytes, never by
  * `git hash-object` or `git diff`. The task map's uncommitted read
- * (uncommitted-files.ts) reuses the read-only git helpers below. The one git
- * write is `commitKnowledgeFiles` (the person's commit of `.workbench/`
- * only), which runs the repository's own hooks and filters.
+ * (uncommitted-files.ts) reuses the read-only git helpers below. The two git
+ * writes are the person's: `commitKnowledgeFiles` (`.workbench/` only) and
+ * `commitNodePaths` (one reviewed node's own paths, decision 121-45); both run
+ * the repository's own hooks and filters, and so does the node commit's own
+ * "would it record anything" judgement (`git diff`), which must see what the
+ * commit will store.
  */
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import type { Stats } from 'node:fs';
 import { lstat, readdir, readFile, readlink, realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -78,20 +82,26 @@ function detailOf(error: unknown): string {
   return message.length > MAX_DETAIL ? message.slice(0, MAX_DETAIL) : message;
 }
 
-/** Every git call's timeout but the knowledge commit's. */
+/** Every git call's timeout but the two commits'. */
 const GIT_TIMEOUT_MS = 15_000;
-/** The knowledge commit's two commands: the repository's hooks run inside them, so they wait longer; past it git is
- *  killed and that is a failure. */
-const KNOWLEDGE_COMMIT_TIMEOUT_MS = 120_000;
+/** A commit's `add` and `commit` (knowledge and node): the repository's hooks run inside them, so they wait longer;
+ *  past it git is killed and that is a failure. */
+const COMMIT_TIMEOUT_MS = 120_000;
 
-async function git(root: string, args: readonly string[], timeout: number = GIT_TIMEOUT_MS): Promise<string> {
-  const result = await execute(
+/**
+ * `stdin`, when given, is written to git's standard input and closed (a commit message of any length, `-F -`). git
+ * can exit before reading it all (a failing pre-commit hook runs first): the write then fails with EPIPE, and git's
+ * own exit status is the result.
+ */
+async function git(root: string, args: readonly string[], timeout: number = GIT_TIMEOUT_MS, stdin?: string): Promise<string> {
+  const running = execute(
     'git',
     ['--no-optional-locks', '-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false', '-C', root, ...args],
     { timeout, maxBuffer: 32 * 1024 * 1024, windowsHide: true,
       env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } },
   );
-  return result.stdout;
+  if (stdin !== undefined) running.child.stdin?.on('error', () => undefined).end(stdin);
+  return (await running).stdout;
 }
 
 const COMPLETE_OID = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
@@ -139,11 +149,15 @@ export async function identifyCheckout(root: string): Promise<CheckoutProbe> {
   const folder = await realpath(root);
   const repoKey = await gitCommonDir(folder);
   if (repoKey === null) return { kind: 'not_git', folder };
-  let objectFormat: ObjectFormat = 'sha1';
+  return { kind: 'git', repoKey, folder, branch: await readCheckoutBranch(folder), objectFormat: await objectFormatOf(folder) };
+}
+
+/** The repository's object format, read without a HEAD commit. */
+async function objectFormatOf(root: string): Promise<ObjectFormat> {
   try {
-    if ((await git(folder, ['rev-parse', '--show-object-format'])).trim() === 'sha256') objectFormat = 'sha256';
+    if ((await git(root, ['rev-parse', '--show-object-format'])).trim() === 'sha256') return 'sha256';
   } catch { /* a git without the option is sha1 */ }
-  return { kind: 'git', repoKey, folder, branch: await readCheckoutBranch(folder), objectFormat };
+  return 'sha1';
 }
 
 function normalizePrefix(prefix: string): string {
@@ -273,13 +287,123 @@ function gitFailureOf(error: unknown): string {
 export async function commitKnowledgeFiles(root: string, message: string):
   Promise<{ status: 'committed'; commit: string } | { status: 'failed'; reason: string }> {
   try {
-    await git(root, ['add', ...KNOWLEDGE_PATHSPEC], KNOWLEDGE_COMMIT_TIMEOUT_MS);
-    await git(root, ['commit', '-m', message, ...KNOWLEDGE_PATHSPEC], KNOWLEDGE_COMMIT_TIMEOUT_MS);
+    await git(root, ['add', ...KNOWLEDGE_PATHSPEC], COMMIT_TIMEOUT_MS);
+    await git(root, ['commit', '-m', message, ...KNOWLEDGE_PATHSPEC], COMMIT_TIMEOUT_MS);
   } catch (error) {
     return { status: 'failed', reason: gitFailureOf(error) };
   }
   const commit = await readHead(root);
   return commit === null ? { status: 'failed', reason: 'git commit left no HEAD' } : { status: 'committed', commit };
+}
+
+/**
+ * NR-09 (decision 121-45): the work-tree blob of each given path, in order, computed from its bytes like the
+ * traversal's (a symlink's blob is its target); null when the path is absent. Throws when the root is not the git
+ * work-tree top level (the paths are relative to it) or a path is a directory or another non-file.
+ */
+export async function readPathBlobs(root: string, paths: readonly string[]): Promise<{ path: string; blob: string | null }[]> {
+  if (await gitTopLevel(root) === null) throw new WorkspaceCaptureReadError('the workspace root is not the git work-tree top level');
+  const format = await objectFormatOf(root);
+  const blobs: { path: string; blob: string | null }[] = [];
+  for (const path of paths) {
+    const absolute = join(root, path);
+    const stat: Stats | false = await lstat(absolute).catch(absentOrThrow);
+    if (stat === false) { blobs.push({ path, blob: null }); continue; }
+    const entry = await fileEntryOf(absolute, stat, format);
+    if (entry === null) throw new WorkspaceCaptureReadError(`the node path ${path} is not a file`);
+    blobs.push({ path, blob: entry.blobId });
+  }
+  return blobs;
+}
+
+/**
+ * The given paths whose commit would record something (erratum 7): what `git add -A` and `git commit` of exactly these
+ * paths would store, judged by git itself, so the repository's eol conversion and clean filters apply and the mode
+ * counts as `core.fileMode` sees it. A path HEAD has records something when `git diff HEAD` (HEAD against the work
+ * tree, not the index) lists it: content, mode, type or a deletion; a path HEAD lacks, when it is in the work tree.
+ * A file staged and then restored to HEAD's content records nothing, whatever `git status` says. Without a HEAD
+ * commit every present path records something. The node review's raw-content guard (`readPathBlobs`) is separate.
+ */
+async function changedNodePaths(root: string, paths: readonly string[]): Promise<string[]> {
+  if (await gitTopLevel(root) === null) throw new WorkspaceCaptureReadError('the workspace root is not the git work-tree top level');
+  const head = await readHead(root);
+  const tree = head === null ? new Map<string, TreeEntry>() : await readTree(root, head, pickObjectFormat(head), paths);
+  const tracked = paths.filter(path => tree.has(path));
+  const differing = new Set(head === null || tracked.length === 0 ? []
+    : (await git(root, ['--literal-pathspecs', 'diff', '--no-ext-diff', '--no-renames', '--name-only', '-z', head, '--',
+      ...tracked])).split('\0'));
+  const changed: string[] = [];
+  for (const path of paths) {
+    if (tree.has(path) ? differing.has(path) : await lstat(join(root, path)).then(() => true, absentOrThrow)) {
+      changed.push(path);
+    }
+  }
+  return changed;
+}
+
+/** A missing path (or one under a missing directory) is absent; any other stat failure is the read's failure. */
+function absentOrThrow(error: unknown): false {
+  const code = (error as { code?: unknown }).code;
+  if (code === 'ENOENT' || code === 'ENOTDIR') return false;
+  throw error;
+}
+
+export async function hasNodePathChanges(root: string, paths: readonly string[]): Promise<boolean> {
+  return (await changedNodePaths(root, paths)).length > 0;
+}
+
+/** The three trailers of a node commit (NR-14), the message's last three lines in this order. */
+const NODE_RECORD_TRAILER = 'Node-Record: ';
+const NODE_COMMIT_TRAILER = 'Node-Commit: ';
+const NODE_REVIEW_TRAILER = 'Node-Review: ';
+
+/**
+ * NR-11: the node commit. `git add -A` and `git commit`, both with literal pathspecs and limited to the node's paths
+ * whose commit records something (`changedNodePaths`), so code the person staged elsewhere is neither committed nor
+ * unstaged and a path like `a[1].ts` names only itself; an empty pathspec would take the whole tree, so none left is a
+ * failure. The message is the person's, then the record snapshot, the identity and the fingerprint as trailers, which
+ * `findNodeCommit` reads back after a crash; it goes through standard input (`-F -`), since the snapshot of a large
+ * node would not fit in one argument. A failure comes back in git's own words, with no retry, no configuration change,
+ * no `--amend` and no push.
+ */
+export async function commitNodePaths(root: string, paths: readonly string[], message: string,
+  trailer: { record: string; identity: string; fingerprint: string }):
+  Promise<{ status: 'committed'; commit: string } | { status: 'failed'; reason: string }> {
+  const changed = await changedNodePaths(root, paths);
+  if (changed.length === 0) return { status: 'failed', reason: 'the node paths no longer differ from HEAD' };
+  const full = `${message}\n\n${NODE_RECORD_TRAILER}${trailer.record}\n${NODE_COMMIT_TRAILER}${trailer.identity}\n`
+    + `${NODE_REVIEW_TRAILER}${trailer.fingerprint}`;
+  try {
+    await git(root, ['--literal-pathspecs', 'add', '-A', '--', ...changed], COMMIT_TIMEOUT_MS);
+    await git(root, ['--literal-pathspecs', 'commit', '-F', '-', '--', ...changed], COMMIT_TIMEOUT_MS, full);
+  } catch (error) {
+    return { status: 'failed', reason: gitFailureOf(error) };
+  }
+  const commit = await readHead(root);
+  return commit === null ? { status: 'failed', reason: 'git commit left no HEAD' } : { status: 'committed', commit };
+}
+
+/**
+ * NR-14: the node commit of this identity in HEAD's reachable history, not only HEAD (a knowledge commit may have
+ * moved it since). Its last two lines must be exactly the identity and this fingerprint; the same identity with
+ * another fingerprint is a conflict. Throws when git fails.
+ */
+export async function findNodeCommit(root: string, identity: string, fingerprint: string):
+  Promise<{ sha: string; record: string } | { conflict: true } | null> {
+  if (await readHead(root) === null) return null;
+  const output = await git(root, ['log', '-F', `--grep=${NODE_COMMIT_TRAILER}${identity}`, '--format=%H%x00%B%x00', 'HEAD']);
+  const fields = output.split('\0');
+  let conflict = false;
+  for (let at = 0; at + 1 < fields.length; at += 2) {
+    const lines = fields[at + 1]!.trimEnd().split('\n');
+    if (lines.at(-2) !== `${NODE_COMMIT_TRAILER}${identity}`) continue;
+    const record = lines.at(-3);
+    if (lines.at(-1) === `${NODE_REVIEW_TRAILER}${fingerprint}` && record?.startsWith(NODE_RECORD_TRAILER) === true) {
+      return { sha: fields[at]!.trim(), record: record.slice(NODE_RECORD_TRAILER.length) };
+    }
+    conflict = true;
+  }
+  return conflict ? { conflict: true } : null;
 }
 
 /** The ignored untracked names from the repository's own rules, names only.
@@ -292,6 +416,15 @@ async function readIgnoredNames(root: string): Promise<string[]> {
 
 export function pickObjectFormat(commit: string): ObjectFormat {
   return commit.length === 64 ? 'sha256' : 'sha1';
+}
+
+/** A regular file's or a symlink's entry from its bytes (a symlink's blob is its target); null for anything else. */
+async function fileEntryOf(absolute: string, stat: Stats, format: ObjectFormat): Promise<TreeEntry | null> {
+  if (stat.isSymbolicLink()) return { mode: '120000', blobId: gitBlobId(Buffer.from(await readlink(absolute)), format) };
+  if (stat.isFile()) {
+    return { mode: (stat.mode & 0o100) !== 0 ? '100755' : '100644', blobId: gitBlobId(await readFile(absolute), format) };
+  }
+  return null;
 }
 
 /**
@@ -335,12 +468,7 @@ async function traverse(
       if (isGitIgnored(path)) { addNotVisible(path); continue; }
       const absolute = join(dir, name);
       const stat = await lstat(absolute);
-      if (stat.isSymbolicLink()) {
-        const target = await readlink(absolute);
-        const blobId = gitBlobId(Buffer.from(target), format);
-        entries.set(path, { mode: '120000', blobId });
-        hash.update(path).update('\0').update('120000').update('\0').update(blobId).update('\0');
-      } else if (stat.isDirectory()) {
+      if (stat.isDirectory()) {
         // A submodule appears as a directory that carries its own `.git`.
         try {
           await lstat(join(absolute, '.git'));
@@ -349,15 +477,12 @@ async function traverse(
           if (error instanceof WorkspaceCaptureReadError) throw error;
         }
         await walk(absolute, path);
-      } else if (stat.isFile()) {
-        const body = await readFile(absolute);
-        const mode = (stat.mode & 0o100) !== 0 ? '100755' : '100644';
-        const blobId = gitBlobId(body, format);
-        entries.set(path, { mode, blobId });
-        hash.update(path).update('\0').update(mode).update('\0').update(blobId).update('\0');
-      } else {
-        throw new WorkspaceCaptureReadError(`the workspace contains a special file at ${path}`);
+        continue;
       }
+      const entry = await fileEntryOf(absolute, stat, format);
+      if (entry === null) throw new WorkspaceCaptureReadError(`the workspace contains a special file at ${path}`);
+      entries.set(path, entry);
+      hash.update(path).update('\0').update(entry.mode).update('\0').update(entry.blobId).update('\0');
     }
   }
 

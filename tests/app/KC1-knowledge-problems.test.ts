@@ -5,7 +5,7 @@
  * without a file (V7), one path claimed by two modules (V8), a dangling reference (V9), a dependency cycle (V10), two
  * modules the index names without files (V11), the graph validator's fallback row (V12), a project-level merge failure
  * in the second workspace (V13), the same rows after closing and reopening the same SQLite store (V14), a bad note file
- * (V15), the notice item's `noticeKind` (V16), and the route's refused input (V17).
+ * (V15), the notice item's `noticeKind` (V16), and the route's refused input (V17). KC-3 adds K8 (see its comment).
  *
  * The world is `KLS2C-knowledge-host.ts` (`openKLS2CHost`, `kls2cAdopt`, `kls2cConflict`, `kls2cModuleFile`,
  * `kls2cEditModule`, `kls2cProblems`, `world.notices`, `world.idle`); V13 is the two-workspace `XWS2P-world.ts`, its
@@ -270,6 +270,22 @@ it('V16 the conflict notice item carries noticeKind (ruling 4-10); another kind 
   expect(others.length).toBeGreaterThan(0);
   expect(others.every(item => item.noticeKind === undefined)).toBe(true);
 }, 120_000);
+
+// K8 / Q3（KC-3；lead next1113c Q3；草稿 §2.5）：架构读的闸门只用 knowledgeProblemsOf 一份判定，理由取它的第一行；双认领不挡读。
+// 今天 same_id 红在理由（旧闸门回“the module other has no module file”），same_path 是绿的护栏。具名改坏：闸门留着旧句子
+// → 红在 same_id；闸门把双认领也算读不成 → 红在 same_path（今天的树上做过，见回复）。
+it.each([
+  ['same_id', ['rejected', 'unavailable', true], '2 个模块文件都写了模块号 core：一个模块号只能有一个文件，删掉或改掉多余的'],
+  ['same_path', ['ready', null, true], null],
+] as const)('K8 (Q3) the architecture read refuses with the first problem row; a double claim still reads: %s',
+  async (kind, expected, reason) => {
+    const world = await adoptedWorld();
+    kls2cConflict(world, kind);
+    await world.idle();
+    const read = await world.call<{ status: string; code?: string; reason?: string }>('architecture/read',
+      plain(world.scope, { selection: { kind: 'current' } }));
+    expect([read.status, read.code ?? null, reason === null || (read.reason ?? '').includes(reason)]).toEqual(expected);
+  }, 120_000);
 
 describe('rejects: knowledge/problems input', () => {
   it('V17a an empty input is invalid', async () => {

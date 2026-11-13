@@ -35,6 +35,13 @@
  * - SQLite (crash and restart): a drop over an `entering` round closes it
  *   `cancelled`/`dropped` at the restart; a retry after the restart keeps the
  *   round its first attempt absorbed.
+ * - QENT-1: a start aborted while its Kernel entry is held settles the old Run
+ *   `closed`/`not_entered`; the request Job waits `pending`, a plain Query's Job
+ *   closes `not_entered` with `aborted_before_entry`, no model call. Red today at
+ *   the read-back (`entering`/running); green once the exit runs the start-up
+ *   classifier. Named breaks: no call -> `entering`; probe on the aborted caller
+ *   signal -> `cancelled`, Q-07 writes nothing; probe `missing` -> Q-05 writes
+ *   `unknown` (not Q-02), still red on the same read-back.
  *
  * Every step is a public route, a fixture gate or the fixture's crash, plus
  * one delegating hold of the start's prompt-text read (rule sheet A3: it waits
@@ -53,7 +60,7 @@ import { plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { claimQuery, claimWithSecretaryProfile, prepareAttempt, start } from '../helpers/request-claim-steps.js';
 import { byIdentityPrefix, commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import { submitRound } from '../helpers/S6A-history-fixture.js';
-import { openS6AHostWorld, type S6AHostWorld } from '../helpers/S6A-host-fixture.js';
+import { callPublishedOwnerAsHost, openS6AHostWorld, type S6AHostWorld } from '../helpers/S6A-host-fixture.js';
 import { S6A_GOAL_1, S6A_SCOPE, type S6ASession } from '../helpers/S6A-request-fixture.js';
 
 vi.mock('../../src/core/record-store/in-memory-record-store.js', async (importOriginal) =>
@@ -97,6 +104,18 @@ function holdNextPromptTextRead(): { reached: Promise<void>; release(): void; re
     return await real(...args);
   });
   return { reached: reached.promise, release: () => gate.resolve(), restore: () => spy.mockRestore() };
+}
+
+async function startAbortedAtKernel(world: S6AHostWorld, round: QueryJobRef, prepared: PreparedQueryExecution,
+  session: S6ASession, requestId: string) {
+  const kernel = await world.gates.beforeKernel(session);
+  const caller = new AbortController();
+  const started = callPublishedOwnerAsHost(world, 'QENT', { owner: 'runtime.startQuery', wave: 'QENT-1',
+    scope: S6A_SCOPE, signal: caller.signal }, { prepared, consumerId: 'ag2b-consumer', requestId });
+  await kernel.reached;
+  expect((await readQuery(world.ag2b, round)).run.run.executionState?.phase).toBe('entering');
+  caller.abort(); kernel.release();
+  return await started;
 }
 
 /** What an abandoned start answers. */
@@ -468,6 +487,17 @@ describe.each(['memory'] as const)('a request round started through the Query ro
       await world.occupy(b);
     });
   });
+
+  it('QENT-1: a plain Query aborted before entry closes not_entered with reason aborted_before_entry', async () => {
+    const world = await openHostWorld(backend);
+    const a = await world.createSecretary('a');
+    const refs = await world.occupy(a);
+    const prepared = await prepareAttempt(world, refs.queryJobRef, 's6a-qent-plain-prepare');
+    expect(await startAbortedAtKernel(world, refs.queryJobRef, prepared, a, 's6a-qent-plain-start'))
+      .toMatchObject({ status: 'rejected', code: 'unavailable' });
+    expect((await readQuery(world.ag2b, refs.queryJobRef)).job.job).toMatchObject({ status: 'closed', closeReason: {
+      code: 'not_entered', message: 'aborted_before_entry' } });
+  });
 });
 
 describe('a request round across a crash and restart (sqlite)', () => {
@@ -501,6 +531,21 @@ describe('a request round across a crash and restart (sqlite)', () => {
     expect((await world.readSession(a)).record.occupancy).toBeNull();
     expect(world.model.calls()).toBe(0);
     expect(world.scripted.abandonedCalls()).toEqual([]);
+  });
+
+  it('QENT-1: aborting the caller at the held Kernel entry settles the old Run not_entered; the Job waits pending', async () => {
+    const world = await openHostWorld('sqlite');
+    const a = await world.createSecretary('a');
+    const request = await submitRound(world, { commandId: 's6a-qent', goalId: S6A_GOAL_1.goalId, text: 'S6A QENT', recipient: a });
+    const prepared = await claimAndPrepare(world, request.round, a, 's6a-qent');
+    expect(await startAbortedAtKernel(world, request.round, prepared, a, 's6a-qent-start'))
+      .toMatchObject({ status: 'rejected', code: 'unavailable' });
+    // Q-02 leaves the words on the same Job and opens a new attempt; the old Run is read by its own ref.
+    expect((await world.post('queries/observe', plain(S6A_SCOPE, { queryRunRef: prepared.queryRunRef }))).body)
+      .toMatchObject({ status: 'ready', value: { run: { run: { status: 'closed', outcome: 'not_entered',
+        executionState: { phase: 'settled' } } } } });
+    expect((await readQuery(world.ag2b, request.round)).job.job.status).toBe('pending');
+    expect(world.model.calls()).toBe(0);
   });
 
   it('a retry after the restart keeps the round its first attempt absorbed: one model run, the batch still names it', async () => {

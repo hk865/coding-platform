@@ -9,11 +9,13 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ModuleRef, SessionRef } from '../../../contracts/core/identity.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import type { ReadResult, WriteResult } from '../../../contracts/core/results.js';
-import type { KnowledgeProblemV1, ReconcileResult } from '../../../contracts/knowledge.js';
+import {
+  ARCHITECTURE_FILE_PATH, MODULES_DIRECTORY, type KnowledgeProblemKindV1, type KnowledgeProblemV1, type ReconcileResult,
+} from '../../../contracts/knowledge.js';
 import { truncateUtf8, utf8ByteLength } from '../../../contracts/utf8.js';
 import { isPos, isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type { KnowledgeOpsPort } from '../model/knowledge-ops.js';
-import { lineRefKey, type KnowledgeLines, type LineKnowledge } from '../model/line-knowledge.js';
+import { lineRefKey, type KnowledgeLines, type KnowledgeWriteDeps, type LineKnowledge } from '../model/line-knowledge.js';
 import { hostSystemContext } from '../model/platform-check-context.js';
 import { storeFailureToRejection } from '../persistence/read-result-failures.js';
 import { knowledgeConflictQuestion } from '../state/exploration-followup.js';
@@ -35,9 +37,17 @@ export type KnowledgeConflictAsks = {
 
 /** The one sender of every conflict repair round: the mailbox keys a send by its sender and workspace too. */
 const KNOWLEDGE_CONFLICT_ACTOR = { kind: 'system' as const, id: 'knowledge-conflict' };
-const REPAIR_HEAD = '知识文件里有同一个路径被几个模块认领的地方，每一处只交给一位区域参谋：';
-const REPAIR_INSTRUCTION = '请只处理交给你这个区域的那几处：用 propose_architecture_revision 提一份架构修订，让每个路径只归一个模块。平台不会自动合并，也不会改这些文件；人在卡上批准后由平台写。';
+const REPAIR_HEAD = '知识文件里有几处问题，每一处只交给一位区域参谋：';
+const REPAIR_INSTRUCTION = '请只处理交给你这个区域的那几处：用 propose_architecture_revision 提一份架构修订。这一轮以上次采用的架构为底（文件读不出也能提）；平台不会自动合并，也不会改这些文件；人在卡上批准后由平台按修订把架构文件整张写回，读不出的文件和多余的同号文件会被改回或删掉。';
 const omittedPlaces = (count: number): string => `（还有 ${count} 处没列出）`;
+/**
+ * KC-3 (121-106 ②, ruling Q2): the kinds a repair round is opened for; every other kind only notifies. A bad file
+ * counts only for `architecture.json` and a module file (a note is not a repair target).
+ */
+const REPAIRED: ReadonlySet<KnowledgeProblemKindV1> = new Set<KnowledgeProblemKindV1>(
+  ['path_claimed_by_two_modules', 'duplicate_module_id', 'dangling_reference', 'bad_file']);
+const repaired = (place: KnowledgeProblemV1): boolean => REPAIRED.has(place.kind) && (place.kind !== 'bad_file'
+  || place.files[0]!.path === ARCHITECTURE_FILE_PATH || place.files[0]!.path.startsWith(`${MODULES_DIRECTORY}/`));
 
 /**
  * `localOnly`: the person's "architecture and notes stay local" of a checkout (`LineRef.repoKey`), the Host's setting; a
@@ -52,7 +62,7 @@ export function createKnowledgeOps(lines: KnowledgeLines, asks: KnowledgeConflic
     const project = await lines.project(ctx);
     const result = await reconcileKnowledgeLine(lines.write, line.value, trigger,
       project.status === 'ready' ? project.value : null);
-    if (result.status === 'ready') await openConflictRepair(asks, ctx, line.value, result.value);
+    if (result.status === 'ready') await openConflictRepair(asks, lines.write, ctx, line.value, result.value);
     return result;
   };
   return {
@@ -135,25 +145,37 @@ export function createKnowledgeOps(lines: KnowledgeLines, asks: KnowledgeConflic
 }
 
 /**
- * [2C1-17], KC-1 G1: a round whose only places are paths claimed by two modules opens (or replays) one
- * `knowledge_conflict` follow-up for the region advisers that hold the first module of each place. The sender is
+ * [2C1-17], KC-1 G1, KC-3: a round with a path claimed by two modules, a duplicate module id, a dangling reference or
+ * a bad architecture or module file opens (or replays) one `knowledge_conflict` follow-up for the region advisers
+ * those places are handed to; the round's other places stay in the notice only (121-106 ②, ruling Q2). The sender is
  * fixed on the reconciled workspace and the follow-up's key is the notice id, so the same problems open it once
  * whichever trigger reconciled. No adviser (the notice tells the person, [2C1-17]) or a read that fails (the next
  * round opens it) opens nothing. Nothing is merged, no file is changed and no card is made.
  */
-async function openConflictRepair(asks: KnowledgeConflictAsks, ctx: CoreCallContext, line: LineKnowledge,
-  result: ReconcileResult): Promise<void> {
+async function openConflictRepair(asks: KnowledgeConflictAsks, write: KnowledgeWriteDeps, ctx: CoreCallContext,
+  line: LineKnowledge, result: ReconcileResult): Promise<void> {
   const notice = conflictNoticeOf(line.projectId, result.lineRef, result.issues, result.conflicts);
-  // 121-106 ② (产品规则): only a duplicate path is handed to an adviser; every other place is the person's to fix.
-  if (notice === null || result.issues.length > 0 || result.conflicts.length === 0
-    || result.conflicts.some(conflict => conflict.kind !== 'path_claimed_by_two_modules')) return;
-  const places = result.problems.filter(problem => problem.kind === 'path_claimed_by_two_modules');
+  const places = result.problems.filter(repaired);
+  if (notice === null || places.length === 0) return;
   const sender = hostSystemContext({ ...ctx, workspaceId: line.scope.workspaceId }, KNOWLEDGE_CONFLICT_ACTOR);
-  // 4-7: one place is handed to the adviser of its first module (sorted), never to every claimant.
-  const advisers = await asks.regionAdvisersOf(sender, line.projectId, [...new Set(places.map(place => place.moduleIds[0]!))]);
+  // Ruling Q1: a bad file names no module, so it goes with the first module a duplicate or dangling place of this
+  // notice names (4-7's rule), else the smallest module of the catalog the records last adopted; none, not handed.
+  const named = places.filter(place => place.kind === 'duplicate_module_id' || place.kind === 'dangling_reference')
+    .map(place => place.moduleIds[0]!).sort();
+  let badFileModule = named[0] ?? null;
+  if (badFileModule === null && places.some(place => place.kind === 'bad_file')) {
+    const recorded = await write.recordedArchitecture(line.projectId);
+    if (recorded.status !== 'ready') return;
+    badFileModule = recorded.value?.catalog.modules.map(module => module.ref.moduleId).sort()[0] ?? null;
+  }
+  // 4-7: one place is handed to the adviser of its first module (sorted), never to every module it names.
+  const firstOf = (place: KnowledgeProblemV1): string | null => place.kind === 'bad_file' ? badFileModule : place.moduleIds[0]!;
+  const advisers = await asks.regionAdvisersOf(sender, line.projectId,
+    [...new Set(places.flatMap(place => firstOf(place) ?? []))]);
   if (advisers.status !== 'ready') return;
   const given = places.flatMap(place => {
-    const adviser = advisers.value.get(place.moduleIds[0]!);
+    const first = firstOf(place);
+    const adviser = first === null ? null : advisers.value.get(first);
     return adviser === null || adviser === undefined ? [] : [{ place, region: adviser.region }];
   });
   if (given.length === 0) return;

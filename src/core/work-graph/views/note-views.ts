@@ -22,7 +22,8 @@
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ReadResult, CoreRejection } from '../../../contracts/core/results.js';
-import { okFalse } from '../../../contracts/core/rejections.js';
+import { okFalse, rejected } from '../../../contracts/core/rejections.js';
+import { messageOf } from '../../../contracts/error-message.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { LinkEvidenceStoredV1, LinkPayloadV1, LinkVerificationV1, NoteAnchorV1, NoteFactV1, NoteHeadSnapshot,
   NoteSectionsV1, NoteVersionSnapshot, SymbolLocatorV1 } from '../../../contracts/note.js';
@@ -37,7 +38,7 @@ import type { PlanTaskPort } from '../model/plan-contracts.js';
 import type { AdoptedArchitecture, ArchitectureCatalogPort, ArchitectureRevision, ModuleDefinition } from '../architecture/catalog-contracts.js';
 import type { RunRef } from '../../../contracts/dispatch.js';
 import type { NoteAnchorCheckV1, NoteCheckV1, NoteFileObservationV1, NoteHeadCheckItemV1, NoteHeadCheckPort, NoteHintV1,
-  NoteLinkVerifyV1, NoteSimilarV1, NoteUpdateDueTriggerV1, UnderstandingStatusV1 } from '../model/note-contracts.js';
+  NoteLinkVerifyV1, NoteRemovedModuleItemV1, NoteSimilarV1, NoteUpdateDueTriggerV1, UnderstandingStatusV1 } from '../model/note-contracts.js';
 import { NOTE_ANCHOR_LINK_QUOTA, NOTE_ANCHOR_QUOTA, NOTE_BASIS_FILE_MAX_BYTES, NOTE_CHECK_DEADLINE_MS, NOTE_GOAL_LINK_QUOTA,
   NOTE_GOAL_QUOTA, NOTE_LINK_VERIFY_MAX, NOTE_NATIVE_READ_WAIT_MS, NOTE_PROJECT_FLOW_QUOTA, NOTE_READ_FACTS_MAX,
   NOTE_READ_FILES_MAX, NOTE_READ_PARSE_BYTES_MAX, NOTE_SIMILAR_MAX, NOTE_SIMILAR_MIN,
@@ -58,10 +59,11 @@ import {
   createNoteHeadDerivations, mapStoreFailure, newHeadCache,
   type HeadCache, type NoteHeadDerivations, type NoteHeadLike,
 } from '../notes/note-read-model.js';
-import type { KnowledgeLines } from '../model/line-knowledge.js';
+import { lineRefKey, type KnowledgeLines } from '../model/line-knowledge.js';
 import type { KnowledgeRead } from '../architecture/catalog-service.js';
 import { indexedHeads, isKnowledgeAnchorKey, overlayFileKnowledge } from '../notes/note-knowledge.js';
 import { isKnowledgeAnchor } from '../notes/note-file.js';
+import { readHeadBatch } from '../notes/note-batch-reader.js';
 import {
   S4_NOTE_BY_ANCHOR_LOOKUPS, decodeNoteHeadSnapshot, decodeNoteVersionSnapshot, noteHeadRefKey, noteVersionRefKey,
   currentPointerRefKey, decodeCurrentPointerSnapshot,
@@ -1998,6 +2000,52 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
     return conclusion;
   }
 
+  /**
+   * 121-88: the current (`accepted`/`reviewed`, not user-confirmed) notes whose MAIN anchor is a module the
+   * current catalog no longer has, or an interface whose module is gone (interface anchors follow the module
+   * they sit on). Only the main slot decides: an extra slot only ever goes to `retiredExtraAnchors`. No adopted
+   * catalog is an empty list (no module was ever removed); a real read failure is `unavailable`, never empty.
+   */
+  async function removedModuleNotes(ctx: CoreCallContext): Promise<ReadResult<readonly NoteRemovedModuleItemV1[]>> {
+    const catalog = await deps.architecture.readArchitectureRevision(ctx, { selection: { kind: 'current' } });
+    if (catalog.status === 'not_found') return { status: 'ready', value: [] };
+    if (catalog.status !== 'ready') return catalog;
+    const lines = await deps.knowledge.project(ctx);
+    if (lines.status !== 'ready') return mapStoreFailure(lines);
+    const modules = catalog.value.catalog.catalog.modules;
+    const items: NoteRemovedModuleItemV1[] = [];
+    for (const line of lines.value) {
+      const lineRef = lineRefKey(line.scope, line.line);
+      let moduleRows: readonly { anchorKey: string; noteId: string }[];
+      let interfaceRows: readonly { anchorKey: string; noteId: string }[];
+      try {
+        const index = deps.knowledge.write.indexOf(ctx.projectId);
+        moduleRows = index.noteAnchorsByPrefix(lineRef, 'module:');
+        interfaceRows = index.noteAnchorsByPrefix(lineRef, 'interface:');
+      } catch (error) {
+        return rejected('unavailable', `the knowledge index cannot be read: ${messageOf(error)}`);
+      }
+      // `interface:<moduleId>/<interfaceId>`: the module part before the first slash decides the module.
+      const gone = [
+        ...moduleRows.filter(row => moduleIn(modules, row.anchorKey.slice('module:'.length)) === undefined),
+        ...interfaceRows.filter(row =>
+          moduleIn(modules, row.anchorKey.slice('interface:'.length).split('/')[0]!) === undefined),
+      ];
+      if (gone.length === 0) continue;
+      const heads = await readHeadBatch(deps.records, ctx.projectId, gone.map(row => row.noteId));
+      if (!heads.ok) return rejected('unavailable', heads.reason);
+      for (const head of heads.value.values()) {
+        const pair = gone.find(row => row.noteId === head.noteId && row.anchorKey === head.anchorKey0);
+        if (pair === undefined) continue;
+        if (head.state !== 'accepted' && head.state !== 'reviewed') continue;
+        if (head.confirmedByUser) continue; // the scribe cannot withdraw a user-confirmed note (note-service.ts:2460-2465)
+        items.push({ identity: `${head.noteId}@${String(head.version)}`, anchorKey: pair.anchorKey,
+          noteId: head.noteId, version: head.version, lineRef, goalId: head.goalId });
+      }
+    }
+    return { status: 'ready', value: items };
+  }
+
   return {
     /**
      * S2.5: the public shape is unchanged. It reads the head and version with
@@ -2073,6 +2121,7 @@ export function createNoteCheck(deps: NoteCheckDependencies): NoteHeadCheckPort 
       }
       return { status: 'ready', value: { items: results, understanding, anchorsOnly: checked.value.anchorsOnly } };
     },
+    removedModuleNotes,
     doubtfulLinks(scope, max) {
       return [...doubtful.values()]
         .filter(entry => entry.projectId === scope.projectId && entry.workspaceId === scope.workspaceId)

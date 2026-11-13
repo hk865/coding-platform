@@ -72,6 +72,11 @@ export function unknownCallAdviceProblem(value: unknown): string | null {
   if (!UNKNOWN_CALL_ADVICE_CHOICES[phase].includes(value['choice'] as string)) {
     return `the advice choice is not one of the ${phase} choices`;
   }
+  return adviceDetailsProblem(value);
+}
+
+/** The escalation kind, rationale and plain sentence every adviser answer carries (both advice contracts share it). */
+export function adviceDetailsProblem(value: Record<string, unknown>): string | null {
   const kind = value['escalationKind'];
   if (value['choice'] === 'escalate'
     ? !(UNKNOWN_CALL_ADVICE_ESCALATION_KINDS as readonly string[]).includes(kind as string) : kind !== null) {

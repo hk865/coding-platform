@@ -39,7 +39,7 @@ import { goalDecisionBasis } from '../../src/core/work-graph/tasks/goal-basis.js
 import {
   createK3PendingReview, openK3ReviewCardWorld, readK3Review, readK3ReviewCard, type K3ReviewCardWorld,
 } from '../helpers/K3-proposal-round.js';
-import { blockedRecordWithClaim, requeueBlockedRecord } from '../helpers/B2-crr-world.js';
+import { blockedRecordWithClaim, crrCardOf, requeueBlockedRecord, requestRerunOf } from '../helpers/B2-crr-world.js';
 import { shellSeam } from '../helpers/K3-tool-seams.js';
 
 const seams = vi.hoisted(() => ({ shellSeam: undefined as unknown }));
@@ -248,5 +248,46 @@ describe('rejects: adviser answers that are not the adviser\'s', () => {
     const { world, state, apply } = await awaitingAdvice('memory', { shape: 'plan_round' });
     expect(await apply()).toMatchObject({ status: 'rejected', code: 'invalid' });
     expect(await readK3Review(world, state.record)).toMatchObject({ status: 'awaiting_advice', revision: state.record.revision });
+  });
+});
+
+describe('K3L-6 ③ the rerun request routes by the review record\'s real streak', () => {
+  // The Task's second consecutive interruption reaches the person (the prior Run's record has the unknown
+  // process, and the adviser's skip is only the suggestion). The CRR owner must pass THAT record's streak when it
+  // creates the next request. Mutation: `streak: targetReview.streak` replaced by an empty streak -> `no_adviser`
+  // instead of the person's plain `pending@1`.
+  it('K3L6-③: after two crashes and the human card, the next rerun request is the person\'s and carries no adviser cause', async () => {
+    const skip: UnknownCallAdviceV1 = { phase: 'disposition', choice: 'skip_as_done', escalationKind: null,
+      rationale: 'b 已经跑完了', plain: '这一步其实已经做完了。' };
+    const { world, state, apply } = await awaitingAdvice('memory', { advice: skip }, true);
+    expect(await apply()).toMatchObject({ status: 'committed', value: { status: 'needs_decision',
+      escalation: { cause: 'second_consecutive', suggestion: skip } } });
+    const escalated = await readK3Review(world, state.record);
+    // The person closes the human card; that disposition is what records the blocked command the next Run asks
+    // about.
+    const { card: reviewCard } = await readK3ReviewCard(world, escalated);
+    const answered = await world.decisions.answerDecision(world.fixture.ctx, {
+      input: { source: reviewCard.source, selection: { kind: 'option', optionId: 'skip_as_done' }, text: '',
+        annotations: [] },
+      meta: { requestId: 'k3l6-3-answer', expected: reviewCard.source.pins } });
+    expect(answered.status).toBe('committed');
+    if (answered.status !== 'committed') throw new Error(JSON.stringify(answered));
+    const disposition = await world.reviews.applyDisposition(world.fixture.ctx, {
+      input: { source: reviewCard.source, selection: { kind: 'option', optionId: 'skip_as_done' },
+        decisionMessageRef: answered.value.ref },
+      meta: { requestId: 'k3l6-3-disposition', expected: reviewCard.source.pins } });
+    expect(disposition.status).toBe('committed');
+    if (disposition.status !== 'committed') throw new Error(JSON.stringify(disposition));
+    const record = disposition.value;
+    // The person closed the first interruption from the card, so only the unknown process repeats; the streak is
+    // still the record's own, never an empty one.
+    expect(record.streak).toMatchObject({ priorUnknownProcess: true });
+    expect(record.streak.priorAdvised).toBeUndefined();
+    const request = await requestRerunOf(world, record, 'k3l6-3-request', 'echo b');
+    expect(request).toMatchObject({ state: 'pending', revision: 1 });
+    expect(request).not.toHaveProperty('escalation');
+    const card = await crrCardOf(world);
+    expect(card.options.map(option => option.id)).toEqual(['allow_rerun', 'deny', 'deny_final']);
+    expect(card.source).toMatchObject({ kind: 'command_rerun_request' });
   });
 });

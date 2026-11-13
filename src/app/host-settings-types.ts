@@ -224,6 +224,8 @@ export type SettingsRoutes = {
   'models/select': { input: { scope: CoreScope; modelId: string }; value: HostSettingsSnapshot };
   'workspaces/open': { input: OpenSettingsWorkspace; value: { settings: HostSettingsSnapshot; bootstrap: BootstrapResponse; scope: CoreScope } };
   'workspaces/access': { input: SaveWorkspaceAccess; value: { settings: HostSettingsSnapshot; bootstrap: BootstrapResponse } };
+  'workspaces/withdraw': { input: { scope: CoreScope }; value: { settings: HostSettingsSnapshot; bootstrap: BootstrapResponse } };
+  'workspaces/remove': { input: { scope: CoreScope }; value: { settings: HostSettingsSnapshot; bootstrap: BootstrapResponse } };
   'checks/approve': { input: ApproveWorkspaceChecks; value: HostSettingsSnapshot };
   'automation/save': { input: SaveAutomationSettings; value: HostSettingsSnapshot };
   'resource-caps/save': { input: SaveResourceCapSettings; value: HostSettingsSnapshot };

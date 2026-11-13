@@ -58,9 +58,10 @@ export type CommandRerunToolsConfig = {
   /**
    * The SAME owner the routes publish; the adapter adds no request rules.
    * Rework 2 item 3: a no-write pending/allowed outcome carries the WAITING
-   * request's command, so there is no point read here at all.
+   * request's command, so there is no point read here at all. The tool calls
+   * only `requestRerun`.
    */
-  requests: CommandRerunRequestPort;
+  requests: Pick<CommandRerunRequestPort, 'requestRerun'>;
   /** Trusted, already-bound context (a `work_run` principal). Never model JSON. */
   context: CoreCallContext;
   /** The trusted prepared Task (`manifest.claim.task`); never model JSON. */
@@ -109,14 +110,17 @@ function outcomeResult(callId: string, reply: NotWrittenReply | WrittenReply): T
     reply.status === 'not_written' ? reply.outcome : reply.value.outcome,
     // The committed branches carry the waiting form on the returned request;
     // the no-write pending/allowed branches carry their own `command`.
-    reply.status === 'committed' ? reply.value.request.command : '');
+    reply.status === 'committed' ? reply.value.request.command : '',
+    reply.status === 'committed' && reply.value.request.state === 'awaiting_advice');
 }
 
-function outcomeText(callId: string, outcome: ReplyOutcome, committedCommand: string): ToolResult {
+function outcomeText(callId: string, outcome: ReplyOutcome, committedCommand: string, adviserFirst: boolean): ToolResult {
   switch (outcome.status) {
     case 'requested':
+      // 121-110: the agent is told who decides: the responsible adviser first, or the person at once.
       return success(callId, { status: 'requested', requestId: outcome.requestId },
-        '已请求，等人答复。这一轮不能跑这条命令；可以先做别的，或者结束这一轮并写明在等允许。');
+        (adviserFirst ? '已请求，等答复（参谋先看；拿不准会交给人）。' : '已请求，等人答复。')
+        + '这一轮不能跑这条命令；可以先做别的，或者结束这一轮并写明在等允许。');
     case 'pending': {
       const waitingCommand = 'command' in outcome ? outcome.command : committedCommand;
       return success(callId, { status: 'pending', requestId: outcome.requestId },
@@ -126,7 +130,7 @@ function outcomeText(callId: string, outcome: ReplyOutcome, committedCommand: st
     case 'allowed': {
       const waitingCommand = 'command' in outcome ? outcome.command : committedCommand;
       return success(callId, { status: 'allowed', requestId: outcome.requestId },
-        `人已允许 \`${waitingCommand}\` 一次，还没用；`
+        `已允许 \`${waitingCommand}\` 一次，还没用；`
         + '先用它，用掉或作废以后才能再请求别的写法');
     }
     case 'refused':

@@ -13,7 +13,7 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "2faee57b0e880734df4a55b614e86fc2b38bd176f8b7f4725d4459b28238bffa"
+    "sha256": "b3e0f90cb4479123b29af154dff74c97bca12d36fd9d04ff606ad57fc434a265"
   },
   {
     "path": "resources/prompts/platform/strings.json",
@@ -65,7 +65,7 @@
   },
   {
     "path": "resources/prompts/platform/templates/scribe-reminder.txt",
-    "sha256": "b9e8989113444afb1cd7b2af5e9612c13eb26616978e4d4cc56c9fce7975aa57"
+    "sha256": "eb35407bf86bd2853381f7716d5af2059e71fb64e717eeea70e3537cc028ca6f"
   },
   {
     "path": "resources/prompts/platform/templates/continuation-brief.txt",
@@ -141,11 +141,11 @@
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-adviser.txt",
-    "sha256": "b5d9eac0e054bbb12a8121d98508165e03de008a17fab17ef66c68bae126f776"
+    "sha256": "b96a3e5867ab98f821bb34926568b2f21325607254cf583a978dbd35c59c3628"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-scribe.txt",
-    "sha256": "7e7d2ea6b21f44f407d7dcd2d2847651e7b156306ae97fdc5a1bceb92ee4bd94"
+    "sha256": "06eaa54bb819486d3b7e3e69bd4bdcfe0a5cfb7e5a73a893296500710ec7b65d"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-reviewer.txt",
@@ -241,7 +241,7 @@
   },
   {
     "path": "resources/prompts/platform/tools/request_command_rerun.json",
-    "sha256": "1a92fa0ed1b95571c3dbb47c813282bc1cffb765eba72057a11314b32b57b22e"
+    "sha256": "877c16141d3815d01f3040edfefa8b2a77ebf3d83f00a9509828bd12b398bd76"
   },
   {
     "path": "resources/prompts/platform/tools/send_session_message.json",
@@ -406,5 +406,17 @@
   {
     "path": "resources/prompts/platform/tools/submit_unknown_call_advice.json",
     "sha256": "a4b43e9b2f31b5265ab9223c7fc6bb88ff6dff34566e6c6d1c2af4f32b58570b"
+  },
+  {
+    "path": "resources/prompts/platform/tools/submit_scribe_review.json",
+    "sha256": "57d44eb9ad4f1c5c2ef2b2d071e5ccdb75e6b91294d2019d73be7d60c082d61f"
+  },
+  {
+    "path": "resources/prompts/platform/templates/command-rerun-advice-input.txt",
+    "sha256": "63a13b0bc400df45af55df481a9941ba209f536e226af10535995117bb722785"
+  },
+  {
+    "path": "resources/prompts/platform/tools/submit_command_rerun_advice.json",
+    "sha256": "9273b233247b818e2035f7fbcf5a93938cbe571e42bd5ccf98b8b19b6a322678"
   }
 ]

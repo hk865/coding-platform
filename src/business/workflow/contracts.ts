@@ -24,6 +24,7 @@ import type { QueryJobRecord } from '../../core/work-graph/queries/contracts.js'
 import type { GoalTaskPort } from '../../core/work-graph/model/task-contracts.js';
 import type { TaskClaimPort } from '../../core/work-graph/model/claim-contracts.js';
 import type { UnknownCallReviewPort } from '../../core/work-graph/model/unknown-call-review-contracts.js';
+import type { CommandRerunRequestPort } from '../../core/work-graph/model/command-rerun-request-contracts.js';
 import type { InitialPlanProposalResult, PlanTaskPort } from '../../core/work-graph/model/plan-contracts.js';
 import type { EvidencePort } from '../../core/work-graph/model/evidence-contracts.js';
 import type { RuntimeExecutionPort } from '../../core/agent-runtime/ports.js';
@@ -132,6 +133,10 @@ export type WorkflowCalls = {
   apply_adviser_answer: UnknownCallReviewPort['applyAdviserAnswer'];
   /** K3 layering: put an `awaiting_advice` record in front of the person (no adviser line, or a round with no answer). */
   escalate_review: UnknownCallReviewPort['escalateReview'];
+  /** 121-110: apply the adviser round's answer to an `awaiting_advice` command rerun request; the owner judges it. */
+  apply_rerun_adviser_answer: CommandRerunRequestPort['applyAdviserAnswer'];
+  /** 121-110: put an `awaiting_advice` command rerun request in front of the person (no adviser, or no answer). */
+  escalate_rerun: CommandRerunRequestPort['escalateRerun'];
   /**
    * K3 §3.4 UR3h / L21 (ruling 3): the Workflow's own automation cancels a
    * review round claimed but never entered (including one paused before entry),

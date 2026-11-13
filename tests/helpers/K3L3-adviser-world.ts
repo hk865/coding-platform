@@ -16,6 +16,7 @@ import type { RunRef, TaskTriple } from '../../src/contracts/dispatch.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import { decisionSourceKey } from '../../src/contracts/goal-decisions.js';
 import type { UnknownCallReviewV1 } from '../../src/contracts/unknown-call-review.js';
+import type { TrustedCheckConfiguration } from '../../src/contracts/verification.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { DecisionCardV1, DecisionQueueReadV1 } from '../../src/core/work-graph/model/decision-contracts.js';
 import type { QueryJobRecord } from '../../src/core/work-graph/queries/contracts.js';
@@ -32,6 +33,7 @@ import { S6A_SCOPE, S6A_WORK_ROLE, type S6ASession } from './S6A-request-fixture
 import { committed, ready } from './S7A-fixture.js';
 import { sendS7A2PersonMessage } from './S7A2-fixture.js';
 import { listed, readS7BMessage } from './S7B-fixture.js';
+import { inboxOf } from './S7B-F-support.js';
 import type { S9ToolResult } from './S9-review-fixture.js';
 
 export type K3L3World = {
@@ -40,18 +42,41 @@ export type K3L3World = {
 };
 
 /**
+ * The `scr:` request numbers found in every Session's saved message body, every workspace line and archived included.
+ * Without a scribe line, or without a Goal, the platform must open no review round, so this is empty.
+ */
+export async function scrRoundsInEverySession(world: S6AHostWorld):
+Promise<Array<{ sessionId: string; text: string }>> {
+  const rounds: Array<{ sessionId: string; text: string }> = [];
+  for (const card of await world.listSessions()) {
+    const ref = { projectId: card.record.ref.projectId, sessionId: card.record.ref.sessionId };
+    for (const message of await inboxOf(world, ref)) {
+      const text = await readBody(world, message.ref, 'message');
+      if (text.startsWith('scr:')) rounds.push({ sessionId: ref.sessionId, text });
+    }
+  }
+  return rounds;
+}
+
+/**
  * One SQLite Host world, `resumeOnStartup` off, one Plan on the first Goal with the Work Task `<label>-work` on the
  * work role, its Work line and the Goal's adviser line. `readonlyCommands`: the Work binding may also run the
- * read-only command (a proposal round needs it).
+ * read-only command (a proposal round needs it). `checks`: the trusted check a normally ended Work Run is verified
+ * by (K3L-6: a failing check sends the Task to its automatic rework).
  */
-export async function openK3L3World(label: string, options: { readonlyCommands?: boolean } = {}): Promise<K3L3World> {
+export async function openK3L3World(label: string, options: { readonlyCommands?: boolean;
+  checks?: boolean | TrustedCheckConfiguration;
+  /** A second Work Task (`${label}-other`) on the same line, so a Goal-level selection passes the first. */
+  otherTask?: boolean } = {}): Promise<K3L3World> {
   const world = await openPLConsumptionWorld({ backend: 'sqlite', label, write: 'every_start', gitRoot: true,
-    readonlyCommands: options.readonlyCommands === true });
+    readonlyCommands: options.readonlyCommands === true,
+    ...(options.checks === undefined ? {} : { checks: options.checks }) });
   try {
     await world.setResumeOnStartup(false);
     const goal = world.goals.first;
     const { tasks } = await adoptPLMixedPlan(world, { goal, label,
-      tasks: [{ taskId: `${label}-work`, role: S6A_WORK_ROLE.templateId }] });
+      tasks: [{ taskId: `${label}-work`, role: S6A_WORK_ROLE.templateId },
+        ...(options.otherTask === true ? [{ taskId: `${label}-other`, role: S6A_WORK_ROLE.templateId }] : [])] });
     const workLine = await createPLLine(world, { label: `${label}-work-line`, role: S6A_WORK_ROLE, tasks });
     return { world, goal, task: tasks[0]!, workLine, adviser: await createPLAdviserLine(world, `${label}-adviser`) };
   } catch (error) {
@@ -88,18 +113,14 @@ export async function reachK3L3<T>(w: K3L3World, gate: S6AGate<T>, what: string)
  * the Task's `select_work`. Returns the held Run; the seam stays armed until the test file releases it.
  *
  * The crashed Host is abandoned, not stopped (rule sheet A2), and its consume loop would go on taking messages from
- * the same store. Before the crash a decoy adviser-role line's round is held at its model request (A3), which keeps
- * that loop's one workspace job busy until the world closes, so only the new Host consumes the adviser's rounds.
+ * the same store; `occupyK3L3Consumer` keeps it busy first.
  */
-export async function crashK3L3Command(w: K3L3World, label: string): Promise<RunRef> {
-  const decoy = await createPLLine(w.world, { label: `${label}-decoy`, role: PL_ADVISER_ROLE });
-  const busy = await w.world.gates.modelRequest(decoy);
-  await sendS7A2PersonMessage(w.world, { label: `${label}-decoy`, recipient: decoy.ref, goal: w.world.goals.second });
-  await reachK3L3(w, busy, `${label}: the decoy round at its model request`);
+export async function crashK3L3Command(w: K3L3World, label: string, command = `${label} runs a program`): Promise<RunRef> {
+  await occupyK3L3Consumer(w, label);
   const held = shellSeam.enabled ? shellSeam.calls.length : 0;
   if (!shellSeam.enabled) shellSeam.arm();
   await w.world.scripted.script(w.workLine, [{ kind: 'calls', calls: [
-    { callId: `${label}-shell`, name: 'shell', args: { command: `${label} runs a program` } }] }]);
+    { callId: `${label}-shell`, name: 'shell', args: { command } }] }]);
   let failure: unknown = null;
   driveWorkflow(w.world.ag2b, selectK3L3(w, `${label}-crash`)).catch(error => { failure = error; });
   await waitFor(async () => shellSeam.calls.length > held || failure !== null, done => done, `${label}: the held shell`);
@@ -108,12 +129,32 @@ export async function crashK3L3Command(w: K3L3World, label: string): Promise<Run
     await w.world.post('sessions/facts', plain(S6A_SCOPE, w.workLine.ref)), `${label}: the Work line facts`);
   if (facts.latestWork === null) throw new Error(`K3L3: ${label} reached the shell call with no Work claim`);
   await w.world.crash();
+  await continueK3L3Goal(w, label);
+  return facts.latestWork.runRef;
+}
+
+/**
+ * After a crash restart the person continues the interrupted Goal: pause, driver start and stop, resume (the start is
+ * the one step that resolves the interruption; on a paused Goal the driver selects nothing). Until then the Host
+ * consumes no intervention of the Goal (`intervention.ts`: `busy`, a person continues it by starting the Goal).
+ */
+export async function continueK3L3Goal(w: K3L3World, label: string): Promise<void> {
   await controlK3L3Goal(w, 'pause', `${label}-pause`);
   ready(await w.world.post('workflow/driver-start', plain(S6A_SCOPE, { advance: { schemaVersion: 1, goalRef: w.goal,
     flowId: `${label}-driver`, sessionHint: null, kind: 'select_work' }, queryProfileIds: [] })), `${label}: driver start`);
   ready(await w.world.post('workflow/driver-stop', plain(S6A_SCOPE, { goalRef: w.goal })), `${label}: driver stop`);
   await controlK3L3Goal(w, 'resume', `${label}-resume`);
-  return facts.latestWork.runRef;
+}
+
+/**
+ * Before a crash: a decoy adviser-role line's round is held at its model request (A3), which keeps the running Host's
+ * one workspace consume job busy until the world closes, so only the next Host consumes the adviser's rounds.
+ */
+export async function occupyK3L3Consumer(w: K3L3World, label: string): Promise<void> {
+  const decoy = await createPLLine(w.world, { label: `${label}-decoy`, role: PL_ADVISER_ROLE });
+  const busy = await w.world.gates.modelRequest(decoy);
+  await sendS7A2PersonMessage(w.world, { label: `${label}-decoy`, recipient: decoy.ref, goal: w.world.goals.second });
+  await reachK3L3(w, busy, `${label}: the decoy round at its model request`);
 }
 
 /** `goals/control` of the world's Goal (its two pins read publicly). */
@@ -134,12 +175,12 @@ export async function readK3L3Review(w: K3L3World, runRef: RunRef): Promise<Unkn
     `the record of ${runRef.runId}`);
 }
 
-/** The adviser line's `ucr:` system rounds (inbox order) with their saved bodies. */
-export async function adviserRoundsOf(w: K3L3World): Promise<Array<{ message: SessionMessage; text: string }>> {
+/** The adviser line's system rounds of one kind (`ucr:`, K3L-6's `crr:`; inbox order) with their saved bodies. */
+export async function adviserRoundsOf(w: K3L3World, prefix = 'ucr:'): Promise<Array<{ message: SessionMessage; text: string }>> {
   const rounds: Array<{ message: SessionMessage; text: string }> = [];
   for (const message of await listed(w.world, 'inbox', w.adviser)) {
     const text = await readBody(w.world, message.ref, 'message');
-    if (message.intent === 'action_request' && text.startsWith('ucr:')) rounds.push({ message, text });
+    if (message.intent === 'action_request' && text.startsWith(prefix)) rounds.push({ message, text });
   }
   return rounds;
 }
@@ -181,9 +222,9 @@ export async function adviserManifestOf(w: K3L3World, round: SessionMessage): Pr
   return JSON.parse(bundle.body) as PreparedQueryManifestV1;
 }
 
-/** The tool result the adviser line's model was served for `callId` (read off its model requests). */
-export async function adviserToolResult(w: K3L3World, callId: string): Promise<S9ToolResult> {
-  for (const request of await w.world.scripted.requests(w.adviser)) {
+/** The tool result the adviser line's (or `line`'s) model was served for `callId` (read off its model requests). */
+export async function adviserToolResult(w: K3L3World, callId: string, line: S6ASession = w.adviser): Promise<S9ToolResult> {
+  for (const request of await w.world.scripted.requests(line)) {
     const message = request.messages.find(candidate => candidate.role === 'tool' && candidate.callId === callId);
     if (message !== undefined && message.role === 'tool') return message.result as unknown as S9ToolResult;
   }

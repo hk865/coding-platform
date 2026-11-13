@@ -31,12 +31,13 @@ import type {
   EncodedEventSchema,
   RecordBackendSchemas,
 } from '../../record-store/ports.js';
-import { workspaceDecisionSettingsProblem } from '../persistence/record-codecs.js';
-import { invalid, isPos, isRecord, isSha256Hex, nonEmpty, type UnknownRecord } from '../../../contracts/validation/common.js';
+import { workspaceDecisionSettingsProblem, workspaceSnapshotValueProblem } from '../persistence/record-codecs.js';
+import { invalid, isNonNeg, isPos, isRecord, isSha256Hex, nonEmpty, type UnknownRecord } from '../../../contracts/validation/common.js';
 import { encodeEventEnvelope } from '../persistence/event-envelope.js';
 
 export const PROJECT_REGISTERED_EVENT = 'ProjectRegistered';
 export const PROJECT_WORKSPACE_REGISTERED_EVENT = 'ProjectWorkspaceRegistered';
+export const PROJECT_WORKSPACE_REMOVED_EVENT = 'ProjectWorkspaceRemoved';
 export const PROJECT_COMPLETION_POLICY_INSTALLED_EVENT = 'ProjectCompletionPolicyInstalled';
 export const PROJECT_COMPLETION_POLICY_ACTIVATED_EVENT = 'ProjectCompletionPolicyActivated';
 export const PROJECT_BOOTSTRAP_EVENT_SCHEMA_VERSION = 1;
@@ -57,6 +58,11 @@ export type ProjectRegisteredEventV1 =
   ProjectBootstrapEventBody<ProjectSnapshot> & { eventType: typeof PROJECT_REGISTERED_EVENT };
 export type ProjectWorkspaceRegisteredEventV1 =
   ProjectBootstrapEventBody<WorkspaceSnapshot> & { eventType: typeof PROJECT_WORKSPACE_REGISTERED_EVENT };
+export type ProjectWorkspaceRemovedEventV1 =
+  Omit<ProjectBootstrapEventBody<WorkspaceSnapshot>, 'payload'> & {
+    eventType: typeof PROJECT_WORKSPACE_REMOVED_EVENT;
+    payload: { value: WorkspaceSnapshot; releasedClaims: number };
+  };
 export type ProjectCompletionPolicyInstalledEventV1 =
   ProjectBootstrapEventBody<CompletionPolicyRevisionSnapshot> & { eventType: typeof PROJECT_COMPLETION_POLICY_INSTALLED_EVENT };
 export type ProjectCompletionPolicyActivatedEventV1 =
@@ -203,6 +209,43 @@ function workspaceSnapshotFromValue(value: unknown, projectId: string): DecodeRe
   };
 }
 
+/**
+ * WD-27: the value of a `ProjectWorkspaceRemoved` event. It is deliberately not
+ * the revision-1 `workspaceSnapshotFromValue`: only the next Workspace (revision
+ * >= 2) that already carries `removedAt` is legal. The shared exact-key check
+ * validates the optional settings without backfilling them.
+ */
+export function workspaceRemovedSnapshotFromValue(value: unknown, projectId: string): DecodeResult<WorkspaceSnapshot> {
+  if (!isRecord(value)) return invalid('ProjectWorkspaceRemoved value must be an object');
+  const problem = workspaceSnapshotValueProblem(value);
+  if (problem !== null) return invalid(`ProjectWorkspaceRemoved ${problem}`);
+  const ref = workspaceRefFromValue(value['ref']);
+  if (ref === null) return invalid('ProjectWorkspaceRemoved value has no valid WorkspaceRef');
+  if (ref.projectId !== projectId) return invalid('ProjectWorkspaceRemoved value belongs to another project');
+  const revision = value['revision'];
+  if (!isPos(revision) || revision < 2) {
+    return invalid('a removed Workspace snapshot revision must be at least 2');
+  }
+  const removedAt = value['removedAt'];
+  if (!nonEmpty(removedAt)) return invalid('a removed Workspace snapshot must carry a non-empty removedAt');
+  const decisionSettings = value['decisionSettings'];
+  const lineSettings = value['lineSettings'];
+  return {
+    status: 'decoded',
+    value: {
+      ref,
+      revision,
+      ...(decisionSettings === undefined
+        ? {}
+        : { decisionSettings: decisionSettings as NonNullable<WorkspaceSnapshot['decisionSettings']> }),
+      ...(lineSettings === undefined
+        ? {}
+        : { lineSettings: lineSettings as NonNullable<WorkspaceSnapshot['lineSettings']> }),
+      removedAt,
+    },
+  };
+}
+
 function policySnapshotFromValue(value: unknown, projectId: string): DecodeResult<CompletionPolicyRevisionSnapshot> {
   if (!isRecord(value)) return invalid('ProjectCompletionPolicyInstalled value must be an object');
   const ref = policyRefFromValue(value['ref']);
@@ -270,6 +313,7 @@ function activeSnapshotFromValue(value: unknown, projectId: string): DecodeResul
 
 type BootstrapEventEnvelope = {
   body: UnknownRecord;
+  payload: UnknownRecord;
   payloadValue: unknown;
 };
 
@@ -293,7 +337,7 @@ function eventEnvelope(event: EncodedDomainEvent, what: string): DecodeResult<Bo
   if (!isRecord(payload) || !Object.prototype.hasOwnProperty.call(payload, 'value')) {
     return invalid(`${what} payload must be an object with a value`);
   }
-  return { status: 'decoded', value: { body, payloadValue: payload['value'] } };
+  return { status: 'decoded', value: { body, payload, payloadValue: payload['value'] } };
 }
 
 function factOf<TValue>(event: EncodedDomainEvent, body: UnknownRecord, value: TValue): ProjectBootstrapEventFact<TValue> {
@@ -331,6 +375,27 @@ export function decodeProjectWorkspaceRegisteredEvent(
   const decoded = workspaceSnapshotFromValue(envelope.value.payloadValue, envelope.value.body['projectId'] as string);
   if (decoded.status !== 'decoded') return decoded;
   return { status: 'decoded', value: factOf(event, envelope.value.body, decoded.value) };
+}
+
+export function decodeProjectWorkspaceRemovedEvent(
+  event: EncodedDomainEvent,
+): DecodeResult<ProjectBootstrapEventFact<{ workspace: WorkspaceSnapshot; releasedClaims: number }>> {
+  if (event.eventType !== PROJECT_WORKSPACE_REMOVED_EVENT || event.schemaVersion !== PROJECT_BOOTSTRAP_EVENT_SCHEMA_VERSION) {
+    return invalid(`expected event type ${PROJECT_WORKSPACE_REMOVED_EVENT}@1`);
+  }
+  const envelope = eventEnvelope(event, 'ProjectWorkspaceRemoved event');
+  if (envelope.status !== 'decoded') return envelope;
+  const decoded = workspaceRemovedSnapshotFromValue(
+    envelope.value.payload['value'], envelope.value.body['projectId'] as string);
+  if (decoded.status !== 'decoded') return decoded;
+  const releasedClaims = envelope.value.payload['releasedClaims'];
+  if (!isNonNeg(releasedClaims)) {
+    return invalid('ProjectWorkspaceRemoved releasedClaims must be a non-negative integer');
+  }
+  return {
+    status: 'decoded',
+    value: factOf(event, envelope.value.body, { workspace: decoded.value, releasedClaims }),
+  };
 }
 
 export function decodeProjectCompletionPolicyInstalledEvent(
@@ -371,6 +436,9 @@ export function encodeProjectRegisteredEvent(event: ProjectRegisteredEventV1): E
 export function encodeProjectWorkspaceRegisteredEvent(event: ProjectWorkspaceRegisteredEventV1): EncodedDomainEvent {
   return encodeEventEnvelope(event);
 }
+export function encodeProjectWorkspaceRemovedEvent(event: ProjectWorkspaceRemovedEventV1): EncodedDomainEvent {
+  return encodeEventEnvelope(event);
+}
 export function encodeProjectCompletionPolicyInstalledEvent(
   event: ProjectCompletionPolicyInstalledEventV1,
 ): EncodedDomainEvent {
@@ -406,6 +474,11 @@ const PROJECT_BOOTSTRAP_EVENT_SCHEMAS: readonly EncodedEventSchema[] = [
     validate: (event) => decodeAsEncodedEvent(event, decodeProjectWorkspaceRegisteredEvent),
   },
   {
+    eventType: PROJECT_WORKSPACE_REMOVED_EVENT,
+    schemaVersion: PROJECT_BOOTSTRAP_EVENT_SCHEMA_VERSION,
+    validate: (event) => decodeAsEncodedEvent(event, decodeProjectWorkspaceRemovedEvent),
+  },
+  {
     eventType: PROJECT_COMPLETION_POLICY_INSTALLED_EVENT,
     schemaVersion: PROJECT_BOOTSTRAP_EVENT_SCHEMA_VERSION,
     validate: (event) => decodeAsEncodedEvent(event, decodeProjectCompletionPolicyInstalledEvent),
@@ -420,7 +493,7 @@ const PROJECT_BOOTSTRAP_EVENT_SCHEMAS: readonly EncodedEventSchema[] = [
 /**
  * Records reuse `GOAL_RECORD_SCHEMAS` (Project/Workspace) and
  * `PLAN_GOVERNANCE_RECORD_SCHEMAS` (policy revision / active pointer): only the
- * four operation events are registered here.
+ * operation events are registered here.
  */
 export const PROJECT_BOOTSTRAP_RECORD_SCHEMAS: RecordBackendSchemas = {
   records: [],

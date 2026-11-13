@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest';
 import { planningOutputReserveTokens } from '../../src/contracts/runtime-budget.js';
 import type { QueryJobAnswerSnapshot } from '../../src/contracts/query-job.js';
 import {
-  systemRoundRequestId, type SystemRoundV1,
+  systemRoundOfText, systemRoundRequestId, type SystemRoundV1,
 } from '../../src/contracts/plan-round.js';
 import { systemRoundMessageRef } from '../helpers/system-round-ref.js';
 import type { CollaborationSnapshot } from '../../src/app/collaboration-driver.js';
@@ -234,5 +234,13 @@ describe('A-05: the plan round through the adviser Host line', () => {
     }
     }
   }, 120_000);
+
+  // ⑨: the `crr:` head keeps a requestId that itself contains colons; the task is
+  // the first segment and the revision and the digest are the last two.
+  it('reads back a crr: requestId that contains colons', () => {
+    const head = systemRoundOfText('crr:t:c2-tool:abc:1:d');
+    if (head?.kind !== 'command_rerun') throw new Error('A-05: the crr: header did not parse');
+    expect(head.requestId).toBe('c2-tool:abc');
+  });
 });
 

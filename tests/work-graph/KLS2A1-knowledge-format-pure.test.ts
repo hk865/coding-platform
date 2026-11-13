@@ -226,8 +226,9 @@ describe('P5 the architecture read-back gates', () => {
     ['③ two module files with one id', [[pathOf('a'), fileA], [pathOf('b'), fileB], [pathOf('c'), fileA]],
       ['a'.repeat(32), 'c'.repeat(32)]],
     ['④ one file declares contains and another does not', [[pathOf('a'), fileA], [pathOf('b'), fileBWithoutContains]], []],
+    // KC-3 (ruling Q3): the reason is `knowledgeProblemsOf`'s first row, the cycle row (“依赖成环”), not the validator's.
     ['⑤ a dependency cycle a→b→a', [[pathOf('a'), fileA], [pathOf('b'), { ...fileB, dependsOn: [{ to: 'a', reason: 'r' }] }]],
-      ['cycle']],
+      ['成环']],
   ] as [string, [string, unknown][], string[]][])('%s is invalid', (_label, modules, mentions) => {
     const result = read(modules);
     expect(result.status).toBe('invalid');

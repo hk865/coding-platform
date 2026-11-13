@@ -98,6 +98,11 @@ export const TEMPLATE_SLOTS: Readonly<Record<string, TemplateSlotTableV1>> = {
     'unknown-call-advice-input': {
         record: { required: true },
     },
+    // 121-110: the rerun round's guide carries the request and the record that blocked its command.
+    'command-rerun-advice-input': {
+        request: { required: true },
+        review: { required: true },
+    },
     'initial-planning-answer': {},
     'continuation-brief': {
         marker: { required: true },
@@ -172,6 +177,7 @@ export const TEMPLATE_SLOTS: Readonly<Record<string, TemplateSlotTableV1>> = {
         pendingCount: { required: true },
         updateDueCount: { required: true },
         brokenCount: { required: true },
+        moduleRemovedCount: { required: true },
         anchors: { required: false },
     },
     // The stale-files reminder is fixed text with no slots.

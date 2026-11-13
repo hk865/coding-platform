@@ -50,6 +50,7 @@ import type { ExplorationFollowUpActionV1 } from '../state/exploration-followup.
 import { roleLineOperationRef } from '../state/role-line-operation.js';
 import { effectiveRegions, type RegionClaimV1 } from '../state/role-scope.js';
 import { catalogPinOf, readCurrentCatalogWindow } from '../architecture/catalog-service.js';
+import type { KnowledgeReadBaseV1 } from '../../../contracts/knowledge.js';
 import {
   decodeArchitectureProposalBatchRecord, decodeArchitectureProposalRecord,
 } from '../architecture/proposal-record-codecs.js';
@@ -342,7 +343,7 @@ async function savedBatchesHandled(records: Pick<GoalRecordTransactionPort, 'rea
 export async function submitExploration(deps: ColdStartServiceDeps, at: RoleExplorationAtV1,
   round: { queryJobId: string; runId: string; question: string; segment: RoleExplorationSegmentV1;
     line: SessionRef; card: SessionCard; messageRef: SessionMessageRef; region?: ModuleRef | null;
-    workspaceId?: string }):
+    workspaceId?: string; base?: KnowledgeReadBaseV1 }):
   Promise<ReadResult<ColdStartExplorationQueryRefV1>> {
   const projectId = at.input.projectId;
   // A follow-up round runs in the source round's workspace (M6), which may differ from the operation's own.
@@ -371,7 +372,8 @@ export async function submitExploration(deps: ColdStartServiceDeps, at: RoleExpl
   const intent: QueryJobIntentV1 = { schemaVersion: 1, intentId: round.queryJobId, projectId, workspaceId,
     goalId: null, question: round.question, focusTaskRefs: [], budget: { ...profile.budget },
     multiTurn: { maxRounds: 1 }, correlationId: at.op.ref.operationId,
-    execution: roleExplorationExecution({ roleBinding: profile.roleBinding, runtimeBudget: profile.runtimeBudget }) };
+    execution: roleExplorationExecution({ roleBinding: profile.roleBinding, runtimeBudget: profile.runtimeBudget,
+      ...(round.base === undefined ? {} : { base: round.base }) }) };
   // A null-Goal Query carries no Goal pin: Project, Workspace and the new pair only.
   const submitted = await deps.queries.submitQueryJob(scopedCtx, {
     input: { queryJobId: round.queryJobId, runId: round.runId, intent },
@@ -392,7 +394,7 @@ export async function submitExploration(deps: ColdStartServiceDeps, at: RoleExpl
  *  project-scoped. */
 export async function openExploration(deps: ColdStartServiceDeps, at: RoleExplorationAtV1,
   input: { line: SessionRef; segment: RoleExplorationSegmentV1; region: ModuleRef | null; key: string;
-    question?: string; ids?: { queryJobId: string; runId: string }; workspaceId?: string }):
+    question?: string; ids?: { queryJobId: string; runId: string }; workspaceId?: string; base?: KnowledgeReadBaseV1 }):
   Promise<ReadResult<ColdStartExplorationQueryRefV1>> {
   const card = await deps.sessions.readSession(at.ctx, input.line, 'project');
   if (card.status !== 'ready') return card;
@@ -406,7 +408,8 @@ export async function openExploration(deps: ColdStartServiceDeps, at: RoleExplor
   return submitExploration(deps, at, { queryJobId: input.ids?.queryJobId ?? `cold-start-query:${base}`,
     runId: input.ids?.runId ?? `cold-start-run:${base}`, question, segment: input.segment, line: input.line,
     card: card.value, messageRef: sent.value.ref, region: input.region,
-    ...(input.workspaceId === undefined ? {} : { workspaceId: input.workspaceId }) });
+    ...(input.workspaceId === undefined ? {} : { workspaceId: input.workspaceId }),
+    ...(input.base === undefined ? {} : { base: input.base }) });
 }
 
 /** Rulings 4, 5: the group's last round. `not_entered` (a restart before entry, the handoff fence) did nothing and
@@ -485,7 +488,9 @@ export async function endingOf(deps: ColdStartServiceDeps, at: RoleExplorationAt
     const reopened = await submitExploration(deps, at, { queryJobId: ids.queryJobId,
       runId: ids.runId, question, segment: entry.segment,
       line: entry.sessionRef, card: card.value, messageRef: entry.messageRef,
-      region: entry.region ?? null, ...(runRef.workspaceId === at.input.workspaceId ? {} : { workspaceId: runRef.workspaceId }) });
+      region: entry.region ?? null, ...(runRef.workspaceId === at.input.workspaceId ? {} : { workspaceId: runRef.workspaceId }),
+      // KC-3: a reopened repair round reads the base its first round read.
+      ...(job.intent.execution.base === undefined ? {} : { base: job.intent.execution.base }) });
     if (reopened.status !== 'ready') return reopened;
     return { status: 'ready', value: { kind: 'reopen', entry: reopened.value } };
   }

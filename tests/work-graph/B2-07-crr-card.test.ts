@@ -1,8 +1,9 @@
 /**
  * B2-07 / L19a: the `command_rerun_request` card through the REAL request
  * owner, review record and card source. The card appears at the highest
- * autonomy (the source never consults it), carries exactly the three fixed
- * options in order, is answerable only by the human, shows the Kernel's FULL
+ * autonomy (the card source never filters by autonomy; the CRR owner routes),
+ * carries exactly the three fixed options in order, is answered by the person
+ * in a world with no adviser (121-110), shows the Kernel's FULL
  * blocked command and the request's stored `match` plus this alias's declared
  * forms — never a re-expansion.
  */
@@ -41,7 +42,7 @@ describe('B2-07: the command_rerun_request card', () => {
     const world = await openK3ReviewCardWorld(kind, { realKernelCommandFacts: true });
     worlds.push(world);
     // The Goal's autonomy is already the highest the fixture seeds; the request
-    // card source does not read it at all (asserted by the produced card).
+    // card source never filters by it (asserted by the produced card).
     expect(world.fixture.goals.B.autonomy).toBeDefined();
     const record = await blockedRecord(world, 'k3-20-a', 'b2-07',
       [{ callId: 'k3-07-call-1', command: CRR_COMMAND }]);

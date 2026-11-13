@@ -8,6 +8,8 @@ import { defineShape, f, type ShapeRule } from './data-format.js';
 export const KNOWLEDGE_DIRECTORY = '.workbench';
 /** A line's architecture index file, relative to its folder. */
 export const ARCHITECTURE_FILE_PATH = `${KNOWLEDGE_DIRECTORY}/architecture.json`;
+/** A line's module files' directory, relative to its folder. */
+export const MODULES_DIRECTORY = `${KNOWLEDGE_DIRECTORY}/modules`;
 
 /** A root-relative path that is the knowledge directory or inside it. */
 export function withinKnowledgeDirectory(path: string): boolean {
@@ -57,12 +59,16 @@ export type ProposalBatchFileV1 = {
   workspaceId: string;
   /** Null for a new module file: its name is chosen at approval (ruling 4-9, §9-5). */
   path: string | null;
-  /** The project view; null for `architecture.json`. */
+  /** The project view; null for `architecture.json` and for a module file whose bytes name no module (KC-3 deletes it). */
   moduleId: string | null;
   action: 'create' | 'modify' | 'delete';
   /** The file's writer now; null for a `create`. */
   source: KnowledgeFileSourceV1 | null;
+  /** KC-3: approving now would write back a file the platform did not write (the batch's base is the record). */
+  willRevert: boolean;
 };
+/** KC-3: which architecture a read uses. `recorded` is the catalog the records last adopted, never the files. */
+export type KnowledgeReadBaseV1 = 'current' | 'recorded';
 
 /** What started one reconciliation of a line's knowledge files with the index. */
 export type ReconcileTrigger = 'run_end' | 'before_adopt' | 'idle' | 'startup' | 'after_commit' | 'recovery' | 'joined';

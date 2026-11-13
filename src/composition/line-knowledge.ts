@@ -16,7 +16,9 @@ import { dirname, join } from 'node:path';
 import { rejected } from '../contracts/core/rejections.js';
 import { messageOf } from '../contracts/error-message.js';
 import { sha256Hex } from '../contracts/fingerprint.js';
-import { ARCHITECTURE_FILE_PATH, KNOWLEDGE_DIRECTORY, type KnowledgePinModuleV1 } from '../contracts/knowledge.js';
+import {
+  ARCHITECTURE_FILE_PATH, KNOWLEDGE_DIRECTORY, MODULES_DIRECTORY, type KnowledgePinModuleV1,
+} from '../contracts/knowledge.js';
 import type { GoalRecordTransactionPort, StoreResult } from '../core/record-store/ports.js';
 import type { WorkspaceHostBindings } from '../core/workspace/access.js';
 import { readContinuationBaselineBlob } from '../core/workspace/continuation-diff-reads.js';
@@ -43,7 +45,6 @@ export type KnowledgeWorkspaceSource = {
 };
 export type LineKnowledgeDeps = { records: Pick<GoalRecordTransactionPort, 'readMany'> };
 
-const MODULES_DIRECTORY = `${KNOWLEDGE_DIRECTORY}/modules`;
 const NOTES_DIRECTORY = `${KNOWLEDGE_DIRECTORY}/notes`;
 const LOCAL_DIRECTORY = `${KNOWLEDGE_DIRECTORY}/local`;
 
@@ -237,26 +238,38 @@ export async function openLineKnowledge(projectId: string, line: LineRef, scope:
   }
 
   async function writeModule(input: Parameters<LineKnowledge['writeModule']>[0],
-    baseline: Parameters<LineKnowledge['writeModule']>[1]): Promise<StoreResult<KnowledgeFileChange[]>> {
+    baseline: Parameters<LineKnowledge['writeModule']>[1], replace = false): Promise<StoreResult<KnowledgeFileChange[]>> {
     const index = await bytesAt(ARCHITECTURE_FILE_PATH);
     if (index.status !== 'ready') return index;
     const files = architectureFilesOf(input, baseline, scope, index.value);
     if (files.status !== 'decoded') return rejected('invalid', files.reason);
     const existing = await moduleFiles();
     if (existing.status !== 'ready') return existing;
-    // An existing id keeps its file name; a bad file or two files of one id is not guessed around.
+    // An existing id keeps its file name; a bad file or two files of one id is not guessed around. KC-3 (121-106 ②③,
+    // user 问 3 甲 “整张写回”): a repair batch's write (`replace`) keeps the first file of an id (path order), gives a bad
+    // file's name to a module that has no file (its bytes never name one; names carry nothing) and deletes the rest.
     const byId = new Map<string, { path: string; bytes: Uint8Array }>();
+    const bad: { path: string; bytes: Uint8Array }[] = [];
+    const extra: { path: string; bytes: Uint8Array }[] = [];
     for (const file of existing.value) {
       const read = moduleFileIdOf(file.path, file.bytes);
-      if (read.status !== 'decoded') return unavailable(read.reason);
+      if (read.status !== 'decoded') {
+        if (!replace) return unavailable(read.reason);
+        bad.push(file);
+        continue;
+      }
       const id = read.value;
       const other = byId.get(id);
-      if (other !== undefined) return unavailable(`two module files carry the id ${id}: ${other.path}, ${file.path}`);
+      if (other !== undefined) {
+        if (!replace) return unavailable(`two module files carry the id ${id}: ${other.path}, ${file.path}`);
+        extra.push(file);
+        continue;
+      }
       byId.set(id, file);
     }
     const changes: KnowledgeFileChange[] = [];
     for (const module of files.value.modules) {
-      const old = byId.get(module.moduleId);
+      const old = byId.get(module.moduleId) ?? bad.shift();
       byId.delete(module.moduleId);
       if (old !== undefined && sameBytes(old.bytes, module.bytes)) continue;
       changes.push({ path: old?.path ?? `${MODULES_DIRECTORY}/${randomBytes(16).toString('hex')}.json`,
@@ -265,7 +278,7 @@ export async function openLineKnowledge(projectId: string, line: LineRef, scope:
     if (index.value === null || !sameBytes(index.value, files.value.architecture)) {
       changes.push({ path: ARCHITECTURE_FILE_PATH, before: index.value, after: files.value.architecture });
     }
-    for (const gone of byId.values()) changes.push({ path: gone.path, before: gone.bytes, after: null });
+    for (const gone of [...byId.values(), ...extra, ...bad]) changes.push({ path: gone.path, before: gone.bytes, after: null });
     return ready(changes);
   }
 

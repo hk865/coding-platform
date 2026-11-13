@@ -62,6 +62,7 @@ import type {
   ProjectRegistrationPort,
 } from '../core/work-graph/configuration/project-bootstrap-contracts.js';
 import type { GoalTaskPort } from '../core/work-graph/model/task-contracts.js';
+import type { TaskNodeCommitPort } from '../core/work-graph/model/task-node-commit-contracts.js';
 import type { PlanProposalRef, PlanTaskPort } from '../core/work-graph/model/plan-contracts.js';
 import type {
   DecisionMessagePort,
@@ -244,6 +245,8 @@ export type CoreRouteSuffix =
   | 'queries/start'
   | 'queries/observe'
   | 'queries/cancel'
+  // Node-level review (121-45): the person's commit or acknowledgement of one reviewed node.
+  | 'nodes/commit'
   | 'queries/answer'
   | 'materials/open'
   | 'workflow/goal-input'
@@ -901,6 +904,12 @@ export type QueriesCancelResponse = RouteResponse<NonNullable<RuntimeExecutionPo
  *  the production graph (the same type-only assembly the other route families use). */
 export type QueriesCancelCoreRouteDto = {
   'queries/cancel': { body: QueriesCancelBody; response: QueriesCancelResponse };
+};
+export type NodesCommitBody = GraphWriteBody<TaskNodeCommitPort['commitNode']>;
+export type NodesCommitResponse = RouteResponse<TaskNodeCommitPort['commitNode']>;
+/** The `nodes/commit` body/response pair; `CORE_ROUTE_SPECS`'s annotation names it, so both aliases are reached. */
+export type NodesCoreRouteDto = {
+  'nodes/commit': { body: NodesCommitBody; response: NodesCommitResponse };
 };
 export type QueriesAnswerBody = PlainBody<QueryJobPort['readQueryAnswer']>;
 export type QueriesAnswerResponse = RouteResponse<QueryJobPort['readQueryAnswer']>;

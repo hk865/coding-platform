@@ -16,11 +16,15 @@
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { WorkspaceScope } from '../../../contracts/core/identity.js';
 import { rejected } from '../../../contracts/core/rejections.js';
-import type { ReadResult } from '../../../contracts/core/results.js';
+import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
-import { queryJobRefFor } from '../../../contracts/query-job.js';
+import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { interventionPlanningQueryRefs, queryJobRefFor } from '../../../contracts/query-job.js';
 import { systemRoundContext, systemRoundOfText } from '../../../contracts/plan-round.js';
 import { interventionGoalRefOf, type SessionMailboxPort, type SessionMessage } from '../model/communication-contracts.js';
+import {
+  NO_ACCEPTED_ANSWER, reviewQueryEnded, type ReviewQueryReads, type ReviewSessionDuty,
+} from '../model/evidence-contracts.js';
 import type { PlanProposal, PlanTaskPort } from '../model/plan-contracts.js';
 import type { QueryJobPort } from '../queries/contracts.js';
 import { handoffContextOf } from '../sessions/session-handoff-service.js';
@@ -61,6 +65,61 @@ export async function sentSystemRoundRef(messages: Pick<SessionMailboxPort, 'rea
   const read = messages.readHostSendMessageRef;
   if (read === undefined) return rejected('unsupported', 'the Host sent-message read is not wired');
   return read(systemRoundContext(scope, signal), { requestId, scope });
+}
+
+/**
+ * An adviser round's accepted answer, read one way for every adviser round owner (K3 layering, 121-110): the system
+ * message of `requestId` (`sentSystemRoundRef` in the sender's `scope`), its intervention-planning Query, the Session
+ * that answered and the answer `parse` reads. A Query not created or not ended is `incomplete` (the caller waits); an
+ * ended Query without an answer that parses is `invalid` `NO_ACCEPTED_ANSWER`. Safety and the product rule (009,
+ * 121-110): the answer is only what the round's submit tool wrote in `shape`, and only an adviser answers. The owner
+ * keeps its own subject, revision and state checks.
+ */
+export async function readAdviserRoundAnswer<T extends { status: 'parsed' }>(deps: {
+  queries?: ReviewQueryReads; sessionDuty?: ReviewSessionDuty; messages?: Pick<SessionMailboxPort, 'readHostSendMessageRef'>;
+}, ctx: CoreCallContext, input: { scope: WorkspaceScope; goalId: string; requestId: string;
+  shape: 'unknown_call_advice' | 'command_rerun_advice'; parse: (text: string) => T | CoreRejection },
+): Promise<{ ok: true; value: T } | { ok: false; rejection: CoreRejection }> {
+  const adviserReadRefusal = (rejection: CoreRejection) => ({ ok: false as const, rejection });
+  if (deps.queries === undefined || deps.sessionDuty === undefined || deps.messages === undefined) {
+    return adviserReadRefusal(rejected('unavailable', 'the adviser Query, duty and sent-message reads are not wired'));
+  }
+  const notCreated = rejected('incomplete', 'the adviser Query has not been created; the round waits');
+  const sent = await sentSystemRoundRef(deps.messages, input.scope, input.requestId, ctx.signal);
+  if (sent.status === 'not_found') return adviserReadRefusal(notCreated);
+  if (sent.status !== 'ready') {
+    return adviserReadRefusal(sent.status === 'rejected' ? sent : rejected('unavailable', 'the adviser round message is not readable'));
+  }
+  const read = await deps.queries.readQueryJob(ctx,
+    interventionPlanningQueryRefs(sent.value, input.scope.workspaceId).queryJobRef);
+  if (read.status === 'not_found') return adviserReadRefusal(notCreated);
+  if (read.status !== 'ready') {
+    return adviserReadRefusal(read.status === 'rejected' ? read : rejected('incomplete', 'the adviser Query is not readable yet'));
+  }
+  const job = read.value.job.job;
+  if (!reviewQueryEnded(job)) return adviserReadRefusal(rejected('incomplete', 'the adviser Query has not ended; the round waits'));
+  const execution = job.intent.execution;
+  if (execution.kind !== 'intervention_planning' || execution.answerShape !== input.shape || job.goalId !== input.goalId
+    || canonicalJson(execution.sourceMessageRef as unknown as JsonValue) !== canonicalJson(sent.value as unknown as JsonValue)) {
+    return adviserReadRefusal(rejected('invalid', `the adviser Query was not asked by this round's message in the ${input.shape} shape`));
+  }
+  const answerRef = job.answerRefs.at(-1);
+  if (answerRef === undefined) return adviserReadRefusal(rejected('invalid', NO_ACCEPTED_ANSWER));
+  const sessionRef = read.value.run.run.executionState?.sessionRef;
+  if (sessionRef === undefined) return adviserReadRefusal(rejected('unavailable', 'the answered adviser Query names no entering Session'));
+  const session = await deps.sessionDuty.readSession(ctx, sessionRef, 'project');
+  if (session.status !== 'ready') return adviserReadRefusal(rejected('unavailable', 'the adviser Session could not be read'));
+  const duty = await deps.sessionDuty.dutyOfRole(ctx, session.value.record.role);
+  if (duty.status !== 'ready' || duty.value === 'unknown') {
+    return adviserReadRefusal(rejected('unavailable', 'the adviser Session duty could not be read'));
+  }
+  if (duty.value !== 'adviser') return adviserReadRefusal(rejected('forbidden', `the Session that answered has duty ${duty.value}, not adviser`));
+  const stored = await deps.queries.readQueryAnswer(ctx, answerRef);
+  if (stored.status !== 'ready') {
+    return adviserReadRefusal(stored.status === 'rejected' ? stored : rejected('unavailable', 'the adviser answer is not readable'));
+  }
+  const parsed = input.parse(stored.value.answer.answer);
+  return parsed.status === 'parsed' ? { ok: true, value: parsed } : adviserReadRefusal(rejected('invalid', NO_ACCEPTED_ANSWER));
 }
 
 /**

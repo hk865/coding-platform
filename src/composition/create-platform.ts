@@ -108,7 +108,9 @@ import {
   SESSION_MESSAGE_MAX_TEXT_BYTES, SESSION_MESSAGE_RECORD_SCHEMAS,
 } from '../core/work-graph/sessions/message-record-codecs.js';
 import { createSourceAuthorityReader } from '../core/work-graph/source-authority-reader.js';
-import { createWorkflow } from '../business/workflow/workflow.js';
+import { createWorkflow, responsibleAdviserInputOf } from '../business/workflow/workflow.js';
+import type { CommandReviewDeps } from '../business/workflow/command-review.js';
+import type { NoteAnchorV1 } from '../contracts/note.js';
 import { servingBinding, servedRoleIds } from '../business/workflow/role-bindings.js';
 import {
   createCommandRerunRequestApplicationAdapter, createMemberCreationApplicationAdapter,
@@ -169,7 +171,7 @@ import type { EvidencePort } from '../core/work-graph/model/evidence-contracts.j
 import { VerificationWorkspaceReader } from '../core/workspace/verification-workspace-reader.js';
 import { createRegisteredCheckRunner, type RegisteredCheckRunner } from '../core/agent-runtime/check-execution.js';
 import { createCommandSlots, PLATFORM_COMMAND_SLOTS, type CommandSlots } from '../core/agent-runtime/command-slots.js';
-import { createRunningCommands } from '../core/agent-runtime/running-commands.js';
+import { createRunningCommands, runningCommandKey } from '../core/agent-runtime/running-commands.js';
 import type { TrustedCheckConfiguration } from '../contracts/verification.js';
 import { createExecutionHistoryService } from '../core/work-graph/tasks/execution-history-service.js';
 import { EXECUTION_HISTORY_RECORD_SCHEMAS } from '../core/work-graph/persistence/execution-history-codecs.js';
@@ -248,6 +250,9 @@ import { createWorkspaceJoinService } from '../core/work-graph/sessions/workspac
 import {
   createExplorationControl, type ExplorationCancelPort, type ExplorationControlViewV1,
 } from '../core/work-graph/sessions/exploration-control.js';
+import { createWorkspaceRemoval } from '../core/work-graph/sessions/workspace-removal.js';
+import { createWorkspaceKnowledgeRemoval } from '../core/work-graph/knowledge/workspace-removal.js';
+import { catalogForWorkspace } from '../contracts/workspace-catalog.js';
 import {
   createExplorationFollowUpService, reproposeSourcesFromMembers, reproposeSourcesOf,
   type ExplorationFollowUpResultV1,
@@ -337,7 +342,13 @@ import { COMMAND_RERUN_REQUEST_RECORD_SCHEMAS } from '../core/work-graph/tasks/c
 import { createCommandRecognizer } from '../core/work-graph/tasks/command-recognition.js';
 import { readKernelCommandFacts } from '../core/agent-runtime/context-assembler.js';
 import { readTaskReviews } from '../core/work-graph/tasks/task-review-reader.js';
-import { captureWorkspaceChange, type WorkspaceChangeCaptureResult } from '../core/workspace/workspace-change-capture.js';
+import {
+  captureWorkspaceChange, commitNodePaths, findNodeCommit, hasNodePathChanges, readPathBlobs,
+  type WorkspaceChangeCaptureResult,
+} from '../core/workspace/workspace-change-capture.js';
+import { TASK_NODE_COMMIT_SCHEMAS } from '../core/work-graph/persistence/task-node-commit-codecs.js';
+import { createTaskNodeCommitService } from '../core/work-graph/tasks/task-node-commit-service.js';
+import type { TaskNodeCommitPort, TaskNodeCommitWorkspacePort } from '../core/work-graph/model/task-node-commit-contracts.js';
 import { readWorkspaceBaselineFromBundle } from '../core/workspace/workspace-baseline-artifact.js';
 import { WORKSPACE_DENIED_PREFIXES } from '../core/workspace/denied-prefixes.js';
 import { createToolCommitLookup } from './tool-commit-lookup.js';
@@ -364,7 +375,7 @@ import {
 import type { ModuleMaintainerPort } from '../core/work-graph/model/module-maintainer-contracts.js';
 import { createModuleMaintainer } from '../core/work-graph/sessions/module-maintainer-service.js';
 import type { VersionPin } from '../contracts/core/identity.js';
-import type { GoalRef } from '../contracts/ledger.js';
+import type { GoalRef, WorkspaceRef } from '../contracts/ledger.js';
 import type { PlanProposalRef } from '../core/work-graph/model/plan-contracts.js';
 import type { RoleConfigurationRef } from '../contracts/core/identity.js';
 import { isReviewRoundPurpose, reviewRoundAdmissionProblem } from '../contracts/review-admission.js';
@@ -637,6 +648,8 @@ export type TargetPlatformOptions = {
    * for the Query routes or a later Host.
    */
   requestWake?: (scope: WorkspaceScope, source: 'request_command') => void;
+  /** 121-112: the Host's memory of the scribe's "look again"; without a Host no review round is sent at all. */
+  commandReviewNext?: CommandReviewDeps['scheduleNext'];
   /**
    * C1: the Host's Query stage driver for the cold start's exploration rounds (bound after the platform is built)
    * and the lifecycle wake a settled round sends. Absent, the cold start's rounds wait where they are.
@@ -1143,7 +1156,8 @@ export function platformRecordSchemas() {
       ...MODULE_OVERLAP_GATE_SCHEMAS.records,
       ...REWORK_REQUEST_RECORD_SCHEMAS.records,
       ...INITIALIZATION_ADOPTION_SCHEMAS.records, ...HANDOFF_BRIEF_RECORD_SCHEMAS.records,
-      ...ROLE_LINE_RECORD_SCHEMAS.records, ...ROLE_LINE_ORCHESTRATION_SCHEMAS.records, ...KNOWLEDGE_RECORD_SCHEMAS.records],
+      ...ROLE_LINE_RECORD_SCHEMAS.records, ...ROLE_LINE_ORCHESTRATION_SCHEMAS.records, ...KNOWLEDGE_RECORD_SCHEMAS.records,
+      ...TASK_NODE_COMMIT_SCHEMAS.records],
     events: [...materialsSchema.events, ...PLAN_RECORD_SCHEMAS.events, ...PLAN_STATE_RECORD_SCHEMAS.events,
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events, ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events,
       ...ROLE_RECORD_SCHEMAS.events, ...OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.events, ...ARCHITECTURE_CATALOG_SCHEMAS.events,
@@ -1163,7 +1177,8 @@ export function platformRecordSchemas() {
       ...MODULE_OVERLAP_GATE_SCHEMAS.events,
       ...REWORK_REQUEST_RECORD_SCHEMAS.events,
       ...INITIALIZATION_ADOPTION_SCHEMAS.events, ...HANDOFF_BRIEF_RECORD_SCHEMAS.events,
-      ...ROLE_LINE_RECORD_SCHEMAS.events, ...ROLE_LINE_ORCHESTRATION_SCHEMAS.events, ...KNOWLEDGE_RECORD_SCHEMAS.events],
+      ...ROLE_LINE_RECORD_SCHEMAS.events, ...ROLE_LINE_ORCHESTRATION_SCHEMAS.events, ...KNOWLEDGE_RECORD_SCHEMAS.events,
+      ...TASK_NODE_COMMIT_SCHEMAS.events],
     lookups: [...materialsSchema.lookups ?? [], ...PLAN_RECORD_SCHEMAS.lookups ?? [], ...PLAN_STATE_RECORD_SCHEMAS.lookups ?? [],
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.lookups ?? [], ...SESSION_RECORD_SCHEMAS.lookups ?? [],
       ...SESSION_LIFECYCLE_RECORD_SCHEMAS.lookups ?? [], ...ROLE_RECORD_SCHEMAS.lookups ?? [],
@@ -1184,7 +1199,7 @@ export function platformRecordSchemas() {
       ...REWORK_REQUEST_RECORD_SCHEMAS.lookups ?? [],
       ...GOAL_COPY_RECORD_SCHEMAS.lookups ?? [], ...INITIALIZATION_ADOPTION_SCHEMAS.lookups ?? [],
       ...HANDOFF_BRIEF_RECORD_SCHEMAS.lookups ?? [], ...ROLE_LINE_RECORD_SCHEMAS.lookups ?? [], ...ROLE_LINE_ORCHESTRATION_SCHEMAS.lookups ?? [],
-      ...KNOWLEDGE_RECORD_SCHEMAS.lookups ?? []],
+      ...KNOWLEDGE_RECORD_SCHEMAS.lookups ?? [], ...TASK_NODE_COMMIT_SCHEMAS.lookups ?? []],
   };
 }
 
@@ -1438,6 +1453,25 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       readTaskClosure: async (_ctx, task) => readTaskClosure(backend.records,
         { aggregateType: 'Goal', projectId: task.projectId, goalId: task.goalId }, task.taskId),
       recognize: commandRecognizer,
+      // 121-110: the request's responsible adviser at creation, by the Workflow's `reviewAdviserOf` rule (the SAME
+      // L35 resolver and `responsibleAdviserInputOf`, the Task's module from the active plan; built below).
+      adviserOf: async (ctx, task) => {
+        const goalRef: GoalRef = { aggregateType: 'Goal', projectId: task.projectId, goalId: task.goalId };
+        const window = await readGoalPlanWindow(backend.records, goalRef);
+        if (window.status !== 'ready') return window;
+        const scope = window.plan?.tasks.find(candidate => candidate.taskId === task.taskId)?.scope ?? null;
+        const read = await responsibilityRecipient.resolveResponsibilityRecipient(ctx,
+          { projectId: task.projectId, ...responsibleAdviserInputOf(goalRef, scope) });
+        if (read.status !== 'ready') return read;
+        return { status: 'ready', value: read.value.kind === 'session' ? read.value.session : null };
+      },
+      // 121-110: the adviser round's answer through the SAME Query owner, Session duty read and Host send receipt the
+      // UnknownCallReview owner above reads (the closures resolve them at call time).
+      queries: { readQueryJob: (...args) => queryJobs.readQueryJob(...args),
+        readQueryAnswer: (...args) => queryJobs.readQueryAnswer(...args) },
+      sessionDuty: { readSession: (...args) => sessionDirectory.readSession(...args),
+        dutyOfRole: (ctx, role) => sessionDutyResolver(role, ctx) },
+      messages: { readHostSendMessageRef: (...args) => mailbox.readHostSendMessageRef!(...args) },
       now, eventId: randomUUID,
     });
     // O2: the retained-cap reclaim enters both admissions through this holder, filled once the role-line maintenance
@@ -2669,7 +2703,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
         // C3: the continuation brief's checkpoint uses the SAME workspace reader as the evidence owner.
         workspaceSource: continuationWorkspaceSource, pythonSyntax: (ctx, input) => changedPythonSyntaxProblems({ readWorkspaceFiles: workspace.readWorkspaceFiles, lookup: nativeSingleFile.lookup }, ctx, { ...input, maxBytes: DEFAULT_WORKSPACE_LIMITS.maxFileBytes }),
         // A.2 step 5.6: the in-process ends without a Kernel terminal (RUN-16, RUN-23).
-        runReconcile,
+        runReconcile, ...(hostInstance === undefined ? {} : { hostInstanceId: hostInstance.hostInstanceId }),
         // K slice M1/M3/L5: the dangling-Turn closure's health owner and this
         // Host instance's lease. The Runtime calls the same SES-13 owner as
         // start-up step 1, under the Host call identity, and never writes health itself.
@@ -2831,6 +2865,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     const projects: ProjectRegistrationPort = {
       createProject: (...args) => trackedCall(() => bootstrap.projects.createProject(...args), unavailable),
       registerWorkspace: (...args) => trackedCall(() => bootstrap.projects.registerWorkspace(...args), unavailable),
+      removeWorkspace: (...args) => trackedCall(() => bootstrap.projects.removeWorkspace(...args), unavailable),
       readWorkspaceRegistration: (...args) => trackedCall(() => bootstrap.projects.readWorkspaceRegistration(...args), unavailable),
       // MVP UI connection: the narrow Project-only read is assembled here so a
       // real composition never leaves it absent. The reader implementation is
@@ -2990,6 +3025,39 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       queryDecisionQueue: (...args) => trackedCall(() => rawDecisionReads.queryDecisionQueue(...args), unavailable),
       readDecisionCard: (...args) => trackedCall(() => rawDecisionReads.readDecisionCard(...args), unavailable),
       queryGoalConflicts: (...args) => trackedCall(() => rawDecisionReads.queryGoalConflicts(...args), unavailable),
+    };
+    // Node-level review (121-45): the node commit's git on the Goal workspace's Host root, the same `resolveRoot` the
+    // change capture uses. A root that cannot be resolved, or a git failure, is `unavailable` in its own words.
+    const nodeGitOn = async <T>(workspaceRef: WorkspaceRef, work: (root: string) => Promise<T>):
+      Promise<{ status: 'ready'; value: T } | CoreRejection> => {
+      try {
+        const resolved = await options.workspace.resolveRoot(workspaceRef);
+        if (resolved.status !== 'ready') {
+          return { status: 'rejected', code: 'unavailable', reason: `the workspace root could not be resolved: ${resolved.reason}` };
+        }
+        return { status: 'ready', value: await work(resolved.value.root) };
+      } catch (error) {
+        return { status: 'rejected', code: 'unavailable', reason: messageOf(error) };
+      }
+    };
+    const nodeCommitGit: TaskNodeCommitWorkspacePort = {
+      readTaskNodeBlobs: input => nodeGitOn(input.workspace, root => readPathBlobs(root, input.paths)),
+      hasTaskNodeChanges: input => nodeGitOn(input.workspace, root => hasNodePathChanges(root, input.paths)),
+      commitTaskNodeChanges: async input => {
+        const done = await nodeGitOn(input.workspace, root => commitNodePaths(root, input.paths, input.message, input.trailer));
+        if (done.status !== 'ready') return done;
+        return done.value.status === 'committed' ? { status: 'ready', value: { sha: done.value.commit } }
+          : { status: 'rejected', code: 'unavailable', reason: done.value.reason };
+      },
+      findTaskNodeCommit: input => nodeGitOn(input.workspace,
+        root => findNodeCommit(root, input.identity, input.fingerprint)),
+    };
+    const rawNodeCommits = createTaskNodeCommitService({ records: backend.records, executedFiles: goalExecutedFiles,
+      conflicts: rawDecisionReads, workspace: nodeCommitGit, now,
+      ...(operatorActor === undefined ? {} : { operatorActor }) });
+    const nodeCommits: TaskNodeCommitPort = {
+      readNodeRows: (...args) => trackedCall(() => rawNodeCommits.readNodeRows(...args), unavailable),
+      commitNode: (...args) => trackedCall(() => rawNodeCommits.commitNode(...args), unavailable),
     };
     const requestCandidatePort: RequestCandidatePort = {
       readRequestCandidate: (...args) => trackedCall(() => requestCandidates.readRequestCandidate(...args), unavailable),
@@ -3311,7 +3379,14 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     // Slice 4A P1/P6: the derived scribe-scope facts (open responsible module
     // links, the SAME duty resolver the Workflow gets, and the active catalog's
     // containment) and the L7 per-scope current count.
-    const scribeScope = createScribeScope({ records: backend.records, sessions: sessionDirectory,
+    // The scribe scope reads which lines are scribes and what they hold: project facts, the same for every caller.
+    // The Session directory serves only Host and Work Run principals, so the scribe's own review round (a
+    // `query_run` the note owner already admitted through `resolveNoteQueryRun`, 121-112) reads them through the
+    // platform's read context; every other caller keeps its own.
+    const scribeScope = createScribeScope({ records: backend.records,
+      sessions: { findSessions: (ctx, input) => sessionDirectory.findSessions(ctx.principal.kind === 'query_run'
+        ? { ...lifecycleReadContext({ projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' }), signal: ctx.signal }
+        : ctx, input) },
       architecture: catalog, duties: sessionDutyResolver, knowledge: knowledgeLines,
       mainWorkspaceOf: mainWorkspaceOf });
     // The second tier's reference analyzer and the one Python/C++ single-file
@@ -3468,7 +3543,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     noteMemoryMaterialPort = noteMemoryMaterial;
     contextExtensionsDeps.memoryMaterial = noteMemoryMaterial;
     const noteScribeTodos = createNoteScribeTodos({ records: backend.records,
-      userReasonFacts: noteWrite.userReasonFacts });
+      userReasonFacts: noteWrite.userReasonFacts, check: noteCheck });
     // Slice 4C L13/L14: fill the stable holder the Runtime already received. The
     // tools read these fields at Run start time, after this point.
     noteToolDeps.memory = noteReads;
@@ -3503,10 +3578,13 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       return { status: 'ready' as const, value: overlaid.value[0]! };
     };
     // b08/c24: the managing scope of one scribe todo. This public read owns its per-call cache, like
-    // `countCurrentNotes` (scribe-scope.ts:321–:322). An `updateDue` todo has no head (note-scribe-todos.ts:198–:201);
+    // `countCurrentNotes` (scribe-scope.ts:321–:322). An `updateDue` todo has no head (note-scribe-todos.ts:215–:217);
     // its goal/stage anchors are one goal's, and a stage anchor is that goal's class, so the goal anchor gives
-    // the same scope. `goalId!` holds: only a non-null goal group carries `updateDueTodos` (note-scribe-todos.ts:211).
-    const managingScopeOf = async (ctx: CoreCallContext, input: { todo: NoteScribeTodoV1; goalId: string | null }):
+    // the same scope. `goalId!` holds: only a non-null goal group carries `updateDueTodos` (note-scribe-todos.ts:225).
+    // 121-88: a module-removed item reuses this same scope rule through its `noteId` only, so the input takes
+    // that one field instead of a whole `NoteScribeTodoV1`.
+    const managingScopeOf = async (ctx: CoreCallContext,
+      input: { todo: Pick<NoteScribeTodoV1, 'noteId'>; goalId: string | null }):
       Promise<ReadResult<NoteScopeV1>> => {
       const call = newScribeScopeCall();
       if (input.todo.noteId === null) {
@@ -3589,6 +3667,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
         goalIdsForWorkspace: (ctx: CoreCallContext) => Promise<ReadResult<string[]>>;
         resolveScribeRecipient: (ctx: CoreCallContext, scope: NoteScopeV1) => Promise<ReadResult<SessionRef | null>>;
         managingScopeOf: typeof managingScopeOf;
+        managingScopeOfAnchors: (ctx: CoreCallContext, anchors: readonly NoteAnchorV1[]) =>
+          Promise<ReadResult<NoteScopeV1>>;
         brokenLinkScope(ctx: CoreCallContext,
           input: { noteId: string; version: number }): Promise<ReadResult<NoteScopeV1 | null>>;
       } = {
@@ -3610,6 +3690,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
         goalIdsForWorkspace,
         resolveScribeRecipient,
         managingScopeOf,
+        // 121-112: the managing scope of a long command's Goal (the Host's scribe review round).
+        managingScopeOfAnchors: (ctx, anchors) => scribeScope.managingScopeOfAnchors(ctx, anchors, newScribeScopeCall()),
         brokenLinkScope,
       };
     // Slice 1 (spec §3.3): the responsibility port's three public writes. Every
@@ -3707,12 +3789,12 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       sessionFacts, now,
     });
     roleLineMaintenance = maintenance;
-    const workflowDependencies: WorkflowDependencies & {
-      sessionHandoff?: HandoffWorkflowDependencies;
-    } = {
+    const workflowDependencies: Parameters<typeof createWorkflow>[0] = {
       tasks: rawGoals,
       // S1: the same per-request candidate head read and request-round order the Workflow entry uses.
       requestCandidates: requestCandidatePort, requests: { readRequest: (...args) => rawRequestFacts.readRequest(...args) },
+      // Node-level review (121-45): the `every_step` gate's read.
+      nodeCommits: rawNodeCommits,
       // L-02 §6.4.3: an automatic adoption registers its export at the commit itself,
       // before the later candidate read and reply association can fail.
       plans: options.wrapPlanChange === undefined ? planService
@@ -3760,6 +3842,14 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       // L33: the two Workflow triggers allocate through the one queue owner (a deferred read of the const above).
       goalAdviserQueue: { allocate: (ctx, input) => goalAdviserQueue.allocate(ctx, input) },
       recipients: lateRecipients,
+      // 121-112: the scribe review's two platform effects for the intervention close-out: the person's notice
+      // through the one project-notice writer, and the Host's "look again".
+      commandReview: {
+        notifyProject: (input) => notifyProject({ records: backend.records, now }, input),
+        scheduleNext: (subject, nextReviewInMs) => { options.commandReviewNext?.(subject, nextReviewInMs); },
+        isCommandRunning: commandKey => runningCommands.list()
+          .some(entry => runningCommandKey(entry.run, entry.callId) === commandKey),
+      },
       // The startup Workflow is only the seed: `registerWorkflowBinding` replaces
       // this dependency afterwards, and every reader above resolves it live.
       ...(options.workflow === undefined ? {} : { configuration: structuredClone(options.workflow) }),
@@ -4002,6 +4092,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       // Runtime publish; the Workflow reads the selected Run's record and
       // performs `settle_review` through it.
       unknownCallReviews,
+      // 121-110: the SAME CommandRerunRequest owner; the task gate runs a waiting request's adviser round through it.
+      commandRerunRequests,
       // The secretary lifecycle composite's injected owners. `createWorkflow` assembles the composite itself from
       // this bag (one child call between two advances); this root supplies only the owners, never a second composite.
       sessionHandoff: {
@@ -4751,6 +4843,44 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       records: backend.records, duty: sessionDutyResolver, catalog, allocation: roleLineAllocation });
     const projectNoticeWriter = (input: Parameters<typeof notifyProject>[1]): ReturnType<typeof notifyProject> =>
       trackedCall(() => notifyProject({ records: backend.records, now }, input), unavailable);
+    // 7D2 WD: the one withdraw/remove owner over this project's registration, reconcile candidates, region links,
+    // current catalog and knowledge lines. `platform.workspaces` publishes this same instance to the Host settings
+    // assembly; the knowledge seam is bound per call so the index is the project's one index (`indexOf`, :1257).
+    const workspaceRemoval = createWorkspaceRemoval({
+      records: backend.records,
+      now,
+      registration: { read: (ctx, scope) => projects.readWorkspaceRegistration(ctx, scope) },
+      targets: {
+        listGoals: (scope, signal) => reconcileCandidates.listGoals(scope, signal),
+        listRuns: (scope, status, signal) => reconcileCandidates.listRuns(scope, status, signal),
+      },
+      regionLines: {
+        readOpen: (ctx, projectId) =>
+          readOpenResponsibilityLines(backend.records, ctx, { projectId }, sessionDutyResolver),
+      },
+      knowledge: {
+        bind: (ctx, requestId, contribution) => createWorkspaceKnowledgeRemoval({
+          registration: {
+            remove: (innerCtx, request, fragment) => projects.removeWorkspace(innerCtx, request, fragment),
+          },
+          lines: knowledgeLines,
+          index: knowledgeLines.write.indexOf(ctx.projectId),
+        }).bind(ctx, requestId, contribution),
+      },
+      exploration: explorationControl,
+      notices: { notifyProject: projectNoticeWriter },
+      mainWorkspace: readMainWorkspace,
+      catalog: {
+        inGraph: async (ctx, projectId, workspaceId, main) => {
+          const window = await readCurrentCatalogWindow(backend.records, projectId,
+            { lines: knowledgeLines, caller: ctx });
+          if (window.status === 'not_found') return { status: 'ready', value: false };
+          if (window.status !== 'ready') return window;
+          return { status: 'ready',
+            value: catalogForWorkspace(window.catalog.catalog, workspaceId, main).modules.length > 0 };
+        },
+      },
+    });
     // PL §6.7.1: the ONE goal-loop reader factory, built from the owners above. The Host's restart
     // rebuild reads it; the plan routes (L) share the same instance. Internal like the other owner groups.
     const planReadersOwner = createPlanReaders({
@@ -4846,6 +4976,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     };
     const platform = {
       goals, plans, claims, executions, sessions, materials, messages, messageRelease, controls, evidence, checks, roles, architecture, projects, completionPolicies,
+      // 7D2 WD: the project's withdraw/remove owner; the Host settings assembly reads it by property.
+      workspaces: workspaceRemoval,
       messageExpiry: messageExpiryPort,
       messageForwarding, disconnect: { records: backend.records, sessions: sessionFacts },
       consumableSessions,
@@ -4864,6 +4996,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       // Slice 4A P2: the note write/read owner; 4C's routes bind to it. It stays
       // non-enumerable like the other internal owner groups.
       notes, knowledge,
+      // Node-level review (121-45): the review read and the person's commit; internal like the other owner groups.
+      nodeCommits,
       // The one repair activation owner the Host's triggers and the answer row
       // use. Internal and never drained through `trackedCall`; the Host reads it
       // by property.
@@ -5065,7 +5199,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       'bindings', 'initializationAdoption', 'confirmInstalledChecks', 'messageRelease', 'messageForwarding', 'disconnect', 'messageExpiry',
       'consumableSessions', 'readCandidateCard', 'roleLineOperations', 'roleLines', 'roleLineOperationsRead',
       'explorationControl', 'explorationFollowUp',
-      'goalAdviserQueue', 'runtimeInFlight', 'roleLineRead'] as const) {
+      'goalAdviserQueue', 'runtimeInFlight', 'roleLineRead', 'nodeCommits', 'workspaces'] as const) {
       Object.defineProperty(platform, key, { enumerable: false });
     }
     // The Goal list read is an internal owner like the decision ports.

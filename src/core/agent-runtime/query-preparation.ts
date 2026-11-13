@@ -22,7 +22,9 @@ import {
   interventionPlanningQueryRefs, isRequestRound, queryAnswerShapeOf, queryExecutionBindingOf,
   type QueryAnswerShapeV1, type QueryJobIntentV1,
 } from '../../contracts/query-job.js';
-import { planResumeOriginalQueryOfText, systemRoundOfText, unknownCallAdviceSubjectOfText } from '../../contracts/plan-round.js';
+import {
+  commandRerunAdviceSubjectOfText, planResumeOriginalQueryOfText, systemRoundOfText, unknownCallAdviceSubjectOfText,
+} from '../../contracts/plan-round.js';
 import { parseInitialPlanningResponseV2 } from '../../contracts/initial-planning-parse.js';
 import type { FrozenHandoffBriefV1 } from '../../contracts/handoff-brief.js';
 import type { RoleSpecResolutionV1 } from '../../contracts/role-spec-materials.js';
@@ -660,6 +662,25 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         const guideProblem = appendGuide('unknown-call-advice-input',
           { record: canonicalJson(reviewRead.value as unknown as JsonValue) });
         if (guideProblem !== null) return guideProblem;
+      } else if (shape === 'command_rerun_advice') {
+        // 121-110: the adviser reads the rerun request and the record that blocked its command (with the hosts the
+        // original Run reached), as they are now. A request that moved after the round was sent is still prepared,
+        // for the reason the unknown-call round above gives: the answer names the frozen revision and the owner
+        // answers `revision_conflict`.
+        const subject = commandRerunAdviceSubjectOfText(requestQuestion);
+        if (subject === null) return rejected('invalid', 'the rerun round names no request subject');
+        if (deps.commandRerunRequests === undefined || deps.unknownCallReviews === undefined) {
+          return rejected('unsupported', 'the rerun round requires the rerun request and unknown-call review reads');
+        }
+        const requestRead = await deps.commandRerunRequests.readRequest(owned, { ref: subject.requestRef });
+        if (requestRead.status !== 'ready') return requestRead;
+        const reviewRead = await deps.unknownCallReviews.readReview(owned, { ref: subject.reviewRef });
+        if (reviewRead.status !== 'ready') return reviewRead;
+        const guideProblem = appendGuide('command-rerun-advice-input', {
+          request: canonicalJson(requestRead.value as unknown as JsonValue),
+          review: canonicalJson(reviewRead.value as unknown as JsonValue),
+        });
+        if (guideProblem !== null) return guideProblem;
       } else if (!requestRound && execution.kind === 'initial_coordination') {
         const guideProblem = appendGuide('initial-planning-answer', {});
         if (guideProblem !== null) return guideProblem;
@@ -828,6 +849,8 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         permissions: projected.permissions,
         question,
         texts: tracked.texts, toolNames, history,
+        // KC-3: a knowledge_conflict repair round's context reads the base its round was opened with.
+        ...(execution.base === undefined ? {} : { base: execution.base }),
         ...(record5 === undefined ? {} : { record5 }),
         ...(secretaryFacts === null ? {} : { secretaryFacts }),
         ...(handoff === undefined ? {} : { handoff }),

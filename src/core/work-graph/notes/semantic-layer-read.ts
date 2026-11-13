@@ -118,7 +118,10 @@ async function readLinks(
   if (!candidates.ok) return { status: 'rejected', code: candidates.code, reason: candidates.reason };
   // [2B-16]: the scope's filed links with no record head merge in by noteId; only their anchors are checked.
   const merged = mergedById(candidates.value);
-  const hasMore = merged.length > input.limit;
+  // A project page filters out a scanned head whose index rows are gone; the unfiltered scan's last head is then
+  // the cursor, so the next page still reaches the links after it.
+  const scannedAfter = candidates.value.scannedAfter ?? null;
+  const hasMore = merged.length > input.limit || scannedAfter !== null;
   const filed = await pageFiles(deps, ctx, merged.slice(0, input.limit), LINK_KIND);
   if (!filed.ok) return { status: 'rejected', code: filed.code, reason: filed.reason };
   const page = filed.value;
@@ -137,9 +140,9 @@ async function readLinks(
   const anchorChecks = new Map(headless.map((entry, index) => [entry.note.noteId, checked.value.anchorsOnly[index]!]));
   const items = page.map(entry => isHeadEntry(entry) ? semanticLinkOf(entry, checks.get(entry.noteId)!, catalog)
     : headlessLinkOf(entry, anchorChecks.get(entry.note.noteId)!, catalog));
-  const next = hasMore
-    ? encodeMemoryCursor(ctx, 'semantic_links', request,
-      { after: merged[input.limit - 1]!.noteId, recordCursor: null })
+  const afterCursor = merged.length > input.limit ? merged[input.limit - 1]!.noteId : scannedAfter;
+  const next = hasMore && afterCursor !== null
+    ? encodeMemoryCursor(ctx, 'semantic_links', request, { after: afterCursor, recordCursor: null })
     : null;
   return { status: 'ready', value: { items, next, catalogRevision } };
 }
@@ -284,7 +287,7 @@ export function linkChecksOf(rows: readonly NoteCheckV1[]): SemanticLinkChecks {
 /** [2B-16]: a filed note with no record head, as the index lists it: its line; the page reads its file. */
 type HeadlessEntry = { line: LineKnowledge; noteId: string };
 /** The heads a scope reads and, beside them, its filed notes with no record head ([2B-16]). */
-type ScopeNotes = { heads: NoteHeadSnapshot[]; headless: HeadlessEntry[] };
+type ScopeNotes = { heads: NoteHeadSnapshot[]; headless: HeadlessEntry[]; scannedAfter?: string | null };
 type ScopeEntry = NoteHeadSnapshot | HeadlessEntry;
 /** A page entry with the file it shows. */
 type FiledEntry = NoteHeadSnapshot | HeadlessNote;
@@ -339,7 +342,12 @@ async function scopeHeads(deps: SemanticReadDeps, ctx: CoreCallContext, scope: S
     const heads = await projectHeads(deps, ctx, after, cap);
     if (!heads.ok) return heads;
     const edges = await edgeNotes(deps, ctx, 'link_from', null, after, boundOf(heads.value, cap), heads.value);
-    return edges.ok ? { ok: true, value: { heads: heads.value, headless: edges.value.headless } } : edges;
+    if (!edges.ok) return edges;
+    // WD-13: the index's `link_from` edge decides project membership; a head whose rows the removal cleared is not
+    // a candidate even though its record head is kept.
+    const scannedAfter = heads.value.length === cap ? heads.value[heads.value.length - 1]!.noteId : null;
+    return { ok: true, value: { heads: heads.value.filter(head => edges.value.listed.has(head.noteId)),
+      headless: edges.value.headless, scannedAfter } };
   }
   return keyNotes(deps, ctx, scope, catalog, after, cap, visibleOnly);
 }

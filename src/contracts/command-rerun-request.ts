@@ -3,6 +3,7 @@
  * the state machine is `core/work-graph/state/command-rerun-request.ts`.
  */
 import type { SessionMessageRef } from './core/session-message.js';
+import type { CommandRerunAdviceV1 } from './command-rerun-advice.js';
 import type { RunRef, TaskTriple } from './dispatch.js';
 import type { UnknownCallReviewRef } from './unknown-call-review.js';
 
@@ -14,7 +15,20 @@ export type CommandRerunRequestRef = {
   requestId: string;
 };
 
-export type CommandRerunRequestStateV1 = 'pending' | 'allowed' | 'used' | 'denied' | 'denied_final' | 'closed';
+/**
+ * `awaiting_advice` (121-110): the responsible adviser answers first; `pending` is the person's card. Every-step
+ * confirmation and the review record's second consecutive interruption go to the person at once.
+ */
+export type CommandRerunRequestStateV1 =
+  | 'awaiting_advice' | 'pending' | 'allowed' | 'used' | 'denied' | 'denied_final' | 'closed';
+
+/**
+ * 121-110: why a request that went to the adviser reached the person: no adviser line, the adviser round ended
+ * without an answer, the adviser escalated, or the Goal was switched to every-step confirmation before the answer
+ * was applied.
+ */
+export const COMMAND_RERUN_ESCALATION_CAUSES = ['no_adviser', 'adviser_failed', 'adviser_escalated', 'every_step'] as const;
+export type CommandRerunEscalationCauseV1 = typeof COMMAND_RERUN_ESCALATION_CAUSES[number];
 
 export type CommandRerunRequestV1 = {
   ref: CommandRerunRequestRef;
@@ -43,6 +57,14 @@ export type CommandRerunRequestV1 = {
   };
   reason: string /* 1..2000 code points */;
   state: CommandRerunRequestStateV1;
+  /**
+   * Written on entry into `awaiting_advice` (`answer: null`); `answer` keeps the adviser answer once applied. Absent
+   * on a request that went to the person at once. An `allowed`/`denied` request with an answer was decided by the
+   * adviser (its `answerMessageRef` stays null: there is no person's answer message).
+   */
+  advice?: { answer: CommandRerunAdviceV1 | null };
+  /** Written when a request that went to the adviser reaches the person; `suggestion` is the adviser's answer, if any. */
+  escalation?: { cause: CommandRerunEscalationCauseV1; suggestion: CommandRerunAdviceV1 | null };
   answerMessageRef: SessionMessageRef | null;
   allowedAt: string | null;
   usedAt: string | null;

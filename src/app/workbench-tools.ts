@@ -162,6 +162,9 @@ export type WorkbenchToolsHandle = {
   /** 121-106: the person's settings switch replaces one registered workspace's write prefixes and command
    *  authorization; the next save or command start reads them. A running command keeps running, readable and stoppable. */
   setAccess(scope: MaterialSourceScope, access: Pick<WorkbenchToolsWorkspace, 'writePrefixes' | 'allowCommands'>): void;
+  /** 7D2 WD: drop one workspace's tools configuration and stop its unfinished commands without awaiting their
+   *  drain (`close()` still owns the final one). Idempotent for a scope that is not registered. */
+  removeWorkspace(scope: MaterialSourceScope): void;
   /** Refuses new starts, aborts every owned handle and awaits its real drain. */
   close(): Promise<void>;
 };
@@ -329,6 +332,17 @@ export function createWorkbenchTools(options: WorkbenchToolsOptions): WorkbenchT
       ...(access.writePrefixes === undefined ? {} : { writePrefixes: access.writePrefixes }),
       ...(access.allowCommands === undefined ? {} : { allowCommands: access.allowCommands }),
     };
+  }
+  /** WD-18: a removed workspace leaves the tools table; its unfinished commands stop but their drain stays with
+   *  `close()`, and a second removal of the same scope does nothing. */
+  function removeWorkspaceTools(scope: MaterialSourceScope): void {
+    const key = scopeKey(scope);
+    if (!byScope.delete(key)) return;
+    for (const handle of handlesById.values()) {
+      if (scopeKey(handle.scope) !== key || handle.snapshot.state === 'settled') continue;
+      handle.snapshot = { ...handle.snapshot, state: 'stopping' };
+      handle.controller.abort();
+    }
   }
   let closed = false;
   let closePromise: Promise<void> | undefined;
@@ -612,6 +626,7 @@ export function createWorkbenchTools(options: WorkbenchToolsOptions): WorkbenchT
     tools,
     addWorkspace,
     setAccess,
+    removeWorkspace: removeWorkspaceTools,
     close(): Promise<void> {
       closePromise ??= (async () => {
         closed = true;

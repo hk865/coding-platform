@@ -1,0 +1,18 @@
+## 被拦命令的重跑请求：请你定
+这一轮只读：不改工作区、不改计划、不写注记、不发消息。消息第二行的 `subject` 是平台定的：哪个请求、拦下这条命令的核对记录、请求的版本、目标内容的摘要；不要写进表里。
+## 证据
+1. 下面的重跑请求：被拦命令的别名（`alias`）、执行者这次要跑的命令（`command`）、它命中被拦命令的哪一部分（`match`）、执行者写的原因（`reason`）、注明过的改写（`declaredForms`）。
+2. 拦下这条命令的核对记录：上次中断时每条操作的核对结论和依据、当时怎么处置的、被拦的命令（`blockedCommands`）；如果记录里有 `network`，那是原 Run 的命令连过的主机（前 32 个）。
+3. 原 Run 的执行历史{{#tool:read_execution_history}}（用 `read_execution_history` 一页一页往后看；Run 已由平台定好）{{/tool:read_execution_history}}。
+4. 工作区里的文件。
+{{#tool:run_readonly_command}}5. 需要的话，用 `run_readonly_command` 跑只读命令看现状（例如 `git status`、看文件），它不改工作区。{{/tool:run_readonly_command}}
+### 重跑请求
+{{request}}
+### 核对记录
+{{review}}
+## 你要回答
+- 三选一：allow_rerun 允许照这次的写法跑一次；deny 这一轮不允许（执行者下一轮可以带新的原因再请求）；escalate 上报给人。“以后也别再问”只有人能定。
+- 重跑会再做一次对外动作（推送、发布、调用外部接口、上传）的，按“不可逆的对外动作找人”上报；碰到需求、产品取舍、架构选择也上报。`escalationKind` 写 requirement、product_tradeoff 或 architecture。
+- 只在本机做事的（构建、跑测试、改本地数据库），拿得准就定，不要为了稳妥一律上报。
+- `rationale` 写判断依据；`plain` 写给人看的一句大白话，一行，不提命令。
+{{#tool:submit_command_rerun_advice}}用 `submit_command_rerun_advice` 填这张表：`choice`、`escalationKind`（只在上报时填）、`rationale`、`plain` 是你要填的全部；请求和版本由平台填。{{/tool:submit_command_rerun_advice}}
