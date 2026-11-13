@@ -553,6 +553,8 @@
 | 121-113 | 2026-11-13 | 第 9 片 G3、K3L-1、XWR-0 落地 `26564e06`（叠树全量 1,580 个文件 16,081 项、规模批 15/44 全过）；取消 Goal 时，取消前已采用的候选回“已采用”（PL-41，回复要说真话）；取舍 007–009 进索引。 | 一次性安排，已完成（PL-41 的裁定现行） | HANDOFF 121-113、取舍 [008](tradeoffs/008-unknown-call-adviser-layer-state.md)、[009](tradeoffs/009-unknown-call-adviser-round-channel.md) |
 | 121-114 | 2026-11-13 | 下一批开工裁定：SHT 拆成 SHT-1、SHT-2；新开 AGT-X（含问答轮读任务图）、QSTOP（问答轮命令能停）、XWR-ON；本机参谋只有问答轮，G6 前单开 ADVQ 让参谋在干预规划问答轮里建执行者；用户定参谋、书记随时主动发卡和请知悉进 MVP、排 G6 后（ADVMSG）；CTXFIT 改 PC 裁定第 7 步（最新一段工具交换截断不删除）；工作区自带凭据和 `web_fetch` 出网通道按用户“空壳都可以上传”接受、PRODUCT 照实写；XWR 不等 K3L-2；一波最多 6 个 DSH、`OOMPolicy=continue`。 | 现行，改 PC 裁定第 7 步、121-110（参谋做事轮工具本机走不到，由 ADVQ、ADVMSG 接） | HANDOFF 121-114 |
 | 121-115 | 2026-11-13 | 放开 agent 的第一批九个包落地 `f4e77385`（SHT-1、AGT+、SBX、NET-B、甲、NET-A、K3L-4、CTXFIT、SEC；叠树全量 1,591 个文件 16,224 项、规模批 15/44 全过）；取舍 010、011 进索引；KC-1 的两个条件是产品规则、留着（lead 收回删的裁定）。 | 一次性安排，已完成 | HANDOFF 121-115、取舍 [010](tradeoffs/010-command-network-proxy.md)、[011](tradeoffs/011-command-network-hosts.md) |
+| 121-116 | 2026-11-13 | 第二批 KC-1、XWR 主包落地 `7453f128`（叠树全量 1,595 个文件 16,251 项、规模批 15/44 全过；具名改坏 KC-1 35/42、XWR 19/24，缺口补格或写明走不到）。 | 一次性安排，已完成 | HANDOFF 121-116 |
+| 121-117 | 2026-11-13 | 第二波（K3L-2、SHT-2）、第三波（AGT-X、QSTOP、KC-2、XWR-ON、ADVQ、乙′、K3L-3）开工裁定。<br>• AGT-X 只放开不要回复的跨区发信。<br>• 新开难包 XMSG（发件方读者跨区；进 MVP，不挡 G6）。<br>• 书记问询挪进 ADVMSG。<br>• 乙′ 改 4-21：通知在提交后发。<br>• K3L-3 删 K3L-2 准备时的版本拒绝。<br>• 书记审查轮另开 SCRV，G6 前。 | 现行 | HANDOFF 121-117 |
 
 ## 表后
 
