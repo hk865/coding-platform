@@ -107,7 +107,7 @@ agent 候选由目标循环统一处理：先过机械诊断，再由独立审�
 
 秘书的正式回答按填表式回答。请求轮冻结 `submit_secretary_answer`；初始化轮冻结 `submit_initial_plan`、`submit_initial_questions`。工具按表单生成今天的 v1 秘书对象或 v2 信封，模型不写 JSON 正文。提交前查五层里的前三层：表单结构（Kernel 的 zod，参数不符合 schema 时逐条列出 `<路径>: <消息>`，码仍是 `invalid_arguments`）、回答自身按采用的规则、对着当前状态；所有问题一次列出，带小节和原因，模型改完在同一轮再调。提交后会变的事实由采用时照旧再查，判断不归表单。接受后这一轮在接受处结束，不再请求一次模型。模型只写文字、不调工具时按旧读法（`formalAnswerOf`，代码框权宜保留）；文字坏了照旧算这轮失败。普通 Query 和普通 Work 不变。
 
-秘书的请求轮能拿六个工具：四个邮箱工具（`send_session_message`、`ack_session_message`、`respond_session_message`、`withdraw_session_message`）、`create_member`，以及只读的 `read_requests`；其他 Query 仍然全部禁用这些工具。`read_requests` 读工作区任一目标或无目标的请求，最新在前，每页 20 条，每轮回答截到 2 KiB；它不返回卡和通知，也不挪“看到哪儿”。
+秘书的请求轮能拿四个工具：两个邮箱工具（`send_session_message`、`withdraw_session_message`；`ack`、`respond` 2026-11-13 起不再给，121-114 AGT+）、`create_member`，以及只读的 `read_requests`。参谋的干预规划轮（有 Goal、不是副本、不是结果未知的系统轮）也能用 `create_member` 给任务建执行者线（121-114 ADVQ）；其他 Query 仍然禁用这些工具。有 Goal 的 Query 都能用只读的 `query_task_graph`、`query_ready_tasks`（121-117 AGT-X）。`read_requests` 读工作区任一目标或无目标的请求，最新在前，每页 20 条，每轮回答截到 2 KiB；它不返回卡和通知，也不挪“看到哪儿”。
 
 已有授权覆盖的细化在审阅 `pass`、诊断无问题且自治级别允许后自动采用（PL-1 已落地）；缺治理或来源过期时说明具体对象并修复。实质改变目标、验收或越权必须由人决定；其他候选按候选循环转卡时，也展示相应差异和待决内容。用户确认绑定具体候选版本；过期确认不批准新版本。只有 Host 能采用计划：模型只能提议（`plans/propose`），采用只经 Host 的 `applyPlanChange`；`apply_future_plan` 和所有 agent 采用分支已删除。自动采用也走 Host 的同一入口，身份是平台自动化，不由模型或参谋代采用（PL-1 已落地）。模型来源不能伪装 Host 来源绕过采用。
 
