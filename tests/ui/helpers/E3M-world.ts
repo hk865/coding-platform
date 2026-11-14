@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { expect } from 'vitest';
 import type { SessionRef } from '../../../src/contracts/core/identity.js';
+import type { SubmittedControl } from '../../../src/contracts/control-intent.js';
 import type { RunRef } from '../../../src/contracts/dispatch.js';
 import type { QueryJobRef } from '../../../src/contracts/query-job.js';
 import { asRecord, asText } from '../../../src/ui/values.js';
@@ -10,7 +11,7 @@ import { submitControl } from '../../helpers/A2-restart-fixture.js';
 import { openS6ANoticesWorld, type S6ANoticesWorld } from '../../helpers/S6A-cards-fixture.js';
 import { S6A_SCOPE, type S6ARequestWorld } from '../../helpers/S6A-request-fixture.js';
 import { openS7C1World, type S7C1World } from '../../helpers/S7C-member-fixture.js';
-import { cleanupScenarios, openHostScenario, type HostScenario } from '../../scenarios/harness.js';
+import { cleanupScenarios, openHostScenario, type Driven, type HostScenario } from '../../scenarios/harness.js';
 import { NO_REDRIVE, editThenText, readCall, selectedRun } from '../../scenarios/support/common.js';
 import { bootPage, findClass, findElement, type BootedPage } from './boot-page.js';
 import type { FakeElement } from './dom.js';
@@ -94,7 +95,7 @@ export async function openMemberW3(): Promise<S6ANoticesWorld> {
 export type E3MHost = { h: HostScenario; line: SessionRef; run: RunRef };
 
 /** The seeded executor line of `ag2b-work`, read from `lines/list`. */
-async function workLineOf(h: HostScenario): Promise<SessionRef> {
+export async function workLineOf(h: HostScenario): Promise<SessionRef> {
   const list = asRecord(asRecord(await h.answer('lines/list', plain(AG2B_SCOPE, { workspace: AG2B_SCOPE })))['value']);
   const rows = Array.isArray(list['rows']) ? list['rows'] : [];
   const row = rows.map(asRecord).find((entry) => (Array.isArray(entry['responsibleNow']) ? entry['responsibleNow'] : [])
@@ -103,25 +104,78 @@ async function workLineOf(h: HostScenario): Promise<SessionRef> {
   return row['key'] as SessionRef;
 }
 
+type E3MW4Run = { h: HostScenario; line: SessionRef; run: RunRef; done: Promise<Driven>;
+  page?: { page: BootedPage; log: PageLog }; intent?: SubmittedControl['intent'] };
+
+/** W4's Host and first pause; `bootPage` opens Member while the pause/cancel is
+ * still queued (its `duringReply`), the one difference between W4 and P04-4/P05-3. */
+async function openW4Run(options: { kind?: 'pause' | 'cancel'; bootPage?: boolean } = {}): Promise<E3MW4Run> {
+  const boot = options.bootPage === true;
+  const flowId = boot ? 'e3m-queue' : 'e3m-w4';
+  let h: HostScenario | undefined;
+  let opened: { page: BootedPage; log: PageLog } | undefined;
+  let line: SessionRef | undefined;
+  let run: RunRef | undefined;
+  let intent: SubmittedControl['intent'] | undefined;
+  let signal: () => void = () => undefined;
+  const pageOpened = new Promise<void>((resolve) => { signal = resolve; });
+  const scenario = await openHostScenario({ automation: NO_REDRIVE, gitWorkspace: !boot, script: {
+    replies: boot ? [readCall(flowId)] : [readCall(flowId), ...editThenText(flowId)],
+    duringReply: async (index) => {
+      if (index !== 0 || h === undefined) return;
+      if (!boot) {
+        await submitControl(h.host, await selectedRun(h), 'pause', 'operator pause', 'e3m-w4-pause');
+        return;
+      }
+      run = await selectedRun(h);
+      line = await workLineOf(h);
+      const submitted = await submitControl(h.host, run, options.kind!, 'operator ' + options.kind, 'e3m-queue-' + options.kind);
+      intent = submitted.intent;
+      opened = await bootMemberOnHost(h, memberSearch('ag2b-goal', line));
+      signal();
+    } } });
+  h = scenario;
+  const done = scenario.advance(scenario.select(flowId, AG2B_WORK_TASK_ID));
+  if (!boot) {
+    const first = await done;
+    if (first.state !== 'waiting') throw new Error(`E3M W4: the paused Run did not wait: ${first.state}`);
+    await mkdir(join(scenario.root, 'src'), { recursive: true });
+    await writeFile(join(scenario.root, 'src/e3m-change.ts'), 'export const e3mOne = 1;\nexport const e3mTwo = 2;\nexport const e3mThree = 3;\n');
+    return { h: scenario, line: await workLineOf(scenario), run: await selectedRun(scenario), done };
+  }
+  await pageOpened;
+  if (opened === undefined || line === undefined || run === undefined || intent === undefined) {
+    throw new Error(`E3M: the ${options.kind} page did not open during the first model call`);
+  }
+  return { h: scenario, line, run, done, page: opened, intent };
+}
+
 /**
  * W4 (A7-control.test.ts:243-268): the first model request pauses the Run,
  * the pause lands at the safe point; then `src/e3m-change.ts` (three lines) is
  * written into the git workspace before any page opens.
  */
 export async function openMemberW4(): Promise<E3MHost> {
-  let h: HostScenario | undefined;
-  const scenario = await openHostScenario({ automation: NO_REDRIVE, gitWorkspace: true, script: {
-    replies: [readCall('e3m-w4'), ...editThenText('e3m-w4')],
-    duringReply: async (index) => {
-      if (index !== 0 || h === undefined) return;
-      await submitControl(h.host, await selectedRun(h), 'pause', 'operator pause', 'e3m-w4-pause');
-    } } });
-  h = scenario;
-  const first = await scenario.advance(scenario.select('e3m-w4', AG2B_WORK_TASK_ID));
-  if (first.state !== 'waiting') throw new Error(`E3M W4: the paused Run did not wait: ${first.state}`);
-  await mkdir(join(scenario.root, 'src'), { recursive: true });
-  await writeFile(join(scenario.root, 'src/e3m-change.ts'), 'export const e3mOne = 1;\nexport const e3mTwo = 2;\nexport const e3mThree = 3;\n');
-  return { h: scenario, line: await workLineOf(scenario), run: await selectedRun(scenario) };
+  const { h, line, run } = await openW4Run();
+  return { h, line, run };
+}
+
+/**
+ * W4's pause at the safe point, plus the Member page opened while the control
+ * is still `queued`: `duringReply` submits the control and boots the page before
+ * the Run reaches its safe point, so the head reads `已请求暂停/取消，等安全点`.
+ * `done` is the Workflow drive; `intent` is the submitted control.
+ */
+export type E3MQueued = { h: HostScenario; line: SessionRef; run: RunRef; page: BootedPage; log: PageLog;
+  done: Promise<Driven>; intent: SubmittedControl['intent'] };
+
+export async function openMemberControlQueued(kind: 'pause' | 'cancel'): Promise<E3MQueued> {
+  const opened = await openW4Run({ kind, bootPage: true });
+  if (opened.page === undefined || opened.intent === undefined) {
+    throw new Error(`E3M: the ${kind} page did not open during the first model call`);
+  }
+  return { h: opened.h, line: opened.line, run: opened.run, page: opened.page.page, log: opened.page.log,
+    done: opened.done, intent: opened.intent };
 }
 
 /** C8-auto-rework-cap.test.ts:40-95: Run n creates its own file, then answers; the check always fails. */

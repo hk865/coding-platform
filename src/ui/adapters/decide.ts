@@ -305,7 +305,7 @@ function timeOf(iso: string | null): string | null {
   return iso === null || iso === '' ? null : localShortAt(iso);
 }
 
-function subjectGoalId(subject: DecisionSubjectV1 | undefined): string | null {
+export function subjectGoalId(subject: DecisionSubjectV1 | undefined): string | null {
   return subject?.kind === 'goal' ? subject.goalRef.goalId : null;
 }
 

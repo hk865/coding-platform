@@ -63,6 +63,16 @@ describe('E37-U the adapter (spec §4.4)', () => {
     const both = actual([IN, B].map((path) => ({ path, certainty: 'definite' })));
     expect(detailOf({ ...planned, actualFiles: actualFiles ?? both }, read).filesNote).toBe(note);
   });
+
+  /* 具名改坏: `filesUnknown` 恒 false；本表第 1、2 行红。 */
+  it.each([
+    ['记录读不到', { availability: 'unavailable', cause: 'not_recorded', reason: 'e37' }, true],
+    ['可能不全且零文件', { availability: 'available', value: [], possiblyIncomplete: true }, true],
+    ['已知零文件', { availability: 'available', value: [], possiblyIncomplete: false }, false],
+    ['有一个实际文件', actual([{ path: IN, certainty: 'definite' }]), false],
+  ])('E37-U5 %s', (_, actualFiles, unknown) => {
+    expect(detailOf({ ...planned, actualFiles }, null).filesUnknown).toBe(unknown);
+  });
 });
 
 /** Bounded polling (F9): the text once it contains `text`, or a throw with the last text read. */
@@ -149,4 +159,5 @@ describe('E37-U4 the page reads files/uncommitted with the detail (spec §4.1, �
     const seen = await openDetail(Array.from({ length: 101 }, (_, i) => ui(name(i))), ready([]), '实际改过');
     expect(seen.sent?.input?.paths).toEqual(Array.from({ length: 100 }, (_, i) => 'src/ui/' + name(i)));
   }, 60_000);
+
 });

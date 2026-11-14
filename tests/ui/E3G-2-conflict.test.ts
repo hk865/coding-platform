@@ -5,7 +5,10 @@ import {
 import { click } from './helpers/E3N-interact.js';
 import { findButton, findClass, findElement, type BootedPage } from './helpers/boot-page.js';
 import type { FakeElement } from './helpers/dom.js';
-import { E3G_OVERLAP, e3gCardPins, e3gGoalPins, e3gSettled, openE3GW0, openE3GW1, openE3GW2, type E3GWorld } from './helpers/E3G-world.js';
+import {
+  E3G_OVERLAP, decideConflict, e3gCardPins, e3gConflictOptions, e3gConflictSection, e3gGoalPins, e3gSettled,
+  openE3GW0, openE3GW1, openE3GW2, type E3GWorld,
+} from './helpers/E3G-world.js';
 
 /**
  * E3G-2 G10–G19 (test sheet §2.2): the conflict card, its three options and the
@@ -20,14 +23,11 @@ afterEach(async () => {
 });
 
 function sectionOf(root: FakeElement): FakeElement | undefined {
-  return descendants(root).find((element) => hasClass(element, 'gx-sec')
-    && element.getAttribute('aria-label') === '冲突');
+  return e3gConflictSection(root);
 }
 
 function optionsOf(root: FakeElement): FakeElement[] {
-  const section = sectionOf(root);
-  return section === undefined ? [] : descendants(section)
-    .filter((element) => element.tagName.toLowerCase() === 'button' && hasClass(element, 'opt-top'));
+  return e3gConflictOptions(root);
 }
 
 function factsOf(root: FakeElement): Array<{ key: string; value: string }> {
@@ -68,13 +68,9 @@ function answerState(log: PageLog): string | undefined {
 }
 
 async function decide(page: BootedPage, option: number): Promise<void> {
-  const options = optionsOf(page.root);
+  const { options, go } = await decideConflict(page, option);
   expect(options.length).toBe(3);
-  click(options[option]!);
-  await turns(() => hasClass(options[option]!, 'is-on') || options[option]!.getAttribute('aria-checked') === 'true', 800);
-  const go = findButton(page.root, '确定');
   expect(go).toBeDefined();
-  click(go!);
 }
 
 describe('E3G-2 the conflict card', () => {

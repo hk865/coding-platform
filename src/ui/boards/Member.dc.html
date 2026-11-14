@@ -959,6 +959,19 @@ button.deliv:hover .on { color: var(--text); }
     <sc-if value="{{pt.isSess}}" hint-placeholder-val="{{ true }}">
       <div class="pbody">
         <p class="pnote">这条工作线的工作记录。派生的咨询和临时分支只读：不改文件，也不打扰正在进行的工作。</p>
+        <sc-if value="{{startup.show}}">
+          <div class="rail-label sg-other">
+            <button class="btn-text" type="button" aria-expanded="{{startup.open}}" onClick="{{startup.toggle}}">启动核对 · {{startup.count}}</button>
+          </div>
+          <sc-if value="{{startup.open}}">
+            <sc-for list="{{startup.groups}}" as="sg" hint-placeholder-count="3">
+              <div class="rail-label sg-other"><span>{{sg.label}}</span></div>
+              <sc-for list="{{sg.rows}}" as="sr" hint-placeholder-count="3">
+                <div class="sys-line"><span>{{sr.text}}</span></div>
+              </sc-for>
+            </sc-for>
+          </sc-if>
+        </sc-if>
         <sc-for list="{{groups}}" as="g" hint-placeholder-count="3">
           <sc-if value="{{g.hasLabel}}" hint-placeholder-val="{{ false }}">
             <div class="rail-label sg-other" title="{{g.labelTip}}"><span>{{g.label}}</span></div>
@@ -2156,6 +2169,12 @@ class Component extends DCLogic {
   memberTip(kind, line) {
     const att = line === null ? 1 : (line.attempt.ordinal || 1);
     const when = line !== null && line.status.advancing ? line.status.advText : '当前这一步结束后';
+    /* The task card is the task's own reason word (`line.task.tip`); a line
+       without a task keeps the pause fallback. */
+    if (kind === 'task' && line !== null && line.task !== null) {
+      return { hasSq: true, sq: 'sq z8 ' + this.sqAt(line.task.st), name: line.task.name, tx: 'tx-plain',
+        word: line.task.tip, why: '', rows: [], hint: '' };
+    }
     const C = {
       pause: ['暂停', '到下一个安全点停下', [['何时', when + '生效；在那之前它还在做'], ['保留', '改动和工作记录都保留'], ['之后', '只有你能继续，系统不会自动继续']], '点一下请求暂停'],
       resume: ['继续', '从停下的安全点接着做', [['尝试', '仍是第 ' + att + ' 次尝试，接着用这份工作记录'], ['消息', '排队中的直接干预在第一个安全点送达']], '点一下继续'],
@@ -2212,6 +2231,10 @@ class Component extends DCLogic {
       scopeText: line === null ? '' : line.scopeText,
       attempt: line === null ? '' : line.attempt.text,
     };
+    /* the right panel's 启动核对: collapsed by default, its rows from the Host's report */
+    const toggleStartup = () => set({ startup: !(this.state || {}).startup });
+    const startup = { show: D.startup.show, count: D.startup.count, open: !!s.startup,
+      groups: D.startup.groups, toggle: toggleStartup };
     const c = {
       canPause: line !== null && line.canPause,
       canResume: line !== null && line.canResume,
@@ -2474,16 +2497,26 @@ class Component extends DCLogic {
     };
 
     /* the rail: the lines and the archived row, from the adapter's nav data */
-    const railRow = (m, arch) => ({
-      id: m.id, isLink: m.synth, isLine: !m.synth && !arch, isArch: arch,
-      name: m.name, word: arch ? '' : m.word, sub: '', dot: m.dot, current: m.current ? 'page' : null,
-      cls: 'row wl-line lv-line' + (arch ? ' is-arch' : '') + (m.current ? ' is-current' : ''),
-      open: !!s.arch, chev: 'ico xs chev' + (s.arch ? ' is-open' : ''),
-      pick: m.synth ? () => { if (D.ownKey !== null) this.props.actions.openLine(D.ownKey); }
-        : () => this.props.actions.openLine(m.key),
-      hover: () => {}, unhover: () => {}, card: false, cardCls: '',
-      c: { dot: m.dot, tx: 'tx-plain', word: m.word, live: '', rows: [], hint: '' }
-    });
+    const railRow = (m, arch) => {
+      /* an archived row keeps its tag (UI-WORKBENCH:122; `src/contracts/work-line.ts:36`) */
+      const sub = !arch ? '' : m.archivedTag === 'done' ? '已归档 · 已做完'
+        : m.archivedTag === 'retired' ? '已归档 · 已退役' : '已归档';
+      /* a line row names the role, then its module (UI-WORKBENCH §5); archived
+         names stay as recorded and the main conversation keeps its own name */
+      let name = m.name;
+      if (!arch && m.duty === 'executor' && !name.startsWith('执行者')) name = '执行者 · ' + name;
+      if (!arch && m.scope !== '') name = name + ' · ' + m.scope;
+      return {
+        id: m.id, isLink: m.synth, isLine: !m.synth && !arch, isArch: arch,
+        name: name, word: arch ? '' : m.word, sub: sub, dot: m.dot, current: m.current ? 'page' : null,
+        cls: 'row wl-line lv-line' + (arch ? ' is-arch' : '') + (m.current ? ' is-current' : ''),
+        open: !!s.arch, chev: 'ico xs chev' + (s.arch ? ' is-open' : ''),
+        pick: m.synth ? () => { if (D.ownKey !== null) this.props.actions.openLine(D.ownKey); }
+          : () => this.props.actions.openLine(m.key),
+        hover: () => {}, unhover: () => {}, card: false, cardCls: '',
+        c: { dot: m.dot, tx: 'tx-plain', word: m.word, live: '', rows: [], hint: '' }
+      };
+    };
     const wl = {
       head: D.head,
       goals: D.goals.map((g) => ({ cls: 'row is-static' + (g.goalId === (D.goal === null ? null : D.goal.id) ? ' is-on' : ''),
@@ -2553,6 +2586,7 @@ class Component extends DCLogic {
       sendLabel: isBranch ? '开只读副本来问' : '发出直接干预',
       pt: pt, groups: groups,
       chg: chg, hasDet: !!det, det: det || noDet,
+      startup: startup,
     };
   }
 
@@ -2570,6 +2604,7 @@ class Component extends DCLogic {
       const none = { scope: null, goal: null, goals: [], lines: [], archived: [], archivedText: '没有已归档的工作线',
         head: '工作中 0 · 待命 0', headTip: '', line: null, ownKey: null, ownName: '', trace: [],
         changes: { repository: 'git', files: [], note: '' }, write: null,
+        startup: { show: false, count: 0, groups: [] },
         inbox: { decideN: 0, noticeN: 0, hasDecide: false, hasNotice: false, none: true } };
       return this.memberDataVals(data || none, s, set, DUTY, read);
     }

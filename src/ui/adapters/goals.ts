@@ -388,6 +388,15 @@ export function adaptGoals(input: GoalsInput, selected: string | null): GoalsDat
   const labels = card === null && earlierId === ''
     ? []
     : labelEntries.map((entry) => labelOfEntry(entry, earlierId, laterId)).filter((text) => text !== '');
+  /* D42-3: the accepted parallel risk is a tag on BOTH Goal rows (目标栏 and
+    目标卡), not only in the card's done line. Each label names its own Goal. */
+  const labelByGoal = new Map<string, string>();
+  for (const entry of labelEntries) {
+    const text = labelOfEntry(entry, earlierId, laterId);
+    if (text === '') continue;
+    const goalId = asText(asRecord(asRecord(entry).goalRef).goalId);
+    if (goalId !== '') labelByGoal.set(goalId, text);
+  }
   const hasConflict = card !== null || labels.length > 0;
   const tasks = input.tasks ?? {};
 
@@ -474,6 +483,8 @@ export function adaptGoals(input: GoalsInput, selected: string | null): GoalsDat
       : goal.id === conflict.earlierId ? conflict.laterId
         : goal.id === conflict.laterId ? conflict.earlierId : null;
     let line = statusWord;
+    const parallel = labelByGoal.get(goal.id) ?? '';
+    if (other === null && parallel !== '') line += ' · ' + parallel;
     if (other !== null) {
       const otherOrdinal = goal.id === conflict!.earlierId ? conflict!.laterOrdinal : conflict!.earlierOrdinal;
       const otherName = goal.id === conflict!.earlierId ? conflict!.laterName : conflict!.earlierName;

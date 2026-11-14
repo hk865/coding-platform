@@ -149,6 +149,7 @@ button.bq-ref:hover { color: var(--text); }
           <span class="row-main">
             <span class="row-name">{{g.name}}</span>
             <sc-if value="{{g.hasSub}}" hint-placeholder-val="{{ false }}"><span class="row-sub">{{g.sub}}</span></sc-if>
+            <sc-for list="{{g.notices}}" as="n" hint-placeholder-count="1"><span class="row-sub">{{n}}</span></sc-for>
           </span>
           <sc-if value="{{g.hasN}}" hint-placeholder-val="{{ false }}"><span class="row-meta" title="需要你决定">{{g.n}}</span></sc-if>
           <span class="{{g.sq}}" aria-hidden="true"></span>
@@ -3172,7 +3173,7 @@ class Component extends DCLogic {
     const taskMapHref = goalId ? 'TaskMap.dc.html?goal=' + encodeURIComponent(goalId) : 'TaskMap.dc.html';
     const goals = (data.goals || []).map((g, i) => ({
       ord: g.ordinal === null || g.ordinal === undefined ? i + 1 : g.ordinal,
-      name: g.name, sq: 'sq z10 s-' + g.st, sub: g.sub, hasSub: !!g.hasSub,
+      name: g.name, sq: 'sq z10 s-' + g.st, sub: g.sub, hasSub: !!g.hasSub, notices: g.notices,
       n: g.n, hasN: !!g.hasN, tip: g.tip,
       cls: 'row' + (g.goalId === goalId ? ' is-on' : ''),
       current: g.goalId === goalId ? 'true' : null,
@@ -3799,7 +3800,7 @@ class Component extends DCLogic {
     const order = cf === 'reorder' ? ['g2', 'g1', 'g3'] : ['g1', 'g2', 'g3'];
     const goals = order.map((id, i) => {
       const n = decideOf(id).length;
-      return { ord: i + 1, name: this.goalInfo()[id].name, sq: 'sq z10 s-' + this.goalSt(id), sub: goalSub[id], hasSub: !!goalSub[id],
+      return { ord: i + 1, name: this.goalInfo()[id].name, sq: 'sq z10 s-' + this.goalSt(id), sub: goalSub[id], hasSub: !!goalSub[id], notices: [],
         n: n, hasN: n > 0, tip: this.goalWord(id) + (n ? '，需要你决定 ' + n : ''), cls: 'row' + (id === goal ? ' is-on' : ''), current: id === goal ? 'true' : null,
         pick: switchGoal(id) };
     });

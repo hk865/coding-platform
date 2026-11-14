@@ -4,7 +4,7 @@ import { bootE3N, callsTo, countRoute, descendants, hasClass, quietPage, sentWri
 import { click, notConnected } from './helpers/E3N-interact.js';
 import { labelled, typeInto } from './helpers/E3D-page.js';
 import {
-  answerOf, headOf, lineText, openPAW1, openPAW2, options, planCard, planLines, planReady, type PAW2,
+  answerOf, bootPlanW2, headOf, lineText, openPAW1, openPAW2, options, planCard, planLines, planList as list, planReady,
 } from './helpers/E3P-world.js';
 import type { S6ARequestWorld } from '../helpers/S6A-request-fixture.js';
 import type { FakeElement } from './helpers/dom.js';
@@ -26,22 +26,12 @@ const isButton = (element: FakeElement): boolean => element.tagName.toLowerCase(
 const section = (card: FakeElement, name: string): FakeElement | undefined =>
   descendants(card).find((element) => isButton(element) && hasClass(element, 'xp-b') && textOf(element).startsWith(name));
 
-/** The opened 方案细节 list named `name` (`div.xl[aria-label]`). */
-const list = (card: FakeElement, name: string): FakeElement | undefined =>
-  descendants(card).find((element) => hasClass(element, 'xl') && element.getAttribute('aria-label') === name);
-
 /** The plan card's foot button whose text contains `text` (采用方案 …, 在对话里修改). */
 const footButton = (root: FakeElement, text: string): FakeElement | undefined => {
   const card = planCard(root);
   const foot = card === undefined ? undefined : findClass(card, 'plan-foot');
   return foot === undefined ? undefined : findButton(foot, text);
 };
-
-async function bootW2(w: PAW2): Promise<Awaited<ReturnType<typeof bootE3N>>> {
-  const booted = await bootE3N(w.world, 'Plan', { search: GOAL });
-  await planReady(booted.log);
-  return booted;
-}
 
 describe('E3P Plan plan card', () => {
   it('PA-30 the plan card counts the answer’s two ideas', async () => {
@@ -112,7 +102,7 @@ describe('E3P Plan plan card', () => {
   it('PA-32/35 the live candidate v2: what changed, its tasks and checks, and the adopted version 1 line', async () => {
     const w = await openPAW2();
     worlds.push(w.world);
-    const { page, log } = await bootW2(w);
+    const { page, log } = await bootPlanW2(w);
     try {
       const card = planCard(page.root)!;
       expect(headOf(card, 'scope')).toBe('2 个方案');
@@ -157,7 +147,7 @@ describe('E3P Plan plan card', () => {
   it('PA-33 采用方案 applies candidate v2 pinned to the Goal only; the versions read 第 2 版 then 第 1 版', async () => {
     const w = await openPAW2();
     worlds.push(w.world);
-    const { page, log } = await bootW2(w);
+    const { page, log } = await bootPlanW2(w);
     try {
       /* `selectedIndex` also names the adopt label: W2's one selection is idea B. */
       expect(textOf(footButton(page.root, '采用方案')!)).toBe('采用方案 B');
@@ -187,7 +177,7 @@ describe('E3P Plan plan card', () => {
   it('PA-34 在对话里修改 asks the round that made v2 again with v2 as the card', async () => {
     const w = await openPAW2();
     worlds.push(w.world);
-    const { page, log } = await bootW2(w);
+    const { page, log } = await bootPlanW2(w);
     try {
       click(footButton(page.root, '在对话里修改')!);
       /* 具名改坏: `iterate` 的 `iterKey` 用本地 `pick`（A）；这一句红。 */

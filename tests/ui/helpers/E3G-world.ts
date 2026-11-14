@@ -12,7 +12,10 @@ import { governS6B } from '../../helpers/S6B1-fixture.js';
 import { ag2bPlanDraft, graphWrite, plain } from '../../helpers/AG2b-collaboration-fixture.js';
 import { completeS7BGoal } from '../../helpers/S7B-V-fixture.js';
 import { draftFrom } from '../../scenarios/support/common.js';
-import { countRoute, turns, type PageLog } from './E3N-page.js';
+import { click } from './E3N-interact.js';
+import { bootE3N, callsTo, countRoute, descendants, hasClass, turns, type PageLog } from './E3N-page.js';
+import { findButton, type BootedPage } from './boot-page.js';
+import type { FakeElement } from './dom.js';
 
 /**
  * The E3 Goals worlds (test sheet §1.2): one real Host per row, every state
@@ -214,4 +217,57 @@ export async function e3gCardPins(world: S6ARequestWorld): Promise<VersionPin[]>
     throw new Error(`E3G: goals/conflicts has no card pins: ${JSON.stringify(answer.body)}`);
   }
   return pins;
+}
+
+/* ------------------------------------------------------- the Goals page's DOM */
+
+/** The Goals order list's `role=listitem` rows, in document order. */
+export function e3gGoalRows(root: FakeElement): FakeElement[] {
+  const list = descendants(root).find((element) => hasClass(element, 'gx-list')
+    && element.getAttribute('role') === 'list');
+  return list === undefined ? [] : descendants(list).filter((element) => element.getAttribute('role') === 'listitem');
+}
+
+/**
+ * Boot the Goals page on a world and wait for its first `goals/list` and its two
+ * rows. `mode: 'controlled'` holds the change stream for a row that counts the
+ * action's own reread.
+ */
+export async function openE3GGoals(world: E3GWorld['world'], search?: string,
+  mode?: 'controlled'): Promise<{ page: BootedPage; log: PageLog }> {
+  const booted = await bootE3N(world, 'Goals', { ...(search === undefined ? {} : { search }),
+    ...(mode === undefined ? {} : { mode }) });
+  await turns(() => callsTo(booted.log, 'goals/list').some((call) => call.reply !== undefined)
+    && e3gGoalRows(booted.page.root).length === 2, 3_000).catch(() => undefined);
+  return booted;
+}
+
+/** The `section.gx-sec[aria-label=冲突]` holder of the card and its done line. */
+export function e3gConflictSection(root: FakeElement): FakeElement | undefined {
+  return descendants(root).find((element) => hasClass(element, 'gx-sec')
+    && element.getAttribute('aria-label') === '冲突');
+}
+
+/** The three `button.opt-top` options of the Goals conflict card. */
+export function e3gConflictOptions(root: FakeElement): FakeElement[] {
+  const section = e3gConflictSection(root);
+  return section === undefined ? [] : descendants(section)
+    .filter((element) => element.tagName.toLowerCase() === 'button' && hasClass(element, 'opt-top'));
+}
+
+/**
+ * Pick `option` and press 确定, the gesture E3G-2's rows use. It returns after
+ * the option is drawn selected; the caller waits for the answer's own effect.
+ */
+export async function decideConflict(page: BootedPage, option: number):
+Promise<{ options: FakeElement[]; go: FakeElement }> {
+  const options = e3gConflictOptions(page.root);
+  if (options.length !== 3) throw new Error(`E3G: the conflict card has ${String(options.length)} options`);
+  click(options[option]!);
+  await turns(() => hasClass(options[option]!, 'is-on')
+    || options[option]!.getAttribute('aria-checked') === 'true', 800);
+  const go = findButton(page.root, '确定');
+  if (go === undefined) throw new Error('E3G: the conflict card has no 确定');
+  click(go);
+  return { options, go };
 }

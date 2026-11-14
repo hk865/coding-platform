@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { findElement, findLink } from './helpers/boot-page.js';
+import { boardUrlOf, findElement, findLink } from './helpers/boot-page.js';
 import { bootE3N, goalRows, mainHeadTitle, textOf } from './helpers/E3N-page.js';
 import { click } from './helpers/E3N-interact.js';
 import { cancelGoal, openW1 } from './helpers/E3N-world.js';
@@ -12,7 +12,6 @@ import type { S6ARequestWorld } from '../helpers/S6A-request-fixture.js';
  * real Host built by E3N-world; the page is the real `bootBoardPage`.
  */
 
-const PAGE = 'http://host/workbench/';
 const worlds: S6ARequestWorld[] = [];
 afterEach(async () => {
   for (const world of worlds.splice(0)) await world.close();
@@ -20,7 +19,7 @@ afterEach(async () => {
 
 function urlOf(href: string | null, board: 'Main' | 'TaskMap'): URL {
   expect(href).not.toBeNull();
-  return new URL(href!, `${PAGE}${board}.dc.html`);
+  return boardUrlOf(href, `${board}.dc.html`);
 }
 
 describe('E3N-1 switching boards and Goals', () => {

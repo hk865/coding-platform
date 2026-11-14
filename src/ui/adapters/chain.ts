@@ -18,11 +18,12 @@ import type { TaskGraph, TaskRow } from '../../contracts/task-graph.js';
 import type { SessionRef } from '../../contracts/core/identity.js';
 import { asRecord, asText } from '../values.js';
 import {
-  CHECK_RESULT_WORD, FAILURE_CLASS_WORD, PHASE_WORD, RUN_RESULT_WORD,
+  CHECK_RESULT_WORD, FAILURE_CLASS_WORD, PHASE_WORD, RUN_RESULT_WORD, requirementWordOf,
   taskStateOfRow, taskWhyOf,
 } from './task-map.js';
 import { dutyWordOf, lineHref, lineStatusView, type LineKey, type NavData, type NavLine } from './nav.js';
 import { requeueVisible } from './line-shared.js';
+import { briefRowsOf } from './member.js';
 
 /** B06: the word a check row shows for the platform witness, which runs no command (never a literal "null"). */
 export const WITNESS_CHECK_WORD = '平台只读核对';
@@ -44,6 +45,12 @@ type RoundRead = {
       ordinal: number; roundRef: VerificationRoundRef;
       status: 'open' | 'finalized'; outcome: string | null;
       counts: { total: number; pass: number; fail: number };
+    }>;
+  };
+  /** The public `delivery`; a reviewer requirement's `state` is its conclusion (S9). */
+  delivery: {
+    requirements: Array<{
+      requirementId: string; kind: string; description: string; state: string;
     }>;
   };
 };
@@ -100,6 +107,8 @@ export type ChainAttempt = {
   startedAt: string | null;
   endedAt: string | null;
   requeue: { number: number; automatic: boolean; autoCount: number; cap: number | null } | null;
+  /** The continuation brief's ruled facts, or null without a brief. */
+  brief: { rows: Array<{ k: string; v: string }> } | null;
   process: 'not_connected';
   rounds: ChainRound[];
 };
@@ -116,6 +125,8 @@ export type ChainRound = {
 export type ChainCheck = {
   checkId: string; command: string; outcomeWord: string;
   fail: boolean; reason: string | null;
+  /** A reviewer requirement's conclusion: shown even when it passes (S9). */
+  review: boolean;
 };
 
 export type ChainTraceRecord = {
@@ -252,11 +263,20 @@ function roundViewOf(read: RoundRead): ChainRound {
     total: chainRound?.counts.total ?? read.checks.length,
     pass: chainRound?.counts.pass ?? read.checks.filter((check) => check.outcome === 'PASS').length,
     fail: chainRound?.counts.fail ?? read.checks.filter((check) => check.outcome === 'FAIL').length,
-    checks: read.checks.map((check) => ({
-      // B06: the witness runs no command; the page shows what it is, never a literal "null".
-      checkId: check.checkId, command: check.command ?? WITNESS_CHECK_WORD, outcomeWord: checkWordOf(check),
-      fail: check.outcome === 'FAIL', reason: check.reason ?? check.incompleteCause,
-    })),
+    checks: [
+      ...read.checks.map((check) => ({
+        // B06: the witness runs no command; the page shows what it is, never a literal "null".
+        checkId: check.checkId, command: check.command ?? WITNESS_CHECK_WORD, outcomeWord: checkWordOf(check),
+        fail: check.outcome === 'FAIL', reason: check.reason ?? check.incompleteCause, review: false,
+      })),
+      /* S9: a reviewer requirement is answered by booked review Evidence, not by a
+         command check; its public conclusion is `delivery.requirements[].state`. */
+      ...read.delivery.requirements.filter((requirement) => requirement.kind === 'reviewer').map((requirement) => ({
+        checkId: requirement.requirementId, command: '审阅结论',
+        outcomeWord: requirementWordOf(requirement.state),
+        fail: requirement.state === 'fail', reason: requirement.description, review: true,
+      })),
+    ],
   };
 }
 
@@ -374,6 +394,44 @@ function requeueOf(brief: { brief: ContinuationBriefV1 } | null): ChainAttempt['
   };
 }
 
+/* The UI bundle cannot value-import `renderContinuationBriefZh`: it pulls
+   `fingerprint.ts`'s `node:crypto` into the browser build (E3N-2 fails). These are the
+   prototype `cbrief`'s facts, read from the same `ContinuationBriefV1`. */
+const BRIEF_CHECKPOINT_WORD: Record<'round_open' | 'requeue' | 'brief', string> = {
+  round_open: '检查轮次开始', requeue: '重新入队', brief: '本次执行开始前',
+};
+
+/** The continuation brief's own facts: Member's three shared rows plus the
+ * prototype `cbrief`'s check, change, source and rework rows. */
+function chainBriefRowsOf(brief: ContinuationBriefV1): Array<{ k: string; v: string }> {
+  const failed = brief.checks === null ? [] : brief.checks.failing;
+  const self = brief.workspace.selfChanged;
+  const changed = self.confirmed.concat(self.possible);
+  const segments = brief.workspace.segments.map((segment) => {
+    const from = brief.workspace.checkpoints[segment.from]!;
+    const to = brief.workspace.checkpoints[segment.to]!;
+    const verdict = segment.verdict === 'unchanged' ? '源码摘要相同'
+      : segment.verdict === 'changed' ? '源码摘要变了' : '无法确定';
+    return BRIEF_CHECKPOINT_WORD[from.kind] + ' → ' + BRIEF_CHECKPOINT_WORD[to.kind] + '：' + verdict;
+  });
+  const auto = brief.trigger.autoRework;
+  return [
+    ...briefRowsOf(brief),
+    { k: '失败的检查', v: failed.length === 0 ? '没有' : failed.map((check) => check.checkId
+      + '：' + (check.outcome === null ? '没有结果' : CHECK_RESULT_WORD[check.outcome] ?? check.outcome)
+      + '，阶段 ' + (PHASE_WORD[check.phase] ?? check.phase)
+      + (check.reportRef === null ? '' : '，报告 sha256:' + check.reportRef.digest)).join('；') },
+    { k: '已保存的改动', v: self.status === 'unavailable' ? '无法读到改动'
+      : self.status === 'not_entered' ? '上一次执行没有进入，改动无法确定'
+        : changed.length === 0 ? (self.status === 'known' ? '没有记录到改动' : '改动可能没列全')
+          : self.confirmed.join('、')
+            + (self.possible.length === 0 ? '' : (self.confirmed.length === 0 ? '可能：' : '；可能：')
+              + self.possible.join('、')) },
+    { k: '来源对比', v: segments.length === 0 ? '没有可比较的检查点' : segments.join('；') },
+    { k: '自动返工', v: auto === null ? '不是自动返工' : String(auto.count) + '/' + String(auto.cap) },
+  ];
+}
+
 /** The whole page's data of one read. `attempts` stays in owner page order,
  * oldest first; `selected` only marks the rail's current row. */
 export function adaptChain(source: ChainSource, ui: ChainUi): ChainData {
@@ -418,6 +476,7 @@ export function adaptChain(source: ChainSource, ui: ChainUi): ChainData {
       startedAt: run.attempt.startedAt ?? (item !== null && item.kind === 'execution' ? item.startedAt : null),
       endedAt: run.attempt.endedAt,
       requeue,
+      brief: brief === null ? null : { rows: chainBriefRowsOf(brief.brief) },
       process: 'not_connected' as const,
       rounds: (source.rounds[run.run.ref.runId] ?? []).map(roundViewOf),
     };

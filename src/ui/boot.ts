@@ -9,7 +9,7 @@ import { qualifyProjectPath, splitWorkspacePath } from '../contracts/workspace-p
 import { createAutoRefresh, type RefreshRead, type RefreshSnapshot, type RefreshSources } from './refresh.js';
 import { adaptNav, completionRevisionOf, goalHref, type LineKey, type NavData, type NavLineDetail } from './adapters/nav.js';
 import {
-  adaptMember, adaptMemberLine, messageBodyKey, taskOfLine, traceOf,
+  adaptMember, adaptMemberLine, messageBodyKey, startupReportOf, taskOfLine, traceOf,
   type MemberData, type MemberLine, type MemberSource, type MemberWriteBasis,
 } from './adapters/member.js';
 import { adaptChain, type ChainData, type ChainSource } from './adapters/chain.js';
@@ -22,8 +22,9 @@ import {
   type MainData, type MainLineRecord, type MainPageCursorV1, type MainPageV1, type MainTrackRow,
 } from './adapters/main.js';
 import {
-  adaptPlan, candidateReadOf, ideasRoundOf, versionRowsOf,
-  type MainPageRead, type PlanCandidateRead, type PlanData, type PlanProposalRef, type PlanVersionRow,
+  adaptPlan, adoptedPlanDoc, candidateReadOf, ideasRoundOf, versionRowsOf,
+  type MainPageRead, type PlanCandidateRead, type PlanData, type PlanDoc, type PlanProposalRef,
+  type PlanProposalShape, type PlanVersionRow,
 } from './adapters/plan.js';
 import {
   auxChangedRowsOf, auxFileListOf, auxFilePageOf, auxLeafCountsOf, auxTaskDetailOf, catalogArchTree, goalTaskTree,
@@ -33,7 +34,7 @@ import {
 } from './adapters/aux-panel.js';
 import { adaptGoals, conflictSelectionOf, goalOrderOf, type GoalsData } from './adapters/goals.js';
 import {
-  adaptDecide, budgetTokensOf, draftOf, pinsFor, taskTripleOf, type DecideCard, type DecideData, type DecideRow, type DecideStepKey,
+  adaptDecide, budgetTokensOf, draftOf, pinsFor, subjectGoalId, taskTripleOf, type DecideCard, type DecideData, type DecideRow, type DecideStepKey,
 } from './adapters/decide.js';
 import {
   adaptArchOverview, type ArchCatalogRead, type ArchNoteRead, type ArchObservedRead, type ArchOverviewData,
@@ -82,6 +83,17 @@ let latestSelectedGoalId: string | null = null;
 /** §2.7: the one line the four line actions read, set by `publish` from a
  * successful Member or Main read only (READS-1); a failed reread keeps none. */
 let latestLine: { scope: CoreScope; line: MemberLine; write: MemberWriteBasis | null } | null = null;
+/** D42/decision 121-…: after 采用 the request's candidate closes, so the Plan
+ * read no longer carries the adopted draft; the page keeps the adopted card
+ * (prototype `Plan.dc.html:4506` 已采用, checks included) while that version is
+ * the newest one. A later candidate or a newer version drops it. One state per
+ * page boot, reset at `bootBoardPage`, so a reconnect or a second page never
+ * loses or borrows an adoption. */
+type AdoptedPlanState = {
+  pending: Map<string, PlanProposalShape>;
+  cards: Map<string, { revision: number; doc: PlanDoc }>;
+};
+let pageAdoptedPlans: AdoptedPlanState | null = null;
 
 /** One Goal reference of the shown project: the one builder the line and right-panel readers share (READS-10 a). */
 function goalRefIn(projectId: string, goalId: string): { aggregateType: 'Goal'; projectId: string; goalId: string } {
@@ -206,7 +218,7 @@ export type BoardActions = {
   /** E3 Plan A §2.3: one `requests/select-idea` for the shown ideas round. */
   selectIdea: (round: QueryJobRef, index: number) => Promise<void>;
   /** E3 Plan A §2.3: one `plans/apply` pinned to the shown candidate and Goal. */
-  adoptPlan: (proposalRef: PlanProposalRef, revision: number) => Promise<void>;
+  adoptPlan: (proposal: PlanProposalShape) => Promise<void>;
   /** E3 Plan A §2.3: one `requests/ask` with `regenerate` for the shown plan. */
   askPlanChange: (text: string,
     target: { round: QueryJobRef; proposalRef: PlanProposalRef; revision: number })
@@ -243,6 +255,7 @@ export type BoardActions = {
 export async function bootBoardPage(): Promise<void> {
   const root = document.querySelector('x-dc');
   if (!root) return;
+  pageAdoptedPlans = { pending: new Map(), cards: new Map() };
   const search = new URLSearchParams(location.search);
   const goalParam = search.get('goal');
   let goalId = goalParam === null || goalParam === '' ? null : goalParam;
@@ -252,11 +265,17 @@ export async function bootBoardPage(): Promise<void> {
   const lineSession = search.get('lineSession');
   const boardName = boardNameOf(location.href);
   /* A1/A24: the frozen template keeps `Main.dc.html`; the ArchOverview copy
-     carries the Goal through the one `goalHref` encoding. */
+     carries the Goal through the one `goalHref` encoding. TaskMap's detail action
+     and Goals/Plan's 整页查看 are the same cross-page links (clk-current P02-9,
+     P16-6), so they carry the current Goal too. */
   const source = await fetchPageText(location.href);
-  const board = parseBoard(document.title, boardName === 'ArchOverview' || boardName === 'Chain' || boardName === 'Decide' || boardName === 'Member'
+  const mainSource = boardName === 'ArchOverview' || boardName === 'Chain' || boardName === 'Decide'
+    || boardName === 'Member' || boardName === 'TaskMap'
     ? source.split('href="Main.dc.html"').join('href="' + goalHref('Main.dc.html', goalId) + '"')
-    : source);
+    : source;
+  const board = parseBoard(document.title, boardName === 'Goals' || boardName === 'Plan' || boardName === 'Main'
+    ? mainSource.split('href="TaskMap.dc.html"').join('href="' + goalHref('TaskMap.dc.html', goalId) + '"')
+    : mainSource);
   if (board.helmetHtml.length > 0) hoistHelmet(board.helmetHtml);
 
   const documentToken = readPlatformToken(document);
@@ -544,7 +563,7 @@ export async function bootBoardPage(): Promise<void> {
       }
       await refresh.reread();
     },
-    async adoptPlan(proposalRef: PlanProposalRef, revision: number): Promise<void> {
+    async adoptPlan(proposal: PlanProposalShape): Promise<void> {
       const data = latest;
       const scope = latestNavScope;
       if (data === null || scope === null || data.selectedGoalId === null
@@ -554,12 +573,16 @@ export async function bootBoardPage(): Promise<void> {
       const goalRef = { aggregateType: 'Goal' as const, projectId: scope.projectId, goalId: data.selectedGoalId };
       try {
         committedRouteValue(await client.write('plans/apply', scope, {
-          input: { proposalRef, expectedProposalRevision: revision, decisionRefs: [] },
+          input: { proposalRef: proposal.ref, expectedProposalRevision: proposal.revision, decisionRefs: [] },
           meta: {
             requestId: crypto.randomUUID(),
             expected: [{ ref: goalRef, revision: data.selectedGoalRevision }],
           },
         }), 'plans/apply');
+        /* The shown candidate's own draft is what the adopted version carries;
+           the next readPlan draws it as the read-only 已采用 card (prototype
+           `Plan.dc.html:4506`), checks included. */
+        pageAdoptedPlans?.pending.set(data.selectedGoalId, proposal);
       } catch (error) {
         /* §2.3: a revision conflict is shown and the page rereads; `busy` keeps
            its one-click retry text and does not reread. The stop behind `busy`
@@ -892,8 +915,7 @@ export async function bootBoardPage(): Promise<void> {
       const card = decideCardOf(cardKey);
       const scope = latestDecideScope;
       if (card === null || scope === null) throw new Error(writeTextOf(new Error('the shown card is gone')));
-      const goalId = card.subject.kind === 'goal' ? card.subject.goalRef.goalId
-        : latestDecide?.nav.selectedGoalId ?? null;
+      const goalId = subjectGoalId(card.subject) ?? latestDecide?.nav.selectedGoalId ?? null;
       return askAndRead(scope, card.requestRef, card.requestRef, card.source.pins, false, text, goalId);
     },
     async controlLine(kind: 'pause' | 'resume' | 'cancel'): Promise<void> {
@@ -1784,7 +1806,7 @@ export async function readLineFacts(
   return {
     scope, nav: { ...nav, tasks: taskGraph }, line: detail, ownKey: key,
     executions, messages, messageViews, messageBodies, copies, controls, brief,
-    history: null, files: null, hover: null, execution, taskGraph, write: null,
+    history: null, files: null, hover: null, execution, taskGraph, write: null, startup: null,
   };
 }
 
@@ -1838,6 +1860,11 @@ export async function readMember(
   }
   if (nav === null || nav.scope === null) return { data: null, cursor };
   const scope = nav.scope;
+  /* §2.4: the Host's start-up report is read once per page read; the Member
+     page's 启动核对 section lists its reconcile lines. */
+  const startupRead = readyRouteValue<unknown>(
+    await client.post('host/reconcile-report', scope, {}), 'host/reconcile-report');
+  const startup = startupReportOf(asRecord(startupRead).report);
   let key = requested;
   if (key === null) {
     key = nav.lines.find((row) => !row.synth && !row.archived)?.key ?? null;
@@ -1859,6 +1886,7 @@ export async function readMember(
   let source: MemberSource;
   if (line !== null && line.kind === 'line' && key !== null) {
     source = await readLineFacts(client, scope, key, line, nav);
+    source.startup = startup;
     /* The page's own line, not the selected one (§2.4: the rail's `current`). */
     source.ownKey = demand.ownKey ?? key;
   } else {
@@ -1867,7 +1895,7 @@ export async function readMember(
       scope, nav, line, ownKey: demand.ownKey ?? key,
       executions: [], messages: [], messageViews: [], messageBodies: {}, copies: [],
       controls: null, brief: null, history: null, files: null, hover: null,
-      execution: null, taskGraph: nav.tasks, write: null,
+      execution: null, taskGraph: nav.tasks, write: null, startup,
     };
   }
   if (demand.traceOpen === true && key !== null) {
@@ -2039,7 +2067,7 @@ export async function readChain(
           if (!(error instanceof RouteReadError)) throw error;
           reads.push({
             ...entry, displayStatus: entry.status === 'open' ? 'incomplete' : 'completed',
-            checks: [], chain: main.chain,
+            checks: [], chain: main.chain, delivery: { requirements: [] },
           } as unknown as ChainSource['rounds'][string][number]);
         }
       }
@@ -2471,13 +2499,36 @@ export async function readPlan(
       if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
     }
   }
-  return {
-    data: adaptPlan({
-      main: adaptMain({ nav, ...thread }),
-      pages: thread.pages, cand, versions,
-    }),
-    cursor: navRead.cursor,
-  };
+  const data = adaptPlan({
+    main: adaptMain({ nav, ...thread }),
+    pages: thread.pages, cand, versions,
+  });
+  /* The adopted card is the one the page just adopted: its proposal read
+     (above) carries the draft the closed candidate no longer does. */
+  if (nav.selectedGoalId !== null) {
+    const goalId = nav.selectedGoalId;
+    const newest = data.versions[0]?.revision ?? null;
+    const adopted = pageAdoptedPlans;
+    const pending = adopted?.pending.get(goalId);
+    if (pending !== undefined && adopted !== null) {
+      if (newest !== null && data.plan !== null && data.plan.proposal === null) {
+        data.plan = adoptedPlanDoc(data.plan, pending);
+        adopted.cards.set(goalId, { revision: newest, doc: data.plan });
+        adopted.pending.delete(goalId);
+      } else if (data.plan?.proposal?.ref.proposalId !== pending.ref.proposalId) {
+        /* A different candidate (or no Plan page) means this adoption is no
+           longer the one to draw; the same stale candidate waits one read. */
+        adopted.pending.delete(goalId);
+      }
+    } else if (adopted !== null) {
+      const card = adopted.cards.get(goalId);
+      if (card !== undefined) {
+        if (newest === card.revision && data.plan !== null && data.plan.proposal === null) data.plan = card.doc;
+        else adopted.cards.delete(goalId);
+      }
+    }
+  }
+  return { data, cursor: navRead.cursor };
 }
 
 /**

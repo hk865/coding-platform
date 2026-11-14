@@ -5295,7 +5295,7 @@ class Component extends DCLogic {
       }),
       adopt: canAdopt ? () => {
         set({ err: '', errKeep: '' });
-        Promise.resolve(actions.adoptPlan(proposal.ref, proposal.revision))
+        Promise.resolve(actions.adoptPlan(proposal))
           .catch((e) => { const err = this.planMsg(e); set({ err: err, errKeep: e && e.keep === true ? err : '' }); });
       } : nc
     };

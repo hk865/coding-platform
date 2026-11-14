@@ -674,6 +674,9 @@ export type TaskMapNodeDetailData = {
   plannedFileCount: number;
   /** E3-7: what the 架构 summary adds after 实际改过／可能改过（现在）, without the ` · `; '' adds nothing. */
   filesNote: string;
+  /** D42-2: the record could not say which files changed (or may be incomplete
+   * with none named), so the detail says 改动未知. */
+  filesUnknown: boolean;
   /** `archived`: the line's `status.bucket`; the track opens it among the archived lines. */
   participants: Array<{ name: string; text: string; key: { projectId: string; sessionId: string } | null; archived: boolean; role: string }>;
   hasParticipants: boolean;
@@ -948,6 +951,10 @@ export function adaptTaskMapDetail(
   const shown = [...certaintyOf.keys()].map((projectPath) => stateOf.get(projectPath)?.state);
   const filesNote = shown.includes('uncommitted') ? '工作区里还没提交的改动，可能混有别的执行的改动'
     : shown.length > 0 && shown.every((entry) => entry === 'clean') ? '工作区里没有它未提交的改动' : '';
+  /* D42-2/UI-WORKBENCH:129: an unreadable record, or a possibly incomplete one
+   * with no file named, says 改动未知; a known empty record says nothing. */
+  const filesUnknown = actual.availability === 'unavailable'
+    || (actual.availability === 'available' && executed.length === 0 && actual.possiblyIncomplete === true);
   const lines: TaskMapNodeDetailData['participants'] = [];
   const responsibleNow = new Set((Array.isArray(task.responsibleNow) ? task.responsibleNow : [])
     .map((entry) => trackSessionKeyOf(asRecord(entry).key)));
@@ -973,6 +980,7 @@ export function adaptTaskMapDetail(
     hasFiles: groups.size > 0,
     plannedFileCount: inList.size,
     filesNote,
+    filesUnknown,
     participants: lines, hasParticipants: lines.length > 0, noParticipants: lines.length === 0,
     participantsLoaded, participantsComplete,
     overlaps: risks.flatMap((page) => (Array.isArray(page.items) ? page.items : []).map((entry) => {
@@ -1404,6 +1412,12 @@ export const RUN_RESULT_WORD: Record<string, string> = {
 export const CHECK_RESULT_WORD: Record<string, string> = {
   open: '检查中', PASS: '通过', FAIL: '未通过', INCONCLUSIVE: '检查不完整',
 };
+/** A delivery requirement's five states: the three results are `CHECK_RESULT_WORD`'s; only pending/missing are new. */
+export const REQUIREMENT_STATE_WORD: Record<string, string> = {
+  pass: CHECK_RESULT_WORD.PASS!, fail: CHECK_RESULT_WORD.FAIL!, inconclusive: CHECK_RESULT_WORD.INCONCLUSIVE!,
+  pending: '待检查', missing: '没有检查',
+};
+export function requirementWordOf(state: string): string { return REQUIREMENT_STATE_WORD[state] ?? state; }
 const QUERY_RESULT_WORD: Record<string, string> = {
   running: '进行中', answered: '已回答', completed: '已回答', failed: '失败', cancelled: '已取消', unknown: '未知',
   timeout: '超时', gap: '没有正式回答', not_entered: '没有开始',

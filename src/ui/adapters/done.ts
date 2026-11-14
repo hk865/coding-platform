@@ -25,7 +25,7 @@ import { taskProgressOf } from './goals.js';
 import { briefRowsOf } from './member.js';
 import { WITNESS_CHECK_WORD } from './chain.js';
 import {
-  CHECK_RESULT_WORD, FAILURE_CLASS_WORD, goalDisplayState, reworkLines, taskStateOfRow,
+  CHECK_RESULT_WORD, requirementWordOf, FAILURE_CLASS_WORD, goalDisplayState, reworkLines, taskStateOfRow,
 } from './task-map.js';
 
 /** The `verification/round` projection this page reads (§2.3): the delivery's
@@ -193,11 +193,11 @@ const NO_REPORT = '—';
 /** §2.5's state words, squares and text classes. The three result words are
  * `CHECK_RESULT_WORD`'s; only `pending` and `missing` are new here (§2.3). */
 const REQUIREMENT_VIEW: Record<DoneRequirementState, [string, string, string]> = {
-  pass: [CHECK_RESULT_WORD.PASS!, 'sq z10 s-satisfied', 'tx-satisfied'],
-  fail: [CHECK_RESULT_WORD.FAIL!, 'sq z10 s-failed', 'tx-failed'],
-  inconclusive: [CHECK_RESULT_WORD.INCONCLUSIVE!, 'sq z10 s-blocked', 'tx-blocked'],
-  pending: ['待检查', 'sq z10 s-pending', ''],
-  missing: ['没有检查', 'sq z10 s-idle', ''],
+  pass: [requirementWordOf('pass'), 'sq z10 s-satisfied', 'tx-satisfied'],
+  fail: [requirementWordOf('fail'), 'sq z10 s-failed', 'tx-failed'],
+  inconclusive: [requirementWordOf('inconclusive'), 'sq z10 s-blocked', 'tx-blocked'],
+  pending: [requirementWordOf('pending'), 'sq z10 s-pending', ''],
+  missing: [requirementWordOf('missing'), 'sq z10 s-idle', ''],
 };
 
 function digestShort(ref: ArtifactRef | null): string {

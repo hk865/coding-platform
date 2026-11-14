@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { runRevisionOf } from '../helpers/PL-deviation-fixture.js';
 import { openS7C1World, type S7C1World } from '../helpers/S7C-member-fixture.js';
 import { findClass, findElement } from './helpers/boot-page.js';
-import { bootChain, goalRevisionOf, seedChainChecks, taskBar, taskRowOf, type ChainPage } from './helpers/E3C-world.js';
+import { barItem, bootChain, goalRevisionOf, seedChainChecks, taskBar, taskRowOf, type ChainPage } from './helpers/E3C-world.js';
 import {
   UUID_V4, buttonText, callsOf, controlPins, memberSearch, metaOf, openMemberW4, press, settle, worldSlot,
 } from './helpers/E3M-world.js';
@@ -24,10 +24,7 @@ const world = (key: string, firstRun: 'ended' | 'held') =>
 /** The five failure-class labels the platform derives; none belongs on a running task's bar. */
 const FAILURE_WORDS = ['平台中断', '已取消', '检查未通过', '执行失败', '检查不完整'];
 
-const inBar = (root: FakeElement, className: string): string => {
-  const bar = taskBar(root);
-  return bar === undefined ? '' : textOf(findClass(bar, className));
-};
+const inBar = (root: FakeElement, className: string): string => barItem(root, className);
 const headTitle = (root: FakeElement): string => textOf(findClass(findClass(root, 'main') ?? root, 'head-title'));
 const confirmDialog = (root: FakeElement) => findElement(root, (element) => element.getAttribute('role') === 'alertdialog');
 const bootModule = (s7c: S7C1World): Promise<ChainPage> => bootChain(s7c.world, memberSearch('s7c-goal', s7c.lines.module.ref));

@@ -17,7 +17,7 @@ import { asRecord, asText } from '../values.js';
 import { AUTONOMY_TEXT, taskStageOf } from './goals.js';
 import { goalControlsOf, type NavInbox } from './nav.js';
 import {
-  lastAnsweredRoundOf, requestRootKey, type MainData, type MainPageCursorV1, type MainRequestRead, type MainRoundRead,
+  lastAnsweredRoundOf, requestRootKey, type MainData, type MainPageCursorV1, type MainPageV1, type MainRequestRead, type MainRoundRead,
 } from './main.js';
 
 /** The JSON ref of one candidate, four fields; never a copy of a core type. */
@@ -56,7 +56,10 @@ type PlanRequestRead = Omit<MainRequestRead, 'rounds'> & {
 
 /** `main/read`'s page, widened beside Main's `MainPageV1` without re-copying
  * its fields; structurally a `MainPageV1`. */
-export type MainPageRead = { requests: PlanRequestRead[]; next: MainPageCursorV1 | null };
+export type MainPageRead = {
+  notices: MainPageV1['notices'];
+  requests: PlanRequestRead[]; next: MainPageCursorV1 | null;
+};
 
 export type PlanGoalCard = {
   draft: {
@@ -92,6 +95,14 @@ export type PlanDoc = {
 };
 
 export type PlanVersionRow = { revision: number; at: string; reasonLabel: string };
+
+/** The adopted card (prototype `Plan.dc.html:4506` 已采用): after `plans/apply`
+ * the request's candidate closes, so the page reads the adopted proposal back
+ * and keeps its tasks and checks on the read-only card. */
+export function adoptedPlanDoc(doc: PlanDoc, proposal: PlanProposalShape): PlanDoc {
+  return { ...doc, proposal, live: false, selectable: false, stText: '已采用',
+    tasks: tasksOf(proposal.draft), checks: planChecksOf(proposal.draft) };
+}
 
 /** §2.2 step 4: `plans/versions`' `VersionListPageV1` rows at the JSON edge. */
 export function versionRowsOf(page: { items: { revision: number; at: string | null; reasonLabel: string }[] }): PlanVersionRow[] {

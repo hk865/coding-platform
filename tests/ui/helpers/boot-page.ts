@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { expect } from 'vitest';
 import { fileURLToPath } from 'node:url';
 import { bootBoardPage } from '../../../src/ui/boot.js';
 import { PLATFORM_TOKEN_META_NAME } from '../../../src/ui/host-client.js';
@@ -137,6 +138,18 @@ export function findElement(root: FakeElement, predicate: (element: FakeElement)
 
 export function findButton(root: FakeElement, text: string): FakeElement | undefined {
   return findElement(root, (element) => element.tagName.toLowerCase() === 'button' && element.textContent.includes(text));
+}
+
+/** A `<button>` whose `aria-label` contains `text`, in depth-first order. */
+export function findButtonByLabel(root: FakeElement, text: string): FakeElement | undefined {
+  return findElement(root, (element) => element.tagName.toLowerCase() === 'button'
+    && (element.getAttribute('aria-label') ?? '').includes(text));
+}
+
+/** A board link's address, resolved against the Host's workbench origin; `href` must exist. */
+export function boardUrlOf(href: string | null, from: string): URL {
+  expect(href).not.toBeNull();
+  return new URL(href!, `http://host/workbench/${from}`);
 }
 
 /** An `<a>` whose text contains `text` and, when given, whose `href` starts with `hrefStarts`. */

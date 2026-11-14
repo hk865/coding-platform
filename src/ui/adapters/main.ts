@@ -9,17 +9,18 @@
  * reads and are never a second copy of a rule.
  */
 import type { SessionRef } from '../../contracts/core/identity.js';
+import type { DecisionSubjectV1 } from '../../contracts/goal-decisions.js';
 import type { QueryJobRef, RequestReferenceV1 } from '../../contracts/query-job.js';
 import type { LineExecutionItemV1 } from '../../contracts/work-line.js';
 import type { SessionMessageReadV1, MessageBody } from '../../contracts/mailbox.js';
 import { asRecord, asText } from '../values.js';
 import { localShortAt } from './task-map.js';
-import type { DecideData } from './decide.js';
+import { subjectGoalId, type DecideData } from './decide.js';
 import { taskProgressOf } from './goals.js';
 import {
   messageBodyKey, runWordOf, type MemberCopySource, type MemberLine, type MemberWriteBasis,
 } from './member.js';
-import type { NavData } from './nav.js';
+import type { NavData, NavGoal } from './nav.js';
 import type { AuxPanelData } from './aux-panel.js';
 
 /** One file quote of a user bubble (`RequestReferenceV1`'s four fields). */
@@ -77,7 +78,14 @@ export type MainLineRecord = {
   write: MemberWriteBasis | null;
 };
 
+export type MainGoal = NavGoal & {
+  /** The shown notice lines of this Goal (`main/read`'s folded `summary`); empty for every other Goal. */
+  notices: string[];
+};
+
 export type MainData = NavData & {
+  /** The rail rows with this Goal's folded notice lines (main/read is one Goal's view). */
+  goals: MainGoal[];
   /** This read's queue; null = the queue read failed and only the cards hide. */
   decisions: DecideData | null;
   /** Time order, oldest first (the prototype draws the newest at the bottom). */
@@ -116,8 +124,14 @@ export type MainRequestRead = {
   rounds: MainRoundRead[];
 };
 
+/** One shown notice of `main/read`, narrowed to what the rail's fold line reads. */
+export type MainNoticeRead = { summary: string; subject: DecisionSubjectV1 };
+
 /** `main/read`'s value (`MainPageV1`), narrowed to what the page reads. */
-export type MainPageV1 = { requests: MainRequestRead[]; next: MainPageCursorV1 | null };
+export type MainPageV1 = {
+  notices: MainNoticeRead[];
+  requests: MainRequestRead[]; next: MainPageCursorV1 | null;
+};
 
 /** The continuation `main/read` returns; the UI keeps its boundary shape. */
 export type MainPageCursorV1 = { phase: 'goal' | 'pre'; since: string; rootKey: string };
@@ -338,8 +352,15 @@ export function adaptMain(input: {
   older: MainPageCursorV1 | null; track: MainTrackRow[] | null;
   line?: MainLineRecord | null; aux?: AuxPanelData | null;
 }): MainData {
+  const page = input.pages[0] ?? null;
+  const notices = page === null ? [] : page.notices;
+  const goals = input.nav.goals.map((goal) => ({
+    ...goal,
+    notices: notices.filter((notice) => subjectGoalId(notice.subject) === goal.goalId).map((notice) => notice.summary),
+  }));
   return {
     ...input.nav,
+    goals,
     decisions: input.decisions,
     conversation: conversationOf(input.pages),
     older: input.older,

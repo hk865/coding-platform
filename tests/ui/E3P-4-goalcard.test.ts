@@ -6,7 +6,7 @@ import { labelled, typeInto } from './helpers/E3D-page.js';
 import { cancelGoal } from './helpers/E3N-world.js';
 import { openE3GW0, openE3GW1 } from './helpers/E3G-world.js';
 import {
-  answerOf, goalCard, goalCardValue, lineText, openPAW5, planLines, planReady, valueText,
+  answerOf, goalCard, goalCardValue, goalbarButton, lineText, openPAW5, planLines, planReady, valueText,
 } from './helpers/E3P-world.js';
 import { s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
 import { S6A_SCOPE, type S6ARequestWorld } from '../helpers/S6A-request-fixture.js';
@@ -21,9 +21,6 @@ import type { FakeElement } from './helpers/dom.js';
 
 const worlds: S6ARequestWorld[] = [];
 afterEach(async () => { for (const world of worlds.splice(0)) await world.close(); });
-
-const goalbarButton = (root: FakeElement, text: string): FakeElement | undefined =>
-  findButton(findClass(root, 'goalbar') ?? root, text);
 
 /** The goal card's 自治档位 control: the menu button of a pending card, or the read-only value. */
 function autonomyText(card: FakeElement): string {

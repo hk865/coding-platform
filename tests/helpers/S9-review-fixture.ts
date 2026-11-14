@@ -24,6 +24,7 @@
 import type { RunRef, TaskTriple } from '../../src/contracts/dispatch.js';
 import type { EvidenceRef } from '../../src/contracts/evidence.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
+import type { CompletionPolicyContentV1 } from '../../src/contracts/governance.js';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
 import type { PreparedQueryManifestV1 } from '../../src/contracts/core/prepared-execution.js';
@@ -136,8 +137,7 @@ export async function openS9ReviewWorld(options: {
     const main = s6aCardsWorkspace(world, S6A_SCOPE);
     await world.setResumeOnStartup(false);
     const governance = await governS6B(world, main, world.goals);
-    await governance.activatePolicy({ content: { schemaVersion: 1, requirementKinds: ['static', 'reviewer'],
-      minimumRequiredRequirementsPerObligation: 1 } });
+    await governance.activatePolicy({ content: REVIEW_REQUIRED_POLICY });
     const goal = world.goals.first;
     await adoptPLPlanDraft(main, goal, options.draft === undefined
       ? s9ReviewDraft(goal, options.checks) : options.draft(goal), 's9-review');
@@ -333,3 +333,8 @@ export function s9ReviewerProfile(): S7BVWorkProfile {
   return { roleBinding: profile.roleBinding, runtimeBudget: profile.runtimeBudget, budget: profile.budget,
     consumerId: profile.consumerId };
 }
+
+/** The completion policy that admits the required independent-review kind (S9's worlds and E3P's P10-1). */
+export const REVIEW_REQUIRED_POLICY: CompletionPolicyContentV1 = {
+  schemaVersion: 1, requirementKinds: ['static', 'reviewer'], minimumRequiredRequirementsPerObligation: 1,
+};

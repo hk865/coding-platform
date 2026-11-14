@@ -78,6 +78,10 @@ export type NavLine = {
   /** `LineNameV1.goalRef`'s Goal: the line serves this Goal; empty when it has none.
    * Chain uses it to pick the Goal's own line (DC3) and to say the Goal has no line. */
   goalId: string;
+  /** The line's module id (`groups.module.moduleId`); empty when it has none. */
+  scope: string;
+  /** The kept tag of an archived line (`status.archivedTag`); empty when none. */
+  archivedTag: string;
   chainSessions: unknown[];
   pinned: boolean;
   archived: boolean;
@@ -150,11 +154,16 @@ function countValue(count: unknown): number {
 export function lineStatusView(status: unknown): { st: string; word: string; dot: string } {
   const row = asRecord(status);
   const attention = asText(asRecord(row.attention).code);
+  const own = asText(row.own);
+  /* A waiting line's own word is the member state word (等回复); the decide
+     attention stays in the queue instead of replacing it (`tests/ui/E3M-8-waits.test.ts` P11-3; UI-WORKBENCH §5). */
+  if (own === 'waiting_reply' && attention === 'decide') {
+    return { st: 'waiting', word: OWN_WORD.waiting_reply!, dot: 'dot s-waiting' };
+  }
   if (attention !== '' && ATTENTION_WORD[attention] !== undefined) {
     const st = ATTENTION_ST[attention] ?? 'waiting';
     return { st, word: ATTENTION_WORD[attention]!, dot: 'dot s-' + (st === 'waiting' ? 'waiting' : 'idle') };
   }
-  const own = asText(row.own);
   const st = own === 'working' || own === 'checking' || own === 'starting' ? 'doing'
     : own === 'paused' || own === 'waiting_reply' || own === 'unknown' ? 'waiting' : 'idle';
   return { st, word: OWN_WORD[own] ?? '待命', dot: 'dot s-' + (st === 'doing' ? 'running' : st === 'waiting' ? 'waiting' : 'idle') };
@@ -191,6 +200,8 @@ function navLineOf(entry: unknown, archived: boolean): NavLine {
     short: task,
     task: task === '' ? null : task,
     goalId: asText(asRecord(nameRow.goalRef).goalId),
+    scope: asText(asRecord(asRecord(row.groups).module).moduleId),
+    archivedTag: asText(status.archivedTag),
     chainSessions: Array.isArray(row.chainSessions) ? row.chainSessions : [],
     pinned: row.pinned === true,
     archived,
@@ -216,7 +227,8 @@ function synthLine(): NavLine {
   return {
     id: 'main', key: { projectId: '', sessionId: '' }, name: '秘书（主对话）', duty: 'secretary',
     status: '', st: 'idle', word: '', dot: 'dot s-idle', why: '', recent: '', short: '', task: null,
-    goalId: '', chainSessions: [], pinned: false, archived: false, synth: true, responsibleNow: [], lastActivityAt: '',
+    goalId: '', scope: '', archivedTag: '',
+    chainSessions: [], pinned: false, archived: false, synth: true, responsibleNow: [], lastActivityAt: '',
   };
 }
 

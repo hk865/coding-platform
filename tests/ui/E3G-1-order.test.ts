@@ -1,13 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import {
-  bootE3N, countRoute, descendants, hasClass, textOf, turns,
-} from './helpers/E3N-page.js';
+import { countRoute, descendants, hasClass, textOf, turns } from './helpers/E3N-page.js';
 import { click } from './helpers/E3N-interact.js';
-import { findClass, findLink, type BootedPage } from './helpers/boot-page.js';
+import { findButtonByLabel, findClass, findLink } from './helpers/boot-page.js';
 import type { FakeElement } from './helpers/dom.js';
 import { cancelGoal } from './helpers/E3N-world.js';
-import { e3gGoalPins, openE3GW0, type E3GWorld } from './helpers/E3G-world.js';
-import type { PageLog } from './helpers/E3N-page.js';
+import { e3gGoalPins, e3gGoalRows, openE3GGoals, openE3GW0, type E3GWorld } from './helpers/E3G-world.js';
 
 /**
  * E3G-1 G01–G08 (test sheet §2.1): the Goal list, its order writes and the one
@@ -22,8 +19,7 @@ afterEach(async () => {
 });
 
 function rowsOf(root: FakeElement): FakeElement[] {
-  const list = findClass(root, 'gx-list');
-  return list === undefined ? [] : descendants(list).filter((element) => element.getAttribute('role') === 'listitem');
+  return e3gGoalRows(root);
 }
 
 function rowButton(row: FakeElement): FakeElement | undefined {
@@ -32,11 +28,6 @@ function rowButton(row: FakeElement): FakeElement | undefined {
 
 function label(element: FakeElement, name: string): string {
   return element.getAttribute(name) ?? '';
-}
-
-function byLabel(element: FakeElement, text: string): FakeElement | undefined {
-  return descendants(element).find((child) => child.tagName.toLowerCase() === 'button'
-    && (child.getAttribute('aria-label') ?? '').includes(text));
 }
 
 function pairsOf(root: FakeElement): Array<{ key: string; value: string }> {
@@ -55,19 +46,11 @@ function currentOf(row: FakeElement): string | null {
   return row.getAttribute('aria-current') ?? rowButton(row)?.getAttribute('aria-current') ?? null;
 }
 
-async function openGoals(world: E3GWorld['world'], search?: string): Promise<{ page: BootedPage; log: PageLog }> {
-  const booted = await bootE3N(world, 'Goals', search === undefined ? {} : { search });
-  /* The page's first read is asynchronous; a page that never reads stays on the
-     sample rows, and the row's own assertion is the one that fails. */
-  await turns(() => rowsOf(booted.page.root).length === 2, 2_000).catch(() => undefined);
-  return booted;
-}
-
 describe('E3G-1 the Goal order list', () => {
   it('G01 the back link keeps the current Goal', async () => {
     const opened = await openE3GW0();
     worlds.push(opened);
-    const { page } = await openGoals(opened.world, `?goal=${opened.world.goals.first.goalId}`);
+    const { page } = await openE3GGoals(opened.world, `?goal=${opened.world.goals.first.goalId}`);
     try {
       /* 具名改坏: `Goals.dc.html` 的返回链接去掉 `?goal=`；G01 的 goal 断言红。 */
       const back = findLink(page.root, '返回工作台');
@@ -84,7 +67,7 @@ describe('E3G-1 the Goal order list', () => {
   it('G02 the list shows both Goals in order', async () => {
     const opened = await openE3GW0();
     worlds.push(opened);
-    const { page } = await openGoals(opened.world, `?goal=${opened.world.goals.first.goalId}`);
+    const { page } = await openE3GGoals(opened.world, `?goal=${opened.world.goals.first.goalId}`);
     try {
       /* 具名改坏: 适配器按 `ordinal` 倒序排 `goals`；G02 的 `.row-name` 顺序红。 */
       const rows = rowsOf(page.root);
@@ -101,7 +84,7 @@ describe('E3G-1 the Goal order list', () => {
   it('G03 one row opens at a time', async () => {
     const opened = await openE3GW0();
     worlds.push(opened);
-    const { page } = await openGoals(opened.world);
+    const { page } = await openE3GGoals(opened.world);
     try {
       const rows = rowsOf(page.root);
       expect(rows).toHaveLength(2);
@@ -127,11 +110,11 @@ describe('E3G-1 the Goal order list', () => {
     const opened = await openE3GW0();
     worlds.push(opened);
     const pins = await e3gGoalPins(opened.world);
-    const { page, log } = await openGoals(opened.world);
+    const { page, log } = await openE3GGoals(opened.world);
     try {
       const rows = rowsOf(page.root);
       expect(rows).toHaveLength(2);
-      const up = byLabel(rows[1]!, '上移');
+      const up = findButtonByLabel(rows[1]!, '上移');
       expect(up).toBeDefined();
       const before = countRoute(log, 'goals/reorder');
       click(up!);
@@ -155,12 +138,12 @@ describe('E3G-1 the Goal order list', () => {
   it('G05 the first up and last down arrows are disabled and write nothing', async () => {
     const opened = await openE3GW0();
     worlds.push(opened);
-    const { page, log } = await openGoals(opened.world);
+    const { page, log } = await openE3GGoals(opened.world);
     try {
       const rows = rowsOf(page.root);
       expect(rows).toHaveLength(2);
-      const up = byLabel(rows[0]!, '已经在第 1 位');
-      const down = byLabel(rows[1]!, '已经在最后');
+      const up = findButtonByLabel(rows[0]!, '已经在第 1 位');
+      const down = findButtonByLabel(rows[1]!, '已经在最后');
       expect(up).toBeDefined();
       expect(down).toBeDefined();
       /* 具名改坏: 删掉首/末位的禁用；G05 的 `is-off` 和零请求红。 */
@@ -180,7 +163,7 @@ describe('E3G-1 the Goal order list', () => {
   it('G06 ?goal= names the current row', async () => {
     const opened = await openE3GW0();
     worlds.push(opened);
-    const { page } = await openGoals(opened.world, `?goal=${opened.world.goals.second.goalId}`);
+    const { page } = await openE3GGoals(opened.world, `?goal=${opened.world.goals.second.goalId}`);
     try {
       const rows = rowsOf(page.root);
       expect(rows).toHaveLength(2);
@@ -197,7 +180,7 @@ describe('E3G-1 the Goal order list', () => {
     const opened = await openE3GW0();
     worlds.push(opened);
     await cancelGoal(opened.world, opened.world.goals.first);
-    const { page } = await openGoals(opened.world);
+    const { page } = await openE3GGoals(opened.world);
     try {
       const rows = rowsOf(page.root);
       expect(rows).toHaveLength(2);
@@ -213,7 +196,7 @@ describe('E3G-1 the Goal order list', () => {
   it('G08 the open row states progress, line, change count and autonomy', async () => {
     const opened = await openE3GW0();
     worlds.push(opened);
-    const { page } = await openGoals(opened.world);
+    const { page } = await openE3GGoals(opened.world);
     try {
       const rows = rowsOf(page.root);
       expect(rows).toHaveLength(2);

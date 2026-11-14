@@ -114,7 +114,7 @@ export async function seedArchWorld(world: S6ARequestWorld,
 }
 
 /** The project's governance a Plan needs: the real policy install + activate. */
-async function activateArchPolicy(world: S6ARequestWorld): Promise<void> {
+export async function activateArchPolicy(world: S6ARequestWorld): Promise<void> {
   const scope = world.scope;
   const projectRef = { aggregateType: 'Project' as const, projectId: scope.projectId };
   const registration = await world.post('workspaces/registration',

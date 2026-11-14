@@ -224,6 +224,12 @@ export function taskBar(root: FakeElement): FakeElement | undefined {
   return byLabel(root, '任务状态');
 }
 
+/** The text of `className` inside the dock's task bar; '' when the bar is absent. */
+export function barItem(root: FakeElement, className: string): string {
+  const bar = taskBar(root);
+  return bar === undefined ? '' : textOf(findClass(bar, className));
+}
+
 /** The head buttons of the 对话 thread's `.grp` groups whose text contains `head`. */
 export function groupHeads(root: FakeElement, head?: string): FakeElement[] {
   const thread = findClass(root, 'thread');

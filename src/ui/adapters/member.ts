@@ -43,6 +43,24 @@ export type MemberWriteBasis = {
   goalRevision: number;
 };
 
+/** One collapsed 启动核对 section: grouped start-up rows; hidden when there is nothing to report. */
+export type MemberStartup = {
+  show: boolean;
+  count: number;
+  groups: Array<{ label: string; rows: Array<{ text: string }> }>;
+};
+
+/** The four display fields of one reconcile line; the page never reads the Host type. */
+export type MemberStartupLine = { ref: string; row: string; status: string; reason: string };
+export type MemberStartupReport = {
+  sessions: MemberStartupLine[]; runs: MemberStartupLine[]; queries: MemberStartupLine[];
+  checks: MemberStartupLine[]; controls: MemberStartupLine[]; reviews: MemberStartupLine[];
+  fanOut: Array<{ goalId: string; control: string; problem: string; runs: number; continuations: number }>;
+  redriveGoals: Array<{ goalId: string; taskIds: string[] }>;
+  interruptedGoals: Array<{ goalId: string; taskIds: string[]; runRefs: number; close: string; status: string }>;
+  problems: string[];
+};
+
 export type MemberSource = {
   scope: CoreScope;
   nav: NavData;
@@ -65,6 +83,8 @@ export type MemberSource = {
   /** The graph of the Goal the line's task belongs to; `null` for no Plan. */
   taskGraph: TaskGraph | null;
   write: MemberWriteBasis | null;
+  /** The Host's start-up reconcile report; `null` when this Host did not reconcile. */
+  startup: MemberStartupReport | null;
 };
 
 export type MemberRailRow = NavLine & { current: boolean };
@@ -132,6 +152,7 @@ export type MemberData = {
   trace: MemberTraceRow[];
   changes: MemberChanges;
   write: MemberWriteBasis | null;
+  startup: MemberStartup;
 };
 
 /** The one key both reads use for a message body: workspace + message + part. */
@@ -255,6 +276,75 @@ export function briefRowsOf(brief: ContinuationBriefV1): Array<{ k: string; v: s
   ];
 }
 
+/** The six step arrays of the report, in the order the 启动核对 section lists them. */
+const STARTUP_STEPS = ['sessions', 'runs', 'queries', 'checks', 'controls', 'reviews'] as const;
+const STARTUP_STEP_WORD: Record<typeof STARTUP_STEPS[number], string> = {
+  sessions: '工作记录', runs: '执行', queries: '咨询', checks: '检查', controls: '控制', reviews: '审阅',
+};
+
+const startupTexts = (value: unknown): string[] =>
+  (Array.isArray(value) ? value : []).map((entry) => asText(entry)).filter((text) => text !== '');
+const startupNumber = (value: unknown): number => typeof value === 'number' ? value : 0;
+
+/** The JSON boundary of `host/reconcile-report`: keep the fields the section shows. */
+export function startupReportOf(value: unknown): MemberStartupReport | null {
+  if (value === null || value === undefined) return null;
+  const report = asRecord(value);
+  const lines = (step: typeof STARTUP_STEPS[number]): MemberStartupLine[] =>
+    (Array.isArray(report[step]) ? report[step] : []).map((entry) => {
+      const line = asRecord(entry);
+      return { ref: asText(line.ref), row: asText(line.row), status: asText(line.status), reason: asText(line.reason) };
+    });
+  return {
+    sessions: lines('sessions'), runs: lines('runs'), queries: lines('queries'),
+    checks: lines('checks'), controls: lines('controls'), reviews: lines('reviews'),
+    fanOut: (Array.isArray(report.fanOut) ? report.fanOut : []).map((entry) => {
+      const row = asRecord(entry);
+      return { goalId: asText(row.goalId), control: asText(row.control), problem: asText(row.problem),
+        runs: startupNumber(row.runs), continuations: startupNumber(row.continuations) };
+    }),
+    redriveGoals: (Array.isArray(report.redriveGoals) ? report.redriveGoals : []).map((entry) => {
+      const row = asRecord(entry);
+      return { goalId: asText(asRecord(row.goalRef).goalId), taskIds: startupTexts(row.taskIds) };
+    }),
+    interruptedGoals: (Array.isArray(report.interruptedGoals) ? report.interruptedGoals : []).map((entry) => {
+      const row = asRecord(entry);
+      return { goalId: asText(asRecord(row.goalRef).goalId), taskIds: startupTexts(row.taskIds),
+        runRefs: Array.isArray(row.runRefs) ? row.runRefs.length : 0,
+        close: asText(row.close), status: asText(row.status) };
+    }),
+    problems: startupTexts(report.problems),
+  };
+}
+
+/** The 启动核对 rows, grouped by step; an empty report hides the section. */
+function startupOf(report: MemberStartupReport | null): MemberStartup {
+  if (report === null) return { show: false, count: 0, groups: [] };
+  const lineRows = (lines: MemberStartupLine[]): Array<{ text: string }> => lines.map((line) => ({
+    text: line.ref + ' · ' + line.row + ' · ' + line.status
+      + (line.reason === '' ? '' : ' · ' + line.reason),
+  }));
+  const groups = [
+    ...STARTUP_STEPS.map((step) => ({ label: STARTUP_STEP_WORD[step], rows: lineRows(report[step]) })),
+    { label: '扇出', rows: report.fanOut.map((row) => ({
+      text: 'Goal ' + row.goalId + ' · 控制 ' + (row.control === '' ? '—' : row.control)
+        + ' · 执行 ' + String(row.runs) + ' · 接续 ' + String(row.continuations)
+        + (row.problem === '' ? '' : ' · ' + row.problem),
+    })) },
+    { label: '重新驱动', rows: report.redriveGoals.map((row) => ({
+      text: 'Goal ' + row.goalId + ' · 任务 ' + (row.taskIds.join('、') || '—'),
+    })) },
+    { label: '被中断的目标', rows: report.interruptedGoals.map((row) => ({
+      text: 'Goal ' + row.goalId + ' · ' + row.status + ' · ' + row.close
+        + ' · 任务 ' + (row.taskIds.join('、') || '—')
+        + (row.runRefs === 0 ? '' : ' · 执行 ' + String(row.runRefs)),
+    })) },
+    { label: '问题', rows: report.problems.map((text) => ({ text })) },
+  ].filter((group) => group.rows.length > 0);
+  const count = groups.reduce((sum, group) => sum + group.rows.length, 0);
+  return { show: count > 0, count, groups };
+}
+
 /** The member data of one read. `selected` is the line in the centre; `null`
  * is the empty state. */
 export function adaptMember(source: MemberSource, selected: LineKey | null): MemberData {
@@ -289,6 +379,7 @@ export function adaptMember(source: MemberSource, selected: LineKey | null): Mem
     trace: traceOf(source.history),
     changes,
     write: source.write,
+    startup: startupOf(source.startup),
   };
 }
 
@@ -311,8 +402,15 @@ export function adaptMemberLine(source: MemberSource, detail: WorkLineDetailV1):
      a cancel still keeps travelling through the last safe point. */
   const pausePending = pendingKind === 'pause'
     || row.status.markers.some((marker) => marker.kind === 'stop_pending');
-  const advancing = pendingKind === 'cancel'
-    || (pausePending && row.status.own !== 'paused');
+  /* A cancel that landed stops the advancing text: prototype
+     `docs/ui-reference/workbench-2026-10/Member.dc.html:1455-1461` (cancelling keeps the
+     working word; the landed cancel reads 已取消，可重新入队). */
+  const cancelLanded = pendingKind === 'cancel'
+    && source.execution !== null
+    && source.execution.run.status === 'ended'
+    && source.execution.run.outcome === 'cancelled';
+  const advancing = !cancelLanded && (pendingKind === 'cancel'
+    || (pausePending && row.status.own !== 'paused'));
   const live = view.st === 'doing';
   const intervene = controlOf(controls, 'intervene');
   const lineGoalRef = row.name.goalRef;
@@ -338,8 +436,8 @@ export function adaptMemberLine(source: MemberSource, detail: WorkLineDetailV1):
       live,
       advancing,
       still: !live && !advancing,
-      word: view.word,
-      dot: view.dot,
+      word: cancelLanded ? '已取消，可重新入队' : view.word,
+      dot: cancelLanded ? 'dot s-cancelled' : view.dot,
       advText: pendingKind === 'cancel' ? '已请求取消，等安全点' : '已请求暂停，等安全点',
     },
     attempt: attemptOf(taskRow),

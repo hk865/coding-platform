@@ -224,6 +224,18 @@ body { margin: 0; background: #1F1F1F; }
               <div class="msg-agent"><p class="prose">{{b.text}}</p></div>
             </sc-if>
 
+            <sc-if value="{{b.isBrief}}" hint-placeholder-val="{{ false }}">
+              <div class="lv-brief">
+                <div class="sys-line">
+                  <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.75 8a5.25 5.25 0 1 0 1.6-3.8"></path><path d="M2.5 2.75v2.5H5"></path><path d="M8 5.25V8l2 1.25"></path></svg>
+                  <span>接续说明：只用已保存的事实组装</span>
+                </div>
+                <dl class="d-dl">
+                  <sc-for list="{{b.rows}}" as="br" hint-placeholder-count="7"><dt>{{br.k}}</dt><dd>{{br.v}}</dd></sc-for>
+                </dl>
+              </div>
+            </sc-if>
+
             <sc-if value="{{b.isMsg}}" hint-placeholder-val="{{ false }}">
               <div class="msg-agent">
                 <div class="msg-from">
@@ -2107,7 +2119,7 @@ class Component extends DCLogic {
       let steps;
       if (flat) steps = rows;
       else {
-        const bad = rows.filter((x) => x.fail);
+        const bad = rows.filter((x) => x.fail || x.review);
         const n = rows.length - bad.length;
         if (more) {
           steps = rows.concat([{ id: id + '-less', kind: 'less', verb: '收起通过的 ' + n + ' 项', rest: true, expanded: true,
@@ -2117,7 +2129,7 @@ class Component extends DCLogic {
             onToggle: () => set({ crest: Object.assign({}, cur().crest, { [id]: true }) }) }]);
         }
       }
-      chainGroup(head, steps, { keepHead: true });
+      chainGroup(head, steps, { keepHead: true, defOpen: rows.some((x) => x.review) });
     };
 
     /* one attempt: its real run facts, then the process group that has no
@@ -2128,6 +2140,9 @@ class Component extends DCLogic {
       sys('att-' + a.ordinal, 'claim', '第 ' + a.ordinal + ' 次尝试 · ' + a.statusWord
         + (a.outcomeWord === null || a.outcomeWord === a.statusWord ? '' : ' · ' + a.outcomeWord)
         + (at === '' ? '' : ' · ' + at), at);
+      if (a.brief !== null) {
+        items.push(Object.assign({}, blankItem, { id: 'cb-' + a.ordinal, isBrief: true, rows: a.brief.rows }));
+      }
       chainGroup({ id: 'att-' + a.ordinal, off: true, live: liveAttempt(a),
         head: NOT_CONNECTED, t: NOT_CONNECTED, toggle: notConnected }, [], { defOpen: false });
       a.rounds.forEach((round) => {
@@ -2139,7 +2154,7 @@ class Component extends DCLogic {
         const rows = round.checks.length === 0
           ? [{ id: 'r-' + a.ordinal + '-' + round.ordinal + '-none', kind: 'cmd', verb: NOT_CONNECTED, meta: '' }]
           : round.checks.map((c, j) => ({ id: 'r-' + a.ordinal + '-' + round.ordinal + '-' + j, kind: 'cmd',
-            verb: c.command, obj: c.outcomeWord, meta: c.reason || '', fail: c.fail, rec: null }));
+            verb: c.command, obj: c.outcomeWord, meta: c.reason || '', fail: c.fail, review: c.review, rec: null }));
         check('r-' + a.ordinal + '-' + round.ordinal, round, rows, head);
       });
     });

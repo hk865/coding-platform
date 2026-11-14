@@ -3041,6 +3041,7 @@ class Component extends DCLogic {
       if (real && real.disposition) {
         out.rel = out.rel.concat([{ k: '处置', items: [], files: [], lines: [real.disposition.text], hasText: false, text: '' }]);
       }
+      if (real && real.filesUnknown) out.rel = out.rel.concat([grp('改过', [], '改动未知')]);
       /* 架构: the planned modules (计划要改, no square: no real file state) and the
          adapted actual files, grouped by the formal catalog; the plan's listed files (计划要改, no square while only planned);
          an actual file's +/− and （未提交） are in its tag (E3-7). */
@@ -3175,7 +3176,7 @@ class Component extends DCLogic {
       back: noop, canFold: false, foldLabel: '展开', toggleFold: noop, open: false, items: [], none: false,
       hasMore: false, more: '', hasHeld: false, held: [] };
     const emptyDet = { sq: 'sq', name: '', tx: '', word: '', why: '', hasAt: false, atTime: '', atWord: '', atTx: '', atWhy: '', crumbs: [], agent: '', sem: '', rel: [],
-      hasArch: false, archSum: '', arch: [], hasLines: false, lines: [], noLines: false, hasLinesNote: false, linesNote: '', canHandle: false, acts: [], close: noop,
+      hasArch: false, archSum: '', arch: [], filesUnknown: false, hasLines: false, lines: [], noLines: false, hasLinesNote: false, linesNote: '', canHandle: false, acts: [], close: noop,
       pinned: false, hasPins: false, pins: [], closeLabel: '关闭详情' };
     const emptyWl = { full: false, blockCls: 'wl-block', cls: 'tl full wl', bys: [], wins: [], hasCell: false, cellLabel: '', clearCell: noop, hasCrumb: false, crumbs: [], stale: false, resort: noop, replay: false, backNow: noop, atText: '',
       axName: '', ticks: [], evs: [], nowX: 0, nowTag: false, cur: { show: false, off: false, x: 0, label: '', text: '', min: 0, max: 0, now: 0, cls: 'wl-cur', key: noop }, down: noop, move: noop, up: noop,

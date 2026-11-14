@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "authorization": {
+    "text": null
+  },
+  "tokenCaps": {
+    "total": 400000000,
+    "perScenario": 50000000
+  },
+  "window": {
+    "from": null,
+    "to": null
+  },
+  "scenarios": ["A1", "B1", "E05", "E06", "E08", "E09", "E12", "iteration", "intervention", "waiting", "attached", "B06", "compaction"],
+  "autonomy": {
+    "E05": "after_plan_confirmation",
+    "E06": "after_plan_confirmation",
+    "E08": "every_step",
+    "E09": "after_plan_confirmation",
+    "E12": "after_plan_confirmation",
+    "iteration": "after_plan_confirmation",
+    "intervention": "after_plan_confirmation",
+    "waiting": "after_plan_confirmation",
+    "attached": "after_plan_confirmation",
+    "B06": "after_plan_confirmation",
+    "compaction": "after_plan_confirmation"
+  },
+  "runRoot": null,
+  "reportDir": null,
+  "host": {
+    "launcher": {
+      "script": "/home/han001/smoke-rr/start-host.sh",
+      "cdLine": "cd $HOME/smoke-rr"
+    },
+    "providerProbe": "/mnt/d/cc-lead-notes/impl/smoke/srr/smoke-route.sh",
+    "settingsModels": [
+      {
+        "id": "smoke-flash",
+        "label": "deepseek-v4.1-flash via the local gateway",
+        "provider": "deepseek",
+        "model": "deepseek-v4.1-flash",
+        "baseUrl": "http://172.17.160.1:8080/v1",
+        "thinking": "disabled",
+        "secretEnvironmentVariable": "OPENAI_API_KEY"
+      },
+      {
+        "id": "smoke-ollama",
+        "label": "deepseek-v4.1-flash via Ollama",
+        "provider": "deepseek",
+        "model": "deepseek-v4.1-flash",
+        "baseUrl": "https://ollama.com/v1",
+        "thinking": "disabled",
+        "secretEnvironmentVariable": "OLLAMA_API_KEY"
+      },
+      {
+        "id": "smoke-deepseek",
+        "label": "deepseek-flash on the DeepSeek API",
+        "provider": "deepseek",
+        "model": "deepseek-flash",
+        "thinking": "disabled",
+        "secretEnvironmentVariable": "DEEPSEEK_API_KEY"
+      }
+    ]
+  },
+  "cells": {
+    "A1": {
+      "modelId": null,
+      "contextWindowTokens": 1000000,
+      "reservedOutput": 131072
+    },
+    "B1": {
+      "modelId": null,
+      "contextWindowTokens": 128000,
+      "reservedOutput": 64000,
+      "outputTokens": 64000
+    },
+    "compaction": {
+      "modelId": null,
+      "triggerRatio": 0.02,
+      "targetRatio": 0.01
+    }
+  }
+}

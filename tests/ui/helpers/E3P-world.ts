@@ -5,11 +5,12 @@ import {
 } from '../../helpers/S6A-history-fixture.js';
 import { S6A_GOAL_1, S6A_SCOPE, S6A_WORK_ROLE, type S6ASession } from '../../helpers/S6A-request-fixture.js';
 import { graphWrite, plain } from '../../helpers/AG2b-collaboration-fixture.js';
+import { REVIEW_REQUIRED_POLICY } from '../../helpers/S9-review-fixture.js';
 import { ready } from '../../helpers/S7A-fixture.js';
 import { waitFor as readUntil } from '../../scenarios/harness.js';
-import { findElement } from './boot-page.js';
+import { findButton, findClass, findElement } from './boot-page.js';
 import { FakeElement } from './dom.js';
-import { callsTo, descendants, hasClass, quietPage, textOf, waitFor, type PageLog } from './E3N-page.js';
+import { bootE3N, callsTo, descendants, hasClass, quietPage, textOf, waitFor, type PageLog } from './E3N-page.js';
 
 /**
  * E3P (Plan page package A, test sheet §1.2): the request worlds the Plan rows
@@ -40,11 +41,18 @@ async function guarded<T>(world: S6AHostWorld, build: () => Promise<T>): Promise
   }
 }
 
-/** W1: two seeded Goals, both pointers, one secretary; goal 1's request `PA question` answered with two ideas. */
-export async function openPAW1(): Promise<PAWorld> {
+/**
+ * W1: two seeded Goals, both pointers, one secretary; goal 1's request `PA question` answered with two ideas.
+ * `reviewer: true` activates a policy that also admits the `reviewer` requirement kind (the S9 world's policy),
+ * so a plan round can carry a required independent-review obligation; `planCall` adds that obligation.
+ */
+export async function openPAW1(options: { reviewer?: boolean } = {}): Promise<PAWorld> {
   const world = await openS6AHostWorld({ backend: 'memory', extraHostOptions: { requestDriver: 'on' } });
   return await guarded(world, async () => {
-    await initializeProject(world);
+    const governance = await initializeProject(world);
+    if (options.reviewer === true) {
+      await governance.activatePolicy({ content: REVIEW_REQUIRED_POLICY });
+    }
     const secretary = await world.createSecretary('pa-secretary');
     const first = await answeredRound(world, { session: secretary,
       answer: secretaryAnswer({ body: 'PA body', ideas: PA_IDEAS }), submit: newRequest('pa-ask', secretary, 'PA question') });
@@ -53,7 +61,7 @@ export async function openPAW1(): Promise<PAWorld> {
 }
 
 /** One complete plan through the real `submit_plan_round` tool (the 6C sample's shape, S6C:123-153). */
-function planCall(callId: string, summary: string, workTitle: string) {
+function planCall(callId: string, summary: string, workTitle: string, reviewer = false) {
   const plan = {
     stages: [],
     tasks: [
@@ -65,7 +73,10 @@ function planCall(callId: string, summary: string, workTitle: string) {
     assignments: [{ taskId: 'pa-work', role: S6A_WORK_ROLE.templateId, instruction: 'PA instruction' }],
     obligations: [{ obligationId: 'pa-obligation', title: 'PA delivery', requirementLevel: 'required',
       taskIds: ['pa-work', 'pa-gate'], verificationRequirements: [{ requirementId: 'pa-check', requirementLevel: 'required',
-        kind: 'static', description: 'PA static check' }] }],
+        kind: 'static', description: 'PA static check' }] }, ...(reviewer ? [{ obligationId: 'pa-review-obligation',
+      title: 'PA independent review', requirementLevel: 'required', taskIds: ['pa-work'],
+      verificationRequirements: [{ requirementId: 'pa-review', requirementLevel: 'required', kind: 'reviewer',
+        description: 'PA review check' }] }] : [])],
     taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] }, taskRelations: [], inputRequirements: [],
   };
   return { kind: 'calls' as const, calls: [{ callId, name: 'submit_plan_round', args: { answerKind: 'plan', summary, plan } }] };
@@ -81,11 +92,12 @@ async function candidateOf(world: S6AHostWorld, requestRoot: QueryJobRef): Promi
  * through `plans/apply`; a follow-up's plan turn (`PA version two`, `PA work v2`)
  * leaves the live candidate v2.
  */
-export async function openPAW2(): Promise<PAW2> {
-  const w1 = await openPAW1();
+export async function openPAW2(options: { reviewer?: boolean } = {}): Promise<PAW2> {
+  const w1 = await openPAW1(options);
   const { world, secretary, requestRoot } = w1;
   return await guarded(world, async () => {
-    await world.scripted.script(secretary, [planCall('pa-plan-1', 'PA version one', 'PA work')]);
+    await world.scripted.script(secretary, [planCall('pa-plan-1', 'PA version one', 'PA work',
+      options.reviewer === true)]);
     const selected = await world.selectIdea({ commandId: 'pa-select', round: w1.round, index: 1 });
     if (selected.status !== 'queued') throw new Error(`E3P: the selection was refused: ${JSON.stringify(selected)}`);
     await waitForRound(world, requestRoot, selected.followupRound, 'ended');
@@ -100,7 +112,8 @@ export async function openPAW2(): Promise<PAW2> {
     /* Two adoptions never share one instant: `plans/versions` lists by `acceptedAt`
        (newest first), so v2's adoption must come later on the world clock. */
     world.clock.advance(1000);
-    await world.scripted.script(secretary, [planCall('pa-plan-2', 'PA version two', 'PA work v2')]);
+    await world.scripted.script(secretary, [planCall('pa-plan-2', 'PA version two', 'PA work v2',
+      options.reviewer === true)]);
     const again = await submitRound(world, followUp('pa-again', requestRoot, 'PA change it'));
     await waitForRound(world, requestRoot, again.round, 'ended');
     const v2 = (await readUntil(() => candidateOf(world, requestRoot),
@@ -133,6 +146,25 @@ export async function openPAW5(): Promise<PAWorld> {
 export async function planReady(log: PageLog): Promise<void> {
   await waitFor(() => callsTo(log, 'main/read').some((call) => call.reply !== undefined));
   await quietPage(log);
+}
+
+/** W2's Plan page, first read settled; `controlled` holds the change stream (P09-3's stale page). */
+export async function bootPlanW2(w: PAW2, options: { controlled?: boolean } = {}):
+Promise<Awaited<ReturnType<typeof bootE3N>>> {
+  const booted = await bootE3N(w.world, 'Plan', { search: '?goal=ag2b-goal',
+    ...(options.controlled === true ? { mode: 'controlled' as const } : {}) });
+  await planReady(booted.log);
+  return booted;
+}
+
+/** The opened 方案细节 list named `name` (`div.xl[aria-label]`), under `root` (a card or the page). */
+export function planList(root: FakeElement, name: string): FakeElement | undefined {
+  return findElement(root, (element) => hasClass(element, 'xl') && element.getAttribute('aria-label') === name);
+}
+
+/** The goal bar's button whose text contains `text` (暂停/继续/取消/重新入队). */
+export function goalbarButton(root: FakeElement, text: string): FakeElement | undefined {
+  return findButton(findClass(root, 'goalbar') ?? root, text);
 }
 
 /** The Host's answer body of a route's `n`-th call, once it arrived. */
