@@ -98,8 +98,21 @@ export async function planningCell(ctx, rec, { project, modelId, window, target,
     usageStatus: request.usageStatus, inputTokens: request.inputTokens, outputTokens: request.outputTokens, cachedInputTokens: request.cachedInputTokens }));
   rec.note(`请求事实：${JSON.stringify(rec.facts.requests)}；Query ${read?.run?.run?.status}；close ${JSON.stringify(close)}；profile 累计输出上限 ${cumulative}`);
   if (first?.usageStatus === 'reported' && !terminal(read)) {
+    // Lead ruling after the real run: the driver's own cancel is recorded first, then the cell waits (reads only, up
+    // to 5 min) for the Query's terminal state, so the unit's final reading sees a known end; the request the cancel
+    // cut is then counted 0 by the meter. If the Query does not end in time its unknown usage keeps the meter stopped.
+    ctx.budget.markCancelled(runRef);
     const cancelled = await project.host.client.read('queries/cancel', project.scope, { queryRunRef: runRef });
     rec.note(`queries/cancel after the first request: ${cancelled?.status} ${cancelled?.value?.stop ?? cancelled?.code ?? ''}`);
+    for (const until = Date.now() + 5 * MINUTE; !terminal(read) && Date.now() < until;) {
+      await sleep(10_000);
+      read = ready(await project.host.client.read('queries/read', project.scope, jobRef));
+    }
+    const cut = requestsOf(read).filter(request => request.usageStatus !== 'reported');
+    if (!terminal(read)) rec.note(`the cancelled Query did not end within 5 min (${read?.run?.run?.status}); its unknown usage keeps the meter stopped`);
+    for (const request of terminal(read) ? cut : []) {
+      rec.note(`request ${request.requestId}: cut by the driver's cancel; usage not reported, at most one request (Query ${read.run.run.status}, close ${read?.job?.job?.closeReason?.code ?? '-'})`);
+    }
   }
   judgeFirst(rec, first, read, close, target, terminal(read));
   if (meterStop !== null) {

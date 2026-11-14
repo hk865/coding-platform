@@ -1229,7 +1229,7 @@ button.bq-ref:hover { color: var(--text); }
             <button class="{{scope.allCls}}" type="button" aria-pressed="{{scope.isAll}}" onClick="{{scope.toAll}}" title="整棵树：每个模块一条分支">全部</button>
           </div>
           <sc-if value="{{scope.hasNote}}" hint-placeholder-val="{{ true }}"><span class="note">{{scope.note}}</span></sc-if>
-          <a class="btn-text plink" href="ArchOverview.dc.html" title="分层的模块图：模块之间的依赖和数据流，可以逐层进入">
+          <a class="btn-text plink" href="{{archHref}}" title="分层的模块图：模块之间的依赖和数据流，可以逐层进入">
             完整架构图
             <svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.25 2.75h4v4M13.25 2.75 7.75 8.25"></path><path d="M11.75 9.5v3.75h-9V4.25h3.75"></path></svg>
           </a>
@@ -4318,6 +4318,7 @@ class Component extends DCLogic {
     const isOutlineNow = isArch ? s.aview === 'outline' : s.view === 'outline';
     return {
       rootMod: (theme === 'light' ? 't-light' : '') + (s.panel === false ? ' no-panel' : ''),
+      archHref: this.props.archHref || 'ArchOverview.dc.html',
       themeLabel: theme === 'light' ? '切换到深色' : '切换到浅色',
       toggleTheme: () => set({ theme: theme === 'light' ? 'dark' : 'light' }),
       togglePanel: () => set((this.state || {}).panel === false ? { panel: true } : { panel: false, axMax: false, axNew: false }),

@@ -112,6 +112,27 @@ describe('E3G-5 the shell and the first read', () => {
     }
   }, 60_000);
 
+  it('G45 a failed Goals read keeps the URL Goal on 完整架构图', async () => {
+    const opened = await openE3GW0();
+    worlds.push(opened);
+    const goalId = opened.world.goals.first.goalId;
+    const { page, log } = await bootE3N(opened.world, 'Goals', {
+      search: `?goal=${goalId}`, unavailable: 'goals/read',
+    });
+    try {
+      await turns(() => countRoute(log, 'goals/read') > 0, 800);
+      const link = findElement(page.root, (element) => element.tagName.toLowerCase() === 'a'
+        && (element.getAttribute('href') ?? '').startsWith('ArchOverview.dc.html'));
+      expect(link).toBeDefined();
+      /* 具名改坏: `boot.ts` 不把网址里的 goal 放进 完整架构图 链接；本行的 goal 断言红。 */
+      const url = new URL(link!.getAttribute('href') ?? '', 'http://host/workbench/Goals.dc.html');
+      expect(url.pathname).toBe('/workbench/ArchOverview.dc.html');
+      expect(url.searchParams.get('goal')).toBe(goalId);
+    } finally {
+      await page.restore();
+    }
+  });
+
   it('G44 one new Session rereads the list once and keeps the one stream', async () => {
     const opened = await openE3GW0();
     worlds.push(opened);

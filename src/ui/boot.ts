@@ -285,7 +285,10 @@ export async function bootBoardPage(): Promise<void> {
     return;
   }
 
-  const view = new BoardView(board, { ...board.defaults, readState: { status: 'loading' } });
+  /* The page's 完整架构图 link keeps the current Goal: the URL's Goal until a
+     read says which Goal the page shows. A failed read falls back to the URL. */
+  const defaults = { ...board.defaults, archHref: goalHref('ArchOverview.dc.html', goalId) };
+  const view = new BoardView(board, { ...defaults, readState: { status: 'loading' } });
   view.mount(root);
   let token = documentToken;
   let client = createHostClient(token);
@@ -1099,7 +1102,23 @@ export async function bootBoardPage(): Promise<void> {
           latestLine = main?.line && main.scope ? { scope: main.scope, line: main.line.line, write: main.line.write } : null;
         }
       }
-      view.updateProps(pageProps(board.defaults, snapshot, restart, actions));
+      const props = pageProps(defaults, snapshot, restart, actions);
+      if (boardName === 'Goals') {
+        props.archHref = goalHref('ArchOverview.dc.html', latestGoals?.selectedGoalId ?? goalId);
+      } else if (boardName === 'Main' || boardName === 'Plan') {
+        /* A failed read keeps `defaults.archHref`, the URL Goal, though `goalId`
+           may already name a Goal picked after mount. */
+        if (snapshot.error === null) {
+          props.archHref = goalHref('ArchOverview.dc.html', latestSelectedGoalId);
+        }
+      } else if (boardName === 'Decide') {
+        /* DecideData keeps its navigation under `nav`, so the publish above does
+           not unwrap it; the link takes the Goal that read published. */
+        if (snapshot.error === null) {
+          props.archHref = goalHref('ArchOverview.dc.html', latestDecide?.nav.selectedGoalId ?? null);
+        }
+      }
+      view.updateProps(props);
     },
     subscribe: (handlers, cursor) => subscribeChanges(tokenOf, handlers, cursor),
   };
@@ -1806,7 +1825,7 @@ export async function readLineFacts(
   return {
     scope, nav: { ...nav, tasks: taskGraph }, line: detail, ownKey: key,
     executions, messages, messageViews, messageBodies, copies, controls, brief,
-    history: null, files: null, hover: null, execution, taskGraph, write: null, startup: null,
+    history: null, files: null, hover: null, execution, taskGraph, write: null, startup: null, startupError: null,
   };
 }
 
@@ -1861,10 +1880,18 @@ export async function readMember(
   if (nav === null || nav.scope === null) return { data: null, cursor };
   const scope = nav.scope;
   /* §2.4: the Host's start-up report is read once per page read; the Member
-     page's 启动核对 section lists its reconcile lines. */
-  const startupRead = readyRouteValue<unknown>(
-    await client.post('host/reconcile-report', scope, {}), 'host/reconcile-report');
-  const startup = startupReportOf(asRecord(startupRead).report);
+     page's 启动核对 section lists its reconcile lines. A failed read is that
+     section's own 错误和重试: the line, the conversation and the controls stay. */
+  let startup: ReturnType<typeof startupReportOf> = null;
+  let startupError: string | null = null;
+  try {
+    const startupRead = readyRouteValue<unknown>(
+      await client.post('host/reconcile-report', scope, {}), 'host/reconcile-report');
+    startup = startupReportOf(asRecord(startupRead).report);
+  } catch (error) {
+    logReadError(error);
+    startupError = pageTextOf(error);
+  }
   let key = requested;
   if (key === null) {
     key = nav.lines.find((row) => !row.synth && !row.archived)?.key ?? null;
@@ -1887,6 +1914,7 @@ export async function readMember(
   if (line !== null && line.kind === 'line' && key !== null) {
     source = await readLineFacts(client, scope, key, line, nav);
     source.startup = startup;
+    source.startupError = startupError;
     /* The page's own line, not the selected one (§2.4: the rail's `current`). */
     source.ownKey = demand.ownKey ?? key;
   } else {
@@ -1895,7 +1923,7 @@ export async function readMember(
       scope, nav, line, ownKey: demand.ownKey ?? key,
       executions: [], messages: [], messageViews: [], messageBodies: {}, copies: [],
       controls: null, brief: null, history: null, files: null, hover: null,
-      execution: null, taskGraph: nav.tasks, write: null, startup,
+      execution: null, taskGraph: nav.tasks, write: null, startup, startupError,
     };
   }
   if (demand.traceOpen === true && key !== null) {

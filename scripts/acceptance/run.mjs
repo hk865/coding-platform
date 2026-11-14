@@ -155,7 +155,9 @@ async function settle(ctx, live, where, ms) {
  * Cancel one in-flight item the way the person would: a Query with `queries/cancel`, a Work Run with a `cancel`
  * control (`controls/submit`, pinned to the Run, then `controls/deliver`). A refusal is also a wall row (http.mjs).
  */
-async function cancelItem(item, why) {
+async function cancelItem(ctx, item, why) {
+  // Recorded before it is sent: the request this cancel cuts is a known outcome for the meter (ruling after the real run).
+  ctx.budget.markCancelled(item.kind === 'query' ? item.ref : item.run.ref);
   const client = item.host.client;
   if (item.kind === 'query') {
     const answer = await client.read('queries/cancel', item.scope, { queryRunRef: item.ref });
@@ -187,7 +189,7 @@ async function drain(ctx, goals, where, why, note) {
   if (first.busy === null) return unsettled(ctx, `${why}: ${first.text}`, note);
   note(`${why}: ${first.text}; cancelling what is left`);
   for (const item of first.busy.items) {
-    const cancelled = await cancelItem(item, why);
+    const cancelled = await cancelItem(ctx, item, why);
     note(`${why}: ${cancelled.text}`);
     if (!cancelled.ok) return unsettled(ctx, `${why}: ${cancelled.text}`, note);
   }

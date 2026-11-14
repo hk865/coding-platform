@@ -1146,7 +1146,7 @@ body { margin: 0; background: #1F1F1F; }
             <svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7"></path></svg>
           </button>
         </sc-if>
-        <a class="btn-text plink" href="ArchOverview.dc.html" title="分层的模块图：模块之间的依赖和数据流，可以逐层进入">
+        <a class="btn-text plink" href="{{archHref}}" title="分层的模块图：模块之间的依赖和数据流，可以逐层进入">
           完整架构图
           <svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.25 2.75h4v4M13.25 2.75 7.75 8.25"></path><path d="M11.75 9.5v3.75h-9V4.25h3.75"></path></svg>
         </a>
@@ -5018,6 +5018,7 @@ class Component extends DCLogic {
       headTitle: '工作台界面改版',
       hasNote: !!(ax && ax.hasQuotes), composerNote: ax ? ax.quoteNote : '',
       rootMod: (theme === 'light' ? 't-light' : '') + (s.panel === false ? ' no-panel' : ''),
+      archHref: this.props.archHref || 'ArchOverview.dc.html',
       themeLabel: theme === 'light' ? '切换到深色' : '切换到浅色',
       toggleTheme: () => set({ theme: theme === 'light' ? 'dark' : 'light' }),
       togglePanel: () => set({ panel: (this.state || {}).panel === false }),

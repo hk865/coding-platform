@@ -352,7 +352,7 @@ body { margin: 0; background: #1F1F1F; }
             <button class="{{scopePairCls}}" type="button" aria-pressed="{{isPair}}" onClick="{{toPair}}" title="画出两个目标各自要改的全部源码文件，重叠的路径保持亮起">两个目标的文件</button>
           </div>
           <span class="note">{{scopeNote}}</span>
-          <a class="btn-text plink" href="ArchOverview.dc.html" title="分层的模块图：模块之间的依赖和数据流，可以逐层进入">
+          <a class="btn-text plink" href="{{archHref}}" title="分层的模块图：模块之间的依赖和数据流，可以逐层进入">
             完整架构图
             <svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.25 2.75h4v4M13.25 2.75 7.75 8.25"></path><path d="M11.75 9.5v3.75h-9V4.25h3.75"></path></svg>
           </a>
@@ -2030,7 +2030,8 @@ class Component extends DCLogic {
       themeLabel: theme === 'light' ? '切换到深色' : '切换到浅色',
       toggleTheme: () => set({ theme: theme === 'light' ? 'dark' : 'light' }),
       togglePanel: () => set({ panel: (this.state || {}).panel === false, axNew: false }),
-      backHref: backHref, headSub: headSub, listSize: data.goals.length,
+      backHref: backHref, archHref: this.props.archHref || 'ArchOverview.dc.html',
+      headSub: headSub, listSize: data.goals.length,
       ax: ax, isMap: isMap, isArch: isArch, isTaskTab: isTaskTab, isPage: !!page,
 
       goals: goals, cf: cf, log: log,

@@ -28,6 +28,7 @@ export class BudgetStop extends Abort {
 
 const unreadable = (route, body) => new BudgetStop('meter', `the budget meter could not read ${route} (${body?.status ?? 'no answer'} ${
   body?.code ?? ''} ${body?.reason ?? ''}); the last complete reading stands and no new work starts`);
+const CUT = "cut by the driver's cancel; usage not reported, at most one request";
 
 class Meter {
   constructor(host, budget) {
@@ -53,19 +54,22 @@ class Meter {
   }
 
   /**
-   * The Query has reached its terminal failure and that failure names the model service as its source
-   * (`provider_request_failed`, `contracts/dispatch.ts:76-78`): a proven rejection, not unknown usage.
+   * The known end of an unknown-usage request in a closed Query, or null: a terminal failure from the model service
+   * (`provider_request_failed`, `contracts/dispatch.ts:76-78`), or a terminal `cancelled` of a Query the driver itself
+   * cancelled (lead ruling 11-14 after the real run: at most one in-flight request cut, usage not reported).
    */
-  async #provenRejection(scope, snapshot) {
-    if (snapshot.run?.status !== 'closed') return false;
+  async #knownEnd(scope, snapshot) {
+    if (snapshot.run?.status !== 'closed') return null;
     const ref = snapshot.ref;
     const body = await this.host.client.quiet('queries/read', scope,
       { aggregateType: 'QueryJob', projectId: ref.projectId, workspaceId: ref.workspaceId, queryJobId: ref.queryJobId });
     const job = ready(body);
     if (job === null) throw unreadable('queries/read', body);
-    return job.job?.job?.closeReason?.code === 'failed' && JSON.stringify(job).includes('provider_request_failed');
+    const close = job.job?.job?.closeReason?.code;
+    if (close === 'failed' && JSON.stringify(job).includes('provider_request_failed')) return 'provider rejection (model_service / provider_request_failed)';
+    if (close === 'cancelled' && this.budget.cancelled.has(keyOf(ref))) return CUT;
+    return null;
   }
-
   /** One complete reading of this Host; nothing is counted unless every read answered. */
   async poll() {
     const client = this.host.client;
@@ -97,11 +101,12 @@ class Meter {
                 held.pendingKey = key;
                 throw held;
               }
-              if (!(await this.#provenRejection(scope, snapshot))) {
-                throw new BudgetStop('meter', `request ${request.requestId} of ${snapshot.ref.queryJobId} has usage ${request.usageStatus} and its Query shows no terminal provider failure; the meter cannot count it, so no new work starts`);
+              const known = await this.#knownEnd(scope, snapshot);
+              if (known === null) {
+                throw new BudgetStop('meter', `request ${request.requestId} of ${snapshot.ref.queryJobId} has usage ${request.usageStatus} and its Query ended with neither a provider failure nor the driver's own cancel; the meter cannot count it, so no new work starts`);
               }
               found.push({ key, scope, kind: 'query', input: 0, output: 0, cached: 0, unbilled: true, detail: { queryRunRef: snapshot.ref, sessionRef,
-                requestId: request.requestId, reservedOutput: request.reservedOutput, unbilled: 'provider rejection (model_service / provider_request_failed)' } });
+                requestId: request.requestId, reservedOutput: request.reservedOutput, unbilled: known } });
               continue;
             }
             found.push({ key, scope, kind: 'query', input: request.inputTokens, output: request.outputTokens,
@@ -114,11 +119,12 @@ class Meter {
       const goals = ready(goalsBody)?.goals;
       if (goals === undefined) throw unreadable('goals/list', goalsBody);
       const ended = [];
+      const outcomes = new Map();
       for (const goal of goals) {
         const items = await this.#all('executions/list', scope, afterCursor => ({ goalRef: goal.ref, page: { afterCursor, limit: 100 } }));
         for (const item of items) {
           if (item.run.status !== 'ended') { busy.runs += 1; busy.workRuns.push(item.run); continue; }
-          if (!this.seen.has(keyOf(item.run.ref))) ended.push(item.run.ref);
+          if (!this.seen.has(keyOf(item.run.ref))) { ended.push(item.run.ref); outcomes.set(keyOf(item.run.ref), item.run.outcome ?? null); }
         }
       }
       for (let index = 0; index < ended.length; index += 200) {
@@ -129,12 +135,17 @@ class Meter {
           // Only a complete reading counts, or the public proof of a zero (a Run that never entered the Kernel,
           // `activity-read-helpers.ts:367-375`); unknown or incomplete usage stops the meter and is read again later.
           const provenZero = view.usage === null && view.readings?.usage?.tokens === 0 && view.readings.usage.complete === true;
-          if (!provenZero && view.usage?.complete !== true) {
+          // A Run the driver itself cancelled that ended `cancelled`: what it reported counts, and the request its cancel
+          // cut counts 0 (lead ruling after the real run).
+          const cut = this.budget.cancelled.has(keyOf(view.runRef)) && outcomes.get(keyOf(view.runRef)) === 'cancelled';
+          if (!provenZero && view.usage?.complete !== true && !cut) {
             throw new BudgetStop('meter', `Run ${view.runRef.runId} ended with ${view.usage === null ? 'unknown' : 'incomplete'} usage (${
               view.readings?.usage?.reason ?? 'no reason'}); the meter cannot count it, so no new work starts`);
           }
+          const partial = cut && view.usage?.complete !== true;
           found.push({ key: keyOf(view.runRef), scope, kind: 'run', input: view.usage?.inputTokens ?? 0, output: view.usage?.outputTokens ?? 0,
-            cached: view.usage?.cachedInputTokens ?? 0, noUsage: provenZero, detail: { runRef: view.runRef, complete: true } });
+            cached: view.usage?.cachedInputTokens ?? 0, noUsage: provenZero, unbilled: partial,
+            detail: { runRef: view.runRef, complete: !partial, ...(partial ? { unbilled: CUT } : {}) } });
         }
       }
     }
@@ -159,6 +170,8 @@ export class Budget {
     /** The run-wide stop (`total` or `meter`) once seen; the unit stops once each unit's cap is crossed. */
     this.stop = null;
     this.unitStops = new Map();
+    /** Query and Run refs the driver itself cancelled (A/B cells, the drain): their cut request is a known outcome. */
+    this.cancelled = new Set();
   }
 
   /** Meter a Host; a restart over the same ledger keeps the counted refs (no double count). */
@@ -175,6 +188,11 @@ export class Budget {
   }
 
   /** The unit that owns everything counted from this project from now on. */
+  /** Record a cancel the driver itself sends (before it is sent), so its cut request is read as a known outcome. */
+  markCancelled(ref) {
+    this.cancelled.add(keyOf(ref));
+  }
+
   own(scope, unit) {
     this.owners.set(scopeKey(scope), unit);
   }
@@ -191,7 +209,7 @@ export class Budget {
     totals.output += item.output ?? 0;
     totals.cached += item.cached ?? 0;
     if (item.kind === 'query') { totals.queryRequests += 1; if (item.unbilled) { totals.unbilled += 1; this.report.note(`${unit}: request ${item.detail.requestId} counted as unbilled 0 (${item.detail.unbilled})`); } }
-    else { totals.runs += 1; if (item.noUsage) totals.runsWithoutUsage += 1; }
+    else { totals.runs += 1; if (item.noUsage) totals.runsWithoutUsage += 1; if (item.unbilled) { totals.unbilled += 1; this.report.note(`${unit}: Run ${item.detail.runRef.runId} counted with its reported part only, the rest 0 (${item.detail.unbilled})`); } }
     this.report.modelCall({ at: new Date().toISOString(), host: hostName, unit, kind: item.kind, ...item.detail,
       inputTokens: item.input ?? null, outputTokens: item.output ?? null, cachedInputTokens: item.cached ?? null });
   }
@@ -241,7 +259,7 @@ export class Budget {
     // is lifted; nothing else is.
     const held = this.stop?.pendingKey;
     if (held !== undefined && [...this.meters.values()].some(meter => meter.seen.has(held))) {
-      this.report.note(`the stop held for ${held} is lifted: its Query ended with a proven provider rejection, counted unbilled 0`);
+      this.report.note(`the stop held for ${held} is lifted: its Query reached a known end (a proven provider rejection, or the driver's own cancel), counted unbilled 0`);
       this.stop = null;
     }
     const used = this.used();
@@ -297,7 +315,7 @@ export class Budget {
       '已知缺口：Work Run 的压缩摘要请求在另一个 Kernel Session 里跑，不在 `activity/runs` 里，计量少算了它们；驱动不读数据库补数（lead 裁定 11-14 #3）。400M/50M 上限远高于预期用量，这是记下的缺口，不是阻断。',
       `最后一次完整读数时在途：Query ${inFlight.queries}，Work Run ${inFlight.runs}（Work Run 的用量要等 Run 结束才在 \`activity/runs\` 出现，所以超限后的停止点是第一次能看到超出的读数）。`,
       ...(this.stop?.cap === 'meter' ? [`计量不可用：${this.stop.message}`] : []),
-      ...[...this.units.entries()].map(([unit, item]) => `${unit}：用量 ${item.input + item.output}（输入 ${item.input}，输出 ${item.output}，缓存命中 ${item.cached}；Query 请求 ${item.queryRequests}（其中 provider 拒收、按未计费 0 计的 ${item.unbilled}），结束的 Run ${item.runs}）`),
+      ...[...this.units.entries()].map(([unit, item]) => `${unit}：用量 ${item.input + item.output}（输入 ${item.input}，输出 ${item.output}，缓存命中 ${item.cached}；Query 请求 ${item.queryRequests}（其中按未计费 0 计的 ${item.unbilled}：provider 拒收，或驱动自己取消截断的请求），结束的 Run ${item.runs}）`),
     ];
   }
 }

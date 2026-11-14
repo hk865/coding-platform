@@ -217,11 +217,14 @@ const RECEIPT_ROUTES = new Set(['controls/submit', 'tasks/requeue', 'messages/se
  * boot returns and a click's reread is the only later one. The write routes'
  * answers are kept for the rows' `committed` checks.
  */
-export async function bootMemberAt(target: { readonly base: string; readonly token: string }, search: string): Promise<MemberPage> {
+export async function bootMemberAt(
+  target: { readonly base: string; readonly token: string }, search: string,
+  options: { unavailable?: string } = {},
+): Promise<MemberPage> {
   const log = newPageLog();
   gateChanges(log);
   const receipts: MemberPage['receipts'] = [];
-  const forward = forwardPage(target as unknown as S6ARequestWorld, log, 'controlled');
+  const forward = forwardPage(target as unknown as S6ARequestWorld, log, 'controlled', options.unavailable ?? null);
   const page = await bootPage({ name: 'Member', search, token: () => target.token, request: async (url, init, realFetch) => {
     const answer = await forward(url, init, realFetch);
     const route = routeOf(url);

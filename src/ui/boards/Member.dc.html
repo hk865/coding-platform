@@ -963,6 +963,9 @@ button.deliv:hover .on { color: var(--text); }
           <div class="rail-label sg-other">
             <button class="btn-text" type="button" aria-expanded="{{startup.open}}" onClick="{{startup.toggle}}">启动核对 · {{startup.count}}</button>
           </div>
+          <sc-if value="{{startup.hasError}}" hint-placeholder-val="{{ false }}">
+            <p class="empty">{{startup.error}} <button class="btn-text" type="button" onClick="{{startup.retry}}">重试</button></p>
+          </sc-if>
           <sc-if value="{{startup.open}}">
             <sc-for list="{{startup.groups}}" as="sg" hint-placeholder-count="3">
               <div class="rail-label sg-other"><span>{{sg.label}}</span></div>
@@ -2234,7 +2237,9 @@ class Component extends DCLogic {
     /* the right panel's 启动核对: collapsed by default, its rows from the Host's report */
     const toggleStartup = () => set({ startup: !(this.state || {}).startup });
     const startup = { show: D.startup.show, count: D.startup.count, open: !!s.startup,
-      groups: D.startup.groups, toggle: toggleStartup };
+      groups: D.startup.groups, toggle: toggleStartup,
+      hasError: !!D.startup.error, error: D.startup.error || '',
+      retry: () => { const a = this.props.actions; if (a && typeof a.readMore === 'function') a.readMore({}); } };
     const c = {
       canPause: line !== null && line.canPause,
       canResume: line !== null && line.canResume,
@@ -2604,7 +2609,7 @@ class Component extends DCLogic {
       const none = { scope: null, goal: null, goals: [], lines: [], archived: [], archivedText: '没有已归档的工作线',
         head: '工作中 0 · 待命 0', headTip: '', line: null, ownKey: null, ownName: '', trace: [],
         changes: { repository: 'git', files: [], note: '' }, write: null,
-        startup: { show: false, count: 0, groups: [] },
+        startup: { show: false, count: 0, groups: [], error: null },
         inbox: { decideN: 0, noticeN: 0, hasDecide: false, hasNotice: false, none: true } };
       return this.memberDataVals(data || none, s, set, DUTY, read);
     }

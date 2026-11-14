@@ -48,6 +48,8 @@ export type MemberStartup = {
   show: boolean;
   count: number;
   groups: Array<{ label: string; rows: Array<{ text: string }> }>;
+  /** `host/reconcile-report`'s read failure, drawn in this section only. */
+  error: string | null;
 };
 
 /** The four display fields of one reconcile line; the page never reads the Host type. */
@@ -85,6 +87,8 @@ export type MemberSource = {
   write: MemberWriteBasis | null;
   /** The Host's start-up reconcile report; `null` when this Host did not reconcile. */
   startup: MemberStartupReport | null;
+  /** A failed `host/reconcile-report`: the message 启动核对 shows; never the page's error. */
+  startupError: string | null;
 };
 
 export type MemberRailRow = NavLine & { current: boolean };
@@ -318,8 +322,9 @@ export function startupReportOf(value: unknown): MemberStartupReport | null {
 }
 
 /** The 启动核对 rows, grouped by step; an empty report hides the section. */
-function startupOf(report: MemberStartupReport | null): MemberStartup {
-  if (report === null) return { show: false, count: 0, groups: [] };
+function startupOf(report: MemberStartupReport | null, error: string | null): MemberStartup {
+  if (error !== null) return { show: true, count: 0, groups: [], error };
+  if (report === null) return { show: false, count: 0, groups: [], error: null };
   const lineRows = (lines: MemberStartupLine[]): Array<{ text: string }> => lines.map((line) => ({
     text: line.ref + ' · ' + line.row + ' · ' + line.status
       + (line.reason === '' ? '' : ' · ' + line.reason),
@@ -342,7 +347,7 @@ function startupOf(report: MemberStartupReport | null): MemberStartup {
     { label: '问题', rows: report.problems.map((text) => ({ text })) },
   ].filter((group) => group.rows.length > 0);
   const count = groups.reduce((sum, group) => sum + group.rows.length, 0);
-  return { show: count > 0, count, groups };
+  return { show: count > 0, count, groups, error: null };
 }
 
 /** The member data of one read. `selected` is the line in the centre; `null`
@@ -379,7 +384,7 @@ export function adaptMember(source: MemberSource, selected: LineKey | null): Mem
     trace: traceOf(source.history),
     changes,
     write: source.write,
-    startup: startupOf(source.startup),
+    startup: startupOf(source.startup, source.startupError),
   };
 }
 

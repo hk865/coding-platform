@@ -4,7 +4,7 @@ import type { FakeElement } from './helpers/dom.js';
 import { countRoute, descendants, hasClass, textOf } from './helpers/E3N-page.js';
 import { hover, leave } from './helpers/E3N-interact.js';
 import {
-  bootMemberAt, bootMemberOnHost, detailValue, elementsOf, memberSearch, openMemberS7C, openMemberW3, openMemberW4,
+  bootMemberAt, bootMemberOnHost, buttonText, detailValue, elementsOf, headFact, memberSearch, openMemberS7C, openMemberW3, openMemberW4,
   press, recordRows, settle, worldSlot,
 } from './helpers/E3M-world.js';
 
@@ -20,6 +20,7 @@ afterAll(async () => { await slot.close(); }, 180_000);
 const w3 = () => slot.use('W3', () => openMemberW3(), (opened) => opened.close());
 const w4 = () => slot.use('W4', () => openMemberW4(), (opened) => opened.h.dispose());
 const w1 = () => slot.use('W1', () => openMemberS7C(), (opened) => opened.s7c.close());
+const w2 = () => slot.use('W2', () => openMemberS7C({ firstRun: 'held' }), (opened) => opened.s7c.close());
 
 const panel = (root: FakeElement): FakeElement | undefined => findClass(root, 'panel');
 const tab = (root: FakeElement, name: string): FakeElement | undefined =>
@@ -52,6 +53,24 @@ describe('E3M-4 the Member right panel', () => {
       await page.restore();
     }
   }, 180_000);
+
+  it('R36 a refused host/reconcile-report fails only 启动核对: the line and the controls stay (M31)', async () => {
+    const w = await w2();
+    const booted = await bootMemberAt(w.s7c.world, memberSearch('s7c-goal', w.module),
+      { unavailable: 'host/reconcile-report' });
+    try {
+      const root = booted.page.root;
+      await settle(() => textOf(root).includes('启动核对'));
+      /* 具名改坏: `readMember` 把 `host/reconcile-report` 的失败抛出去；本行的状态/暂停/段文字红。 */
+      expect(headFact(root, '状态')).not.toBe('');
+      expect(buttonText(root, '重试')).toBeDefined();
+      expect(textOf(root)).toContain('暂时读不到，可以重试。');
+      expect(buttonText(root, '暂停')).toBeDefined();
+      expect(buttonText(root, '取消')).toBeDefined();
+    } finally {
+      await booted.page.restore();
+    }
+  });
 
   it.each([{ goal: 'ag2b-goal' }, { goal: 's6a-goal-2' }])('R32 the group head of $goal links to its own Goal and hovers without a read (M33)', async ({ goal }) => {
     const { page, log } = await bootW3();
