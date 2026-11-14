@@ -53,7 +53,7 @@ function isWithin(candidate, prefix) {
 function isWithinIgnoringCase(candidate, prefix) {
     return isWithin(candidate.toLowerCase(), prefix.toLowerCase());
 }
-function identity(value) {
+export function identity(value) {
     return `${String(value.dev)}:${String(value.ino)}`;
 }
 function decodeUtf8(buffer, relativePath) {

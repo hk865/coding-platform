@@ -41,8 +41,8 @@
 做活动日历、活动稳定窗口与任务时间条的去这组。
 
 - `activity-read-helpers.ts` — 活动读模型共用的计数读法（`Budget`、有序/等值/单键读）、`RunActivity`/`QueryActivity` 投影，以及 Work 与 Query 共用的缺失记录分类 `classifyMissingActivity`：各自的事实由 `runMissingActivityFacts`/`queryMissingActivityFacts` 给出，分类结果由 `runMissingActivityViewOf`/`queryMissingActivityViewOf` 原样映射成视图；没有记录的 Query 落在哪个 Goal 由 `missingQueryActivityGoalOf` 定，在哪个 Session 上由 `queryExecutingSession`（claim 记下的 Session）定。
-- `activity-read-model.ts` — 日历（Goal 或整个 workspace 范围，Work 与 Query 的活动落在同一格；workspace 范围也数每个 Goal 的验收检查；还没结束的 Query 从开着的 Job 索引读到，算进行中）与单 Run、单 Query 活动读模型；只读 `RunActivity`/`QueryActivity`/`ActivityRecording` 和已存时间点。导出 `calendarTaskKey`（任务条目按 `(goalId, taskId)` 合并的键）与 `calendarCellComplete`（一格是否完整），日历与纯测试共用同一判断。
-- `activity-stable-window.ts` — 五个活动读共用的稳定窗口：前后 watermark 相等才算一次，最多四次。
+- `activity-read-model.ts` — 日历（Goal 或整个 workspace 范围，Work 与 Query 的活动落在同一格；workspace 范围也数每个 Goal 的验收检查；还没结束的 Query 从开着的 Job 索引读到，算进行中）与单 Run、单 Query 活动读模型；G7 另有线长读数（`readLineUsage`/`LineUsageV1`，Work 的 claim 轮与 Query 轮各取一个采样）；只读 `RunActivity`/`QueryActivity`/`ActivityRecording` 和已存时间点。导出 `calendarTaskKey`（任务条目按 `(goalId, taskId)` 合并的键）与 `calendarCellComplete`（一格是否完整），日历与纯测试共用同一判断。
+- `activity-stable-window.ts` — 六个活动读共用的稳定窗口：前后 watermark 相等才算一次，最多四次。
 - `task-state-timeline.ts` — 任务状态时间条：只折已存时间点，全部标记 `approximate`。
 
 ### 决定与冲突
@@ -172,7 +172,7 @@
 | `createGoalListReadModel` | `src/core/work-graph/views/goal-list-read-model.ts:43` | `goals/list` 的全量读：一次稳定 `a2-goal-by-workspace` 窗口、项目创建序 `ordinal`、上限 5,000 回 `capacity`、phase 按 CANCELLED → COMPLETED → PAUSED → PLANNING → `null` 判 | 全工作区 Goal 列表页；不要循环调 `goals/settings`/`goals/display` |
 | `CONFLICT_OPTIONS` | `src/core/work-graph/views/goal-conflicts.ts:83`、`src/core/work-graph/communication/decision-source/goal-conflict.ts:15` | 固定的 wait/order/parallel 三个冲突选项 | 冲突卡片；同一能力两份，正本待 lead 定 |
 | `readWatermark` | `src/core/work-graph/views/activity-read-helpers.ts:130`、`src/contracts/core/results.ts:33` | 读存储读水位：活动读返回 `ReadResult`，决定读返回 ready/rejection | 一次读的前后水位；同一能力两份，正本待 lead 定 |
-| `createActivityReadModel` | `src/core/work-graph/views/activity-read-model.ts:1125` | 日历（Goal/workspace 范围，含 Query 步数与查询覆盖）、单 Run 与单 Query 活动视图 | 活动页、Run/Query 活动列 |
+| `createActivityReadModel` | `src/core/work-graph/views/activity-read-model.ts:1358` | 日历（Goal/workspace 范围，含 Query 步数与查询覆盖）、单 Run 与单 Query 活动视图、线长读数（`readLineUsage`/`LineUsageV1`，无 route，公开 owner 读）；同文件的纯函数 `latestSampledRoundOf`（最近采样轮）与 `frequencyVerdictOf`（10 轮/25% 频率判定） | 活动页、Run/Query 活动列；线长报告取这两个纯规则 |
 | `classifyMissingActivity` | `src/core/work-graph/views/activity-read-helpers.ts:171` | Work 与 Query 共用的缺失记录规则：never entered、进行中、未补记/未记录/无记录起点 | 任何按活动记录判空/判未知的读；不要另写一份 |
 | `queryActivityViewOf` | `src/core/work-graph/views/activity-read-helpers.ts:343` | 把 `QueryActivity` 快照投影成 `QueryActivityViewV1`（含补记 late 规则） | Query 活动读投影时 |
 | `createTrackReadModel` | `src/core/work-graph/views/track-read-model.ts:1282` | 轨道条：Run/验收轮/Query 的重叠窗口分页 | 轨道页；composition 把 `readTrackBars` 与 `TrackReadPort` 装到一起 |

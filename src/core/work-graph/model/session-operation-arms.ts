@@ -47,6 +47,7 @@ const HandoffSavedCreateInputField = f.object({
   commandId: id, duty: f.enumOf(PLATFORM_DUTIES), scope: f.object({ kind: f.literal('project') }), reason: id,
   provenance: SessionProvenanceField, roleConfiguration: RoleConfigurationField,
   replaces: f.nullable(f.ref(SessionRefShape)), parentOperation: f.nullable(f.ref(OperationRefShape)),
+  lineFolder: f.optional(id),
 });
 /** `RequestUnderstandingCommandV1` (`src/contracts/query-job.ts`); the operation replays it as saved. */
 const RequestUnderstandingCommandField = f.object({

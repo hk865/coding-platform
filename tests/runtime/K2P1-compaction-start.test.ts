@@ -6,6 +6,8 @@
  * target 200,000; tailBudget 100,000; tokensPerChar 0.29; a large result ≥ 60,000 code points, a small
  * one ≤ 2,600. The model is scripted; no row reads the database or imports compaction.ts.
  */
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ModelRequest } from '../../vendor/coding-agent/dist/public-api.js';
 import type { PreparedTaskManifestV1 } from '../../src/contracts/core/prepared-execution.js';
@@ -16,10 +18,13 @@ import { reenter, submitRunControl } from '../scenarios/support/control.js';
 import { driveWorkflow } from '../helpers/A2-restart-fixture.js';
 import { OPERATOR, S6A_SCOPE, S6A_WORK_ROLE_BINDING } from '../helpers/S6A-request-fixture.js';
 import { usageOf, type S6AReply } from '../helpers/S6A-host-fixture.js';
-import {
-  bigReply, compactions, openK2QueryWorld, openK2WorkWorld, smallReply, type K2KernelRecord, type K2QueryWorld, type K2WorkWorld,
-} from '../helpers/K2-world.js';
+import { bigReply, compactions, kernelRecordsOf, openK2QueryWorld, openK2WorkWorld, renameRepeatedCalls,
+  smallReply, type K2KernelRecord, type K2QueryWorld, type K2WorkWorld } from '../helpers/K2-world.js';
 import { checkConfiguration } from '../helpers/S7A-fixture.js';
+import { heartbeat, heartbeatUntil, readPlanningQuery } from '../helpers/IV-host-fixture.js';
+import { sendS7A2PersonMessage } from '../helpers/S7A2-fixture.js';
+import { adviserWorkOf, openS7D2RoleLineWorld, S7D2_ADVISER_WORK, S7D2_TOO_LONG_INPUT_TOKENS,
+  type S7D2RoleLineWorld } from '../helpers/S7D2-role-line-world.js';
 import { claimSuccessorRun, type WP2PlatformFixture } from '../helpers/WP2-platform-support.js';
 
 import { canonicalJson, sha256Hex } from '../../src/contracts/fingerprint.js';
@@ -37,7 +42,7 @@ async function successorsOf(world: { world: { post(suffix: string, body: unknown
   }
   return items;
 }
-const worlds: Array<K2WorkWorld | K2QueryWorld> = [];
+const worlds: Array<K2WorkWorld | K2QueryWorld | S7D2RoleLineWorld> = [];
 afterEach(async () => {
   const left = worlds.splice(0);
   await Promise.allSettled(left.map(world => world.close()));
@@ -595,4 +600,78 @@ describe('K2P1-15 the startup ratios decide trigger, target and tail', () => {
     await half.runTask('r3', 'k2-15d-half-r3', [{ kind: 'text', text: 'R3', usage: usageOf(1_000) }]);
     expect(compactions(await half.records())).toHaveLength(1);
   }, 180_000);
+});
+
+/**
+ * K2P1-12: role-line maintenance on an adviser line (`intervention_planning` rounds) in the S7D2 200k world (lead
+ * 11-10: the spec's 1M line cannot be built on the public path): trigger 0.4×200,000 = 80,000, target 0.2×200,000
+ * = 40,000, handoff line min(500,000, floor(0.8×200,000)) = 160,000. Q1/Q2 are 12×60,000-byte results; Q3 one
+ * small result (kept original), Q4/Q5 answer-only small rounds, because one planning input is 15,470 record chars
+ * and three result-bearing small turns (3×25,048 chars = 21,792 tokens) overflow the 20,000 tail. Reported input
+ * Q1–Q4 = 40,000, Q5 = 160,000. After Q5: no compacted view, 5 rounds, last 160,000 ≥ 80,000; tail budget
+ * 0.5×40,000 = 20,000; Q3–Q5 = 18,514 tokens, Q2 = 208,800 > the 1,486 left -> boundary Q2; savedChars
+ * 2×712,800 = 1,425,600; estimate 160,000 − 413,424 = −253,424 ≤ 40,000 -> stubs through Q2 (the sheet's
+ * result-only count, newest 3 small rounds 1,740 and Q2 > 18,260, reads the same boundary). Using the spec's
+ * literal reports inside this 200k world (Q5 500,000) gives estimate 86,576 > target 40,000, so Q6 would summarize,
+ * not stub; the spec's own 1M world has target 200,000 and reads stubs.
+ * Named mutation: `create-platform.ts:3840–:3841`'s `unlessCompactsNext` wrapper removed -> (a) hands off.
+ */
+describe('K2P1-12 role-line maintenance defers to the compaction of the next round', () => {
+  it('K2P1-12 (a) Q5 at the handoff line does not hand off, Q6 compacts; (b) the compacted Q6 hands off',
+    async () => {
+      const world = await openS7D2RoleLineWorld({ backend: 'memory',
+        extraBindings: [adviserWorkOf(S7D2_ADVISER_WORK.binding.grant.tools, true)],
+        extraHostOptions: { inputConsumers: [{ scope: S6A_SCOPE,
+          sessionRef: { projectId: S6A_SCOPE.projectId, sessionId: 'k2p1-12-consume' },
+          goalRef: { aggregateType: 'Goal' as const, projectId: S6A_SCOPE.projectId, goalId: 'k2p1-12-consume' },
+          queryProfileId: 's7d2-adviser-query-profile', heartbeatMs: 25 }] } });
+      worlds.push(world);
+      for (let index = 1; index <= 12; index += 1) await writeFile(join(world.world.root,
+        `big-${String(index)}.txt`), 'a'.repeat(60_000));
+      await writeFile(join(world.world.root, 'small.txt'), 'b'.repeat(2_000));
+      const line = world.lines.adviser;
+      const used = new Set<string>();
+      const round = async (label: string, replies: readonly S6AReply[]): Promise<ModelRequest[]> => {
+        await world.world.scripted.script(line, renameRepeatedCalls(used, label, replies));
+        const before = (await world.world.scripted.requests(line)).length;
+        const sent = await sendS7A2PersonMessage(world.world, { label, recipient: line.ref, goal: world.goal });
+        const ended = await heartbeatUntil(world.world, () => readPlanningQuery(world.world, sent.ref),
+          value => value?.job.job.status === 'answered' || value?.run.run.status === 'closed'
+            || value?.run.run.executionState?.phase === 'settled', 64);
+        if (ended === null) throw new Error(`K2P1-12: the ${label} planning Query did not end`);
+        return (await world.world.scripted.requests(line)).slice(before);
+      };
+      const maintenance = async (label: string): Promise<void> => {
+        await world.world.post('workflow/advance', plain(S6A_SCOPE, { schemaVersion: 1,
+          goalRef: world.world.goals.second, flowId: `k2p1-12-${label}`, sessionHint: null, kind: 'select_work' }));
+        for (let pass = 0; pass < 8; pass += 1) await heartbeat(world.world);
+      };
+      await round('q1', bigReply(12, 40_000, 'Q1'));
+      await round('q2', bigReply(12, 40_000, 'Q2'));
+      await round('q3', smallReply(40_000, 'Q3'));
+      await round('q4', [{ kind: 'text', text: 'Q4', usage: usageOf(40_000) }]);
+      await round('q5', [{ kind: 'text', text: 'Q5', usage: usageOf(S7D2_TOO_LONG_INPUT_TOKENS) }]);
+      // (a) one maintenance page: the handoff line is reached, but the next round compacts first.
+      expect(compactions(await kernelRecordsOf(world.world, line.ref))).toEqual([]);
+      await maintenance('a');
+      const successorsNow = (await world.world.post('sessions/successors',
+        plain(S6A_SCOPE, { sessionRef: line.ref, page: { limit: 10 } }))).body as { value: { items: unknown[] } };
+      expect(successorsNow.value.items).toEqual([]);
+      expect(compactions(await kernelRecordsOf(world.world, line.ref))).toEqual([]);
+
+      const q6 = await round('q6', smallReply(S7D2_TOO_LONG_INPUT_TOKENS, 'Q6'));
+      const written = compactions(await kernelRecordsOf(world.world, line.ref));
+      expect(written).toHaveLength(1);
+      expect(payloadOf(written[0]!)['outcome']).toBe('compacted');
+      const first = q6[0]!;
+      expect(toolText(first, 'big-1')).toContain('旧工具结果已清');
+      expect(toolText(first, 'big-1@q2')).toContain('旧工具结果已清');
+      expect(toolText(first, 'small')).toBe('b'.repeat(2_000));
+
+      // (b) Q6 began on the compacted view and ended at the handoff line: the page hands the line off.
+      await maintenance('b');
+      const successors = await successorsOf(world, line.ref, 1) as Array<{ provenance: unknown }>;
+      expect(successors).toHaveLength(1);
+      expect(successors[0]!.provenance).toEqual({ schemaVersion: 1, kind: 'handoff', from: line.ref });
+    }, 240_000);
 });

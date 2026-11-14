@@ -28,6 +28,8 @@ export type HandoffSavedCreateInputV1 = {
   commandId: string; duty: PlatformDutyV1; scope: { kind: 'project' }; reason: string;
   provenance: SessionProvenanceV1; roleConfiguration: RoleConfigurationRef;
   replaces: SessionRef | null; parentOperation: OperationRef | null;
+  /** KLS-3b: the source Session's line folder; the successor works on that line (and its Kernel store). */
+  lineFolder?: string;
 };
 /** The full input one atomic write stores before its child call, so a resume replays the original call. */
 export type HandoffSavedInputV1 =

@@ -6,14 +6,19 @@
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import type { LineRef } from '../../../contracts/line.js';
 import type {
   KnowledgeCommitResult, KnowledgeCommitStatus, KnowledgeProblemV1, KnowledgeRecoverResult, KnowledgeRecoveryItemV1,
   ReconcileResult, ReconcileTrigger,
 } from '../../../contracts/knowledge.js';
 
 export interface KnowledgeOpsPort {
-  /** One reconciliation of the line the workspace has checked out now ([2C1-10]–[2C1-18]). */
-  reconcile(ctx: CoreCallContext, workspaceId: string, trigger: ReconcileTrigger): Promise<ReadResult<ReconcileResult>>;
+  /**
+   * One reconciliation of the line the workspace has checked out now ([2C1-10]–[2C1-18]), or of the named line of it
+   * (KLS-3b: a merged line, in the folder the Host registered for it).
+   */
+  reconcile(ctx: CoreCallContext, workspaceId: string, trigger: ReconcileTrigger, line?: LineRef):
+    Promise<ReadResult<ReconcileResult>>;
   /** KC-1 G3: this project's places of a `knowledge_conflict` notice, by `itemNo`; none is `not_found`. */
   problems(ctx: CoreCallContext, input: { noticeId: string }):
     Promise<ReadResult<{ problems: readonly KnowledgeProblemV1[] }>>;

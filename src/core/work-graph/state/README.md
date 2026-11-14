@@ -83,7 +83,7 @@
 - `decision-policy.ts` — 五层动作策略 `decisionActionPolicy`（`DecisionPolicyInputV1` 只在旧入参上做加法，结果是 `DecisionPolicyVerdictV1`）：总是问你的九个动作 → 同一动作已有待答卡 → 匹配到的自主规则（`automatic_notice`）→ 出厂默认（四个角色线动作与 `create_member`/`short_change_duty` 有一个受影响目标是每步问就出卡，否则人做直接做、别的调用方发通知；`module_maintainer` 照旧；其余旧动作照旧表）→ 越界出卡；另有用户消息准入、自动化确认原因、gate 覆盖与修复判定。
 - `line-status.ts` — 工作线的纯派生：状态、注意、标记、桶、归档标签、控制项、排序键；线的 `wait` 取最早未消费等待的状态，决定“等回复”（open/answered）与已消费标记（consumed）；待命原因多一个 `unassigned`（链上没有开着的负责链接），行带名额等待 `runningCap`。
 - `line-pin-machine.ts` — Workspace 工作线置顶机器（一次原子增删）。
-- `line-machine.ts` — 线记录的唯一构造器 `newLineRecord`（KLS-3a）：出生 `open`、revision 1、`forkPoint` 是建线时的 HEAD；`merged`/`removed` 归 KLS-3b 的线结束，在这里加迁移。
+- `line-machine.ts` — 线记录的唯一构造器 `newLineRecord`（KLS-3a）：出生 `open`、revision 1、`forkPoint` 是建线时的 HEAD。KLS-3b：`nextLineStatus(line, facts)` 是线结束的唯一判定（纯函数，事实 `LineStatusFacts` 由 Host 读）：工作区已移出、文件夹（Host 确认检出真没了才给 false）或分支没了 → `removed`（121-90）；不是 base 线（工作区的第一条）、HEAD 离开了分叉点、是 base HEAD 的祖先、工作树干净 → `merged`（L10、R11）；base 线自己不合回（R19），刚开的线（HEAD 在分叉点）和没有分叉点的线不判，git 答不出的事实（null）什么都不判，已关闭的线不再动。`nextLineIdentity` 是同一文件夹换了分支（或第一个提交）时的新版本（还是这条线，`forkPoint` 重置为切换时的 HEAD，裁定 7）；`nextLineClosed` 是线结束的记录（`closedAt` 只在这里写）。
 - `initialization-adoption.ts` — 初始化采用操作的纯记录表：出生 `newInitializationAdoptionRecord`、既有操作的再次接受 `acceptExistingInitializationAdoption`、写入前标记 `nextAdoptionStage`，以及三个后写 `advanceInitializationAdoption`/`stopInitializationAdoption`/`completeInitializationAdoption`，再加供服务重建已提交记录的纯投影 `committedAdoptionRecord`（前缀、before/stopped 标记与 `record.result` 只在这里形成；不读时钟、不生成 id、不碰存储）。
 
 ### 注记/消息/其他生命周期
@@ -155,6 +155,8 @@
 | `planReanchorHook`、`PlanReanchorHookInputV1`、`PlanReanchorHookResultV1` | `src/core/work-graph/state/goal-copy.ts:18`、`:12`、`:13` | 包 7D1 的 `planReanchor`，复制的出生提交按职责各调一次：把源目标参谋/书记的负责关系挪到新 Goal；纯函数，不写事实、不给回执 | 复制的出生提交里迁参谋和书记；不要另开一条迁移路径 |
 | `newGoalSnapshot` | `src/core/work-graph/state/goal-machine.ts:100` | 建 Goal 的预绑定快照（`since: null`，创建提交填游标）；出生即带 `lineRef`、`settings`、`continuedFrom`、`copiedInterventions` | 新建 Goal |
 | `newLineRecord` | `src/core/work-graph/state/line-machine.ts:8` | 建一条线的记录（`open`、revision 1、键是工作区和文件夹） | 登记一条线 |
+| `nextLineStatus` | `src/core/work-graph/state/line-machine.ts:53` | 一条开着的线该不该结束、结束成什么（`merged`/`removed`/null），只看给它的事实 | Host 扫线时；不要在别处读 `line.status` 另判 |
+| `nextLineIdentity`、`nextLineClosed` | `src/core/work-graph/state/line-machine.ts:64`、`src/core/work-graph/state/line-machine.ts:72` | 线的两种新版本：换分支（revision+1，分支、第一个提交、分叉点换新）和结束（revision+1，状态、`closedAt`） | `registerLine` 的换分支、`settleLine`；不要手写线记录 |
 | `decideGoalConfirm` | `src/core/work-graph/state/goal-confirm.ts:32` | confirm-draft 的唯一纯决定：拒绝顺序、草稿、objective、出生设置与 order | 确认草稿前；不要另写拒绝顺序 |
 | `confirmObjectiveText` | `src/core/work-graph/state/goal-confirm.ts:21` | 确认后的 objective：正文 + 空行 + `完成标准：` + 每条 `- ` 完成标准，两段都规范化 | 建确认 Goal 的 objective |
 | `newInitializationBinding` | `src/core/work-graph/state/goal-confirm.ts:60` | 不可变 `InitializationBinding@1` 的唯一构造：ref、answerRef、digest、requestRef、draftIndex、goalRef、screening | 确认提交；服务只编码，不自己构造 |

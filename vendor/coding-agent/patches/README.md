@@ -125,3 +125,16 @@ node scripts/build-kernel-patch.mjs --write
 受管 `sandbox/workspace/workspace-sandbox.ts` 的 `listFiles` 开根后把 `#deniedPrefixes` 里存在的项 `lstat` 成 `dev:ino` 集合，遍历子项时 `lstat` 命中该集合的条目照旧跳过；不按名字大小写比较，所以不区分大小写的根上以 `.WORKBENCH` 打开 `.workbench` 时漏出的同 inode 子项被跳过，ext4 上真名 `.WORKBENCH/local` 是另一个 inode，不受影响。`#gitSnapshot`、`snapshot`、`#normalize` 和现有条目级拒绝不变。改前源 SHA-256 `ba2cdb5de2902cbbd795dc71812e7e79a0afece1418c24357be6352f8e5a149d`，改后 `8bc526683f44f160d1bf52a7ae28b802fedb57f578ce260f87057e2afbeb6ea6`；四份产物为 `afee5a99dea51abe4e5df4be0ee7d6fb1ec0fc55f40f76766399bfd8d5dbcd93`（js）、`99b8b822061b20aff1fece038afccec04e9740b410a0b892df6511a8be47b5d5`（js.map）、`fda42ff92ca6140a09a0fe99c99a9a792a34f7b95348185aa23e5f155e52f7e2`（d.ts，未变）、`1d22829391bf0664c8c941f9d27e9e26de8f5ebc380b46c8c9e13a7498c13de9`（d.ts.map）。
 
 命令：`node scripts/build-kernel-patch.mjs --check`（二十个源、80 份产物）与 `--write`；`--write` 退出 0，重写 `permission-policy` 的 js、js.map、d.ts.map 和 `workspace-sandbox` 的 js、js.map、d.ts.map（两份 d.ts 未变），其余产物不变。
+
+## 2026-11-13 DSEC3 不分大小写盘上 `.git` 的 ASCII 别名
+
+受管源 `sandbox/process/process-sandbox.ts` 在读写和只读两条挂载路径上给 `.git` 的 7 个 ASCII 大小写变体（`.GIT`、`.Git`、`.GiT`、`.GIt`、`.gIT`、`.gIt`、`.giT`，原名除外）各加一条只读挂载。读写分支在 `#arguments` 的受保护路径之后、`--chdir` 之前：目录用 `--ro-bind-try <childRoot>/<variant>`，文件 `.git`（linked worktree 的 gitfile）用 `--ro-bind /dev/null`。只读分支由 `#classifyProtectedPaths` 在 `.git` 与 `.GIT` 同 `dev:ino` 时把 7 个变体并进快照；`identity` 从 `sandbox/workspace/workspace-sandbox.ts` 导出复用，不另写一份 `dev:ino` 比较；`planReadonlyMounts` 把变体目录当 `bind-readonly`、文件当 `mask-devnull`，别的目录规则不变。ext4 上真名 `.GIT` 是另一个目录项，gate 为假，计划和挂载都不变（121-111）。`.workbench` 的 511 个 ASCII 变体不挂，理由是协调（每条命令多约 2 秒；这类盘上的知识文件缺口记进 STATUS）；`ı`、Kelvin 等 Unicode 折叠不挂，理由是产品规则（没有书面要求，这台机器上也没有证据）。没有新选项、公开类型、路由或 `public-api` 导出。
+
+`--check` 输出：`mode: "check"`、TypeScript 6.0.3、二十个源、80 份产物，80 项 `matches: true`，退出 0。改前/改后源 SHA-256：
+
+- `sandbox/process/process-sandbox.ts` 改前 `6229dc47ef08bc49862eecd287f739cde9a9da64969c4d8be32b2fb10068f383`（SBX 之后），改后 `08a8552201dc82a4e45ca2819428fdfc7bb5a031aaffcf62a90c46ca4f4bb32c`
+  - 四份产物：`18c1a48f96ba0e1915559866615c65cd73c42d3fd1f0a12c72dbf1ed5d5c42e2`（js）、`77354943b5896921d575ea1fc21d3e07d40ffac299e0903650d137e6fabf9a55`（js.map）、`cdf2df52d7e95ca6bf8b12671c9f23c2b218de67d1943d92e5af6f98e4b299ca`（d.ts）、`a8596f3960c9e724f77983576a6005c72ae109ea825392210337ff530eada1d1`（d.ts.map）
+- `sandbox/workspace/workspace-sandbox.ts` 改前 `8bc526683f44f160d1bf52a7ae28b802fedb57f578ce260f87057e2afbeb6ea6`（DSEC2 之后），改后 `d0a87a079c8a9b1992c1c71c4c00f25ae7f771213bdd8770096528237f0d340c`
+  - 四份产物：`9c20296512634285db233a19dfe57458eba440989e72a07f7bce414a754507cb`（js）、`506e2b33b3192f830b5c8588f0ff903267a3a993e7cfa0bbe461e967e4500db8`（js.map）、`753c0e2307260b568528854430fc552f45a29e1fbafc58bb996ed8e5123be228`（d.ts）、`c981c2e155c43e0cb4f5140dcb7aad2a0b5b0bad9f3afa2fd442ec46c31d5bd8`（d.ts.map）
+
+命令不变：`node scripts/build-kernel-patch.mjs --check`（0，二十个源、80 份产物）与 `--write`；`--write` 只改上面这 8 份产物，其余产物不变。

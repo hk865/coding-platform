@@ -5,9 +5,11 @@
  * the world's guard "sent no exec review round".
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { execReviewAnswerText } from '../../src/contracts/exec-review.js';
 import type { WorkflowAdvanceResult } from '../../src/business/workflow/contracts.js';
 import { readPlanningQuery, waitForResponse } from '../helpers/IV-host-fixture.js';
 import { byIdentityPrefix, commitBarrier } from '../helpers/S6A-commit-barrier.js';
+import { readS7BMessage } from '../helpers/S7B-fixture.js';
 import {
   advanceS9Review, answerS9Review, openS9ReviewRound, openS9ReviewWorld, type S9ReviewWorld,
 } from '../helpers/S9-review-fixture.js';
@@ -72,4 +74,29 @@ describe('W1-read: readReviewState through workflow/advance', () => {
     expect(operationOf(closed)?.kind).toBe('finalize_checks');
     expect(Object.keys((inputOf(closed) ?? {}) as object)).toEqual(['roundRef']);
   }, 120_000);
+
+  /*
+   * FSUB-1 (fsub §3): a form round's Answer is only an accepted `submit_exec_review`; parseable model text is not.
+   * Red today at `answerRefs`: the observer's `submitted === null` branch keeps the text (`extractAnswer`) for
+   * `exec_review`, so the Query ends `answered` and `selectReview` books `record_review` (the text passes the review).
+   * Green after the package's one four-shape set (`exec_review`/`unknown_call_advice`/`scribe_review`/
+   * `command_rerun_advice`): the same text becomes `{kind:'empty'}` -> `gap`, so the round finalizes without it.
+   * Named mutation (draft §3): delete `'exec_review'` from the set -> an Answer is present again and the next step
+   * is `record_review` with the text standing in for PASS.
+   */
+  it('exec_review text without its submit tool is not an answer: gap, then finalize_checks', async () => {
+    const review = await openS9ReviewWorld();
+    worlds.push(review);
+    const text = execReviewAnswerText({ verdict: 'pass', basis: 'dfsub basis', report: 'dfsub report' });
+    const sent = await answerS9Review(review, [{ kind: 'text', text }]);
+    const record = await readPlanningQuery(review.world, sent.messageRef);
+    expect(record?.job.job.answerRefs).toEqual([]);
+    expect(record?.job.job.closeReason?.code).toBe('gap');
+    const closed = await selectReview(review);
+    expect(closed.state).toBe('advance');
+    expect(operationOf(closed)?.kind).toBe('finalize_checks');
+    expect(Object.keys((inputOf(closed) ?? {}) as object)).toEqual(['roundRef']);
+    const source = await readS7BMessage(review.world, sent.messageRef);
+    expect(source.response !== null || source.withdrawnAt !== null).toBe(true);
+  });
 });

@@ -129,7 +129,7 @@ function isWithinIgnoringCase(candidate: string, prefix: string): boolean {
   return isWithin(candidate.toLowerCase(), prefix.toLowerCase());
 }
 
-function identity(value: { dev: number | bigint; ino: number | bigint }): string {
+export function identity(value: { dev: number | bigint; ino: number | bigint }): string {
   return `${String(value.dev)}:${String(value.ino)}`;
 }
 

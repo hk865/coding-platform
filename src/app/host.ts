@@ -56,7 +56,12 @@ import {
 } from '../composition/project-runtime.js';
 import { kernelStoreDirectory, kernelStoreEntry } from '../composition/project-store-paths.js';
 import { ensureKnowledgeDirectory, resolveKnowledgeLine } from '../composition/line-knowledge.js';
-import { checkoutIdentityOf, identifyCheckout, readHead, type CheckoutProbe } from '../core/workspace/workspace-change-capture.js';
+import {
+  checkoutIdentityOf, gitTopLevel, identifyCheckout, isAncestor, isWorktreeClean, listWorktrees, readHead, readRef,
+  type CheckoutProbe,
+} from '../core/workspace/workspace-change-capture.js';
+import { lineRefOf, sameCheckout, type LineSnapshot } from '../contracts/line.js';
+import { nextLineStatus } from '../core/work-graph/state/line-machine.js';
 import type { WorkspaceHostBindings } from '../core/workspace/access.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { SessionRef, WorkspaceScope } from '../contracts/core/identity.js';
@@ -1069,6 +1074,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
    * registered workspace shares it: the settings open (new or already bound), the route after a committed
    * registration, and the Host start. A root the Host cannot read has no checkout to name yet, and a folder with no
    * Workspace record keeps its flow (its line comes with the registration): both answer no failure.
+   * KLS-3b: the one refresh of a line too. An open line whose folder switched branch (a detached HEAD included) or
+   * first commit moves to it, forked from the HEAD at the switch (ruling 7); a closed line is left as it ended.
    */
   async function registerHostLine(platform: ProjectPlatform, ctx: CoreCallContext, scope: CoreScope,
     root: string): Promise<CoreRejection | null> {
@@ -1080,8 +1087,11 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     }
     const line = checkoutIdentityOf(probe);
     const found = await platform.projects.readLine(ctx, { workspaceId: scope.workspaceId, folder: line.folder });
-    if (found.status === 'ready') return null;
     if (found.status === 'rejected') return found;
+    // KLS-3b (lead 11-14, as Astra 2): a folder git could not read keeps its recorded line; the next safe point reads it
+    // again. A new folder still registers as not git, so an open waits on nothing.
+    if (found.status === 'ready' && (found.value.status !== 'open' || (probe.kind === 'not_git' && probe.answer === 'unreadable')
+      || (found.value.branch === line.branch && found.value.firstCommit === line.firstCommit))) return null;
     const registration = await platform.projects.readWorkspaceRegistration(ctx, scope);
     if (registration.status === 'rejected' && registration.code === 'not_found') return null;
     if (registration.status !== 'ready') {
@@ -1089,9 +1099,11 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         : { status: 'rejected', code: 'unavailable', reason: 'the workspace registration is not readable' };
     }
     const forkPoint = probe.kind === 'git' ? await readHead(probe.folder) : null;
+    // The line's revision tells a move apart from an earlier one to the same branch and HEAD.
+    const identity = [line.folder, line.branch, forkPoint, found.status === 'ready' ? found.value.revision : 0];
     const registered = await platform.projects.registerLine(ctx, {
       input: { workspaceId: scope.workspaceId, line, forkPoint },
-      meta: { requestId: `host-line:${scope.workspaceId}:${sha256Hex(canonicalJson([line.folder, line.branch, forkPoint]))}`,
+      meta: { requestId: `host-line:${scope.workspaceId}:${sha256Hex(canonicalJson(identity))}`,
         expected: [{ ref: registration.value.workspace.ref, revision: registration.value.workspace.revision }] },
     });
     return registered.status === 'committed' ? null : registered;
@@ -1821,6 +1833,116 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     return lined;
   }
 
+  /**
+   * KLS-3b (kls-design §2.3.2, 121-90): every open line of the project, judged at the Host's safe points (an open, the
+   * start, an idle round, a removal); no timer of its own. A removed workspace's lines end with it; another line's
+   * folder that switched branch moves its line first (`registerHostLine`), then `nextLineStatus` judges it against its
+   * workspace's base line (the first) and `settleLine` writes the end. A merged line's folder is reconciled once more,
+   * so a note it changed is marked for verification. A read that fails leaves the line for the next safe point.
+   */
+  async function sweepLines(scope: CoreScope): Promise<void> {
+    const platform = platformFor(scope.projectId);
+    if (platform === null) return;
+    const read = await platform.projects.readLines(settingsContext(scope), {});
+    if (read.status !== 'ready') return;
+    const byWorkspace = new Map<string, LineSnapshot[]>();
+    for (const line of read.value.lines) {
+      byWorkspace.set(line.ref.workspaceId, [...byWorkspace.get(line.ref.workspaceId) ?? [], line]);
+    }
+    for (const [workspaceId, lines] of byWorkspace) {
+      const lineScope: CoreScope = { projectId: scope.projectId, workspaceId };
+      const ctx = settingsContext(lineScope);
+      const registration = await platform.projects.readWorkspaceRegistration(ctx, lineScope);
+      if (registration.status !== 'ready') continue;
+      const workspace = registration.value.workspace;
+      const base = lines[0]!;
+      for (const recorded of lines) {
+        if (recorded.status !== 'open') continue;
+        const isBaseLine = recorded.ref.lineRef === base.ref.lineRef;
+        const folderExists = await stat(recorded.folder).then(info => info.isDirectory(), () => false);
+        // Coordination (lead 11-14 Q4): a folder can be missing for a while (an unmounted drive) and a line's end is for
+        // good, so a transient state ends nothing. The base line waits for its folder; another line ends only once the
+        // base repository is readable and no longer records its checkout. A removed workspace still ends every line.
+        if (!folderExists && workspace.removedAt === undefined
+          && (isBaseLine || !await checkoutGone(recorded, base))) continue;
+        let line = recorded;
+        if (workspace.removedAt === undefined && folderExists) {
+          if (await registerHostLine(platform, ctx, lineScope, recorded.folder) !== null) continue;
+          const moved = await platform.projects.readLine(ctx, { workspaceId, folder: recorded.folder });
+          if (moved.status !== 'ready') continue;
+          line = moved.value;
+        }
+        // Astra 2: a HEAD git could not read (a timeout, a folder gone meanwhile) ends nothing; the next safe point
+        // reads it again. A removed workspace's lines end without it.
+        const headRead = folderExists && workspace.removedAt === undefined ? await readRef(line.folder, 'HEAD')
+          : { status: 'absent' as const };
+        if (headRead.status === 'unreadable') continue;
+        const head = headRead.status === 'commit' ? headRead.oid : null;
+        const baseHead = isBaseLine ? head : await readHead(base.folder);
+        // The refreshed line is on its folder's branch (or detached HEAD), so the branch is gone exactly when git says
+        // HEAD does not resolve; before the repository's first commit nothing resolves and no branch is gone.
+        const branchExists = line.branch === '' || head !== null || baseHead === null;
+        const ancestorOfBase = isBaseLine || head === null || baseHead === null ? null
+          : await isAncestor(line.folder, head, baseHead);
+        const next = nextLineStatus(line, {
+          isBaseLine, workspaceRemoved: workspace.removedAt !== undefined, folderExists, branchExists, head,
+          forkPoint: line.forkPoint, ancestorOfBase,
+          worktreeClean: ancestorOfBase === true ? await isWorktreeClean(line.folder) : null,
+        });
+        if (next === null) continue;
+        const settled = await platform.projects.settleLine(ctx, {
+          input: { workspaceId, folder: line.folder, status: next },
+          meta: { requestId: `host-line-end:${workspaceId}:${sha256Hex(canonicalJson([line.folder, next]))}`,
+            expected: [{ ref: workspace.ref, revision: workspace.revision }] },
+        });
+        if (settled.status !== 'committed' || next !== 'merged') continue;
+        try {
+          await platform.knowledge.reconcile(hostScopeContext(lineScope, HOST_RECONCILE_ACTOR), workspaceId, 'line_merged',
+            lineRefOf(settled.value));
+        } catch { /* the line's next reconciliation comes with its next use */ }
+      }
+    }
+  }
+
+  /** A missing line folder is gone only when its repository says so: a worktree of the base line's repository that the
+   *  readable base repository no longer lists. A clone of its own is in no such list, so it never reads as gone. */
+  async function checkoutGone(line: LineSnapshot, base: LineSnapshot): Promise<boolean> {
+    if (line.repoKey !== base.repoKey) return false;
+    const listed = await listWorktrees(base.folder);
+    return listed !== null && !listed.includes(line.folder);
+  }
+
+  /**
+   * KLS-3b (kls-design §2.3.4): a folder opened into a project, as a new line of the bound workspace whose line is a
+   * checkout of the same repository (`sameCheckout`; a shallow or many-rooted history counts only by its common git
+   * directory). `null`: the folder is no checkout root, or no workspace of the project has its repository, and it
+   * opens as a new workspace. Coordination: a line comes before the Goals and Sessions on it, so a line that cannot be
+   * read or registered fails the open (`unavailable`) instead of guessing a workspace; nothing is saved then.
+   */
+  async function joinAsLine(projectId: string, canonical: string): Promise<SettingsResponse<HostSettingsOpenedHost> | null> {
+    const runtime = registry.get(projectId);
+    if (runtime === null || await gitTopLevel(canonical) === null) return null;
+    const probe = await identifyCheckout(canonical);
+    const listed = workspaces.find(workspace => workspace.scope.projectId === projectId)!;
+    const read = await runtime.platform.projects.readLines(settingsContext(listed.scope), {});
+    if (read.status !== 'ready') {
+      return { status: 'rejected', code: 'unavailable', reason: 'the project lines could not be read' };
+    }
+    const identity = checkoutIdentityOf(probe);
+    const found = read.value.lines.find(line => sameCheckout(line, identity)
+      && byScope.has(scopeKey({ projectId, workspaceId: line.ref.workspaceId })));
+    if (found === undefined) return null;
+    const scope: CoreScope = { projectId, workspaceId: found.ref.workspaceId };
+    const ctx = settingsContext(scope);
+    const lined = await registerHostLine(runtime.platform, ctx, scope, canonical)
+      ?? await registerHostLines(runtime, ctx, scope, byScope.get(scopeKey(scope))!.root);
+    if (lined !== null) {
+      return { status: 'rejected', code: 'unavailable', reason: `the workspace line could not be registered: ${lined.reason}` };
+    }
+    await sweepLines(scope);
+    return { status: 'ready', value: { scope } };
+  }
+
   function builtinQueryProfile(scope: CoreScope, bindingId: string, idPrefix: string, label: string,
     sessionRole: WorkbenchQueryProfile['sessionRole'], roleBinding: WorkbenchQueryProfile['roleBinding'],
     model: HostSettingsStoredModel): WorkbenchQueryProfile {
@@ -2234,6 +2356,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         if (lined !== null) {
           return { status: 'rejected', code: 'unavailable', reason: `the workspace line could not be registered: ${lined.reason}` };
         }
+        if (owner !== null) await sweepLines(workspace.scope);
         return { status: 'ready', value: { scope: { ...workspace.scope } } };
       }
     }
@@ -2247,6 +2370,13 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
           break;
         }
       }
+    }
+    // KLS-3b (kls-design §2.3.4, 121-64): another checkout of a repository this project already has is a new line of
+    // that workspace, not a new workspace: no new registration, descriptor or Kernel scope. Only a checkout's own root
+    // is one (a line is a checkout), and a checkout that is not surely the same repository opens as a new workspace.
+    if (requestedProjectId !== undefined && !isRestore && !sharedWith) {
+      const joined = await joinAsLine(requestedProjectId, canonical);
+      if (joined !== null) return joined;
     }
     const projectId = requestedProjectId ?? randomBytes(16).toString('hex');
     const workspaceId = request.workspaceId ?? randomBytes(16).toString('hex');
@@ -2336,6 +2466,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         ...(request.writeAllowed ? { writePrefixes: ['.'] } : {}),
         ...(request.commandsAllowed && request.writeAllowed ? { allowCommands: true } : {}),
       });
+      await sweepLines(scope);
       // L8: the settings path's registration step, after the root is bound,
       // and only when this call performed a non-replayed registration.
       if (registeredNow) captureWorkspaceRegistration(scope);
@@ -2430,6 +2561,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         ? await removals.withdraw(settingsContext(scope), request)
         : await removals.remove(settingsContext(scope), request);
       if (result.status !== 'committed') return settingsFailureOf(result);
+      // KLS-3b (121-90): the removed workspace's lines end with it, before the save, which may fail and be retried.
+      await sweepLines(scope);
       try { await save(); }
       catch (error) {
         return { status: 'rejected', code: 'unavailable', reason: messageOf(error) };
@@ -2588,6 +2721,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     try { await projectPlatform(scope.projectId).knowledge.reconcile(reconcileContext(scope), scope.workspaceId, 'startup'); }
     catch { /* the next idle round reconciles */ }
   }
+  // KLS-3b: each held project's lines once at start (a line merged, or a workspace removed, while no Host ran).
+  for (const scope of new Map(ownedScopes().map(scope => [scope.projectId, scope])).values()) await sweepLines(scope);
   // Slice 2B L7: with its project's lease, every served workspace records its
   // start-of-recording epoch BEFORE the start-up reconcile, so a Run that ends
   // after this instant and has no tally reads `not_recorded` (an error) rather
@@ -3714,6 +3849,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
               if (!runtimeIdle(platform, clockMs())) return;
               await platform.knowledge.reconcile({ ...reconcileContext(workspace.scope), signal: attentionAbort.signal },
                 workspace.scope.workspaceId, 'idle');
+              // KLS-3b: the project's lines are judged in the same idle job.
+              await sweepLines(workspace.scope);
             } catch { /* the next idle heartbeat reconciles again */ }
           })
           .finally(() => inputJobs.delete(key))

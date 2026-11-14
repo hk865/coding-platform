@@ -256,7 +256,7 @@ export interface ReadonlyMountPlan {
     readonly mounts: readonly ReadonlyMount[];
     /** 被遮蔽的受保护路径（空 tmpfs 或 `/dev/null`）；其整棵子树都不可见。 */
     readonly maskedSubtrees: readonly string[];
-    /** 只读但内容仍可读的受保护路径（当前只有目录形态的 `.git`）；其下显式否认路径各自保留挂载。 */
+    /** 只读但内容仍可读的受保护路径（目录形态的 `.git` 及其 ASCII 大小写变体）；其下显式否认路径各自保留挂载。 */
     readonly readableSubtrees: readonly string[];
     /** 因最近的已选遮蔽祖先而丢弃、不再单独挂载的受保护路径。 */
     readonly dropped: readonly string[];
@@ -266,7 +266,8 @@ export interface ReadonlyMountPlan {
 /**
  * D-ONECHECK/D-GIT/D-GITFILE：纯函数，从一次 `lstat` 快照推导只读挂载计划。
  *
- * - 目录形态的 `.git` 是唯一的“只读但可读”绑定，其下显式否认路径各自保留挂载；
+ * - 目录形态的 `.git` 及其 ASCII 大小写变体是“只读但可读”的绑定，其下显式否认路径
+ *   各自保留挂载；
  * - 普通目录用空 tmpfs 遮蔽，普通文件用 `/dev/null` 遮蔽，两者都让整棵子树不可见；
  * - 只有当最近的上层**已选遮蔽挂载**存在时才丢弃后代（“never expose a directory
  *   after discarding its denials”）；读取型祖先不遮蔽；

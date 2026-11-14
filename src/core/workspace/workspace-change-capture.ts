@@ -28,7 +28,7 @@ import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { ARTIFACT_MAX_SIZE_BYTES } from '../../contracts/artifact.js';
 import { KNOWLEDGE_DIRECTORY, withinKnowledgeDirectory } from '../../contracts/knowledge.js';
-import type { CheckoutIdentity } from '../../contracts/line.js';
+import type { CheckoutIdentity, LineRef } from '../../contracts/line.js';
 import type {
   CapturedPathV1, WorkspaceBaselineEntryV1, WorkspaceBaselineV1, WorkspaceChangeCaptureV1,
 } from '../../contracts/unknown-call-review.js';
@@ -99,7 +99,8 @@ async function git(root: string, args: readonly string[], timeout: number = GIT_
     'git',
     ['--no-optional-locks', '-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false', '-C', root, ...args],
     { timeout, maxBuffer: 32 * 1024 * 1024, windowsHide: true,
-      env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } },
+      // English messages: `failedReadAnswer` reads git's "not a git repository" text (lead 11-14).
+      env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', LC_ALL: 'C.UTF-8' } },
   );
   if (stdin !== undefined) running.child.stdin?.on('error', () => undefined).end(stdin);
   return (await running).stdout;
@@ -121,25 +122,41 @@ export async function gitTopLevel(root: string): Promise<string | null> {
 /** The repository's common git directory (shared by all its work trees), absolute and real; null when the root is
  * in no work tree, git is missing or the command fails. Git may answer relative to the root. */
 export async function gitCommonDir(root: string): Promise<string | null> {
+  const common = await readCommonDir(root);
+  return common.status === 'dir' ? common.path : null;
+}
+
+/** `gitCommonDir` with why there is none: `absent` (no repository) or `unreadable` (`failedReadAnswer`). */
+async function readCommonDir(root: string):
+  Promise<{ status: 'dir'; path: string } | { status: 'absent' } | { status: 'unreadable' }> {
   try {
     const value = (await git(root, ['rev-parse', '--git-common-dir'])).trim();
-    if (value === '') return null;
+    if (value === '') return { status: 'unreadable' };
     const absolute = resolve(root, value);
-    return await realpath(absolute).catch(() => absolute);
-  } catch {
-    return null;
+    return { status: 'dir', path: await realpath(absolute).catch(() => absolute) };
+  } catch (error) {
+    return { status: failedReadAnswer(error) };
   }
 }
 
-/** One checkout's identity (KLS-2, KLS-3a): a git work tree with its first commit, or a folder that is in none. */
+/**
+ * One checkout's identity (KLS-2, KLS-3a): a git work tree with its history's roots (`rev-list --max-parents=0 HEAD`,
+ * none before the first commit) and whether it is shallow, or a folder that is in none.
+ */
 export type CheckoutProbe =
-  | ({ kind: 'git'; objectFormat: 'sha1' | 'sha256' } & CheckoutIdentity)
-  | { kind: 'not_git'; folder: string };
+  | ({ kind: 'git'; objectFormat: 'sha1' | 'sha256'; shallow: boolean; roots: string[] } & LineRef)
+  | { kind: 'not_git'; folder: string; answer: 'absent' | 'unreadable' };
 
-/** The line of a probed checkout; a folder in no git work tree is its own repository, with no branch and no commit. */
+/**
+ * The line of a probed checkout; a folder in no git work tree is its own repository, with no branch and no commit.
+ * The root commit names the repository across clones (121-64) only in a full history with one root (lead ruling
+ * KLS-3b §9 甲): a shallow clone takes its boundary for a root and several roots differ between branches, so such a
+ * checkout has no first commit and is one repository with another only through the same common git directory.
+ */
 export function checkoutIdentityOf(probe: CheckoutProbe): CheckoutIdentity {
   return probe.kind === 'git'
-    ? { repoKey: probe.repoKey, folder: probe.folder, branch: probe.branch, firstCommit: probe.firstCommit }
+    ? { repoKey: probe.repoKey, folder: probe.folder, branch: probe.branch,
+      firstCommit: !probe.shallow && probe.roots.length === 1 ? probe.roots[0]! : null }
     : { repoKey: probe.folder, folder: probe.folder, branch: '', firstCommit: null };
 }
 
@@ -152,18 +169,25 @@ export async function readCheckoutBranch(root: string): Promise<string> {
   }
 }
 
-/** `folder` is the real root; `repoKey` the real common git directory. A root that does not exist throws. */
+/**
+ * `folder` is the real root; `repoKey` the real common git directory. A root that does not exist throws. `not_git`
+ * says whether git said so (`absent`) or could not read the folder (`unreadable`, KLS-3b: a recorded line keeps its
+ * identity on it).
+ */
 export async function identifyCheckout(root: string): Promise<CheckoutProbe> {
   const folder = await realpath(root);
-  const repoKey = await gitCommonDir(folder);
-  if (repoKey === null) return { kind: 'not_git', folder };
-  // The root commit names the repository across clones (121-64); the first one git lists when history has several.
-  let firstCommit: string | null = null;
+  const common = await readCommonDir(folder);
+  if (common.status !== 'dir') return { kind: 'not_git', folder, answer: common.status };
+  const repoKey = common.path;
+  let roots: string[] = [];
   try {
-    firstCommit = (await git(folder, ['rev-list', '--max-parents=0', 'HEAD'])).trim().split('\n')[0] || null;
+    roots = (await git(folder, ['rev-list', '--max-parents=0', 'HEAD'])).split('\n').filter(root => root !== '');
   } catch { /* an unborn HEAD: a repository with no commit yet */ }
+  // A history git cannot call complete is taken as shallow: when unsure, two checkouts are not one repository (121-111).
+  const shallow = await git(folder, ['rev-parse', '--is-shallow-repository'])
+    .then(answer => answer.trim() !== 'false', () => true);
   return { kind: 'git', repoKey, folder, branch: await readCheckoutBranch(folder), objectFormat: await objectFormatOf(folder),
-    firstCommit };
+    shallow, roots };
 }
 
 /** The repository's object format, read without a HEAD commit. */
@@ -187,10 +211,71 @@ export function gitBlobId(body: Uint8Array, format: ObjectFormat): string {
   return createHash(format).update(`blob ${body.length}\0`).update(body).digest('hex');
 }
 
-export async function readHead(root: string): Promise<string | null> {
+/**
+ * `rev-parse --verify -q <ref>`: the commit a ref names; `absent` when git says it does not resolve (exit 1: an unborn
+ * or deleted branch) or there is no repository; `unreadable` when git could not tell (`failedReadAnswer`). KLS-3b
+ * (Astra 2): only `absent` may end a line.
+ */
+export async function readRef(root: string, ref: string):
+  Promise<{ status: 'commit'; oid: string } | { status: 'absent' } | { status: 'unreadable' }> {
   try {
-    const head = (await git(root, ['rev-parse', '--verify', 'HEAD'])).trim();
-    return COMPLETE_OID.test(head) ? head : null;
+    const value = (await git(root, ['rev-parse', '--verify', '-q', ref])).trim();
+    return COMPLETE_OID.test(value) ? { status: 'commit', oid: value } : { status: 'unreadable' };
+  } catch (error) {
+    return { status: failedReadAnswer(error) };
+  }
+}
+
+/**
+ * KLS-3b (Astra 2, lead 11-14): the one reading of a failed git read. `absent` only when git said no for sure: exit 1
+ * (a `--verify -q` that resolves nothing) or its search found no repository at all (exit 128, "not a git repository
+ * (or any …"). Exit 128 alone is also a folder git cannot enter, and a linked checkout whose main repository is away
+ * for a while says "not a git repository: <its git dir>". Anything else is `unreadable` and changes no line.
+ */
+function failedReadAnswer(error: unknown): 'absent' | 'unreadable' {
+  const { code, stderr } = error as { code?: unknown; stderr?: unknown };
+  return code === 1 || (code === 128 && /not a git repository \(or any/i.test(String(stderr))) ? 'absent' : 'unreadable';
+}
+
+/** HEAD's commit, or null when there is none or git cannot read it. */
+export async function readHead(root: string): Promise<string | null> {
+  const head = await readRef(root, 'HEAD');
+  return head.status === 'commit' ? head.oid : null;
+}
+
+/**
+ * KLS-3b (kls-design §2.3.2): `merge-base --is-ancestor`. Exit 1 is the ordinary "not an ancestor" (`false`); any
+ * other failure (a timeout, no repository, an unknown commit) is `null`, so the caller judges nothing.
+ */
+export async function isAncestor(root: string, ancestor: string, descendant: string): Promise<boolean | null> {
+  try {
+    await git(root, ['merge-base', '--is-ancestor', ancestor, descendant]);
+    return true;
+  } catch (error) {
+    return (error as { code?: unknown }).code === 1 ? false : null;
+  }
+}
+
+/**
+ * KLS-3b (lead 11-14 Q4): the checkouts the repository at `root` still records (`git worktree list --porcelain -z`, a
+ * missing but unpruned one included; NUL-separated, so a path may hold a newline), each by its real path when it is
+ * there; null when git cannot answer.
+ */
+export async function listWorktrees(root: string): Promise<string[] | null> {
+  let listed: string;
+  try {
+    listed = await git(root, ['worktree', 'list', '--porcelain', '-z']);
+  } catch {
+    return null;
+  }
+  const paths = listed.split('\0').filter(entry => entry.startsWith('worktree ')).map(entry => entry.slice('worktree '.length));
+  return Promise.all(paths.map(path => realpath(path).catch(() => path)));
+}
+
+/** KLS-3b: no changed, staged or untracked file in the whole work tree, code and knowledge alike; null when git fails. */
+export async function isWorktreeClean(root: string): Promise<boolean | null> {
+  try {
+    return (await git(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all'])).length === 0;
   } catch {
     return null;
   }

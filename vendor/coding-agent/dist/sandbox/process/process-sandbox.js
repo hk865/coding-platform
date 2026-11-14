@@ -15,7 +15,7 @@ import { access, lstat, mkdtemp, readdir, readFile, realpath, rm, stat } from "n
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { normalizeWorkspacePath } from "../../policy/permissions/permission-policy.js";
-import { WorkspaceSandbox } from "../workspace/workspace-sandbox.js";
+import { WorkspaceSandbox, identity } from "../workspace/workspace-sandbox.js";
 /** L10 的固定表：没有资源上限时的原因文本。 */
 export const RESOURCE_CAP_NONE_TEXT = {
     not_linux: "没有资源上限：本机不是 Linux 或 WSL",
@@ -439,9 +439,39 @@ function shellSingleQuote(value) {
     return `'${value.replaceAll("'", "'\\''")}'`;
 }
 /**
+ * `.git` 在不区分大小写的文件系统上会落到同一个目录项的 7 个 ASCII 大小写变体（原名除外）。
+ * 这是本规则唯一覆盖的一组名字：`.workbench` 的 511 个变体不挂，理由是协调（每条命令
+ * 多约 2 秒，这个盘的缺口记进 STATUS）；`ı`、Kelvin 等 Unicode 折叠不挂，理由是产品规则
+ * （没有书面要求，这台机器上也没有证据）。
+ */
+const GIT_CASE_VARIANTS = [".GIT", ".Git", ".GiT", ".GIt", ".gIT", ".gIt", ".giT"];
+function isGitCaseVariant(relative) {
+    return GIT_CASE_VARIANTS.includes(relative);
+}
+/**
+ * 121-106：命令不能写 `.git`；只挡原名时，大小写不敏感的文件系统会把 `.GIT` 解析到
+ * 同一个目录项。只有 `.git` 与 `.GIT` 的 dev:ino 相同才返回变体：ext4 上真名 `.GIT`
+ * 是另一个目录项，加了会误伤（121-111）。
+ * `.git` 不存在或 lstat 失败时没有变体：这是命令启动前的文件系统错误，不是命令能
+ * 控制的状态，不 fail-closed（草稿 §6 B6，没有裁定要求改变启动语义）。
+ */
+async function gitCaseAliasPaths(root) {
+    try {
+        const [exact, upper] = await Promise.all([
+            lstat(path.join(root, ".git")),
+            lstat(path.join(root, ".GIT")),
+        ]);
+        return identity(exact) === identity(upper) ? GIT_CASE_VARIANTS : [];
+    }
+    catch {
+        return [];
+    }
+}
+/**
  * D-ONECHECK/D-GIT/D-GITFILE：纯函数，从一次 `lstat` 快照推导只读挂载计划。
  *
- * - 目录形态的 `.git` 是唯一的“只读但可读”绑定，其下显式否认路径各自保留挂载；
+ * - 目录形态的 `.git` 及其 ASCII 大小写变体是“只读但可读”的绑定，其下显式否认路径
+ *   各自保留挂载；
  * - 普通目录用空 tmpfs 遮蔽，普通文件用 `/dev/null` 遮蔽，两者都让整棵子树不可见；
  * - 只有当最近的上层**已选遮蔽挂载**存在时才丢弃后代（“never expose a directory
  *   after discarding its denials”）；读取型祖先不遮蔽；
@@ -472,7 +502,9 @@ export function planReadonlyMounts(snapshot) {
             throw new ProcessSandboxError("launch_failed", `受保护路径 ${state.path} 不能是 symlink`);
         }
         if (state.kind === "directory") {
-            if (state.path === ".git") {
+            // 变体只在 `#classifyProtectedPaths` 确认和 `.git` 同 dev:ino 后才进快照；
+            // 这里按名字识别它们，和 `.git` 一样只读可读，别的目录规则不变。
+            if (state.path === ".git" || isGitCaseVariant(state.path)) {
                 mounts.push({ path: state.path, action: "bind-readonly" });
                 readableSubtrees.push(state.path);
             }
@@ -1640,11 +1672,15 @@ export class ProcessSandbox {
         };
     }
     /**
-     * D-ONECHECK：对 `.git` 和每条受保护路径各做一次 `lstat`，形成唯一的分类快照。
+     * D-ONECHECK：先判断 `.git` 的 ASCII 大小写别名，再对 `.git` 和每条受保护路径
+     * （别名存在时连同 7 个变体）各做一次 `lstat`，形成唯一的分类快照。
      * 在 `#run` 顶部、任何工作区快照或根句柄获取之前调用；之后不再重新分类。
      */
     async #classifyProtectedPaths() {
-        const paths = [...new Set([".git", ...this.#protectedPaths])].sort(byteOrder);
+        // 只在 `.git`/`.GIT` 同 dev:ino 时把 7 个 ASCII 变体并进快照；ext4 上加不进来，
+        // 现有 plan 断言不变（121-111）。
+        const aliases = await gitCaseAliasPaths(this.workspaceRoot);
+        const paths = [...new Set([".git", ...this.#protectedPaths, ...aliases])].sort(byteOrder);
         const states = [];
         for (const relative of paths) {
             let kind;
@@ -1844,8 +1880,8 @@ export class ProcessSandbox {
             }
         }
         else {
-            // read_write 行为保持不变：逐路径 lstat，目录用空 tmpfs，文件用 /dev/null，
-            // 目录形态的 `.git` 仍只读可读。
+            // read_write 其余规则不变：逐路径 lstat，目录用空 tmpfs，文件用 /dev/null，
+            // 目录形态的 `.git` 及其 ASCII 大小写变体只读可读。
             for (const relative of this.#protectedPaths) {
                 const parentSource = `${parentRoot}/${relative}`;
                 const childSource = `${childRoot}/${relative}`;
@@ -1855,10 +1891,11 @@ export class ProcessSandbox {
                     if (metadata.isSymbolicLink()) {
                         throw new ProcessSandboxError("launch_failed", `受保护路径 ${relative} 不能是 symlink`);
                     }
-                    if (relative === ".git" && metadata.isDirectory()) {
+                    const directory = metadata.isDirectory();
+                    if (relative === ".git" && directory) {
                         args.push("--ro-bind", childSource, destination);
                     }
-                    else if (metadata.isDirectory()) {
+                    else if (directory) {
                         args.push("--tmpfs", destination);
                     }
                     else if (metadata.isFile()) {
@@ -1866,6 +1903,14 @@ export class ProcessSandbox {
                     }
                     else {
                         throw new ProcessSandboxError("launch_failed", `受保护路径 ${relative} 类型不安全`);
+                    }
+                    // 121-106：只挡原名时，大小写不敏感的文件系统上 `.GIT` 会落到同一个目录项。
+                    // 变体只在 `.git`/`.GIT` 同 dev:ino 时加；文件 `.git`（linked worktree 的
+                    // gitfile）用 /dev/null 逐个遮蔽，目录用 --ro-bind-try（源不存在就跳过）。
+                    if (relative === ".git") {
+                        for (const variant of await gitCaseAliasPaths(parentRoot)) {
+                            args.push(directory ? "--ro-bind-try" : "--ro-bind", directory ? `${childRoot}/${variant}` : "/dev/null", `/workspace/${variant}`);
+                        }
                     }
                 }
                 catch (error) {

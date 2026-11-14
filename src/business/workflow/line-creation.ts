@@ -51,6 +51,9 @@ export type LineCreationInput = {
   name?: string | null;
   /** KC-3: a knowledge_conflict repair round's line checks its region on the last adopted catalog (`recorded`). */
   base?: KnowledgeReadBaseV1;
+  /** KLS-3b: the folder of the workspace line the Session works on (its Goal's or its predecessor's); absent is the
+   *  main line. */
+  lineFolder?: string;
 };
 
 export type LineCreationResultV1 =
@@ -120,6 +123,7 @@ export function createLineCreation(deps: LineCreationDependencies): LineCreation
         // The parent operation is the runtime request's own optional member; `replaces` is not, so it rides as the
         // one extra member the admission reads.
         parentOperation,
+        ...(input.lineFolder === undefined ? {} : { lineFolder: input.lineFolder }),
         ...({ replaces } as object),
       });
     } catch (error) {

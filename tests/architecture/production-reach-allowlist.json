@@ -1368,6 +1368,12 @@
       "name": "readAcrossProjects",
       "reason": "kept-for",
       "note": "kept for second-workspace B (xws2b), decision 121-75"
+    },
+    {
+      "file": "src/core/work-graph/views/activity-read-model.ts",
+      "name": "frequencyVerdictOf",
+      "reason": "kept-for",
+      "note": "kept for slice 9 of the orchestration design: the S9 G7 line-usage report after G6 applies this 10-round/25% frequency verdict; scripts/measure/line-usage.mjs does not apply it yet (STATUS gap), and no production path in src/ calls it, so the read port no longer calls it just to stay reachable"
     }
   ]
 }

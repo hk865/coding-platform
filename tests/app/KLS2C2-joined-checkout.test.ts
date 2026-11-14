@@ -15,6 +15,8 @@
  * baseline it carries left out, B's own baseline read), B's write carries that baseline back as it is, and A reads as
  * before.
  */
+import { realpathSync, renameSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CoreScope } from '../../src/app/core-http-types.js';
 import type { ProjectPlatform } from '../../src/composition/project-runtime.js';
@@ -24,7 +26,7 @@ import { plain, readPageToken } from '../helpers/AG2b-collaboration-fixture.js';
 import {
   kls2cAdopt, kls2cAdoptBody, kls2cNoteWrite, kls2cReviseResponsibility, openKLS2CHost, type KLS2CHost,
 } from '../helpers/KLS2C-knowledge-host.js';
-import { initGitWorkspace } from '../scenarios/support/git-workspace.js';
+import { addGitWorktree, initGitWorkspace } from '../scenarios/support/git-workspace.js';
 import { settingsPost } from './support/S8A-L8-host.js';
 
 const built = vi.hoisted(() => ({ platforms: [] as ProjectPlatform[] }));
@@ -64,7 +66,8 @@ describe.each(['memory', 'sqlite'] as const)('%s', storage => {
     await kls2cAdopt(world, ['core']);
     const openFolder = await folderOpener(world);
     const root = await tempDir('kls2c2-k36-r-');
-    await initGitWorkspace(root);
+    // Another repository than the world's (121-64): its own first commit, even when both are made in the same second.
+    await initGitWorkspace(root, { message: 'kls2c2-k36 another repository' });
     const onR = await openFolder({ projectId: world.scope.projectId, path: root, writeAllowed: true, commandsAllowed: false });
     const written = await world.call<{ write: { status: string; noteId?: string } }>('notes/write',
       kls2cNoteWrite(onR, 'kls2c2-k36', { topic: 'k36', anchor: { kind: 'file', path: 'src/module.ts' } }));
@@ -125,4 +128,28 @@ it('a checkout that is project A\'s main workspace reads as project B\'s second 
   // Named mutation: a second workspace's file written without the baseline it carried → A's read is unavailable.
   expect(baselineInFile(world)).toEqual(baseline);
   expect(await current(world, world.scope)).toEqual({ modules: ['core'], description: 'KLS2C' });
+}, 120_000);
+
+it('KLS-3b (lead ruling Q4): a second line whose folder is missing for a while stays open, and is the same open line '
+  + 'when the folder comes back', async () => {
+  const world = await openKLS2CHost({ storage: 'memory', git: true });
+  worlds.push(world);
+  const openFolder = await folderOpener(world);
+  const folder = addGitWorktree(world.root, join(await tempDir('kls3b-q4-'), 'wt'), 'wt');
+  expect(await openFolder({ projectId: world.scope.projectId, path: folder, writeAllowed: false, commandsAllowed: false }))
+    .toEqual(world.scope);
+  /** Reopening the main checkout judges the lines (a Host safe point); then `workspaces/lines`. */
+  const linesAfterSweep = async (): Promise<unknown> => {
+    await openFolder({ projectId: world.scope.projectId, path: world.root, writeAllowed: false, commandsAllowed: false });
+    const read = await world.call<{ status: string; value?: { lines: { folder: string; status: string }[] } }>(
+      'workspaces/lines', plain(world.scope, { workspaceId: world.scope.workspaceId }));
+    return read.value?.lines.map(line => [line.folder, line.status]) ?? read;
+  };
+  const open = [[realpathSync(world.root), 'open'], [folder, 'open']];
+  // The folder goes away without git being told (a drive not mounted): the repository still records the checkout.
+  renameSync(folder, `${folder}-away`);
+  // Named mutation: end a line whose folder is missing without asking git (`checkoutGone` true) → `removed` here.
+  expect(await linesAfterSweep()).toEqual(open);
+  renameSync(`${folder}-away`, folder);
+  expect(await linesAfterSweep()).toEqual(open);
 }, 120_000);

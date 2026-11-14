@@ -1270,6 +1270,8 @@ export function createSessionHandoffAdvanceService(deps: SessionHandoffAdvanceDe
               provenance: { schemaVersion: 1, kind: 'handoff', from: source },
               roleConfiguration,
               replaces: source, parentOperation: operation,
+              // KLS-3b: the successor continues the source's history, which is in its line's Kernel store.
+              ...(sourceCard.value.record.lineRef === null ? {} : { lineFolder: sourceCard.value.record.lineRef.folder }),
             };
             const stable = stableSessionCreationIdentity(principal.actor, operation.projectId, input.commandId);
             const arm: HandoffSavedInputV1 = { kind: 'create', requestId: input.commandId, input };

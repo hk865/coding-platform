@@ -373,6 +373,7 @@ export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
         available = (await capability.call(deps.runtime, owned.ctx, {
           workspace: { projectId: owned.projectId, workspaceId: goal.workspaceRef.workspaceId },
           role: binding.sessionRole,
+          ...(goal.lineRef === null ? {} : { line: goal.lineRef }),
         })).status === 'available';
       } catch { available = false; }
     }

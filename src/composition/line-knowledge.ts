@@ -90,22 +90,30 @@ function workspaceListOf(source: KnowledgeWorkspaceSource, caller: KnowledgeCall
 }
 
 async function resolveWith(source: KnowledgeWorkspaceSource, caller: KnowledgeCaller, workspaceId: string,
-  probe: (root: string) => Promise<CheckoutProbe>):
+  probe: (root: string) => Promise<CheckoutProbe>, line?: LineRef):
   Promise<StoreResult<{ line: LineRef; scope: KnowledgeLineScope; objectFormat: 'sha1' | 'sha256' }>> {
   const listed = workspaceListOf(source, caller);
   if (listed.status !== 'ready') return listed;
   if (!listed.value.includes(workspaceId)) {
     return unavailable(`the workspace ${workspaceId} is not registered in the project ${caller.projectId}`);
   }
-  const resolved = await source.resolveRoot({ aggregateType: 'Workspace', projectId: caller.projectId, workspaceId });
-  if (resolved.status !== 'ready') {
-    return unavailable(`the root of the workspace ${workspaceId} cannot be resolved: ${resolved.code}: ${resolved.reason}`);
+  // KLS-3b (draft §2.6): a named line (the Host's merged line, from its record) is read in its own folder; otherwise the
+  // workspace's root, where its current line is checked out.
+  let root: string;
+  if (line !== undefined) {
+    root = line.folder;
+  } else {
+    const resolved = await source.resolveRoot({ aggregateType: 'Workspace', projectId: caller.projectId, workspaceId });
+    if (resolved.status !== 'ready') {
+      return unavailable(`the root of the workspace ${workspaceId} cannot be resolved: ${resolved.code}: ${resolved.reason}`);
+    }
+    root = resolved.value.root;
   }
   let checkout: CheckoutProbe;
   try {
-    checkout = await probe(resolved.value.root);
+    checkout = await probe(root);
   } catch (error) {
-    return unavailable(`the workspace root ${resolved.value.root} cannot be read: ${messageOf(error)}`);
+    return unavailable(`the workspace root ${root} cannot be read: ${messageOf(error)}`);
   }
   const scope = { workspaceId, mainWorkspaceId: listed.value[0]! };
   return ready({ line: lineRefOf(checkoutIdentityOf(checkout)), scope,
@@ -416,7 +424,7 @@ export async function openLineKnowledge(projectId: string, line: LineRef, scope:
 export function createKnowledgeLines(source: KnowledgeWorkspaceSource, deps: LineKnowledgeDeps,
   write: KnowledgeWriteDeps): KnowledgeLines {
   const checkouts = new Map<string, CheckoutProbe>();
-  async function line(caller: KnowledgeCaller, workspaceId: string): Promise<StoreResult<LineKnowledge>> {
+  async function line(caller: KnowledgeCaller, workspaceId: string, named?: LineRef): Promise<StoreResult<LineKnowledge>> {
     const resolved = await resolveWith(source, caller, workspaceId, async root => {
       const folder = await realpath(root);
       const key = JSON.stringify([caller.projectId, workspaceId, folder]);
@@ -427,7 +435,7 @@ export function createKnowledgeLines(source: KnowledgeWorkspaceSource, deps: Lin
         return probe;
       }
       return known.kind === 'git' ? { ...known, branch: await readCheckoutBranch(folder) } : known;
-    });
+    }, named);
     if (resolved.status !== 'ready') return resolved;
     return openLineKnowledge(caller.projectId, resolved.value.line, resolved.value.scope, resolved.value.objectFormat, deps);
   }

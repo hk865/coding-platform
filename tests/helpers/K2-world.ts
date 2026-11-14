@@ -71,7 +71,7 @@ function configured(compaction: K2Compaction | undefined): Configure {
  * The Kernel refuses a Session history that repeats a tool call id ("重复 ToolCall"), and a real model never repeats
  * one, so the first use of an id on a line keeps it and a repeat gets `@<label>` (the task or round that made it).
  */
-function renameRepeatedCalls<R extends { kind: string }>(used: Set<string>, label: string, replies: readonly R[]): R[] {
+export function renameRepeatedCalls<R extends { kind: string }>(used: Set<string>, label: string, replies: readonly R[]): R[] {
   return replies.map(reply => {
     if (reply.kind !== 'calls') return reply;
     const calls = (reply as unknown as Extract<K2Reply, { kind: 'calls' }>).calls.map(call => {
@@ -131,7 +131,7 @@ async function historyOf(world: S6AHostWorld, sessionRef: SessionRef, limit = 20
 }
 
 /** The decoded Kernel records of one Session of a K2 world. */
-async function kernelRecordsOf(world: S6AHostWorld, sessionRef: SessionRef): Promise<K2KernelRecord[]> {
+export async function kernelRecordsOf(world: S6AHostWorld, sessionRef: SessionRef): Promise<K2KernelRecord[]> {
   return (await historyOf(world, sessionRef)).flatMap(item => 'encoding' in item.body
     && item.body.encoding === 'kernel_session_record_json'
     ? [sessionRecordSchema.parse(JSON.parse(item.body.text))] : []);

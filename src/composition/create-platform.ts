@@ -2493,9 +2493,11 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     // end commits and the backfill write through, and reach the route layer as
     // the non-enumerable `activity`/`timeline` groups.
     const activityReads: ActivityReadPort = createActivityReadModel({ records: backend.records, now });
+    const readLineUsage = activityReads.readLineUsage.bind(activityReads);
     const activity: ActivityReadPort & Pick<TrackReadPort, 'readTrackBars'> = {
       ...activityReads,
       readQueryActivities: (...args) => trackedCall(() => activityReads.readQueryActivities(...args), unavailable),
+      readLineUsage: (...args) => trackedCall(() => readLineUsage(...args), unavailable),
       ...createTrackReadModel({ records: backend.records, now }),
     };
     const timeline: TaskTimelineReadPort = createTaskStateTimeline({ records: backend.records });
@@ -2903,6 +2905,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       // still an explicit stage-one gap.
       readProject: (...args) => trackedCall(() => bootstrap.projects.readProject!(...args), unavailable),
       registerLine: (...args) => trackedCall(() => lines.registerLine(...args), unavailable),
+      settleLine: (...args) => trackedCall(() => lines.settleLine(...args), unavailable),
       readLine: (...args) => trackedCall(() => lines.readLine(...args), unavailable),
       readLines: (...args) => trackedCall(() => lines.readLines(...args), unavailable),
     };

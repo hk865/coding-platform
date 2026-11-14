@@ -151,9 +151,10 @@ const PROTECTED_TYPES: readonly ProtectedType[] = [
   { file: 'src/contracts/ledger.ts', name: 'WorkspaceSnapshot', kind: 'record',
     fields: ['decisionSettings', 'lineSettings', 'removedAt'], use: WORKSPACE_USE },
   // KLS-3a1 (start rulings draft §2.3, §4): the line record's state is written only by its one constructor
-  // (`state/line-machine.ts`); the record type is the field-table `LineSnapshot` of `contracts/line.ts`.
+  // (`state/line-machine.ts`); the record type is the field-table `LineSnapshot` of `contracts/line.ts`. KLS-3b (draft
+  // v2 §4): the branch refresh and the line end write it through the same file's two transitions.
   { file: 'src/contracts/line.ts', name: 'LineSnapshot', kind: 'record',
-    fields: ['status', 'closedAt'], use: 'state/line-machine.ts newLineRecord' },
+    fields: ['status', 'closedAt'], use: 'state/line-machine.ts newLineRecord, nextLineIdentity, nextLineClosed' },
   { file: 'src/contracts/goal-phase.ts', name: 'GoalPhaseSnapshot', kind: 'record',
     fields: ['phase', 'planRef', 'adoptedTaskReductions'], use: 'state/goal-machine.ts buildGoalPhaseSnapshot' },
   { file: 'src/core/work-graph/model/plan-contracts.ts', name: 'PlanProposal', kind: 'record',

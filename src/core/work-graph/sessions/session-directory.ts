@@ -52,7 +52,7 @@ import type {
   StoreFailure, UniqueClaimChange,
 } from '../../record-store/ports.js';
 import type { RecordLookupPort, RecordLookupRequest } from '../../record-store/lookup-ports.js';
-import { lineForWrite } from '../persistence/line-record-codecs.js';
+import { closedLineRefusal, lineForWrite } from '../persistence/line-record-codecs.js';
 import { readMainWorkspace } from './role-line-operations.js';
 import { sessionStoreFailureToRejection } from '../persistence/read-result-failures.js';
 import { readSessionWorkLinks } from './session-links.js';
@@ -1140,6 +1140,14 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       if (pins.value.workspace !== undefined && pins.value.workspace !== workspace.revision) {
         return reject('revision_conflict', 'the supplied Workspace pin does not match the version read in this call',
           [{ ref: { aggregateType: 'Workspace', projectId: scope.projectId, workspaceId: scope.workspaceId }, revision: workspace.revision }]);
+      }
+      // KLS-3b ruling 2 (lead 11-14 Q3): a Session that starts new work on a named merged or removed line is refused
+      // (product rule: a closed line takes no new work); one for existing work, with a predecessor, a line intent or a
+      // Task link, goes on. After the receipt lookup above, so a creation made before the line closed replays.
+      if (input.lineFolder !== undefined && createdProvenance.kind === 'new' && input.creation === null
+        && input.initialLinks.length === 0) {
+        const closed = await closedLineRefusal(lineReads, scope, input.lineFolder);
+        if (closed !== null) return closed;
       }
       // KLS-3a: the line the Session works on, fixed here and kept on the operation for the registration.
       const line = await lineForWrite(lineReads, scope, input.lineFolder);

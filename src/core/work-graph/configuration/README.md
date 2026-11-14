@@ -9,14 +9,14 @@
 - 不启动 Agent、不写消息、不判断完成；`registerWorkspace` 只登记领域事实，不打开/创建目录，也不保存第二份 Host root。
 
 ## 文件
-- `project-bootstrap-contracts.ts` — `ProjectRegistrationPort`（KLS-3a 加线的三个方法 `registerLine`/`readLine`/`readLines` 和输入 `RegisterLineInputV1`，由 `line-service.ts` 实现，组合根和 bootstrap 的方法一起挂在 `projects` 下）、`CompletionPolicyConfigurationPort` 与 bootstrap 依赖/服务类型；`registerWorkspace` 的输入可带可选的 `explorationDepth`（1/2/3），`startLines`/`workspaceJoin` 回调也用同名字段接收，配置层不按运行时去猜这个字段。
+- `project-bootstrap-contracts.ts` — `ProjectRegistrationPort`（KLS-3a 加线的三个方法 `registerLine`/`readLine`/`readLines` 和输入 `RegisterLineInputV1`，KLS-3b 加线状态的写口 `settleLine` 和输入 `SettleLineInputV1`，由 `line-service.ts` 实现，组合根和 bootstrap 的方法一起挂在 `projects` 下）、`CompletionPolicyConfigurationPort` 与 bootstrap 依赖/服务类型；`registerWorkspace` 的输入可带可选的 `explorationDepth`（1/2/3），`startLines`/`workspaceJoin` 回调也用同名字段接收，配置层不按运行时去猜这个字段。
 - `project-bootstrap-record-codecs.ts` — 四个初始化事件与 Workspace 移除的 codec（`PROJECT_WORKSPACE_REMOVED_EVENT`、`workspaceRemovedSnapshotFromValue`、`decodeProjectWorkspaceRemovedEvent`、`encodeProjectWorkspaceRemovedEvent`）、CompletionPolicy 纯内容校验与 `PROJECT_BOOTSTRAP_RECORD_SCHEMAS` 注册。
 - `project-bootstrap-service.ts` — 五个 Host 写操作（建 Project、登记 Workspace、安装政策、激活政策、移出 Workspace）+ 三个精确读；一次 `PreparedCommit` 与 event replay。
 - `role-record-codecs.ts` — role-spec / coordination-policy 的记录与事件 codec、ref/snapshot 解码。
 - `role-memory-service.ts` — 角色规格安装、精确读、激活与绑定解析；文件名仍带 memory，但记忆读写尚未实现（memory 是独立未完成族）。
 - `decision-settings-service.ts` — Workspace 决定设置的唯一 owner：`markNoticesSeen`（display token、seenThrough、一次 Workspace 提交）；带 Goal 的 token 只认主对话签发的，队列签发的照旧拒绝。
 - `line-settings-service.ts` — Workspace 工作线 pin 的唯一 owner：`setLinePins`（注入 Session 读、一次 Workspace 提交）。
-- `line-service.ts` — 线记录的唯一 owner `createLineService`（KLS-3a）：`registerLine` 只收 Host 身份、`meta.expected` 只收这个工作区的 Workspace 钉；同一文件夹已有线就回那条线、只提交事件不写记录（和 `lines/pin` 的无变化路径一样，回执带真游标）；工作区已有的线不是同一个仓库（`sameCheckout`）时拒 `invalid`（协调：模块号和 claim 按工作区分，一个工作区就是一个仓库）；判定读的线集合带读位置，提交按它 CAS（`ledgerHorizon`，`retryable.horizon`），同时登记的两条第一条线后到的那条重读、由 `sameCheckout` 重判，不另加锁；`readLine`、`readLines` 是 `workspaces/lines` 背后的读，按建线时间排，工作区的第一条是主线。
+- `line-service.ts` — 线记录的唯一 owner `createLineService`（KLS-3a）：`registerLine` 只收 Host 身份、`meta.expected` 只收这个工作区的 Workspace 钉；同一文件夹已有线就回那条线、只提交事件不写记录（和 `lines/pin` 的无变化路径一样，回执带真游标）；工作区已有的线不是同一个仓库（`sameCheckout`）时拒 `invalid`（协调：模块号和 claim 按工作区分，一个工作区就是一个仓库）；判定读的线集合带读位置，提交按它 CAS（`ledgerHorizon`，`retryable.horizon`），同时登记的两条第一条线后到的那条重读、由 `sameCheckout` 重判，不另加锁；KLS-3b：同一文件夹的线还开着、分支或第一个提交变了时写它的新版本（`nextLineIdentity`，`forkPoint` 用 Host 传的切换时 HEAD，裁定 7；仍发 `LineRegistered`，按线的 revision CAS），已关闭的线原样回、不重开。`settleLine` 是线状态的唯一写口（裁定 4）：同样只收这个工作区的 Workspace 钉，读这个文件夹的线（没有回 `not_found`），已关闭再关拒 `invalid`（协调：一条线只结束一次），记录经 `nextLineClosed`、事件 `LineChanged`，按线的 revision CAS；两个写共用内部的 `workspacePinOf`。`readLine`、`readLines` 是 `workspaces/lines` 背后的读，按建线时间排，工作区的第一条是主线。
 - `message-duties-adapter.ts` — 从 Session 固定角色与既有 resolver 派生唯一生效 duty 的事实适配器。
 - `workspace-settings-reads.ts` — 两个 Workspace owner 共用的绑定上下文、Workspace pin 校验、精确读与原始事件重放。
 

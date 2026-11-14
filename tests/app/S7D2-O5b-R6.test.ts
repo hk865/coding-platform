@@ -21,14 +21,13 @@ import type { SessionRef } from '../../src/contracts/core/identity.js';
 import type { ArchiveTaskChoiceV1 } from '../../src/contracts/core/session-archive.js';
 import type { NoteScribeTodoPort } from '../../src/core/work-graph/model/note-contracts.js';
 import type { RoleLineReadResultV1, RoleLineReadV1 } from '../../src/core/work-graph/views/role-line-read.js';
+import { driveWorkflow } from '../helpers/A2-restart-fixture.js';
 import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { adoptPLMixedPlan } from '../helpers/PL-consumption-fixture.js';
 import { S6A_SCOPE, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
 import { ready } from '../helpers/S7A-fixture.js';
 import { inboxOf } from '../helpers/S7B-F-support.js';
-import {
-  linkS7D2Scopes, openS7D2RoleLineWorld, runS7D2Work, type S7D2RoleLineWorld,
-} from '../helpers/S7D2-role-line-world.js';
+import { linkS7D2Scopes, openS7D2RoleLineWorld, type S7D2RoleLineWorld } from '../helpers/S7D2-role-line-world.js';
 import { waitFor } from '../scenarios/harness.js';
 
 const worlds: S7D2RoleLineWorld[] = [];
@@ -97,7 +96,12 @@ describe('O5b-R6: the same scope\'s note, count and reminder reach the same goal
     const E = await h.createWorkLine('r6-exec');
     await linkS7D2Scopes(h.world, { line: E, targets: [{ kind: 'task', ref: T! }], label: 'r6-task' });
     const gate = await h.world.gates.modelRequest(E);
-    runS7D2Work(h.world, { line: E, goal: G, task: T!, label: 'r6-run', replies: [{ kind: 'text', text: 'R6 run' }] })
+    // The drive only holds E's Work Run at its gate (`runS7D2Work`'s drive). It stops before the Workflow opens a
+    // replacement Session for the requeued Task: that Session's claim claims the archive trigger and ends `immediate`
+    // (ruling 8), racing check A (the flake seen 11-14).
+    await h.world.scripted.script(E, [{ kind: 'text', text: 'R6 run' }]);
+    driveWorkflow(h.world.ag2b, { schemaVersion: 1, goalRef: G, flowId: 's7d2-r6-run', sessionHint: E.ref,
+      kind: 'select_work', taskId: T!.taskId }, { stopBefore: op => op.kind === 'open_checks' || op.kind === 'create_session' })
       .catch(() => undefined);
     await gate.reached;
     const card = await h.readCard(E);

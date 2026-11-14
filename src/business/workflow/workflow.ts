@@ -224,6 +224,8 @@ function createSessionStep(
     workspace: value.workspace, role: value.role, recommendedRefs: value.recommendedRefs,
     initialLinks: value.initialLinks, meta: { expected },
     ...(value.provenance === undefined ? {} : { provenance: value.provenance }),
+    // KLS-3b: a Session on another line of the workspace is another request.
+    ...(value.lineFolder === undefined ? {} : { lineFolder: value.lineFolder }),
     ...(requeue === undefined ? {} : { requeueRef: requeue.requeueRef }),
     // K3 L12: a review round's new Session is its own request; the identity
     // names the record and phase, never the (absent) requeue.
@@ -1542,6 +1544,8 @@ export function createWorkflow(deps: WorkflowDependencies & {
         role: binding.sessionRole, recommendedRefs: [],
         initialLinks: [{ target: { kind: 'task', ref: taskRef }, relation: 'responsible' }],
         ...(provenance === null ? {} : { provenance }),
+        // KLS-3b: the Task's Session works on its Goal's line (kls-design §2.3.4).
+        ...(goal.lineRef === null ? {} : { lineFolder: goal.lineRef.folder }),
       }, taskRef, planRef, requeue, review)));
     }
     // E15 (W1-HO-04, §4.4.7, L17): a reused Session that continues exactly this
@@ -3248,11 +3252,13 @@ export function createWorkflow(deps: WorkflowDependencies & {
     }
     const claimSession = await deps.sessions.readSession(owned.ctx, operation.request.sessionRef);
     const provenance = continuationProvenanceFor(claimSession, workspaceId, binding, operation.taskRef);
+    const goalLine = goalRead.value.goal.lineRef;
     return advancing(receipt, makePerform(base, createSessionStep(base, {
       workspace: { projectId: owned.projectId, workspaceId },
       role: binding.sessionRole, recommendedRefs: [],
       initialLinks: [{ target: { kind: 'task', ref: operation.taskRef }, relation: 'responsible' }],
       ...(provenance === null ? {} : { provenance }),
+      ...(goalLine === null ? {} : { lineFolder: goalLine.folder }),
     }, operation.taskRef, operation.planRef, operation.requeue, operation.review)));
   }
 

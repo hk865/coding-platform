@@ -55,8 +55,8 @@ const repaired = (place: KnowledgeProblemV1): boolean => REPAIRED.has(place.kind
  */
 export function createKnowledgeOps(lines: KnowledgeLines, asks: KnowledgeConflictAsks,
   localOnly: (repoKey: string) => boolean): KnowledgeOpsPort {
-  const reconcile: KnowledgeOpsPort['reconcile'] = async (ctx, workspaceId, trigger) => {
-    const line = await lines.line(ctx, workspaceId);
+  const reconcile: KnowledgeOpsPort['reconcile'] = async (ctx, workspaceId, trigger, named) => {
+    const line = await lines.line(ctx, workspaceId, named);
     if (line.status !== 'ready') return storeFailureToRejection(line);
     // A project read that fails skips only the project-level merge check (its own lines report their reads).
     const project = await lines.project(ctx);

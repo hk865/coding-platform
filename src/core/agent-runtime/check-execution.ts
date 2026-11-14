@@ -33,6 +33,7 @@ import { ensureKnowledgeDirectory } from '../workspace/knowledge-exclude.js';
 import type { CommandSlots } from './command-slots.js';
 import { withCommandSandbox, type CommandToolchain } from './readonly-command-tool.js';
 import type { WorkspaceHostBindings } from '../workspace/access.js';
+import type { WorkspaceRef } from '../../contracts/ledger.js';
 import type { AbandonCheckInput, EvidencePort } from '../work-graph/model/evidence-contracts.js';
 import type { GraphWrite } from '../work-graph/model/task-contracts.js';
 import { checkExecutionTicketProblem } from '../work-graph/persistence/evidence-record-codecs.js';
@@ -88,6 +89,21 @@ function mapWorkspaceCode(code: string): CoreError {
 export function createRegisteredCheckRunner(deps: RegisteredCheckRunnerDependencies): RegisteredCheckRunner {
     /** A finishing signal under the same Host identity/scope (B2 cleanup pattern): a proven fact survives a late cancel. */
     const finishing = (ctx: CoreCallContext): CoreCallContext => ({ ...ctx, signal: new AbortController().signal });
+
+    /**
+     * KLS-3b (lead ruling Q1): the Host's current root of the line the round froze, and that line. Evidence opens a
+     * round at its subject Run's line root (`resolveRoot(workspace, line)`): the workspace root for the main line, the
+     * line's own folder for another line, so a frozen root other than the workspace root names its line by that folder.
+     * A root that is neither answers the workspace root, and the comparisons below see it changed (VR-05). The line is
+     * kept for the one re-check after begin.
+     */
+    async function resolveFrozenRoot(workspace: WorkspaceRef, frozenRoot: string) {
+        const main = await deps.workspaceHost.resolveRoot(workspace);
+        if (main.status !== 'ready' || main.value.root === frozenRoot) return { resolved: main, line: undefined };
+        const line = { folder: frozenRoot };
+        const onLine = await deps.workspaceHost.resolveRoot(workspace, line);
+        return onLine.status === 'ready' ? { resolved: onLine, line } : { resolved: main, line: undefined };
+    }
 
     /**
      * VR-05 (VD-6): no process started after begin, so the window returns to
@@ -158,7 +174,7 @@ export function createRegisteredCheckRunner(deps: RegisteredCheckRunnerDependenc
             }
 
             const configuration = round.configuration;
-            const resolved = await deps.workspaceHost.resolveRoot(configuration.workspace);
+            const { resolved, line } = await resolveFrozenRoot(configuration.workspace, round.identity.workspaceRoot);
             if (resolved.status !== 'ready') return reject(mapWorkspaceCode(resolved.code), resolved.reason);
             const authorized = await deps.workspaceHost.authorize(ctx, configuration.workspace);
             if (authorized.status !== 'ready') return reject(mapWorkspaceCode(authorized.code), authorized.reason);
@@ -231,7 +247,7 @@ export function createRegisteredCheckRunner(deps: RegisteredCheckRunnerDependenc
                 return await abandon(ctx, round.ref, check.checkId, invocationId, 'root_changed', reject('unavailable',
                     'the prepared sandbox root/constraints differ from the fresh ticket; no process was started'));
             }
-            const rootVerify = await deps.workspaceHost.resolveRoot(ticket.workspace);
+            const rootVerify = await deps.workspaceHost.resolveRoot(ticket.workspace, line);
             if (rootVerify.status !== 'ready' || rootVerify.value.root !== ticket.workspaceRoot) {
                 return await abandon(ctx, round.ref, check.checkId, invocationId, 'root_changed',
                     reject('unavailable', 'the workspace root changed after begin; no process was started'));

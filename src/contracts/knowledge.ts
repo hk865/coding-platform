@@ -70,8 +70,10 @@ export type ProposalBatchFileV1 = {
 /** KC-3: which architecture a read uses. `recorded` is the catalog the records last adopted, never the files. */
 export type KnowledgeReadBaseV1 = 'current' | 'recorded';
 
-/** What started one reconciliation of a line's knowledge files with the index. */
-export type ReconcileTrigger = 'run_end' | 'before_adopt' | 'idle' | 'startup' | 'after_commit' | 'recovery' | 'joined';
+/** What started one reconciliation of a line's knowledge files with the index; `line_merged`: the Host found the line
+ *  merged back (KLS-3b). */
+export type ReconcileTrigger = 'run_end' | 'before_adopt' | 'idle' | 'startup' | 'after_commit' | 'recovery' | 'joined'
+  | 'line_merged';
 /** A knowledge file that could not be read as one (R8): its path and why. */
 export type KnowledgeIssueV1 = { path: string; reason: string };
 /** One reconciliation of one line. */

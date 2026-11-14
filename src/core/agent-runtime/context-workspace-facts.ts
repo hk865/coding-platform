@@ -43,7 +43,7 @@ export async function briefWorkspaceFactsFor(
   let resolved;
   try {
     resolved = await deps.workspaceHost.resolveRoot({ aggregateType: 'Workspace', projectId: record.run.ref.projectId,
-      workspaceId: record.run.workspaceSnapshot.workspaceId });
+      workspaceId: record.run.workspaceSnapshot.workspaceId }, record.run.workspaceSnapshot.line ?? undefined);
   } catch (error) {
     if (signal.aborted) return cancelled();
     return unavailable(`the workspace root could not be resolved: ${messageOf(error)}`);
@@ -134,7 +134,7 @@ export async function unknownCallReviewFilesFor(
   let root: string;
   try {
     const resolved = await deps.workspaceHost.resolveRoot({ aggregateType: 'Workspace', projectId: record.run.ref.projectId,
-      workspaceId: record.run.workspaceSnapshot.workspaceId });
+      workspaceId: record.run.workspaceSnapshot.workspaceId }, record.run.workspaceSnapshot.line ?? undefined);
     if (resolved.status === 'rejected' && resolved.code === 'cancelled') return 'cancelled';
     if (signal.aborted) return 'cancelled';
     if (resolved.status !== 'ready') return new Map();

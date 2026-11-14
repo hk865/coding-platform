@@ -272,8 +272,8 @@ export type KnowledgeWriteDeps = {
 export interface KnowledgeLines {
   /** The project's workspace ids, the main one first; a platform without a Host list has only `caller.workspaceId`. */
   workspaces(caller: KnowledgeCaller): Promise<StoreResult<readonly string[]>>;
-  /** The line a workspace has checked out now. */
-  line(caller: KnowledgeCaller, workspaceId: string): Promise<StoreResult<LineKnowledge>>;
+  /** The line a workspace has checked out now, or the named line of it (KLS-3b, at the root the Host holds for it). */
+  line(caller: KnowledgeCaller, workspaceId: string, line?: LineRef): Promise<StoreResult<LineKnowledge>>;
   /** The lines of every workspace of the project, in `workspaces` order. */
   project(caller: KnowledgeCaller): Promise<StoreResult<readonly LineKnowledge[]>>;
   readonly write: KnowledgeWriteDeps;

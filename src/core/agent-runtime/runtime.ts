@@ -569,7 +569,7 @@ function createReviewCapability(
       return unavailable('the Host read-only command switch is off');
     }
     let resolved;
-    try { resolved = await deps.workspaceHost.resolveRoot(workspace); }
+    try { resolved = await deps.workspaceHost.resolveRoot(workspace, input.line); }
     catch (error) { return unavailable(`the workspace root could not be resolved: ${message(error)}`); }
     if (resolved.status !== 'ready') return unavailable(resolved.reason);
     let authorized;

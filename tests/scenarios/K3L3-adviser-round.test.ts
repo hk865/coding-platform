@@ -31,7 +31,7 @@ import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { UnknownCallReviewV1 } from '../../src/contracts/unknown-call-review.js';
 import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
-import { readBody, readQueryAnswer } from '../helpers/IV-host-fixture.js';
+import { heartbeatUntil, readBody, readPlanningQuery, readQueryAnswer } from '../helpers/IV-host-fixture.js';
 import { shellSeam } from '../helpers/K3-tool-seams.js';
 import {
   adviserManifestOf, adviserNoticesOf, adviserRoundsOf, adviserToolResult, advanceK3L3, answerK3L3Round,
@@ -43,6 +43,8 @@ import type { S6AReply } from '../helpers/S6A-host-fixture.js';
 import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
 import { committed, ready, setS7AAutonomy } from '../helpers/S7A-fixture.js';
 import { interventionPlanningQueryRefs } from '../../src/contracts/query-job.js';
+import { unknownCallAdviceAnswerText } from '../../src/contracts/unknown-call-advice.js';
+import { unknownCallAdviceSubjectOfText } from '../../src/contracts/plan-round.js';
 
 // R9's read-only command: the K3-19 stand-in (rule sheet A7-1); its probe answers as the switch says.
 const sandbox = vi.hoisted(() => ({ available: true as boolean }));
@@ -236,30 +238,66 @@ describe('R4 the adviser line is gone before the send', () => {
 });
 
 describe('R5 the adviser round fails, or the adviser escalates', () => {
+  // FSUB-2 adds cell `c`: this shape's Answer is only an accepted `submit_unknown_call_advice` call; model text never
+  // stands in for it.
+  // (a) Red today: the observer's `submitted === null` branch reads the last text for `unknown_call_advice`, so the
+  //     Query ends `answered` with this parseable text as its Answer (①), the gate applies it through
+  //     `apply_adviser_answer` and the record resolves with that advice (②), and the source is replied to, not
+  //     withdrawn (③). The first failing assertion is ① `expect(ended.query.job.job.answerRefs).toEqual([])`: the
+  //     text was accepted as the answer at `answerK3L3Round` (the Query ended `answered`), before `advanceK3L3` runs.
+  // (b) Green once the package lands: `unknown_call_advice` is in the observer's one four-shape set, so no accepted
+  //     submit gives `final = { kind: 'empty' }` -> `gap`, no Answer (①); the gate escalates `adviser_failed` (②); the
+  //     source has no answer, so the Host takes the `no_answer` path and withdraws it (③).
+  // (c) Named mutation (draft §3): delete `'unknown_call_advice'` from the set -> an Answer appears (①) and the text is
+  //     parsed and applied again (②: the record no longer carries `adviser_failed`).
   it.each([
     ['a', [{ kind: 'text', text: 'R5 a plain text, no answer' }] as S6AReply[]],
     ['b', [submit('r5-escalate', { choice: 'escalate', escalationKind: 'architecture', rationale: 'r',
       plain: '要不要换数据库得你定' })]],
+    ['c', [] as S6AReply[]],
   ] as const)('R5 (%s) SQLite only: the person gets the second layer', async (cell, replies) => {
     const { w, runRef } = await crashed(`k3l3r5${cell}`);
     const { message: round } = await sentRound(w, `k3l3r5${cell}-a`);
-    const { source } = await answerK3L3Round(w, round, replies);
+    let scripted: readonly S6AReply[] = replies;
+    if (cell === 'c') {
+      expect(await readK3L3Review(w, runRef)).toMatchObject({ status: 'awaiting_advice' });
+      // The subject is the platform's frozen second line of the round's question, not a value the test invents.
+      const query = await heartbeatUntil(w.world, () => readPlanningQuery(w.world, round.ref),
+        value => value !== null && unknownCallAdviceSubjectOfText(value.job.job.intent.question) !== null, 32);
+      const subject = query === null ? null : unknownCallAdviceSubjectOfText(query.job.job.intent.question);
+      if (subject === null) throw new Error('R5 (c): the frozen question carries no advice subject');
+      const choice = subject.phase === 'disposition' ? 'rerun_as_is' : 'approve';
+      const text = unknownCallAdviceAnswerText(subject, { phase: subject.phase, choice, escalationKind: null,
+        rationale: 'r', plain: '只改本机的库' });
+      scripted = [{ kind: 'text', text }];
+    }
+    const ended = await answerK3L3Round(w, round, scripted);
+    const { source } = ended;
     const applied = await advanceK3L3(w, selectK3L3(w, `k3l3r5${cell}-b`));
     const record = await readK3L3Review(w, runRef);
     if (cell === 'a') {
       expect(source.withdrawnAt).not.toBeNull();
       expect(kinds(applied.receipts)).toContain('escalate_review');
       expect(record).toMatchObject({ status: 'needs_decision', escalation: { cause: 'adviser_failed' } });
+    } else if (cell === 'c') {
+      // ① The text stayed in the history: the round has no Answer.
+      expect(ended.query.job.job.answerRefs).toEqual([]);
+      // ② No advice was applied: the gate escalates the record to the person.
+      expect(record).toMatchObject({ status: 'needs_decision', escalation: { cause: 'adviser_failed' } });
+      // ③ The source is withdrawn (the Host's `no_answer` path).
+      expect(source.withdrawnAt).not.toBeNull();
     } else {
       expect(await readBody(w.world, round.ref, 'response')).toBe('参谋已答复：要不要换数据库得你定');
       expect(record).toMatchObject({ status: 'needs_decision', escalation: { cause: 'adviser_escalated',
         suggestion: { escalationKind: 'architecture' } } });
     }
-    const card = await k3l3CardOf(w, record);
-    expect(card?.options.map(option => option.id)).not.toContain('follow_suggestion');
-    expect(card?.objects.find(object => object.kind === 'aggregate')?.label.split('\n').slice(0, cell === 'a' ? 1 : 2))
-      .toEqual(cell === 'a' ? ['任务中断时有一步操作不知道做完没有，参谋没能给出判断，要你来定怎么继续。']
-        : ['任务中断时有一步操作不知道做完没有，参谋认为这件事要你来定。', '参谋说（架构选择）：要不要换数据库得你定']);
+    if (cell !== 'c') {
+      const card = await k3l3CardOf(w, record);
+      expect(card?.options.map(option => option.id)).not.toContain('follow_suggestion');
+      expect(card?.objects.find(object => object.kind === 'aggregate')?.label.split('\n').slice(0, cell === 'a' ? 1 : 2))
+        .toEqual(cell === 'a' ? ['任务中断时有一步操作不知道做完没有，参谋没能给出判断，要你来定怎么继续。']
+          : ['任务中断时有一步操作不知道做完没有，参谋认为这件事要你来定。', '参谋说（架构选择）：要不要换数据库得你定']);
+    }
   }, 240_000);
 });
 

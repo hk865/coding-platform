@@ -43,8 +43,10 @@ import {
 } from '../persistence/evidence-record-codecs.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { queryActivityRefOf } from '../model/query-activity-plan.js';
-import { QUERY_OPEN_BY_WORKSPACE_INDEX } from '../model/request-contracts.js';
+import { QUERY_OPEN_BY_WORKSPACE_INDEX, SECRETARY_HANDOFF_INPUT_TOKENS } from '../model/request-contracts.js';
+import { WORK_EXECUTION_BY_SESSION_LOOKUP } from '../model/session-facts-contracts.js';
 import { decodeRun } from '../materials/run-snapshot-decoder.js';
+import { decodeDispatchOutboxEntry } from '../tasks/claim-record-codecs.js';
 import {
   decodeQueryActivitySnapshot,
   queryActivityRefKey,
@@ -61,9 +63,11 @@ import {
   S2B_RUN_BY_GOAL_ENDED_LOOKUP,
   S2B_RUN_BY_WORKSPACE_ENDED_LOOKUP,
 } from '../tasks/plan-readers.js';
+import { runActivityRefOf } from '../tasks/run-activity-service.js';
 import {
   decodeQueryJobSnapshot,
   decodeQueryRunSnapshotRecord,
+  S2C_QUERY_RUN_BY_SESSION_GENERATION_LOOKUP,
   S6_QUERY_RUN_BY_WORKSPACE_ENDED_LOOKUP,
 } from '../queries/query-record-codecs.js';
 import {
@@ -148,6 +152,47 @@ export type RunActivityViewV1 = {
   unresolvedCalls: number | null;
 };
 
+export type LineUsageRequestV1 = { requestId: string; inputTokens: number | null;
+  cachedInputTokens: number | null; usageStatus: 'reported' | 'unknown' };
+export type LineUsageRoundV1 = { sessionGeneration: number; requests: readonly LineUsageRequestV1[] };
+export type LineUsageSampleV1 = { sessionGeneration: number; requestId: string;
+  inputTokens: number; cachedInputTokens: number | null;
+  usageStatus: 'reported' | 'unknown'; complete: boolean };
+export type LineUsageV1 = {
+  lineKey: SessionRef; headSessionRef: SessionRef;
+  lastInputTokens: number | null; lastCachedInputTokens: number | null;
+  hitRate: number | null; observedRounds: number; overThresholdRounds: number;
+  usageStatus: 'reported' | 'unknown'; complete: boolean;
+  basis: 'latest' | 'run_total'; sourceRefs: { runRef: RunRef | QueryRunRef; requestId: string }[];
+};
+/** The one sampled request of a round: last-to-first, the first non-null input. */
+function sampledRequestOf(requests: readonly LineUsageRequestV1[]): LineUsageRequestV1 | null {
+  for (let index = requests.length - 1; index >= 0; index -= 1) {
+    const request = requests[index]!;
+    if (request.inputTokens !== null) return request;
+  }
+  return null;
+}
+/** Frozen `:465`: stable newest generation first, then the newest sampled request. */
+export function latestSampledRoundOf(rounds: readonly LineUsageRoundV1[]): LineUsageSampleV1 | null {
+  const ordered = [...rounds].sort((left, right) => right.sessionGeneration - left.sessionGeneration);
+  const position = ordered.findIndex(round => sampledRequestOf(round.requests) !== null);
+  if (position < 0) return null;
+  const round = ordered[position]!;
+  const request = sampledRequestOf(round.requests)!;
+  return { sessionGeneration: round.sessionGeneration, requestId: request.requestId,
+    inputTokens: request.inputTokens!, cachedInputTokens: request.cachedInputTokens,
+    usageStatus: request.usageStatus,
+    complete: position === 0 && round.requests.every(entry => entry.usageStatus !== 'unknown') };
+}
+
+/** Frozen `:462-:463`: fewer than ten observed rounds never gets a frequency verdict. */
+export function frequencyVerdictOf(observedRounds: number, overThresholdRounds: number):
+  'often' | 'not_often' | 'insufficient' {
+  if (observedRounds < 10) return 'insufficient';
+  return overThresholdRounds * 4 >= observedRounds ? 'often' : 'not_often';
+}
+
 /**
  * The calendar, per-Run and per-Query activity reads. Spec §2 also places
  * `readTrackBars` on this port; the track owner (`views/track-read-model.ts`,
@@ -163,6 +208,8 @@ export interface ActivityReadPort {
   readRunActivities(ctx: CoreCallContext, input: { runRefs: RunRef[] }): Promise<ReadResult<RunActivityViewV1[]>>;
   readQueryActivities(ctx: CoreCallContext, input: { refs: QueryRunRef[] }):
     Promise<ReadResult<QueryActivityViewV1[]>>;
+  readLineUsage(ctx: CoreCallContext, input: { lineKey?: SessionRef }):
+    Promise<ReadResult<LineUsageV1>>;
 }
 
 export type ActivityReadModelDependencies = {
@@ -582,7 +629,7 @@ async function readCalendarWindow(
       if (!(startedAt !== null ? startedAt < input.to : (run.endedAt !== null && run.endedAt < input.to))) continue;
       if (recordActivityRunIds.has(run.ref.runId)) continue;
       classified.add(run.ref.runId);
-      const existing = await readOneKeyed(records, runActivityRefKey(runActivityRefOf(run.ref)), budget);
+      const existing = await readOneKeyed(records, runActivityRefKey(runActivityRefOf(run)), budget);
       if (existing === undefined) {
         // L9 input + L17: Run placement filters by the claiming Session, and a
         // Session-resolution failure propagates as a read failure.
@@ -639,7 +686,7 @@ async function readCalendarWindow(
       const startedAt = run.startedAt;
       if (!(startedAt !== null ? startedAt < input.to : (run.endedAt !== null && run.endedAt < input.to))) continue;
       classified.add(run.ref.runId);
-      const existing = await readOneKeyed(records, runActivityRefKey(runActivityRefOf(run.ref)), budget);
+      const existing = await readOneKeyed(records, runActivityRefKey(runActivityRefOf(run)), budget);
       if (existing !== undefined) {
         const decoded = decodeRunActivitySnapshot(existing);
         if (decoded.status !== 'decoded') throw rejected('unavailable', `RunActivity record ${existing.refKey}: ${decoded.reason}`);
@@ -913,10 +960,6 @@ function checksBegun(round: { checks: readonly { invocationId: string | null }[]
   return round.checks.filter((check) => check.invocationId !== null).length;
 }
 
-function runActivityRefOf(runRef: RunRef): RunActivitySnapshot['ref'] {
-  return { aggregateType: 'RunActivity', projectId: runRef.projectId, goalId: runRef.goalId, runId: runRef.runId };
-}
-
 function sessionKey(session: SessionRef): string {
   return `${session.projectId}/${session.sessionId}`;
 }
@@ -1025,7 +1068,7 @@ async function readRunActivitiesWindow(
     if (runRef.projectId !== ctx.projectId) {
       return { status: 'rejected', code: 'forbidden', reason: 'the requested Run is outside the bound call scope' };
     }
-    const activityRecord = await readOneKeyed(records, runActivityRefKey(runActivityRefOf(runRef)), budget);
+    const activityRecord = await readOneKeyed(records, runActivityRefKey(runActivityRefOf({ ref: runRef })), budget);
     const runRecord = await readOneKeyed(records, canonicalKey(runRef), budget);
     let run: RunSnapshot | null = null;
     if (runRecord !== undefined) {
@@ -1120,12 +1163,201 @@ async function readQueryActivitiesWindow(
 }
 
 // --------------------------------------------------------------------------
+// readLineUsage (G7)
+// --------------------------------------------------------------------------
+
+/** One sampled round; `at` is the QueryRun's endedAt or the Work RunActivity's runEndedAt. */
+type LineUsageSampledRound = {
+  kind: 'work' | 'query'; at: string | null; runRef: RunRef | QueryRunRef; sample: LineUsageSampleV1;
+};
+
+function sampledQueryRoundOf(
+  round: LineUsageRoundV1, at: string | null, runRef: QueryRunRef,
+): LineUsageSampledRound | null {
+  const request = sampledRequestOf(round.requests);
+  if (request === null) return null;
+  return { kind: 'query', at, runRef,
+    sample: { sessionGeneration: round.sessionGeneration, requestId: request.requestId,
+      inputTokens: request.inputTokens!, cachedInputTokens: request.cachedInputTokens,
+      usageStatus: request.usageStatus,
+      complete: round.requests.every(entry => entry.usageStatus !== 'unknown') } };
+}
+
+/**
+ * The G7 line usage read. Rejections: `invalid` (coordination: a Host has no
+ * line), `forbidden` (coordination: outside the caller), `not_found` (product
+ * rule: no head Session), `unavailable` (AGENTS §4: damaged/missing record).
+ */
+async function readLineUsageWindow(
+  deps: ActivityReadModelDependencies,
+  ctx: CoreCallContext,
+  input: { lineKey?: SessionRef },
+  budget: Budget,
+): Promise<ReadResult<LineUsageV1>> {
+  const records = deps.records;
+  let head: SessionRef;
+  if (input.lineKey !== undefined) {
+    head = input.lineKey;
+  } else if (ctx.principal.kind === 'work_run') {
+    const refKey = canonicalKey(ctx.principal.runRef);
+    const runRecord = await readOneKeyed(records, refKey, budget);
+    if (runRecord === undefined) return rejected('unavailable', `the Run ${refKey} was not found`);
+    const decoded = decodeRun(runRecord);
+    if (!decoded.ok) return rejected('unavailable', `Run record ${runRecord.refKey}: ${decoded.reason}`);
+    head = await claimingSessionOf(records, decoded.value, budget);
+  } else if (ctx.principal.kind === 'query_run') {
+    const refKey = canonicalKey(ctx.principal.queryRunRef);
+    const runRecord = await readOneKeyed(records, refKey, budget);
+    if (runRecord === undefined) return rejected('unavailable', `the QueryRun ${refKey} was not found`);
+    const decoded = decodeQueryRunSnapshotRecord(runRecord);
+    if (decoded.status !== 'decoded') return rejected('unavailable', `QueryRun record ${runRecord.refKey}: ${decoded.reason}`);
+    const executionState = decoded.value.run.executionState;
+    if (executionState === undefined) return rejected('unavailable', 'the QueryRun has no execution state');
+    head = executionState.sessionRef;
+  } else {
+    // Coordination: the Host has no line of its own and this read never scans
+    // the whole workspace.
+    return rejected('invalid', 'readLineUsage needs a lineKey or a Run/QueryRun principal');
+  }
+  if (head.projectId !== ctx.projectId) {
+    return rejected('forbidden', 'the line is outside the caller scope');
+  }
+  const sessionRecord = await readOneKeyed(records, sessionAggregateRefKey({
+    aggregateType: 'Session', projectId: head.projectId, sessionId: head.sessionId,
+  }), budget);
+  if (sessionRecord === undefined) {
+    return rejected('not_found', `the Session ${head.sessionId} was not found`);
+  }
+  const sessionDecoded = decodeSessionRecord(sessionRecord);
+  if (sessionDecoded.status !== 'decoded') {
+    return rejected('unavailable', `Session record ${sessionRecord.refKey}: ${sessionDecoded.reason}`);
+  }
+  const lineWorkspaceId = sessionDecoded.value.workspaceId;
+  if (lineWorkspaceId !== ctx.workspaceId) {
+    return rejected('forbidden', 'the line is outside the caller scope');
+  }
+
+  const workRows = await readEqualityAll(records, WORK_EXECUTION_BY_SESSION_LOOKUP,
+    [head.projectId, lineWorkspaceId, head.sessionId], budget);
+  const entered: { runRef: RunRef; sessionGeneration: number }[] = [];
+  for (const record of workRows) {
+    const decoded = decodeDispatchOutboxEntry(record);
+    if (decoded.status !== 'decoded') {
+      return rejected('unavailable', `Dispatch outbox record ${record.refKey}: ${decoded.reason}`);
+    }
+    const state = decoded.value.dispatchState;
+    if (state === undefined) continue;
+    entered.push({ runRef: decoded.value.claim.runRef, sessionGeneration: state.sessionGeneration });
+  }
+  const activityKeys = entered.map(entry => runActivityRefKey(runActivityRefOf({ ref: entry.runRef })));
+  const activityByKey = new Map<string, EncodedRecord>();
+  if (activityKeys.length > 0) {
+    const read = await records.readMany(activityKeys);
+    if (read.status !== 'ready') throw read;
+    budget.spend(activityKeys.length);
+    for (const record of read.value.records) activityByKey.set(record.refKey, record);
+  }
+
+  const sampled: LineUsageSampledRound[] = [];
+  type WorkLatest = { at: string; sample: LineUsageSampleV1 };
+  let workLatest: WorkLatest | null = null;
+  for (const entry of entered) {
+    const activityRecord = activityByKey.get(runActivityRefKey(runActivityRefOf({ ref: entry.runRef })));
+    if (activityRecord === undefined) continue;
+    const decoded = decodeRunActivitySnapshot(activityRecord);
+    if (decoded.status !== 'decoded') {
+      return rejected('unavailable', `RunActivity record ${activityRecord.refKey}: ${decoded.reason}`);
+    }
+    const activity = decoded.value;
+    if (activity.facts.status !== 'counted') continue;
+    const requests: LineUsageRequestV1[] = activity.facts.usage.requests
+      .map((request, index) => ({ request, index }))
+      .sort((left, right) => left.request.startedAt < right.request.startedAt ? -1
+        : left.request.startedAt > right.request.startedAt ? 1 : left.index - right.index)
+      .map(({ request }): LineUsageRequestV1 => ({ requestId: request.requestId,
+        inputTokens: request.inputTokens, cachedInputTokens: request.cachedInputTokens,
+        usageStatus: request.usageStatus }));
+    const round: LineUsageRoundV1 = { sessionGeneration: entry.sessionGeneration, requests };
+    const request = sampledRequestOf(requests);
+    if (request === null) continue;
+    const sample: LineUsageSampleV1 = { sessionGeneration: round.sessionGeneration,
+      requestId: request.requestId, inputTokens: request.inputTokens!,
+      cachedInputTokens: request.cachedInputTokens, usageStatus: request.usageStatus,
+      complete: activity.facts.usage.complete };
+    if (workLatest === null || activity.runEndedAt > workLatest.at) {
+      workLatest = { at: activity.runEndedAt, sample };
+    }
+    sampled.push({ kind: 'work', at: activity.runEndedAt, runRef: activity.runRef, sample });
+  }
+
+  const queryRecords = await readOrderedAll(records, {
+    index: S2C_QUERY_RUN_BY_SESSION_GENERATION_LOOKUP,
+    values: [head.projectId, lineWorkspaceId, head.sessionId],
+    direction: 'desc',
+  }, budget);
+  const queryRounds: LineUsageRoundV1[] = [];
+  const queryEndedAt: (string | null)[] = [];
+  for (const record of queryRecords) {
+    const decoded = decodeQueryRunSnapshotRecord(record);
+    if (decoded.status !== 'decoded') {
+      return rejected('unavailable', `QueryRun record ${record.refKey}: ${decoded.reason}`);
+    }
+    const executionState = decoded.value.run.executionState;
+    if (executionState === undefined) {
+      return rejected('unavailable', `QueryRun record ${record.refKey} has no execution state`);
+    }
+    const requests: LineUsageRequestV1[] = executionState.requests.map(
+      (request): LineUsageRequestV1 => ({ requestId: request.requestId,
+        inputTokens: request.inputTokens, cachedInputTokens: request.cachedInputTokens,
+        usageStatus: request.usageStatus === 'reported' ? 'reported' : 'unknown' }),
+    );
+    const round: LineUsageRoundV1 = { sessionGeneration: executionState.sessionGeneration, requests };
+    queryRounds.push(round);
+    queryEndedAt.push(decoded.value.run.endedAt);
+    const querySample = sampledQueryRoundOf(round, decoded.value.run.endedAt, decoded.value.ref);
+    if (querySample !== null) sampled.push(querySample);
+  }
+
+  const querySample = latestSampledRoundOf(queryRounds);
+  const queryLatestEndedAt = querySample === null ? null
+    : queryEndedAt[queryRounds.findIndex(round => round.requests.some(request => request.requestId === querySample.requestId))] ?? null;
+  const chosen = workLatest !== null && (querySample === null
+    || (queryLatestEndedAt !== null && workLatest.at >= queryLatestEndedAt))
+    ? workLatest.sample : querySample;
+
+  // sourceRefs: newest to oldest; ties keep Work first (secretary basis :106).
+  sampled.sort((left, right) => {
+    const leftAt = left.at === null ? '\uffff' : left.at;
+    const rightAt = right.at === null ? '\uffff' : right.at;
+    if (leftAt !== rightAt) return leftAt < rightAt ? 1 : -1;
+    return left.kind === right.kind ? 0 : (left.kind === 'work' ? -1 : 1);
+  });
+
+  const lastInputTokens = chosen === null ? null : chosen.inputTokens;
+  const lastCachedInputTokens = chosen === null ? null : chosen.cachedInputTokens;
+  const hitRate = lastInputTokens === null ? null
+    : (lastCachedInputTokens === null ? null : lastCachedInputTokens / lastInputTokens);
+  const usageStatus: 'reported' | 'unknown' = chosen === null ? 'unknown' : chosen.usageStatus;
+  const complete = chosen === null ? false : chosen.complete;
+  const observedRounds = sampled.length;
+  const overThresholdRounds = sampled.filter(entry => entry.sample.inputTokens >= SECRETARY_HANDOFF_INPUT_TOKENS).length;
+
+  return { status: 'ready', value: {
+    lineKey: input.lineKey ?? head, headSessionRef: head,
+    lastInputTokens, lastCachedInputTokens, hitRate,
+    observedRounds, overThresholdRounds,
+    usageStatus, complete, basis: chosen === null ? 'run_total' : 'latest',
+    sourceRefs: sampled.map(entry => ({ runRef: entry.runRef, requestId: entry.sample.requestId })),
+  } };
+}
+
+// --------------------------------------------------------------------------
 // Factory
 // --------------------------------------------------------------------------
 
 export function createActivityReadModel(
   deps: ActivityReadModelDependencies,
-): Pick<ActivityReadPort, 'readActivityCalendar' | 'readRunActivities' | 'readQueryActivities'> {
+): Pick<ActivityReadPort, 'readActivityCalendar' | 'readRunActivities' | 'readQueryActivities' | 'readLineUsage'> {
   const cap = deps.readRecordCap ?? ACTIVITY_READ_RECORD_CAP;
   const now = deps.now;
 
@@ -1187,6 +1419,22 @@ export function createActivityReadModel(
           return storeFailureToRejection(error as { code: string; reason: string });
         },
         exhausted: () => rejected('unavailable', `the Query activity read did not yield one stable read window within ${String(ACTIVITY_WINDOW_MAX_ATTEMPTS)} attempts`),
+      });
+    },
+
+    async readLineUsage(ctx, input): Promise<ReadResult<LineUsageV1>> {
+      return readStableActivityWindow({
+        records: deps.records,
+        cap,
+        read: (budget) => readLineUsageWindow(deps, ctx, input, budget),
+        mapError: (error) => {
+          if (error instanceof CapacityError) {
+            return { status: 'rejected', code: 'capacity',
+              reason: `the line usage read exceeds the storage-read cap of ${String(cap)}` };
+          }
+          return storeFailureToRejection(error as { code: string; reason: string });
+        },
+        exhausted: () => rejected('unavailable', `the line usage read did not yield one stable read window within ${String(ACTIVITY_WINDOW_MAX_ATTEMPTS)} attempts`),
       });
     },
   };

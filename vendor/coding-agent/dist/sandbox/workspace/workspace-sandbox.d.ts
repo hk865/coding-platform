@@ -47,6 +47,10 @@ export interface WorkspaceSandboxOptions {
     readonly maxFileBytes?: number;
 }
 export declare const DEFAULT_WORKSPACE_SNAPSHOT_IGNORED_PREFIXES: readonly [".git", ".tooling", "node_modules", "dist", "coverage", "test-results", ".cache"];
+export declare function identity(value: {
+    dev: number | bigint;
+    ino: number | bigint;
+}): string;
 /**
  * 基于受信目录句柄的 workspace 文件能力。所有路径逐段 O_NOFOLLOW 打开，
  * 避免“先检查路径、后使用路径”的 symlink 竞态逃逸。

@@ -204,6 +204,8 @@ export type QueryRuntimeConfigurationInput = {
 export type ReadonlyCommandAccessInput = {
   workspace: WorkspaceScope;
   role: RoleConfigurationRef;
+  /** KLS-3b: the Goal's line, whose folder the review round's Run reads in; absent is the workspace root. */
+  line?: import('../../contracts/line.js').LineRef;
 };
 
 /** Trusted Host startup binding. The stored `runtime` option is data, never a

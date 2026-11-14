@@ -83,12 +83,21 @@ export interface ProjectRegistrationPort {
     projectId: string,
   ): Promise<ReadResult<ProjectSnapshot>>;
   /**
-   * KLS-3a: the one writer of a workspace's lines (`line-service.ts`). The Host registers the line of a checkout it
-   * opened; `meta.expected` is exactly the Workspace pin. A folder that already has its line answers that line.
+   * KLS-3a: the writer of a workspace's lines' identity (`line-service.ts`). The Host registers the line of a checkout
+   * it opened; `meta.expected` is exactly the Workspace pin. A folder that already has its line answers that line,
+   * moved to the folder's branch when it switched (KLS-3b); a closed line is answered as it is.
    */
   registerLine(
     ctx: CoreCallContext,
     request: GraphWrite<RegisterLineInputV1>,
+  ): Promise<WriteResult<LineSnapshot>>;
+  /**
+   * KLS-3b: the one writer of a line's status, its end (`merged` or `removed`, judged by the Host from git and the
+   * workspace registration); `meta.expected` is exactly the Workspace pin. A closed line is not closed again.
+   */
+  settleLine(
+    ctx: CoreCallContext,
+    request: GraphWrite<SettleLineInputV1>,
   ): Promise<WriteResult<LineSnapshot>>;
   /** One workspace's line in one folder (`lineKeyOf`); `not_found` when the folder is no line of it. */
   readLine(ctx: CoreCallContext, input: { workspaceId: string; folder: string }): Promise<ReadResult<LineSnapshot>>;
@@ -98,6 +107,8 @@ export interface ProjectRegistrationPort {
 
 /** The line a Host probed: its identity and the HEAD it forks from (null when not git or before the first commit). */
 export type RegisterLineInputV1 = { workspaceId: string; line: CheckoutIdentity; forkPoint: string | null };
+/** A line's end: the workspace and folder name it. */
+export type SettleLineInputV1 = { workspaceId: string; folder: string; status: 'merged' | 'removed' };
 
 /**
  * Trusted Host CompletionPolicy configuration.
@@ -163,6 +174,6 @@ export type ProjectBootstrapDependencies = {
  * and `platform.completionPolicies`. */
 export type ProjectBootstrapServices = {
   /** The line methods are `line-service.ts`'s; the composition root publishes both under one `projects` port. */
-  projects: Omit<ProjectRegistrationPort, 'registerLine' | 'readLine' | 'readLines'>;
+  projects: Omit<ProjectRegistrationPort, 'registerLine' | 'settleLine' | 'readLine' | 'readLines'>;
   completionPolicies: CompletionPolicyConfigurationPort;
 };

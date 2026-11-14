@@ -443,6 +443,8 @@ export function createConsultationConsumer(deps: ConsultationConsumerDeps):
           messageRef: { ...messageRef } },
         meta: { requestId: `consultation-child:${hashOf(messageRef)}`, expected: [] },
         ...(frozen.value === null ? {} : { consultation: frozen.value }),
+        // KLS-3b: the copy derives from the recipient's history, which is in its line's Kernel store.
+        ...(card.record.lineRef === null ? {} : { lineFolder: card.record.lineRef.folder }),
       });
       if (child.status !== 'completed') {
         return waiting(message, null, null, `creating the isolated A′ Session failed: ${rejectionReason(child)}`);

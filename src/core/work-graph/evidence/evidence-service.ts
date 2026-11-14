@@ -1025,13 +1025,23 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         return { ok: false, rejection: unavailable(`the witness report was rejected: ${stored.reason}`) };
     }
 
+    /**
+     * KLS-3b (lead ruling Q1): the root of the subject Run's line (`resolveRoot(workspace, line)`, as KLS-3a2's Run):
+     * a round freezes, captures and compares the source where its Run worked, the main checkout or another line's folder.
+     */
+    async function resolveRunRoot(ctx: CoreCallContext, workspace: WorkspaceRef, runRef: RunRef) {
+        const execution = await deps.executions.readExecution(ctx, runRef);
+        if (execution.status !== 'ready') return mapRead(execution);
+        return await deps.workspaceHost.resolveRoot(workspace, execution.value.run.workspaceSnapshot.line ?? undefined);
+    }
+
     async function evaluateSource(
         ctx: CoreCallContext,
         configuration: TrustedCheckConfiguration,
         round: RoundSnapshot,
     ): Promise<Exclude<RoundCheckSnapshot['sourceStatus'], null>> {
         try {
-            const resolved = await deps.workspaceHost.resolveRoot(configuration.workspace);
+            const resolved = await resolveRunRoot(ctx, configuration.workspace, round.subjectRunRef);
             if (resolved.status !== 'ready') return 'unavailable';
             const authorized = await deps.workspaceHost.authorize(ctx, configuration.workspace);
             if (authorized.status !== 'ready') return 'permission_changed';
@@ -1136,7 +1146,8 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         if (policyRead.status !== 'resolved') return failure(mapRejected(policyRead));
         const baseline = await readPinnedBaseline(records, plan.effectiveArchitectureBaseline);
         if (!baseline.ok) return baseline;
-        const resolvedRoot = await deps.workspaceHost.resolveRoot(configuration.workspace);
+        const resolvedRoot = await deps.workspaceHost.resolveRoot(configuration.workspace,
+            input.run.workspaceSnapshot.line ?? undefined);
         if (resolvedRoot.status !== 'ready') return failure(mapWorkspaceRejection(resolvedRoot));
         const authorization = await deps.workspaceHost.authorize(input.hostCtx, configuration.workspace);
         if (authorization.status !== 'ready') return failure(mapWorkspaceRejection(authorization));
@@ -1513,7 +1524,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         // exact frozen source; otherwise no execution ticket is issued. The
         // permission and root are compared before the capture, the source
         // before the invocation id is minted.
-        const resolved = await deps.workspaceHost.resolveRoot(configuration.workspace);
+        const resolved = await resolveRunRoot(ownedCtx.ctx, configuration.workspace, round.subjectRunRef);
         if (resolved.status !== 'ready') return mapWorkspaceRejection(resolved);
         const authorized = await deps.workspaceHost.authorize(ownedCtx.ctx, configuration.workspace);
         if (authorized.status !== 'ready') return mapWorkspaceRejection(authorized);
@@ -2051,7 +2062,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         readSet.push({ refKey: subjectRunKey, expectedRevision: subjectRunRevision });
         let sourceCurrent = false;
         let currentWorkspaceRevision = round.identity.workspaceRevision;
-        const resolved = await deps.workspaceHost.resolveRoot(round.configuration.workspace);
+        const resolved = await resolveRunRoot(ownedCtx.ctx, round.configuration.workspace, round.subjectRunRef);
         if (resolved.status === 'ready') {
             currentWorkspaceRevision = resolved.value.workspaceRevision;
             const authorized = await deps.workspaceHost.authorize(ownedCtx.ctx, round.configuration.workspace);

@@ -151,6 +151,11 @@ function entryIdentity(state: NonNullable<QueryExecutionRecord['run']['run']['ex
   };
 }
 
+/** 121-112 (K3L-6 Astra ①): these form rounds' Answer is only an accepted submit; model text never stands in for it. */
+const SUBMIT_FORM_ANSWER_SHAPES: ReadonlySet<QueryAnswerShapeV1> = new Set<QueryAnswerShapeV1>([
+  'exec_review', 'unknown_call_advice', 'scribe_review', 'command_rerun_advice',
+]);
+
 /** An answered turn's final text, or why it has none within the formal 16 KiB answer bound. */
 type FinalText = { kind: 'text'; text: string } | { kind: 'empty' } | { kind: 'too_long' };
 
@@ -517,10 +522,9 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
       let final: FinalText;
       const answerShape = submitted === null ? shape : submitShapeOf(shape!, submitted.name);
       if (submitted === null) {
-        // Safety (121-112): the scribe's review conclusion can stop a command, so model text never stands in for
-        // its submit tool: without an accepted submit the round has no answer (the text stays in the history).
-        // K3L-6: a rerun advice is only what its submit tool wrote; its text is no answer (`gap`).
-        final = shape === 'scribe_review' || shape === 'command_rerun_advice' ? { kind: 'empty' } : extractAnswer(runState);
+        // Safety (121-112): a form round's answer is only its accepted submit; without one the round has no
+        // answer (`gap`) and the model text stays in the history. Other shapes keep the final-text reading (97-3).
+        final = SUBMIT_FORM_ANSWER_SHAPES.has(shape!) ? { kind: 'empty' } : extractAnswer(runState);
       } else {
         // Rebuild the exact text the accepted handler built, bounded by shape.
         const text = buildAnswerText(answerShape!, submitted.arguments, {

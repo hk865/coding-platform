@@ -70,7 +70,7 @@ import type { ToolCommitLookup, ToolCommitLookupInput, ToolCommitLookupResult } 
 import { lookupCommittedReceiptByIdentity } from '../persistence/receipt-lookup.js';
 import { readAllOrdered } from '../persistence/lookup-ordered-all.js';
 import { goalRefFor } from '../persistence/commit-compiler.js';
-import { readGoalPlanWindow, readGoalsByWorkspaceCreated } from './plan-readers.js';
+import { readGoal, readGoalPlanWindow, readGoalsByWorkspaceCreated } from './plan-readers.js';
 import { planGuard } from './entry-plan-reader.js';
 import { writeAnswer } from '../sessions/session-handoff-service.js';
 import { readOwnerRecord } from './owner-record-read.js';
@@ -146,6 +146,8 @@ export type MemberLineCreationInputV1 = {
   delegationCeiling?: MemberDelegationCeilingV1;
   secretaryCreated?: true;
   parentOperation: OperationRef;
+  /** KLS-3b: the Task's Goal's line folder; the member works on that line. */
+  lineFolder?: string;
 };
 
 export type MemberLineCreationResultV1 =
@@ -936,6 +938,10 @@ export function createMemberService(deps: MemberServiceDependenciesV1): MemberSe
       if (role.status === 'rejected') return role;
       return rejected('unavailable', 'the Task executor role is not readable');
     }
+    // KLS-3b: the member works on its Task's Goal's line (fixed at the Goal's creation, so a replay reads the same).
+    const task = operation.action.input.scope.task;
+    const goal = await readGoal(deps.records, goalRefFor(task.projectId, task.goalId));
+    if (goal.status !== 'ready') return rejected(goal.code, goal.reason);
     return {
       commandId: childCommandIdOf(operation.ref),
       duty: 'executor',
@@ -946,6 +952,7 @@ export function createMemberService(deps: MemberServiceDependenciesV1): MemberSe
       ...(delegationCeiling === undefined ? {} : { delegationCeiling: structuredClone(delegationCeiling) }),
       ...(coordinatorBuilt ? { secretaryCreated: true as const } : {}),
       parentOperation: structuredClone(operation.ref),
+      ...(goal.goal.lineRef === null ? {} : { lineFolder: goal.goal.lineRef.folder }),
     };
   }
 

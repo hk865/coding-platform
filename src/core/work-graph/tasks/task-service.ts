@@ -41,7 +41,7 @@ import { setGoalControlFromHost } from "./goal-control.js";
 import type { CreateGoalInput, GoalService, GoalServiceDependencies, GoalTaskPort, GraphWrite } from "../model/task-contracts.js";
 import { compareCallerGoalPins, compileGoalCreate, goalCreateFingerprint, goalCreateIdentityKey, goalRefFor, normalizeCallerGoalPins, projectRefFor, workspaceRefFor } from "../persistence/commit-compiler.js";
 import { createGoalGraphRepository, type CommittedStoreReceipt, type GoalCreateIdentity, type GoalGraphRepository } from "../persistence/graph-repository.js";
-import { lineForWrite } from "../persistence/line-record-codecs.js";
+import { closedLineRefusal, lineForWrite } from "../persistence/line-record-codecs.js";
 import { cloneActorRef, canonicalRefKey } from "../persistence/record-codecs.js";
 import { goalStateOf, transitionGoal } from "../state/goal-machine.js";
 
@@ -215,8 +215,15 @@ export async function admitGoalCreation(
   if (records.lookup === undefined) {
     return reject("unsupported", "Goal creation requires a RecordStore with the exact lookup capability (the workspace's lines)");
   }
+  const lineScope = { projectId: command.identity.projectId, workspaceId: command.payload.workspaceId };
+  // KLS-3b ruling 2 (lead 11-14 Q3): a Goal named on a merged or removed line is new work there, refused after the
+  // replay lookup above (product rule: a closed line takes no new work; its Goals still read and claim).
+  if (command.payload.lineFolder !== undefined) {
+    const closed = await closedLineRefusal(records, lineScope, command.payload.lineFolder);
+    if (closed !== null) return reject(closed.code, closed.reason);
+  }
   const line = await lineForWrite({ readMany: records.readMany.bind(records), lookup: records.lookup.bind(records) },
-    { projectId: command.identity.projectId, workspaceId: command.payload.workspaceId }, command.payload.lineFolder);
+    lineScope, command.payload.lineFolder);
   if (line.status !== "ready") return reject(line.code, line.reason);
   const preReadGoalRevision = observed.goal?.revision;
   const goalRefKey = canonicalRefKey(refs.goalRef);
