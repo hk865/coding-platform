@@ -242,7 +242,9 @@ import type { LineRowV1 } from '../contracts/work-line.js';
 import type { EffectiveScopeV1 } from '../core/work-graph/state/role-scope.js';
 import type { RoleLinePositionV1 } from '../core/work-graph/state/role-line-position.js';
 import type { RoleScopeV1 } from '../contracts/role-lines.js';
-import { createRoleLineOperations, readMainWorkspace, startLinesInitialRecord } from '../core/work-graph/sessions/role-line-operations.js';
+import {
+  createRoleLineOperations, readMainWorkspace, scopesInProjectView, startLinesInitialRecord,
+} from '../core/work-graph/sessions/role-line-operations.js';
 import {
   createColdStartProposalWindow, createColdStartService, type ColdStartServiceDeps, type ColdStartStagePort,
 } from '../core/work-graph/sessions/cold-start-service.js';
@@ -294,6 +296,8 @@ import { knowledgeFileRules } from '../core/work-graph/notes/knowledge-files.js'
 import { knowledgeConflictsOf, lineProblemsOf } from '../core/work-graph/architecture/architecture-file.js';
 import { projectArchitectureOf } from '../core/work-graph/architecture/project-architecture.js';
 import { KNOWLEDGE_RECORD_SCHEMAS } from '../core/work-graph/persistence/knowledge-record-codecs.js';
+import { LINE_RECORD_SCHEMAS } from '../core/work-graph/persistence/line-record-codecs.js';
+import { createLineService } from '../core/work-graph/configuration/line-service.js';
 import type { KnowledgeWriteHoldPoint, KnowledgeWriteLease } from '../core/work-graph/model/line-knowledge.js';
 import type { CatalogPlanFactsV1 } from '../core/work-graph/model/catalog-revision-ports.js';
 import type { SessionRecord, SessionWorkLink } from '../contracts/core/session.js';
@@ -349,6 +353,13 @@ import {
 import { TASK_NODE_COMMIT_SCHEMAS } from '../core/work-graph/persistence/task-node-commit-codecs.js';
 import { createTaskNodeCommitService } from '../core/work-graph/tasks/task-node-commit-service.js';
 import type { TaskNodeCommitPort, TaskNodeCommitWorkspacePort } from '../core/work-graph/model/task-node-commit-contracts.js';
+// Delivery (121-45): the acceptance record/event codecs, the write owner and the page read.
+import { GOAL_DELIVERY_SCHEMAS } from '../core/work-graph/persistence/goal-delivery-codecs.js';
+import { createGoalDeliveryService } from '../core/work-graph/tasks/goal-delivery-service.js';
+import type { GoalDeliveryPort } from '../core/work-graph/model/goal-delivery-contracts.js';
+import {
+  createGoalDeliveryRead, type GoalDeliveryReadPort,
+} from '../core/work-graph/views/delivery-read.js';
 import { readWorkspaceBaselineFromBundle } from '../core/workspace/workspace-baseline-artifact.js';
 import { WORKSPACE_DENIED_PREFIXES } from '../core/workspace/denied-prefixes.js';
 import { createToolCommitLookup } from './tool-commit-lookup.js';
@@ -437,7 +448,7 @@ import { readUnknownCallReviewDraft } from '../core/agent-runtime/unknown-call-d
 import type { SessionMappingProbe } from '../core/agent-runtime/session-operations.js';
 import type { TaskExecutionRecord } from '../core/work-graph/model/execution-read-contracts.js';
 import type { QueryExecutionRecord } from '../core/work-graph/queries/contracts.js';
-import type { RunRef, RunSnapshot, SourceRefV1 } from '../contracts/dispatch.js';
+import type { RunRef, RunSnapshot, RunWorkspacePinV1, SourceRefV1 } from '../contracts/dispatch.js';
 import type { QueryRunRef } from '../contracts/query-job.js';
 import { isRequestRound, queryExecutionBindingOf } from '../contracts/query-job.js';
 import type { WriteResult } from '../contracts/core/results.js';
@@ -1157,7 +1168,7 @@ export function platformRecordSchemas() {
       ...REWORK_REQUEST_RECORD_SCHEMAS.records,
       ...INITIALIZATION_ADOPTION_SCHEMAS.records, ...HANDOFF_BRIEF_RECORD_SCHEMAS.records,
       ...ROLE_LINE_RECORD_SCHEMAS.records, ...ROLE_LINE_ORCHESTRATION_SCHEMAS.records, ...KNOWLEDGE_RECORD_SCHEMAS.records,
-      ...TASK_NODE_COMMIT_SCHEMAS.records],
+      ...TASK_NODE_COMMIT_SCHEMAS.records, ...LINE_RECORD_SCHEMAS.records, ...GOAL_DELIVERY_SCHEMAS.records],
     events: [...materialsSchema.events, ...PLAN_RECORD_SCHEMAS.events, ...PLAN_STATE_RECORD_SCHEMAS.events,
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events, ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events,
       ...ROLE_RECORD_SCHEMAS.events, ...OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.events, ...ARCHITECTURE_CATALOG_SCHEMAS.events,
@@ -1178,7 +1189,7 @@ export function platformRecordSchemas() {
       ...REWORK_REQUEST_RECORD_SCHEMAS.events,
       ...INITIALIZATION_ADOPTION_SCHEMAS.events, ...HANDOFF_BRIEF_RECORD_SCHEMAS.events,
       ...ROLE_LINE_RECORD_SCHEMAS.events, ...ROLE_LINE_ORCHESTRATION_SCHEMAS.events, ...KNOWLEDGE_RECORD_SCHEMAS.events,
-      ...TASK_NODE_COMMIT_SCHEMAS.events],
+      ...TASK_NODE_COMMIT_SCHEMAS.events, ...LINE_RECORD_SCHEMAS.events, ...GOAL_DELIVERY_SCHEMAS.events],
     lookups: [...materialsSchema.lookups ?? [], ...PLAN_RECORD_SCHEMAS.lookups ?? [], ...PLAN_STATE_RECORD_SCHEMAS.lookups ?? [],
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.lookups ?? [], ...SESSION_RECORD_SCHEMAS.lookups ?? [],
       ...SESSION_LIFECYCLE_RECORD_SCHEMAS.lookups ?? [], ...ROLE_RECORD_SCHEMAS.lookups ?? [],
@@ -1199,7 +1210,7 @@ export function platformRecordSchemas() {
       ...REWORK_REQUEST_RECORD_SCHEMAS.lookups ?? [],
       ...GOAL_COPY_RECORD_SCHEMAS.lookups ?? [], ...INITIALIZATION_ADOPTION_SCHEMAS.lookups ?? [],
       ...HANDOFF_BRIEF_RECORD_SCHEMAS.lookups ?? [], ...ROLE_LINE_RECORD_SCHEMAS.lookups ?? [], ...ROLE_LINE_ORCHESTRATION_SCHEMAS.lookups ?? [],
-      ...KNOWLEDGE_RECORD_SCHEMAS.lookups ?? [], ...TASK_NODE_COMMIT_SCHEMAS.lookups ?? []],
+      ...KNOWLEDGE_RECORD_SCHEMAS.lookups ?? [], ...TASK_NODE_COMMIT_SCHEMAS.lookups ?? [], ...LINE_RECORD_SCHEMAS.lookups ?? []],
   };
 }
 
@@ -1265,7 +1276,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     // it. Its writes queue on the Host's one queue (or this platform's own) and index into this store.
     const openKnowledgeIndex = options.knowledgeIndexFactory ?? createKnowledgeIndex;
     const knowledgeLines = createKnowledgeLines({
-      resolveRoot: workspaceRef => options.workspace.resolveRoot(workspaceRef),
+      resolveRoot: (workspaceRef, line) => options.workspace.resolveRoot(workspaceRef, line),
       ...(options.knowledgeWorkspaces === undefined ? {} : { workspacesOf: options.knowledgeWorkspaces }),
     }, { records: backend.records }, {
       queue: options.knowledgeWriteQueue ?? createKnowledgeWriteQueue(),
@@ -1342,6 +1353,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       readRoleSpec: roleService.readRoleSpec.bind(roleService),
       configuration: () => workflowDependencies.configuration,
     });
+    // KLS-3a: the one line owner, over the same backend as the workspace records it guards.
+    const lines = createLineService({ records: backend.records, now });
     const bootstrap = createProjectBootstrapServices({ records: backend.records, now, eventId: randomUUID,
       // O1b (L26): the start_lines birth, encoded by the sessions codec.
       startLines: (input: { projectId: string; workspaceId: string; now: string;
@@ -2397,6 +2410,18 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     ): void => {
       try { options.onArchitectureCaptureTrigger?.({ kind, projectId }); } catch { /* the caller's result is unchanged */ }
     };
+    // Slice 2B §2/P1: the WorkGraph RunActivity write and backfill candidate
+    // reader. The end commits write the record through their own `records`
+    // dependency; this owner is what the Workflow backfill and the activity
+    // reads share (a single writer/reader pair, §0.4). It is built before the
+    // evidence owner because the check round reads the subject Run's tally.
+    const runActivity = createRunActivityService({ records: backend.records, now, eventId: randomUUID });
+    // B06-N1: the ONE parse of the Python files a Run changed. The Run's
+    // before-model safety points and the check round's finalize share it, so
+    // the two callers cannot drift (one closure, two callers).
+    const pythonSyntax = (ctx: CoreCallContext, input: { workspace: WorkspaceRef; paths: readonly string[] }) =>
+      changedPythonSyntaxProblems({ readWorkspaceFiles: workspace.readWorkspaceFiles, lookup: nativeSingleFile.lookup },
+        ctx, { ...input, maxBytes: DEFAULT_WORKSPACE_LIMITS.maxFileBytes });
     const evidenceOwner = createEvidenceService({
       records: backend.records, commitIdentities: rawBackend.commitIdentities, knowledge: knowledgeLines,
       // Slice 9 VR-16: the review booking reads the review Query and the answering Session's duty (project scope).
@@ -2415,6 +2440,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       ...(authorizeConfiguration === undefined ? {} : {
         delegatedWrites: { reads: executionReader, roles: roleService, bodies, authorizeConfiguration },
       }),
+      runActivity, pythonSyntax,
       now, newId: randomUUID,
     });
     // L8 (book ruling 1): wrap the ONE Evidence instance's `finalizeChecks` where it
@@ -2440,11 +2466,6 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     // classifier reads the Kernel through the same history owner the observer uses.
     const runReconcile: RunReconcileService = createRunReconcileService({ records: backend.records, reads: executionReader,
       bodies, ...(hostInstance === undefined ? {} : { hostInstance }), now, eventId: randomUUID });
-    // Slice 2B §2/P1: the WorkGraph RunActivity write and backfill candidate
-    // reader. The end commits write the record through their own `records`
-    // dependency; this owner is what the Workflow backfill and the activity
-    // reads share (a single writer/reader pair, §0.4).
-    const runActivity = createRunActivityService({ records: backend.records, now, eventId: randomUUID });
     // NET-B (decision 121-112): the ONE owner of each Run's host record. The command proxy notes through it before
     // it connects; the `network/read` route and the unknown-call review drafts read through it.
     const runNetworkOwner = createRunNetworkService({ records: backend.records, now, eventId: randomUUID });
@@ -2628,7 +2649,11 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
             const facts = await maintenance.readSplitFacts(owned, input.caller.session);   // the page's own read
             if (facts.status === 'rejected') return facts;
             if (facts.status !== 'ready') return rejected('unavailable', 'the split facts are not readable');
-            const plan = planRoleLineSplit({ ...facts.value, move: input.move, tooLong: false, tooSlow: false });
+            // The model names the moved regions in its own workspace's frame (kls-design §2.3.4; a Work Run names its
+            // workspace).
+            const move = await scopesInProjectView(backend.records, ctx.projectId, ctx.workspaceId!, input.move);
+            if (move.status !== 'ready') return move;
+            const plan = planRoleLineSplit({ ...facts.value, move: move.value, tooLong: false, tooSlow: false });
             if (plan === null) return rejected('invalid', 'the move is not a strict subrange of the caller line');
             let understanding: { noteId: string; version: number }[] | undefined;
             if (facts.value.line.duty === 'adviser') {
@@ -2701,7 +2726,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
         handoffs: (ctx, input) => handoffEntry.requestHandoff(ctx, input),
         memoryMaterial,
         // C3: the continuation brief's checkpoint uses the SAME workspace reader as the evidence owner.
-        workspaceSource: continuationWorkspaceSource, pythonSyntax: (ctx, input) => changedPythonSyntaxProblems({ readWorkspaceFiles: workspace.readWorkspaceFiles, lookup: nativeSingleFile.lookup }, ctx, { ...input, maxBytes: DEFAULT_WORKSPACE_LIMITS.maxFileBytes }),
+        workspaceSource: continuationWorkspaceSource, pythonSyntax,
         // A.2 step 5.6: the in-process ends without a Kernel terminal (RUN-16, RUN-23).
         runReconcile, ...(hostInstance === undefined ? {} : { hostInstanceId: hostInstance.hostInstanceId }),
         // K slice M1/M3/L5: the dangling-Turn closure's health owner and this
@@ -2871,6 +2896,9 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       // real composition never leaves it absent. The reader implementation is
       // still an explicit stage-one gap.
       readProject: (...args) => trackedCall(() => bootstrap.projects.readProject!(...args), unavailable),
+      registerLine: (...args) => trackedCall(() => lines.registerLine(...args), unavailable),
+      readLine: (...args) => trackedCall(() => lines.readLine(...args), unavailable),
+      readLines: (...args) => trackedCall(() => lines.readLines(...args), unavailable),
     };
     const completionPolicies: CompletionPolicyConfigurationPort = {
       installCompletionPolicy: (...args) => trackedCall(() => bootstrap.completionPolicies.installCompletionPolicy(...args), unavailable),
@@ -3058,6 +3086,25 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     const nodeCommits: TaskNodeCommitPort = {
       readNodeRows: (...args) => trackedCall(() => rawNodeCommits.readNodeRows(...args), unavailable),
       commitNode: (...args) => trackedCall(() => rawNodeCommits.commitNode(...args), unavailable),
+    };
+    // Delivery (121-45): the acceptance write owner and the delivery page read. The write owner admits the configured
+    // operator only; the read joins the Goal display, the acceptance, the node rows and the secretary, reusing
+    // `queryGoalDisplay`, `readNodeRows` and `resolveDutyRecipient`. Both publish through `trackedCall`.
+    const rawGoalDelivery = createGoalDeliveryService({ records: backend.records, now, newId: randomUUID,
+      ...(operatorActor === undefined ? {} : { operatorActor }) });
+    const goalDelivery: GoalDeliveryPort = {
+      readAcceptance: (...args) => trackedCall(() => rawGoalDelivery.readAcceptance(...args), unavailable),
+      acceptDelivery: (...args) => trackedCall(() => rawGoalDelivery.acceptDelivery(...args), unavailable),
+    };
+    const rawGoalDeliveryRead = createGoalDeliveryRead({
+      readGoalDisplay: (ctx, input) => planService.queryGoalDisplay(ctx, input),
+      delivery: goalDelivery,
+      nodeCommits: rawNodeCommits,
+      duties: { resolveDutyRecipient },
+      records: backend.records,
+    });
+    const delivery: GoalDeliveryReadPort = {
+      readGoalDelivery: (...args) => trackedCall(() => rawGoalDeliveryRead.readGoalDelivery(...args), unavailable),
     };
     const requestCandidatePort: RequestCandidatePort = {
       readRequestCandidate: (...args) => trackedCall(() => requestCandidates.readRequestCandidate(...args), unavailable),
@@ -3945,7 +3992,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
           respondFromQueryAnswer: mailbox.respondFromQueryAnswer.bind(mailbox),
           recordConsultationDerivation: mailbox.recordConsultationDerivation!.bind(mailbox) },
         queries: queryJobs,
-        projects: bootstrap.projects,
+        projects: { ...bootstrap.projects, ...lines },
       },
       // Slice 5 §3.3/§4.5: the SAME settings/message/read owners. They are
       // optional on the Workflow port so an old composition still starts; this
@@ -4229,26 +4276,19 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
         detail: string,
       ): WorkspaceCaptureV1 => ({ status: 'unavailable', runBaselineKnown, reason,
         detail: detail.length > 500 ? detail.slice(0, 500) : detail });
-      let root: string;
-      try {
-        const resolved = await options.workspace.resolveRoot({ aggregateType: 'Workspace', projectId: ctx.projectId,
-          workspaceId: input.workspaceId });
-        if (resolved.status !== 'ready') {
-          return unavailable(false, 'read_failed', `the workspace root could not be resolved: ${resolved.reason}`);
-        }
-        root = resolved.value.root;
-      } catch (error) {
-        return unavailable(false, 'read_failed', `the workspace root could not be resolved: ${String(error)}`);
-      }
       let baseline: WorkspaceBaselineV1 | null = null;
       let runRef: RunRef | null = null;
       let sourceRefs: SourceRefV1[] = [];
+      let line: { folder: string } | undefined;
       // Item 10: one read/decode/degrade of the prepared bundle's baseline,
       // shared with the context assembler (`readWorkspaceBaselineFromBundle`).
       const bundle = await readWorkspaceBaselineFromBundle(bodies, input.bundleRef);
       if (bundle !== null) {
-        const manifest = bundle.manifest as { claim?: { runRef?: RunRef }; sourceRefs?: unknown };
+        const manifest = bundle.manifest as { claim?: { runRef?: RunRef }; sourceRefs?: unknown;
+          workspaceSnapshot?: RunWorkspacePinV1 };
         if (manifest.claim?.runRef !== undefined) runRef = manifest.claim.runRef;
+        // kls-design §2.3.3: the Run's changes are in its line's folder, where its baseline was taken.
+        line = manifest.workspaceSnapshot?.line ?? undefined;
         // K3 L4 (RUN-25): the capture Artifact reuses the prepared manifest's
         // run-start source pin (`plan-revision` + `workspace`), exactly the list
         // `execution-preparation.ts` stores the manifest and baseline with.
@@ -4256,6 +4296,17 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
           sourceRefs = manifest.sourceRefs as SourceRefV1[];
         }
         baseline = bundle.baseline;
+      }
+      let root: string;
+      try {
+        const resolved = await options.workspace.resolveRoot({ aggregateType: 'Workspace', projectId: ctx.projectId,
+          workspaceId: input.workspaceId }, line);
+        if (resolved.status !== 'ready') {
+          return unavailable(false, 'read_failed', `the workspace root could not be resolved: ${resolved.reason}`);
+        }
+        root = resolved.value.root;
+      } catch (error) {
+        return unavailable(false, 'read_failed', `the workspace root could not be resolved: ${String(error)}`);
       }
       let captured: WorkspaceChangeCaptureResult;
       try {
@@ -4817,9 +4868,9 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       // The card source already read the members; the answer side has only the batch ref.
       const sources = members === undefined
         ? await reproposeSourcesOf(ctx, { proposals: architectureProposals, sessions: sessionDirectory,
-          records: backend.records }, batchRef)
-        : await reproposeSourcesFromMembers(ctx, { proposals: architectureProposals, sessions: sessionDirectory },
-          members);
+          records: backend.records, knowledge: coldStartDeps.knowledge }, batchRef)
+        : await reproposeSourcesFromMembers(ctx, { proposals: architectureProposals, sessions: sessionDirectory,
+          records: backend.records, knowledge: coldStartDeps.knowledge }, members);
       return sources.status === 'ready' && sources.value.length > 0;
     }
     // 7D2 EXC: the follow-up owner and the exploration control, over the same cold-start deps. The control's stop
@@ -4998,6 +5049,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       notes, knowledge,
       // Node-level review (121-45): the review read and the person's commit; internal like the other owner groups.
       nodeCommits,
+      // Delivery (121-45): the page read and the person's one acceptance write; internal like the other owner groups.
+      delivery, goalDelivery,
       // The one repair activation owner the Host's triggers and the answer row
       // use. Internal and never drained through `trackedCall`; the Host reads it
       // by property.
@@ -5199,7 +5252,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       'bindings', 'initializationAdoption', 'confirmInstalledChecks', 'messageRelease', 'messageForwarding', 'disconnect', 'messageExpiry',
       'consumableSessions', 'readCandidateCard', 'roleLineOperations', 'roleLines', 'roleLineOperationsRead',
       'explorationControl', 'explorationFollowUp',
-      'goalAdviserQueue', 'runtimeInFlight', 'roleLineRead', 'nodeCommits', 'workspaces'] as const) {
+      'goalAdviserQueue', 'runtimeInFlight', 'roleLineRead', 'nodeCommits', 'delivery', 'goalDelivery', 'workspaces'] as const) {
       Object.defineProperty(platform, key, { enumerable: false });
     }
     // The Goal list read is an internal owner like the decision ports.

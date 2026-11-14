@@ -4,6 +4,7 @@
  * candidate's knowledge pin (L3, [2C2-01]) is written by hand: the S8B worlds are not git, so a line is `head: null`,
  * `dirty: true` and carries its used modules; the content hash's algorithm is K26's, so only its form is asserted here.
  */
+import { realpathSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ArchitectureCatalogPinV1, ModuleDefinition } from '../../src/contracts/architecture-catalog.js';
 import type { KnowledgePinModuleV1, KnowledgePinV1 } from '../../src/contracts/knowledge.js';
@@ -88,9 +89,9 @@ function withIntent(moduleRef: string): (draft: W2PlanDraftV2) => W2PlanDraftV2 
       scope: { kind: 'module', stageId: 'agent', moduleRef } }] });
 }
 const unknownModule = (reason: string) => ({ status: 'rejected', code: 'invalid', reason });
-/** The one-line pin of a candidate proposed in `workspaceId` that uses `modules` (not git: no head, dirty). */
-const linePin = (workspaceId: string, modules: ModuleDefinition[]): KnowledgePinV1 => ({ lines: [{
-  lineRef: JSON.stringify([workspaceId, '']), contentHash: expect.stringMatching(/^[0-9a-f]{64}$/), head: null, dirty: true,
+/** The one-line pin of a candidate proposed in `workspaceId` in `folder` that uses `modules` (not git: no head, dirty). */
+const linePin = (workspaceId: string, folder: string, modules: ModuleDefinition[]): KnowledgePinV1 => ({ lines: [{
+  lineRef: JSON.stringify([workspaceId, folder]), contentHash: expect.stringMatching(/^[0-9a-f]{64}$/), head: null, dirty: true,
   modules: modules.map((module): KnowledgePinModuleV1 => ({ moduleId: module.ref.moduleId, paths: module.paths,
     responsibility: module.responsibility, contains: [], dependsOn: [] })) }] });
 /** The Agent world's one module (tests/helpers/task-claim-fixture.ts's bootstrap module). */
@@ -106,7 +107,7 @@ async function proposeThrough(entry: Entry, catalog: boolean, module: string) {
     const goal = () => world.plans.queryGoal(world.ctx, world.goalRef);
     const before = await goal();
     const result = await world.proposeAsWorkRun(world.futureDraft('s8b-agent-plan', withIntent(module)), world.planRef);
-    return { result, pin: linePin(world.scope.workspaceId, [agentModule(world.scope.projectId)]),
+    return { result, pin: linePin(world.scope.workspaceId, realpathSync(world.root), [agentModule(world.scope.projectId)]),
       unchanged: async () => expect(await goal()).toEqual(before) };
   }
   const world = await catalogWorld();
@@ -115,7 +116,7 @@ async function proposeThrough(entry: Entry, catalog: boolean, module: string) {
   let pin: KnowledgePinV1 | null = null;
   if (catalog) {
     await world.adopt([catalogModule(projectId, 'core')]);
-    pin = linePin(world.scope.workspaceId, [catalogModule(projectId, 'core')]);
+    pin = linePin(world.scope.workspaceId, realpathSync(world.root), [catalogModule(projectId, 'core')]);
   }
   const detail = () => world.platform.plans.queryGoal(world.ctx, goal);
   if (entry === 'answer') {
@@ -206,7 +207,7 @@ describe('B01-adopt-initial: the catalog governance selects judges a module task
       expect(await world.platform.plans.queryGoal(world.ctx, goal)).toEqual(before);
       return;
     }
-    expect(candidate.catalogPin).toEqual(early ? null : linePin(world.scope.workspaceId,
+    expect(candidate.catalogPin).toEqual(early ? null : linePin(world.scope.workspaceId, realpathSync(world.root),
       scopes.flatMap(scope => scope === null ? [] : [catalogModule(world.scope.projectId, scope)])));
     expect(proposedPin.baseline.ref.revision).toBe(1);
     expect(governed.baseline.ref.revision).toBe(revise ? 2 : 1);
@@ -312,7 +313,7 @@ it('B05a-root: a single root module is adopted as given, and a plan on it propos
   const proposed = (await world.proposeFromAnswer(answerRef)).result;
   if (proposed.status !== 'committed') throw new Error(JSON.stringify(proposed));
   const candidate = proposed.value;
-  expect(candidate.catalogPin).toEqual(linePin(world.scope.workspaceId, [root]));
+  expect(candidate.catalogPin).toEqual(linePin(world.scope.workspaceId, realpathSync(world.root), [root]));
   await world.governance();
   expect((await world.apply(candidate)).result).toMatchObject({ status: 'committed' });
 });

@@ -13,8 +13,8 @@ import type { SessionProvenanceV1, SessionRecord } from '../../contracts/core/se
 import { canonicalJson, type JsonValue } from '../../contracts/fingerprint.js';
 import type { SessionHistoryEntry } from '../../contracts/session-activity.js';
 import type {
-  ConsultationCreateV1, SessionCard, SessionCreateOperationRecord, SessionCreationIntentV1, SessionCreationResult,
-  SessionDirectoryPort, SessionOperationRecord,
+  ConsultationCreateV1, SessionAdmissionPorts, SessionCard, SessionCreateOperationRecord, SessionCreationIntentV1,
+  SessionCreationResult, SessionDirectoryPort, SessionOperationRecord,
 } from '../work-graph/model/session-contracts.js';
 import type {
   ConsultationHistoryFailureV1, ConsultationHistoryReadV1, ConsultationHistoryRecordV1,
@@ -50,6 +50,8 @@ export type CreateSessionRequest = {
   parentOperation?: OperationRef | null;
   /** §3.15 item 3: the frozen consultation payload, present only on a consultation copy. */
   consultation?: ConsultationCreateV1 | null;
+  /** KLS-3a: the folder of the line the Session works on; absent is the workspace's main line. */
+  lineFolder?: string;
 };
 /** Trusted locator from the task graph; positions are inclusive. */
 export type SessionHistoryRange = {
@@ -132,6 +134,7 @@ function ownCreateRequest(request: unknown): { ok: true; value: CreateSessionReq
     ...(raw.creation === undefined ? {} : { creation: raw.creation }),
     ...(raw.parentOperation === undefined ? {} : { parentOperation: raw.parentOperation }),
     ...(raw.consultation === undefined ? {} : { consultation: raw.consultation }),
+    ...(raw.lineFolder === undefined ? {} : { lineFolder: raw.lineFolder }),
     meta: raw.meta,
   };
   try {
@@ -541,6 +544,13 @@ export function createSessionOperations(deps: {
   kernelStores: KernelStoreRegistry;
 }): SessionOperationsPort {
   const { sessions, kernelStores } = deps;
+  /** The admission's Kernel store choice (kls-design §2.3.3): the line's own store, or the workspace's. */
+  const admissionPorts: SessionAdmissionPorts = {
+    kernelStoreFor(scope, line) {
+      const location = line === null ? kernelStores.forWorkspace(scope) : kernelStores.forLine(scope, line.folder);
+      return location === null ? null : { adapterId: location.adapterId, storeKey: location.storeKey };
+    },
+  };
 
   async function register(
     ctx: CoreCallContext,
@@ -592,21 +602,13 @@ export function createSessionOperations(deps: {
       if (workspace.workspaceId !== ctxWorkspaceId) {
         return rejected('forbidden', 'the requested workspace is outside the call scope');
       }
-      // The trusted Host route is chosen once, before admission, and becomes the
-      // durable pin. A later default change must never move the operation to a
-      // different Kernel store instance.
-      const defaultLocation = kernelStores.forWorkspace(workspace);
-      if (!defaultLocation) {
-        return rejected('unsupported', 'no trusted current Kernel store is registered for the operation workspace');
-      }
-      const pin = { adapterId: defaultLocation.adapterId, storeKey: defaultLocation.storeKey };
-
+      // The trusted Host route is chosen once, inside the admission after the line, and becomes the durable pin. A
+      // later default change must never move the operation to a different Kernel store instance.
       let admitted: WriteResult<SessionCreateOperationRecord>;
       try {
         admitted = await sessions.admitSessionCreation(ctx, {
           input: {
             workspace,
-            kernelStore: pin,
             role: value.role,
             recommendedRefs: value.recommendedRefs ?? [],
             initialLinks: value.initialLinks ?? [],
@@ -616,9 +618,10 @@ export function createSessionOperations(deps: {
             ...(value.creation === undefined ? {} : { creation: value.creation }),
             ...(value.parentOperation === undefined ? {} : { parentOperation: value.parentOperation }),
             ...(value.consultation === undefined ? {} : { consultation: value.consultation }),
+            ...(value.lineFolder === undefined ? {} : { lineFolder: value.lineFolder }),
           },
           meta: value.meta,
-        });
+        }, admissionPorts);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return rejected('unavailable', `Session admission did not complete: ${message}`);

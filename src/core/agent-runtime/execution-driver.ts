@@ -517,7 +517,8 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
       // 5. Resolve the trusted workspace root and Kernel database.
       let rootResolved;
       try {
-        rootResolved = await deps.workspaceHost.resolveRoot(workspace);
+        // kls-design §2.3.3: the Run runs in the folder of the line it was claimed on, kept on the Run.
+        rootResolved = await deps.workspaceHost.resolveRoot(workspace, record.run.workspaceSnapshot.line ?? undefined);
       } catch (error) {
         return rejected('unavailable', `resolving the workspace root failed: ${messageOf(error)}`);
       }
@@ -662,6 +663,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         ...(deps.evidence === undefined ? {} : { evidence: deps.evidence }),
         sessions: deps.sessions,
         plans: deps.plans,
+        ...(deps.mainWorkspaceOf === undefined ? {} : { mainWorkspaceOf: deps.mainWorkspaceOf }),
         context: toolContext,
         sessionRef,
         runRef,

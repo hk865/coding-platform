@@ -46,6 +46,7 @@ function sessionRecord(sessionId: string, revision: number, over: Partial<Sessio
     health: 'available',
     role: ROLE,
     workspaceId: WORKSPACE,
+    lineRef: null,
     lastExecutionRef: null,
     occupancy: null,
     historyCursor: null,

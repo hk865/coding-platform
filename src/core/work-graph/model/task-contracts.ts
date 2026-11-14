@@ -36,6 +36,8 @@ export type CreateGoalInput = {
   goalId: string;
   workspace: WorkspaceScope;
   objective: string;
+  /** KLS-3a: the folder of the line the Goal works on; absent is the workspace's main line. */
+  lineFolder?: string;
 };
 
 /**

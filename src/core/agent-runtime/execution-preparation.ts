@@ -20,7 +20,7 @@ import {
   renderUnknownCallReviewZh,
   type PreparedTaskExecution, type PreparedTaskManifestV1, type UnknownCallReviewInputV1,
 } from '../../contracts/core/prepared-execution.js';
-import type { SourceRefV1, RuntimeInputBindingV1 } from '../../contracts/dispatch.js';
+import type { SourceRefV1, RuntimeInputBindingV1, RunWorkspacePinV1 } from '../../contracts/dispatch.js';
 import type { TaskEnvelopeV1 } from '../../contracts/task-envelope.js';
 import type { SessionAnomalyAnchorRef } from '../../contracts/session-anomaly.js';
 import { revisionAssignments } from '../../contracts/plan.js';
@@ -248,7 +248,7 @@ export function fitUnknownCallReviewForManifest(input: {
 async function recordWorkspaceBaseline(
   deps: ExecutionPreparationDependencies,
   ctx: CoreCallContext,
-  workspaceId: string,
+  pin: RunWorkspacePinV1,
   runRef: PreparedTaskManifestV1['claim']['runRef'],
   deniedPrefixes: readonly string[],
   sourceRefs: SourceRefV1[],
@@ -260,7 +260,9 @@ async function recordWorkspaceBaseline(
   if (ctx.signal.aborted) return 'cancelled';
   let root: string;
   try {
-    const resolved = await deps.workspaceHost.resolveRoot({ aggregateType: 'Workspace', projectId: ctx.projectId, workspaceId });
+    // The baseline is the Run's line folder at start, the root the Run itself runs in (kls-design §2.3.3).
+    const resolved = await deps.workspaceHost.resolveRoot(
+      { aggregateType: 'Workspace', projectId: ctx.projectId, workspaceId: pin.workspaceId }, pin.line ?? undefined);
     // Slice 8 §13.8: a dependency that names cancellation is never a read failure.
     if (resolved.status === 'rejected' && resolved.code === 'cancelled') return 'cancelled';
     if (ctx.signal.aborted) return 'cancelled';
@@ -721,7 +723,7 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
       // NEVER fails preparation; a cancellation still ends it (slice 8 §13.8).
       const workspaceBaseline = permissions.writeScope.length === 0
         ? undefined
-        : await recordWorkspaceBaseline(deps, owned, runWorkspaceId, runRef, hostConfig.deniedPrefixes, sourceRefs);
+        : await recordWorkspaceBaseline(deps, owned, run.workspaceSnapshot, runRef, hostConfig.deniedPrefixes, sourceRefs);
       if (workspaceBaseline === 'cancelled') {
         return rejected('cancelled', 'the preparation was cancelled during the workspace baseline capture');
       }
@@ -743,7 +745,8 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
           schemaVersion: 1, kind: 'task_execution', claim, role: roleResolution,
           hostTemplate: roleResolution.status === 'resolved' ? null : hostConfig.hostTemplate,
           roleBinding: run.roleBinding, hostConfigurationRevision: hostConfig.configurationRevision, sessionRole: session.role,
-          workspaceSnapshot: { workspaceId: runWorkspaceId, revision: run.workspaceSnapshot.revision },
+          workspaceSnapshot: { workspaceId: runWorkspaceId, revision: run.workspaceSnapshot.revision,
+            line: run.workspaceSnapshot.line },
           permissions, budget: run.budget, selectedTaskInputs, materialBasis: hostConfig.materialBasis,
           materialAccessRefs: [], additionalMaterialRefs, deliveryRefs: [], sourceRefs,
           contextAssembly: assembly,

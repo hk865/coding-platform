@@ -63,8 +63,11 @@ export async function recoverKnowledgeItem(lines: KnowledgeLines, caller: Knowle
 
 async function recoverLeased(write: KnowledgeWriteDeps, line: LineKnowledge, snapshots: KnowledgeSnapshots,
   row: KnowledgeRecoveryRow): Promise<WriteResult<KnowledgeRecoverResult>> {
-  // errata 2c1#15: the item's line is the one checked out now, or nothing is written.
-  if (lineRefKey(line.scope, line.line) !== row.lineRef) return rejected('revision_conflict', '检出的分支已经变了');
+  // errata 2c1#15: the item's line and branch are the ones checked out now, or nothing is written (the line key is
+  // the folder, so a branch switch in it is caught by the branch the item was noticed on).
+  if (lineRefKey(line.scope, line.line) !== row.lineRef || line.line.branch !== row.branch) {
+    return rejected('revision_conflict', '检出的分支已经变了');
+  }
   const disk = await line.readKnowledgeFiles();
   if (disk.status !== 'ready') return storeFailureToRejection(disk);
   const current = disk.value.files.find(file => file.path === row.path) ?? null;

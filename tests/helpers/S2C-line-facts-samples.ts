@@ -27,6 +27,7 @@ export function sessionRecord(over: Partial<SessionRecord> = {}): SessionRecord 
     kernel: { adapterId: 'coding-agent', kernelSessionId: 'k-h' },
     lifecycle: 'active', health: 'available', healthConclusion: null,
     role: { kind: 'legacy_template', templateId: 'tpl', templateRevision: 'r1' }, workspaceId: W,
+    lineRef: null,
     lastExecutionRef: null, occupancy: null, historyCursor: null, createdAt: T0, archivedAt: null,
     provenance: { schemaVersion: 1, kind: 'new' }, archiveRequest: null, unavailableSince: null,
     ...over,
@@ -36,7 +37,7 @@ export function sessionRecord(over: Partial<SessionRecord> = {}): SessionRecord 
 export function runOf(ref: RunRef, over: Partial<RunSnapshot> = {}): RunSnapshot {
   return {
     ref, revision: 4, schemaVersion: 1, task: TASK_A, attemptId: `${ref.runId}-attempt`, planRef: PLAN,
-    roleBinding: ROLE_BINDING, budget: { tokenBudget: 1000, deadline: null }, workspaceSnapshot: { workspaceId: W, revision: 1 },
+    roleBinding: ROLE_BINDING, budget: { tokenBudget: 1000, deadline: null }, workspaceSnapshot: { workspaceId: W, revision: 1, line: null },
     status: 'ended', outcome: 'completed', exitCode: 0, lastEventSeq: 2, lastRuntimeEventId: `rt-${ref.runId}`,
     lastFactEventId: `ev-${ref.runId}`, envelope: null, startedAt: T0, startedSince: null, endedAt: T0, previousRun: null, ...over,
   };

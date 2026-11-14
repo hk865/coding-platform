@@ -23,6 +23,7 @@ import type { SessionArchiveRequestV1 } from '../../../contracts/core/session-ar
 import type { SessionHealthConclusion, SessionProvenanceV1, SessionRecord, SessionWorkLink } from '../../../contracts/core/session.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
+import type { LineRef } from '../../../contracts/line.js';
 import type { RunRef, TaskTriple } from '../../../contracts/dispatch.js';
 import type { CoreError } from '../../../contracts/core/results.js';
 import type { QueryExecutionStateV1, QueryRunRef, QueryRunSnapshot } from '../../../contracts/query-job.js';
@@ -335,6 +336,8 @@ export type NewSessionRecordInput = {
   kernel: SessionRecord['kernel'];
   role: RoleConfigurationRef;
   workspaceId: string;
+  /** The line the admission resolved (kls-design §2.3.1); null when the workspace has no line. */
+  lineRef: LineRef | null;
   createdAt: string;
   /**
    * Slice 1 §2.2/K2: the normalized creation provenance. The admission always
@@ -357,6 +360,7 @@ export function createSessionRecord(input: NewSessionRecordInput): SessionRecord
     health: 'available',
     role: input.role,
     workspaceId: input.workspaceId,
+    lineRef: input.lineRef,
     lastExecutionRef: null,
     occupancy: null,
     historyCursor: null,

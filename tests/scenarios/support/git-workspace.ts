@@ -20,6 +20,7 @@
  * recipes are documented in tests/scenarios/K3-r1-seams.test.ts.
  */
 import { execFileSync } from 'node:child_process';
+import { realpathSync } from 'node:fs';
 import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
@@ -77,6 +78,15 @@ export function gitIn(root: string, ...args: string[]): string {
       GIT_TERMINAL_PROMPT: '0',
     },
   }).toString();
+}
+
+/**
+ * KLS-3a: a second checkout of the repository at `root`, as a person makes one: `git worktree add -b <branch>
+ * <folder>` from its HEAD. Answers the folder's realpath (the line's `folder`).
+ */
+export function addGitWorktree(root: string, folder: string, branch: string): string {
+  gitIn(root, 'worktree', 'add', '-q', '-b', branch, folder);
+  return realpathSync(folder);
 }
 
 /** The denied-prefix exclusion for one path: its first segment plus `/`. */

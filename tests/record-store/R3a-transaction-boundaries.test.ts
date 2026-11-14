@@ -7,6 +7,7 @@ import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memo
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
 import type { GoalRecordTransactionPort, RecordBackendSchemas } from '../../src/core/record-store/ports.js';
 import { GOAL_RECORD_SCHEMAS, canonicalRefKey } from '../../src/core/work-graph/persistence/record-codecs.js';
+import { LINE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/line-record-codecs.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
 import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
@@ -21,8 +22,11 @@ const workspace: WorkspaceSnapshot = { ref: { aggregateType: 'Workspace', projec
 const actor = { kind: 'human' as const, id: 'trusted-host' };
 const ctx: CoreCallContext = { projectId, workspaceId, principal: { kind: 'host', actor },
   materialReader: { kind: 'host', projectId, workspaceId, actor }, signal: new AbortController().signal };
-const schemas: RecordBackendSchemas = { ...GOAL_RECORD_SCHEMAS, events: [...GOAL_RECORD_SCHEMAS.events,
-  ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events] };
+const schemas: RecordBackendSchemas = { ...GOAL_RECORD_SCHEMAS,
+  records: [...GOAL_RECORD_SCHEMAS.records, ...LINE_RECORD_SCHEMAS.records],
+  events: [...GOAL_RECORD_SCHEMAS.events,
+    ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events],
+  lookups: [...(LINE_RECORD_SCHEMAS.lookups ?? [])] };
 const request = (goalId: string, requestId = goalId) => ({
   meta: { requestId, expected: [{ ref: project.ref, revision: 1 }, { ref: workspace.ref, revision: 1 }] },
   input: { goalId, workspace: { projectId, workspaceId }, objective: 'Record exactly once' },

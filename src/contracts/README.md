@@ -17,6 +17,7 @@
 - `goal-card.ts` — 目标卡确认/复制的输入、回执、事实与决定：`GoalConfirmDraftInputV1`/`GoalConfirmDraftReceiptV1`/`GoalConfirmFactsV1`/`GoalConfirmDecisionV1`、`GoalCopyDraftInputV1`/`GoalCopyDraftResultV1`/`GoalCopyConfirmInputV1`/`GoalCopyConfirmResultV1`/`GoalUnderstandingPinV1`/`GoalCopyFactsV1`/`GoalCopyDecisionV1`。复制的三处形状：`GoalCopyDraftResultV1.interventions` 为 `{ available: false }` 或带 `candidates` 的 `{ available: true }`（候选用 `goal-copy-retraction.ts` 的 `CopyInterventionCandidateV1`），`GoalCopyFactsV1.selected` 直接就是这个候选类型（没有 `intervened`），决定 create 臂的 `retract` 是未选中的候选 ref。
 - `goal-copy-retraction.ts` — 复制取消的候选契约：`CopyInterventionStateV1`（候选状态闭集）与 `CopyInterventionCandidateV1`（消息 ref、版本、状态、可选/可撤回及各自原因）。
 - `goal-phase.ts` — `GoalPhaseRef`/`GoalPhaseSnapshot`：Goal 终止相位。
+- `goal-delivery.ts` — 交付确认（决定 121-45）的 `GoalDeliveryAcceptance@1` 和 `GoalDeliveryAccepted` 结果事件：ref `GoalDeliveryAcceptanceRef` 按 `(project, goal, phaseRevision)` 一条，值 `GoalDeliveryAcceptanceV1` 带 `planRef`/`planRevision`/`acceptedBy`（只有人）/`acceptedAt`/`requestId`，没有 `reviewed` 字段；事件 `GoalDeliveryAcceptedEvent` 带整条记录，重放只读事件。
 - `initial-planning.ts` — `InitialPlanAssignment`、`InitialPlanOrigin`、`InitialPlanOriginSourceV1`（`binding`/`prepared_goal`/`plain`/`intervention` 四臂）与 `InterventionAnswerSourceV1`（`{ kind: 'intervention', messageRef }`，干预 Plan 答案的唯一来源选择器）、`InitializationSourceShape`/`InitializationSourceV1`（初始化计划读哪一份回答：绑定的草稿或已备好的 Goal）、初始规划响应/设置。
 - `initial-planning-parse.ts` — `parseInitialPlanningResponseV2`：初始规划 v2 回答外层协议的唯一纯解析；WorkGraph `tasks/` 的 Plan owner 和 `queries/` 的秘书回答检查共用（`queries` 不能 import `tasks`）。
 - `input-declaration-id.ts` — `edgeDeclarationId`/`legacyDeclarationId`：输入声明 id。
@@ -31,7 +32,7 @@
 - `plan-round.ts` — 系统轮契约（§5.2.2、§5.2.5–§5.2.6、§5.3.5、§5.6）：九种轮形状（第 9 片的 `exec_review` 臂：请求 id `execreview:<roundId>`、首行恰两段、头不带 `goalId`；`unknown_call` 臂：请求 id `ucr:<runId>:<revision>:<phase>:<goalBasisDigest>`、首行恰五段、第二行是平台冻结的 `subject: <canonicalJson>`，`unknownCallAdviceSubjectOfText` 只从这两行读回 subject 和它的 Run；121-110 的 `command_rerun` 臂：请求 id `crr:<taskId>:<requestId>:<revision>:<goalBasisDigest>`（`requestId` 自己可能带 `:`，读回时任务号取第一段、版本和摘要取末两段），第二行同样是 `subject: <canonicalJson>`，`commandRerunAdviceSubjectOfText` 读回）、`SYSTEM_ROUND_ACTOR`（固定 `host:plan-round` 发送方）、`systemRoundContext`（Host scope 上下文）、每种的 `systemRoundRequestId` 与 `hostMessageId` 的身份（已发的轮次消息在收件线的工作区，按 Host 自己的发件回执 `readHostSendMessageRef` 找，不按 request id 拼 ref）、从正文首行读回的 `systemRoundOfText` 与 `planResumeOriginalQueryOfText`，以及 `planningReplyTextOf`（按冻结的回答形状取短回复；执行审阅只回“通过”或“要求返工”加 Query 号，参谋的两种答复都只回“参谋已答复：<plain>”，书记审查只回“书记已看：<reason>”，都不带答案 JSON）。121-112 的 `command_review` 臂：请求 id `scr:<projectId>:<reviewSeq>:<sha256(commandKey)>`（不带时间，下一次审查换 `reviewSeq`）、首行恰四段、第二行是 Host 冻结的 `subject: <canonicalJson>`，`commandReviewSubjectOfText` 只从这两行读回。只 import 契约，不发送、不选细化、不建 Query。
 - `reduction.ts` — `TaskReductionRef`、归因码与完成审计快照。
 - `rework-request.ts` — `ReworkRequestRef`：返工请求（记录 3）的 ref；记录的值类型和字段表在 `core/work-graph/persistence/rework-request-codecs.ts`。
-- `task-envelope.ts` — `TaskEnvelopeV1`：有界执行绑定；`permissions.createMember` 是必填布尔（Work 的委托），两个 Query 配方只用三字段投影。
+- `task-envelope.ts` — `TaskEnvelopeV1`：有界执行绑定，`workspaceSnapshot` 是 `RunWorkspacePinV1`；`permissions.createMember` 是必填布尔（Work 的委托），两个 Query 配方只用三字段投影。
 - `task-failure.ts` — 任务失败/自动化停止/返工事实 DTO。
 - `task-node-commit.ts` — 节点级审核（决定 121-45）的 `TaskNodeCommit@1`：一个完成节点（按它覆盖的 TaskReduction 修订号）一条审核事实，`committed` 带 commit 和人的说明，`acknowledged`（文件已和 HEAD 没差异）不带；ref 形状 `TaskNodeCommitRefShape`、格式 `TaskNodeCommitFormat`（按 Goal 的 lookup `TASK_NODE_COMMIT_BY_GOAL_LOOKUP`）、结果事件 `TaskNodeCommittedFormat`（事件带整条记录）。
 - `task-requeue.ts` — `TaskRequeue`/返工拒绝、自动化 actor（含结构改动自动批准的固定身份 `STRUCTURAL_AUTO_APPROVAL_ACTOR`）、策略默认、启动三档 `RESUME_ON_STARTUP_MODES`、`isAutomationActor`、`reworkActorClassOf`。
@@ -42,7 +43,7 @@
 - `continuation-brief-base.ts` — 简报的上限 `CONTINUATION_BRIEF_LIMITS` 与第二行标记 `continuationBriefMarker`：不 import 任何文件的叶子，渲染和结构校验都从这里取上限。
 - `continuation-brief-render.ts` — 简报的中文渲染：`renderContinuationBriefZh`、`renderHandoffBriefZh`、`approvedMethodLinesZh`、`templateToolNames` 与 `ContinuationBriefCapacityError`；包里的固定文字、模板渲染和字节预算的私有 helper（`briefTexts`、`renderBriefTemplateZh`、`clip`、`boundedZh`、`listZh`）也在这里，别的简报渲染写进本文件复用它们。简报类型只用 `import type` 从 `continuation-brief.ts` 取，不反向 value import（那会形成加载环）。
 - `control-intent.ts` — 暂停/取消/恢复/引导：`ControlIntentRef`、`ControlIntentRequestV1`、`ControlIntentSnapshotV1`。
-- `dispatch.ts` — 派发/运行契约：`RunRef`、`TaskAttemptRef`、`RunSnapshot`、`TaskEligibility`、`MODEL_SERVICE_FAILURE_CODES`、`TERMINAL_PAYLOAD_*`。
+- `dispatch.ts` — 派发/运行契约：`RunRef`、`TaskAttemptRef`、`RunSnapshot`、`RunWorkspacePinV1`（Run、任务 manifest、envelope 同一个工作区 pin：`workspaceId`、`revision`、`line: LineRef | null`，claim 时取 Goal 的线，KLS-3a）、`TaskEligibility`、`MODEL_SERVICE_FAILURE_CODES`、`TERMINAL_PAYLOAD_*`。
 - `execution-feedback.ts` — `FeedbackSource`：验证失败调查的输入来源。
 - `query-execution-context.ts` — `QueryExecutionRequest`：持久化的 Query 请求形状。
 - `execution-read.ts` — 执行读窗口 `TaskExecutionRecord` 与派工 outbox 记录 `DispatchOutboxRecord`/`DispatchStateV1`（唯一正本；WorkGraph 的 `model/execution-read-contracts.ts`、`state/attempt-machine.ts` 转出，`model/claim-contracts.ts` 叫它 `TaskClaimOutbox`）；`executions/read` 的形状。
@@ -111,7 +112,8 @@
 - `graph-context.ts` — 上下文装配/图读模型/注意力/任务输入页 DTO，调用种类闭集 `ContextCallKindV1` 与唯一列表 `CONTEXT_CALL_KINDS`（含 `intervention_planning`、冷启动探索轮的 `role_exploration`），以及 `goalContextContentV1`、`goalContextDigestV1`。
 - `human-role-collaboration.ts` — 协作策略 revision/active 与 `coordinationPolicyContentDigest`。
 - `keyset-cursor.ts` — 有序查找的翻页游标 `KeysetCursorV1`（`{ v: 1, goalId, after }`，只绑一个 Goal，`goalId` 为 null 是工作区页）与它的 `encodeKeysetCursor`/`decodeKeysetCursor`（base64url 的 JSON）。
-- `ledger.ts` — 聚合引用/快照、`AggregateRef` 闭集、`makeCommitCursor`（`src/contracts/ledger.ts:131`）/ `seqOfCommitCursor`（`src/contracts/ledger.ts:137`）/ `compareCursors`（`src/contracts/ledger.ts:149`）；`GoalSnapshot` 带创建提交的 `since`，创建路径用预绑定的 `PendingGoalSnapshot`（`since` 为提交占位符）；每个 Goal 自带出生字段 `settings`、`continuedFrom`（`GoalContinuationV1` 或 null）和 `copiedInterventions`，缺字段的记录被拒绝。7A-1 加 `DispatchCounterRef`（`src/contracts/ledger.ts:159`）、`DispatchBasisV1`（`:152`）、`DispatchCurrentV1`（`:157`），`AggregateRef` 增 `DispatchCounterRef` 成员，并转出 `DispatchCounterV1`（`:159`）；7D2 的 `AggregateRef` 再增四个角色线记录 ref（`GoalAdviserQueueRef`/`AutonomyRuleRef`/`AutonomyRuleSetRef`/`RoleCapacityEpisodeRef`，`src/contracts/ledger.ts:53`）。
+- `line.ts` — 线的身份（KLS-3a，kls-design §2.3.1）：`RepoKey`、`LineRef`（仓库身份、检出根的 realpath、分支）、`CheckoutIdentity`（加 `firstCommit`，空仓库和非 git 为 null）、工作区规则 `sameCheckout`（同一 common git 目录，或两份克隆同一个非 null 的第一个提交）、线键 `lineKeyOf`（`canonicalJson([workspaceId, folder])`，知识索引、快照、写日志、钉和线记录共用）；线记录 `Line@1` 的字段表 `LineFormat`（`ref`/`revision`/仓库/文件夹/分支/`firstCommit`/`forkPoint`/`status`/`createdAt`/`closedAt`，`closedAt` 只在非 open 时有值，`ref.lineRef` 必须是它的工作区和文件夹）、推导类型 `LineSnapshot`、`LineStatusV1`、记录地址 `WorkspaceLineRef`（进 `AggregateRef`）、按项目的 lookup `LINE_BY_PROJECT_LOOKUP`、Goal/Session 存的线的形状 `LineRefShape` 和取法 `lineRefOf`，存下的线的唯一校验 `lineRefProblem`（必填，`null` 或完整 `LineRef`；Session codec 和 Run 的工作区 pin 共用）。只有 `state/line-machine.ts` 建线记录。
+- `ledger.ts` — 聚合引用/快照、`AggregateRef` 闭集、`makeCommitCursor`（`src/contracts/ledger.ts:137`）/ `seqOfCommitCursor`（`src/contracts/ledger.ts:143`）/ `compareCursors`（`src/contracts/ledger.ts:155`）；`GoalSnapshot` 带创建提交的 `since`，创建路径用预绑定的 `PendingGoalSnapshot`（`since` 为提交占位符）；每个 Goal 自带出生字段 `settings`、`continuedFrom`（`GoalContinuationV1` 或 null）、`copiedInterventions` 和 `lineRef`（KLS-3a：目标所在的线，工作区没有线时为 null），缺字段的记录被拒绝。7A-1 加 `DispatchCounterRef`（`src/contracts/ledger.ts:165`）、`DispatchBasisV1`（`:158`）、`DispatchCurrentV1`（`:163`），`AggregateRef` 增 `DispatchCounterRef` 成员，并转出 `DispatchCounterV1`（`:165`）；7D2 的 `AggregateRef` 再增四个角色线记录 ref（`GoalAdviserQueueRef`/`AutonomyRuleRef`/`AutonomyRuleSetRef`/`RoleCapacityEpisodeRef`，`src/contracts/ledger.ts:54`）。
 - `workspace-removal.ts` — 撤回/移出的 core 视图 `WorkspaceRemovalViewV1`（项目/工作区 ref、`removedAt`、这次释放的 claim 数、删除的索引行数和跨工作区链接数）与两种命令 `WorkspaceRemovalKindV1`；core 端口直接回这个视图，Host 设置路由再包成 `SettingsResponse`。
 - `line-delta.ts` — 真实文本行 diff 的唯一正本：`lineDelta`（`contentLines` 切行，返回 `added`/`deleted`/`totalLines`）、`lineEditCounts`（同一个算法，LCS 超过 250k 格改用 Myers，Myers 可以设编辑距离上限，过了答 null）、`gitLines`（git 的切法，任务图的“未提交”读用）；`MAX_LCS_CELLS` 私有；注意力、Run activity tally 和 WorkspaceTools 共用（`core` 不 import `app`）。
 - `memory.ts` — `MemoryPurpose`：记忆用途闭集。
@@ -160,14 +162,14 @@
 | `InitializationSourceShape`、`InitializationSourceV1` | `src/contracts/initial-planning.ts:38`、`src/contracts/initial-planning.ts:44` | 初始化计划的来源：`binding`（回答 + 草稿号）或 `prepared_goal`（回答）。 | 读取/采用初始化计划时指定来源；不要从回答文本猜来源。 |
 | `InitialPlanOriginSourceV1`、`InterventionAnswerSourceV1` | `src/contracts/initial-planning.ts:18`、`src/contracts/initial-planning.ts:21` | 初始 Plan 的 origin 来源选择：`binding`/`prepared_goal`/`plain`/`intervention` 四臂，以及干预臂的 `{ kind: 'intervention', messageRef }`。 | 规范化写 origin、读取/采用重核时；干预选择器只校验完整消息 ref，不比较 `answerRef`。 |
 | `InitialPlanSourceResolutionV1`、`InitialPlanAnswerFacts` | `src/contracts/query-job.ts:727`、`src/contracts/query-job.ts:737` | 来源与 Goal 只解析一次的产物：plain/binding/prepared_goal/`intervention` 四臂，`bindingRef`、Goal 与 `goalRevision`；干预臂带回 `InterventionAnswerSourceV1`。 | 初始 Plan 的规范化、提案与采用重核；不要另写来源解析。 |
-| `GoalContinuationV1` | `src/contracts/ledger.ts:81` | 接续来源：被接续的 Goal、它当时的 revision 和可选的理解注记版本。 | Goal 的 `continuedFrom`；不接续时为 null。 |
+| `GoalContinuationV1` | `src/contracts/ledger.ts:82` | 接续来源：被接续的 Goal、它当时的 revision 和可选的理解注记版本。 | Goal 的 `continuedFrom`；不接续时为 null。 |
 | `CanonicalJsonError` | `src/contracts/canonical-json.ts:17` | 规范 JSON 编码失败的错误类型。 | 需要捕获并区分不可编码值时。 |
 | `messageOf` **正本** | `src/contracts/error-message.ts:2` | 把 unknown 错误转成可读文本：`Error.message`，否则 `String(error)`；转换抛错不吞。 | 统一错误文本；不要再另写一份副本。 |
 | `sameActorIdentity` | `src/contracts/actor-equality.ts:4` | 两个 unknown 的 actor 身份：只比 `kind`/`id`，`runRef` 不参与。 | 宽容读入的历史 actor 比较。 |
 | `sameActorKindAndId` | `src/contracts/actor-equality.ts:9` | 两个 typed actor 只比 `kind`/`id`，不另做形状检查。 | 已校验形状的 actor 比较。 |
-| `commandIdentityKey` | `src/contracts/command-event.ts:108` | 命令幂等身份键：projectId、actor、idempotencyKey、agentPrincipal。 | 命令幂等/replay 查重；不要退回只比 idempotencyKey。 |
-| `commandFingerprint` | `src/contracts/command-event.ts:90` | `CreateGoalCommand` 的内容指纹（JCS + SHA-256）。 | Goal 创建命令的幂等/replay；其他命令用自己的配方。 |
-| `normalizeObjective` | `src/contracts/command-event.ts:86` | Unicode NFC + 首尾空白裁剪。 | 指纹与存储 Goal 目标之前。 |
+| `commandIdentityKey` | `src/contracts/command-event.ts:114` | 命令幂等身份键：projectId、actor、idempotencyKey、agentPrincipal。 | 命令幂等/replay 查重；不要退回只比 idempotencyKey。 |
+| `commandFingerprint` | `src/contracts/command-event.ts:94` | `CreateGoalCommand` 的内容指纹（JCS + SHA-256）。 | Goal 创建命令的幂等/replay；其他命令用自己的配方。 |
+| `normalizeObjective` | `src/contracts/command-event.ts:90` | Unicode NFC + 首尾空白裁剪。 | 指纹与存储 Goal 目标之前。 |
 | `queryJobRefFor` | `src/contracts/query-job.ts:270` | 由三个身份分量构造 `QueryJobRef`。 | 生产 Query 引用；不要手拼 aggregate 对象。 |
 | `RequestUnderstandingCommandV1` | `src/contracts/query-job.ts:117` | 内部 `request_understanding` 命令的唯一格式：操作、代、请求根、每个 Goal 的指针与检查版本、checkedRound 与 live/closed/consumed。 | 交接的 understanding 代写、准备/启动读取与 Runtime 模板；不要另写一份命令形状。 |
 | `RequestReferenceInputV1`、`RequestReferenceV1`、`QueryJobV1` 的 `requestReferences` | `src/contracts/query-job.ts:14`、`src/contracts/query-job.ts:25`、`src/contracts/query-job.ts:523` | 提交时的可选引用写法（`path`、可选 `startLine`/`endLine`/`snapshot`）、存储/读回的完整形状（缺省写 `null`），以及 `QueryJobV1` 上的持久字段（request 轮必写，plain Query 不写；旧记录不再接受）。 | `requests/submit` 的引用、读回与 request 轮的必填键；不要另写一份引用形状。 |
@@ -188,9 +190,9 @@
 | `requirementKeyOf` | `src/contracts/evidence.ts:130` | 由 obligationId 与 requirementId 生成键。 | 证据覆盖与需求查找。 |
 | `edgeDeclarationId` | `src/contracts/input-declaration-id.ts:5` | 内容派生的执行 DAG 边 `edge:` 声明 id。 | 计划输入声明。 |
 | `legacyDeclarationId` | `src/contracts/input-declaration-id.ts:14` | `inputRequirements` 条目的 `legacy:` 声明 id。 | 兼容旧计划输入时。 |
-| `makeCommitCursor` | `src/contracts/ledger.ts:131` | 由序号构造 `CommitCursor`。 | 合成/测试游标；生产写入从提交回执取真实游标。 |
-| `seqOfCommitCursor` | `src/contracts/ledger.ts:137` | 从 `CommitCursor` 取回序号。 | 排序、日志与范围比较。 |
-| `compareCursors` | `src/contracts/ledger.ts:149` | 两个游标的顺序：都是 ledger 游标时按序号，否则按文本。 | 排序、日志与范围比较；`queries/request-rounds-read.ts` 转出这一份，不要另写。 |
+| `makeCommitCursor` | `src/contracts/ledger.ts:137` | 由序号构造 `CommitCursor`。 | 合成/测试游标；生产写入从提交回执取真实游标。 |
+| `seqOfCommitCursor` | `src/contracts/ledger.ts:143` | 从 `CommitCursor` 取回序号。 | 排序、日志与范围比较。 |
+| `compareCursors` | `src/contracts/ledger.ts:155` | 两个游标的顺序：都是 ledger 游标时按序号，否则按文本。 | 排序、日志与范围比较；`queries/request-rounds-read.ts` 转出这一份，不要另写。 |
 | `encodeKeysetCursor`、`decodeKeysetCursor` | `src/contracts/keyset-cursor.ts:18`、`src/contracts/keyset-cursor.ts:18` | 有序查找页的游标：把 Goal（或 null，工作区页）和页的 `next` 原样编成 base64url；解码只认 `v` 为 1 且 `goalId` 相同的游标，否则 `null`。不查 `after` 和页宽，坏值由存储的有序请求规则拒绝。 | 按 Goal 或工作区翻 `lookupOrdered` 的页时；不要另写私有游标。 |
 | `completionPolicyContentDigest` | `src/contracts/governance.ts:106` | 完成策略正文摘要。 | 安装/激活 revision 前对齐摘要。 |
 | `coordinationPolicyContentDigest` | `src/contracts/human-role-collaboration.ts:88` | 协作策略正文摘要。 | 安装/激活协作策略 revision。 |
@@ -204,8 +206,8 @@
 | `pathOwnershipOf` | `src/contracts/path-ownership.ts:36` | 最长前缀路径归属，返回 owner/none/tie 与命中前缀。 | 文件到模块/范围归属；全仓唯一实现，不要另写。 |
 | `isSafeWorkspaceRelativePath`、`isSafeProjectPath`、`splitWorkspacePath`、`qualifyProjectPath`、`normalizeProjectPath`、`displayProjectPath` | `src/contracts/workspace-path.ts:21`、`:47`、`:68`、`:99`、`:122`、`:156` | 工作区相对路径与项目路径的唯一语法、解析、写侧限定、规范化和显示。 | 注记锚、模块路径、联系证据；这是唯一的正本；`architecture-record-codecs.ts` 的 `safeRelativePath` 和 `session-anomaly-codecs.ts` 的 `pathProblem` 还各留一份旧规则，在清理清单上。 |
 | `projectModuleId`、`rawModuleId` | `src/contracts/workspace-module-id.ts:22`、`src/contracts/workspace-module-id.ts:34` | 模块编号的项目视图和它的反向；反向遇到不合语法的前缀抛错（接收模型输入的入口接住、回 `invalid`），`workspaceId: null` 是主工作区。 | 记录、索引、钉版本、跨工作区引用的模块编号；不要另拼 `/@ws:` 前缀。 |
-| `projectModuleRef`、`rawModuleRef` | `src/contracts/workspace-module-id.ts:47`、`src/contracts/workspace-module-id.ts:52` | 同一对规则作用在 `ModuleRef` 上（`projectModuleRef` 第一个参数是 projectId）。 | 要 `ModuleRef` 时。 |
-| `fileModuleId`、`projectModuleIdOfFile`、`fileProjectPath`、`projectPathOfFile` | `src/contracts/workspace-module-id.ts:57`、`src/contracts/workspace-module-id.ts:63`、`src/contracts/workspace-module-id.ts:69`、`src/contracts/workspace-module-id.ts:75` | 文件帧：项目视图的编号和路径写进某个工作区的文件（那个工作区不带前缀、别的工作区一律带前缀，项目主工作区也带），以及读回。调用者帧用同一对。 | 知识文件的写和读回；架构采用和修订入口把调用者给的编号转成项目视图。 |
+| `rawModuleRef` | `src/contracts/workspace-module-id.ts:47` | 反向规则作用在 `ModuleRef` 上；调用者帧的 `ModuleRef` 换成项目视图是 `architecture/catalog-service.ts` 的 `moduleRefInProjectView`（`projectModuleIdOfFile`）。 | 要 `ModuleRef` 的原始编号时。 |
+| `fileModuleId`、`projectModuleIdOfFile`、`fileProjectPath`、`projectPathOfFile` | `src/contracts/workspace-module-id.ts:52`、`src/contracts/workspace-module-id.ts:58`、`src/contracts/workspace-module-id.ts:64`、`src/contracts/workspace-module-id.ts:70` | 文件帧：项目视图的编号和路径写进某个工作区的文件（那个工作区不带前缀、别的工作区一律带前缀，项目主工作区也带），以及读回。调用者帧用同一对。 | 知识文件的写和读回；架构采用和修订入口把调用者给的编号转成项目视图。 |
 | `KnowledgePinShape` | `src/contracts/knowledge.ts:148` | 计划记录 `catalogPin` 的形状（L3）：顶层只有 `lines`、非空、`lineRef` 严格升序；每条恰好 `{lineRef, contentHash, head, dirty, modules}`，`dirty: false` 时 `modules` 为 null、`true` 时为最小字段数组 | `plan-record-codecs.ts` 的候选 codec；不要另写钉的检查 |
 | `KNOWLEDGE_DIRECTORY`、`ARCHITECTURE_FILE_PATH`、`MODULES_DIRECTORY`、`withinKnowledgeDirectory` | `src/contracts/knowledge.ts:8`、`src/contracts/knowledge.ts:10`、`src/contracts/knowledge.ts:15` | 工作区根下的知识目录（相对路径）、一条线的 `architecture.json` 和模块文件目录（相对线的路径）和一条根相对路径在不在它里面 | 写知识文件路径、观测和 Run 的变更捕获跳过它时；不要另写 `.workbench` 字面量 |
 | `catalogForWorkspace` | `src/contracts/workspace-catalog.ts:16` | 把一份正式 catalog 投影到一个工作区（去前缀、丢别的模块、过滤依赖/containment）。 | 观测比较、提醒、W 搜索与任务图的归属；不要另写投影。 |
@@ -263,8 +265,8 @@
 | `ARTIFACT_MAX_SIZE_BYTES` | `src/contracts/artifact.ts:6` | Artifact 正文最大字节数。 | artifact 写入校验。 |
 | `K3_CRR_BY_TASK_ALIAS_INDEX`、`K3_CRR_BY_GOAL_STATE_INDEX`、`K3_CRR_BY_TASK_INDEX` | `src/contracts/command-rerun-request.ts:86` | `CommandRerunRequest` 的三个注册索引名。 | 读写/查询 CRR 时按名引用。 |
 | `CONTINUATION_BRIEF_LIMITS` | `src/contracts/continuation-brief-base.ts:9` | 简报各项条数/字节上限。 | 组装或渲染简报。 |
-| `TERMINAL_PAYLOAD_TEXT_MAX_CHARS`、`TERMINAL_PAYLOAD_TRUNCATION_SUFFIX` | `src/contracts/dispatch.ts:232`、`src/contracts/dispatch.ts:234` | 终止 payload 文本上限与截断后缀。 | 记录/展示终止原因时截断。 |
-| `runAdmissionWaitOf` | `src/contracts/dispatch.ts:143` | 由 Run 的持久 status、`executionAuthorization.phase` 与组是否满额派生运行中的等待（`running_cap` 或 null）；Run 没有 `admissionWait` 字段，重启后按同一组持久事实重算。 | 读 Run 是否在等运行名额；不要另写判定或给 Run 加等待字段。 |
+| `TERMINAL_PAYLOAD_TEXT_MAX_CHARS`、`TERMINAL_PAYLOAD_TRUNCATION_SUFFIX` | `src/contracts/dispatch.ts:233`、`src/contracts/dispatch.ts:235` | 终止 payload 文本上限与截断后缀。 | 记录/展示终止原因时截断。 |
+| `runAdmissionWaitOf` | `src/contracts/dispatch.ts:144` | 由 Run 的持久 status、`executionAuthorization.phase` 与组是否满额派生运行中的等待（`running_cap` 或 null）；Run 没有 `admissionWait` 字段，重启后按同一组持久事实重算。 | 读 Run 是否在等运行名额；不要另写判定或给 Run 加等待字段。 |
 | `EVIDENCE_SUMMARY_MAX_BYTES`、`EVIDENCE_OUTCOMES` | `src/contracts/evidence.ts:60`、`src/contracts/evidence.ts:60` | 证据摘要上限与结局闭集。 | 证据校验与展示。 |
 | `DEFAULT_GOAL_SETTINGS_V1`、`DEFAULT_WORKSPACE_DECISION_SETTINGS_V1` | `src/contracts/goal-decisions.ts:71`、`src/contracts/goal-decisions.ts:69` | Goal/工作区决策默认设置。 | Goal 的那份只是 `goals/create` 的出生值，没有 `settings` 的 Goal 记录被拒绝、不读成默认；工作区的未配置时取默认。不要另抄一份。 |
 | `MANIFEST_CONTENT_TYPE`、`QUERY_MANIFEST_CONTENT_TYPE`、`REPORT_CONTENT_TYPE`、`PLATFORM_GENERATED_CONTENT_TYPES`、`MAX_NEW_BASIS_INPUT_REFS` | `src/contracts/no-progress.ts:43` | 平台生成正文类型与新依据输入上限。 | 判定内容类型/新依据时。 |

@@ -85,7 +85,7 @@ const operator: ActorRef = { kind: 'human', id: 'operator-1' };
 /** An ended `completed` Run by default; `patch` moves it to the row's facts. */
 function run(runId: string, patch: Partial<RunSnapshot> = {}): RunSnapshot {
   return { ref: runRef(runId), revision: 4, schemaVersion: 1, task, attemptId: `att-${runId}`, planRef, roleBinding,
-    budget: { tokenBudget: 1000, deadline: null }, workspaceSnapshot: { workspaceId: W, revision: 2 },
+    budget: { tokenBudget: 1000, deadline: null }, workspaceSnapshot: { workspaceId: W, revision: 2, line: null },
     status: 'ended', outcome: 'completed', exitCode: 0, lastEventSeq: 5, lastRuntimeEventId: 'rt-5',
     lastFactEventId: 'fact-5', envelope: null, startedAt: T_START, startedSince: null, endedAt: T_END, previousRun: null, ...patch };
 }

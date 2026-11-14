@@ -44,7 +44,7 @@ export async function pendingKnowledgeWrites(records: RecordLookupPort, projectI
     for (const record of listed.items) {
       const decoded = knowledgeWriteCodec.decode(record);
       if (decoded.status !== 'decoded') return rejected('unavailable', decoded.reason);
-      logs.push(decoded.value);
+      if (decoded.value.branch === line.line.branch) logs.push(decoded.value);
     }
   }
   return { status: 'ready', value: logs };
@@ -68,7 +68,8 @@ export function writeLogExtras(write: KnowledgeWriteDeps, projectId: string,
       const file = write.files.writeLogFileOf(line.scope, change.path, (change.after ?? change.before)!);
       const encoded = knowledgeWriteCodec.encode({
         ref: { aggregateType: 'KnowledgeWrite', projectId, writeId: write.newId() }, revision: 1,
-        lineRef: lineRefKey(line.scope, line.line), path: change.path, kind: file.kind, moduleId: file.moduleId,
+        lineRef: lineRefKey(line.scope, line.line), branch: line.line.branch, path: change.path, kind: file.kind,
+        moduleId: file.moduleId,
         beforeBlob: change.before === null ? null : gitBlobId(change.before, line.objectFormat),
         afterBlob: change.after === null ? null : gitBlobId(change.after, line.objectFormat),
         state: 'pending', since: null,

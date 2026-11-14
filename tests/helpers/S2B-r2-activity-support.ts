@@ -59,7 +59,7 @@ export async function seedActivityRun(
     task: { projectId: f.b2.base.scope.projectId, goalId: f.goalRef.goalId, taskId: input.taskId },
     attemptId: `s2b-r2-attempt-${input.runId}`, planRef: goalRead.value.goal.activePlanRevision,
     roleBinding: f.b2.base.roleBinding, budget: f.b2.base.budget,
-    workspaceSnapshot: { workspaceId: f.b2.base.scope.workspaceId, revision: 1 },
+    workspaceSnapshot: { workspaceId: f.b2.base.scope.workspaceId, revision: 1, line: null },
     status: input.status, outcome: input.outcome ?? null, exitCode: null, lastEventSeq: 0,
     lastRuntimeEventId: '', lastFactEventId: '', envelope: null,
     startedAt: input.startedAt, startedSince: null, endedAt: input.endedAt, previousRun: null,

@@ -12,7 +12,8 @@
  *      scope;
  *   3. ONE read snapshot of the canonical Project/Workspace/Goal keys; caller
  *      pins are structurally validated BEFORE the lookup and enforced against
- *      the versions read here;
+ *      the versions read here; then the Goal's line (the named folder's line or
+ *      the workspace's main line, `lineForWrite`);
  *   4. GOAL-01 (`state/goal-machine.ts` `transitionGoal`, STATE-MACHINES-SPEC
  *      §2) judges the pins and gives Goal@1 plus exactly 3 guards; compile;
  *   5. `records.commit(...)`: the store re-looks-up, CASes, writes, records the
@@ -40,6 +41,7 @@ import { setGoalControlFromHost } from "./goal-control.js";
 import type { CreateGoalInput, GoalService, GoalServiceDependencies, GoalTaskPort, GraphWrite } from "../model/task-contracts.js";
 import { compareCallerGoalPins, compileGoalCreate, goalCreateFingerprint, goalCreateIdentityKey, goalRefFor, normalizeCallerGoalPins, projectRefFor, workspaceRefFor } from "../persistence/commit-compiler.js";
 import { createGoalGraphRepository, type CommittedStoreReceipt, type GoalCreateIdentity, type GoalGraphRepository } from "../persistence/graph-repository.js";
+import { lineForWrite } from "../persistence/line-record-codecs.js";
 import { cloneActorRef, canonicalRefKey } from "../persistence/record-codecs.js";
 import { goalStateOf, transitionGoal } from "../state/goal-machine.js";
 
@@ -48,7 +50,8 @@ import { goalStateOf, transitionGoal } from "../state/goal-machine.js";
 // --------------------------------------------------------------------------
 
 export type GoalAdmissionDeps = {
-  records: GoalRecordTransactionPort;
+  /** `lookup` lists the workspace's lines; a store without it cannot tell which line a Goal is born on. */
+  records: GoalRecordTransactionPort & Partial<RecordLookupPort>;
   now(): string;
   eventId(): string;
 };
@@ -208,6 +211,13 @@ export async function admitGoalCreation(
   if (read.status !== "ready") return reject("unavailable", read.reason);
 
   const observed = read.scope;
+  const records = deps.records;
+  if (records.lookup === undefined) {
+    return reject("unsupported", "Goal creation requires a RecordStore with the exact lookup capability (the workspace's lines)");
+  }
+  const line = await lineForWrite({ readMany: records.readMany.bind(records), lookup: records.lookup.bind(records) },
+    { projectId: command.identity.projectId, workspaceId: command.payload.workspaceId }, command.payload.lineFolder);
+  if (line.status !== "ready") return reject(line.code, line.reason);
   const preReadGoalRevision = observed.goal?.revision;
   const goalRefKey = canonicalRefKey(refs.goalRef);
   const disagreeing = compareCallerGoalPins(command, pins.pins, {
@@ -223,7 +233,7 @@ export async function admitGoalCreation(
   const created = transitionGoal(
     goalStateOf(observed.goal ?? null, null),
     {
-      type: "goal_created", ref: refs.goalRef, workspaceRef: refs.workspaceRef, objective,
+      type: "goal_created", ref: refs.goalRef, workspaceRef: refs.workspaceRef, lineRef: line.value, objective,
       settings: structuredClone(DEFAULT_GOAL_SETTINGS_V1), continuedFrom: null, copiedInterventions: [],
     },
     {
@@ -315,6 +325,11 @@ async function createGoalFromHost(
   const goalId = rawInput["goalId"];
   const objective = rawInput["objective"];
   const workspace = rawInput["workspace"];
+  // KLS-3a: the folder of the line the Goal works on; absent is the workspace's main line.
+  const lineFolder = rawInput["lineFolder"];
+  if (lineFolder !== undefined && !isNonEmptyString(lineFolder)) {
+    return { status: "rejected", code: "invalid", reason: "createGoal lineFolder must be a non-empty folder path" };
+  }
   if (
     !isNonEmptyString(goalId) ||
     typeof objective !== "string" ||
@@ -388,7 +403,7 @@ async function createGoalFromHost(
     expectedRevision: 0,
     correlationId: derived.correlationId,
     submittedAt: deps.now(),
-    payload: { workspaceId, objective },
+    payload: { workspaceId, objective, ...(lineFolder === undefined ? {} : { lineFolder }) },
   };
 
   const admission = await admitGoalCreation(deps, command, expectedPins as readonly VersionPin[] | undefined, {
@@ -412,9 +427,9 @@ async function createGoalFromHost(
 
 /**
  * Creates the Goal service published to the Control/Host composition roots.
- * Every entry point shares the same physical record backend. `createGoal` never
- * reads `lookup`; the completion methods narrow it ONCE at construction time and
- * report an explicit `unsupported` when the real backend cannot supply it.
+ * Every entry point shares the same physical record backend. `createGoal` reads
+ * `lookup` only for the workspace's lines; it and the completion methods report
+ * an explicit `unsupported` when the real backend cannot supply it.
  */
 export function createGoalService(deps: GoalServiceDependencies): GoalService {
   const completionDeps: CompletionDependencies | null = typeof deps.records.lookup === "function"

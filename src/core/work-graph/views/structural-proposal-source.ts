@@ -40,7 +40,7 @@ export type StructuralProposalCardFactsV1 = {
   batch: ArchitectureProposalBatchV1;
   members: ArchitectureProposalRecordV1[];
   activeRevision: number;
-  /** M6: every member resolves to its exploration round; only then does the card show “不对，重新提”. */
+  /** M6: every member resolves to a source that can re-propose it (exploration or Work-Run); only then does the card show “不对，重新提”. */
   repropose: boolean;
 };
 

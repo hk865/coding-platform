@@ -71,17 +71,19 @@
 - `goal-confirm.ts` — `goals/confirm-draft` 的纯规则：`decideGoalConfirm` 的拒绝顺序（不是最新已答轮 → `revision_conflict`；草稿下标越界 → `invalid`；同一 `(answerRef, draftIndex)` 已确认 → `revision_conflict`）、确认后的 objective 文本 `confirmObjectiveText`（正文与每条完成标准都经 `normalizeObjective`），以及不可变 `InitializationBinding@1` 的唯一构造 `newInitializationBinding`（ref 指 answer+draft，revision 与 goalRevision 都是 1，顺序和重复原样保留）。无 I/O、无时钟、无 id；服务只编码它并放进自己的一次提交。
 - `goal-copy.ts` — 复制的纯决定：只有 `cancelled` 源可复制；确认带回 `expectedSourceRevision` 时先核对源 revision；勾选的干预必须是 owner 读到的、可选的候选，同一 ref 勾选两次被 `invalid` 拒绝（6B 没有读端口时候选集为空，非空勾选被拒而不是被信任）；出生设置保留源的 autonomy 与 order、清空「等前一个」和并行风险，再由 `isLegalSettings` 查形状；决定给出 `continuedFrom`、`copiedInterventions`（勾中的候选 ref，按勾选顺序）、`retract`（未勾中的候选 ref，按候选顺序）与 `selection`（`retract` 非空即 `retraction_pending`）。`planReanchorHook` 包 7D1 的 `planReanchor`，复制的出生提交按职责各调一次（入参、结果是 `PlanReanchorHookInputV1`、`PlanReanchorHookResultV1`）。
 - `goal-machine.ts` — Goal 机器：目标状态、计划指针、完成记录；fan-out/resume 身份与展示归约；re-export `GOAL_FAN_OUT_ACTOR`。
+- `goal-delivery.ts` — 交付确认（决定 121-45）的纯规则：`goalDeliveryProblem`（`cancelled`、无 GoalPhase、相位不是 `COMPLETED`、GoalPhase 的 Plan 已被活动 Plan 取代，都回同一句“没有可接受的交付”）与 `goalDeliveryAcceptanceOf`（唯一构造：ref 取 GoalPhase 修订号、Plan 取该相位、`acceptedBy` 是人、`acceptedAt`/`requestId` 由 owner 给）。不读存储、不读钟。
 - `goal-settings-machine.ts` — Goal 设置机器与启动准入、决策依据匹配、Goal 冲突事实（模块说法按模块比，文件只按同一路径比）。
 - `plan-machine.ts` — PlanProposal 机器与 PlanRevision 派生：candidate→accepted 与 Goal 指针同一提交；候选与提案事件带必填可空的 `sourceMessageRef`（干预消息，其他写者为 `null`）。
 - `architecture-proposal-machine.ts` — `ArchitectureProposal` 状态机：写入时 `pending`，之后只改 `state`（`pending → applied | rejected | stale`）与一次进入冻结批的 `batchRef`；内容（pin/ops/moves/reason/proposer/operation ref）不可变，`ARCHITECTURE_PROPOSAL_STATES` 是闭集，`newArchitectureProposalRecord`/`transitionArchitectureProposal` 只复制记录并改 revision/state/batchRef；无存储、时钟或 id。
 - `plan-candidate.ts` — 计划候选的纯决定与机械诊断（§6.1.3、§6.2）：`decidePlanCandidate` 按审阅/修复读与采用策略给出请求审阅、请求修复、采用、出卡或等待（首次匹配即返回，不读存储）；`diagnosePlanCandidate` 用验证计划编译器的同一份 `compileVerificationCoverage` 逐条报 `no_registered_check`（审阅类要求由 `review-packet` 项覆盖，第 9 片起不再报），`checks: null` 是覆盖未知、永不采用，`checks: []` 是已配置但没有注册检查。
-- `verification-machine.ts` — VerificationRound / round-check / TaskEvidenceIndex 机器与链、折叠、重验证、证据索引。第 9 片加 VR-16 `review_recorded`（`RoundEventHead`、`RoundEvent` 各一臂）：`roundOnReviewRecorded`（`src/core/work-graph/state/verification-machine.ts:1403`）恰四条 effect：`guard_round_unchanged`、`admit_verdict_evidence`（每个 pair 一条、同一个 ref）、`append_task_evidence_index`、`emit_event VerificationReviewEvidenceRecorded`，不写 Round；`pendingRoundChecks` 与 `foldSteps` 跳过 `satisfactionPath:'review-packet'` 项；`roundReviewerEvidenceProblem` 对任何个数回 null（审阅 ref 由 owner 读完事实后归属）。
+- `verification-machine.ts` — VerificationRound / round-check / TaskEvidenceIndex 机器与链、折叠、重验证、证据索引。第 9 片加 VR-16 `review_recorded`（`RoundEventHead`、`RoundEvent` 各一臂）：`roundOnReviewRecorded`（`src/core/work-graph/state/verification-machine.ts:1418`）恰四条 effect：`guard_round_unchanged`、`admit_verdict_evidence`（每个 pair 一条、同一个 ref）、`append_task_evidence_index`、`emit_event VerificationReviewEvidenceRecorded`，不写 Round；`pendingRoundChecks` 与 `foldSteps` 跳过 `satisfactionPath:'review-packet'` 项；`roundReviewerEvidenceProblem` 对任何个数回 null（审阅 ref 由 owner 读完事实后归属）。
 - `witness-check.ts` — 见证检查的纯判定（B06 G1）：`effectsOf` 只从已存 `RunActivityFactsV1` 判 Run 的三态 effects（`status:'unknown'` → unknown；已确认改动 → changed；仅可能改动/窗口未终结/未决调用 → unknown；`changedLines.complete` 不参与判 none，不重新 tally）；`runWitnessCheck` 由三态输入给 `EvidenceOutcome`（`knownFailure` 四支判 FAIL 且优先，`hasGap` 六支判 INCONCLUSIVE，`incompleteCause` 只在 INCONCLUSIVE、Run 适用且来源不是 matched 时是 `source_not_matched`，`missingPaths` 只取 absent 且不落库）。不读存储、不调 `outcomeFor`；G2 的见证 owner 调用它们。
 - `autonomy-rules.ts` — 自主规则的纯半边：`validateAutonomyRule`（唯一校验：先查 actions/scope 是数组、limits/limits.open 是对象，再查 actions 非空且都是 `RuleActionV1`（否则 `invalid/rule_action_fixed`）、scope 非空、每职责上限不超过项目 `open` 上限（否则 `invalid/rule_limit_over_cap`）、`expiresAt` 是 ISO 时间或 null）、`matchAutonomyRule`（active、未到期、动作在列、每个责任对象在规则 scope 和调用方责任上限内、工具与建成员授权、动作之后的计数不超过规则的每职责上限）、`nextAutonomyRuleSetRevision`；记录与 codec 在 contracts 和 sessions，三个写命令在 `tasks/autonomy-rule-service.ts`。
 - `role-capacity-episode.ts` — 容量 episode 的三个纯函数：`nextCapacityEpisode`（同一项目同一职责的下一个编号）、`capacityEpisodeCloses`（回到上限以下，或上限变了就关）、`closeCapacityEpisode`（revision 加一、写 `closedAt`）；记录格式是 contracts 的 `RoleCapacityEpisodeFormat`。
 - `decision-policy.ts` — 五层动作策略 `decisionActionPolicy`（`DecisionPolicyInputV1` 只在旧入参上做加法，结果是 `DecisionPolicyVerdictV1`）：总是问你的九个动作 → 同一动作已有待答卡 → 匹配到的自主规则（`automatic_notice`）→ 出厂默认（四个角色线动作与 `create_member`/`short_change_duty` 有一个受影响目标是每步问就出卡，否则人做直接做、别的调用方发通知；`module_maintainer` 照旧；其余旧动作照旧表）→ 越界出卡；另有用户消息准入、自动化确认原因、gate 覆盖与修复判定。
 - `line-status.ts` — 工作线的纯派生：状态、注意、标记、桶、归档标签、控制项、排序键；线的 `wait` 取最早未消费等待的状态，决定“等回复”（open/answered）与已消费标记（consumed）；待命原因多一个 `unassigned`（链上没有开着的负责链接），行带名额等待 `runningCap`。
 - `line-pin-machine.ts` — Workspace 工作线置顶机器（一次原子增删）。
+- `line-machine.ts` — 线记录的唯一构造器 `newLineRecord`（KLS-3a）：出生 `open`、revision 1、`forkPoint` 是建线时的 HEAD；`merged`/`removed` 归 KLS-3b 的线结束，在这里加迁移。
 - `initialization-adoption.ts` — 初始化采用操作的纯记录表：出生 `newInitializationAdoptionRecord`、既有操作的再次接受 `acceptExistingInitializationAdoption`、写入前标记 `nextAdoptionStage`，以及三个后写 `advanceInitializationAdoption`/`stopInitializationAdoption`/`completeInitializationAdoption`，再加供服务重建已提交记录的纯投影 `committedAdoptionRecord`（前缀、before/stopped 标记与 `record.result` 只在这里形成；不读时钟、不生成 id、不碰存储）。
 
 ### 注记/消息/其他生命周期
@@ -112,6 +114,7 @@
 | `nodeInFlight` | `src/core/work-graph/state/task-node-commit.ts:92` | `every_step` 下 work 节点还在检查/完成途中（`verifying`） | Workflow 的领取挡（`selectOrdinary` 的 `claimHold`）；不要另写这条判断 |
 | `nodeReviewProblem`、`taskNodePending`、`taskNodeFilesOf`、`taskAwaitsReview`、`reviewedContentProblem`、`taskNodeCommitOf`、`taskNodeCommitRefOf` | `src/core/work-graph/state/task-node-commit.ts:55`、`src/core/work-graph/state/task-node-commit.ts:64`、`src/core/work-graph/state/task-node-commit.ts:27`、`src/core/work-graph/state/task-node-commit.ts:76`、`src/core/work-graph/state/task-node-commit.ts:100`、`src/core/work-graph/state/task-node-commit.ts:129`、`src/core/work-graph/state/task-node-commit.ts:116` | 节点审核的判定、节点文件、等审阅算 live、blob 比对和审核事实的构造 | 节点审核 owner 的读和写；不要另写“哪些节点要审”或第二个构造 |
 | `interruptionRefOf`、`pendingGoalInterruption`、`resumedGoalInterruption`、`GoalInterruptionWriteV1` | `src/core/work-graph/state/goal-interruption.ts:9`、`src/core/work-graph/state/goal-interruption.ts:22`、`src/core/work-graph/state/goal-interruption.ts:38`、`src/core/work-graph/state/goal-interruption.ts:9` | 目标中断记录的地址，pending/resumed 迁移与版本期待（已 pending 保留、已 resumed 不再写） | 启动对账记录候选、驱动开始时结清、显示读记录时；不要另写记录地址，不要绕过状态层写记录 |
+| `goalDeliveryProblem`、`goalDeliveryAcceptanceOf` | `src/core/work-graph/state/goal-delivery.ts:19`、`src/core/work-graph/state/goal-delivery.ts:27` | 是否有可接受的交付（取消、无相位、未完成、Plan 已被活动 Plan 取代都拒绝）与确认记录的唯一构造 | 交付接受的写 owner 与页面读；不要另写可接受条件或第二个构造 |
 | `projectNoticeIdentity`、`projectNoticeNext`、`projectNoticePending`、`projectNoticeBound` | `src/core/work-graph/state/project-notice.ts:65`、`:37`、`:61`、`:65` | 项目通知的操作身份/记录 id、写入前的决定、待提交记录与回执游标绑定后的投影 | 项目通知写入与来源读取；不要另写身份、校验或字段 |
 | `decideActivityOutcome` | `src/core/work-graph/state/activity-replacement.ts:23` | 按 L4 判定本次活动写是 created/replaced/unchanged | 回填或 Run 结束要写 Run.activity 时 |
 | `MemberCreateActionShape`、`memberCreateInputProblem` | `src/core/work-graph/state/member-creation.ts:105`、`:103` | `member_create` 的字段表与跨字段规则（任务/调用者在同一项目、reason 1..2000 UTF-8 字节，`done` 必须有 outcome） | 编解码 member 操作、建事件、M-records 的纯规则行 |
@@ -150,16 +153,17 @@
 | `nextCapacityEpisode`、`capacityEpisodeCloses`、`closeCapacityEpisode` | `src/core/work-graph/state/role-capacity-episode.ts:20`、`:15`、`:20` | 容量 episode 的编号、关闭判定与关闭后的记录 | 容量服务开、关 episode 时；不要另算编号或关闭条件 |
 | `decideGoalCopy`、`DecideGoalCopy` | `src/core/work-graph/state/goal-copy.ts:30` | 复制的唯一纯决定：源必须 `cancelled`；`revision_conflict`/`invalid` 的拒绝文案都出自这里，同一 ref 勾选两次也是 `invalid`；产出新 Goal 的 `objective`、`settings`、`continuedFrom`、`copiedInterventions`（勾中的候选 ref，按勾选顺序）、`retract`（未勾中的候选 ref，按候选顺序）与 `selection`（`selection_only`/`retraction_pending`，`retract` 非空即后者） | 复制确认在提交前判；不要在服务里另判源状态、revision 或勾选 |
 | `planReanchorHook`、`PlanReanchorHookInputV1`、`PlanReanchorHookResultV1` | `src/core/work-graph/state/goal-copy.ts:18`、`:12`、`:13` | 包 7D1 的 `planReanchor`，复制的出生提交按职责各调一次：把源目标参谋/书记的负责关系挪到新 Goal；纯函数，不写事实、不给回执 | 复制的出生提交里迁参谋和书记；不要另开一条迁移路径 |
-| `newGoalSnapshot` | `src/core/work-graph/state/goal-machine.ts:97` | 建 Goal 的预绑定快照（`since: null`，创建提交填游标）；出生即带 `settings`、`continuedFrom`、`copiedInterventions` | 新建 Goal |
+| `newGoalSnapshot` | `src/core/work-graph/state/goal-machine.ts:100` | 建 Goal 的预绑定快照（`since: null`，创建提交填游标）；出生即带 `lineRef`、`settings`、`continuedFrom`、`copiedInterventions` | 新建 Goal |
+| `newLineRecord` | `src/core/work-graph/state/line-machine.ts:8` | 建一条线的记录（`open`、revision 1、键是工作区和文件夹） | 登记一条线 |
 | `decideGoalConfirm` | `src/core/work-graph/state/goal-confirm.ts:32` | confirm-draft 的唯一纯决定：拒绝顺序、草稿、objective、出生设置与 order | 确认草稿前；不要另写拒绝顺序 |
 | `confirmObjectiveText` | `src/core/work-graph/state/goal-confirm.ts:21` | 确认后的 objective：正文 + 空行 + `完成标准：` + 每条 `- ` 完成标准，两段都规范化 | 建确认 Goal 的 objective |
 | `newInitializationBinding` | `src/core/work-graph/state/goal-confirm.ts:60` | 不可变 `InitializationBinding@1` 的唯一构造：ref、answerRef、digest、requestRef、draftIndex、goalRef、screening | 确认提交；服务只编码，不自己构造 |
-| `goalWithObjective` | `src/core/work-graph/state/goal-machine.ts:124` | 纯函数：只把候选带来的新目标说明写进 Goal 快照的 `objective`，不 bump revision；随后仍由 `nextGoalPointer` 移指针并 bump 一次 | 人采用带 `reason.objective` 的候选时，与计划指针同一次提交 |
-| `goalStateOf` | `src/core/work-graph/state/goal-machine.ts:228` | Goal + GoalPhase 的机器状态；保留记录类型，预绑定 Goal 得 pending 状态 | Goal 迁移前 |
-| `goalCompletionProblem` | `src/core/work-graph/state/goal-machine.ts:462` | 完成事件的前置检查 | goal_completed 提交 |
-| `transitionGoal` | `src/core/work-graph/state/goal-machine.ts:601` | Goal 主迁移：目标状态、计划指针、完成；`goal_created` 的 `next` 是预绑定 Goal | Goal 写入 |
-| `goalFanOutRequestId` | `src/core/work-graph/state/goal-machine.ts:657` | 派生 fan-out 请求的稳定 id | pause/cancel/resume 的扇出 |
-| `findGoalResumeContinuations` | `src/core/work-graph/state/goal-machine.ts:710` | 从任务事实找 resume 的续作 | 恢复 Goal 后规划续作 |
+| `goalWithObjective` | `src/core/work-graph/state/goal-machine.ts:126` | 纯函数：只把候选带来的新目标说明写进 Goal 快照的 `objective`，不 bump revision；随后仍由 `nextGoalPointer` 移指针并 bump 一次 | 人采用带 `reason.objective` 的候选时，与计划指针同一次提交 |
+| `goalStateOf` | `src/core/work-graph/state/goal-machine.ts:231` | Goal + GoalPhase 的机器状态；保留记录类型，预绑定 Goal 得 pending 状态 | Goal 迁移前 |
+| `goalCompletionProblem` | `src/core/work-graph/state/goal-machine.ts:465` | 完成事件的前置检查 | goal_completed 提交 |
+| `transitionGoal` | `src/core/work-graph/state/goal-machine.ts:604` | Goal 主迁移：目标状态、计划指针、完成；`goal_created` 的 `next` 是预绑定 Goal | Goal 写入 |
+| `goalFanOutRequestId` | `src/core/work-graph/state/goal-machine.ts:660` | 派生 fan-out 请求的稳定 id | pause/cancel/resume 的扇出 |
+| `findGoalResumeContinuations` | `src/core/work-graph/state/goal-machine.ts:713` | 从任务事实找 resume 的续作 | 恢复 Goal 后规划续作 |
 | `transitionGoalSettings` | `src/core/work-graph/state/goal-settings-machine.ts:189` | Goal 设置迁移（order_set 用已有顺序的下标） | 修改 Goal 设置 |
 | `goalStartPolicy` | `src/core/work-graph/state/goal-settings-machine.ts:237` | 启动准入策略 | 自动启动 Goal 前 |
 | `goalDecisionBasisMatches` | `src/core/work-graph/state/goal-settings-machine.ts:255` | 决策依据是否仍对应当前 Goal | 复用/重算决策时 |
@@ -229,30 +233,30 @@
 | `leaseReleasedForContinuation` | `src/core/work-graph/state/review-lease.ts:25` | 租约是否由 afterRun 或其复查轮释放 | 续作前置检查 |
 | `isUnenteredReviewRoundForCancellation` | `src/core/work-graph/state/review-lease.ts:41` | 可证明未进入 Kernel 的复查 Run | UR3h 取消判定 |
 | `reviewRoundEndedKnown` | `src/core/work-graph/state/review-lease.ts:63` | 复查 Run 是否已知结束 | 判断可续作 |
-| `newRunRecord` | `src/core/work-graph/state/run-machine.ts:855` | 建 Run 记录 | claim/开跑 |
-| `withBoundStart` | `src/core/work-graph/state/run-machine.ts:877` | 首次 entry 成功后把提交游标绑到返回的 Run；已有的值不替换 | entered/result 返回 Run 时 |
-| `transitionRun` | `src/core/work-graph/state/run-machine.ts:1395` | Run 主迁移，返回整条下一条 Run | 任何 Run 生命周期写入 |
-| `runStateOf` | `src/core/work-graph/state/run-machine.ts:148` | Run 快照的机器状态 | Run 迁移前 |
+| `newRunRecord` | `src/core/work-graph/state/run-machine.ts:858` | 建 Run 记录；`workspaceSnapshot.line` 取 claim 事件里 Goal 的线 | claim/开跑 |
+| `withBoundStart` | `src/core/work-graph/state/run-machine.ts:880` | 首次 entry 成功后把提交游标绑到返回的 Run；已有的值不替换 | entered/result 返回 Run 时 |
+| `transitionRun` | `src/core/work-graph/state/run-machine.ts:1398` | Run 主迁移，返回整条下一条 Run | 任何 Run 生命周期写入 |
+| `runStateOf` | `src/core/work-graph/state/run-machine.ts:149` | Run 快照的机器状态 | Run 迁移前 |
 | `messageMachineStateOf` | `src/core/work-graph/state/message-machine.ts:369` | 消息记录的机器状态；缺失为 absent | 消息迁移前 |
-| `isPausedInterrupted` | `src/core/work-graph/state/run-machine.ts:208` | 是否 paused/interrupted 的结束 | 重排队与展示 |
-| `runUnresolvedBlocker` | `src/core/work-graph/state/run-machine.ts:222` | 未解决工具调用的阻塞原因 | 未知调用审查 |
-| `claimHoldGuard` | `src/core/work-graph/state/run-machine.ts:1128` | claim 时 Session/Lease 的持有检查 | claim 提交 |
-| `entryPermitGuard` | `src/core/work-graph/state/run-machine.ts:1223` | 进入许可与持久 claim 的一致性检查 | 进入 Kernel 前 |
+| `isPausedInterrupted` | `src/core/work-graph/state/run-machine.ts:209` | 是否 paused/interrupted 的结束 | 重排队与展示 |
+| `runUnresolvedBlocker` | `src/core/work-graph/state/run-machine.ts:223` | 未解决工具调用的阻塞原因 | 未知调用审查 |
+| `claimHoldGuard` | `src/core/work-graph/state/run-machine.ts:1131` | claim 时 Session/Lease 的持有检查 | claim 提交 |
+| `entryPermitGuard` | `src/core/work-graph/state/run-machine.ts:1226` | 进入许可与持久 claim 的一致性检查 | 进入 Kernel 前 |
 | `newSessionAnomalyAnchorRecord` | `src/core/work-graph/state/session-anomaly.ts:24` | 建异常锚点（每 Run 至多一个，不可变） | 发现异常时 |
 | `transitionSessionAnomaly` | `src/core/work-graph/state/session-anomaly.ts:27` | 异常锚点首次写入迁移 | 记录异常 |
 | `deriveSessionAnomalyView` | `src/core/work-graph/state/session-anomaly.ts:55` | 由锚点与后续事实派生异常视图 | 读异常 |
-| `createSessionRecord` | `src/core/work-graph/state/session-availability.ts:350` | 建 Session 记录；可选的 `delegationCeiling`/`secretaryCreated` 从创建意图带进记录 | 新建 Session |
-| `occupySessionRecord` | `src/core/work-graph/state/session-availability.ts:381` | 在下一代 generation 上取得占用 | 运行开始 |
-| `releaseSessionRecord` | `src/core/work-graph/state/session-availability.ts:405` | 只释放匹配的 holder/generation | 终态、取消、恢复 |
-| `releaseUnenteredQuerySession` | `src/core/work-graph/state/session-availability.ts:437` | 没进 Kernel 就结束的 Query attempt 的 SES-08 释放（drop、`end_unbound`、请求轮新 attempt）：Run 不再持有时返回 null | 请求 owner 的 drop/结束和新 attempt；调用方自己读 Session、加 revision guard、映射拒绝 |
-| `transitionSession` | `src/core/work-graph/state/session-availability.ts:679` | Session 主迁移（SES-01..19） | 任何 Session 生命周期写入 |
-| `sessionMachineStateOf` | `src/core/work-graph/state/session-availability.ts:310` | Session 记录的机器状态；缺失为 absent | Session 迁移前 |
-| `ownsOccupancy` | `src/core/work-graph/state/session-availability.ts:265` | 占用是否正好是该 holder 与该代 | claim、进入、Query、对账 |
-| `nextOccupancyGeneration` | `src/core/work-graph/state/session-availability.ts:249` | 下一次占用代数 | 取占用时 |
-| `sessionAvailabilityAdmissionProblem` | `src/core/work-graph/state/session-availability.ts:737` | SES-02/SES-03 的共用可用性检查：lifecycle 为 active 且 health 为 available | 占用准入与请求分派共用这条子规则 |
-| `occupancyAdmissionProblem` | `src/core/work-graph/state/session-availability.ts:755` | 完整占用准入：lifecycle/health/占用/代/pin | 实际 claim |
-| `sessionDispatchAdmissionProblem` | `src/core/work-graph/state/session-availability.ts:547` | 分派准入：归档、只读副本、Work 等待；已消费等待按消息/原 Run/任务匹配，`intervention` 不消费等待 | 选秘书/分派候选 |
-| `roleLineIdleOf`、`RoleLineIdleFactsV1` | `src/core/work-graph/state/session-availability.ts:629`、`:609` | 参谋/书记线的闲置判定与六项事实；读不到是 `unreadable`，占用未知是 `occupied`；事实里另带三项排除（最后一条、待答卡、`unfinishedSplitLine`：未完成拆线的新线或源线），由回收挑线时跳过 | 保留名额回收挑线之前；不要另写闲置规则 |
+| `createSessionRecord` | `src/core/work-graph/state/session-availability.ts:354` | 建 Session 记录；准入时定下的 `lineRef` 和可选的 `delegationCeiling`/`secretaryCreated` 从创建意图带进记录 | 新建 Session |
+| `occupySessionRecord` | `src/core/work-graph/state/session-availability.ts:385` | 在下一代 generation 上取得占用 | 运行开始 |
+| `releaseSessionRecord` | `src/core/work-graph/state/session-availability.ts:409` | 只释放匹配的 holder/generation | 终态、取消、恢复 |
+| `releaseUnenteredQuerySession` | `src/core/work-graph/state/session-availability.ts:441` | 没进 Kernel 就结束的 Query attempt 的 SES-08 释放（drop、`end_unbound`、请求轮新 attempt）：Run 不再持有时返回 null | 请求 owner 的 drop/结束和新 attempt；调用方自己读 Session、加 revision guard、映射拒绝 |
+| `transitionSession` | `src/core/work-graph/state/session-availability.ts:683` | Session 主迁移（SES-01..19） | 任何 Session 生命周期写入 |
+| `sessionMachineStateOf` | `src/core/work-graph/state/session-availability.ts:311` | Session 记录的机器状态；缺失为 absent | Session 迁移前 |
+| `ownsOccupancy` | `src/core/work-graph/state/session-availability.ts:266` | 占用是否正好是该 holder 与该代 | claim、进入、Query、对账 |
+| `nextOccupancyGeneration` | `src/core/work-graph/state/session-availability.ts:250` | 下一次占用代数 | 取占用时 |
+| `sessionAvailabilityAdmissionProblem` | `src/core/work-graph/state/session-availability.ts:741` | SES-02/SES-03 的共用可用性检查：lifecycle 为 active 且 health 为 available | 占用准入与请求分派共用这条子规则 |
+| `occupancyAdmissionProblem` | `src/core/work-graph/state/session-availability.ts:759` | 完整占用准入：lifecycle/health/占用/代/pin | 实际 claim |
+| `sessionDispatchAdmissionProblem` | `src/core/work-graph/state/session-availability.ts:551` | 分派准入：归档、只读副本、Work 等待；已消费等待按消息/原 Run/任务匹配，`intervention` 不消费等待 | 选秘书/分派候选 |
+| `roleLineIdleOf`、`RoleLineIdleFactsV1` | `src/core/work-graph/state/session-availability.ts:633`、`:613` | 参谋/书记线的闲置判定与六项事实；读不到是 `unreadable`，占用未知是 `occupied`；事实里另带三项排除（最后一条、待答卡、`unfinishedSplitLine`：未完成拆线的新线或源线），由回收挑线时跳过 | 保留名额回收挑线之前；不要另写闲置规则 |
 | `goalPositionOf`、`regionPositionOf`、`RoleLinePositionV1` | `src/core/work-graph/state/role-line-position.ts:104`、`:65`、`:104` | 目标位置（候选参谋线）与 region 负担（`region`/`descend`/`unknown`），以及读线时带出的位置值 | 选参谋线、读线卡、拆线规划；不要另走一遍最长前缀归属 |
 | `planRoleLineSplit` | `src/core/work-graph/state/role-line-split.ts:15` | 拆线的唯一严格子范围证明与挑选 | 维护页和 `propose_role_split` 的 owner 共用；不要另写校验 |
 | `reclaimIdleLineOf`、`RoleLineReclaimPort`、`RoleCapacityPort` | `src/core/work-graph/state/role-line-reclaim.ts:34`、`:23`、`:34` | 回收挑线（跳过最后一条、有待答卡和未完成拆线的线）、回收端口（答 `ReclaimSeatV1`，`limits` 可为 `null`：项目从没设过额度）和容量 episode 的注入端口 | 满额时回收一条闲置线、归档后关闭 episode |
@@ -296,19 +300,19 @@
 | `unknownCallReviewRouteOf` | `src/core/work-graph/state/unknown-call-review.ts:196` | 结果未知记录分两层的去处：参谋 / 先问参谋再升人 / 人（带新的升层原因；今天的卡清掉旧的，人自己的方案回来保留旧的） | 定稿、批准和参谋答复落实；不要另写分层判断 |
 | `unknownCallReviewSaferMethodOpen`、`approvedMethodsOf` | `src/core/work-graph/state/unknown-call-review.ts:221`、`src/core/work-graph/state/unknown-call-review.ts:226` | “换稳妥跑法”还能不能选（有可提对象、剩两个轮次空位）；批准时的方案清单 | 卡的选项、参谋落实、owner 的批准 |
 | `ARCHITECTURE_PROPOSAL_STATES`、`newArchitectureProposalRecord`、`transitionArchitectureProposal` | `src/core/work-graph/state/architecture-proposal-machine.ts:45`、`:34`、`:45` | 提案状态闭集与记录的唯一构造/迁移：进入批或到终态，只改 state/batchRef 与 revision，内容不可变 | 提案 owner 的写入、冻结与答复提交 |
-| `transitionRound` | `src/core/work-graph/state/verification-machine.ts:1387` | 验证轮主迁移（VR-01..16）；`round_finalized` 的 ref 数 = admissions + reviewerEvidenceCount（命令 ref 在前、审阅 ref 在后） | 轮生命周期写入 |
-| `transitionCheck` | `src/core/work-graph/state/verification-machine.ts:1664` | 单项检查迁移 | 检查开始/结果/中断 |
-| `buildOpenedRound` | `src/core/work-graph/state/verification-machine.ts:935` | 建已开启的轮 | 开轮提交 |
+| `transitionRound` | `src/core/work-graph/state/verification-machine.ts:1402` | 验证轮主迁移（VR-01..16）；`round_finalized` 的 ref 数 = admissions + reviewerEvidenceCount（命令 ref 在前、审阅 ref 在后） | 轮生命周期写入 |
+| `transitionCheck` | `src/core/work-graph/state/verification-machine.ts:1679` | 单项检查迁移 | 检查开始/结果/中断 |
+| `buildOpenedRound` | `src/core/work-graph/state/verification-machine.ts:950` | 建已开启的轮 | 开轮提交 |
 | `buildSuccessorRound` | `src/core/work-graph/state/verification-machine.ts:639` | 建后继轮 | 重验证 |
-| `finalizeRoundOutcome` | `src/core/work-graph/state/verification-machine.ts:821` | 折叠检查并定轮结果；第 9 片把 `RoundFoldFactsV1.review`（outcome/gaps/refs）当成一个不进 admissions 的候选，它的 gap 跟在检查 gap 后面 | 轮收尾 |
+| `finalizeRoundOutcome` | `src/core/work-graph/state/verification-machine.ts:836` | 折叠检查并定轮结果；第 9 片把 `RoundFoldFactsV1.review`（outcome/gaps/refs）当成一个不进 admissions 的候选，它的 gap 跟在检查 gap 后面；B06-N1 的 `PYTHON_SYNTAX_GAP_CODE`/`pythonSyntaxGaps`/`python_syntax_error` 是 context gap，一文件一条（`path:line: message`） | 轮收尾 |
 | `foldVerdictChecks` | `src/core/work-graph/state/verification-machine.ts:798` | 按验证计划折叠检查判定 | 轮收尾/展示 |
 | `roundChainHead` | `src/core/work-graph/state/verification-machine.ts:487` | 一轮链的头（最新/最高轮次） | 链相关守卫 |
 | `roundTaskSignal` | `src/core/work-graph/state/verification-machine.ts:714` | 轮链给 Task 相位的信号 | Task 相位投影 |
-| `reverifyAdmissionProblem` | `src/core/work-graph/state/verification-machine.ts:1473` | 能否开重验证轮 | 重验证前 |
+| `reverifyAdmissionProblem` | `src/core/work-graph/state/verification-machine.ts:1488` | 能否开重验证轮 | 重验证前 |
 | `reverifyExemption` | `src/core/work-graph/state/verification-machine.ts:560` | 重验证的豁免判定 | 自动重做计数 |
-| `roundWriteAdmission` | `src/core/work-graph/state/verification-machine.ts:1104` | 轮写入的通用准入；VR-16 `review_recorded`：无轮 invalid、已 finalize busy、非执行者 forbidden、pin 旧 revision_conflict | 任何轮写入 |
-| `roundSubjectRunProblem` | `src/core/work-graph/state/verification-machine.ts:1240` | VD-3：被审 Run 正式以 `completed` 结束且对账缺省或 `done` | 开轮守卫；VR-16 的终态读复用（不为 null 就记 INCONCLUSIVE） |
-| `taskEvidenceIndexRefOf` | `src/core/work-graph/state/verification-machine.ts:1054` | 轮对应的证据索引 ref | 追加证据 |
+| `roundWriteAdmission` | `src/core/work-graph/state/verification-machine.ts:1119` | 轮写入的通用准入；VR-16 `review_recorded`：无轮 invalid、已 finalize busy、非执行者 forbidden、pin 旧 revision_conflict | 任何轮写入 |
+| `roundSubjectRunProblem` | `src/core/work-graph/state/verification-machine.ts:1255` | VD-3：被审 Run 正式以 `completed` 结束且对账缺省或 `done` | 开轮守卫；VR-16 的终态读复用（不为 null 就记 INCONCLUSIVE） |
+| `taskEvidenceIndexRefOf` | `src/core/work-graph/state/verification-machine.ts:1069` | 轮对应的证据索引 ref | 追加证据 |
 | `displayRoundStatus` | `src/core/work-graph/state/verification-machine.ts:440` | 展示用轮状态 | 读模型 |
 | `isFinalizedNonPass` | `src/core/work-graph/state/verification-machine.ts:103` | 已定稿且非 PASS | 失败事实/重验证 |
 | `copyInterventionCandidateOf`、`CopyInterventionFactsV1` | `src/core/work-graph/state/copy-intervention.ts:16`、`src/core/work-graph/state/copy-intervention.ts:6` | 复制取消的纯候选规则与事实形状：按书的表序（先排除，再投递/未投递）判一条消息是否候选、可选/可撤回及原因；`null` 不是候选 | 分页读可复制干预时；不要另写状态判定 |
@@ -330,5 +334,5 @@
 - 不要在服务里 spread 一条 Run/Session/Task 改字段或另写一套迁移；受保护字段写入一律走本层构造器与 `transition*`（M1-05、M1-06）。
 - 不要手抄 Session 的 lifecycle/health/occupancy 判定：领用走 `occupancyAdmissionProblem`，只共享 lifecycle/health 的候选筛选走 `sessionAvailabilityAdmissionProblem` 并把 busy 单列（FP-09、M1-04）。
 - 不要把 Query 的 claimed/prepared 当成不可达，也不要只结清 Job/Run 的一半（M1-01、M1-36、CS-03）。
-- 不要手搓 Attempt/Lease/Outbox，或假设 Run 完成等于 Task/Goal 完成；effects 交 `claimEffectRecords`（`src/core/work-graph/tasks/execution-entry-service.ts:935`）翻译。
+- 不要手搓 Attempt/Lease/Outbox，或假设 Run 完成等于 Task/Goal 完成；effects 交 `claimEffectRecords`（`src/core/work-graph/tasks/execution-entry-service.ts:934`）翻译。
 - 不要在本层 import 时钟、随机数、计时器、网络、进程或任何 store；时间与 id 由调用方传入。

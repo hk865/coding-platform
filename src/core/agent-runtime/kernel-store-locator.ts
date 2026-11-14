@@ -10,11 +10,16 @@ export type KernelStoreEntry = {
   storeKey: string;
   workspace: WorkspaceScope;
   databasePath: string;
+  /** The folder of the line this store serves (kls-design §2.3.3); absent on the workspace's own (main line) store. */
+  lineFolder?: string;
 };
 export type KernelStoreLocation = Readonly<KernelStoreEntry>;
 
 export interface KernelStoreRegistry {
+  /** The workspace's own store: its main line's, and a workspace's with no line. */
   forWorkspace(workspace: WorkspaceScope): KernelStoreLocation | null;
+  /** The store of the workspace's line in `folder`, other than its main line; null when none is registered. */
+  forLine(workspace: WorkspaceScope, folder: string): KernelStoreLocation | null;
   byAdapterId(adapterId: string): KernelStoreLocation | null;
   /** Only current workspace registrations can be used for creation. */
   withStore<T>(adapterId: string, use: (store: SqliteStores) => Promise<T>): Promise<T>;
@@ -47,7 +52,14 @@ export async function createKernelStoreRegistry(input: {
   entries: readonly KernelStoreEntry[];
 }): Promise<KernelStoreRegistry> {
   const current = new Map<string, KernelStoreLocation>();
+  /** One store per (workspace, line): `null` is the workspace's own store. */
   const workspaceOwners = new Map<string, string>();
+  const ownerKey = (workspace: WorkspaceScope, lineFolder: string | null): string =>
+    JSON.stringify([workspace.projectId, workspace.workspaceId, lineFolder]);
+  const locationAt = (key: string): KernelStoreLocation | null => {
+    const owner = workspaceOwners.get(key);
+    return owner === undefined ? null : current.get(owner) ?? null;
+  };
   const pathOwners = new Map<string, string>();
 
   const registerCurrentEntry = (entry: KernelStoreEntry, databasePath: string): KernelStoreLocation => {
@@ -57,7 +69,7 @@ export async function createKernelStoreRegistry(input: {
     const prior = pathOwners.get(databasePath);
     if (prior !== undefined) throw new Error(`Kernel database path already registered as ${prior}`);
     if (!entry.workspace.projectId || !entry.workspace.workspaceId) throw new Error('Kernel workspace identity is incomplete');
-    const key = JSON.stringify([entry.workspace.projectId, entry.workspace.workspaceId]);
+    const key = ownerKey(entry.workspace, entry.lineFolder ?? null);
     if (workspaceOwners.has(key)) throw new Error(`Kernel workspace already registered as ${workspaceOwners.get(key)}`);
     pathOwners.set(databasePath, entry.adapterId);
     workspaceOwners.set(key, entry.adapterId);
@@ -75,10 +87,8 @@ export async function createKernelStoreRegistry(input: {
   }
 
   return Object.freeze({
-    forWorkspace(workspace: WorkspaceScope) {
-      const owner = workspaceOwners.get(JSON.stringify([workspace.projectId, workspace.workspaceId]));
-      return owner === undefined ? null : current.get(owner) ?? null;
-    },
+    forWorkspace(workspace: WorkspaceScope) { return locationAt(ownerKey(workspace, null)); },
+    forLine(workspace: WorkspaceScope, folder: string) { return locationAt(ownerKey(workspace, folder)); },
     byAdapterId(adapterId: string) { return current.get(adapterId) ?? null; },
     async withStore<T>(adapterId: string, use: (store: SqliteStores) => Promise<T>): Promise<T> {
       // Every caller resolves the adapter through byAdapterId first and only rereads

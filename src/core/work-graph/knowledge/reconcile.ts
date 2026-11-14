@@ -34,7 +34,7 @@ import { completeKnowledgeWrites, markKnowledgeWritesUnconfirmed } from './write
 
 /** One path this round finds new, changed or deleted against the index. */
 type Change = { path: string; before: string | null; file: KnowledgeDiskFileV1 | null };
-type RecoveryItem = Omit<KnowledgeRecoveryRow, 'noticeId' | 'itemNo' | 'lineRef'>;
+type RecoveryItem = Omit<KnowledgeRecoveryRow, 'noticeId' | 'itemNo' | 'lineRef' | 'branch'>;
 
 /**
  * [2C1-10]: in the write queue and the line's cross-Host lease (held by another Host → `unavailable`, the next round
@@ -94,7 +94,7 @@ async function reconcileLeased(write: KnowledgeWriteDeps, line: LineKnowledge, t
   // keeps the file and becomes a recovery item once, then `unconfirmed`. An `unconfirmed` log whose file came to be
   // its written bytes is completed too. A pending log's path is not an outside edit this round; a path with a log of
   // either state is classified and indexed as usual but is no revert (its recovery item is the write's).
-  const logs = await openWriteLogs(write, projectId, lineRef);
+  const logs = await openWriteLogs(write, projectId, lineRef, line.line.branch);
   const notLanded = logs.filter(log => log.state === 'pending' && blobAt(log.path) !== log.afterBlob);
   const platformPaths = new Set(logs.filter(log => log.state === 'pending').map(log => log.path));
   const loggedPaths = new Set(logs.map(log => log.path));
@@ -124,10 +124,11 @@ async function reconcileLeased(write: KnowledgeWriteDeps, line: LineKnowledge, t
   }
 
   // Step 6: the recovery items first, then the notice.
-  await notifyRecovery(write, snapshots, projectId, lineRef, 'knowledge_write_unconfirmed', r18.map(log => ({
+  const recoveryAt = { lineRef, branch: line.line.branch };
+  await notifyRecovery(write, snapshots, projectId, recoveryAt, 'knowledge_write_unconfirmed', r18.map(log => ({
     kind: 'write_unconfirmed', writeId: log.ref.writeId, path: log.path, takenAt: null, expectedBlob: blobAt(log.path) })));
   await markKnowledgeWritesUnconfirmed(write, projectId, notLanded);   // a failure leaves them for the next round
-  const newReverts = await notifyRecovery(write, snapshots, projectId, lineRef, 'knowledge_reverted', reverted);
+  const newReverts = await notifyRecovery(write, snapshots, projectId, recoveryAt, 'knowledge_reverted', reverted);
 
   // KC-2: the module each changed module file named last round, read before step 7 drops a bad file's index rows and
   // maybe its blob: a bad module file's record source needs it, its bytes name none. The index keeps a module file's
@@ -198,7 +199,7 @@ async function reconcileLeased(write: KnowledgeWriteDeps, line: LineKnowledge, t
       snapshots.recordProblems(noticeId, lineRef, rows);                      // rows first,
     }
     // then each bad file's item under its row's itemNo (one a recovery removed comes back while the same problems stand),
-    snapshots.recordRecovery(unreadableItemsOf(noticeId, lineRef, rows, blobAt));
+    snapshots.recordRecovery(unreadableItemsOf(noticeId, recoveryAt, rows, blobAt));
     await write.notify({ projectRef: { projectId }, subject: conflictNotice.subject, kind: 'knowledge_conflict',
       summary: conflictNotice.summary, operation: conflictNotice.operation });  // then the notice
   }
@@ -217,8 +218,10 @@ async function reconcileLeased(write: KnowledgeWriteDeps, line: LineKnowledge, t
 }
 
 
-/** The line's `pending` and `unconfirmed` write logs (the lookup is a candidate index: each is re-checked). */
-async function openWriteLogs(write: KnowledgeWriteDeps, projectId: string, lineRef: string): Promise<KnowledgeWriteV1[]> {
+/** The line's `pending` and `unconfirmed` write logs of the branch checked out now (the lookup is a candidate index:
+ *  each is re-checked); a write left on another branch of the folder waits for that branch. */
+async function openWriteLogs(write: KnowledgeWriteDeps, projectId: string, lineRef: string,
+  branch: string): Promise<KnowledgeWriteV1[]> {
   const logs: KnowledgeWriteV1[] = [];
   for (const state of ['pending', 'unconfirmed'] as const) {
     const found = await lookupAll(write.records, KNOWLEDGE_WRITES_BY_LINE_STATE_LOOKUP, [projectId, lineRef, state]);
@@ -226,7 +229,9 @@ async function openWriteLogs(write: KnowledgeWriteDeps, projectId: string, lineR
       const decoded = knowledgeWriteCodec.decode(record);
       if (decoded.status !== 'decoded') throw rejected('unavailable', `${record.refKey}: ${decoded.reason}`);
       const log = decoded.value;
-      if (log.ref.projectId === projectId && log.lineRef === lineRef && log.state === state) logs.push(log);
+      if (log.ref.projectId === projectId && log.lineRef === lineRef && log.branch === branch && log.state === state) {
+        logs.push(log);
+      }
     }
   }
   return logs;
@@ -257,12 +262,13 @@ function knowledgeNoticeOf(projectId: string, lineRef: string, kind: ProjectNoti
  * added.
  */
 async function notifyRecovery(write: KnowledgeWriteDeps, snapshots: KnowledgeSnapshots, projectId: string,
-  lineRef: string, kind: keyof typeof SUMMARIES, items: readonly RecoveryItem[]): Promise<number> {
+  at: { lineRef: string; branch: string }, kind: keyof typeof SUMMARIES, items: readonly RecoveryItem[]): Promise<number> {
   if (items.length === 0) return 0;
+  const { lineRef, branch } = at;
   const { subject, operation, noticeId } = knowledgeNoticeOf(projectId, lineRef, kind, items.map(item =>
     kind === 'knowledge_reverted' ? { path: item.path, takenAt: item.takenAt } : { path: item.path, writeId: item.writeId }));
   if (snapshots.readRecovery(noticeId).length > 0) return 0;
-  snapshots.recordRecovery(items.map((item, index) => ({ ...item, noticeId, itemNo: index + 1, lineRef })));
+  snapshots.recordRecovery(items.map((item, index) => ({ ...item, noticeId, itemNo: index + 1, lineRef, branch })));
   await write.notify({ projectRef: subject.projectRef, subject, kind, summary: SUMMARIES[kind](items.length), operation });
   return items.length;
 }
@@ -301,10 +307,10 @@ async function withRecoverySources(write: KnowledgeWriteDeps, line: LineKnowledg
 }
 
 /** KC-2: the recovery item of each bad file with a source, under its row's itemNo; `expectedBlob` is the file now ([2C1-19]). */
-function unreadableItemsOf(noticeId: string, lineRef: string, rows: readonly KnowledgeProblemV1[],
+function unreadableItemsOf(noticeId: string, at: { lineRef: string; branch: string }, rows: readonly KnowledgeProblemV1[],
   blobAt: (path: string) => string | null): KnowledgeRecoveryRow[] {
   return rows.flatMap(row => row.recovery === undefined ? [] : [{ noticeId, itemNo: row.itemNo, kind: 'unreadable' as const,
-    writeId: null, lineRef, path: row.files[0]!.path,
+    writeId: null, lineRef: at.lineRef, branch: at.branch, path: row.files[0]!.path,
     takenAt: row.recovery.source === 'snapshot' ? row.recovery.takenAt : null, expectedBlob: blobAt(row.files[0]!.path) }]);
 }
 

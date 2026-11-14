@@ -27,7 +27,7 @@ const original = newRunRecord({
   claim, basis: { kind: 'first' }, roleBinding: {
     schemaVersion: 1, bindingId: 'b', templateId: 'worker', templateRevision: 'r1', bindingVersion: 1,
     policyRevision: 'p1',
-  }, budget: { tokenBudget: 1, deadline: null }, workspaceRevision: 1,
+  }, budget: { tokenBudget: 1, deadline: null }, workspaceRevision: 1, line: null,
 });
 
 describe('K3-36 leaseReleasedForContinuation', () => {

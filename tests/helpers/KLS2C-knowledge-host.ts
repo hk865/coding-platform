@@ -19,15 +19,14 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, w
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createLocalWorkbenchHost, type LocalWorkbenchHost, type LocalWorkbenchHostOptions } from '../../src/app/host.js';
-import { PLATFORM_TOKEN_HEADER, type CoreScope } from '../../src/app/core-http-types.js';
-import { SETTINGS_API_PREFIX } from '../../src/app/host-settings-types.js';
+import type { CoreScope } from '../../src/app/core-http-types.js';
 import type { ArchitectureCatalogPinV1 } from '../../src/contracts/architecture-catalog.js';
 import type { StructuralApprovalV1 } from '../../src/contracts/architecture-proposal.js';
 import { sha256Hex } from '../../src/contracts/fingerprint.js';
 import { platformRoleProfile } from '../../src/core/agent-runtime/role-profiles.js';
 import type { DecisionCardV1 } from '../../src/core/work-graph/model/decision-contracts.js';
 import { ProviderRegistry, type ModelClientPort } from '../../vendor/coding-agent/dist/public-api.js';
-import { projectRef, workspaceRef } from '../app/support/S8A-L8-host.js';
+import { projectRef, settingsPost, workspaceRef } from '../app/support/S8A-L8-host.js';
 import { gitIn, initGitWorkspace } from '../scenarios/support/git-workspace.js';
 import { publicDirectory, tempDir } from './A2-restart-fixture.js';
 import { AG2B_RUNTIME_BUDGET, corePost, graphWrite, plain, readPageToken, startLinesEnded } from './AG2b-collaboration-fixture.js';
@@ -60,6 +59,9 @@ export type KLS2CHost = {
   readonly database: string;
   /** A public core route; `body` is the whole request body (`plain(...)` or `graphWrite(...)`), the answer decoded. */
   call<T>(suffix: string, body: unknown): Promise<T>;
+  /** A public Host settings route (`/api/real/settings/<route>`) as the Host's page, the answer decoded: KLS-3a1
+   *  `workspaces/open` (the person opens a folder), KC-3's routes. */
+  settings<T>(suffix: string, body: unknown): Promise<T>;
   /** One idle heartbeat that began after the call has finished: three consume barriers (2c1#7). */
   idle(): Promise<void>;
   /** The project notices of the decision queue (`decisions/queue`), all of them or one kind's. */
@@ -74,8 +76,6 @@ export type KLS2CHost = {
   git(args: string[]): string;
   /** KC-3 (`adviser: true`): queues one Run's replies; each new Run of the scripted adviser takes the next. */
   script(replies: readonly ScriptedReply[]): void;
-  /** A Host settings route (`/api/real/settings/<route>`) as the Host's page; the answer decoded. */
-  settings<T>(route: string, input: unknown): Promise<T>;
   close(): Promise<void>;
 };
 
@@ -196,6 +196,8 @@ export async function openKLS2CHost(opts: KLS2COpenOptions): Promise<KLS2CHost> 
     };
     return {
       host, root, scope, database, call, idle, notices: queueNotices,
+      settings: async <T>(suffix: string, body: unknown): Promise<T> =>
+        await (await settingsPost(url, suffix, token, body)).json() as T,
       noticesWithin: async (kind, rounds = 20) => {
         for (let round = 0; round < rounds; round += 1) {
           await idle();
@@ -214,9 +216,6 @@ export async function openKLS2CHost(opts: KLS2COpenOptions): Promise<KLS2CHost> 
       read: rel => (existsSync(underRoot(rel)) ? readFileSync(underRoot(rel)) : null),
       git: args => gitIn(root, ...args),
       script: replies => { scripts.push([...replies]); },
-      settings: async <T>(route: string, input: unknown): Promise<T> => await (await fetch(new URL(`${SETTINGS_API_PREFIX}${route}`,
-        url), { method: 'POST', body: JSON.stringify(input), headers: { 'content-type': 'application/json',
-        [PLATFORM_TOKEN_HEADER]: token } })).json() as T,
       close: () => host.close(),
     };
   } catch (error) {

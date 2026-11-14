@@ -154,7 +154,7 @@ export type DecisionSourceFactsDependencies = {
    */
   repairApprovalObjects?: (records: S5RecordPort, source: DecisionSourceV1) =>
     Promise<ReadResult<DecisionObjectV1[]>>;
-  /** M6: the ONE “this exploration batch can be re-proposed” read, shared with the card source. */
+  /** M6: the ONE “this batch can be re-proposed” read (exploration and Work-Run sources alike), shared with the card source. */
   reproposeAdmits?: (ctx: CoreCallContext, batchRef: import('../../../contracts/architecture-proposal.js').ArchitectureProposalBatchRef) =>
     Promise<boolean>;
 };
@@ -192,8 +192,8 @@ async function readStructuralProposalSource(deps: DecisionSourceFactsDependencie
   }
   const objects = await deps.structuralProposalObjects(deps.records, source);
   if (objects.status !== 'ready') return objects;
-  // The same judgement the card source runs; a batch whose members do not resolve to exploration rounds keeps the
-  // two original options, and the answer side refuses `repropose` for it through the same option list.
+  // The same judgement the card source runs; a batch whose members do not resolve to a re-proposal source (exploration
+  // or Work-Run) keeps the two original options, and the answer side refuses `repropose` through the same option list.
   const admits = deps.reproposeAdmits === undefined ? false : await deps.reproposeAdmits(ctx, identity.batch);
   return {
     status: 'ready',

@@ -46,7 +46,7 @@ import { EVIDENCE_SUMMARY_MAX_BYTES, requirementKeyOf } from '../../../contracts
 import { parseExecReviewAnswer, type ExecReviewVerdictV1 } from '../../../contracts/exec-review.js';
 import { systemRoundRequestId } from '../../../contracts/plan-round.js';
 import { interventionPlanningQueryRefs } from '../../../contracts/query-job.js';
-import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
+import type { GoalRef, GoalSnapshot, WorkspaceRef } from '../../../contracts/ledger.js';
 import {
     MAX_NEW_BASIS_INPUT_REFS, REPORT_CONTENT_TYPE, type NewBasisInputRefV1, type SourceStampV1,
 } from '../../../contracts/no-progress.js';
@@ -108,6 +108,7 @@ import {
     authorizeDelegatedWrite, identifyDelegatedWriter, type AgentPlanWriter, type PlanDelegatedWriteDependencies,
 } from '../tasks/plan-write-admission.js';
 import { REWORK_NOTE_CONTENT_TYPE, newBasisInputsProblem } from '../tasks/requeue-service.js';
+import type { RunActivityPort } from '../tasks/run-activity-service.js';
 import { readOwnerRecord } from '../tasks/owner-record-read.js';
 import { executeReworkRequestClose } from '../tasks/rework-requests.js';
 import { newBasisInputRefsProblem } from '../persistence/rework-codecs.js';
@@ -119,6 +120,7 @@ import {
 } from '../state/task-failure.js';
 import {
     checkEventAdmission, finalizeRoundOutcome, foldVerdictChecks, frozenBindingProblem, nextTaskEvidenceIndex, outcomeFor,
+    pythonSyntaxGaps,
     reverifyAdmissionProblem, reverifyCapRefusal, reverifyExemption, reverifyFailureClass, successorAutoCount,
     roundActivityProblem, roundChainHead, roundGoalActivityProblem, roundOpenBasisProblem, roundOpenChainProblem,
     roundOpenChecksProblem, roundOpenPointerProblem, roundOpenSubjectProblem, roundSubjectRunProblem,
@@ -954,6 +956,11 @@ export type EvidenceServiceDependencies = {
     queries?: ReviewQueryReads;
     /** Slice 9 VR-16: the reviewer Session's duty read; absent makes `recordReviewEvidence` `unsupported`. */
     sessionDuty?: ReviewSessionDuty;
+    /** B06-N1: the subject Run's recorded changed files; absent skips the check. */
+    runActivity?: Pick<RunActivityPort, 'readRunActivity'>;
+    /** B06-N1: parse the changed Python files; absent skips the check. */
+    pythonSyntax?: (ctx: CoreCallContext, input: { workspace: WorkspaceRef; paths: readonly string[] })
+      => Promise<readonly { path: string; line: number; message: string }[]>;
     now(): string;
     newId(): string;
 };
@@ -1897,6 +1904,24 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
             }
         } else {
             contextGaps.push({ code: 'source_unavailable', message: 'the current workspace root is unavailable for the round fixed source' });
+        }
+
+        // B06-N1 (121-34): the check round records the Python files this Run
+        // changed that still do not parse. Only a current source can be blamed
+        // on the Run, and only its `definite` changes are "changed": a stale
+        // source already has its own gap, and `possible` (shell/unknown) is not
+        // a confirmed edit. A missing or unknown tally means there is nothing
+        // to check, never an empty change list.
+        if (sourceCurrent && deps.pythonSyntax !== undefined && deps.runActivity !== undefined) {
+            const activity = await deps.runActivity.readRunActivity(ownedCtx.ctx, round.subjectRunRef);
+            const definite = activity.status === 'ready' && activity.value !== null
+                && activity.value.status === 'counted'
+                ? activity.value.changedFiles.definite.filter(path => path !== '.') : [];
+            if (definite.length > 0) {
+                const problems = await deps.pythonSyntax(ownedCtx.ctx,
+                    { workspace: round.configuration.workspace, paths: definite });
+                contextGaps.push(...pythonSyntaxGaps(problems));
+            }
         }
 
         // One candidate verdict (one id) and its applicability per check the

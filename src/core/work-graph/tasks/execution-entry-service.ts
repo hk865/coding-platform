@@ -125,6 +125,7 @@ import { planRunActivityForCommit } from './run-activity-service.js';
 import { readGoal, readGoalPhase, readGoalScope, sameCursor } from './plan-readers.js';
 import { goalStartPolicy } from '../state/goal-settings-machine.js';
 import { planRevisionRefKey } from '../persistence/plan-record-codecs.js';
+import { runWorkspacePinProblem } from '../persistence/run-record-codecs.js';
 import { mergeGuards } from '../persistence/record-guards.js';
 import { executionStoreFailureToRejection } from '../persistence/read-result-failures.js';
 import { contextAssemblyProblem, contextAssemblyStructureProblem, contextGoalContentProblem, declaredInputProblem, effectivePlatformDuty, frozenSectionOrderProblem, renderedSectionProblem } from '../state/context-input.js';
@@ -185,9 +186,6 @@ function isRoleBinding(value: unknown): value is RoleBindingRefV1 {
   return isRecord(value) && value['schemaVersion'] === 1 && nonEmpty(value['bindingId'])
     && nonEmpty(value['templateId']) && nonEmpty(value['templateRevision'])
     && isPositiveSafeInteger(value['bindingVersion']) && nonEmpty(value['policyRevision']);
-}
-function isWorkspacePin(value: unknown): value is { workspaceId: string; revision: number } {
-  return isRecord(value) && nonEmpty(value['workspaceId']) && isSafeInteger(value['revision']);
 }
 function isPermissions(value: unknown): value is TaskEnvelopeV1['permissions'] {
   return isRecord(value) && nonEmpty(value['policyRevision'])
@@ -473,7 +471,8 @@ function manifestProblem(value: unknown): string | null {
   if (!nonEmpty(value['hostConfigurationRevision'])) return 'manifest hostConfigurationRevision is required';
   const sessionRoleError = sessionRoleProblem(value['sessionRole']);
   if (sessionRoleError !== null) return sessionRoleError;
-  if (!isWorkspacePin(value['workspaceSnapshot'])) return 'manifest workspaceSnapshot is not a complete workspace pin';
+  const pinProblem = runWorkspacePinProblem(value['workspaceSnapshot']);
+  if (pinProblem !== null) return `manifest workspaceSnapshot ${pinProblem}`;
   if (!isPermissions(value['permissions'])) return 'manifest permissions are incomplete';
   if (!isBudget(value['budget'])) return 'manifest budget is not a TaskBudgetV1';
   if (!Array.isArray(value['selectedTaskInputs'])) return 'manifest selectedTaskInputs must be an array';
@@ -2246,7 +2245,7 @@ function preparedEnvelopeProblem(envelope: Record<string, unknown>, claim: TaskC
     return invalid('the prepared envelope scope disagrees with the claim');
   }
   if (!isRoleBinding(envelope['roleBinding'])) return invalid('the prepared envelope roleBinding is incomplete');
-  if (!isWorkspacePin(envelope['workspaceSnapshot'])) return invalid('the prepared envelope workspaceSnapshot is incomplete');
+  if (runWorkspacePinProblem(envelope['workspaceSnapshot']) !== null) return invalid('the prepared envelope workspaceSnapshot is incomplete');
   if (!isPermissions(envelope['permissions'])) return invalid('the prepared envelope permissions are incomplete');
   if (!isBudget(envelope['budget'])) return invalid('the prepared envelope budget is incomplete');
   if (!Array.isArray(envelope['sourceRefs'])) return invalid('the prepared envelope sourceRefs must be an array');

@@ -1284,7 +1284,7 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
     if (!claimed.ok) return reject(claimed.code, claimed.detail);
     const written = claimRecords(claimed.effects, { lease: releasedLease, session, occupation,
       run: { kind: 'claim_committed', claim, basis, roleBinding: input.roleBinding, budget: input.budget,
-        workspaceRevision: workspaceRecord.revision },
+        workspaceRevision: workspaceRecord.revision, line: goal.lineRef },
       runContext: claimRunContext(claimFacts, actor) });
     if ('status' in written) return written;
     // K3 UCR-03 (L10): the review claim writes the record's `activeRound` in the

@@ -108,6 +108,7 @@ const CALL_ID_512 = 'y'.repeat(512);
 const GOAL_SNAPSHOT: GoalSnapshot = {
   ref: { aggregateType: 'Goal', projectId: PROJECT, goalId: GOAL },
   workspaceRef: { aggregateType: 'Workspace', projectId: PROJECT, workspaceId: WORKSPACE },
+  lineRef: null,
   objective: 'K3-26 pure card', desiredState: 'active', desiredStateRevision: 1, desiredStateRequestedBy: null,
   activePlanRevision: { aggregateType: 'PlanRevision', projectId: PROJECT, planId: 'plan-1' }, revision: 4,
   settings: { schemaVersion: 1, autonomy: 'every_step', order: 0, waitForGoalRef: null, parallelRisks: [] },

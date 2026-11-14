@@ -14,6 +14,7 @@
 - `decision-record-codecs.ts` — 决定写事件（`GoalSettingsChanged`、`WorkspaceNoticeSeenChanged`）、notice origin 解码与决定证明校验。
 - `task-node-commit-codecs.ts` — `TaskNodeCommit@1` 的字段表 codec 与注册：`taskNodeCommitCodec`、`TaskNodeCommitted@1` 事件 codec `taskNodeCommittedCodec` 和 `TASK_NODE_COMMIT_SCHEMAS`；一条记录（`task-node-commit-by-goal` lookup）、一条事件。
 - `goal-interruption-codecs.ts` — `GoalInterruption@1` 的字段表 codec 与注册：`goalInterruptionCodec`、`GoalInterruptionChanged@1` 事件 codec 和 `GOAL_INTERRUPTION_SCHEMAS`；一条记录、一条事件。
+- `goal-delivery-codecs.ts` — `GoalDeliveryAcceptance@1` 的字段表 codec 与注册：`GOAL_DELIVERY_ACCEPTANCE_SCHEMA_ID`、`GOAL_DELIVERY_ACCEPTED_EVENT_TYPE`、`GOAL_DELIVERY_SCHEMAS`（一条记录、一条 `GoalDeliveryAccepted` 事件）、编解码 `encodeGoalDeliveryAcceptance`/`decodeGoalDeliveryAcceptance` 与 `encodeGoalDeliveryAcceptedEvent`/`decodeGoalDeliveryAcceptedEvent`（事件带整条记录，重放只读事件），以及 ref 键 `goalDeliveryAcceptanceRefKey`；没有 lookup，按完整 ref 的 canonical key 读。
 - `dispatch-counter-codecs.ts` — `DispatchCounter@1` 的字段表 codec 与注册：`dispatchCounterCodec`（check/encode/decode/注册）和 `DISPATCH_COUNTER_SCHEMAS`（一条记录、零事件）；键是完整 ref 的 `canonicalJson`。
 - `event-codec-factory.ts` — 事件 codec 工厂：固定“外层→解析→内外层一致→body”管线。
 - `event-envelope.ts` — 外层事件信封编码。
@@ -26,6 +27,7 @@
 - `initialization-binding-codecs.ts` — `InitializationBinding@1` 的字段表 codec 与注册：`initializationBindingCodec`（check/encode/decode/注册/两条 lookup）和 `INITIALIZATION_BINDING_SCHEMAS`（一条记录、零事件）；键是完整 ref 的 `canonicalJson`。
 - `initialization-adoption-codecs.ts` — `InitializationAdoption@1` 的字段表 codec 与注册：`initializationAdoptionCodec`（check/encode/decode/注册，键是完整 ref 的 `canonicalJson`，无 lookup）、两个重放事件 codec `initializationAdoptionAcceptedCodec`/`initializationAdoptionAdvancedCodec` 和 `INITIALIZATION_ADOPTION_SCHEMAS`（一条记录、两个事件）；进度规则调用 `C/validation/initialization-adoption.ts` 的同一份。
 - `line-settings-codecs.ts` — `WorkspaceLinePinsChanged@1` 事件 codec。
+- `line-record-codecs.ts` — 线记录 `Line@1` 的字段表 codec `lineCodec`、结果事件 `LineRegistered@1`（`lineRegisteredCodec`，带回答的整条线，重放只靠事件）和 `LINE_RECORD_SCHEMAS`（一条记录、一个事件、一条按项目的 lookup）；线的唯一读法：`lineRecordKey`、项目（或一个工作区）的线按建线时间排的 `readProjectLines`（带读位置 `watermark`，按它判定的写 CAS 在上面）、一个文件夹的线 `readLineRecord`；新 Goal/Session 取线的唯一规则 `lineForWrite`（给了文件夹就取这个工作区那个文件夹的线，不是这个工作区的线就拒 `not_found`；没给就取主线，工作区没有线为 null，多条线也不拒）。放在这里是因为 `tasks`、`sessions`、`configuration` 都要用。
 - `lookup-all.ts` — 等值索引完整候选集的稳定窗口分页。
 - `knowledge-record-codecs.ts` — 知识写日志 `KnowledgeWrite@1` 和完成事件 `KnowledgeWritesCompleted@1` 的字段表 codec 与注册：一次知识写的每个文件改动一条日志（线键、路径、种类、模块文件的项目视图模块号、写前写后 blob、`since` 绑到携带这个文件内容的那个事件），状态 `pending`（在途）、`unconfirmed`（对账交给人的恢复项）、`completed`；两条 lookup `knowledge-writes-by-line-state`（project、lineRef、state）和 `knowledge-writes-by-state`（project、state）；`unconfirmed` 的事件 `KnowledgeWritesUnconfirmed@1`；`KNOWLEDGE_RECORD_SCHEMAS` 是一条记录、两个事件。
 - `lookup-ordered-all.ts` — 有序索引完整分页读取。
@@ -40,7 +42,7 @@
 - `record-codecs.ts` — Goal 家族记录/事件 codec、`canonicalRefKey`、Goal/Workspace 设置校验。
 - `rework-codecs.ts` — 返工/引用/notice origin 等纯形状校验（actor、Run、Session、Task 等 ref）。
 - `run-activity-codecs.ts` — `RunActivity`/`ActivityRecording` 记录与事件 codec；`ActivityRecording` 的当前格式带 `querySince`（null = 还没有 Query epoch），facts/span/ref 校验器导出供 Query codec 复用；两种记录的 SessionRef 都用 `rework-codecs.ts` 的正本 `sessionRefProblem`。
-- `run-record-codecs.ts` — `RunSnapshot@1`/`QueryRunSnapshot@1` 的纯校验唯一实现：两个 schema id、Run/QueryRun 形状检查、`decodeRun` 与 `Decoded`；`materials/record-readers.ts` 只保留注册和同名委托，`materials/run-snapshot-decoder.ts` 只保留 `decodeRun` 再导出。
+- `run-record-codecs.ts` — `RunSnapshot@1`/`QueryRunSnapshot@1` 的纯校验唯一实现：两个 schema id、Run/QueryRun 形状检查、`decodeRun` 与 `Decoded`，以及 Run、任务 manifest、envelope 共用的工作区 pin 校验 `runWorkspacePinProblem`（带 `line`，经 `contracts/line.ts` 的 `lineRefProblem`）；`materials/record-readers.ts` 只保留注册和同名委托，`materials/run-snapshot-decoder.ts` 只保留 `decodeRun` 再导出。
 
 ## 可以复用的能力
 | 名字 | 位置 | 做什么 | 什么时候用 |
@@ -63,16 +65,16 @@
 | `atLeastCursorResult` | `src/core/work-graph/persistence/read-result-failures.ts:26` | 比较观察到的 watermark 与要求的 `atLeastCursor`，不足则给真实 `not_ready` | 索引读承诺新鲜度时 |
 | `lookupAll` | `src/core/work-graph/persistence/lookup-all.ts:32` | 把一个等值索引读到结尾，窗口变化最多重试 4 次，返回 watermark 且 `truncated` 恒为 false | 契约要求完整等值事实集时 |
 | `readAllOrdered` | `src/core/work-graph/persistence/lookup-ordered-all.ts:17` | 按共享页大小把有序索引读到结尾，返回记录与最后 watermark；store 失败原样抛出 | 契约要求完整有序事实集时 |
-| `canonicalRefKey` | `src/core/work-graph/persistence/record-codecs.ts:81` | Project/Workspace/Goal ref 的规范 key；委托 `src/contracts/fingerprint.ts:16` 的 `canonicalKey` | 读、guard、claim、比较需要完整 key 时；不要另写编码 |
-| `cloneActorRef` | `src/core/work-graph/persistence/record-codecs.ts:92` | 深拷贝 `ActorRef` | 编码前隔离调用方对象时 |
-| `goalSnapshotValueProblem` | `src/core/work-graph/persistence/record-codecs.ts:574` | Goal 快照值形状/范围校验（含出生字段：缺 `settings` 即拒绝，`continuedFrom`/`copiedInterventions` 按字段表片段检查） | 解码或提交 Goal 快照时 |
-| `workspaceSnapshotValueProblem` | `src/core/work-graph/persistence/record-codecs.ts:587` | Workspace 快照值形状校验 | 解码或提交 Workspace 时 |
-| `readGoalSettings` | `src/core/work-graph/persistence/record-codecs.ts:832` | 返回 Goal 快照自带的 `settings`（每个 Goal 出生即有，不再补默认值） | 需要 Goal 设置时 |
-| `effectiveWorkspaceDecisionSettings` | `src/core/work-graph/persistence/record-codecs.ts:848` | 读取 Workspace 生效的决定设置 | 需要决定设置时 |
+| `canonicalRefKey` | `src/core/work-graph/persistence/record-codecs.ts:82` | Project/Workspace/Goal ref 的规范 key；委托 `src/contracts/fingerprint.ts:16` 的 `canonicalKey` | 读、guard、claim、比较需要完整 key 时；不要另写编码 |
+| `cloneActorRef` | `src/core/work-graph/persistence/record-codecs.ts:93` | 深拷贝 `ActorRef` | 编码前隔离调用方对象时 |
+| `goalSnapshotValueProblem` | `src/core/work-graph/persistence/record-codecs.ts:577` | Goal 快照值形状/范围校验（含出生字段：缺 `settings` 即拒绝，`continuedFrom`/`copiedInterventions` 按字段表片段检查） | 解码或提交 Goal 快照时 |
+| `workspaceSnapshotValueProblem` | `src/core/work-graph/persistence/record-codecs.ts:590` | Workspace 快照值形状校验 | 解码或提交 Workspace 时 |
+| `readGoalSettings` | `src/core/work-graph/persistence/record-codecs.ts:836` | 返回 Goal 快照自带的 `settings`（每个 Goal 出生即有，不再补默认值） | 需要 Goal 设置时 |
+| `effectiveWorkspaceDecisionSettings` | `src/core/work-graph/persistence/record-codecs.ts:852` | 读取 Workspace 生效的决定设置 | 需要决定设置时 |
 | `goalRefFor` | `src/core/work-graph/persistence/commit-compiler.ts:56` | 生成 `{aggregateType:'Goal', projectId, goalId}` 的规范 GoalRef | 需要 GoalRef 时；不要另写构造器 |
 | `compileGoalCreate` | `src/core/work-graph/persistence/commit-compiler.ts:90` | 把已由 `state/` 构造的 Goal 快照/guard 编译成一次 `PreparedCommit`；`birthEvent: "none"` 不建、不编码 `GoalCreated`（自己的结果事件记出生的 owner：确认草稿、复制） | Goal 创建的写入 owner |
-| `normalizeCallerGoalPins` | `src/core/work-graph/persistence/commit-compiler.ts:194` | 校验并归一化调用方 Goal pins | 组装 Goal 创建提交前 |
-| `compareCallerGoalPins` | `src/core/work-graph/persistence/commit-compiler.ts:246` | 比较 caller pins 与观察到的版本，返回不一致项 | 提交前核对 pins |
+| `normalizeCallerGoalPins` | `src/core/work-graph/persistence/commit-compiler.ts:195` | 校验并归一化调用方 Goal pins | 组装 Goal 创建提交前 |
+| `compareCallerGoalPins` | `src/core/work-graph/persistence/commit-compiler.ts:247` | 比较 caller pins 与观察到的版本，返回不一致项 | 提交前核对 pins |
 | `createGoalGraphRepository` | `src/core/work-graph/persistence/graph-repository.ts:121` | 在 `GoalRecordTransactionPort` 上提供读快照/幂等查找/提交/重放 | Goal 图写入 owner |
 | `actorRefProblem` | `src/core/work-graph/persistence/rework-codecs.ts:98` | 校验 human/system/agent actor 的完整形状（agent 带 RunRef）；**正本** | actor 字段或嵌套 actor；旧副本见“不要做” |
 | `runRefProblem` | `src/core/work-graph/persistence/rework-codecs.ts:114` | 校验完整 Work RunRef | Work Run 字段，注意不是 QueryRunRef |
@@ -87,7 +89,7 @@
 | `createEventCodec` | `src/core/work-graph/persistence/event-codec-factory.ts:42` | 由一份事件描述生成 encode/decode/注册，固定校验顺序与首错 | 新增兼容事件格式时 |
 | `createRecordCodec` | `src/core/work-graph/persistence/field-table-codec.ts:57` | 由字段表记录格式生成 check/encode/decode/注册/lookup：键是完整 ref 的 `canonicalJson`，encode 先按 pending 检查、不排序不补值，decode 先核对信封（`decodeRefKey`、`decodeRecordBody`）再按 stored 检查 | 新记录格式；顶层字段和数组元素里的可绑定游标（含 `holders[].since`、`reservations[].reservedAt`、`entries[].enqueuedAt`，以及 `openedAt`/`closedAt` 两个顶层名）自动声明为 `commitCursorFields` |
 | `createEventCodec` | `src/core/work-graph/persistence/field-table-codec.ts:109` | 由字段表事件格式生成 codec：encode 先检查再原样交给信封编码，decode 走事件 codec 工厂的固定管线后做字段检查 | 新事件格式；同名的事件 codec 工厂（`event-codec-factory.ts`）是它复用的管线，旧事件仍直接用工厂 |
-| `knowledgeWriteCodec`、`knowledgeWritesCompletedCodec`、`knowledgeWritesUnconfirmedCodec`、`KNOWLEDGE_RECORD_SCHEMAS`、`KNOWLEDGE_WRITES_BY_LINE_STATE_LOOKUP` | `src/core/work-graph/persistence/knowledge-record-codecs.ts:50`、`:56`、`:63`、`:66`、`:17` | 知识写日志的记录 codec、完成事件和 `unconfirmed` 事件的 codec、两后端注册组和按线、按状态的那条 lookup 名（2c-1d 起读写的在途核对都按线判，按项目的那条删了） | 写入顺序记日志和补完成（`knowledge/write-log.ts`）、对账读 pending 日志时、2c-1d 的在途核对（`pendingKnowledgeWrites`）；不要另写日志格式 |
+| `knowledgeWriteCodec`、`knowledgeWritesCompletedCodec`、`knowledgeWritesUnconfirmedCodec`、`KNOWLEDGE_RECORD_SCHEMAS`、`KNOWLEDGE_WRITES_BY_LINE_STATE_LOOKUP` | `src/core/work-graph/persistence/knowledge-record-codecs.ts:53`、`:59`、`:66`、`:69`、`:17` | 知识写日志的记录 codec、完成事件和 `unconfirmed` 事件的 codec、两后端注册组和按线、按状态的那条 lookup 名（2c-1d 起读写的在途核对都按线判，按项目的那条删了） | 写入顺序记日志和补完成（`knowledge/write-log.ts`）、对账读 pending 日志时、2c-1d 的在途核对（`pendingKnowledgeWrites`）；不要另写日志格式 |
 | `formatSchemas` | `src/core/work-graph/persistence/field-table-codec.ts:129` | 把字段表 codec 汇成两个后端共用的 `RecordBackendSchemas`；重复的 schemaId、aggregateType 或 事件 type@version 抛错 | 注册新格式时 |
 | `moduleOverlapGateCodec`、`NOTE_REQUEST_FIELDS`、`moduleOverlapGateOpenedCodec`、`moduleOverlapNoteRequestedCodec`、`moduleOverlapGateReleasedCodec`、`MODULE_OVERLAP_GATE_SCHEMAS` | `src/core/work-graph/persistence/module-overlap-gate-codecs.ts:85`、`:10`、`:81`、`:82`、`:83`、`:85` | `ModuleOverlapGate@1` 的字段表 codec（check/encode/decode/注册）、两个 `noteRequest` 共用的字段对象、门的开/注记请求/释放三条事件 codec 与两后端注册组（一条记录、三个事件、`overlap-gate-by-goal` lookup）；`noteRequest` 只接受两臂 | 组合根注册模块重叠门记录与事件、读写门时；不要另写字段校验或重复注册 |
 | `initializationBindingCodec` | `src/core/work-graph/persistence/initialization-binding-codecs.ts:8` | 初始化绑定记录的 check/encode/decode/注册/两条 lookup；encode 先按 pending 检查，decode 核对信封后按 stored 检查 | 写或读初始化绑定时；不要手写它的字段校验 |
@@ -95,6 +97,7 @@
 | `DISPATCH_COUNTER_SCHEMAS` | `src/core/work-graph/persistence/dispatch-counter-codecs.ts:9` | `DispatchCounter@1` 的两后端注册（一条记录、零事件）；同一文件的 `dispatchCounterCodec` 是它的 check/encode/decode codec | 组合根注册 schema 时；不要另拼一份 |
 | `TASK_NODE_COMMIT_SCHEMAS`、`taskNodeCommitCodec`、`taskNodeCommittedCodec` | `src/core/work-graph/persistence/task-node-commit-codecs.ts:10`、`src/core/work-graph/persistence/task-node-commit-codecs.ts:8`、`src/core/work-graph/persistence/task-node-commit-codecs.ts:9` | 节点审核事实的记录 codec 与 `TaskNodeCommitted@1` 结果事件的注册 | 组合根注册 schema、节点审核 owner 写记录并投影回执时；不要另拼记录或事件 |
 | `GOAL_INTERRUPTION_SCHEMAS`、`goalInterruptionCodec`、`goalInterruptionChangedCodec` | `src/core/work-graph/persistence/goal-interruption-codecs.ts:24`、`src/core/work-graph/persistence/goal-interruption-codecs.ts:22`、`src/core/work-graph/persistence/goal-interruption-codecs.ts:22` | `GoalInterruption@1` 的记录 codec 与一条 `GoalInterruptionChanged@1` 结果事件的注册 | 组合根注册 schema、目标中断 owner 写记录并投影回执时；不要另拼记录或事件 |
+| `GOAL_DELIVERY_SCHEMAS`、`GOAL_DELIVERY_ACCEPTANCE_SCHEMA_ID`、`GOAL_DELIVERY_ACCEPTED_EVENT_TYPE`、`encodeGoalDeliveryAcceptance`、`decodeGoalDeliveryAcceptance`、`encodeGoalDeliveryAcceptedEvent`、`decodeGoalDeliveryAcceptedEvent`、`goalDeliveryAcceptanceRefKey` | `src/core/work-graph/persistence/goal-delivery-codecs.ts:88`、`src/core/work-graph/persistence/goal-delivery-codecs.ts:22`、`src/core/work-graph/persistence/goal-delivery-codecs.ts:23`、`src/core/work-graph/persistence/goal-delivery-codecs.ts:91`、`src/core/work-graph/persistence/goal-delivery-codecs.ts:95`、`src/core/work-graph/persistence/goal-delivery-codecs.ts:101`、`src/core/work-graph/persistence/goal-delivery-codecs.ts:106`、`src/core/work-graph/persistence/goal-delivery-codecs.ts:112` | 交付确认记录与 `GoalDeliveryAccepted` 结果事件的注册、编解码和 ref 键 | 组合根注册 schema、交付接受 owner 写记录并重放投影时；不要另拼记录或事件 |
 | `encodeEventEnvelope` | `src/core/work-graph/persistence/event-envelope.ts:4` | 编码外层事件信封，body 原样 stringify | 手写事件 codec 时 |
 | `eventEnvelopeProblem` | `src/core/work-graph/persistence/event-validation.ts:6` | 校验外层信封四字段 | 事件解码第一步 |
 | `eventBodyEnvelopeProblem` | `src/core/work-graph/persistence/event-validation.ts:25` | 校验 body 与编码信封在 id/type/version/time 上一致 | 解析 body 后 |
@@ -103,13 +106,13 @@
 | `isRunExecutionHistoryV1` | `src/core/work-graph/persistence/execution-history-codecs.ts:73` | 纯 `RunExecutionHistoryV1` 形状/范围校验 | Run 记录与写入规则共用时 |
 | `compareProposalChainPositions` | `src/core/work-graph/persistence/plan-record-codecs.ts:141` | 比较 proposal 链位置 | 需要 proposal 顺序时 |
 | `PLAN_PROPOSAL_COMMIT_CURSOR_FIELDS` | `src/core/work-graph/persistence/plan-record-codecs.ts:77` | 候选记录的两个提交游标字段（`since` 由创建提交绑定，`until` 只由采用提交绑定）；PlanProposal schema 的 `commitCursorFields` 用它 | 注册或核对 PlanProposal schema 时；不要另列游标字段 |
-| `RUN_SNAPSHOT_SCHEMA_ID` | `src/core/work-graph/persistence/run-record-codecs.ts:26` | `RunSnapshot@1` 的 schema id；materials 注册读取它 | 注册或核对 Run 记录 schema 时 |
-| `QUERY_RUN_SNAPSHOT_SCHEMA_ID` | `src/core/work-graph/persistence/run-record-codecs.ts:27` | `QueryRunSnapshot@1` 的 schema id；materials 注册读取它 | 注册或核对 QueryRun 记录 schema 时 |
-| `validateRunSnapshot` | `src/core/work-graph/persistence/run-record-codecs.ts:190` | 唯一的 `RunSnapshot@1` 编码校验（含 `consumedWait` 三臂与 required `previousRun` 的链接检查）；不判断业务准入 | Run 记录读取/解码；不要再写一份 |
-| `executionRequestProfileProblem` | `src/core/work-graph/persistence/run-record-codecs.ts:292` | 执行状态必填的 `requestProfile`：null 或完整 profile（profileId、runtimeBudget、budget、consumerId） | QueryRun 记录与执行事件共用的唯一校验 |
-| `executionPreparedProblem` | `src/core/work-graph/persistence/run-record-codecs.ts:323` | 执行状态必填的 `prepared`：null 或带必填 `requestEffectiveGoalId`（null 或非空）的绑定 | QueryRun 记录与执行事件共用的唯一校验 |
-| `validateQueryRunSnapshot` | `src/core/work-graph/persistence/run-record-codecs.ts:334` | 唯一的 `QueryRunSnapshot@1` 编码校验；queries 复用它 | 解码/校验 QueryRun 记录 |
-| `decodeRun` | `src/core/work-graph/persistence/run-record-codecs.ts:402` | 唯一的 schema-checked `RunSnapshot` 解码及其 `Decoded` 类型；Session/邮箱/Task 读共用 | 需要解码 Run 快照时；不要另写宽松解析 |
+| `RUN_SNAPSHOT_SCHEMA_ID` | `src/core/work-graph/persistence/run-record-codecs.ts:27` | `RunSnapshot@1` 的 schema id；materials 注册读取它 | 注册或核对 Run 记录 schema 时 |
+| `QUERY_RUN_SNAPSHOT_SCHEMA_ID` | `src/core/work-graph/persistence/run-record-codecs.ts:28` | `QueryRunSnapshot@1` 的 schema id；materials 注册读取它 | 注册或核对 QueryRun 记录 schema 时 |
+| `validateRunSnapshot` | `src/core/work-graph/persistence/run-record-codecs.ts:197` | 唯一的 `RunSnapshot@1` 编码校验（含 `consumedWait` 三臂与 required `previousRun` 的链接检查）；不判断业务准入 | Run 记录读取/解码；不要再写一份 |
+| `executionRequestProfileProblem` | `src/core/work-graph/persistence/run-record-codecs.ts:298` | 执行状态必填的 `requestProfile`：null 或完整 profile（profileId、runtimeBudget、budget、consumerId） | QueryRun 记录与执行事件共用的唯一校验 |
+| `executionPreparedProblem` | `src/core/work-graph/persistence/run-record-codecs.ts:329` | 执行状态必填的 `prepared`：null 或带必填 `requestEffectiveGoalId`（null 或非空）的绑定 | QueryRun 记录与执行事件共用的唯一校验 |
+| `validateQueryRunSnapshot` | `src/core/work-graph/persistence/run-record-codecs.ts:340` | 唯一的 `QueryRunSnapshot@1` 编码校验；queries 复用它 | 解码/校验 QueryRun 记录 |
+| `decodeRun` | `src/core/work-graph/persistence/run-record-codecs.ts:408` | 唯一的 schema-checked `RunSnapshot` 解码及其 `Decoded` 类型；Session/邮箱/Task 读共用 | 需要解码 Run 快照时；不要另写宽松解析 |
 
 ## 内部用
 
@@ -133,7 +136,7 @@
 - `storeFailureToRejection` 只有正本这一份：`src/core/work-graph/persistence/read-result-failures.ts:45`；`src/core/work-graph/tasks/request-service.ts` 的本地 store 失败映射已删，现改调 `ownerWriteStoreFailureToRejection`，不要恢复手写映射（M1-30、M1-10）。
 - `actorRefProblem` 是 actor 字段形状的正本；`src/contracts/validation/identity.ts:5` 的 `validateActor` 是另一条规则（`void` 并追加 `ValidationIssue`，契约层也不能 import WorkGraph），二者不能互换；sessions 的 `checkCreationActor` 包装已删除（S05、FP-17）。
 - `canonicalRefKey` 委托 `src/contracts/fingerprint.ts:16` 的 `canonicalKey`；`configuration/role-record-codecs.ts` 的旧副本已删除，不要恢复。
-- `sessionRefProblem` 是普通 SessionRef 的正本；`src/core/work-graph/sessions/session-record-codecs.ts:180` 的 `checkPlainSessionRef` 是 planned 输入的报错适配器（S06，两种固定文字），不能换成它；`isSessionRef` 的副本已删/已改名，不要恢复（CS-11、M1-31）。
+- `sessionRefProblem` 是普通 SessionRef 的正本；`src/core/work-graph/sessions/session-record-codecs.ts:181` 的 `checkPlainSessionRef` 是 planned 输入的报错适配器（S06，两种固定文字），不能换成它；`isSessionRef` 的副本已删/已改名，不要恢复（CS-11、M1-31）。
 - 不要复制 Store 失败 switch；按 owner 语义选现有映射，request 尾/收件冲突先单独处理（M1-30、M1-10）。
 - 不要把 `lookupAll`/`readAllOrdered` 当成有界队列步；完整集与遍历预算是两个契约（M1-13）。
 - 不要重建事件 codec 管线、改校验顺序或把持久化 JSON 换成 canonical-key 序列化（M1-37）。

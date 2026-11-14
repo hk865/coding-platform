@@ -10,6 +10,7 @@ import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js'
 import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
 import { GOAL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/record-codecs.js';
+import { LINE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/line-record-codecs.js';
 import { SESSION_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { ROLE_LINE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/role-line-record-codecs.js';
 import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
@@ -37,11 +38,13 @@ const creation = (requestId: string) => ({
   meta: { requestId, expected: [] },
 });
 const schemas: RecordBackendSchemas = {
-  records: [...GOAL_RECORD_SCHEMAS.records, ...SESSION_RECORD_SCHEMAS.records, ...ROLE_LINE_RECORD_SCHEMAS.records],
+  records: [...GOAL_RECORD_SCHEMAS.records, ...SESSION_RECORD_SCHEMAS.records, ...ROLE_LINE_RECORD_SCHEMAS.records,
+    ...LINE_RECORD_SCHEMAS.records],
   events: [...GOAL_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events,
     ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events, ...ROLE_LINE_RECORD_SCHEMAS.events],
   // The two link lookups arrive with SESSION_RECORD_SCHEMAS; the notice lookup with the R1 bundle.
-  lookups: [...(SESSION_RECORD_SCHEMAS.lookups ?? []), ...(ROLE_LINE_RECORD_SCHEMAS.lookups ?? [])],
+  lookups: [...(SESSION_RECORD_SCHEMAS.lookups ?? []), ...(ROLE_LINE_RECORD_SCHEMAS.lookups ?? []),
+    ...(LINE_RECORD_SCHEMAS.lookups ?? [])],
 };
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });

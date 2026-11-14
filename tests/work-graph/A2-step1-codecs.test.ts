@@ -550,7 +550,7 @@ describe('VerificationRound chain and incompleteCause (spec §9.1, C5)', () => {
 // ------------------------------------------------------------------------ //
 function endedRun(runId: string, outcome: RunSnapshot['outcome']): RunSnapshot {
   return { ref: runRef(runId), revision: 4, schemaVersion: 1, task, attemptId: `attempt-${runId}`, planRef, roleBinding,
-    budget: { tokenBudget: 1000, deadline: null }, workspaceSnapshot: { workspaceId: W, revision: 4 },
+    budget: { tokenBudget: 1000, deadline: null }, workspaceSnapshot: { workspaceId: W, revision: 4, line: null },
     status: 'ended', outcome, exitCode: outcome === 'completed' ? 0 : null, lastEventSeq: 3, lastRuntimeEventId: 'rt-3',
     lastFactEventId: 'fact-3', envelope: null, startedAt: at, startedSince: null, endedAt: at, previousRun: null };
 }
@@ -649,7 +649,7 @@ describe('Run terminalPayload, reconciliation and input binding (spec §6.1)', (
 // Goal desired state (D-9, GOAL-05, LA-7)                                   //
 // ------------------------------------------------------------------------ //
 const legacyGoal: GoalSnapshot = { ref: { aggregateType: 'Goal', projectId: P, goalId: G },
-  workspaceRef: { aggregateType: 'Workspace', projectId: P, workspaceId: W }, objective: 'Ship the module',
+  workspaceRef: { aggregateType: 'Workspace', projectId: P, workspaceId: W }, lineRef: null, objective: 'Ship the module',
   desiredState: 'active', desiredStateRevision: 1, desiredStateRequestedBy: null, activePlanRevision: null, revision: 1,
   settings: { schemaVersion: 1, autonomy: 'after_plan_confirmation', order: 0, waitForGoalRef: null, parallelRisks: [] },
   continuedFrom: null, copiedInterventions: [], since: 'c0000000001' as GoalSnapshot['since'] };
@@ -740,7 +740,7 @@ describe('other step-1 decoders', () => {
   it('reads Session healthConclusion (absent, null or one of three) and its SessionHealthObserved event', () => {
     const session: SessionRecord = { ref: { aggregateType: 'Session', projectId: P, sessionId: 'session-1' }, revision: 2,
       kernel: { adapterId: 'coding-agent', kernelSessionId: 'kernel-session-1' }, lifecycle: 'active', health: 'available',
-      role: { kind: 'legacy_template', templateId: 'worker', templateRevision: 'r1' }, workspaceId: W, lastExecutionRef: null,
+      role: { kind: 'legacy_template', templateId: 'worker', templateRevision: 'r1' }, workspaceId: W, lineRef: null, lastExecutionRef: null,
       occupancy: null, historyCursor: null, createdAt: at, archivedAt: null,
       provenance: { schemaVersion: 1, kind: 'new' } };
     const unavailable: SessionRecord = { ...session, health: 'unavailable', healthConclusion: 'damaged' };

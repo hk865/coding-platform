@@ -785,7 +785,8 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
 
       let rootResolved;
       try {
-        rootResolved = await deps.workspaceHost.resolveRoot(workspace);
+        // kls-design §2.3.3: a QueryRun runs in its Session's line, frozen on the manifest.
+        rootResolved = await deps.workspaceHost.resolveRoot(workspace, manifest.workspace.line ?? undefined);
       } catch (error) {
         return rejected('unavailable', `resolving the Query workspace root failed: ${messageOf(error)}`);
       }

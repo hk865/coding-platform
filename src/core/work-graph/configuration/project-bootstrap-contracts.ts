@@ -21,6 +21,7 @@ import type {
   ProjectCompletionPolicyActiveSnapshot,
 } from '../../../contracts/governance.js';
 import type { ProjectSnapshot, WorkspaceSnapshot } from '../../../contracts/ledger.js';
+import type { CheckoutIdentity, LineSnapshot } from '../../../contracts/line.js';
 import type { EncodedRecord, GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { CommitFragment } from '../persistence/command-executor.js';
 import type { CompletionPolicyReadPort } from '../model/completion-policy-contracts.js';
@@ -81,7 +82,22 @@ export interface ProjectRegistrationPort {
     ctx: CoreCallContext,
     projectId: string,
   ): Promise<ReadResult<ProjectSnapshot>>;
+  /**
+   * KLS-3a: the one writer of a workspace's lines (`line-service.ts`). The Host registers the line of a checkout it
+   * opened; `meta.expected` is exactly the Workspace pin. A folder that already has its line answers that line.
+   */
+  registerLine(
+    ctx: CoreCallContext,
+    request: GraphWrite<RegisterLineInputV1>,
+  ): Promise<WriteResult<LineSnapshot>>;
+  /** One workspace's line in one folder (`lineKeyOf`); `not_found` when the folder is no line of it. */
+  readLine(ctx: CoreCallContext, input: { workspaceId: string; folder: string }): Promise<ReadResult<LineSnapshot>>;
+  /** The project's lines (of one workspace when named), oldest first: a workspace's first line is its main line. */
+  readLines(ctx: CoreCallContext, input: { workspaceId?: string }): Promise<ReadResult<{ lines: LineSnapshot[] }>>;
 }
+
+/** The line a Host probed: its identity and the HEAD it forks from (null when not git or before the first commit). */
+export type RegisterLineInputV1 = { workspaceId: string; line: CheckoutIdentity; forkPoint: string | null };
 
 /**
  * Trusted Host CompletionPolicy configuration.
@@ -146,6 +162,7 @@ export type ProjectBootstrapDependencies = {
 /** The public grouping the composition root publishes as `platform.projects`
  * and `platform.completionPolicies`. */
 export type ProjectBootstrapServices = {
-  projects: ProjectRegistrationPort;
+  /** The line methods are `line-service.ts`'s; the composition root publishes both under one `projects` port. */
+  projects: Omit<ProjectRegistrationPort, 'registerLine' | 'readLine' | 'readLines'>;
   completionPolicies: CompletionPolicyConfigurationPort;
 };

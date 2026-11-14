@@ -1370,18 +1370,6 @@
       "note": "kept for second-workspace B (xws2b), decision 121-75"
     },
     {
-      "file": "src/contracts/workspace-module-id.ts",
-      "name": "projectModuleRef",
-      "reason": "kept-for",
-      "note": "kept for KLS-2b, decision 121-75: the project-view ModuleRef the note, plan and structural-proposal entries build from a caller-frame id"
-    },
-    {
-      "file": "src/contracts/workspace-module-id.ts",
-      "name": "rawModuleRef",
-      "reason": "kept-for",
-      "note": "kept for KLS-3a, decision 121-75"
-    },
-    {
       "file": "src/contracts/verification.ts",
       "name": "WitnessRunState",
       "reason": "kept-for",

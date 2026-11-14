@@ -28,6 +28,7 @@ import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { ARTIFACT_MAX_SIZE_BYTES } from '../../contracts/artifact.js';
 import { KNOWLEDGE_DIRECTORY, withinKnowledgeDirectory } from '../../contracts/knowledge.js';
+import type { CheckoutIdentity } from '../../contracts/line.js';
 import type {
   CapturedPathV1, WorkspaceBaselineEntryV1, WorkspaceBaselineV1, WorkspaceChangeCaptureV1,
 } from '../../contracts/unknown-call-review.js';
@@ -130,10 +131,17 @@ export async function gitCommonDir(root: string): Promise<string | null> {
   }
 }
 
-/** One checkout's identity (KLS-2): a git work tree, or a folder that is in none. */
+/** One checkout's identity (KLS-2, KLS-3a): a git work tree with its first commit, or a folder that is in none. */
 export type CheckoutProbe =
-  | { kind: 'git'; repoKey: string; folder: string; branch: string; objectFormat: 'sha1' | 'sha256' }
+  | ({ kind: 'git'; objectFormat: 'sha1' | 'sha256' } & CheckoutIdentity)
   | { kind: 'not_git'; folder: string };
+
+/** The line of a probed checkout; a folder in no git work tree is its own repository, with no branch and no commit. */
+export function checkoutIdentityOf(probe: CheckoutProbe): CheckoutIdentity {
+  return probe.kind === 'git'
+    ? { repoKey: probe.repoKey, folder: probe.folder, branch: probe.branch, firstCommit: probe.firstCommit }
+    : { repoKey: probe.folder, folder: probe.folder, branch: '', firstCommit: null };
+}
 
 /** The checked-out branch; a detached HEAD is `HEAD`, and a fresh repository's unborn branch still has its name. */
 export async function readCheckoutBranch(root: string): Promise<string> {
@@ -149,7 +157,13 @@ export async function identifyCheckout(root: string): Promise<CheckoutProbe> {
   const folder = await realpath(root);
   const repoKey = await gitCommonDir(folder);
   if (repoKey === null) return { kind: 'not_git', folder };
-  return { kind: 'git', repoKey, folder, branch: await readCheckoutBranch(folder), objectFormat: await objectFormatOf(folder) };
+  // The root commit names the repository across clones (121-64); the first one git lists when history has several.
+  let firstCommit: string | null = null;
+  try {
+    firstCommit = (await git(folder, ['rev-list', '--max-parents=0', 'HEAD'])).trim().split('\n')[0] || null;
+  } catch { /* an unborn HEAD: a repository with no commit yet */ }
+  return { kind: 'git', repoKey, folder, branch: await readCheckoutBranch(folder), objectFormat: await objectFormatOf(folder),
+    firstCommit };
 }
 
 /** The repository's object format, read without a HEAD commit. */

@@ -936,7 +936,10 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
           understandingGrants: secretaryFacts.request.understandingGrants,
         },
         answerShape: shape,
-        workspace: { ref: workspace.ref, revision: workspaceRevision },
+        // A project-level line may run another workspace's Query; its line is of its own workspace, so that Query
+        // runs at this workspace's root as before.
+        workspace: { ref: workspace.ref, revision: workspaceRevision,
+          line: record.session.workspaceId === workspace.ref.workspaceId ? record.session.lineRef : null },
         focusPlan: focusPlan === null ? null : { ref: focusPlan.ref, revision: focusPlan.planRevision },
         permissions: projected.permissions,
         runtimeBudget: projected.budget,

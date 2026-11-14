@@ -112,6 +112,9 @@ import type {
 } from '../core/work-graph/model/note-contracts.js';
 import type { SemanticLinksReader } from '../core/work-graph/notes/semantic-layer-read.js';
 import type { TaskNodeCommitPort } from '../core/work-graph/model/task-node-commit-contracts.js';
+// Delivery (121-45): the page read port and the acceptance write port the two routes bind.
+import type { GoalDeliveryPort } from '../core/work-graph/model/goal-delivery-contracts.js';
+import type { GoalDeliveryReadPort } from '../core/work-graph/views/delivery-read.js';
 import {
   type CoreRouteKind,
   type CoreRouteSuffix,
@@ -120,6 +123,7 @@ import {
   type DecisionsCandidateCardRead,
   type AssignMaintainerRouteEntry,
   type ArchitectureCoreRouteDto,
+  type DeliveryCoreRouteDto,
   type ExplorationCoreRouteDto,
   type K3CoreRouteDto,
   type KnowledgeCoreRouteDto,
@@ -242,6 +246,8 @@ export type CoreRouteBindings = {
   // and `saveWorkspaceFile` come from the Host workbench-tools adapter, and
   // `compareWorkspaceFiles` forwards the EXISTING WorkspaceToolsPort method.
   readProject: NonNullable<ProjectRegistrationPort['readProject']>;
+  /** KLS-3a: the project's lines, the person's read (3a2, 3b and the page read them). */
+  readLines: ProjectRegistrationPort['readLines'];
   listExecutions: NonNullable<ExecutionReadPort['listExecutions']>;
   saveWorkspaceFile: WorkbenchToolsPort['saveFile'];
   listWorkspaceFiles: WorkbenchToolsPort['listFiles'];
@@ -435,6 +441,10 @@ export type CoreRouteBindings = {
   commitKnowledge: (ctx: CoreCallContext, input: unknown) => ReturnType<KnowledgeOpsPort['commit']>;
   /** Node-level review (121-45): the person's commit or acknowledgement of a node; the owner admits the operator only. */
   commitNode: TaskNodeCommitPort['commitNode'];
+  /** Delivery (121-45): the page read and the person's one acceptance write; each owner decides, so the route adds
+   *  no person wrapper. */
+  readGoalDelivery: GoalDeliveryReadPort['readGoalDelivery'];
+  acceptGoalDelivery: GoalDeliveryPort['acceptDelivery'];
 };
 
 /** A.2 step 5.6 (§12.1 step 7, §12.8): this Host's instance lease and its start-up reconcile report. */
@@ -592,6 +602,10 @@ export type CoreRoutePlatform = {
   readProposalBatchFiles?: ArchitectureProposalService['readProposalBatchFiles'];
   /** Node-level review (121-45): the node review owner; internal, so a narrow platform answers `unsupported`. */
   nodeCommits?: Pick<TaskNodeCommitPort, 'commitNode'>;
+  /** Delivery (121-45): the page read and the acceptance write owners; internal like the other owner groups, so a
+   *  narrow platform answers `unsupported`. */
+  delivery?: GoalDeliveryReadPort;
+  goalDelivery?: GoalDeliveryPort;
 };
 
 /** `executions/resolve-unknown` input (RUN-22): the unknown Run and the operator's reason. */
@@ -632,7 +646,7 @@ export const CORE_ROUTE_SPECS: Record<
   | keyof RequestCommandCoreRouteDto | keyof SecretaryLifecycleCoreRouteDto | keyof WaitsCoreRouteDto
   | keyof RoleLineCoreRouteDto | keyof MaintainerCoreRouteDto | keyof WorkspaceFilesCoreRouteDto | keyof ExecutionsCoreRouteDto
   | keyof VerificationCoreRouteDto | keyof ExplorationCoreRouteDto | keyof KnowledgeCoreRouteDto
-  | keyof QueriesCancelCoreRouteDto | keyof NodesCoreRouteDto,
+  | keyof QueriesCancelCoreRouteDto | keyof NodesCoreRouteDto | keyof DeliveryCoreRouteDto,
   CoreRouteSpec
 > = {
   'controls/submit': { kind: 'graph_write', binding: 'submitControl', owner: 'controls.submitControl' },
@@ -724,6 +738,8 @@ export const CORE_ROUTE_SPECS: Record<
   // save / existing-port compare, and the explicit command handle routes.
   'executions/list': { kind: 'plain', binding: 'listExecutions', owner: 'executions.listExecutions' },
   'projects/read': { kind: 'plain', binding: 'readProject', owner: 'projects.readProject' },
+  // KLS-3a: the checkout lines; `lines/list` is the work lines' (slice 2C).
+  'workspaces/lines': { kind: 'plain', binding: 'readLines', owner: 'projects.readLines' },
   'files/save': { kind: 'plain', binding: 'saveWorkspaceFile', owner: 'workbench.saveFile' },
   'files/list': { kind: 'plain', binding: 'listWorkspaceFiles', owner: 'workbench.listFiles' },
   'files/compare': { kind: 'plain', binding: 'compareWorkspaceFiles', owner: 'workspace.compareWorkspace' },
@@ -784,6 +800,9 @@ export const CORE_ROUTE_SPECS: Record<
   'goals/confirm-draft': { kind: 'plain', binding: 'confirmGoalDraft', owner: 'goals.confirmDraft' },
   'goals/copy-draft': { kind: 'plain', binding: 'readGoalCopyDraft', owner: 'goals.readGoalCopyDraft' },
   'goals/copy-confirm': { kind: 'plain', binding: 'confirmGoalCopy', owner: 'goals.confirmGoalCopy' },
+  // Delivery (121-45): the delivery page read and the person's one acceptance write.
+  'goals/delivery': { kind: 'plain', binding: 'readGoalDelivery', owner: 'delivery.readGoalDelivery' },
+  'goals/accept-delivery': { kind: 'graph_write', binding: 'acceptGoalDelivery', owner: 'goalDelivery.acceptDelivery' },
   'initialization/adopt': { kind: 'plain', binding: 'adoptInitialization', owner: 'initialization.adopt' },
   'knowledge/recover': { kind: 'plain', binding: 'recoverKnowledge', owner: 'knowledge.recover' },
   'knowledge/recovery-items': { kind: 'plain', binding: 'readKnowledgeRecoveryItems', owner: 'knowledge.recoveryItems' },
@@ -1227,6 +1246,7 @@ export function createPlatformCoreRouteBindings(
     readProject: platform.projects.readProject === undefined
       ? unsupported('the Host does not publish the narrow project read')
       : platform.projects.readProject.bind(platform.projects),
+    readLines: platform.projects.readLines.bind(platform.projects),
     listExecutions: platform.executions.listExecutions.bind(platform.executions),
     saveWorkspaceFile: workbenchTools === undefined
       ? unsupported('the Host does not publish workbench tools (saveFile)')
@@ -1607,6 +1627,12 @@ export function createPlatformCoreRouteBindings(
         (isPlainObject(input) ? { ...input, workspaceId: ctx.workspaceId ?? '' } : input) as never)),
     commitNode: platform.nodeCommits === undefined ? unsupported('the platform does not publish nodeCommits.commitNode')
       : platform.nodeCommits.commitNode.bind(platform.nodeCommits),
+    readGoalDelivery: platform.delivery === undefined
+      ? unsupported('the platform does not publish delivery.readGoalDelivery')
+      : platform.delivery.readGoalDelivery.bind(platform.delivery),
+    acceptGoalDelivery: platform.goalDelivery === undefined
+      ? unsupported('the platform does not publish goalDelivery.acceptDelivery')
+      : platform.goalDelivery.acceptDelivery.bind(platform.goalDelivery),
   };
 }
 
@@ -1808,6 +1834,7 @@ export async function dispatchCoreRoute(
       case 'executions/history': return bindings.readTaskExecutionHistory(ctx, plain.input as never);
       case 'executions/list': return bindings.listExecutions(ctx, plain.input as never);
       case 'projects/read': return bindings.readProject(ctx, plain.input as never);
+      case 'workspaces/lines': return bindings.readLines(ctx, plain.input as never);
       case 'files/save': return bindings.saveWorkspaceFile(ctx, plain.input as never);
       case 'files/list': return bindings.listWorkspaceFiles(ctx, plain.input as never);
       case 'files/compare': return bindings.compareWorkspaceFiles(ctx, plain.input as never);
@@ -1926,6 +1953,8 @@ export async function dispatchCoreRoute(
       case 'knowledge/status': return bindings.readKnowledgeStatus(ctx, plain.input);
       case 'knowledge/commit': return bindings.commitKnowledge(ctx, plain.input);
       case 'nodes/commit': return bindings.commitNode(ctx, graphWrite.request as never);
+      case 'goals/delivery': return bindings.readGoalDelivery(ctx, plain.input as never);
+      case 'goals/accept-delivery': return bindings.acceptGoalDelivery(ctx, graphWrite.request as never);
     }
   })();
   // A GraphWrite rejection is a failed command: preserve its exact body but let

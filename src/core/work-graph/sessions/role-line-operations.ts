@@ -23,6 +23,7 @@ import { decisionSourceKey, type DecisionSelectionV1, type DecisionSourceV1 } fr
 import type { GoalRef } from '../../../contracts/ledger.js';
 import { WORKFLOW_AUTOMATION_ACTOR } from '../../../contracts/task-requeue.js';
 import { truncateUtf8 } from '../../../contracts/utf8.js';
+import { moduleRefInProjectView } from '../architecture/catalog-service.js';
 import {
   isRoleLineOpenDuty, isRoleScopeV1, roleLineDutyOf, roleScopeOfTarget, workLinkTargetOf,
   type CapacityAtCapDetailV1, type NotifyProjectInputV1, type RoleLineDutyV1, type RoleLineOpenDutyV1,
@@ -311,6 +312,28 @@ export async function readMainWorkspace(records: Pick<GoalRecordTransactionPort,
   if (decoded.status !== 'decoded') return rejected('unavailable', `the start_lines operation is damaged: ${decoded.reason}`);
   return { status: 'ready', value: decoded.value.workspaceId };
 }
+
+/**
+ * Regions across workspaces (decision 121-75, kls-design §2.3.4): the regions a person or a model names are written
+ * in its own workspace's frame (its bare ids are its own modules, another workspace's carry `/@ws:`), while links,
+ * claims and operations keep the project view. This is the one caller-frame step on `ModuleRef`s
+ * (`architecture/catalog-service.ts` `moduleRefInProjectView`), over the project's main workspace (none yet: the
+ * caller's). An id outside the grammar is `invalid`. The claim key is unchanged: a line never enters
+ * it, so the lines of one workspace share a region's adviser.
+ */
+export async function scopesInProjectView(records: Pick<GoalRecordTransactionPort, 'readMany'>, projectId: string,
+  callerWorkspaceId: string, scopes: readonly RoleScopeV1[]): Promise<{ status: 'ready'; value: RoleScopeV1[] } | CoreRejection> {
+  const main = await readMainWorkspace(records, projectId);
+  if (main.status !== 'ready') return roleLineReadFailure(main, 'the main workspace');
+  const mainWorkspaceId = main.value ?? callerWorkspaceId;
+  try {
+    return { status: 'ready', value: scopes.map((scope): RoleScopeV1 => scope.kind !== 'region' ? scope
+      : { kind: 'region', moduleRef: moduleRefInProjectView(scope.moduleRef, callerWorkspaceId, mainWorkspaceId) }) };
+  } catch (error) {
+    return rejected('invalid', error instanceof Error ? error.message : String(error));
+  }
+}
+
 
 export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLineOperationsPort & RoleLineSplitPort {
   const allocationRead = createAllocationRead({ records: deps.records });
@@ -618,7 +641,18 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
     if (record.action.action === 'exploration_followup' && deps.explorationFollowUp !== undefined) {
       // M4c: drive the exact operation the index names, never “the first follow-up of the project”.
       const driven = await deps.explorationFollowUp.drive(ctx, { operation: record.ref });
-      if (driven.status !== 'ready') return driven;
+      if (driven.status !== 'ready') {
+        // DREPRO-04 (lead 11-14): an `invalid` refusal is this operation's end, not a wait; write the one failed
+        // record so the person reads the reason. A retryable refusal (`unavailable`, `busy`) waits for the next pass.
+        if (driven.status !== 'rejected' || driven.code !== 'invalid') return driven;
+        const ended = failedRecordOf(record, record.action, driven);
+        const written = await writeOperation(ctx, record, ended, {
+          commandId: `exploration-followup-end:${record.ref.operationId}`,
+          fingerprintInput: { operation: record.ref },
+        });
+        if (written.status !== 'committed') return written;
+        return driven;
+      }
       const state = driven.value.completed ? 'done'
         : driven.value.revision === record.revision ? 'waiting' : 'blocked';
       return { status: 'ready', value: { revision: driven.value.revision, state, capacity: null } };
@@ -677,7 +711,8 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
     }
   }
 
-  async function openLine(ctx: CoreCallContext, input: RoleLineOpenCommandV1): Promise<WriteResult<RoleLineLineV1>> {
+  async function openLine(ctx: CoreCallContext, command: RoleLineOpenCommandV1): Promise<WriteResult<RoleLineLineV1>> {
+    let input = command;
     if (!isRecord(input) || !nonEmpty(input.commandId)) return rejected('invalid', 'roleLines.open requires a commandId');
     if (!isRoleLineOpenDuty(input.duty)) return rejected('invalid', 'role_line_duty');
     const problem = roleScopeListProblem(input.scope);
@@ -690,6 +725,12 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
     if (lineCtx.status !== 'ready') return roleLineReadFailure(lineCtx, 'the main workspace');
     // The saved action comes from the trusted principal, not an input field (v4 §2.2 item 4).
     const platformCaller = ctx.principal.kind === 'host' && ctx.principal.actor.kind === 'system';
+    // A person's regions are in its own workspace's frame; a platform caller's are the project view already.
+    if (!platformCaller) {
+      const viewed = await scopesInProjectView(deps.records, ctx.projectId, trusted.scope.workspaceId, input.scope);
+      if (viewed.status !== 'ready') return viewed;
+      input = { ...input, scope: viewed.value };
+    }
     const savedAction = input.duty === 'reviewer' || platformCaller ? 'role_line_add' : 'open';
     const ref = roleLineOperationRef(ctx.projectId, 'open:add', input.commandId);
     const key = input.duty === 'reviewer' ? 'reviewer' : 'line';
@@ -727,13 +768,21 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
     return { status: 'ready', value: droppedScopeLinksOf(card.value, requested) };
   }
 
-  async function changeScope(ctx: CoreCallContext, input: RoleLineChangeScopeCommandV1):
+  async function changeScope(ctx: CoreCallContext, command: RoleLineChangeScopeCommandV1):
     Promise<WriteResult<RoleLineLineV1>> {
+    let input = command;
     if (!isRecord(input) || !nonEmpty(input.commandId)) return rejected('invalid', 'roleLines.changeScope requires a commandId');
     const problem = roleScopeListProblem(input.scope);
     if (problem !== null) return rejected('invalid', problem);
     const lineCtx = await lineContextOf(ctx);
     if (lineCtx.status !== 'ready') return roleLineReadFailure(lineCtx, 'the main workspace');
+    // As `openLine`; a context without a workspace is the project's, whose frame is the main workspace's.
+    if (!(ctx.principal.kind === 'host' && ctx.principal.actor.kind === 'system')) {
+      const viewed = await scopesInProjectView(deps.records, ctx.projectId, ctx.workspaceId ?? lineCtx.value.workspaceId!,
+        input.scope);
+      if (viewed.status !== 'ready') return viewed;
+      input = { ...input, scope: viewed.value };
+    }
     const links = await openScopesOf(lineCtx.value, input.session, input.scope);
     if (links.status !== 'ready') return roleLineReadFailure(links, 'the line');
     const ref = roleLineOperationRef(ctx.projectId, 'open:change_scope', input.commandId);

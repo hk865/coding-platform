@@ -22,7 +22,7 @@
 - `ports.ts` — 核心机械协议：`GoalRecordTransactionPort`、`RecordCommitIdentityPort`（按 identity 读已提交回执和提交时的 fingerprint）、`PreparedCommit`、guard/claim/receipt、记录与事件 DTO、schema 注册形状。
 - `record-codec.ts` — schema 注册、JSON envelope/refKey/revision 一致性、`planPreparedCommit`、事务内游标绑定、guard 规则、幂等行与回执。
 - `sqlite-body-store.ts` — `artifacts(key, record)` 表上的原子 `INSERT ... ON CONFLICT DO NOTHING` 正文实现，`close` 幂等。 `openSqliteFile` 是正文库、知识索引和知识快照库共用的打开方式（忙等重试、WAL、`synchronous FULL`）。知识索引和知识快照库还共用两个：`openSqliteWithSchema(what, path | null, schema)` 经 `openSqliteFile` 打开再跑 DDL（`null` 开 `:memory:`，打不开抛错带路径），`inImmediateTransaction(db, body)` 是一笔 `BEGIN IMMEDIATE` … `COMMIT`（抛错整笔回滚再抛）。
-- `sqlite-knowledge-snapshots.ts` — KLS-2c 的 `openKnowledgeSnapshots(path | null)`：四张表（`snapshot_blob`、`snapshot_ref`、`knowledge_recovery`、`knowledge_problem`），内容按 sha256 只存一份；和这个键最新一份内容不同、时钟却没走过它的，键取它之后 1 毫秒（先存的那份留着）；每个（线、文件）留最新 20 份，恢复项指着的那份（`reverted`，或来源是快照的 `unreadable`）`put` 和 `deletePath` 都不删；恢复项按（通知、序号）只写一次，已有就跳过；一个 `knowledge_conflict` 通知的问题行也按（通知、序号）只写一次（`recordProblems`），`readProblems` 按序号读回，已有通知的行不覆盖。memory 用 `:memory:`。
+- `sqlite-knowledge-snapshots.ts` — KLS-2c 的 `openKnowledgeSnapshots(path | null)`：四张表（`snapshot_blob`、`snapshot_ref`、`knowledge_recovery`、`knowledge_problem`），内容按 sha256 只存一份；和这个键最新一份内容不同、时钟却没走过它的，键取它之后 1 毫秒（先存的那份留着）；每个（线、文件）留最新 20 份，恢复项指着的那份（`reverted`，或来源是快照的 `unreadable`）`put` 和 `deletePath` 都不删；恢复项带线和通知时的分支、按（通知、序号）只写一次，已有就跳过；一个 `knowledge_conflict` 通知的问题行也按（通知、序号）只写一次（`recordProblems`），`readProblems` 按序号读回，已有通知的行不覆盖。memory 用 `:memory:`。
 - `sqlite-knowledge-index.ts` — KLS-2b 的 `createKnowledgeIndex(projectId, path | null)`：SQLite 和 memory（`:memory:`）都经 `openSqliteWithSchema` 打开，同一套 DDL，事务经 `inImmediateTransaction`；全文复用 `scanEntries`，按 noteId 升序；`noteIdsByEdge` 按边的种类（和可选的 `to_ref`）列出这条线的注记；`noteAnchorsByPrefix` 是 `noteIdsByAnchorPrefix` 的同一次范围读，每行带锚点键（调用者要逐个判键时用）。打不开的库抛错带路径。
 - `sqlite-lookup-indexes.ts` — 每个注册 lookup 一张按 aggregateType 分区的部分表达式索引，以及开库时的增量迁移。
 - `sqlite-record-store.ts` — SQLite 记录 backend：一个连接、`BEGIN IMMEDIATE` 事务、旧列/旧 JSON 字节兼容、精确 `eventAt`；另暴露只读的 `commitIdentities` 成员。
@@ -93,4 +93,4 @@
 - 不要手填提交游标：记录里先留 null 占位，再用 `commitCursorBindings`，事务内绑定后做最终 schema 校验（CS-01、CS-08、CS-10）。
 - 不要在 store 外重建回执或重放：用 `lookupCommit`/`eventAt`；恢复时不要把 lookup 失败当“未提交”（M1-14、M1-15、M1-26）。
 - 不要重写 idempotency/快照的编码，也不要重新序列化旧记录：保持旧列/旧 JSON 的原字节（CS-01、CS-08、CS-10；另写事件/记录构造的同类错误见 M1-37）。
-- `lookupReceipt` 不是本层导出：它只是 `src/core/work-graph/queries/query-job-service.ts:436`、`src/core/work-graph/tasks/completion.ts:174`、`src/core/work-graph/evidence/evidence-service.ts:560` 各自的私有包装；不要把它写成 `ports.ts` 的端口，收拢前按各 owner 的代码使用。
+- `lookupReceipt` 不是本层导出：它只是 `src/core/work-graph/queries/query-job-service.ts:436`、`src/core/work-graph/tasks/completion.ts:174`、`src/core/work-graph/evidence/evidence-service.ts:562` 各自的私有包装；不要把它写成 `ports.ts` 的端口，收拢前按各 owner 的代码使用。

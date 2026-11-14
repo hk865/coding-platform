@@ -550,7 +550,7 @@ export async function createTaskClaimFixture<A = unknown>(kind: ClaimFixtureKind
       const ref: RunRef = { aggregateType: 'Run', projectId, goalId: goalRef.goalId, runId };
       const snapshot: RunSnapshot = { ref, revision: 1, schemaVersion: 1,
         task: { projectId, goalId: goalRef.goalId, taskId }, attemptId: `r4c-seeded-attempt-${taskId}`,
-        planRef, roleBinding, budget, workspaceSnapshot: { workspaceId, revision: 1 },
+        planRef, roleBinding, budget, workspaceSnapshot: { workspaceId, revision: 1, line: null },
         status, outcome: status === 'ended' ? 'failed' : null, exitCode: null,
         lastEventSeq: 0, lastRuntimeEventId: '', lastFactEventId: '', envelope: null,
         startedAt: null, startedSince: null, endedAt: null, previousRun: null };

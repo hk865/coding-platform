@@ -71,7 +71,9 @@ describe('R4b Session skeleton', () => {
   });
 
   it('rejects unbound callers before accessing persistence or Kernel', async () => {
-    const sessions = createSessionDirectory({ records: {} as never, lookups: {} as never,
+    // The one line read binds both ports at construction, so both throw if a refusal ever reaches them.
+    const sessions = createSessionDirectory({ records: { readMany: () => { throw new Error('unbound caller reached the record port'); } } as never,
+      lookups: { lookup: () => { throw new Error('unbound caller reached the lookup port'); } } as never,
       knowledge: knowledgeLinesOver({} as never), duty: unknownSessionDuty });
     const result = await sessions.admitSessionCreation({} as never, {} as never);
     expect(result).toMatchObject({ status: 'rejected', code: 'forbidden' });

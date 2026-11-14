@@ -83,7 +83,7 @@ const MESSAGE_FIELDS = ['status', 'readAt', 'response', 'acceptedInputs', 'consu
   'expiredAt', 'withdrawnAt', 'waitCancelledAt', 'transferredTo', 'originalRef', 'appliedAt', 'rejectedAt',
   'approvedAt', 'approvalRevision', 'applicationProof', 'pins'] as const;
 const WORKSPACE_USE = 'state/notice-settings-machine.ts buildWorkspaceDecisionSettingsRecord or '
-  + 'state/line-pin-machine.ts buildWorkspaceLineSettingsRecord';
+  + 'state/line-pin-machine.ts buildWorkspaceLineSettingsRecord or state/workspace-removal.ts nextWorkspaceRemoved';
 const PROPOSAL_USE = 'state/plan-machine.ts newCandidateProposal or acceptProposalRecord';
 const QUERY_USE = 'state/query-run-recovery.ts newPendingQueryRecords, advanceQueryExecutionRecord, '
   + 'markQueryRunUnknownRecord or settleQueryRunRecord; state/request-rounds.ts newRequestRound, newRoutingRound, '
@@ -149,7 +149,11 @@ const PROTECTED_TYPES: readonly ProtectedType[] = [
   { file: 'src/contracts/run-network.ts', name: 'RunNetworkSnapshotV1', kind: 'record',
     fields: ['revision', 'hosts', 'omitted'], use: 'state/run-network.ts nextRunNetwork' },
   { file: 'src/contracts/ledger.ts', name: 'WorkspaceSnapshot', kind: 'record',
-    fields: ['decisionSettings', 'lineSettings'], use: WORKSPACE_USE },
+    fields: ['decisionSettings', 'lineSettings', 'removedAt'], use: WORKSPACE_USE },
+  // KLS-3a1 (start rulings draft §2.3, §4): the line record's state is written only by its one constructor
+  // (`state/line-machine.ts`); the record type is the field-table `LineSnapshot` of `contracts/line.ts`.
+  { file: 'src/contracts/line.ts', name: 'LineSnapshot', kind: 'record',
+    fields: ['status', 'closedAt'], use: 'state/line-machine.ts newLineRecord' },
   { file: 'src/contracts/goal-phase.ts', name: 'GoalPhaseSnapshot', kind: 'record',
     fields: ['phase', 'planRef', 'adoptedTaskReductions'], use: 'state/goal-machine.ts buildGoalPhaseSnapshot' },
   { file: 'src/core/work-graph/model/plan-contracts.ts', name: 'PlanProposal', kind: 'record',

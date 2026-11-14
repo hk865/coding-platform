@@ -2,8 +2,8 @@
  * WK fixture steps 3–5 (fixture spec v2.2 §2, SR4 §7): one 20-goal wake world, one real commit and the restart world.
  *
  * W-F1's `openS7BWorld` is the only world opener. Step 3 registers G01–G20 on one fresh registry at the
- * frozen registration cursor 10 (`makeCommitCursor`); the world is already past it (head 15), so step 4's
- * next real commit is 16. Step 4 takes the Host's real send step (`tests/helpers/S7A-fixture.ts:554`:
+ * frozen registration cursor 10 (`makeCommitCursor`); the world is already past it (head 16), so step 4's
+ * next real commit is 17. Step 4 takes the Host's real send step (`tests/helpers/S7A-fixture.ts:554`:
  * `world.dispatch('messages/send', world.systemContext(), ...)`), whose route result carries the commit
  * cursor. Step 5 builds 19 real waits (open/answered/expired) and one released unprocessed action on its
  * own new Goal/plan/line, then offers the caller the same-directory crash. Nothing is read from or written
@@ -39,7 +39,7 @@ export type S7B2WakeWorld = {
   /** The recipient of step 4's real send; created before the registration read. */
   recipient: S6ASession;
   goals: readonly GoalRef[];
-  /** The frozen registration cursor 10 (`makeCommitCursor(10)`), older than the world's head 15. */
+  /** The frozen registration cursor 10 (`makeCommitCursor(10)`), older than the world's head 16. */
   cursorAtRead: CommitCursor;
 };
 

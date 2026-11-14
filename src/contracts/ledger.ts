@@ -27,10 +27,12 @@ import type { WorkParticipationRef } from "./coordination.js";
 import type { UnknownCallReviewRef } from "./unknown-call-review.js";
 import type { CommandRerunRequestRef } from "./command-rerun-request.js";
 import type { HandoffBriefRef } from './handoff-brief.js';
+import type { GoalDeliveryAcceptanceRef } from './goal-delivery.js';
 import type { InitializationAdoptionRef } from "./initialization-adoption.js";
 import type { ReworkRequestRef } from "./rework-request.js";
 import type { ModuleOverlapGateRef } from "./module-overlap-gate.js";
 import type { ArchitectureProposalBatchRef, ArchitectureProposalRef } from "./architecture-proposal.js";
+import type { LineRef } from "./line.js";
 export type ProjectRef = {
     aggregateType: "Project";
     projectId: string;
@@ -49,7 +51,7 @@ export type GoalRef = {
     projectId: string;
     goalId: string;
 };
-export type AggregateRef = import('./core/identity.js').SessionAggregateRef | import('./core/identity.js').SessionWorkLinkRef | import('./core/operations.js').OperationRef | import('./reviewer-work.js').TaskReviewProtocolRef | import('./reviewer-work.js').ReviewWorkRef | import('./reviewer-work.js').ReviewResultRef | ProjectRef | ProjectRoleLimitsRef | WorkspaceRef | GoalRef | CompletionPolicyRevisionRef | ArchitectureBaselineRevisionRef | ProjectCompletionPolicyActiveRef | ProjectArchitectureBaselineActiveRef | PlanRevisionRef | TaskLeaseRef | TaskAttemptRef | RunRef | DispatchOutboxRef | EvidenceRef | TaskEvidenceIndexRef | VerificationRoundRef | TaskReductionRef | GoalPhaseRef | WorkContextRef | ControlIntentRef | QueryJobRef | QueryRunRef | QueryJobAnswerRef | { aggregateType: "PlanProposal"; projectId: string; workspaceId: string; proposalId: string } | CoordinationPolicyRevisionRef | ProjectCoordinationPolicyActiveRef | RoleSpecRevisionRef | ProjectRoleSpecActiveRef | MaterialAccessGrantRef | WorkParticipationRef | import('./dispatch.js').ModelRequestPermitRef | SessionMessageRef | TaskRequeueRef | TaskReworkRefusalRef | SessionAnomalyAnchorRef | RunActivityRef | ActivityRecordingRef | NoteHeadRef | NoteVersionRef | CurrentPointerRef | UnknownCallReviewRef | CommandRerunRequestRef | import('./session-activity.js').SessionActivityRef | import('./initialization-binding.js').InitializationBindingRef | InitializationAdoptionRef | DispatchCounterRef | import('./goal-interruption.js').GoalInterruptionRef | ReworkRequestRef | ModuleOverlapGateRef | HandoffBriefRef | ArchitectureProposalRef | ArchitectureProposalBatchRef | import('./role-lines.js').GoalAdviserQueueRef | import('./role-lines.js').AutonomyRuleRef | import('./role-lines.js').AutonomyRuleSetRef | import('./role-lines.js').RoleCapacityEpisodeRef | import('./task-node-commit.js').TaskNodeCommitRef;
+export type AggregateRef = import('./core/identity.js').SessionAggregateRef | import('./core/identity.js').SessionWorkLinkRef | import('./core/operations.js').OperationRef | import('./reviewer-work.js').TaskReviewProtocolRef | import('./reviewer-work.js').ReviewWorkRef | import('./reviewer-work.js').ReviewResultRef | ProjectRef | ProjectRoleLimitsRef | WorkspaceRef | GoalRef | CompletionPolicyRevisionRef | ArchitectureBaselineRevisionRef | ProjectCompletionPolicyActiveRef | ProjectArchitectureBaselineActiveRef | PlanRevisionRef | TaskLeaseRef | TaskAttemptRef | RunRef | DispatchOutboxRef | EvidenceRef | TaskEvidenceIndexRef | VerificationRoundRef | TaskReductionRef | GoalPhaseRef | WorkContextRef | ControlIntentRef | QueryJobRef | QueryRunRef | QueryJobAnswerRef | { aggregateType: "PlanProposal"; projectId: string; workspaceId: string; proposalId: string } | CoordinationPolicyRevisionRef | ProjectCoordinationPolicyActiveRef | RoleSpecRevisionRef | ProjectRoleSpecActiveRef | MaterialAccessGrantRef | WorkParticipationRef | import('./dispatch.js').ModelRequestPermitRef | SessionMessageRef | TaskRequeueRef | TaskReworkRefusalRef | SessionAnomalyAnchorRef | RunActivityRef | ActivityRecordingRef | NoteHeadRef | NoteVersionRef | CurrentPointerRef | UnknownCallReviewRef | CommandRerunRequestRef | import('./session-activity.js').SessionActivityRef | import('./initialization-binding.js').InitializationBindingRef | InitializationAdoptionRef | DispatchCounterRef | import('./goal-interruption.js').GoalInterruptionRef | ReworkRequestRef | ModuleOverlapGateRef | HandoffBriefRef | ArchitectureProposalRef | ArchitectureProposalBatchRef | import('./role-lines.js').GoalAdviserQueueRef | import('./role-lines.js').AutonomyRuleRef | import('./role-lines.js').AutonomyRuleSetRef | import('./role-lines.js').RoleCapacityEpisodeRef | import('./task-node-commit.js').TaskNodeCommitRef | import('./line.js').WorkspaceLineRef | GoalDeliveryAcceptanceRef;
 export type ProjectSnapshot = {
     ref: ProjectRef;
     revision: number;
@@ -88,6 +90,11 @@ export type GoalContinuationV1 = {
 export type GoalSnapshot = {
     ref: GoalRef;
     workspaceRef: WorkspaceRef;
+    /**
+     * The line the Goal works on (kls-design §2.3.1), taken at birth and never changed: the named folder's line or the
+     * workspace's main line; null when the workspace has no line (no Host opened it).
+     */
+    lineRef: LineRef | null;
     objective: string;
     desiredState: GoalDesiredState;
     /**

@@ -7,6 +7,7 @@ import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-re
 import type { GoalRecordTransactionPort, RecordBackendSchemas } from '../../src/core/record-store/ports.js';
 import type { RecordLookupPort } from '../../src/core/record-store/lookup-ports.js';
 import { GOAL_RECORD_SCHEMAS, canonicalRefKey } from '../../src/core/work-graph/persistence/record-codecs.js';
+import { LINE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/line-record-codecs.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { ProjectSnapshot, WorkspaceSnapshot } from '../../src/contracts/ledger.js';
@@ -28,10 +29,11 @@ const actor = { kind: 'human' as const, id: 'trusted-human' };
 const ctx: CoreCallContext = { projectId, workspaceId, principal: { kind: 'host', actor },
   materialReader: { kind: 'host', projectId, workspaceId, actor }, signal: new AbortController().signal };
 const schemas: RecordBackendSchemas = {
-  records: [...GOAL_RECORD_SCHEMAS.records, ...SESSION_RECORD_SCHEMAS.records, ...ROLE_LINE_RECORD_SCHEMAS.records],
+  records: [...GOAL_RECORD_SCHEMAS.records, ...SESSION_RECORD_SCHEMAS.records, ...ROLE_LINE_RECORD_SCHEMAS.records,
+    ...LINE_RECORD_SCHEMAS.records],
   events: [...GOAL_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events,
     ...LINE_SETTINGS_RECORD_SCHEMAS.events, ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events],
-  lookups: [...(SESSION_RECORD_SCHEMAS.lookups ?? [])],
+  lookups: [...(SESSION_RECORD_SCHEMAS.lookups ?? []), ...(LINE_RECORD_SCHEMAS.lookups ?? [])],
 };
 const request = (goalId: string, requestId: string, objective = ' Original objective ') => ({
   meta: { requestId, expected: [{ ref: project.ref, revision: 1 }, { ref: workspace.ref, revision: 1 }] },
@@ -113,8 +115,9 @@ it.each(['memory', 'sqlite'] as const)('%s: Goal input is owned before the first
     let release!: () => void, seen!: () => void, lookups = 0;
     const gate = new Promise<void>(resolve => { release = resolve; });
     const entered = new Promise<void>(resolve => { seen = resolve; });
-    const records: GoalRecordTransactionPort = {
+    const records: GoalRecordTransactionPort & RecordLookupPort = {
       lookupCommit: async input => { lookups++; seen(); await gate; return backend.records.lookupCommit(input); },
+      lookup: input => backend.records.lookup(input),
       readMany: keys => backend.records.readMany(keys), commit: input => backend.records.commit(input),
       eventAt: cursor => backend.records.eventAt(cursor),
     };

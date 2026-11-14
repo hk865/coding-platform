@@ -90,7 +90,7 @@ const inputBinding: RuntimeInputBindingV1 = { schemaVersion: 1, inputDigest: DIG
 const envelope: TaskEnvelopeV1 = {
   schemaVersion: 1, envelopeId: 'env-1', projectId: P, workspaceId: W, goalId: G, taskId: T,
   runRef: claim.runRef, attemptRef: claim.attemptRef, planRef, roleBinding,
-  workspaceSnapshot: { workspaceId: W, revision: 7 },
+  workspaceSnapshot: { workspaceId: W, revision: 7, line: null },
   permissions: { policyRevision: 'policy-1', tools: [], writeScope: [], createMember: false }, budget, sourceRefs: [],
   bundleRef: { kind: 'artifact', contentType: 'text/plain', digest: 'f'.repeat(64), sizeBytes: 1,
     source: { kind: 'workspace', refId: W, revision: '7' } },
@@ -158,7 +158,7 @@ const CLEAN_TURN: RunTurnFacts = { terminal: false, inFlightToolCallIds: [], las
 const MISMATCHED_CLAIM: RunGuardContext = ctxWith({ persistedClaim: { ...claim, sessionRevision: GEN + 1 } });
 
 const EV = {
-  claim: { kind: 'claim_committed', claim, basis: { kind: 'first' }, roleBinding, budget, workspaceRevision: 7 },
+  claim: { kind: 'claim_committed', claim, basis: { kind: 'first' }, roleBinding, budget, workspaceRevision: 7, line: null },
   authorize: { kind: 'entry_authorized', claim, consumerId: CONSUMER, envelope, inputBinding },
   begin: { kind: 'entry_begun', permit: permitAt(1), kernel },
   entered: { kind: 'entered_observed', permit: permitAt(2), kernelSource: source(3), history: observed(3, 3, null),
@@ -206,7 +206,7 @@ function nextRecord(result: RunTransition): RunSnapshot {
   return record;
 }
 
-const CLAIMED = newRunRecord({ claim, basis: { kind: 'first' }, roleBinding, budget, workspaceRevision: 7 });
+const CLAIMED = newRunRecord({ claim, basis: { kind: 'first' }, roleBinding, budget, workspaceRevision: 7, line: null });
 const AUTHORIZED = nextRecord(transitionRun(runStateOf(CLAIMED), EV.authorize, CTX));
 const ENTERING = nextRecord(transitionRun(runStateOf(AUTHORIZED), EV.begin, CTX));
 const RUNNING = nextRecord(transitionRun(runStateOf(ENTERING), EV.entered, CTX));
@@ -461,7 +461,7 @@ describe('RUN-01 claim_committed', () => {
     const result = ok(transitionRun(stateOf('Absent'), EV.claim, CTX));
     const expected: RunSnapshot = { ref: claim.runRef, revision: 1, schemaVersion: 1, task: claim.task, attemptId: 'att-1',
       planRef, roleBinding, budget,
-      workspaceSnapshot: { workspaceId: W, revision: 7 },
+      workspaceSnapshot: { workspaceId: W, revision: 7, line: null },
       status: 'starting', outcome: null, exitCode: null, lastEventSeq: 0,
       lastRuntimeEventId: '', lastFactEventId: '', envelope: null, startedAt: null, startedSince: null, endedAt: null, previousRun: null };
     expectSameRecord(result.next.record, expected);
@@ -475,7 +475,7 @@ describe('RUN-01 claim_committed', () => {
       claimCtx({ taskHasRun: true, prior })));
     expect(result.next.record?.consumedWait).toEqual(consumedWait);
     expect(result.next.record?.requeueRef).toBeUndefined();
-    expect(newRunRecord({ claim, basis: { kind: 'requeue', requeueRef }, roleBinding, budget, workspaceRevision: 7 }).requeueRef)
+    expect(newRunRecord({ claim, basis: { kind: 'requeue', requeueRef }, roleBinding, budget, workspaceRevision: 7, line: null }).requeueRef)
       .toEqual(requeueRef);
   });
 
@@ -537,7 +537,7 @@ describe('RUN-01 claim_committed', () => {
     const accepted = ok(at({}));
     expect(accepted.next.record?.requeueRef).toEqual(requeueRef);
     expectSameRecord(accepted.next.record,
-      newRunRecord({ claim, basis: { kind: 'requeue', requeueRef }, roleBinding, budget, workspaceRevision: 7 }));
+      newRunRecord({ claim, basis: { kind: 'requeue', requeueRef }, roleBinding, budget, workspaceRevision: 7, line: null }));
     // The shared guards still come first (an occupied Session before the requeue facts).
     expect(answer(transitionRun(stateOf('Absent'), requeue, claimCtx({ sessionOccupied: true, requeue: null }))))
       .toEqual({ reason: 'guard_failed', code: 'busy' });
@@ -602,7 +602,7 @@ describe('RUN-02 / RUN-03 entry_authorized', () => {
       code: 'forbidden', detail: 'the prepared role binding disagrees with the Run' });
     expect(at(CLAIMED, CTX, badBudget)).toEqual({ reason: 'guard_failed', code: 'forbidden',
       detail: 'the prepared budget disagrees with the Run' });
-    expect(at(CLAIMED, CTX, withEnvelope({ workspaceSnapshot: { workspaceId: W, revision: 8 } }))).toEqual({ reason: 'guard_failed',
+    expect(at(CLAIMED, CTX, withEnvelope({ workspaceSnapshot: { workspaceId: W, revision: 8, line: null } }))).toEqual({ reason: 'guard_failed',
       code: 'forbidden', detail: 'the prepared workspace snapshot disagrees with the Run' });
     // Canonical JSON: the key order of the prepared values does not matter.
     expect(transitionRun(runStateOf(CLAIMED), withEnvelope({ budget: { deadline: null, tokenBudget: 1000 } }), CTX).ok).toBe(true);

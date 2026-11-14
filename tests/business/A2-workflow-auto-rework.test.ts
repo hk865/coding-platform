@@ -52,6 +52,7 @@ const goalRef = { aggregateType: 'Goal' as const, projectId: P, goalId: G };
 const planRef = { aggregateType: 'PlanRevision' as const, projectId: P, planId: 'a2-rework-plan', revision: 1 };
 const BINDING_BUDGET: TaskBudgetV1 = { tokenBudget: 1000, deadline: null };
 const goal: GoalSnapshot = { ref: goalRef, workspaceRef: { aggregateType: 'Workspace', projectId: P, workspaceId: W },
+  lineRef: null,
   objective: 'A2 rework', desiredState: 'active', desiredStateRevision: 1, desiredStateRequestedBy: null,
   activePlanRevision: planRef as never, revision: 3,
   settings: { schemaVersion: 1, autonomy: 'after_plan_confirmation', order: 0, waitForGoalRef: null, parallelRisks: [] },

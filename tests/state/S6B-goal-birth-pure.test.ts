@@ -27,7 +27,7 @@ const continuedFrom = () => ({ goal: { aggregateType: 'Goal' as const, projectId
 const message = () => ({ aggregateType: 'SessionMessage' as const, projectId: P, workspaceId: 'w-birth', messageId: 'm-1' });
 /** Goal@1 as written out by hand: the ledger's key order, revision 1, the three birth fields, the pending cursor. */
 const BORN: PendingGoalSnapshot = {
-  ref: GOAL, workspaceRef: WS, objective: OBJECTIVE, desiredState: 'active', desiredStateRevision: 1,
+  ref: GOAL, workspaceRef: WS, lineRef: null, objective: OBJECTIVE, desiredState: 'active', desiredStateRevision: 1,
   desiredStateRequestedBy: null, activePlanRevision: null, revision: 1, settings: settings(), continuedFrom: continuedFrom(),
   copiedInterventions: [message()], since: null,
 };
@@ -42,7 +42,7 @@ const COMMAND: CreateGoalCommand = {
 describe('Goal birth with its settings and copy fields', () => {
   it('GOAL-01 writes Goal@1 with the settings, continuedFrom and copiedInterventions it is given', () => {
     const created = transitionGoal(goalStateOf(null, null), {
-      type: 'goal_created', ref: GOAL, workspaceRef: WS, objective: OBJECTIVE,
+      type: 'goal_created', ref: GOAL, workspaceRef: WS, lineRef: null, objective: OBJECTIVE,
       settings: settings(), continuedFrom: continuedFrom(), copiedInterventions: [message()],
     }, { callerClass: 'human', scopePinsAgree: true, goalInWorkspace: true, completion: null });
     expect(created.ok).toBe(true);
@@ -57,7 +57,7 @@ describe('Goal birth with its settings and copy fields', () => {
     expect(decoded.status).toBe('decoded');
     if (decoded.status !== 'decoded') return;
     expect(decoded.value.payload).toEqual({ objective: OBJECTIVE, desiredState: 'active', activePlanRevision: null,
-      settings: settings(), continuedFrom: continuedFrom(), copiedInterventions: [message()] });
+      settings: settings(), continuedFrom: continuedFrom(), copiedInterventions: [message()], lineRef: null });
     expect(goalSnapshotFromCreatedEvent(decoded.value)).toEqual(BORN);
   });
 

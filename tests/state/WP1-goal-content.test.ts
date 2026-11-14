@@ -26,6 +26,7 @@ function goal(overrides: Partial<GoalSnapshot> = {}): GoalSnapshot {
   return {
     ref: { aggregateType: 'Goal', projectId: PROJECT, goalId: GOAL },
     workspaceRef: { aggregateType: 'Workspace', projectId: PROJECT, workspaceId: WORKSPACE },
+    lineRef: null,
     objective: OBJECTIVE,
     desiredState: 'active',
     desiredStateRevision: 1,

@@ -245,6 +245,8 @@ export type WorkToolGroupInput = {
   extensionNames?: ReadonlySet<string>;
   /** The frozen tool texts every coordination factory reads. */
   texts?: Readonly<Record<string, ToolTextV1>>;
+  /** The project's main workspace, for `find_related_sessions`' module ids (kls-design §2.3.4). */
+  mainWorkspaceOf?: (projectId: string) => Promise<ReadResult<string | null>>;
 };
 
 /**
@@ -355,7 +357,8 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
   }
   if (discoveryNames.length > 0) {
     handles.push(createSessionDiscoveryTools({ sessions: input.sessions, context: input.context,
-      ...(input.texts === undefined ? {} : { texts: input.texts }) }));
+      ...(input.texts === undefined ? {} : { texts: input.texts }),
+      ...(input.mainWorkspaceOf === undefined ? {} : { mainWorkspaceOf: input.mainWorkspaceOf }) }));
   }
   if (graphNames.length > 0) {
     const graphDeps = input.graph as NonNullable<typeof input.graph>;

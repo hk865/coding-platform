@@ -23,6 +23,7 @@ import { createProjectBootstrapServices } from '../../src/core/work-graph/config
 import { materialRecordSchemas } from '../../src/core/work-graph/materials/record-readers.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
 import { QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/query-record-codecs.js';
+import { LINE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/line-record-codecs.js';
 import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
 import type { QueryJobPort } from '../../src/core/work-graph/queries/contracts.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
@@ -82,9 +83,10 @@ function submitRequest(requestId: string, overrides: Partial<QueryJobIntentV1> =
 const schemas: RecordBackendSchemas = (() => {
   const material = materialRecordSchemas();
   return {
-    records: [...material.records, ...QUERY_JOB_RECORD_SCHEMAS.records],
+    records: [...material.records, ...QUERY_JOB_RECORD_SCHEMAS.records, ...LINE_RECORD_SCHEMAS.records],
     events: [...material.events, ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events, ...QUERY_JOB_RECORD_SCHEMAS.events],
-    lookups: [...(material.lookups ?? []), ...(QUERY_JOB_RECORD_SCHEMAS.lookups ?? [])],
+    lookups: [...(material.lookups ?? []), ...(QUERY_JOB_RECORD_SCHEMAS.lookups ?? []),
+      ...(LINE_RECORD_SCHEMAS.lookups ?? [])],
   };
 })();
 

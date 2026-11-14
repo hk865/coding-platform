@@ -6,6 +6,7 @@ import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memo
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
 import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js';
 import { GOAL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/record-codecs.js';
+import { LINE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/line-record-codecs.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
 import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
@@ -28,12 +29,14 @@ const actor = { kind: 'human' as const, id: 'r3c-host' };
 const ctx: CoreCallContext = { projectId, workspaceId, principal: { kind: 'host', actor },
   materialReader: { kind: 'host', projectId, workspaceId, actor }, signal: new AbortController().signal };
 const schemas: RecordBackendSchemas = { records: [...GOAL_RECORD_SCHEMAS.records, ...PLAN_RECORD_SCHEMAS.records,
-    ...PLAN_GOVERNANCE_RECORD_SCHEMAS.records, ...KNOWLEDGE_RECORD_SCHEMAS.records],
+    ...PLAN_GOVERNANCE_RECORD_SCHEMAS.records, ...KNOWLEDGE_RECORD_SCHEMAS.records,
+    ...LINE_RECORD_SCHEMAS.records],
   events: [...GOAL_RECORD_SCHEMAS.events, ...PLAN_RECORD_SCHEMAS.events,
     ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events, ...KNOWLEDGE_RECORD_SCHEMAS.events],
   lookups: [...PLAN_RECORD_SCHEMAS.lookups,
     ...(PLAN_STATE_RECORD_SCHEMAS.lookups ?? []).filter(index => index.name === GOAL_BY_CONTINUED_FROM_INDEX),
-    ...(KNOWLEDGE_RECORD_SCHEMAS.lookups ?? [])] };
+    ...(KNOWLEDGE_RECORD_SCHEMAS.lookups ?? []),
+    ...(LINE_RECORD_SCHEMAS.lookups ?? [])] };
 const dirs: string[] = [];
 afterEach(async () => { for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true }); });
 

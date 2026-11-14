@@ -37,15 +37,19 @@ export function kernelStoreDirectory(paths: ProjectStorePaths): string {
   return join(paths.directory, 'kernel-stores');
 }
 
-/** One workspace's Kernel store entry. The suffix is the first 32 hex digits of
- * sha256(projectId NUL workspaceId); the adapter id and the store key are both
+/** One line's Kernel store entry (kls-design §2.3.3). The suffix is the first 32 hex digits of
+ * sha256(projectId NUL workspaceId) for the workspace's main line, the workspace's store as before, and of
+ * sha256(projectId NUL workspaceId NUL folder) for another line; the adapter id and the store key are both
  * `host-settings-kernel-<suffix>`, and the database is `<kernelDirectory>/<suffix>.sqlite`. */
-export function kernelStoreEntry(kernelDirectory: string, projectId: string, workspaceId: string): KernelStoreEntry {
-  const suffix = sha256Hex(`${projectId}\u0000${workspaceId}`).slice(0, 32);
+export function kernelStoreEntry(kernelDirectory: string, projectId: string, workspaceId: string,
+  lineFolder?: string): KernelStoreEntry {
+  const suffix = sha256Hex(lineFolder === undefined ? `${projectId}\u0000${workspaceId}`
+    : `${projectId}\u0000${workspaceId}\u0000${lineFolder}`).slice(0, 32);
   return {
     adapterId: `host-settings-kernel-${suffix}`,
     storeKey: `host-settings-kernel-${suffix}`,
     workspace: { projectId, workspaceId },
     databasePath: join(kernelDirectory, `${suffix}.sqlite`),
+    ...(lineFolder === undefined ? {} : { lineFolder }),
   };
 }

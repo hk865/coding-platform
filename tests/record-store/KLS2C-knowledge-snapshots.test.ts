@@ -57,7 +57,7 @@ describe.each(BACKENDS)('%s', (_, open) => {
     + 'and goes once the item is gone: %s', kind => {
     const store = opened();
     store.put(LINE, MODULE_A, takenAt(5), utf8('w'));
-    store.recordRecovery([{ noticeId: 'kls2c-ks2', itemNo: 1, kind, writeId: null, lineRef: LINE,
+    store.recordRecovery([{ noticeId: 'kls2c-ks2', itemNo: 1, kind, writeId: null, lineRef: LINE, branch: '',
       path: MODULE_A, takenAt: takenAt(5), expectedBlob: null }]);
     store.deletePath(LINE, MODULE_A);
     expect(store.listRefs(LINE, MODULE_A).map(ref => ref.takenAt)).toEqual([takenAt(5)]);

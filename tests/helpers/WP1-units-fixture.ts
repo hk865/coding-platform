@@ -381,7 +381,7 @@ export function assemblerWithFacts(options: AssemblerFactsOptions = {}): Assembl
   const goalRef: GoalRef = { aggregateType: 'Goal', projectId: 'p', goalId: 'g' };
   const planRef: PlanRevisionRef = { aggregateType: 'PlanRevision', projectId: 'p', planId: 'p1' };
   const workspace: WorkspaceSnapshot = { ref: { aggregateType: 'Workspace', projectId: 'p', workspaceId: 'w' }, revision: 7 };
-  const goal: GoalSnapshot = { ref: goalRef, workspaceRef: workspace.ref, objective: 'Ship A\n第二行',
+  const goal: GoalSnapshot = { ref: goalRef, workspaceRef: workspace.ref, lineRef: null, objective: 'Ship A\n第二行',
     revision: 1, desiredState: 'active', desiredStateRevision: 1, desiredStateRequestedBy: null, activePlanRevision: planRef,
     settings: { schemaVersion: 1, autonomy: 'after_plan_confirmation', order: 0, waitForGoalRef: null, parallelRisks: [] },
     continuedFrom: null, copiedInterventions: [], since: 'c0000000001' as GoalSnapshot['since'] };
@@ -404,7 +404,7 @@ export function assemblerWithFacts(options: AssemblerFactsOptions = {}): Assembl
   const execution: TaskExecutionRecord = {
     run: { ref: claim.runRef, revision: 1, schemaVersion: 1, task: claim.task, attemptId: 'a1', planRef,
       roleBinding: { schemaVersion: 1, bindingId: 'cu-builder', templateId: 'builder', templateRevision: '1', bindingVersion: 1, policyRevision: 'legacy-template' },
-      budget: { tokenBudget: 4096, deadline: null }, workspaceSnapshot: { workspaceId: 'w', revision: workspace.revision },
+      budget: { tokenBudget: 4096, deadline: null }, workspaceSnapshot: { workspaceId: 'w', revision: workspace.revision, line: null },
       status: 'starting', outcome: null, exitCode: null, lastEventSeq: 0, lastRuntimeEventId: '', lastFactEventId: '',
       envelope: null, startedAt: null, startedSince: null, endedAt: null, previousRun: null },
     attempt: { ref: claim.attemptRef, revision: 1, schemaVersion: 1, runId: 'r1', planRef,
@@ -413,6 +413,7 @@ export function assemblerWithFacts(options: AssemblerFactsOptions = {}): Assembl
     session: { ref: { aggregateType: 'Session', ...claim.sessionRef }, revision: 1,
       kernel: { adapterId: 'cu-kernel', kernelSessionId: 'cu-kernel-s1' }, lifecycle: 'active', health: 'available',
       role: { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' }, workspaceId: 'w',
+      lineRef: null,
       lastExecutionRef: null, occupancy: null, historyCursor: null, createdAt: T0, archivedAt: null,
       provenance: { schemaVersion: 1, kind: 'new' } },
     lease: null, readThrough: null,
@@ -567,7 +568,7 @@ export async function startRefusalWorkflow(
   const prepared: PreparedTaskExecution = { kind: 'task', claim,
     envelope: { schemaVersion: 1, envelopeId: 'cu-envelope', projectId: 'p', workspaceId: 'w', goalId: 'g', taskId: 't1',
       runRef: claim.runRef, attemptRef: claim.attemptRef, planRef: claim.planRef,
-      roleBinding: f.taskInput.execution.run.roleBinding, workspaceSnapshot: { workspaceId: 'w', revision: f.workspaceRevision },
+      roleBinding: f.taskInput.execution.run.roleBinding, workspaceSnapshot: { workspaceId: 'w', revision: f.workspaceRevision, line: null },
       permissions: f.taskInput.permissions, budget: f.taskInput.execution.run.budget, sourceRefs: [],
       bundleRef: { kind: 'artifact', contentType: 'application/vnd.coding-platform.task-execution-manifest+json;version=1',
         digest: sha256Hex(body), sizeBytes: Buffer.byteLength(body),

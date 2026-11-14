@@ -22,6 +22,7 @@ import type { TaskEnvelopeV1 } from '../task-envelope.js';
 import type { RoleConfigurationRef, SessionRef } from './identity.js';
 import type { QueryRunRef, QueryAnswerShapeV1, SecretaryRequestManifestV1 } from '../query-job.js';
 import type { GoalSnapshot, WorkspaceSnapshot } from '../ledger.js';
+import type { LineRef } from '../line.js';
 import type { PlanRevisionSnapshot } from '../plan.js';
 import type { RuntimeBudget } from '../runtime-budget.js';
 import type { TaskClaim } from './task-claim.js';
@@ -215,7 +216,7 @@ export type PreparedTaskManifestV1 = {
   roleBinding: RoleBindingRefV1;
   hostConfigurationRevision: string;
   sessionRole: RoleConfigurationRef;
-  workspaceSnapshot: { workspaceId: string; revision: number };
+  workspaceSnapshot: TaskEnvelopeV1['workspaceSnapshot'];
   permissions: TaskEnvelopeV1['permissions'];
   budget: TaskBudgetV1;
   selectedTaskInputs: Array<{ requirementId: string; ref: ArtifactRef }>;
@@ -301,7 +302,8 @@ export type PreparedQueryManifestV1 = {
   request: SecretaryRequestManifestV1 | null;
   /** The frozen submit-tool shape (spec §5.2.7); every new manifest writes it. */
   answerShape: QueryAnswerShapeV1 | null;
-  workspace: { ref: WorkspaceSnapshot['ref']; revision: number };
+  /** `line`: the Session's line when the Session is of this workspace (kls-design §2.3.3), else `null`. */
+  workspace: { ref: WorkspaceSnapshot['ref']; revision: number; line: LineRef | null };
   focusPlan: { ref: PlanRevisionSnapshot['ref']; revision: number } | null;
   permissions: { tools: string[]; writeScope: [] };
   runtimeBudget: RuntimeBudget;

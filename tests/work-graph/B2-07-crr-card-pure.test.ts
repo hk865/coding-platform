@@ -48,6 +48,7 @@ const review: UnknownCallReviewV1 = {
 const goal: GoalSnapshot = {
   ref: { aggregateType: 'Goal', projectId, goalId },
   workspaceRef: { aggregateType: 'Workspace', projectId, workspaceId },
+  lineRef: null,
   objective: 'Run the migration',
   desiredState: 'active', desiredStateRevision: 1, desiredStateRequestedBy: null,
   activePlanRevision: null, revision: 4,

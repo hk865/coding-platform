@@ -24,6 +24,7 @@ import { isLegalSettings } from '../../src/core/work-graph/state/goal-settings-m
 const GOAL: GoalRef = { aggregateType: 'Goal', projectId: 'p1', goalId: 'g-source' };
 const SOURCE: GoalSnapshot = {
   ref: GOAL, workspaceRef: { aggregateType: 'Workspace', projectId: 'p1', workspaceId: 'w1' },
+  lineRef: null,
   objective: 'Ship the reader.', desiredState: 'cancelled', desiredStateRevision: 2,
   desiredStateRequestedBy: null, activePlanRevision: null, revision: 7,
   settings: {
@@ -174,7 +175,7 @@ describe('planReanchorHook', () => {
     ref: { aggregateType: 'Session', projectId: 'p1', sessionId: 's1' }, revision: 4,
     kernel: { adapterId: 'coding-agent', kernelSessionId: 'k-1' }, lifecycle: 'active', health: 'available',
     healthConclusion: null, role: { kind: 'legacy_template', templateId: 'tpl', templateRevision: 'r1' },
-    workspaceId: 'w1', lastExecutionRef: null, occupancy: null, historyCursor: null,
+    workspaceId: 'w1', lineRef: null, lastExecutionRef: null, occupancy: null, historyCursor: null,
     createdAt: '2026-11-01T00:00:00.000Z', archivedAt: null, provenance: { schemaVersion: 1, kind: 'new' },
     archiveRequest: null, unavailableSince: null,
   };

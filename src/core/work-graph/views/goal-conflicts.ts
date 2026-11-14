@@ -320,6 +320,7 @@ async function assembleGoalConflicts(
     for (let rightIndex = leftIndex + 1; rightIndex < footprints.length; rightIndex += 1) {
       const left = footprints[leftIndex]!;
       const right = footprints[rightIndex]!;
+      if (!sameGoalLine(left.goal, right.goal)) continue;
       const facts = goalConflictFacts(left.footprint, right.footprint);
       const risk = acceptedRisk(left.goal, right.goal);
       if (risk) {
@@ -338,6 +339,14 @@ async function assembleGoalConflicts(
     }
   }
   return { status: 'ready', value: { cards, labels, footprintCompleteness, sourceCursor: watermark } };
+}
+
+/**
+ * Two Goals are paired only on one line (kls-design §2.3.4): another line is another folder, so their writes do not
+ * meet. Goals of a workspace without a line are all on its one folder.
+ */
+function sameGoalLine(left: GoalSnapshot, right: GoalSnapshot): boolean {
+  return (left.lineRef?.folder ?? null) === (right.lineRef?.folder ?? null);
 }
 
 function acceptedRisk(left: GoalSnapshot, right: GoalSnapshot): boolean {

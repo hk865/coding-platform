@@ -302,6 +302,7 @@ function countingKernelStore(store: kernel.SqliteStores, reads: KernelRead[]): k
 function countingRegistry(real: KernelStoreRegistry, reads: KernelRead[]): KernelStoreRegistry {
   return {
     forWorkspace: workspace => real.forWorkspace(workspace),
+    forLine: (workspace, folder) => real.forLine(workspace, folder),
     byAdapterId: adapterId => real.byAdapterId(adapterId),
     withStore: (adapterId, use) => real.withStore(adapterId, store => use(countingKernelStore(store, reads))),
   };

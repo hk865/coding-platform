@@ -100,7 +100,7 @@ const CA_PERMISSIONS: TaskEnvelopeV1['permissions'] = {
 };
 
 const GOAL_SNAPSHOT: GoalSnapshot = {
-  ref: GOAL_REF, workspaceRef: WORKSPACE_REF, objective: 'Ship platform', desiredState: 'active',
+  ref: GOAL_REF, workspaceRef: WORKSPACE_REF, lineRef: null, objective: 'Ship platform', desiredState: 'active',
   desiredStateRevision: 1, desiredStateRequestedBy: null, activePlanRevision: PLAN_REF, revision: 1,
   settings: { schemaVersion: 1, autonomy: 'after_plan_confirmation', order: 0, waitForGoalRef: null, parallelRisks: [] },
   continuedFrom: null, copiedInterventions: [],
@@ -234,7 +234,7 @@ function taskRecord(input: {
   const run: RunSnapshot = {
     ref: runRef, revision: 1, schemaVersion: 1, task: input.task, attemptId: attemptRef.attemptId,
     planRef: input.plan.ref, roleBinding: ROLE_BINDING, budget: TASK_BUDGET,
-    workspaceSnapshot: { workspaceId: 'w', revision: 7 }, status: 'starting', outcome: null, exitCode: null,
+    workspaceSnapshot: { workspaceId: 'w', revision: 7, line: null }, status: 'starting', outcome: null, exitCode: null,
     lastEventSeq: 0, lastRuntimeEventId: '', lastFactEventId: '', envelope: null, startedAt: null, startedSince: null, endedAt: null, previousRun: null,
   };
   const attempt: TaskAttemptSnapshot = {
@@ -245,6 +245,7 @@ function taskRecord(input: {
     ref: { aggregateType: 'Session', projectId: 'p', sessionId: input.sessionId }, revision: 1,
     kernel: { adapterId: 's3-ca-kernel', kernelSessionId: `ks-${input.sessionId}` },
     lifecycle: 'active', health: 'available', role: SESSION_ROLE, workspaceId: 'w',
+    lineRef: null,
     lastExecutionRef: null, occupancy: null, historyCursor: null, createdAt: AT, archivedAt: null,
     provenance: { schemaVersion: 1, kind: 'new' },
   };

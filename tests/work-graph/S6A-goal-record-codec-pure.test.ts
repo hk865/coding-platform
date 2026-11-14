@@ -18,6 +18,7 @@ function goal(): GoalSnapshot {
   return {
     ref: { aggregateType: 'Goal', projectId: P, goalId: G },
     workspaceRef: { aggregateType: 'Workspace', projectId: P, workspaceId: W },
+    lineRef: null,
     objective: 'Y goal record',
     desiredState: 'active',
     desiredStateRevision: 1,

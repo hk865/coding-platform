@@ -55,7 +55,7 @@ function expectedWorkspace(ref: WorkspaceRef): WorkspaceSnapshot {
 }
 function expectedGoal(ref: GoalRef, workspaceRef: WorkspaceRef, objective: string,
   activePlanRevision: PlanRevisionRef | null, revision: number, since: GoalSnapshot['since']): GoalSnapshot {
-  return { ref, workspaceRef, objective, desiredState: 'active', desiredStateRevision: 1,
+  return { ref, workspaceRef, lineRef: null, objective, desiredState: 'active', desiredStateRevision: 1,
     desiredStateRequestedBy: null, activePlanRevision, revision,
     settings: { schemaVersion: 1, autonomy: 'after_plan_confirmation', order: 0, waitForGoalRef: null, parallelRisks: [] },
     continuedFrom: null, copiedInterventions: [], since };
@@ -64,7 +64,7 @@ function expectedRun(ref: RunRef, taskId: string, attemptId: string, planRef: Pl
   workspaceId: string): RunSnapshot {
   return { ref, revision: 1, schemaVersion: 1,
     task: { projectId: ref.projectId, goalId: ref.goalId, taskId }, attemptId, planRef, roleBinding, budget,
-    workspaceSnapshot: { workspaceId, revision: 1 }, status: 'starting', outcome: null, exitCode: null,
+    workspaceSnapshot: { workspaceId, revision: 1, line: null }, status: 'starting', outcome: null, exitCode: null,
     lastEventSeq: 0, lastRuntimeEventId: '', lastFactEventId: '', envelope: null, startedAt: null, startedSince: null, endedAt: null, previousRun: null };
 }
 function expectedQueryRun(ref: QueryRunRef): QueryRunSnapshot {

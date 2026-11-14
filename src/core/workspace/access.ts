@@ -20,7 +20,12 @@ export type WorkspaceAuthorization = {
   allowsRead(path: string): boolean;
 };
 export type WorkspaceHostBindings = {
-  resolveRoot(workspace: WorkspaceRef): Promise<WorkspaceResult<{ root: string; workspaceRevision: number }>>;
+  /**
+   * The workspace's root, or with `line` that line's folder as this Host registered it (kls-design §2.3.3): a Run
+   * or a QueryRun runs in its line. A line this Host did not register is `not_found`, never guessed.
+   */
+  resolveRoot(workspace: WorkspaceRef, line?: { folder: string }):
+    Promise<WorkspaceResult<{ root: string; workspaceRevision: number }>>;
   authorize(ctx: CoreCallContext, workspace: WorkspaceRef): Promise<WorkspaceResult<WorkspaceAuthorization>>;
 };
 /**

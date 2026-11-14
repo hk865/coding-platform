@@ -212,40 +212,50 @@ export function createExplorationControl(deps: ExplorationControlDeps): Explorat
     projectId: string; workspaceId: string; batchRef: ArchitectureProposalBatchRef; reason: string;
   }): Promise<WriteResult<{ target: 'coarse_split' | 'followup'; operation: RoleLineOperationV1['ref'] }>> {
     const sources = await reproposeSourcesOf(ctx,
-      { proposals: deps.proposals, sessions: deps.sessions, records: deps.records }, input.batchRef);
+      { proposals: deps.proposals, sessions: deps.sessions, records: deps.records, knowledge: deps.knowledge },
+      input.batchRef);
     if (sources.status !== 'ready') {
       return sources.status === 'rejected' ? sources
         : rejected('invalid', 'the proposal batch has no resolvable exploration source');
     }
     if (sources.value.length === 0) return rejected('invalid', 'the proposal batch has no members');
     const first = sources.value[0]!;
-    const coarse = sources.value.every((source) => sameJson(source.operation.ref, first.operation.ref))
-      && first.operation.action.action === 'cold_start' && first.operation.action.phase === 'coarse_split';
-    if (!coarse) {
+    const firstOperation = first.operation;
+    const firstRound = first.round;
+    const coarse = firstOperation !== null
+      && sources.value.every((source) => source.operation !== null && sameJson(source.operation.ref, firstOperation.ref))
+      && firstOperation.action.action === 'cold_start' && firstOperation.action.phase === 'coarse_split';
+    if (firstOperation === null || !coarse) {
       const modules = new Map<string, { projectId: string; moduleId: string }>();
       for (const source of sources.value) {
         if (source.region === null) return rejected('invalid', 'a region batch source names no region block');
         modules.set(source.region.moduleId, { ...source.region });
       }
       // KC-3: “不对，重新提” on a repair batch is another repair of the same notice (its source round's operation says
-      // which): its base is the record, and its question carries the places that round was given (计划 :198).
-      const notice = await repairNoticeOf(deps.records, first.operation);
-      if (notice.status !== 'ready') return notice;
+      // which): its base is the record, and its question carries the places that round was given (计划 :198). A Work-Run
+      // proposal repairs nothing.
+      const notice = firstOperation === null ? null : await repairNoticeOf(deps.records, firstOperation);
+      if (notice !== null && notice.status !== 'ready') return notice;
+      const noticeId = notice === null ? null : notice.value;
       // R-18: the follow-up's base pin is the window at its birth, not the rejected batch's older pin.
       const window = await readCurrentCatalogWindow(deps.records, input.projectId,
-        { lines: deps.knowledge, caller: ctx, ...repairReadBase(notice.value) });
+        { lines: deps.knowledge, caller: ctx, ...repairReadBase(noticeId) });
       if (window.status !== 'ready') {
         return window.status === 'rejected' ? window
           : rejected('invalid', 'the project has no current architecture window');
       }
-      const places = notice.value === null ? null : first.operation.action.followUp?.reason ?? null;
-      const action = newExplorationFollowUpAction({ depth: explorationDepthOf(first.operation.action), kind: 'repropose',
+      const places = noticeId === null || firstOperation === null ? null
+        : firstOperation.action.followUp?.reason ?? null;
+      const action = newExplorationFollowUpAction({
+        // A Work-Run proposal has no exploration depth; its region round asks at depth 1.
+        depth: firstOperation === null ? 1 : explorationDepthOf(firstOperation.action), kind: 'repropose',
         moduleRefs: [...modules.values()], reason: places === null ? input.reason : `${places}\n\n${input.reason}`,
         sourceBatchRef: input.batchRef, baseCatalogPin: catalogPinOf(window) });
-      const scopedCtx: CoreCallContext = ctx.workspaceId === first.round.queryRunRef.workspaceId
-        ? ctx : { ...ctx, workspaceId: first.round.queryRunRef.workspaceId };
+      // A Work-Run proposal has no round; the operation is born in the workspace the person answered from.
+      const workspaceId = firstRound?.queryRunRef.workspaceId ?? input.workspaceId;
+      const scopedCtx: CoreCallContext = ctx.workspaceId === workspaceId ? ctx : { ...ctx, workspaceId };
       const born = await ensureExplorationFollowUp({ records: deps.records, sessions: deps.sessions, now: deps.now },
-        scopedCtx, { projectId: input.projectId, workspaceId: first.round.queryRunRef.workspaceId,
+        scopedCtx, { projectId: input.projectId, workspaceId,
           key: `repropose:${input.batchRef.batchId}`, action });
       if (born.status !== 'committed') return born;
       return { status: 'committed', value: { target: 'followup', operation: { ...born.value.operation } },
@@ -256,8 +266,8 @@ export function createExplorationControl(deps: ExplorationControlDeps): Explorat
     if (!trusted.ok) return trusted.rejection;
     let prior: RoleLineOperationV1 | null = null;
     let next: RoleLineOperationV1 | null = null;
-    const groupRef = first.operation.ref;
-    const workspaceId = first.operation.workspaceId;
+    const groupRef = firstOperation.ref;
+    const workspaceId = firstOperation.workspaceId;
     const scopedCtx: CoreCallContext = ctx.workspaceId === workspaceId ? ctx : { ...ctx, workspaceId };
     const written = await deps.write(deps.records, {
       operation: 'role-line-operation',

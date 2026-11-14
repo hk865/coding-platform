@@ -71,7 +71,7 @@ function goalSettings(): GoalSettingsV1 {
 
 function goalSnapshot(): GoalSnapshot {
   return {
-    ref: goalRef, workspaceRef, objective: raw.goal.objective,
+    ref: goalRef, workspaceRef, lineRef: null, objective: raw.goal.objective,
     desiredState: 'active', desiredStateRevision: 1, desiredStateRequestedBy: null,
     activePlanRevision: planRef, revision: 1, settings: goalSettings(),
     continuedFrom: null, copiedInterventions: [], since: CURSOR,

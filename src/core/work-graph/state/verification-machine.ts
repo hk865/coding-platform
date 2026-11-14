@@ -245,7 +245,7 @@ export type RoundFoldFactsV1 = {
   decisions: Readonly<Record<string, CheckVerdictDecisionV1>> | null;
   /** The current source still matches the frozen one under the frozen grant; false makes every verdict STALE. */
   sourceCurrent: boolean;
-  /** `evidence_plan_unavailable`, `goal_unavailable`, `adopted_plan_unavailable`, `source_changed`, `source_unavailable`. */
+  /** `evidence_plan_unavailable`, `goal_unavailable`, `adopted_plan_unavailable`, `source_changed`, `source_unavailable`, `python_syntax_error`. */
   contextGaps: readonly RoundGapV1[];
   /**
    * Slice 9: the booked review of the `review-packet` item as the owner judged it. `outcome` is null when there is
@@ -797,6 +797,21 @@ function foldSteps(round: Pick<RoundSnapshot, 'checks' | 'verificationPlan'>): F
  */
 export function foldVerdictChecks(round: Pick<RoundSnapshot, 'checks' | 'verificationPlan'>): RoundCheckSnapshot[] {
   return foldSteps(round).flatMap((step) => step.kind === 'verdict' ? [step.check] : []);
+}
+
+/** B06-N1: one gap per changed Python file the parser still rejects (121-34). */
+export const PYTHON_SYNTAX_GAP_CODE = 'python_syntax_error';
+
+/**
+ * B06-N1: the check round's gap for each Python file this Run changed that
+ * still does not parse. The parser gives the path, line and message; one file
+ * is one gap (121-34's "粒度到文件"), and a gap is INCONCLUSIVE (VD-4), not FAIL.
+ */
+export function pythonSyntaxGaps(
+  problems: readonly { path: string; line: number; message: string }[],
+): RoundGapV1[] {
+  return problems.map(problem => ({ code: PYTHON_SYNTAX_GAP_CODE,
+    message: `${problem.path}:${String(problem.line)}: ${problem.message}` }));
 }
 
 /**

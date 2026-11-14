@@ -9,7 +9,7 @@
  *     does not accept or start the Run.
  */
 import type { ArtifactRef } from "./artifact.js";
-import type { RoleBindingRefV1, RunRef, SourceRefV1, TaskAttemptRef, TaskBudgetV1 } from "./dispatch.js";
+import type { RoleBindingRefV1, RunRef, RunWorkspacePinV1, SourceRefV1, TaskAttemptRef, TaskBudgetV1 } from "./dispatch.js";
 import type { PlanRevisionRef } from "./plan.js";
 export type TaskEnvelopeV1 = {
     work?: import('./reviewer-work.js').ReviewWorkBinding;
@@ -24,11 +24,8 @@ export type TaskEnvelopeV1 = {
     attemptRef: TaskAttemptRef;
     planRef: PlanRevisionRef;
     roleBinding: RoleBindingRefV1;
-    /** Canonical Workspace revision bound at assemble time (verified == current). */
-    workspaceSnapshot: {
-        workspaceId: string;
-        revision: number;
-    };
+    /** Canonical Workspace revision bound at assemble time (verified == current), and the Run's line. */
+    workspaceSnapshot: RunWorkspacePinV1;
     permissions: {
         policyRevision: string;
         tools: string[];

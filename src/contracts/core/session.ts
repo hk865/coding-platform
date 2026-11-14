@@ -34,6 +34,11 @@ export type SessionRecord = {
   /** Absent on records written before A.2 and read as null; null whenever health is available. */
   healthConclusion?: SessionHealthConclusion | null;
   role: RoleConfigurationRef; workspaceId: string;
+  /**
+   * The line the Session works on (kls-design §2.3.1), taken at creation and never changed: the named folder's line
+   * or the workspace's main line; null when the workspace has no line (no Host opened it).
+   */
+  lineRef: import('../line.js').LineRef | null;
   lastExecutionRef: ExecutionRef | null; occupancy: SessionOccupancy | null;
   /** Last completed-turn boundary, not the latest raw session record position. */
   historyCursor: string | null; createdAt: string; archivedAt: string | null;

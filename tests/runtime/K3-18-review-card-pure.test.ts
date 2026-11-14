@@ -28,6 +28,7 @@ const AT = '2026-10-20T00:00:00.000Z';
 
 const GOAL: GoalSnapshot = {
   ref: GOAL_REF, workspaceRef: { aggregateType: 'Workspace', projectId: PROJECT, workspaceId: WORKSPACE },
+  lineRef: null,
   objective: 'K3-18 card', desiredState: 'active', desiredStateRevision: 1, desiredStateRequestedBy: null,
   activePlanRevision: { aggregateType: 'PlanRevision', projectId: PROJECT, planId: 'plan-1' }, revision: 4,
   settings: { schemaVersion: 1, autonomy: 'every_step', order: 0, waitForGoalRef: null, parallelRisks: [] },

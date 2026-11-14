@@ -52,8 +52,11 @@ export type CreateSeatDecisionV1 = {
 };
 export type SessionCreationInput = {
   workspace: WorkspaceScope;
-  /** Trusted Host route selected before admission and pinned by the first durable operation. */
-  kernelStore: { adapterId: string; storeKey: string };
+  /**
+   * The Kernel store to pin, named by a caller that passes no `SessionAdmissionPorts`; with the ports the admission
+   * chooses it from the line (and a named one is not read).
+   */
+  kernelStore?: { adapterId: string; storeKey: string };
   role: RoleConfigurationRef;
   recommendedRefs: ArtifactRef[];
   initialLinks: { target: WorkLinkTarget; relation: WorkLinkRelation }[];
@@ -65,10 +68,16 @@ export type SessionCreationInput = {
   parentOperation?: OperationRef | null;
   /** §3.15 item 3: present only on a consultation copy; absent is null (as `provenance`/`creation`/`parentOperation`). */
   consultation?: ConsultationCreateV1 | null;
+  /** KLS-3a: the folder of the line the Session works on; absent is the workspace's main line. */
+  lineFolder?: string;
 };
 export type SessionCreateActionV1 = { kind: 'create'; plannedSessionRef: SessionRef; parentOperation: OperationRef | null }
-  & Omit<SessionCreationInput, 'provenance' | 'creation' | 'parentOperation' | 'consultation'>
+  & Omit<SessionCreationInput, 'provenance' | 'creation' | 'parentOperation' | 'consultation' | 'lineFolder' | 'kernelStore'>
   & { provenance: SessionProvenanceV1; creation: SessionCreationIntentV1 | null;
+      /** The Kernel store the admission pinned with the line; execution and recovery read it from here, never again. */
+      kernelStore: { adapterId: string; storeKey: string };
+      /** The line the admission resolved (the Session record takes it); null when the workspace has no line. */
+      lineRef: import('../../../contracts/line.js').LineRef | null;
       /** Required; `null` on every create that is not a consultation copy. */
       consultation: ConsultationCreateV1 | null;
       /** Required; the construction object supplies it (`null` for a caller that supplies no decision). */
@@ -146,14 +155,33 @@ export type SessionCard = {
   /** a17: the stored facts row, or null when it is absent; never a second record or write. */
   roleFacts: SessionRoleFactsV1 | null;
 };
+/**
+ * Passed with each admission by the Runtime that owns the Kernel stores (not a directory store): the admission reads
+ * its receipt, then the line, then asks for that line's store, and pins both on the operation (kls-design §2.3.3).
+ */
+export type SessionAdmissionPorts = {
+  /** `line`: the Session's line when it is not the workspace's main line; `null` for the main line or no line, both
+   *  on the workspace's own store. `null` back: no store is registered for it. */
+  kernelStoreFor(scope: WorkspaceScope, line: import('../../../contracts/line.js').LineRef | null):
+    { adapterId: string; storeKey: string } | null;
+};
 export interface SessionDirectoryPort {
-  admitSessionCreation(ctx: CoreCallContext, request: GraphWrite<SessionCreationInput>): Promise<WriteResult<SessionCreateOperationRecord>>;
+  admitSessionCreation(ctx: CoreCallContext, request: GraphWrite<SessionCreationInput>, ports?: SessionAdmissionPorts):
+    Promise<WriteResult<SessionCreateOperationRecord>>;
   recordSessionCreated(ctx: CoreCallContext, request: GraphWrite<SessionCreationResult>): Promise<WriteResult<SessionRecord>>;
   getSessionOperation(ctx: CoreCallContext, ref: OperationRef): Promise<ReadResult<SessionOperationRecord>>;
   readSession(ctx: CoreCallContext, ref: SessionRef, scope?: 'workspace' | 'project'): Promise<ReadResult<SessionCard>>;
   findSessions(ctx: CoreCallContext, input: {
     workspace: { projectId: string; workspaceId?: string }; target?: WorkLinkTarget; role?: RoleConfigurationRef;
     includeArchived: boolean; page: SessionPageRequest & { afterSessionKey?: string };
+    /**
+     * With a module target, also the main workspace's lines holding an open `responsible` link to it (kls-design
+     * §2.3.4: role lines live in the main workspace and answer for the project's regions). No other workspace's
+     * Session is added; the call stays bound to its own workspace.
+     */
+    projectRegionLines?: true;
+    /** Only the Sessions of the line in this folder (kls-design §2.3.4); absent reads every line. */
+    lineFolder?: string;
   }): Promise<ReadResult<SessionPage<SessionCard>>>;
 }
 /** The allocation report read: declared beside the directory port, never a member of it. */

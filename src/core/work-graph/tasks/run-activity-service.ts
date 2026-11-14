@@ -129,6 +129,8 @@ export interface RunActivityPort {
     workspace: WorkspaceScope; mode: 'recent' | 'range'; from: string; to: string;
     after: ActivityBackfillCursor | null; limit: number;
   }): Promise<ReadResult<ActivityBackfillCandidatePage>>;
+  /** B06-N1: the recorded tally of one Run; null when no RunActivity record exists (old or dropped). */
+  readRunActivity(ctx: CoreCallContext, runRef: RunRef): Promise<ReadResult<RunActivityFactsV1 | null>>;
 }
 
 export type RunActivityServiceDependencies = {
@@ -398,6 +400,23 @@ export function createRunActivityService(deps: RunActivityServiceDependencies): 
     const decoded = decodeRunActivitySnapshot(record);
     if (decoded.status !== 'decoded') return { ok: false, rejection: unavailable(`the RunActivity is damaged: ${decoded.reason}`) };
     return { ok: true, record, snapshot: decoded.value };
+  }
+
+  /**
+   * B06-N1: the check round's read of the subject Run's tally. It is the same
+   * bound-context and same-key read as the writes (`readActivity`); a missing
+   * record is `null`, because an old or dropped tally is not an empty change
+   * list (rule 3).
+   */
+  async function readRunActivity(
+    ctx: CoreCallContext, runRef: RunRef,
+  ): Promise<ReadResult<RunActivityFactsV1 | null>> {
+    const trusted = trustedContext(ctx);
+    if (!trusted.ok) return trusted.rejection;
+    if (runRef.projectId !== trusted.value.scope.projectId) return forbidden('the Run belongs to another project');
+    const read = await readActivity(runActivityRefOf({ ref: runRef }));
+    if (!read.ok) return read.rejection;
+    return { status: 'ready', value: read.snapshot === null ? null : read.snapshot.facts };
   }
 
   /**
@@ -954,7 +973,8 @@ export function createRunActivityService(deps: RunActivityServiceDependencies): 
     }
     return { status: 'ready', value: { candidates, next: exhausted ? null : last, cursor: scanCursor } };
   }
-  return { recordRunActivity, recordQueryActivity, ensureActivityRecording, listActivityBackfillCandidates };
+  return { recordRunActivity, recordQueryActivity, ensureActivityRecording, listActivityBackfillCandidates,
+    readRunActivity };
 }
 
 /**

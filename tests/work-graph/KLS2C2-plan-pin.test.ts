@@ -3,12 +3,12 @@
  * read from the answer of the plan owner's public propose (`plans.proposePlan`, published as `plans/propose`).
  * Memory only (S3): `openKLS2AWorld` (git roots) and the S8D fixture without git; the architecture from the public
  * adoption; a person edits files and commits with real git. Expected values by hand: `lineRef` = JSON [workspace,
- * branch] ('' when not git), `head` = `git rev-parse HEAD`, minimal fields as adopted, K26's hash over `git hash-object`.
+ * folder] (the checkout root's realpath), `head` = `git rev-parse HEAD`, minimal fields as adopted, K26's hash over `git hash-object`.
  * New name used: the plan record pin `KnowledgePinV1` ({ lines }), read through `unknown`, so the file type-checks on
  * both trees; while the candidate carries `{catalogRef, baseline}` every row is red in `pinLines`.
  */
 import { createHash } from 'node:crypto';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
@@ -40,10 +40,9 @@ const HEX64 = expect.stringMatching(/^[0-9a-f]{64}$/);
 /** [2C2-01]: a module's minimal fields, as `adoptModules` adopts it in the main workspace (no containment, no edges). */
 const minimalOf = (moduleId: string) =>
   ({ moduleId, paths: [`src/${moduleId}`], responsibility: `own ${moduleId}`, contains: [], dependsOn: [] });
-/** The line key by hand: the workspace and the branch, a JSON array. */
-const lineKeyOf = (workspaceId: string, branch: string): string => JSON.stringify([workspaceId, branch]);
+/** The line key by hand: the workspace and the checkout root's realpath, a JSON array. */
+const expectedLineKey = (workspaceId: string, folder: string): string => JSON.stringify([workspaceId, folder]);
 const gitHead = (root: string): string => gitIn(root, 'rev-parse', 'HEAD').trim();
-const gitBranch = (root: string): string => gitIn(root, 'rev-parse', '--abbrev-ref', 'HEAD').trim();
 
 async function registrationPins(caller: Caller) {
   const read = await caller.platform.projects.readWorkspaceRegistration(caller.ctx, caller.scope);
@@ -136,15 +135,15 @@ describe('K25 a line\'s pin is clean, dirty, not git, or one line per workspace 
       await adoptModules(caller, ['core']);
       gitIn(world.root, 'add', '--', '.workbench');
       gitIn(world.root, 'commit', '-q', '-m', 'the person commits the architecture');
-      return { lines: await pinLines(caller, world.goalRef, 'core'), expected: [{ lineRef: lineKeyOf(world.workspaceId,
-        gitBranch(world.root)), contentHash: HEX64, head: gitHead(world.root), dirty: false, modules: null }] };
+      return { lines: await pinLines(caller, world.goalRef, 'core'), expected: [{ lineRef: expectedLineKey(world.workspaceId,
+        realpathSync(world.root)), contentHash: HEX64, head: gitHead(world.root), dirty: false, modules: null }] };
     }],
     ['② three modules adopted, not committed, the plan on `core` only: dirty, `core`\'s minimal fields only', async () => {
       const world = await gitWorld();
       const caller = callerIn(world);
       await adoptModules(caller, ['core', 'web', 'db']);
-      return { lines: await pinLines(caller, world.goalRef, 'core'), expected: [{ lineRef: lineKeyOf(world.workspaceId,
-        gitBranch(world.root)), contentHash: HEX64, head: gitHead(world.root), dirty: true, modules: [minimalOf('core')] }] };
+      return { lines: await pinLines(caller, world.goalRef, 'core'), expected: [{ lineRef: expectedLineKey(world.workspaceId,
+        realpathSync(world.root)), contentHash: HEX64, head: gitHead(world.root), dirty: true, modules: [minimalOf('core')] }] };
     }],
     ['③ a folder that is not git: no head, dirty, the minimal fields', async () => {
       const fx = await platformFixture('memory', 'kls2c2-plain', [['README.md', '# kls2c2\n']]);
@@ -152,7 +151,7 @@ describe('K25 a line\'s pin is clean, dirty, not git, or one line per workspace 
       const caller: Caller = { platform: fx.platform, ctx: fx.ctx, scope: fx.scope };
       await adoptModules(caller, ['core']);
       return { lines: await pinLines(caller, await goalIn(caller, 'kls2c2-plain-goal'), 'core'), expected: [{
-        lineRef: lineKeyOf(fx.scope.workspaceId, ''), contentHash: HEX64, head: null, dirty: true,
+        lineRef: expectedLineKey(fx.scope.workspaceId, realpathSync(fx.root)), contentHash: HEX64, head: null, dirty: true,
         modules: [minimalOf('core')] }] };
     }],
     // 具名改坏：[2C2-02] 只钉 Goal 所在工作区那条线 → 只这一条红（lines 只有一条）。
@@ -167,9 +166,9 @@ describe('K25 a line\'s pin is clean, dirty, not git, or one line per workspace 
         const ws2 = callerIn(world, 'ws2');
         // The caller's frame (ws2) names the main workspace's module with its prefix.
         return { lines: await pinLines(ws2, await goalIn(ws2, 'kls2c2-ws2-goal'), '/@ws:ws/core'), expected: [
-          { lineRef: lineKeyOf('ws', gitBranch(world.root)), contentHash: HEX64, head: gitHead(world.root), dirty: true,
+          { lineRef: expectedLineKey('ws', realpathSync(world.root)), contentHash: HEX64, head: gitHead(world.root), dirty: true,
             modules: [minimalOf('core')] },
-          { lineRef: lineKeyOf('ws2', gitBranch(ws2Root)), contentHash: HEX64, head: gitHead(ws2Root), dirty: false,
+          { lineRef: expectedLineKey('ws2', realpathSync(ws2Root)), contentHash: HEX64, head: gitHead(ws2Root), dirty: false,
             modules: null },
         ] };
       }],

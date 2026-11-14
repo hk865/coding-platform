@@ -6,7 +6,7 @@
  * side, so a card never shows a button the answer side would refuse.
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
-import type { ModuleRef } from '../../../contracts/core/identity.js';
+import type { ModuleRef, SessionRef } from '../../../contracts/core/identity.js';
 import type { OperationRef } from '../../../contracts/core/operations.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import { rejected } from '../../../contracts/core/rejections.js';
@@ -14,17 +14,17 @@ import { canonicalKey, sameJson } from '../../../contracts/fingerprint.js';
 import type {
   ArchitectureProposalBatchRef, ArchitectureProposalBatchV1, ArchitectureProposalV1,
 } from '../../../contracts/architecture-proposal.js';
-import type { ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
+import type { AdoptedArchitecture, ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
 import { readOwnerRecord } from '../persistence/owner-record-read.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { SessionDirectoryPort } from '../model/session-contracts.js';
 import type { RoleLineOperationV1 } from '../model/session-contracts.js';
-import { catalogPinOf, readCurrentCatalogWindow } from '../architecture/catalog-service.js';
+import { catalogPinOf, readCurrentCatalogWindow, type CurrentCatalogWindow } from '../architecture/catalog-service.js';
 import type { KnowledgeReadBaseV1 } from '../../../contracts/knowledge.js';
 import { decodeArchitectureProposalBatchRecord } from '../architecture/proposal-record-codecs.js';
 import type { ArchitectureProposalService } from '../architecture/proposal-service.js';
 import { roleExplorationQuestion } from '../state/role-exploration.js';
-import { moduleDepth } from '../state/role-scope.js';
+import { moduleDepth, regionContains } from '../state/role-scope.js';
 import {
   appendExploration, explorationGroupsOf, setPlannedRounds,
   type ColdStartExplorationQueryRefV1, type ExplorationDepthV1, type RoleLineActionV1,
@@ -36,7 +36,7 @@ import {
 } from '../state/exploration-followup.js';
 import {
   endingOf, openExploration, readColdStartRecord, readWorkspaceJoinRecord, regionOfRound, submitExploration,
-  type ColdStartServiceDeps,
+  topLevelModules, type ColdStartServiceDeps,
 } from './cold-start-service.js';
 import { writeRoleLineOperation } from './role-line-operation-write.js';
 
@@ -48,12 +48,14 @@ export type ExplorationFollowUpDeps = ColdStartServiceDeps & {
   proposals: ColdStartServiceDeps['proposals'] & Pick<ArchitectureProposalService, 'readArchitectureProposal'>;
 };
 
-/** One resolved source of a structural card: its proposal, the exploration operation and the exact round. */
+/** One resolved source of a structural card: its proposal and the block a re-proposal would re-explore. */
 export type ReproposeSourceV1 = {
   proposal: ArchitectureProposalV1;
-  operation: RoleLineOperationV1;
-  round: ColdStartExplorationQueryRefV1;
-  /** Null for the coarse-split round: it explores the top level, not a region block (R-16). */
+  /** The exploration operation that wrote the proposal; null for an adviser Work-Run proposal. */
+  operation: RoleLineOperationV1 | null;
+  /** The exact exploration round; null for a Work-Run proposal, which has no round. */
+  round: ColdStartExplorationQueryRefV1 | null;
+  /** Null only for the coarse-split round; a Work-Run proposal always resolves at least one block. */
   region: ModuleRef | null;
 };
 
@@ -89,13 +91,15 @@ export function repairReadBase(noticeId: string | null): { base?: KnowledgeReadB
 
 /**
  * The one “can this batch still be re-proposed” read (M6): member proposal → its `operationRef` → that operation →
- * the round named by its `queryRunRef` → the round's region. Any missing link refuses the option; nothing is guessed
- * from the answering person's workspace. Both the card source and the answer side call this.
+ * the round named by its `queryRunRef` → the round's region. A Work-Run proposal has neither an operation nor a round,
+ * so it resolves through the current catalog instead. Any missing link refuses the option; nothing is guessed from
+ * the answering person's workspace. Both the card source and the answer side call this.
  */
 export async function reproposeSourcesOf(ctx: CoreCallContext, deps: {
   proposals: Pick<ArchitectureProposalService, 'readArchitectureProposal'>;
   sessions: Pick<SessionDirectoryPort, 'getSessionOperation'>;
   records: ColdStartServiceDeps['records'];
+  knowledge: ColdStartServiceDeps['knowledge'];
 }, batchRef: ArchitectureProposalBatchRef): Promise<ReadResult<ReproposeSourceV1[]>> {
   const batch = await readOwnerRecord({ store: deps.records, refKey: canonicalKey(batchRef),
     decode: decodeArchitectureProposalBatchRecord,
@@ -106,6 +110,43 @@ export async function reproposeSourcesOf(ctx: CoreCallContext, deps: {
   return reproposeSourcesFromMembers(ctx, deps, (batch.value as ArchitectureProposalBatchV1).members);
 }
 
+/** The current blocks a Work-Run proposal touches. A module the proposal adds is followed through the proposal's
+ *  own `set_parent`; a new top-level module is its own block. */
+export function reproposeRegionsOf(catalog: AdoptedArchitecture, proposal: ArchitectureProposalV1): ModuleRef[] {
+  const parents = new Map<string, string>();
+  const ids = new Set<string>();
+  const addModuleId = (module: ModuleRef | string | undefined): void => {
+    if (module !== undefined) ids.add(typeof module === 'string' ? module : module.moduleId);
+  };
+  for (const op of proposal.ops) {
+    if (op.op === 'set_parent' && op.parentId !== null) parents.set(op.moduleId, op.parentId);
+    if (op.op === 'add_module') addModuleId(op.module.ref.moduleId);
+    else if (op.op === 'add_dependency' || op.op === 'remove_dependency'
+      || op.op === 'add_forbid_rule' || op.op === 'remove_forbid_rule'
+      || op.op === 'set_dependency_reason') { addModuleId(op.from); addModuleId(op.to); }
+    else addModuleId(op.moduleId);
+  }
+  for (const move of proposal.responsibilityMoves) {
+    if (move.to.kind === 'modules') for (const module of move.to.destinations) addModuleId(module);
+  }
+  const top = topLevelModules(catalog);
+  const blocks = new Map<string, ModuleRef>();
+  for (const id of ids) {
+    let current: string | undefined = id;
+    const seen = new Set<string>();
+    let region: ModuleRef | undefined;
+    while (current !== undefined && !seen.has(current)) {
+      seen.add(current);
+      region = top.find((candidate) => regionContains(catalog, candidate.moduleId, current!));
+      if (region !== undefined) break;
+      current = parents.get(current);
+    }
+    const block = region ?? { projectId: proposal.ref.projectId, moduleId: id };
+    blocks.set(block.moduleId, block);
+  }
+  return [...blocks.values()];
+}
+
 /**
  * The members half of the source read: the card source has already read the batch and its members, so it hands them
  * in and no second batch/member read happens; the answer side reaches it through `reproposeSourcesOf`.
@@ -113,16 +154,29 @@ export async function reproposeSourcesOf(ctx: CoreCallContext, deps: {
 export async function reproposeSourcesFromMembers(ctx: CoreCallContext, deps: {
   proposals: Pick<ArchitectureProposalService, 'readArchitectureProposal'>;
   sessions: Pick<SessionDirectoryPort, 'getSessionOperation'>;
+  records: ColdStartServiceDeps['records'];
+  knowledge: ColdStartServiceDeps['knowledge'];
 }, members: readonly import('../../../contracts/architecture-proposal.js').ArchitectureProposalRef[]):
   Promise<ReadResult<ReproposeSourceV1[]>> {
   const out: ReproposeSourceV1[] = [];
+  // Work-Run proposals in one batch share the project's current window: one read, not one per member.
+  let window: CurrentCatalogWindow | null = null;
   for (const member of members) {
     const read = await deps.proposals.readArchitectureProposal(ctx, { proposalRef: member });
     if (read.status !== 'ready') return read;
     const proposal = read.value.proposal;
-    if (proposal.operationRef === null || proposal.operationRef === undefined
-      || proposal.queryRunRef === null || proposal.queryRunRef === undefined) {
-      return rejected('invalid', 'this proposal has no saved exploration source');
+    if (proposal.operationRef === null || proposal.operationRef === undefined) {
+      window ??= await readCurrentCatalogWindow(deps.records, proposal.ref.projectId,
+        { lines: deps.knowledge, caller: ctx });
+      if (window.status !== 'ready') return window;
+      for (const region of reproposeRegionsOf(window.catalog.catalog, proposal)) {
+        out.push({ proposal, operation: null, round: null, region });
+      }
+      continue;
+    }
+    if (proposal.queryRunRef === null || proposal.queryRunRef === undefined) {
+      // The record codec allows the field to be absent; production writes both refs together. Do not guess a round.
+      return rejected('invalid', 'this proposal has no saved exploration round');
     }
     const originCtx = { ...ctx, workspaceId: proposal.queryRunRef.workspaceId };
     const operation = await deps.sessions.getSessionOperation(originCtx, proposal.operationRef);
@@ -229,26 +283,44 @@ export function createExplorationFollowUpService(deps: ExplorationFollowUpDeps):
     if (window.status !== 'ready') return window;
     const lines = await deps.regionLines.readOpenRegionLines(at.ctx, { projectId });
     if (lines.status !== 'ready') return lines;
-    // A follow-up round runs where its source round ran; a deepen has no source round and stays in this workspace.
+    // A follow-up round runs where its source round ran; a Work-Run source has no round and stays in this workspace.
     const sourceWorkspaces = new Map<string, string>();
+    // A new top-level module has no region line yet: its proposal's own line is the one fallback (lead 11-13).
+    const proposers = new Map<string, SessionRef>();
     if (at.action.followUp.kind === 'repropose' && at.action.followUp.sourceBatchRef !== null) {
       const sources = await reproposeSourcesOf(at.ctx, { proposals: deps.proposals, sessions: deps.sessions,
-        records: deps.records }, at.action.followUp.sourceBatchRef);
+        records: deps.records, knowledge: deps.knowledge }, at.action.followUp.sourceBatchRef);
       if (sources.status === 'ready') {
         for (const source of sources.value) {
           if (source.region === null) return rejected('invalid', 'a re-proposed follow-up needs region blocks');
-          sourceWorkspaces.set(source.region.moduleId, source.round.queryRunRef.workspaceId);
+          if (source.round !== null) sourceWorkspaces.set(source.region.moduleId, source.round.queryRunRef.workspaceId);
+          if (!proposers.has(source.region.moduleId)) proposers.set(source.region.moduleId, source.proposal.proposer);
         }
       }
     }
     let next = setPlannedRounds(at.action, at.action.followUp.moduleRefs.length) as ExplorationFollowUpActionV1;
     const added: ColdStartExplorationQueryRefV1[] = [];
     for (const module of at.action.followUp.moduleRefs) {
+      const inCatalog = window.catalog.catalog.modules.some((entry) => sameJson(entry.ref, module));
       const line = lines.value.find((candidate) => candidate.duty === 'adviser'
         && candidate.link.ref.target.kind === 'module'
         && candidate.link.ref.target.ref.projectId === module.projectId
         && candidate.link.ref.target.ref.moduleId === module.moduleId)?.session ?? null;
       let chosen = line;
+      if (chosen === null && !inCatalog) {
+        // A module the proposal adds is not in the adopted graph; no block line can own it yet. The original proposer's
+        // line takes the round while it is open (an archived line can receive but never claim, which leaves the Job).
+        const proposer = proposers.get(module.moduleId);
+        if (proposer !== undefined) {
+          const card = await deps.sessions.readSession(at.ctx, proposer, 'project');
+          if (card.status !== 'ready') return card;
+          if (card.value.availability === 'idle' || card.value.availability === 'busy') chosen = proposer;
+        }
+        if (chosen === null) {
+          return rejected('invalid',
+            'this block is not in the adopted architecture and the original proposer line has ended');
+        }
+      }
       if (chosen === null) {
         const opened = await deps.lines.openRegionLine(at.ctx, {
           commandId: `followup-region:${at.op.ref.operationId}:${module.moduleId}`,
@@ -305,8 +377,9 @@ export function createExplorationFollowUpService(deps: ExplorationFollowUpDeps):
     for (const ref of frozen.value) {
       if (at.action.batchRefs.some((saved) => sameJson(saved, ref))) continue;
       const sources = await reproposeSourcesOf(at.ctx, { proposals: deps.proposals, sessions: deps.sessions,
-        records: deps.records }, ref);
-      if (sources.status === 'ready' && sources.value.every((source) => sameJson(source.operation.ref, at.op.ref))) {
+        records: deps.records, knowledge: deps.knowledge }, ref);
+      if (sources.status === 'ready' && sources.value.every((source) => source.operation !== null
+        && sameJson(source.operation.ref, at.op.ref))) {
         own.push(ref);
       }
     }

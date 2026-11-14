@@ -63,6 +63,9 @@ import type {
 } from '../core/work-graph/configuration/project-bootstrap-contracts.js';
 import type { GoalTaskPort } from '../core/work-graph/model/task-contracts.js';
 import type { TaskNodeCommitPort } from '../core/work-graph/model/task-node-commit-contracts.js';
+// Delivery (121-45): the page read port and the acceptance write port the two route aliases derive from.
+import type { GoalDeliveryPort } from '../core/work-graph/model/goal-delivery-contracts.js';
+import type { GoalDeliveryReadPort } from '../core/work-graph/views/delivery-read.js';
 import type { PlanProposalRef, PlanTaskPort } from '../core/work-graph/model/plan-contracts.js';
 import type {
   DecisionMessagePort,
@@ -247,6 +250,9 @@ export type CoreRouteSuffix =
   | 'queries/cancel'
   // Node-level review (121-45): the person's commit or acknowledgement of one reviewed node.
   | 'nodes/commit'
+  // Delivery (121-45): the delivery page's read and the person's one acceptance write.
+  | 'goals/delivery'
+  | 'goals/accept-delivery'
   | 'queries/answer'
   | 'materials/open'
   | 'workflow/goal-input'
@@ -263,6 +269,8 @@ export type CoreRouteSuffix =
   // workspace CAS save/compare and the explicit command handles.
   | 'executions/list'
   | 'projects/read'
+  // KLS-3a: the project's checkout lines (`{ workspaceId? }` -> `{ lines }`, oldest first).
+  | 'workspaces/lines'
   | 'files/save'
   | 'files/compare'
   | 'files/uncommitted'
@@ -910,6 +918,15 @@ export type NodesCommitResponse = RouteResponse<TaskNodeCommitPort['commitNode']
 /** The `nodes/commit` body/response pair; `CORE_ROUTE_SPECS`'s annotation names it, so both aliases are reached. */
 export type NodesCoreRouteDto = {
   'nodes/commit': { body: NodesCommitBody; response: NodesCommitResponse };
+};
+export type GoalsDeliveryBody = PlainBody<GoalDeliveryReadPort['readGoalDelivery']>;
+export type GoalsDeliveryResponse = RouteResponse<GoalDeliveryReadPort['readGoalDelivery']>;
+export type GoalsAcceptDeliveryBody = GraphWriteBody<GoalDeliveryPort['acceptDelivery']>;
+export type GoalsAcceptDeliveryResponse = RouteResponse<GoalDeliveryPort['acceptDelivery']>;
+/** The delivery page's read and its one acceptance write; `CORE_ROUTE_SPECS`'s annotation names it. */
+export type DeliveryCoreRouteDto = {
+  'goals/delivery': { body: GoalsDeliveryBody; response: GoalsDeliveryResponse };
+  'goals/accept-delivery': { body: GoalsAcceptDeliveryBody; response: GoalsAcceptDeliveryResponse };
 };
 export type QueriesAnswerBody = PlainBody<QueryJobPort['readQueryAnswer']>;
 export type QueriesAnswerResponse = RouteResponse<QueryJobPort['readQueryAnswer']>;

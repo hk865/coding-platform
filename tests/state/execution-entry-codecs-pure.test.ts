@@ -24,7 +24,7 @@ const RUN: RunSnapshot = {
   roleBinding: { schemaVersion: 1, bindingId: 'binding-1', templateId: 'template-1',
     templateRevision: '1', bindingVersion: 1, policyRevision: 'policy-1' },
   budget: { tokenBudget: 1000, deadline: null },
-  workspaceSnapshot: { workspaceId: 'workspace-1', revision: 1 },
+  workspaceSnapshot: { workspaceId: 'workspace-1', revision: 1, line: null },
   status: 'starting',
   outcome: null,
   exitCode: null,

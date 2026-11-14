@@ -19,12 +19,13 @@ import { sha256Hex } from '../contracts/fingerprint.js';
 import {
   ARCHITECTURE_FILE_PATH, KNOWLEDGE_DIRECTORY, MODULES_DIRECTORY, type KnowledgePinModuleV1,
 } from '../contracts/knowledge.js';
+import { lineRefOf } from '../contracts/line.js';
 import type { GoalRecordTransactionPort, StoreResult } from '../core/record-store/ports.js';
 import type { WorkspaceHostBindings } from '../core/workspace/access.js';
 import { readContinuationBaselineBlob } from '../core/workspace/continuation-diff-reads.js';
 import {
-  commitKnowledgeFiles, gitBlobId, identifyCheckout, readCheckoutBranch, readHead, readKnowledgeChanges,
-  readKnowledgeGitState, readLastCommitTime, type CheckoutProbe,
+  checkoutIdentityOf, commitKnowledgeFiles, gitBlobId, identifyCheckout, readCheckoutBranch, readHead,
+  readKnowledgeChanges, readKnowledgeGitState, readLastCommitTime, type CheckoutProbe,
 } from '../core/workspace/workspace-change-capture.js';
 import {
   architectureFilesOf, architectureOfFiles, moduleFileIdOf,
@@ -107,10 +108,8 @@ async function resolveWith(source: KnowledgeWorkspaceSource, caller: KnowledgeCa
     return unavailable(`the workspace root ${resolved.value.root} cannot be read: ${messageOf(error)}`);
   }
   const scope = { workspaceId, mainWorkspaceId: listed.value[0]! };
-  return ready(checkout.kind === 'git'
-    ? { line: { repoKey: checkout.repoKey, folder: checkout.folder, branch: checkout.branch }, scope,
-      objectFormat: checkout.objectFormat }
-    : { line: { repoKey: checkout.folder, folder: checkout.folder, branch: '' }, scope, objectFormat: 'sha1' });
+  return ready({ line: lineRefOf(checkoutIdentityOf(checkout)), scope,
+    objectFormat: checkout.kind === 'git' ? checkout.objectFormat : 'sha1' });
 }
 
 /** The ONE resolution of (projectId, workspaceId) to its line (the root and its current branch) and its place in the project. */

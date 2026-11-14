@@ -55,6 +55,7 @@ import { createSessionDutyResolver } from '../../src/composition/session-duty.js
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createRoleLimitsService } from '../../src/core/work-graph/sessions/role-limits-service.js';
 import { ROLE_LINE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/role-line-record-codecs.js';
+import { LINE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/line-record-codecs.js';
 import type { RoleLineDutyV1 } from '../../src/contracts/role-lines.js';
 import type { SessionDirectoryPort } from '../../src/core/work-graph/model/session-contracts.js';
 import type { SessionDutyReadPort } from '../../src/core/work-graph/model/work-line-contracts.js';
@@ -265,6 +266,7 @@ export async function createGraphSessionFixture(kind: GraphFixtureKind = 'memory
       ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.records,
       ...ROLE_RECORD_SCHEMAS.records,
       ...ROLE_LINE_RECORD_SCHEMAS.records,
+      ...LINE_RECORD_SCHEMAS.records,
       ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.records,
       ...CONTROL_RECORD_SCHEMAS.records,
       ...materialRecordSchemas().records.filter(schema => schema.aggregateType === 'Run'),
@@ -295,6 +297,7 @@ export async function createGraphSessionFixture(kind: GraphFixtureKind = 'memory
       ...(ROLE_LINE_RECORD_SCHEMAS.lookups ?? []),
       ...(UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.lookups ?? []),
       ...(KNOWLEDGE_RECORD_SCHEMAS.lookups ?? []),
+      ...(LINE_RECORD_SCHEMAS.lookups ?? []),
     ],
   };
   let failWrite = false;

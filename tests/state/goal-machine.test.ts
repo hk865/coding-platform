@@ -78,8 +78,10 @@ const OBJECTIVE = 'ship the release';
 const SETTINGS = { schemaVersion: 1 as const, autonomy: 'after_plan_confirmation' as const, order: 0, waitForGoalRef: null,
   parallelRisks: [] };
 
-const pendingGoal = newGoalSnapshot({ ref: GOAL, workspaceRef: WS, objective: OBJECTIVE, settings: SETTINGS,
-  continuedFrom: null, copiedInterventions: [] });
+// KLS-3a1 (draft §2.8, §4): a Goal carries its line (`lineRef`, null without one) after `workspaceRef`; the input
+// shape only, until the package lands it is an unknown key here.
+const pendingGoal = newGoalSnapshot({ ref: GOAL, workspaceRef: WS, lineRef: null, objective: OBJECTIVE,
+  settings: SETTINGS, continuedFrom: null, copiedInterventions: [] });
 /** The same Goal as the creating commit stores it: the bound creation cursor. */
 const GOAL_NEW: GoalSnapshot = { ...pendingGoal, since: 'c0000000001' as GoalSnapshot['since'] };
 /** Active Goals never changed their desired state; paused/cancelled ones did, by an operator. */
@@ -118,8 +120,8 @@ function ctxFor(state: GoalMachineState, overrides: Partial<GoalGuardContext> = 
     completion: state.activePlanRef === null ? null : completionFacts(state.activePlanRef), ...overrides };
 }
 
-const CREATED: GoalEvent = { type: 'goal_created', ref: GOAL, workspaceRef: WS, objective: OBJECTIVE, settings: SETTINGS,
-  continuedFrom: null, copiedInterventions: [] };
+const CREATED: GoalEvent = { type: 'goal_created', ref: GOAL, workspaceRef: WS, lineRef: null, objective: OBJECTIVE,
+  settings: SETTINGS, continuedFrom: null, copiedInterventions: [] };
 const ADOPT_INITIAL: GoalEvent = { type: 'plan_adopted', basedOn: null, target: P1 };
 const ADOPT_FUTURE: GoalEvent = { type: 'plan_adopted', basedOn: P1, target: P2 };
 function controlEvent(type: 'goal_pause_requested' | 'goal_resume_requested' | 'goal_cancel_requested',
@@ -184,7 +186,8 @@ function deepFreeze<T>(value: T): T {
 
 describe('§14.1 Goal record constructors', () => {
   it('newGoalSnapshot writes Goal@1 with today\'s key order, epoch 1 and no requester (commit-compiler.ts:111-118)', () => {
-    expect(JSON.stringify(pendingGoal)).toBe(JSON.stringify({ ref: GOAL, workspaceRef: WS, objective: OBJECTIVE,
+    expect(JSON.stringify(pendingGoal)).toBe(JSON.stringify({ ref: GOAL, workspaceRef: WS, lineRef: null,
+      objective: OBJECTIVE,
       desiredState: 'active', desiredStateRevision: 1, desiredStateRequestedBy: null, activePlanRevision: null, revision: 1,
       settings: SETTINGS, continuedFrom: null, copiedInterventions: [], since: null }));
     expect(pendingGoal.desiredStateRevision).toBe(1);
@@ -205,7 +208,7 @@ describe('§14.1 Goal record constructors', () => {
     expect(moved.desiredStateRevision).toBe(2);
     expect(moved.desiredStateRequestedBy).toEqual(HUMAN);
     expect(JSON.stringify(nextGoalPointer(GOAL_NEW, P1))).toBe(JSON.stringify({ ref: GOAL, workspaceRef: WS,
-      objective: OBJECTIVE, desiredState: 'active', desiredStateRevision: 1, desiredStateRequestedBy: null,
+      lineRef: null, objective: OBJECTIVE, desiredState: 'active', desiredStateRevision: 1, desiredStateRequestedBy: null,
       activePlanRevision: P1, revision: 2, settings: SETTINGS, continuedFrom: null, copiedInterventions: [],
       since: 'c0000000001' }));
   });
@@ -214,10 +217,10 @@ describe('§14.1 Goal record constructors', () => {
     const planned = deepFreeze(nextGoalPointer(GOAL_NEW, P1));
     const actor = { kind: 'system' as const, id: 'host:operator-console' };
     const paused = nextGoalDesiredState(planned, { to: 'paused', requestedBy: actor });
-    expect(Object.keys(paused)).toEqual(['ref', 'workspaceRef', 'objective', 'desiredState', 'desiredStateRevision',
+    expect(Object.keys(paused)).toEqual(['ref', 'workspaceRef', 'lineRef', 'objective', 'desiredState', 'desiredStateRevision',
       'desiredStateRequestedBy', 'activePlanRevision', 'revision', 'settings', 'continuedFrom', 'copiedInterventions',
       'since']);
-    expect(paused).toEqual({ ref: GOAL, workspaceRef: WS, objective: OBJECTIVE, desiredState: 'paused',
+    expect(paused).toEqual({ ref: GOAL, workspaceRef: WS, lineRef: null, objective: OBJECTIVE, desiredState: 'paused',
       desiredStateRevision: 3, desiredStateRequestedBy: actor, activePlanRevision: P1, revision: 3, settings: SETTINGS,
       continuedFrom: null, copiedInterventions: [], since: 'c0000000001' });
     expect(paused.desiredStateRequestedBy).not.toBe(actor);
@@ -710,7 +713,7 @@ function runOf(runId: string, taskId: string, overrides: Partial<RunSnapshot> = 
   return {
     ref: runRef(runId), revision: 3, schemaVersion: 1, task: { projectId: PROJECT, goalId: GOAL_ID, taskId },
     attemptId: `${runId}-attempt`, planRef: P1, roleBinding: ROLE, budget: { tokenBudget: 1000, deadline: null },
-    workspaceSnapshot: { workspaceId: WORKSPACE, revision: 1 }, status: 'ended', outcome: 'completed', exitCode: 0,
+    workspaceSnapshot: { workspaceId: WORKSPACE, revision: 1, line: null }, status: 'ended', outcome: 'completed', exitCode: 0,
     lastEventSeq: 2, lastRuntimeEventId: `rt-${runId}`, lastFactEventId: `ev-${runId}`, envelope: null,
     startedAt: T0, startedSince: null, endedAt: T1, previousRun: null, ...overrides,
   };

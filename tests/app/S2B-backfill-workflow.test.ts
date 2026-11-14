@@ -76,7 +76,7 @@ async function commitLegacyRun(f: S2BActivityFixture, runId: string, endedAt: st
     ref, revision: 1, schemaVersion: 1,
     task: { projectId: ref.projectId, goalId: ref.goalId, taskId }, attemptId: `attempt-${runId}`,
     planRef: goalRead.value.goal.activePlanRevision, roleBinding: f.b2.base.roleBinding, budget: f.b2.base.budget,
-    workspaceSnapshot: { workspaceId: f.b2.base.scope.workspaceId, revision: 1 },
+    workspaceSnapshot: { workspaceId: f.b2.base.scope.workspaceId, revision: 1, line: null },
     status: 'ended', outcome: 'failed', exitCode: null, lastEventSeq: 0,
     lastRuntimeEventId: '', lastFactEventId: '', envelope: null, startedAt: null, startedSince: null, endedAt, previousRun: null,
   };

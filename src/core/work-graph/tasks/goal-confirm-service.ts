@@ -16,6 +16,7 @@ import {
   InitializationBindingFormat, type InitializationBindingV1,
 } from '../../../contracts/initialization-binding.js';
 import { makeCommitCursor, type PendingGoalSnapshot } from '../../../contracts/ledger.js';
+import type { LineRef } from '../../../contracts/line.js';
 import type { QueryJobAnswerRef, QueryJobRef } from '../../../contracts/query-job.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import { checkShape } from '../../../contracts/validation/data-format.js';
@@ -33,6 +34,7 @@ import {
 import { createEventCodec, formatSchemas } from '../persistence/field-table-codec.js';
 import { createGoalGraphRepository } from '../persistence/graph-repository.js';
 import { initializationBindingCodec } from '../persistence/initialization-binding-codecs.js';
+import { lineForWrite } from '../persistence/line-record-codecs.js';
 import { lookupAll } from '../persistence/lookup-all.js';
 import { canonicalRefKey, decodeGoalSnapshot, goalSnapshotValueProblem } from '../persistence/record-codecs.js';
 import { decideGoalConfirm, newInitializationBinding } from '../state/goal-confirm.js';
@@ -182,6 +184,8 @@ type ConfirmReadFacts = {
   activeOrder: number[];
   confirmed: GoalConfirmFactsV1['confirmed'];
   goalId: string;
+  /** The workspace's main line the confirmed Goal is born on (kls-design §2.3.1); null when it has none. */
+  line: LineRef | null;
   guards: { refKey: string; expectedRevision: number | null }[];
   /** The record guards a conflict may re-read: the request window and the scope pins, never the new Goal. */
   retryableGuardRefs: string[];
@@ -282,6 +286,8 @@ export function createGoalConfirmService(deps: GoalConfirmServiceDependencies): 
     const scopeRead = await repository.readGoalScope({ projectRef, workspaceRef, goalRef });
     if (scopeRead.status === 'not_found') return rejected('not_found', scopeRead.reason);
     if (scopeRead.status !== 'ready') return rejected('unavailable', scopeRead.reason);
+    const line = await lineForWrite(deps.records, scope, undefined);
+    if (line.status !== 'ready') return line;
     const guards = [
       { refKey: canonicalRefKey(projectRef), expectedRevision: scopeRead.scope.project.revision },
       { refKey: canonicalRefKey(workspaceRef), expectedRevision: scopeRead.scope.workspace.revision },
@@ -306,6 +312,7 @@ export function createGoalConfirmService(deps: GoalConfirmServiceDependencies): 
         activeOrder: activeOrder.value,
         confirmed,
         goalId,
+        line: line.value,
         guards,
         retryableGuardRefs,
       },
@@ -372,6 +379,7 @@ export function createGoalConfirmService(deps: GoalConfirmServiceDependencies): 
         const goal = newGoalSnapshot({
           ref: goalRef,
           workspaceRef: workspaceRefFor(scope.projectId, scope.workspaceId),
+          lineRef: facts.line,
           objective: decision.objective,
           settings: decision.settings,
           continuedFrom: null,

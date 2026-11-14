@@ -26,6 +26,7 @@ import {
 import { canonicalJson, canonicalOf, type JsonValue } from '../../../contracts/fingerprint.js';
 import { PLATFORM_DUTIES } from '../../../contracts/platform-duty.js';
 import { checkShape } from '../../../contracts/validation/data-format.js';
+import { lineRefProblem } from '../../../contracts/line.js';
 import {
   hasOnlyKeys, invalid, isNonNeg, isPos, isRecord, nonEmpty, parseObject, utf8Bytes, type UnknownRecord,
 } from '../../../contracts/validation/common.js';
@@ -342,10 +343,10 @@ const OPERATION_BODY_KEYS: readonly string[] = [
   'ref', 'revision', 'workspaceId', 'action', 'phase', 'requestedAt', 'updatedAt', 'observation', 'failure',
 ];
 const ACTION_KEYS: readonly string[] = ['kind', 'plannedSessionRef', 'parentOperation', 'workspace', 'kernelStore', 'role',
-  'recommendedRefs', 'initialLinks', 'provenance', 'creation', 'consultation', 'seatDecision'];
+  'recommendedRefs', 'initialLinks', 'provenance', 'creation', 'consultation', 'seatDecision', 'lineRef'];
 const OPERATION_PHASES = ['accepted', 'running', 'completed', 'failed', 'unknown'] as const;
 const SESSION_BODY_KEYS: readonly string[] = [
-  'ref', 'revision', 'kernel', 'lifecycle', 'health', 'healthConclusion', 'role', 'workspaceId', 'lastExecutionRef',
+  'ref', 'revision', 'kernel', 'lifecycle', 'health', 'healthConclusion', 'role', 'workspaceId', 'lineRef', 'lastExecutionRef',
   'occupancy', 'historyCursor', 'createdAt', 'archivedAt', 'provenance', 'archiveRequest', 'unavailableSince',
   'delegationCeiling', 'secretaryCreated',
 ];
@@ -880,6 +881,8 @@ function checkCreateAction(body: UnknownRecord, action: UnknownRecord): Problem 
   }
   const consultationProblem = checkConsultationCreate(action['consultation']);
   if (consultationProblem !== null) return `operation consultation: ${consultationProblem}`;
+  const lineProblem = lineRefProblem(action['lineRef']);
+  if (lineProblem !== null) return `operation ${lineProblem}`;
   // The admission saves the seat it decided once on the create operation; it is required (no absent→null default).
   const seatDecision = action['seatDecision'];
   if (seatDecision !== null) {
@@ -939,6 +942,8 @@ export function checkSessionBody(body: UnknownRecord, requireBoundUnavailableSin
     return 'session kernel requires adapterId and kernelSessionId';
   }
   if (!nonEmpty(body['workspaceId'])) return 'session workspaceId must be a non-empty string';
+  const lineProblem = lineRefProblem(body['lineRef']);
+  if (lineProblem !== null) return `session ${lineProblem}`;
   const role = checkRole(body['role']);
   if (role !== null) return role;
   if (body['lifecycle'] !== 'active' && body['lifecycle'] !== 'archived') {

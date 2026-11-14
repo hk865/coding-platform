@@ -1002,7 +1002,7 @@ const ROLE: RoleConfigurationRef = { kind: 'legacy_template', templateId: 'tpl-1
 function recordOf(overrides: Partial<SessionRecord> = {}): SessionRecord {
   return {
     ref: SESSION_REF, revision: REVISION, kernel: { adapterId: 'coding-agent', kernelSessionId: 'k-1' },
-    lifecycle: 'active', health: 'available', role: ROLE, workspaceId: 'w1', lastExecutionRef: null,
+    lifecycle: 'active', health: 'available', role: ROLE, workspaceId: 'w1', lineRef: null, lastExecutionRef: null,
     occupancy: null, historyCursor: 'cursor-old', createdAt: '2026-10-01T00:00:00.000Z', archivedAt: null,
     provenance: { schemaVersion: 1, kind: 'new' },
     ...overrides,
@@ -1024,15 +1024,16 @@ describe('createSessionRecord', () => {
   it('writes today\'s SES-01 literal (same fields, same order, no healthConclusion field)', () => {
     const record = createSessionRecord({
       ref: SESSION_REF, kernel: { adapterId: 'coding-agent', kernelSessionId: 'k-1' }, role: ROLE, workspaceId: 'w1',
+      lineRef: null,
       createdAt: '2026-10-04T00:00:00.000Z', provenance: { schemaVersion: 1, kind: 'new' },
     });
     expect(record).toEqual({
       ref: SESSION_REF, revision: 1, kernel: { adapterId: 'coding-agent', kernelSessionId: 'k-1' },
-      lifecycle: 'active', health: 'available', role: ROLE, workspaceId: 'w1', lastExecutionRef: null,
+      lifecycle: 'active', health: 'available', role: ROLE, workspaceId: 'w1', lineRef: null, lastExecutionRef: null,
       occupancy: null, historyCursor: null, createdAt: '2026-10-04T00:00:00.000Z', archivedAt: null,
       provenance: { schemaVersion: 1, kind: 'new' },
     });
-    expect(Object.keys(record)).toEqual(['ref', 'revision', 'kernel', 'lifecycle', 'health', 'role', 'workspaceId',
+    expect(Object.keys(record)).toEqual(['ref', 'revision', 'kernel', 'lifecycle', 'health', 'role', 'workspaceId', 'lineRef',
       'lastExecutionRef', 'occupancy', 'historyCursor', 'createdAt', 'archivedAt', 'provenance']);
     const created = transitionSession('absent', { kind: 'session_created' }, ctxOf({ creation: CREATION }));
     expect(created.ok && created.next).toEqual(sessionMachineStateOf(record));

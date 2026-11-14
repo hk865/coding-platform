@@ -14,10 +14,10 @@
  * production resolver reads from the Session's role. Files under the roots are the product's output: rows read
  * them and edit them as a person would; no store is read or written here.
  */
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { VersionPin, WorkspaceScope } from '../../src/contracts/core/identity.js';
 import type { RoleBindingRefV1, RunRef } from '../../src/contracts/dispatch.js';
@@ -26,7 +26,7 @@ import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
 import { createTargetPlatform, type TargetPlatformOptions } from '../../src/composition/create-platform.js';
 import type { ProjectPlatform } from '../../src/composition/project-runtime.js';
-import { initGitWorkspace } from '../scenarios/support/git-workspace.js';
+import { gitIn, initGitWorkspace } from '../scenarios/support/git-workspace.js';
 
 const AT = '2026-11-11T00:00:00.000Z';
 const OPERATOR = { kind: 'human' as const, id: 'kls2a-operator' };
@@ -204,4 +204,42 @@ export async function openKLS2AWorld(opts: { storage?: 'memory' | 'sqlite';
     await rm(directory, { recursive: true, force: true });
     throw error;
   }
+}
+
+/**
+ * KLS-3a1: one git checkout's line as the Host reads it when it opens the folder, worked out by the test's own git
+ * (not `src`): `repoKey` = realpath of `git rev-parse --git-common-dir`, `folder` = realpath of the folder, the
+ * branch, the first commit (`rev-list --max-parents=0 HEAD`); `head` is the fork point (HEAD now).
+ */
+export function kls3a1Checkout(folder: string): {
+  line: { repoKey: string; folder: string; branch: string; firstCommit: string }; head: string;
+} {
+  const real = realpathSync(folder);
+  const common = gitIn(real, 'rev-parse', '--git-common-dir').trim();
+  return {
+    line: { repoKey: realpathSync(resolve(real, common)), folder: real,
+      branch: gitIn(real, 'rev-parse', '--abbrev-ref', 'HEAD').trim(),
+      firstCommit: gitIn(real, 'rev-list', '--max-parents=0', 'HEAD').trim().split('\n')[0]! },
+    head: gitIn(real, 'rev-parse', 'HEAD').trim(),
+  };
+}
+
+/**
+ * KLS-3a: `projects.registerLine` for the checkout at `folder`, as the Host sends it: the line by `kls3a1Checkout`,
+ * forking from HEAD, with the Workspace pin. Until KLS-3b it is the one public owner that adds a second line to a
+ * workspace (the start rulings draft's §3 names it).
+ */
+export async function registerCheckoutLine(projects: Pick<ProjectPlatform['projects'], 'registerLine'>,
+  ctx: CoreCallContext, input: { workspaceId: string; folder: string; workspacePin: VersionPin; requestId: string }) {
+  const { line, head } = kls3a1Checkout(input.folder);
+  return await projects.registerLine(ctx, { input: { workspaceId: input.workspaceId, line, forkPoint: head },
+    meta: { requestId: input.requestId, expected: [input.workspacePin] } });
+}
+
+/** `registerCheckoutLine` in a KLS2A world, as the Host of `workspaceId` (default the main one), its pin read first. */
+export async function registerKLS2ALine(world: KLS2AWorld, folder: string, requestId: string,
+  workspaceId: string = world.workspaceId) {
+  const [, workspacePin] = await world.scopePins(workspaceId);
+  return await registerCheckoutLine(world.platform.projects, world.ctx('host', workspaceId),
+    { workspaceId, folder, workspacePin: workspacePin!, requestId });
 }

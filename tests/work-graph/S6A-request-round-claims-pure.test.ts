@@ -117,7 +117,7 @@ function expectRejected(result: object, code: string): void {
 /** Session A as the claim left it: occupied by the root's Run at generation 2. */
 function occupiedA(): SessionRecord {
   const created = createSessionRecord({ ref: { aggregateType: 'Session', projectId: 'p1', sessionId: 'sA' },
-    kernel: { adapterId: 'kernel', kernelSessionId: 'ks1' }, role: ROLE, workspaceId: 'w1', createdAt: AT, provenance: { schemaVersion: 1, kind: 'new' } });
+    kernel: { adapterId: 'kernel', kernelSessionId: 'ks1' }, role: ROLE, workspaceId: 'w1', lineRef: null, createdAt: AT, provenance: { schemaVersion: 1, kind: 'new' } });
   return occupySessionRecord(created, { holder: round('root', 1).run.ref, generation: 2 });
 }
 
@@ -259,7 +259,7 @@ describe('an abandoned start', () => {
 
   it('releases no Session the attempt no longer holds', () => {
     const created = createSessionRecord({ ref: { aggregateType: 'Session', projectId: 'p1', sessionId: 'sA' },
-      kernel: { adapterId: 'kernel', kernelSessionId: 'ks1' }, role: ROLE, workspaceId: 'w1', createdAt: AT, provenance: { schemaVersion: 1, kind: 'new' } });
+      kernel: { adapterId: 'kernel', kernelSessionId: 'ks1' }, role: ROLE, workspaceId: 'w1', lineRef: null, createdAt: AT, provenance: { schemaVersion: 1, kind: 'new' } });
     const plan = requestAbandon({ records: root, facts: factsOf([root]), trigger: 'owner_changed', session: created, occurredAt: AT });
     if ('status' in plan) throw new Error(plan.reason);
     expect(plan.session).toBeNull();

@@ -7,6 +7,7 @@ import type { Opaque } from "./opaque.js";
 import { canonicalJson, sha256Hex } from "./fingerprint.js";
 import type { GoalSettingsV1 } from "./goal-decisions.js";
 import type { GoalContinuationV1 } from "./ledger.js";
+import type { LineRef } from "./line.js";
 import type { SessionMessageRef } from "./core/session-message.js";
 export type CommitCursor = Opaque<string, "CommitCursor">;
 export type CommandFingerprint = Opaque<string, "CommandFingerprint">;
@@ -49,6 +50,8 @@ export type CreateGoalCommand = {
     payload: {
         workspaceId: string;
         objective: string;
+        /** KLS-3a: the folder of the Goal's line; absent is the workspace's main line (and today's fingerprint). */
+        lineFolder?: string;
     };
 };
 export type GoalCreatedEvent = {
@@ -76,6 +79,7 @@ export type GoalCreatedEvent = {
         settings: GoalSettingsV1;
         continuedFrom: GoalContinuationV1 | null;
         copiedInterventions: SessionMessageRef[];
+        lineRef: LineRef | null;
     };
 };
 /**
@@ -97,6 +101,8 @@ export function commandFingerprint(command: Pick<CreateGoalCommand, "commandType
         payload: {
             workspaceId: command.payload.workspaceId,
             objective: normalizeObjective(command.payload.objective),
+            // Only when named: a command without a line folder keeps its original fingerprint.
+            ...(command.payload.lineFolder === undefined ? {} : { lineFolder: command.payload.lineFolder }),
         },
     };
     return sha256Hex(canonicalJson(shape)) as CommandFingerprint;

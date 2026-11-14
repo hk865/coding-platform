@@ -56,7 +56,7 @@ import {
 } from '../composition/project-runtime.js';
 import { kernelStoreDirectory, kernelStoreEntry } from '../composition/project-store-paths.js';
 import { ensureKnowledgeDirectory, resolveKnowledgeLine } from '../composition/line-knowledge.js';
-import { identifyCheckout } from '../core/workspace/workspace-change-capture.js';
+import { checkoutIdentityOf, identifyCheckout, readHead, type CheckoutProbe } from '../core/workspace/workspace-change-capture.js';
 import type { WorkspaceHostBindings } from '../core/workspace/access.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { SessionRef, WorkspaceScope } from '../contracts/core/identity.js';
@@ -122,7 +122,7 @@ import { plainSessionRefKey } from '../core/work-graph/sessions/session-record-c
 import { sessionMessageRefKey } from '../core/work-graph/sessions/message-record-codecs.js';
 import { EXPIRY_PAGE, type DueWaitPageInputV1 } from '../core/work-graph/communication/message-expiry.js';
 import type { ReadonlyCommandAccessInput, RuntimeHostBindings, ResolvedRuntimeConfiguration } from '../core/agent-runtime/execution-contracts.js';
-import type { CoreError, ReadResult } from '../contracts/core/results.js';
+import type { CoreError, CoreRejection, ReadResult } from '../contracts/core/results.js';
 import { messageOf } from '../contracts/error-message.js';
 import type { BootstrapExecution, BootstrapResponse, BootstrapReviewMaterial, CoreScope, WorkbenchActor } from './core-http-types.js';
 import {
@@ -325,6 +325,8 @@ type HostProject = {
 };
 
 const scopeKey = (scope: CoreScope): string => `${scope.projectId}\u0000${scope.workspaceId}`;
+/** A workspace's line in one folder, in the Host's line root table. */
+const lineRootKey = (scope: CoreScope, folder: string): string => `${scopeKey(scope)}\u0000${folder}`;
 
 // Slice 4C-2 §11.5: the scribe reminder thresholds, default period and the body
 // marker the unhandled check recognizes (the SessionMessage record carries no
@@ -645,6 +647,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   }
   const token = randomBytes(32).toString('hex');
   const byScope = new Map(workspaces.map(workspace => [scopeKey(workspace.scope), workspace] as const));
+  /** KLS-3a (kls-design §2.3.3): each bound workspace's line folders and the root a Run on that line runs in. */
+  const lineRoots = new Map<string, string>();
   // D-SWITCH (L18 layer 1): the workspace switch narrows every runtime binding
   // at the common resolution boundary, at startup and on every settings rebuild.
   const runtimeNarrowing: WorkbenchRuntimeNarrowing = {
@@ -792,10 +796,14 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     ({ status: 'rejected', code, reason });
 
   const bindings: WorkspaceHostBindings = {
-    async resolveRoot(workspace: WorkspaceRef) {
+    async resolveRoot(workspace: WorkspaceRef, line?: { folder: string }) {
       const config = byScope.get(scopeKey(workspace));
       if (config === undefined) return rejected('not_found', 'the workspace is not registered in this Host configuration');
-      return { status: 'ready', value: { root: config.root, workspaceRevision: config.workspaceRevision } };
+      if (line === undefined) return { status: 'ready', value: { root: config.root, workspaceRevision: config.workspaceRevision } };
+      // Coordination: a line's root is the folder this Host registered for it; another one is never guessed.
+      const root = lineRoots.get(lineRootKey(workspace, line.folder));
+      return root === undefined ? rejected('not_found', 'the line is not registered in this Host configuration')
+        : { status: 'ready', value: { root, workspaceRevision: config.workspaceRevision } };
     },
     async authorize(ctx: CoreCallContext, workspace: WorkspaceRef) {
       const config = byScope.get(scopeKey(workspace));
@@ -818,11 +826,11 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       .map(workspace => workspace.scope.workspaceId)];
   /** A project's platform sees only that project's workspaces: another project's workspace is `not_found`. */
   const projectBindings = (projectId: string): WorkspaceHostBindings => ({
-    async resolveRoot(workspace: WorkspaceRef) {
+    async resolveRoot(workspace: WorkspaceRef, line?: { folder: string }) {
       if (workspace.projectId !== projectId) {
         return rejected('not_found', 'the workspace is not registered in this Host configuration');
       }
-      return bindings.resolveRoot(workspace);
+      return bindings.resolveRoot(workspace, line);
     },
     async authorize(ctx: CoreCallContext, workspace: WorkspaceRef) {
       if (workspace.projectId !== projectId) {
@@ -1055,6 +1063,39 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     if (project === undefined || !ownedProject(scope.projectId) || !byScope.has(scopeKey(scope))) return;
     project.autoCapture.workspaceRegistered({ projectId: scope.projectId, workspaceId: scope.workspaceId });
   };
+  /**
+   * KLS-3a (kls-design §2.3.1): the line of a checkout this Host holds the root of, registered once per folder. The
+   * line forks from the HEAD it has now; a reopen finds the line it made and writes nothing. Every path that binds a
+   * registered workspace shares it: the settings open (new or already bound), the route after a committed
+   * registration, and the Host start. A root the Host cannot read has no checkout to name yet, and a folder with no
+   * Workspace record keeps its flow (its line comes with the registration): both answer no failure.
+   */
+  async function registerHostLine(platform: ProjectPlatform, ctx: CoreCallContext, scope: CoreScope,
+    root: string): Promise<CoreRejection | null> {
+    let probe: CheckoutProbe;
+    try {
+      probe = await identifyCheckout(root);
+    } catch {
+      return null;
+    }
+    const line = checkoutIdentityOf(probe);
+    const found = await platform.projects.readLine(ctx, { workspaceId: scope.workspaceId, folder: line.folder });
+    if (found.status === 'ready') return null;
+    if (found.status === 'rejected') return found;
+    const registration = await platform.projects.readWorkspaceRegistration(ctx, scope);
+    if (registration.status === 'rejected' && registration.code === 'not_found') return null;
+    if (registration.status !== 'ready') {
+      return registration.status === 'rejected' ? registration
+        : { status: 'rejected', code: 'unavailable', reason: 'the workspace registration is not readable' };
+    }
+    const forkPoint = probe.kind === 'git' ? await readHead(probe.folder) : null;
+    const registered = await platform.projects.registerLine(ctx, {
+      input: { workspaceId: scope.workspaceId, line, forkPoint },
+      meta: { requestId: `host-line:${scope.workspaceId}:${sha256Hex(canonicalJson([line.folder, line.branch, forkPoint]))}`,
+        expected: [{ ref: registration.value.workspace.ref, revision: registration.value.workspace.revision }] },
+    });
+    return registered.status === 'committed' ? null : registered;
+  }
 
   // The Host's one goal-wait registry per start workspace scope, in start order. The
   // goal-waits queue adapter and the collaboration driver's resolver share these instances;
@@ -1743,15 +1784,41 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   };
 
   /** U5: a workspace's Kernel store goes into its project's Kernel directory (memory: beside the settings), and only
-   *  when the platform has none for it yet (an explicit entry or an earlier registration). */
-  async function registerKernelStore(runtime: ProjectRuntime, scope: CoreScope): Promise<void> {
+   *  when the platform has none for it yet (an explicit entry or an earlier registration). KLS-3a: `lineFolder` names
+   *  a line other than the workspace's main one, which gets a store of its own (kls-design §2.3.3). A memory Host
+   *  without a settings directory has no place for a store; Sessions there answer `unsupported`, as before. */
+  async function registerKernelStore(runtime: ProjectRuntime, scope: CoreScope, lineFolder?: string): Promise<void> {
     const stores = runtime.platform.kernelStores;
-    if (stores.registerCurrent === undefined || stores.forWorkspace(scope) !== null) return;
-    const directory = runtime.paths !== null
-      ? kernelStoreDirectory(runtime.paths)
-      : join(settingsDirectory as string, 'kernel-stores');
+    const registered = lineFolder === undefined ? stores.forWorkspace(scope) : stores.forLine(scope, lineFolder);
+    if (stores.registerCurrent === undefined || registered !== null) return;
+    const directory = runtime.paths !== null ? kernelStoreDirectory(runtime.paths)
+      : settingsDirectory === undefined ? null : join(settingsDirectory, 'kernel-stores');
+    if (directory === null) return;
     mkdirSync(directory, { recursive: true });
-    await stores.registerCurrent(kernelStoreEntry(directory, scope.projectId, scope.workspaceId));
+    await stores.registerCurrent(kernelStoreEntry(directory, scope.projectId, scope.workspaceId, lineFolder));
+  }
+
+  /**
+   * KLS-3a (kls-design §2.3.3): a bound workspace's line (`registerHostLine`), then every line of it into this Host:
+   * its root, where a Run or a QueryRun on it runs, and its Kernel store. The folder of the root this Host holds runs
+   * at that root as configured; any other line in its own folder. The main line (the workspace's first) keeps the
+   * workspace's own store. Every path that binds a registered workspace calls it, so `resolveRoot` never reads the
+   * store; a line registered later reaches this Host on its next open or start.
+   */
+  async function registerHostLines(runtime: ProjectRuntime, ctx: CoreCallContext, scope: CoreScope,
+    root: string): Promise<CoreRejection | null> {
+    const lined = await registerHostLine(runtime.platform, ctx, scope, root);
+    const read = await runtime.platform.projects.readLines(ctx, { workspaceId: scope.workspaceId });
+    if (read.status !== 'ready') {
+      return lined ?? (read.status === 'rejected' ? read
+        : { status: 'rejected', code: 'unavailable', reason: 'the workspace lines are not readable' });
+    }
+    const rootFolder = await canonicalExisting(root);
+    for (const [index, line] of read.value.lines.entries()) {
+      lineRoots.set(lineRootKey(scope, line.folder), line.folder === rootFolder ? root : line.folder);
+      await registerKernelStore(runtime, scope, index === 0 ? undefined : line.folder);
+    }
+    return lined;
   }
 
   function builtinQueryProfile(scope: CoreScope, bindingId: string, idPrefix: string, label: string,
@@ -2160,6 +2227,13 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         // 4-28: a listed start-up workspace takes its saved switches on a restart, unless its access is fixed.
         if (isRestore && workspace.scope.workspaceId === request.workspaceId && accessFixedOf(workspace.scope) === null)
           applyAccess(workspace, { writeAllowed: request.writeAllowed, commandsAllowed: request.commandsAllowed });
+        // KLS-3a: an already bound, registered workspace whose line is missing gets it here too.
+        const owner = registry.get(workspace.scope.projectId);
+        const lined = owner === null ? null
+          : await registerHostLines(owner, settingsContext(workspace.scope), workspace.scope, workspace.root);
+        if (lined !== null) {
+          return { status: 'rejected', code: 'unavailable', reason: `the workspace line could not be registered: ${lined.reason}` };
+        }
         return { status: 'ready', value: { scope: { ...workspace.scope } } };
       }
     }
@@ -2245,6 +2319,11 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         });
         if (registered.status !== 'committed') return { status: 'rejected', code: 'unavailable', reason: 'the workspace could not be registered' };
         registeredNow = !registered.replayed;
+      }
+      // KLS-3a: a Goal or Session is born on a line, so the open fails while the line cannot be registered.
+      const lined = await registerHostLines(runtime, ctx, scope, canonical);
+      if (lined !== null) {
+        return { status: 'rejected', code: 'unavailable', reason: `the workspace line could not be registered: ${lined.reason}` };
       }
       const registration = await platform.projects.readWorkspaceRegistration(ctx, scope);
       const workspaceRevision = registration.status === 'ready' ? registration.value.workspace.revision : 0;
@@ -2494,6 +2573,14 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   /** The workspaces of the projects this Host holds the lease of (U1), in start order. */
   const ownedScopes = (): CoreScope[] => workspaces.filter(workspace => ownedProject(workspace.scope.projectId))
     .map(workspace => ({ projectId: workspace.scope.projectId, workspaceId: workspace.scope.workspaceId }));
+  // KLS-3a: every bound workspace of an open project gets a missing line at start, by the open's own step, and its
+  // lines' roots and Kernel stores bind here, before the start-up reconcile resolves a Run's line root (its workspace
+  // capture) or opens a line's Kernel store (Session recovery). A start never stops for it: a failure leaves the line
+  // to the next open or registration.
+  for (const workspace of workspaces) {
+    const owner = registry.get(workspace.scope.projectId);
+    if (owner !== null) await registerHostLines(owner, settingsContext(workspace.scope), workspace.scope, workspace.root);
+  }
   // KLS-2c [2C1-24]: every served workspace's knowledge is reconciled before any start-up step that may write
   // knowledge (the Run start-up reconcile's repair activations, the redrive), so a write a crash left pending is
   // seen before a newer write changes its file. A failure does not stop the start; the next idle round comes again.
@@ -3799,11 +3886,16 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   // step itself triggers only when `byScope` already holds the scope.
   const registerWorkspace: CoreRouteBindings['registerWorkspace'] = async (ctx, request) => {
     const written = await routeBindings.registerWorkspace(ctx, request);
-    if (written.status === 'committed' && !written.replayed) {
-      const ref = written.value.ref;
-      captureWorkspaceRegistration({ projectId: ref.projectId, workspaceId: ref.workspaceId });
-    }
-    return written;
+    if (written.status !== 'committed') return written;
+    const scope = { projectId: written.value.ref.projectId, workspaceId: written.value.ref.workspaceId };
+    if (!written.replayed) captureWorkspaceRegistration(scope);
+    // KLS-3a: a scope whose root this Host holds gets its line here too; a replay retries a line that failed. The
+    // route opens no directory: a bound root the Host cannot read has no checkout to name yet, and gets its line
+    // when the Host opens it.
+    const bound = byScope.get(scopeKey(scope));
+    if (bound === undefined) return written;
+    const lined = await registerHostLines(project.runtime, ctx, scope, bound.root);
+    return lined ?? written;
   };
   // `queries/ask` is the person's command: read the line once, select the one
   // profile by the same `scope + sessionRole` rule the consume loop uses, then

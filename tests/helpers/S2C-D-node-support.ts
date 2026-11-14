@@ -44,6 +44,7 @@ import {
 } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { SESSION_RECORD_SCHEMAS, plainSessionRefToAggregate, sessionAggregateRefKey } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { ROLE_LINE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/role-line-record-codecs.js';
+import { LINE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/line-record-codecs.js';
 import { SESSION_LIFECYCLE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/lifecycle-record-codecs.js';
 import { SESSION_ANOMALY_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/session-anomaly-codecs.js';
 import { EXECUTION_ENTRY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/execution-entry-codecs.js';
@@ -200,6 +201,7 @@ function schemas(extra: RecordBackendSchemas = { records: [], events: [] }): Rec
       ...ARCHITECTURE_CATALOG_SCHEMAS.records, ...TASK_CLAIM_RECORD_SCHEMAS.records, ...ROLE_RECORD_SCHEMAS.records,
       ...KNOWLEDGE_RECORD_SCHEMAS.records,
       ...ROLE_LINE_RECORD_SCHEMAS.records,
+      ...LINE_RECORD_SCHEMAS.records,
       ...QUERY_JOB_RECORD_SCHEMAS.records, ...CONTROL_RECORD_SCHEMAS.records, ...COMPLETION_RECORD_SCHEMAS.records,
       ...MODEL_REQUEST_RECORD_SCHEMAS.records, ...SESSION_MESSAGE_RECORD_SCHEMAS.records,
       ...EVIDENCE_RECORD_SCHEMAS.records, ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.records, ...extra.records],
@@ -221,7 +223,7 @@ function schemas(extra: RecordBackendSchemas = { records: [], events: [] }): Rec
       ...SESSION_LIFECYCLE_RECORD_SCHEMAS.lookups ?? [], ...SESSION_ANOMALY_RECORD_SCHEMAS.lookups ?? [],
       ...ARCHITECTURE_CATALOG_SCHEMAS.lookups ?? [], ...TASK_CLAIM_RECORD_SCHEMAS.lookups ?? [],
       ...(KNOWLEDGE_RECORD_SCHEMAS.lookups ?? []),
-      ...ROLE_RECORD_SCHEMAS.lookups ?? [], ...QUERY_JOB_RECORD_SCHEMAS.lookups ?? [],
+      ...ROLE_RECORD_SCHEMAS.lookups ?? [], ...(LINE_RECORD_SCHEMAS.lookups ?? []), ...QUERY_JOB_RECORD_SCHEMAS.lookups ?? [],
       ...CONTROL_RECORD_SCHEMAS.lookups ?? [], ...COMPLETION_RECORD_SCHEMAS.lookups ?? [],
       ...MODEL_REQUEST_RECORD_SCHEMAS.lookups ?? [], ...SESSION_MESSAGE_RECORD_SCHEMAS.lookups ?? [],
       ...EVIDENCE_RECORD_SCHEMAS.lookups ?? [], ...(UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.lookups ?? []),

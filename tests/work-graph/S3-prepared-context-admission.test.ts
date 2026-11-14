@@ -544,7 +544,7 @@ export async function createAdmissionFixture(kind: ClaimFixtureKind): Promise<Ad
       roleBinding: base.roleBinding, declaredPermissions: HOST_PERMISSIONS });
     if (roleFacts.result.status !== 'ready') throw new Error('AD base role fixture could not resolve');
     const role = roleFacts.result.value;
-    const workspaceSnapshot = { workspaceId: WORKSPACE_ID, revision: workspaceRevision };
+    const workspaceSnapshot = { workspaceId: WORKSPACE_ID, revision: workspaceRevision, line: null };
     const manifest: PreparedTaskManifestV1 = {
       schemaVersion: 1, kind: 'task_execution', claim: target, role, hostTemplate: HOST_TEMPLATE,
       roleBinding: base.roleBinding, hostConfigurationRevision: HOST_CONFIG_REVISION,

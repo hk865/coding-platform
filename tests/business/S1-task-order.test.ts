@@ -82,8 +82,13 @@ function untouched<T extends object>(name: string): T {
 async function selectNextTask(
   rows: readonly TaskRow[], dependsOn: RuntimeExecutionDAG['dependsOn'],
 ): Promise<string | null> {
+  const session = await orderWorld.createWorkSession('s1-order-session');
+  // The chooser takes only a Session on the Goal's own line (KLS-3a2), so this Goal carries
+  // the workspace main line that `createWorkSession` gives its Session.
+  const lineRef = (await orderWorld.readSession(session.ref)).record.lineRef;
   const goal: GoalSnapshot = { ref: { aggregateType: 'Goal', projectId: ORDER_PROJECT, goalId: ORDER_GOAL },
     workspaceRef: { aggregateType: 'Workspace', projectId: ORDER_PROJECT, workspaceId: ORDER_WORKSPACE },
+    lineRef,
     objective: 'UT39', desiredState: 'active', desiredStateRevision: 1, desiredStateRequestedBy: null,
     activePlanRevision: ORDER_PLAN_REF, revision: 1,
     settings: { schemaVersion: 1, autonomy: 'after_plan_confirmation', order: 0, waitForGoalRef: null, parallelRisks: [] },
@@ -91,7 +96,6 @@ async function selectNextTask(
   const plan = { ref: ORDER_PLAN_REF, tasks: rows.map((row) => row.definition),
     assignments: rows.map((row) => ({ taskId: row.definition.taskId, role: 'builder', instruction: 'work' })),
     executionDag: { dependsOn } };
-  const session = await orderWorld.createWorkSession('s1-order-session');
   const deps: WorkflowDependencies = {
     tasks: untouched('tasks'),
     sessions: orderWorld.platform.sessions,

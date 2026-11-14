@@ -227,7 +227,7 @@ function runOf(runId: string, taskId: string, overrides: Partial<RunSnapshot> = 
   return {
     ref: runRef(runId), revision: 3, schemaVersion: 1, task: { projectId: PROJECT, goalId: GOAL_ID, taskId },
     attemptId: `${runId}-attempt`, planRef: P1, roleBinding: ROLE, budget: { tokenBudget: 1000, deadline: null },
-    workspaceSnapshot: { workspaceId: WORKSPACE, revision: 1 }, status: 'ended', outcome: 'failed', exitCode: 1,
+    workspaceSnapshot: { workspaceId: WORKSPACE, revision: 1, line: null }, status: 'ended', outcome: 'failed', exitCode: 1,
     lastEventSeq: 2, lastRuntimeEventId: `rt-${runId}`, lastFactEventId: `ev-${runId}`, envelope: null,
     startedAt: T0, startedSince: null, endedAt: T1, previousRun: null, ...overrides,
   };

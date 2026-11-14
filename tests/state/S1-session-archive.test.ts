@@ -52,6 +52,7 @@ function sessionRecord(overrides: Partial<SessionRecord> = {}): SessionRecord {
   return {
     ref: S_REF, revision: 7, kernel: { adapterId: 'coding-agent', kernelSessionId: 'k-S' },
     lifecycle: 'active', health: 'available', healthConclusion: null, role: ROLE, workspaceId: 'w',
+    lineRef: null,
     lastExecutionRef: RUN_0, occupancy: { kind: 'execution', executionRef: RUN_0, generation: 7 },
     historyCursor: null, createdAt: T0, archivedAt: null, provenance: PROVENANCE_NEW, archiveRequest: null,
     ...overrides,

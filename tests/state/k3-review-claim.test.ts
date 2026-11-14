@@ -203,8 +203,8 @@ describe('K3-38 RUN-02 review entry', () => {
   const roleBinding = { schemaVersion: 1 as const, bindingId: 'b', templateId: 'worker', templateRevision: 'r1',
     bindingVersion: 1, policyRevision: 'p1' };
   const budget = { tokenBudget: 1, deadline: null };
-  const reviewRun = newRunRecord({ claim, basis: reviewBasis, roleBinding, budget, workspaceRevision: 1 });
-  const plainRun = newRunRecord({ claim, basis: { kind: 'first' }, roleBinding, budget, workspaceRevision: 1 });
+  const reviewRun = newRunRecord({ claim, basis: reviewBasis, roleBinding, budget, workspaceRevision: 1, line: null });
+  const plainRun = newRunRecord({ claim, basis: { kind: 'first' }, roleBinding, budget, workspaceRevision: 1, line: null });
 
   it('K3-38 lets a waiting round with a matching instruction enter', () => {
     expect(reviewRun.purpose).toEqual({ kind: 'unknown_call_review', reviewRef, phase: 'review', round: 1 });

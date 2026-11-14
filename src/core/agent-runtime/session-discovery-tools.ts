@@ -31,6 +31,7 @@ import {
   type WorkspaceSandbox,
 } from '../../../vendor/coding-agent/dist/public-api.js';
 import type { SessionDirectoryPort } from '../work-graph/model/session-contracts.js';
+import { moduleRefInProjectView } from '../work-graph/architecture/catalog-service.js';
 
 /** Typed view: the generated pack's literal `tools` object has no string index signature. */
 const PLATFORM_TOOL_TEXTS: Readonly<Record<string, ToolTextV1>> = PLATFORM_PROMPT_PACK_V1.tools;
@@ -44,6 +45,8 @@ export type SessionDiscoveryToolsConfig = {
   context: CoreCallContext;
   /** The platform tools' model-facing texts; defaults to the generated pack. */
   texts?: Readonly<Record<string, ToolTextV1>>;
+  /** The project's main workspace; absent, the Run's workspace is taken as the main one (as the driver does). */
+  mainWorkspaceOf?: (projectId: string) => Promise<ReadResult<string | null>>;
 };
 
 export type SessionDiscoveryToolsHandle = {
@@ -172,11 +175,26 @@ export function createSessionDiscoveryTools(config: SessionDiscoveryToolsConfig)
                   target: WorkLinkTarget;
                   page: { limit: number; cursor?: string; atLeastCursor?: string };
                 };
+                const workspaceId = context.workspaceId ?? '';
+                // The model names a module in its own workspace's frame; links keep the project view
+                // (kls-design §2.3.4), so a module of another workspace with the same id is not mixed in.
+                let target = input.target;
+                if (target.kind === 'module') {
+                  const main = config.mainWorkspaceOf === undefined ? null : await config.mainWorkspaceOf(context.projectId);
+                  if (main !== null && main.status !== 'ready') return mapRead(call.callId, main);
+                  try {
+                    target = { kind: 'module', ref: moduleRefInProjectView(target.ref, workspaceId, main?.value ?? workspaceId) };
+                  } catch (error) {
+                    return failure(call.callId, 'invalid_arguments', error instanceof Error ? error.message : String(error));
+                  }
+                }
                 const result = await config.sessions.findSessions(context, {
                   // The workspace is ALWAYS the bound context; the model cannot
                   // name another workspace or ask for archived Sessions.
-                  workspace: { projectId: context.projectId, workspaceId: context.workspaceId ?? '' },
-                  target: input.target,
+                  workspace: { projectId: context.projectId, workspaceId },
+                  target,
+                  // A module's role lines live in the main workspace (kls-design §2.3.4); they are found too.
+                  ...(target.kind === 'module' ? { projectRegionLines: true as const } : {}),
                   includeArchived: false,
                   page: {
                     limit: input.page.limit,

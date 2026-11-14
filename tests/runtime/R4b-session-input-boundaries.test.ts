@@ -7,6 +7,7 @@ import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js';
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
 import { GOAL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/record-codecs.js';
+import { LINE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/line-record-codecs.js';
 import { SESSION_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
@@ -28,10 +29,10 @@ const ctx: CoreCallContext = {
 };
 const workspace = { projectId, workspaceId };
 const schemas: RecordBackendSchemas = {
-  records: [...GOAL_RECORD_SCHEMAS.records, ...SESSION_RECORD_SCHEMAS.records],
+  records: [...GOAL_RECORD_SCHEMAS.records, ...SESSION_RECORD_SCHEMAS.records, ...LINE_RECORD_SCHEMAS.records],
   events: [...GOAL_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events,
     ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events],
-  lookups: SESSION_RECORD_SCHEMAS.lookups ?? [],
+  lookups: [...(SESSION_RECORD_SCHEMAS.lookups ?? []), ...(LINE_RECORD_SCHEMAS.lookups ?? [])],
 };
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });
@@ -76,8 +77,8 @@ it('keeps the original request identity and role when the caller mutates input a
   let originalOperation: string | null = null;
   const guarded: SessionDirectoryPort = {
     ...sessions,
-    async admitSessionCreation(context, command) {
-      const result = await sessions.admitSessionCreation(context, command);
+    async admitSessionCreation(context, command, ports) {
+      const result = await sessions.admitSessionCreation(context, command, ports);
       if (result.status === 'committed') {
         originalOperation = result.value.ref.operationId;
         entered();

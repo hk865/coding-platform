@@ -6,7 +6,7 @@
  */
 import type { AdoptedArchitecture, ModuleContainment } from '../../../contracts/architecture-catalog.js';
 import type { CoreRejection, WriteResult } from '../../../contracts/core/results.js';
-import { canonicalJson } from '../../../contracts/fingerprint.js';
+import { lineKeyOf, type LineRef } from '../../../contracts/line.js';
 import type {
   KnowledgeCommitResult, KnowledgeConflictV1, KnowledgeIssueV1, KnowledgeLinePinV1, KnowledgeLineStatusV1,
   KnowledgeProblemV1,
@@ -21,15 +21,13 @@ import type { DecodeResult, EncodedDomainEvent, EncodedRecord, GoalRecordTransac
 import type { KnowledgeFileKind, KnowledgeIndex, KnowledgeIndexTx } from '../../record-store/knowledge-index-ports.js';
 import type { KnowledgeSnapshots } from '../../record-store/knowledge-snapshot-ports.js';
 
-/** git: realpath(git rev-parse --git-common-dir); not git: realpath(the workspace root). */
-export type RepoKey = string;
-/** `folder` = realpath(the registered workspace root), `.workbench/` lives under it; `branch`: '' when not git, 'HEAD' when detached. */
-export type LineRef = { repoKey: RepoKey; folder: string; branch: string };
+/** The line types' home is `src/contracts/line.ts`; the knowledge services read them from here. */
+export type { CheckoutIdentity, LineRef, RepoKey } from '../../../contracts/line.js';
 export type KnowledgeLineScope = { workspaceId: string; mainWorkspaceId: string };
 
-/** The line key of the index, snapshots, write log and pins: the workspace and the branch. */
+/** The line key of the index, snapshots, write log and pins: the workspace and the folder (`lineKeyOf`). */
 export function lineRefKey(scope: KnowledgeLineScope, line: LineRef): string {
-  return canonicalJson([scope.workspaceId, line.branch]);
+  return lineKeyOf(scope.workspaceId, line.folder);
 }
 /** The workspace of a line key (`lineRefKey`). */
 export function lineRefWorkspaceId(lineRef: string): string {

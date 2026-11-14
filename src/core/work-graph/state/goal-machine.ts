@@ -39,6 +39,7 @@ import type { RunOutcome, RunRef, RunSnapshot } from '../../../contracts/dispatc
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { GoalSettingsV1 } from '../../../contracts/goal-decisions.js';
+import type { LineRef } from '../../../contracts/line.js';
 import type { GoalPhaseRef, GoalPhaseSnapshot } from '../../../contracts/goal-phase.js';
 import type { GoalInterruptionV1 } from '../../../contracts/goal-interruption.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
@@ -97,12 +98,13 @@ export function goalControlTarget(control: GoalControl): GoalDesiredState {
  * `copiedInterventions` []). `since` is the pre-bind placeholder.
  */
 export function newGoalSnapshot(input: {
-  ref: GoalRef; workspaceRef: WorkspaceRef; objective: string;
+  ref: GoalRef; workspaceRef: WorkspaceRef; lineRef: LineRef | null; objective: string;
   settings: GoalSettingsV1; continuedFrom: GoalContinuationV1 | null; copiedInterventions: SessionMessageRef[];
 }): PendingGoalSnapshot {
   return {
     ref: input.ref,
     workspaceRef: input.workspaceRef,
+    lineRef: input.lineRef,
     objective: input.objective,
     desiredState: 'active',
     desiredStateRevision: 1,
@@ -149,6 +151,7 @@ export function nextGoalDesiredState(goal: GoalSnapshot, input: {
   return {
     ref: goal.ref,
     workspaceRef: goal.workspaceRef,
+    lineRef: goal.lineRef,
     objective: goal.objective,
     desiredState: input.to,
     desiredStateRevision: revision,
@@ -277,7 +280,7 @@ export type GoalControlRequest = {
  */
 export type GoalEvent =
   | {
-    type: 'goal_created'; ref: GoalRef; workspaceRef: WorkspaceRef; objective: string;
+    type: 'goal_created'; ref: GoalRef; workspaceRef: WorkspaceRef; lineRef: LineRef | null; objective: string;
     settings: GoalSettingsV1; continuedFrom: GoalContinuationV1 | null; copiedInterventions: SessionMessageRef[];
   }
   | { type: 'plan_adopted'; basedOn: PlanRevisionRef | null; target: PlanRevisionRef }
@@ -397,7 +400,7 @@ function onGoalCreated(
   // commit fills `since`. Every Goal the machine reads from a store already
   // carries a bound cursor, so only this placeholder has a null one.
   const goal = newGoalSnapshot({
-    ref: event.ref, workspaceRef: event.workspaceRef, objective: event.objective,
+    ref: event.ref, workspaceRef: event.workspaceRef, lineRef: event.lineRef, objective: event.objective,
     settings: event.settings, continuedFrom: event.continuedFrom, copiedInterventions: event.copiedInterventions,
   });
   return accept<GoalMachineState<PendingGoalSnapshot>, GoalEffect>(goalStateOf(goal, state.goalPhase), [

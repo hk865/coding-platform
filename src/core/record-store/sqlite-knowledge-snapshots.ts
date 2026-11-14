@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS snapshot_blob(blob_sha TEXT PRIMARY KEY, content BLOB
 CREATE TABLE IF NOT EXISTS snapshot_ref(line_ref TEXT, path TEXT, taken_at TEXT, blob_sha TEXT,
   PRIMARY KEY(line_ref, path, taken_at));
 CREATE TABLE IF NOT EXISTS knowledge_recovery(notice_id TEXT, item_no INTEGER, kind TEXT, write_id TEXT, line_ref TEXT,
-  path TEXT, taken_at TEXT, expected_blob TEXT, PRIMARY KEY(notice_id, item_no));
+  branch TEXT NOT NULL, path TEXT, taken_at TEXT, expected_blob TEXT, PRIMARY KEY(notice_id, item_no));
 CREATE TABLE IF NOT EXISTS knowledge_problem(notice_id TEXT, item_no INTEGER, line_ref TEXT, body TEXT NOT NULL,
   PRIMARY KEY(notice_id, item_no));`;
 
@@ -48,7 +48,8 @@ export function openKnowledgeSnapshots(path: string | null): KnowledgeSnapshots 
   const recoveryOf = (row: Row): KnowledgeRecoveryRow => ({
     noticeId: row['notice_id'] as string, itemNo: Number(row['item_no']),
     kind: row['kind'] as KnowledgeRecoveryRow['kind'], writeId: row['write_id'] as string | null,
-    lineRef: row['line_ref'] as string, path: row['path'] as string, takenAt: row['taken_at'] as string | null,
+    lineRef: row['line_ref'] as string, branch: row['branch'] as string, path: row['path'] as string,
+    takenAt: row['taken_at'] as string | null,
     expectedBlob: row['expected_blob'] as string | null,
   });
 
@@ -83,9 +84,9 @@ export function openKnowledgeSnapshots(path: string | null): KnowledgeSnapshots 
     recordRecovery(rows) {
       transaction(() => {
         for (const row of rows) {
-          open.prepare(`INSERT INTO knowledge_recovery(notice_id, item_no, kind, write_id, line_ref, path, taken_at, expected_blob)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(notice_id, item_no) DO NOTHING`).run(row.noticeId, row.itemNo, row.kind,
-            row.writeId, row.lineRef, row.path, row.takenAt, row.expectedBlob);
+          open.prepare(`INSERT INTO knowledge_recovery(notice_id, item_no, kind, write_id, line_ref, branch, path, taken_at,
+            expected_blob) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(notice_id, item_no) DO NOTHING`).run(row.noticeId,
+            row.itemNo, row.kind, row.writeId, row.lineRef, row.branch, row.path, row.takenAt, row.expectedBlob);
         }
       });
     },

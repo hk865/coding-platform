@@ -139,6 +139,7 @@ function goalCreatedEvent(input: GoalCreateCompileInput): GoalCreatedEvent {
       settings: input.goal.settings,
       continuedFrom: input.goal.continuedFrom,
       copiedInterventions: input.goal.copiedInterventions,
+      lineRef: input.goal.lineRef,
     },
   };
 }

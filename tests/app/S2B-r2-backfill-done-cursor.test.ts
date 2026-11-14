@@ -79,6 +79,7 @@ async function failingActivityReads(f: S2BActivityFixture): Promise<Injection> {
     arm: (after) => { afterPosition = after; },
     stores: {
       forWorkspace: (workspace) => registry.forWorkspace(workspace),
+      forLine: (workspace, folder) => registry.forLine(workspace, folder),
       byAdapterId: (adapterId) => registry.byAdapterId(adapterId),
       async withStore(adapterId, use) {
         return registry.withStore(adapterId, async (store) => {

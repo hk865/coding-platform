@@ -45,7 +45,7 @@ const create = { ...shell, ref: op('c1'), action: { kind: 'create', plannedSessi
   workspace: { projectId: P, workspaceId: W }, kernelStore: { adapterId: 'k', storeKey: 'ks' },
   role: { kind: 'legacy_template', templateId: 't', templateRevision: '1' }, recommendedRefs: [], initialLinks: [],
   provenance: { schemaVersion: 1, kind: 'handoff', from: session('s1') }, creation: null, consultation: null,
-  seatDecision: null } };
+  seatDecision: null, lineRef: null } };
 
 type Body = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 const edit = (record: object, change: (body: Body) => void): Body => {

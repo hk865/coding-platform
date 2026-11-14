@@ -14,6 +14,8 @@ export type KnowledgeRecoveryRow = {
   /** The write log a `write_unconfirmed` item recovers; only that kind has one. */
   writeId: string | null;
   lineRef: string;
+  /** The branch checked out when the notice went out; a recovery on another branch is refused. */
+  branch: string;
   path: string;
   /** The snapshot a `reverted` item writes back, and the one an `unreadable` item whose source is a snapshot writes back;
    *  null for the others. */

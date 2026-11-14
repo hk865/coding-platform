@@ -52,6 +52,8 @@ import type {
   StoreFailure, UniqueClaimChange,
 } from '../../record-store/ports.js';
 import type { RecordLookupPort, RecordLookupRequest } from '../../record-store/lookup-ports.js';
+import { lineForWrite } from '../persistence/line-record-codecs.js';
+import { readMainWorkspace } from './role-line-operations.js';
 import { sessionStoreFailureToRejection } from '../persistence/read-result-failures.js';
 import { readSessionWorkLinks } from './session-links.js';
 import {
@@ -60,7 +62,8 @@ import {
 } from './trusted-context.js';
 import type {
   ConsultationCreateV1, CreateSeatDecisionV1, RoleLineOperationV1, SessionCard, SessionCreateOperationRecord,
-  SessionCreationInput, SessionCreationIntentV1, SessionCreationResult, SessionDirectoryPort, SessionOperationRecord,
+  SessionAdmissionPorts, SessionCreationInput, SessionCreationIntentV1, SessionCreationResult, SessionDirectoryPort,
+  SessionOperationRecord,
   SessionPage,
 } from '../model/session-contracts.js';
 import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
@@ -258,13 +261,16 @@ function normalizeCallerPins(raw: unknown, scope: WorkspaceScope):
 
 type NormalizedCreation = {
   workspace: WorkspaceScope;
-  kernelStore: { adapterId: string; storeKey: string };
+  /** Named only by a caller without admission ports. */
+  kernelStore: { adapterId: string; storeKey: string } | undefined;
   role: RoleConfigurationRef;
   recommendedRefs: ArtifactRef[];
   initialLinks: { target: WorkLinkTarget; relation: WorkLinkRelation }[];
   creation: SessionCreationIntentV1 | null;
   parentOperation: OperationRef | null;
   consultation: ConsultationCreateV1 | null;
+  /** The named line's folder; absent is the workspace's main line. */
+  lineFolder: string | undefined;
 };
 type NormalizeOutcome<T> = { ok: true; value: T } | { ok: false; code: CoreError; reason: string };
 
@@ -300,9 +306,13 @@ function normalizeCreationInput(raw: unknown, scope: WorkspaceScope): NormalizeO
   if (roleProblem !== null) return { ok: false, code: 'invalid', reason: `session role is invalid: ${roleProblem}` };
   const roleScope = checkRoleScope(raw['role'], scope);
   if (roleScope !== null) return { ok: false, code: 'forbidden', reason: roleScope };
-  const kernelStore = raw['kernelStore'];
-  if (!isObject(kernelStore) || !nonEmpty(kernelStore['adapterId']) || !nonEmpty(kernelStore['storeKey'])) {
-    return { ok: false, code: 'invalid', reason: 'session kernelStore must be {adapterId,storeKey}' };
+  const rawKernelStore = raw['kernelStore'];
+  let kernelStore: NormalizedCreation['kernelStore'];
+  if (rawKernelStore !== undefined) {
+    if (!isObject(rawKernelStore) || !nonEmpty(rawKernelStore['adapterId']) || !nonEmpty(rawKernelStore['storeKey'])) {
+      return { ok: false, code: 'invalid', reason: 'session kernelStore must be {adapterId,storeKey}' };
+    }
+    kernelStore = { adapterId: rawKernelStore['adapterId'], storeKey: rawKernelStore['storeKey'] };
   }
   const refs = raw['recommendedRefs'];
   if (!Array.isArray(refs)) return { ok: false, code: 'invalid', reason: 'recommendedRefs must be an array' };
@@ -368,17 +378,23 @@ function normalizeCreationInput(raw: unknown, scope: WorkspaceScope): NormalizeO
     }
     consultation = rawConsultation as ConsultationCreateV1;
   }
+  // KLS-3a: a named line is one folder path; absent is the workspace's main line.
+  const lineFolder = raw['lineFolder'];
+  if (lineFolder !== undefined && !nonEmpty(lineFolder)) {
+    return { ok: false, code: 'invalid', reason: 'session lineFolder must be a non-empty folder path' };
+  }
   return {
     ok: true,
     value: {
       workspace: { projectId: scope.projectId, workspaceId: scope.workspaceId },
-      kernelStore: { adapterId: kernelStore['adapterId'], storeKey: kernelStore['storeKey'] },
+      kernelStore,
       role: raw['role'] as RoleConfigurationRef,
       recommendedRefs: refs as ArtifactRef[],
       initialLinks: links as { target: WorkLinkTarget; relation: WorkLinkRelation }[],
       creation,
       parentOperation,
       consultation,
+      lineFolder,
     },
   };
 }
@@ -457,6 +473,7 @@ type DirectoryCursor = {
   includeArchived: boolean;
   targetKey: string | null;
   roleKey: string | null;
+  lineFolder: string | null;
   actorKey: string;
   after: string;
   sourceCursor: string;
@@ -473,11 +490,12 @@ function decodeDirectoryCursor(raw: string): DirectoryCursor | null {
     return null;
   }
   if (!isObject(parsed) || parsed['v'] !== 1) return null;
-  const { projectId, workspaceId, includeArchived, targetKey, roleKey, actorKey, after, sourceCursor } = parsed;
+  const { projectId, workspaceId, includeArchived, targetKey, roleKey, lineFolder, actorKey, after, sourceCursor } = parsed;
   if (!nonEmpty(projectId) || !(workspaceId === null || nonEmpty(workspaceId)) || typeof includeArchived !== 'boolean') return null;
-  if (!(targetKey === null || nonEmpty(targetKey)) || !(roleKey === null || nonEmpty(roleKey))) return null;
+  if (!(targetKey === null || nonEmpty(targetKey)) || !(roleKey === null || nonEmpty(roleKey)) ||
+    !(lineFolder === null || nonEmpty(lineFolder))) return null;
   if (!nonEmpty(actorKey) || !nonEmpty(after) || !isPlatformCursor(sourceCursor)) return null;
-  return { v: 1, projectId, workspaceId, includeArchived, targetKey, roleKey, actorKey, after, sourceCursor };
+  return { v: 1, projectId, workspaceId, includeArchived, targetKey, roleKey, lineFolder, actorKey, after, sourceCursor };
 }
 
 // --------------------------------------------------------------------------
@@ -498,6 +516,7 @@ type TargetCursor = {
   includeArchived: boolean;
   targetKey: string;
   roleKey: string | null;
+  lineFolder: string | null;
   actorKey: string;
   positions: TargetStreamPositions;
   exhausted: TargetStreamExhausted;
@@ -515,10 +534,10 @@ function decodeTargetCursor(raw: string): TargetCursor | null {
     return null;
   }
   if (!isObject(parsed) || parsed['v'] !== 1 || parsed['mode'] !== 'target') return null;
-  const { projectId, workspaceId, includeArchived, targetKey, roleKey, actorKey, positions, exhausted, sourceCursor } = parsed;
+  const { projectId, workspaceId, includeArchived, targetKey, roleKey, lineFolder, actorKey, positions, exhausted, sourceCursor } = parsed;
   if (!nonEmpty(projectId) || !nonEmpty(workspaceId) || typeof includeArchived !== 'boolean') return null;
   if (!nonEmpty(targetKey)) return null;
-  if (!(roleKey === null || nonEmpty(roleKey))) return null;
+  if (!(roleKey === null || nonEmpty(roleKey)) || !(lineFolder === null || nonEmpty(lineFolder))) return null;
   if (!nonEmpty(actorKey) || !isPlatformCursor(sourceCursor)) return null;
   if (!isObject(positions) || !isObject(exhausted)) return null;
   const positionValues: Partial<TargetStreamPositions> = {};
@@ -532,7 +551,7 @@ function decodeTargetCursor(raw: string): TargetCursor | null {
     exhaustedValues[relation] = done;
   }
   return {
-    v: 1, mode: 'target', projectId, workspaceId, includeArchived, targetKey, roleKey, actorKey,
+    v: 1, mode: 'target', projectId, workspaceId, includeArchived, targetKey, roleKey, lineFolder, actorKey,
     positions: positionValues as TargetStreamPositions,
     exhausted: exhaustedValues as TargetStreamExhausted,
     sourceCursor: sourceCursor as CommitCursor,
@@ -693,6 +712,7 @@ function directoryCandidatePlan(scope: { projectId: string; workspaceId?: string
 
 export function createSessionDirectory(stores: SessionDirectoryStores): SessionDirectoryPort {
   const { records, lookups, duty, roleCapacity } = stores;
+  const lineReads = { readMany: records.readMany.bind(records), lookup: lookups.lookup.bind(lookups) };
   // The one read is bound once; each seat decision and each registration attempt calls it, never each entry.
   const allocationRead = createAllocationRead({ records });
 
@@ -1028,6 +1048,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
   async function admitSessionCreation(
     ctx: CoreCallContext,
     request: GraphWrite<SessionCreationInput>,
+    ports?: SessionAdmissionPorts,
   ): Promise<WriteResult<SessionCreateOperationRecord>> {
     const trusted: TrustedContext = trustedContext(ctx, 'a Session call');
     if (!trusted.ok) return trusted.rejection;
@@ -1081,6 +1102,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       ...(input.creation === null ? {} : { creation: input.creation }),
       ...(input.parentOperation === null ? {} : { parentOperation: input.parentOperation }),
       ...(input.consultation === null ? {} : { consultation: input.consultation }),
+      ...(input.lineFolder === undefined ? {} : { lineFolder: input.lineFolder }),
     } as unknown as JsonValue));
 
     let internal: readonly string[] = [];
@@ -1119,6 +1141,20 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
         return reject('revision_conflict', 'the supplied Workspace pin does not match the version read in this call',
           [{ ref: { aggregateType: 'Workspace', projectId: scope.projectId, workspaceId: scope.workspaceId }, revision: workspace.revision }]);
       }
+      // KLS-3a: the line the Session works on, fixed here and kept on the operation for the registration.
+      const line = await lineForWrite(lineReads, scope, input.lineFolder);
+      if (line.status !== 'ready') return line;
+      // kls-design §2.3.3: the Kernel store follows the line, chosen here with it and pinned on the operation; the
+      // workspace's main line (its first, the one taken without a folder) keeps the workspace's own store.
+      let kernelStore = input.kernelStore;
+      if (ports !== undefined) {
+        const main = input.lineFolder === undefined ? line : await lineForWrite(lineReads, scope, undefined);
+        if (main.status !== 'ready') return main;
+        const ownLine = line.value !== null && line.value.folder !== main.value?.folder ? line.value : null;
+        kernelStore = ports.kernelStoreFor(scope, ownLine) ?? undefined;
+      }
+      // Coordination: Sessions on a line run in that line's Kernel store, which only the Host registers.
+      if (kernelStore === undefined) return reject('unsupported', 'the line has no configured Kernel Store');
 
       // S1-SES-01: a named predecessor must exist in this scope and must not close
       // a provenance loop. This runs only after the receipt miss, so a replay of the
@@ -1180,7 +1216,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
           plannedSessionRef,
           parentOperation: input.parentOperation,
           workspace: input.workspace,
-          kernelStore: input.kernelStore,
+          kernelStore,
           role: input.role,
           recommendedRefs: input.recommendedRefs,
           initialLinks: input.initialLinks,
@@ -1188,6 +1224,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
           creation: input.creation,
           consultation: input.consultation,
           seatDecision: seat.decision,
+          lineRef: line.value,
         },
         phase: 'accepted',
         requestedAt: now,
@@ -1430,6 +1467,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
         kernel: { adapterId: registration.adapterId, kernelSessionId: registration.kernelSessionId },
         role: createAction.role,
         workspaceId: scope.workspaceId,
+        lineRef: createAction.lineRef,
         createdAt,
         provenance: acceptedProvenance,
         // The ceiling and secretary pin are written once, in the creation commit.
@@ -1822,8 +1860,12 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
     limit: number;
     cursor: TargetCursor | null;
     atLeast: CommitCursor | undefined;
+    /** The main workspace whose open `responsible` lines on this module are visible too; null: none. */
+    regionMain: string | null;
+    /** Only this line's Sessions; null: every line. */
+    lineFolder: string | null;
   }): Promise<ReadResult<SessionPage<SessionCard>>> {
-    const { scope, target, targetKey, roleKey, includeArchived, limit } = args;
+    const { scope, target, targetKey, roleKey, lineFolder, includeArchived, limit } = args;
     const positions: TargetStreamPositions = { responsible: null, participates: null, investigated: null };
     const exhausted: TargetStreamExhausted = { responsible: false, participates: false, investigated: false };
     if (args.cursor !== null) {
@@ -1928,6 +1970,8 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
         const head = heads[relation];
         if (head !== undefined && head.sessionId === minSessionId && head.open) { openLink = true; break; }
       }
+      const responsible = heads.responsible;
+      const openResponsible = responsible !== undefined && responsible.sessionId === minSessionId && responsible.open;
       // Only the related Session is read; unrelated workspace Sessions are never
       // enumerated or read.
       const sessionKey = sessionAggregateRefKey(
@@ -1947,9 +1991,11 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       const session = decoded.value;
       const visible = openLink
         && session.ref.projectId === scope.projectId
-        && session.workspaceId === scope.workspaceId
+        && (session.workspaceId === scope.workspaceId
+          || (args.regionMain !== null && openResponsible && session.workspaceId === args.regionMain))
         && (includeArchived || session.lifecycle === 'active')
-        && (roleKey === null || canonicalOf(session.role) === roleKey);
+        && (roleKey === null || canonicalOf(session.role) === roleKey)
+        && (args.lineFolder === null || session.lineRef?.folder === args.lineFolder);
       if (visible) {
         const links = await readSessionLinks(scope.projectId, session.ref.sessionId, observeWater);
         if (!links.ok) return links.rejection;
@@ -1983,7 +2029,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       ? encodeTargetCursor({
         v: 1, mode: 'target',
         projectId: scope.projectId, workspaceId: scope.workspaceId,
-        includeArchived, targetKey, roleKey, actorKey: args.actorKey,
+        includeArchived, targetKey, roleKey, lineFolder, actorKey: args.actorKey,
         positions, exhausted, sourceCursor,
       })
       : null;
@@ -2000,6 +2046,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       role?: RoleConfigurationRef;
       includeArchived: boolean;
       page: { limit: number; cursor?: string; atLeastCursor?: CommitCursor; afterSessionKey?: string };
+      projectRegionLines?: true;
     },
   ): Promise<ReadResult<SessionPage<SessionCard>>> {
     // The read binding may suspend, so freeze the caller's input BEFORE the
@@ -2048,6 +2095,12 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       if (scopeProblem !== null) return reject('forbidden', scopeProblem);
       roleValue = role as unknown as RoleConfigurationRef;
     }
+    // kls-design §2.3.4: one line's Sessions, filtered on the same scans (no index of its own).
+    const rawLineFolder = raw['lineFolder'];
+    if (rawLineFolder !== undefined && !nonEmpty(rawLineFolder)) {
+      return reject('invalid', 'findSessions lineFolder must be a non-empty folder path');
+    }
+    const lineFolder = rawLineFolder ?? null;
     if (requestScope.workspaceId === undefined && (targetValue !== undefined || roleValue !== undefined || includeArchived)) {
       return reject('unsupported', 'a project-wide Session read has no target or role filter and reads active Sessions only');
     }
@@ -2072,13 +2125,22 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
         if (targetCursor === null) return reject('invalid', 'findSessions cursor is not a valid target cursor');
         if (targetCursor.projectId !== scope.projectId || targetCursor.workspaceId !== scope.workspaceId ||
           targetCursor.includeArchived !== includeArchived || targetCursor.targetKey !== targetKey ||
-          targetCursor.roleKey !== roleKey || targetCursor.actorKey !== actorKey) {
+          targetCursor.roleKey !== roleKey || targetCursor.lineFolder !== lineFolder || targetCursor.actorKey !== actorKey) {
           return reject('invalid', 'findSessions cursor is bound to another scope, filter or principal');
         }
       }
+      // kls-design §2.3.4: a module's role lines live in the main workspace and answer for the project's regions.
+      const regionLines = raw['projectRegionLines'];
+      if (regionLines !== undefined && regionLines !== true) return reject('invalid', 'findSessions projectRegionLines must be true');
+      let regionMain: string | null = null;
+      if (regionLines === true && targetValue.kind === 'module') {
+        const main = await readMainWorkspace(records, scope.projectId);
+        if (main.status !== 'ready') return main;
+        regionMain = main.value === scope.workspaceId ? null : main.value;
+      }
       return findSessionsByTarget({
         scope, actorKey, target: targetValue, targetKey, roleKey, includeArchived, limit,
-        cursor: targetCursor, atLeast,
+        cursor: targetCursor, atLeast, regionMain, lineFolder,
       });
     }
 
@@ -2097,7 +2159,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
       if (decodedCursor.projectId !== requestScope.projectId ||
         decodedCursor.workspaceId !== (requestScope.workspaceId ?? null) ||
         decodedCursor.includeArchived !== includeArchived || decodedCursor.targetKey !== targetKey ||
-        decodedCursor.roleKey !== roleKey || decodedCursor.actorKey !== actorKey) {
+        decodedCursor.roleKey !== roleKey || decodedCursor.lineFolder !== lineFolder || decodedCursor.actorKey !== actorKey) {
         return reject('invalid', 'findSessions cursor is bound to another scope, filter or principal');
       }
       after = decodedCursor.after;
@@ -2151,6 +2213,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
         if (requestScope.workspaceId !== undefined && session.workspaceId !== requestScope.workspaceId) continue;
         if (!includeArchived && session.lifecycle === 'archived') continue;
         if (roleKey !== null && canonicalOf(session.role) !== roleKey) continue;
+        if (lineFolder !== null && session.lineRef?.folder !== lineFolder) continue;
         if (items.length >= limit) {
           overflow = true;
           continue;
@@ -2182,7 +2245,7 @@ export function createSessionDirectory(stores: SessionDirectoryStores): SessionD
         workspaceId: requestScope.workspaceId ?? null,
         includeArchived,
         targetKey,
-        roleKey,
+        roleKey, lineFolder,
         actorKey,
         after: nextAnchor,
         sourceCursor,

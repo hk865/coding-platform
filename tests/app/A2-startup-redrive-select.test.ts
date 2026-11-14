@@ -33,6 +33,7 @@ const planRef = { aggregateType: 'PlanRevision' as const, projectId: P, planId: 
 const goalRefOf = (goalId: string): GoalRef => ({ aggregateType: 'Goal', projectId: P, goalId });
 function goalOf(goalId: string, over: Partial<GoalSnapshot> = {}): GoalSnapshot {
   return { ref: goalRefOf(goalId), workspaceRef: { aggregateType: 'Workspace', projectId: P, workspaceId: W },
+    lineRef: null,
     objective: goalId, desiredState: 'active', desiredStateRevision: 1, desiredStateRequestedBy: null,
     activePlanRevision: planRef as never, revision: 3,
     settings: { schemaVersion: 1, autonomy: 'after_plan_confirmation', order: 0, waitForGoalRef: null, parallelRisks: [] },

@@ -31,6 +31,7 @@ import type {
   GoalCopyDraftResultV1, GoalCopyFactsV1, GoalUnderstandingPinV1,
 } from '../../../contracts/goal-card.js';
 import type { GoalRef, GoalSnapshot, PendingGoalSnapshot, WorkspaceRef } from '../../../contracts/ledger.js';
+import type { LineRef } from '../../../contracts/line.js';
 import type { NotifyProjectInputV1, ProjectNoticeV1, RoleLineDutyV1 } from '../../../contracts/role-lines.js';
 import { checkShape } from '../../../contracts/validation/data-format.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
@@ -51,6 +52,7 @@ import {
   commandIdentity, executeWriteCommand, type CommandResult, type CommitFragment, type Keys,
 } from '../persistence/command-executor.js';
 import { createEventCodec, formatSchemas } from '../persistence/field-table-codec.js';
+import { lineForWrite } from '../persistence/line-record-codecs.js';
 import { lookupCommittedReceiptByIdentity } from '../persistence/receipt-lookup.js';
 import { GoalCopyFieldsShape, canonicalRefKey, goalSettingsProblem } from '../persistence/record-codecs.js';
 import { mergeGuards } from '../persistence/record-guards.js';
@@ -204,6 +206,8 @@ type CopyBasis = {
   projectRevision: number;
   workspaceRevision: number;
   pin: GoalUnderstandingPinV1;
+  /** The copy's line: the source Goal's, or the workspace's main line when the source has none (kls-design §2.3.1). */
+  line: LineRef | null;
 };
 
 /** What the birth commit adds for the source Goal's moved lines. */
@@ -496,6 +500,9 @@ export function createGoalCopyService(deps: GoalCopyServiceDependencies): GoalCo
         if (scopeRead.goal.workspaceRef.workspaceId !== scope.workspaceId) {
           return forbiddenCopy('the Goal belongs to another workspace');
         }
+        const line = scopeRead.goal.lineRef !== null ? { status: 'ready' as const, value: scopeRead.goal.lineRef }
+          : await lineForWrite(deps.records, scope, undefined);
+        if (line.status !== 'ready') return line;
         const understanding = await deps.understanding.readGoalUnderstanding(ownedCtx, { goalRef: sourceGoalRef });
         if (understanding.status !== 'ready') {
           return asWriteRejection(understanding, 'the source Goal understanding could not be read');
@@ -509,6 +516,7 @@ export function createGoalCopyService(deps: GoalCopyServiceDependencies): GoalCo
         basis = {
           goal: scopeRead.goal, projectKey: scopeRead.projectKey, workspaceKey: scopeRead.workspaceKey,
           projectRevision: scopeRead.projectRevision, workspaceRevision: scopeRead.workspaceRevision, pin,
+          line: line.value,
         };
         // The facts carry the complete candidate set: the selection is verified against it, and the unselected
         // remainder is frozen into the birth event.
@@ -531,7 +539,7 @@ export function createGoalCopyService(deps: GoalCopyServiceDependencies): GoalCo
           aggregateType: 'Workspace', projectId: scope.projectId, workspaceId: scope.workspaceId,
         };
         const goal: PendingGoalSnapshot = newGoalSnapshot({
-          ref: goalRef, workspaceRef, objective: decision.objective, settings: decision.settings,
+          ref: goalRef, workspaceRef, lineRef: basis.line, objective: decision.objective, settings: decision.settings,
           continuedFrom: decision.continuedFrom, copiedInterventions: [...decision.copiedInterventions],
         });
         const create: CreateGoalCommand = {

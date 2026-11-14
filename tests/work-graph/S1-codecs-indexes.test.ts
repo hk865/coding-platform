@@ -84,7 +84,7 @@ function baseSessionRecord(sessionId = 'S'): SessionRecord {
     kernel: { adapterId: 's1-codec-adapter', kernelSessionId: `kernel-${sessionId}` },
     lifecycle: 'active', health: 'available', healthConclusion: null,
     role: { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' },
-    workspaceId: W, lastExecutionRef: null, occupancy: null, historyCursor: null,
+    workspaceId: W, lineRef: null, lastExecutionRef: null, occupancy: null, historyCursor: null,
     createdAt: T0, archivedAt: null, provenance: { schemaVersion: 1, kind: 'new' },
   };
 }

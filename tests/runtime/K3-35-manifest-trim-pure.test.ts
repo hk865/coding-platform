@@ -278,7 +278,7 @@ function manifestFor(review: UnknownCallReviewInputV1, inputText: string): Prepa
       reason: 'the pure manifest skeleton installs no role spec' },
     hostTemplate: null, roleBinding: ROLE_BINDING,
     hostConfigurationRevision: 'k335-pure-host@1', sessionRole: SESSION_ROLE,
-    workspaceSnapshot: { workspaceId: WORKSPACE, revision: 3 },
+    workspaceSnapshot: { workspaceId: WORKSPACE, revision: 3, line: null },
     permissions: PERMISSIONS, budget: BUDGET,
     selectedTaskInputs: [{ requirementId: 'k335-pure-requirement', ref: CAPTURE_REF }],
     materialBasis: { planRef: PLAN_REF, workspaceRevision: 3, sourceDigest: sha256Hex('k335-pure-source') },

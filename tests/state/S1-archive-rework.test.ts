@@ -46,7 +46,7 @@ const runRef = (runId: string): RunRef => ({ aggregateType: 'Run', projectId: P,
 function runOf(runId: string, over: Partial<RunSnapshot> = {}): RunSnapshot {
   return {
     ref: runRef(runId), revision: 4, schemaVersion: 1, task: { ...TASK }, attemptId: `${runId}-attempt`, planRef: PLAN,
-    roleBinding: ROLE, budget: { tokenBudget: 1000, deadline: null }, workspaceSnapshot: { workspaceId: W, revision: 1 },
+    roleBinding: ROLE, budget: { tokenBudget: 1000, deadline: null }, workspaceSnapshot: { workspaceId: W, revision: 1, line: null },
     status: 'ended', outcome: 'completed', exitCode: 0, lastEventSeq: 2, lastRuntimeEventId: `rt-${runId}`,
     lastFactEventId: `ev-${runId}`, envelope: null, startedAt: T0, startedSince: null, endedAt: T0, previousRun: null, ...over,
   };

@@ -190,7 +190,7 @@ export async function openCatalogWorld(backend: Backend, projectId = 's8b-catalo
   const head = async (goal: GoalRef, requestRef: QueryJobRef) =>
     ready(await platform.requestCandidates.readRequestCandidate(ctx, { goalRef: goal, requestRef })).head;
   return {
-    platform, ctx, scope: fx.scope, adopt: fx.adopt, head,
+    platform, ctx, scope: fx.scope, root: fx.root, adopt: fx.adopt, head,
     ...catalogSteps(platform.architecture, ctx, scopePins, projectId),
     /** The policy only: the catalog is `adopt`'s, so a row can propose before, between or after the two. */
     governance: () => activatePolicy(platform, ctx, S8B_POLICY, `${projectId}-policy`),
@@ -266,7 +266,7 @@ export async function openAgentWorld(backend: Backend) {
   const proposeAsWorkRun: W2WhiteboardFixture['proposeAsWorkRun'] = async (draft, basedOn, overrides = {}) =>
     w2.proposeAsWorkRun(draft, basedOn, { ...overrides, expected: overrides.expected ?? [await w2.goalPin()] });
   return {
-    scope: w2.base.scope, goalRef: w2.goalRef, planRef: w2.planRef, plans: w2.plans, ctx: w2.ctxHost,
+    scope: w2.base.scope, root: w2.base.directory, goalRef: w2.goalRef, planRef: w2.planRef, plans: w2.plans, ctx: w2.ctxHost,
     futureDraft: w2.futureDraft, proposeAsWorkRun, proposeAsHost: w2.proposeAsHost, applyAsHost: w2.applyAsHost,
     ...catalogSteps(createArchitectureCatalogService({ records: w2.records,
       knowledge: knowledgeLinesFor({ root: w2.base.directory, ...w2.base.scope, records: w2.records }) }), w2.ctxHost,

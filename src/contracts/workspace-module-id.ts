@@ -44,11 +44,6 @@ export function rawModuleId(projectViewId: string): { workspaceId: string | null
   return { workspaceId, moduleId };
 }
 
-export function projectModuleRef(projectId: string, workspaceId: string, moduleId: string,
-  mainWorkspaceId: string): ModuleRef {
-  return { projectId, moduleId: projectModuleId(workspaceId, moduleId, mainWorkspaceId) };
-}
-
 export function rawModuleRef(ref: ModuleRef): { workspaceId: string | null; moduleId: string } {
   return rawModuleId(ref.moduleId);
 }

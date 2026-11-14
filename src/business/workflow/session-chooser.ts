@@ -40,12 +40,19 @@ export type PickReadsV1 = {
 };
 
 type RoleVerdict = 'ok' | 'workspace' | 'archived' | 'unavailable' | 'occupied' | 'role';
+/**
+ * `project` skips the workspace and line checks: a project-level line may be reused from another workspace of the
+ * project. `lineFolder`, the Goal's line (kls-design §2.3.4): a Session takes only its own line's Tasks, and a Goal
+ * with no line (`null`) only a Session with none.
+ */
+type ReuseOption = { scope: 'workspace'; lineFolder?: string | null } | { scope: 'project' };
 
-/** `project` skips only the workspace check: a project-level line may be reused from another workspace of the project. */
 function roleVerdict(card: SessionCard, workspaceId: string, sessionRole: RoleConfigurationRef,
-  option: { scope: 'workspace' | 'project' } = { scope: 'workspace' }): RoleVerdict {
+  option: ReuseOption = { scope: 'workspace' }): RoleVerdict {
   const record = card.record;
   if (option.scope !== 'project' && record.workspaceId !== workspaceId) return 'workspace';
+  if (option.scope !== 'project' && option.lineFolder !== undefined
+    && (record.lineRef?.folder ?? null) !== option.lineFolder) return 'workspace';
   if (record.lifecycle !== 'active') return 'archived';
   if (record.health !== 'available') return 'unavailable';
   if (record.occupancy !== null) return 'occupied';
@@ -53,9 +60,12 @@ function roleVerdict(card: SessionCard, workspaceId: string, sessionRole: RoleCo
 }
 
 export function roleReusable(card: SessionCard, workspaceId: string, binding: Binding,
-  option?: { scope: 'workspace' | 'project' }): boolean {
+  option?: ReuseOption): boolean {
   return roleVerdict(card, workspaceId, binding.sessionRole, option) === 'ok';
 }
+
+/** The Goal's line as the reuse check reads it. */
+const lineReuse = (goal: GoalSnapshot): ReuseOption => ({ scope: 'workspace', lineFolder: goal.lineRef?.folder ?? null });
 
 type TaskLinkRead =
   | { status: 'found'; card: SessionCard }
@@ -113,14 +123,14 @@ export function createSessionChooser(deps: {
   }
 
   /**
-   * Rule W: a line in another workspace is usable only when it holds a
-   * project-level duty (the four lines of book :278-:280); members and
-   * executors never cross. A line in the Goal's workspace keeps the plain
-   * workspace rule.
+   * Rule W: a line in another workspace, or on another of the workspace's lines (kls-design §2.3.4), is usable
+   * only when it holds a project-level duty (the four lines of book :278-:280); members and executors never cross.
+   * A line on the Goal's own workspace line keeps the plain rule.
    */
   async function projectReusable(owned: Owned, card: SessionCard, binding: Binding,
-    workspaceId: string): Promise<boolean> {
-    if (card.record.workspaceId === workspaceId) return roleReusable(card, workspaceId, binding);
+    goal: GoalSnapshot): Promise<boolean> {
+    const workspaceId = goal.workspaceRef.workspaceId;
+    if (roleReusable(card, workspaceId, binding, lineReuse(goal))) return true;
     if (!roleReusable(card, workspaceId, binding, { scope: 'project' })) return false;
     if (deps.sessionDuty === undefined) return false;
     const duty = await deps.sessionDuty(card.record.role, owned.ctx);
@@ -172,7 +182,7 @@ export function createSessionChooser(deps: {
           const openResponsible = card.links.some(link => link.ref.relation === 'responsible'
             && link.until === null && targets.some(target => sameCanonical(link.ref.target, target)));
           if (!openResponsible) continue;
-          if (!(await projectReusable(owned, card, binding, workspaceId))) continue;
+          if (!(await projectReusable(owned, card, binding, goal))) continue;
           if ((await exclusionOf(owned.ctx, card)).excluded) continue;
           return { status: 'found', card };
         }
@@ -311,6 +321,7 @@ export function createSessionChooser(deps: {
         found = await deps.sessions.findSessions(owned.ctx, {
           workspace: { projectId: owned.projectId, workspaceId },
           role: binding.sessionRole,
+          ...(goal.lineRef === null ? {} : { lineFolder: goal.lineRef.folder }),
           includeArchived: false,
           page: cursor === null ? { limit: 50 } : { limit: 50, cursor },
         });
@@ -394,8 +405,8 @@ export function createSessionChooser(deps: {
       const responsibleGoal = card.links.some(link => link.ref.relation === 'responsible'
         && link.until === null && sameCanonical(link.ref.target, { kind: 'goal', ref: goal.ref }));
       const usable = responsibleTask || responsibleGoal
-        ? await projectReusable(owned, card, binding, workspaceId)
-        : roleReusable(card, workspaceId, binding);
+        ? await projectReusable(owned, card, binding, goal)
+        : roleReusable(card, workspaceId, binding, lineReuse(goal));
       if (!usable) continue;
       const exclusion = await exclusionOf(owned.ctx, card);
       if (exclusion.incomplete === 'waits') marks.add('waits');

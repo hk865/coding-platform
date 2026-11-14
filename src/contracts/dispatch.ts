@@ -1,4 +1,5 @@
 import type { CommitCursor } from "./command-event.js";
+import type { LineRef } from "./line.js";
 import type { PlanRevisionRef } from "./plan.js";
 import type { ModelRequestPromptFactsV1 } from "./prompts/prompt-set.js";
 import type { TaskEnvelopeV1 } from "./task-envelope.js";
@@ -232,6 +233,12 @@ export type RunReconciliationV1 = {
 export const TERMINAL_PAYLOAD_TEXT_MAX_CHARS = 2000;
 /** Appended to a terminal payload text that was cut. */
 export const TERMINAL_PAYLOAD_TRUNCATION_SUFFIX = '…[truncated]';
+/**
+ * The workspace a Run is bound to, kept the same on the Run, its prepared manifest and its envelope: the workspace,
+ * its revision, and the line (kls-design §2.3.1) the Run was claimed on, from its Goal; `null` when the Goal has
+ * none. A Run's root is that line's folder, never guessed again from the current branch (§2.3.3).
+ */
+export type RunWorkspacePinV1 = { workspaceId: string; revision: number; line: LineRef | null };
 export type RunSnapshot = {
     /** Optional for unindexed/legacy executions; does not imply entry permission. */
     executionHistory?: import('./core/execution-history.js').RunExecutionHistoryV1;
@@ -264,10 +271,7 @@ export type RunSnapshot = {
     planRef: PlanRevisionRef;
     roleBinding: RoleBindingRefV1;
     budget: TaskBudgetV1;
-    workspaceSnapshot: {
-        workspaceId: string;
-        revision: number;
-    };
+    workspaceSnapshot: RunWorkspacePinV1;
     status: RunStatus;
     outcome: RunOutcome | null;
     /** exitCode of the LAST run_completed event (null until then). NEVER a satisfaction signal. */

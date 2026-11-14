@@ -17,6 +17,7 @@ import {
 import { taskRequeueRefProblem } from './rework-codecs.js';
 import { runControlStateProblem } from './control-record-codecs.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { lineRefProblem } from '../../../contracts/line.js';
 import { validateRuntimeBudget } from '../../../contracts/runtime-budget.js';
 import { invalid, parseObject } from '../../../contracts/validation/common.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
@@ -68,9 +69,15 @@ function isPlanRevisionRef(value: unknown): value is PlanRevisionRef {
     isNonEmptyString(value['planId']);
 }
 
-function isWorkspacePin(value: unknown): boolean {
-  if (!isJsonObject(value)) return false;
-  return isNonEmptyString(value['workspaceId']) && isRevision(value['revision']);
+/**
+ * The one check of `RunWorkspacePinV1`, the Run's, its prepared manifest's and its envelope's workspace pin: the
+ * workspace, its revision and the line the Run was claimed on (`null`, or a complete `LineRef`).
+ */
+export function runWorkspacePinProblem(value: unknown): string | null {
+  if (!isJsonObject(value) || !isNonEmptyString(value['workspaceId']) || !isRevision(value['revision'])) {
+    return 'is not a complete workspace pin';
+  }
+  return lineRefProblem(value['line']);
 }
 
 function isRoleBinding(value: unknown): boolean {
@@ -233,9 +240,8 @@ export function validateRunSnapshot(record: EncodedRecord): DecodeResult<Encoded
   }
   if (!isRoleBinding(body['roleBinding'])) return invalid('Run snapshot roleBinding is not a RoleBindingRefV1');
   if (!isTaskBudget(body['budget'])) return invalid('Run snapshot budget is not a TaskBudgetV1');
-  if (!isWorkspacePin(body['workspaceSnapshot'])) {
-    return invalid('Run snapshot workspaceSnapshot is not a complete workspace pin');
-  }
+  const pinProblem = runWorkspacePinProblem(body['workspaceSnapshot']);
+  if (pinProblem !== null) return invalid(`Run snapshot workspaceSnapshot ${pinProblem}`);
   // The optional Run controlState is validated by its one pure helper.
   // A historical Run with no field stays readable; a present field must be a
   // complete, scope-aligned control pointer. This is a shape check only: it does

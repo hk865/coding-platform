@@ -25,8 +25,11 @@ const KnowledgeWriteFormat = defineRecord({
   fields: {
     ref: f.ref(KnowledgeWriteRefShape),
     revision: f.revision({ min: 1 }),
-    /** `lineRefKey(scope, line)`: the workspace and the branch. */
+    /** `lineRefKey(scope, line)`: the workspace and the folder. */
     lineRef: id,
+    /** The branch checked out when the write was made ('' when not git): a pending or reconciliation read takes only
+     *  the current branch's logs, so a write left on another branch of the same folder is not judged by this checkout. */
+    branch: f.string(),
     /** Relative to the line's folder, starting with `.workbench/`. */
     path: id,
     kind: f.enumOf(['architecture', 'module', 'note'] as const),

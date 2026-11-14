@@ -549,9 +549,10 @@ export async function architectureWritePlansOf(lines: readonly LineKnowledge[], 
  * The module ids a caller hands in are written in its own frame (its
  * workspace is the main one); every entry turns them into the project view
  * once, so records and files only ever see the project view. A malformed id
- * throws and the entry answers `invalid`.
+ * throws and the entry answers `invalid`. The region and session entries
+ * (`sessions/role-line-operations.ts`, `find_related_sessions`) use this one.
  */
-function moduleRefInProjectView(ref: ModuleRef, callerWorkspaceId: string, mainWorkspaceId: string): ModuleRef {
+export function moduleRefInProjectView(ref: ModuleRef, callerWorkspaceId: string, mainWorkspaceId: string): ModuleRef {
   return { ...ref, moduleId: projectModuleIdOfFile(ref.moduleId, callerWorkspaceId, mainWorkspaceId) };
 }
 

@@ -38,7 +38,7 @@ function runOf(taskTriple: TaskTriple, runId: string, over: Partial<RunSnapshot>
   return {
     ref: runRef(taskTriple, runId), revision: 4, schemaVersion: 1, task: { ...taskTriple }, attemptId: `${runId}-attempt`,
     planRef: PLAN, roleBinding: ROLE, budget: { tokenBudget: 1000, deadline: null },
-    workspaceSnapshot: { workspaceId: W, revision: 3 }, status: 'ended', outcome: 'completed', exitCode: 0,
+    workspaceSnapshot: { workspaceId: W, revision: 3, line: null }, status: 'ended', outcome: 'completed', exitCode: 0,
     lastEventSeq: 2, lastRuntimeEventId: `rt-${runId}`, lastFactEventId: `ev-${runId}`, envelope: null,
     startedAt: at(1), startedSince: null, endedAt: at(5), previousRun: null, ...over,
   };

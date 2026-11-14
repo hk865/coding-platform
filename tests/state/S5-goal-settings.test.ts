@@ -66,6 +66,7 @@ function goal(ref: GoalRef, overrides: Partial<GoalSnapshot> = {}): GoalSnapshot
   return {
     ref,
     workspaceRef: WORKSPACE_REF,
+    lineRef: null,
     objective: `objective of ${ref.goalId}`,
     desiredState: 'active',
     desiredStateRevision: 3,

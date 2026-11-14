@@ -79,11 +79,11 @@
 | `createActivityBackfill` | `src/business/workflow/activity-backfill.ts:112` | 用 `countRunActivity`/`countQueryActivity` 计数并经 `recordRunActivity`/`recordQueryActivity` 写回填批次，不改 Run/Task/Attempt/Query | 启动自动回填与人工区间回填 |
 | `orderTasksByDependency` | `src/business/workflow/task-order.ts:14` | 按 DAG 边的稳定 Kahn 排序，只影响候选尝试顺序 | 选择候选 Task 前的软排序 |
 | `DEFAULT_SESSION_ARCHIVE_POLICY` | `src/business/workflow/ports.ts:104` | 冻结默认归档策略：一天、每页 100 | 组合根未显式配置时 |
-| `stableSessionCreationIdentity` | `src/core/work-graph/sessions/session-directory.ts:183` | 由同一稳定 `commandId` 派生 Session 创建身份 | 建线与崩溃重试；不要另写身份配方（MH-03、FP-13） |
+| `stableSessionCreationIdentity` | `src/core/work-graph/sessions/session-directory.ts:186` | 由同一稳定 `commandId` 派生 Session 创建身份 | 建线与崩溃重试；不要另写身份配方（MH-03、FP-13） |
 | `compareRequestRounds` | `src/core/work-graph/queries/request-rounds-read.ts:96` | request round 的稳定先后比较，只取 `ref` 与 `since` 两项 | drain、最老 pending 选择与请求队列候选的排序；不要另写排序 |
 | `orderCandidates`、`createSecretarySelection` | `src/core/work-graph/tasks/secretary-selection.ts:469`、`src/core/work-graph/tasks/secretary-selection.ts:469` | 秘书候选的准入子集、busy 分类与稳定排序 | 请求分配；不要另算候选或另写排序 |
 | `servingBinding`、`servedRoleIds` **正本** | `src/business/workflow/role-bindings.ts:8`、`src/business/workflow/role-bindings.ts:19` | 角色绑定的唯一正本：恰好一个受信绑定的判据，以及一个 workspace scope 下被服务的 distinct `roleBinding.templateId`（UTF-16 code units 排序） | Workflow 选角色与可用角色读取；不要另写绑定匹配或第二份角色过滤 |
-| `plainSessionRefToAggregate`、`sessionAggregateRefKey` | `src/core/work-graph/sessions/session-record-codecs.ts:1384`、`src/core/work-graph/sessions/session-record-codecs.ts:1384` | 普通 SessionRef 转聚合引用，并生成规范键 | guard、claim 与引用比较；不要内联序列化 Session 聚合 |
+| `plainSessionRefToAggregate`、`sessionAggregateRefKey` | `src/core/work-graph/sessions/session-record-codecs.ts:1389`、`src/core/work-graph/sessions/session-record-codecs.ts:1389` | 普通 SessionRef 转聚合引用，并生成规范键 | guard、claim 与引用比较；不要内联序列化 Session 聚合 |
 | `oldestPendingRound` | `src/core/work-graph/queries/request-rounds-read.ts:464` | 选最老的 pending 非 routing round；**正本**（只此一份） | intake 转移、未分配遍历、Workflow 计划；不要另写排序（M1-16、M1-18、MH-24） |
 | `oldestPending`（私有） | `src/business/workflow/request-intake.ts:173` | 把正本结果投影成 `QueryJobRef` 的私有包装 | 本层 intake/drain 使用；不要在这里重写选轮规则 |
 | `sameJson` | `src/contracts/fingerprint.ts:7` | 按规范 JSON 判等（不可编码即不相等）；**正本** | 引用/输入判等；不要另写比较 |

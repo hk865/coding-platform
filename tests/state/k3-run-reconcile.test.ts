@@ -62,7 +62,7 @@ const inputBinding: RuntimeInputBindingV1 = { schemaVersion: 1, inputDigest: DIG
 const envelope: TaskEnvelopeV1 = {
   schemaVersion: 1, envelopeId: 'env-1', projectId: P, workspaceId: W, goalId: G, taskId: T,
   runRef: claim.runRef, attemptRef: claim.attemptRef, planRef, roleBinding,
-  workspaceSnapshot: { workspaceId: W, revision: 7 },
+  workspaceSnapshot: { workspaceId: W, revision: 7, line: null },
   permissions: { policyRevision: 'policy-1', tools: [], writeScope: [], createMember: false }, budget, sourceRefs: [],
   bundleRef: { kind: 'artifact', contentType: 'text/plain', digest: 'f'.repeat(64), sizeBytes: 1,
     source: { kind: 'workspace', refId: W, revision: '7' } },
@@ -126,7 +126,7 @@ function nextRecord(result: RunTransition): RunSnapshot {
   return record;
 }
 
-const CLAIMED = newRunRecord({ claim, basis: { kind: 'first' }, roleBinding, budget, workspaceRevision: 7 });
+const CLAIMED = newRunRecord({ claim, basis: { kind: 'first' }, roleBinding, budget, workspaceRevision: 7, line: null });
 const AUTHORIZED = nextRecord(transitionRun(runStateOf(CLAIMED), EV.authorize, CTX));
 const ENTERING = nextRecord(transitionRun(runStateOf(AUTHORIZED), EV.begin, CTX));
 const RUNNING = nextRecord(transitionRun(runStateOf(ENTERING), EV.entered, CTX));

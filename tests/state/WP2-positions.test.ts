@@ -55,7 +55,7 @@ const HOST_SENDER = { kind: 'host', actor: { kind: 'human', id: 'operator' } } a
 function sessionRecordOf(overrides: Partial<SessionRecord> = {}): SessionRecord {
   return {
     ref: SESSION_REF, revision: REVISION, kernel: { adapterId: 'coding-agent', kernelSessionId: 'k-1' },
-    lifecycle: 'active', health: 'available', role: ROLE, workspaceId: WORKSPACE, lastExecutionRef: null,
+    lifecycle: 'active', health: 'available', role: ROLE, workspaceId: WORKSPACE, lineRef: null, lastExecutionRef: null,
     occupancy: null, historyCursor: 'cursor-old', createdAt: '2026-10-01T00:00:00.000Z', archivedAt: null,
     provenance: { schemaVersion: 1, kind: 'new' },
     ...overrides,

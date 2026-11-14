@@ -12,6 +12,7 @@ import type { RecordBackendSchemas } from '../../src/core/record-store/ports.js'
 import { createInMemoryRecordBackend } from '../../src/core/record-store/in-memory-record-store.js';
 import { createSqliteRecordBackend } from '../../src/core/record-store/sqlite-record-store.js';
 import { GOAL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/record-codecs.js';
+import { LINE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/line-record-codecs.js';
 import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-record-codecs.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
@@ -56,6 +57,7 @@ const schemas: RecordBackendSchemas = {
   records: [...GOAL_RECORD_SCHEMAS.records, ...PLAN_GOVERNANCE_RECORD_SCHEMAS.records,
     ...PLAN_RECORD_SCHEMAS.records, ...SESSION_RECORD_SCHEMAS.records, ...ARCHITECTURE_CATALOG_SCHEMAS.records,
     ...KNOWLEDGE_RECORD_SCHEMAS.records,
+    ...LINE_RECORD_SCHEMAS.records,
     sessionRoleFactsCodec.registration, projectRoleLimitsCodec.registration],
   events: [...GOAL_RECORD_SCHEMAS.events, ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events,
     ...PLAN_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events,
@@ -64,7 +66,8 @@ const schemas: RecordBackendSchemas = {
     projectRoleLimitsChangedCodec.registration],
   lookups: [...(PLAN_RECORD_SCHEMAS.lookups ?? []), ...(SESSION_RECORD_SCHEMAS.lookups ?? []),
     ...(KNOWLEDGE_RECORD_SCHEMAS.lookups ?? []),
-    ...(ARCHITECTURE_CATALOG_SCHEMAS.lookups ?? [])],
+    ...(ARCHITECTURE_CATALOG_SCHEMAS.lookups ?? []),
+    ...(LINE_RECORD_SCHEMAS.lookups ?? [])],
 };
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });
@@ -294,8 +297,8 @@ describe.each(['memory', 'sqlite'] as const)('R4b real %s RecordStore acceptance
         // A3: a delegating wrapper around the real directory notes the planned
         // Session ref of the real admission and returns the real result unchanged.
         const planned: SessionRef[] = [];
-        const observed: SessionDirectoryPort = { ...sessions, async admitSessionCreation(callCtx, request) {
-          const admitted = await sessions.admitSessionCreation(callCtx, request);
+        const observed: SessionDirectoryPort = { ...sessions, async admitSessionCreation(callCtx, request, ports) {
+          const admitted = await sessions.admitSessionCreation(callCtx, request, ports);
           if (admitted.status === 'committed') planned.push(admitted.value.action.plannedSessionRef);
           return admitted;
         } };

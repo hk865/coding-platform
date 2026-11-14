@@ -47,6 +47,7 @@ import { admitsAutoCleanupTakeover, containedByHostStop } from './unknown-call-k
 import { leaseReleasedForContinuation } from './review-lease.js';
 import { newUnknownCallReview } from './unknown-call-review.js';
 import type { GoalDesiredState } from '../../../contracts/ledger.js';
+import type { LineRef } from '../../../contracts/line.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
 import type { TaskEnvelopeV1 } from '../../../contracts/task-envelope.js';
 import { leaseHeldByClaim, type AttemptClaimBasis } from './attempt-machine.js';
@@ -392,9 +393,9 @@ export type RunTerminalEvidence = {
 };
 
 export type RunEvent =
-  /** RUN-01 (U): the claim intent; the TaskClaim carries every id and the claim instant. */
+  /** RUN-01 (U): the claim intent; the TaskClaim carries every id and the claim instant; `line` is the Goal's. */
   | { kind: 'claim_committed'; claim: TaskClaim; basis: AttemptClaimBasis; roleBinding: RoleBindingRefV1;
-      budget: TaskBudgetV1; workspaceRevision: number }
+      budget: TaskBudgetV1; workspaceRevision: number; line: LineRef | null }
   /** RUN-02/03 (P): the prepared binding; `activePlanRef` only for `carried_unchanged` (C6, step 5.4b). */
   | { kind: 'entry_authorized'; claim: TaskClaim; consumerId: string; envelope: TaskEnvelopeV1;
       inputBinding: RuntimeInputBindingV1; activePlanRef?: PlanRevisionRef }
@@ -848,6 +849,8 @@ export type NewRunInput = {
   roleBinding: RoleBindingRefV1;
   budget: TaskBudgetV1;
   workspaceRevision: number;
+  /** The Goal's line (kls-design §2.3.1): the Run runs in its folder; `null` when the Goal has none. */
+  line: LineRef | null;
 };
 
 /**
@@ -860,7 +863,7 @@ export function newRunRecord(input: NewRunInput): RunSnapshot {
   return {
     ref: claim.runRef, revision: 1, schemaVersion: 1, task: claim.task, attemptId: claim.attemptRef.attemptId,
     planRef: claim.planRef, roleBinding: input.roleBinding, budget: input.budget,
-    workspaceSnapshot: { workspaceId: claim.workspaceId, revision: input.workspaceRevision },
+    workspaceSnapshot: { workspaceId: claim.workspaceId, revision: input.workspaceRevision, line: input.line },
     status: 'starting', outcome: null, exitCode: null, lastEventSeq: 0,
     lastRuntimeEventId: '', lastFactEventId: '', envelope: null, startedAt: null, startedSince: null, endedAt: null,
     previousRun: claim.previousRun,

@@ -40,7 +40,7 @@ function runOf(over: Partial<RunSnapshot>): RunSnapshot {
     task: { projectId: P, goalId: G, taskId: 'work-1' }, attemptId: 'a2-mapping-attempt',
     planRef: { aggregateType: 'PlanRevision', projectId: P, planId: 'a2-mapping-plan' },
     roleBinding: { schemaVersion: 1, bindingId: 'b', templateId: 'builder', templateRevision: '1', bindingVersion: 1, policyRevision: 'p' },
-    budget: { tokenBudget: 1000, deadline: null }, workspaceSnapshot: { workspaceId: W, revision: 1 },
+    budget: { tokenBudget: 1000, deadline: null }, workspaceSnapshot: { workspaceId: W, revision: 1, line: null },
     status: 'ended', outcome: 'completed', exitCode: 0, lastEventSeq: 2, lastRuntimeEventId: 'rt', lastFactEventId: 'ev',
     envelope: null, startedAt: AT, startedSince: null, endedAt: AT, previousRun: null, ...over,
   };

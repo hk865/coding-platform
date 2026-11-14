@@ -35,7 +35,7 @@ import type { DecisionChangeProofV1 } from '../../../contracts/goal-decisions.js
 import { decisionSourceKey } from '../../../contracts/goal-decisions.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import { maintainerCallBindingOf, maintainerClaimConflictOf, roleLineDutyOf } from '../../../contracts/role-lines.js';
-import type { NotifyProjectInputV1, ProjectNoticeV1 } from '../../../contracts/role-lines.js';
+import type { NotifyProjectInputV1, ProjectNoticeV1, RoleScopeV1 } from '../../../contracts/role-lines.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { ArchitectureCatalogPort } from '../architecture/catalog-contracts.js';
@@ -72,6 +72,8 @@ import { commandIdentity, commandKeys, executeWriteCommand } from '../persistenc
 import { lookupCommittedReceipt } from '../persistence/receipt-lookup.js';
 import { storeFailureCode, storeFailureToRejection } from '../persistence/read-result-failures.js';
 import { eventIdOf } from './trusted-context.js';
+import { scopesInProjectView } from './role-line-operations.js';
+import { rawModuleRef } from '../../../contracts/workspace-module-id.js';
 import {
   SESSION_WORK_LINK_CHANGED_EVENT, encodeSessionWorkLinkChangedEvent, sessionWorkLinkChangedPayloadFromEvent,
   type SessionWorkLinkChangedEventV1,
@@ -712,7 +714,8 @@ export function createModuleMaintainer(deps: ModuleMaintainerDependenciesV1): Mo
     try {
       await deps.notifyProject({
         projectRef: { projectId: ctx.projectId }, kind: 'module_maintainer_assigned',
-        summary: `模块维护者：${truncateUtf8(operation.action.input.moduleRef.moduleId, 244)} ← ${truncateUtf8(line.sessionId, 244)}`,
+        // The person reads the module's own id; the record keeps the project view (kls-design §2.3.4).
+        summary: `模块维护者：${truncateUtf8(rawModuleRef(operation.action.input.moduleRef).moduleId, 244)} ← ${truncateUtf8(line.sessionId, 244)}`,
         operation: structuredClone(operation.ref),
       });
     } catch {
@@ -736,6 +739,12 @@ export function createModuleMaintainer(deps: ModuleMaintainerDependenciesV1): Mo
       return rejected('forbidden', 'the maintainer module or line belongs to another project');
     }
     const workspace: WorkspaceScope = { projectId: ctx.projectId, workspaceId: ctx.workspaceId! };
+    // The caller names the module in its own workspace's frame; the claim and the link keep the project view
+    // (kls-design §2.3.4).
+    const viewed = await scopesInProjectView(deps.records, ctx.projectId, workspace.workspaceId,
+      [{ kind: 'region', moduleRef: input.moduleRef }]);
+    if (viewed.status !== 'ready') return viewed;
+    input.moduleRef = (viewed.value[0] as Extract<RoleScopeV1, { kind: 'region' }>).moduleRef;
     const actionInput: MaintainerAssignmentOperationV1['action']['input'] = {
       moduleRef: structuredClone(input.moduleRef), line: structuredClone(input.line),
       reason: input.reason, caller: structuredClone(input.caller),

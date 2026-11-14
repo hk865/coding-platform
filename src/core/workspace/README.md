@@ -4,7 +4,7 @@
 - 按路径读当前/冻结文件、Git 固定版本、源码捕获与查询、Python/C++/TS 索引；只观察 Host 已授权的工作区。
 - module-target 声明本模块依赖为空：不获得 RecordStore，不写记录/事件，不提交，不运行或修改 Session。
 - git 只读，例外是两种人的提交：R21 的 `commitKnowledgeFiles`（人点“提交架构图和注记”时，只提交 `.workbench/`）和节点级审核的 `commitNodePaths`（人审过一个节点后，只提交这个节点自己的路径），见下面的表。
-- 根与权限由 Host 注入（`WorkspaceHostBindings`）；每次 `open` 重跑 `resolveRoot` + `authorize`，模型参数不能指定任意绝对根。
+- 根与权限由 Host 注入（`WorkspaceHostBindings`）；每次 `open` 重跑 `resolveRoot` + `authorize`，模型参数不能指定任意绝对根。`resolveRoot(workspace, line?)` 带线（`{folder}`）时回这条线的文件夹（kls-design §2.3.3，Run 和 QueryRun 在自己的线里跑），Host 没登记的线是 `not_found`；不带是工作区的根。
 - 路径边界、捕获、分页游标与各语言索引规则只在本层实现一次；其他层引用，不另写一份。
 - 可调用 Node、解析器与 Kernel 的只读 `WorkspaceSandbox` 库能力；这不等于依赖 AgentRuntime。
 - 不决定架构职责、不改任务图、不判断完成；changed paths 只是失效提示，不能证明其他文件没变。
@@ -48,7 +48,7 @@
 ## 可以复用的能力
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
-| `createWorkspaceAccessFactory` | `src/core/workspace/access.ts:95` | 用 Host 的 `resolveRoot`/`authorize` 打开一次绑定的读取资格 | 组合根给本模块注入真实根与权限时 |
+| `createWorkspaceAccessFactory` | `src/core/workspace/access.ts:100` | 用 Host 的 `resolveRoot`/`authorize` 打开一次绑定的读取资格 | 组合根给本模块注入真实根与权限时 |
 | `createWorkspaceTools` | `src/core/workspace/workspace-tools.ts:85` | 组装唯一 `WorkspaceToolsPort`（捕获/查询/读/比较）与 continuation 读取；句柄上的 `readWorkspaceFiles`、`listWorkspaceInputs` 可单独传出去用（闭包，不靠 `this`） | 组合根装配 `platform.workspace` 时；消费方不要再建 registry |
 | `WorkspaceToolsPort` | `src/core/workspace/ports.ts:226` | 本模块对外的窄端口与结果类型 | 消费方只注入端口，不拿 registry/sandbox |
 | `WorkspaceToolsPort.readUncommittedFiles` | `src/core/workspace/ports.ts:232` | `files/uncommitted` 的 owner | Host 路由和界面 |
@@ -62,18 +62,18 @@
 | `compareGitWorkspaceTrees` | `src/core/workspace/git-read.ts:537` | 比较两个完整 commit 的文本树 | Git↔Git 来源比较时 |
 | `compareGitWorkingTree` | `src/core/workspace/git-read.ts:617` | 比较 Git commit 与工作树的普通文本和 mode | Git↔working tree 比较时 |
 | `duplicateCandidates` | `src/core/workspace/duplicate-candidates.ts:66` | 在一次比较的 after 材料上列出新的重复定义与字面量候选，带两处位置与 coverage | 比较请求带 `duplicates: true` 时；由 capture/git 两臂调用，不要另建索引 |
-| `readWorkspaceBaseline` | `src/core/workspace/workspace-change-capture.ts:538` | 一次只读遍历得到 run 起始 baseline | 执行前冻结工作区基线时 |
-| `captureWorkspaceChange` | `src/core/workspace/workspace-change-capture.ts:585` | 同一次遍历得到结算变更、notVisible 与样本 | 执行结束后取变更时；不要另走目录遍历 |
-| `gitCommonDir` | `src/core/workspace/workspace-change-capture.ts:121` | 仓库的 common git 目录（所有工作树共用）：`git rev-parse --git-common-dir` 经同一个只读 git 执行口，相对输出按根解析再 realpath；不在工作树里、没有 git 或命令失败为 null | 组合层定项目库位置（`projectStoreLocation`）时；不要另起 git 进程 |
+| `readWorkspaceBaseline` | `src/core/workspace/workspace-change-capture.ts:552` | 一次只读遍历得到 run 起始 baseline | 执行前冻结工作区基线时 |
+| `captureWorkspaceChange` | `src/core/workspace/workspace-change-capture.ts:599` | 同一次遍历得到结算变更、notVisible 与样本 | 执行结束后取变更时；不要另走目录遍历 |
+| `gitCommonDir` | `src/core/workspace/workspace-change-capture.ts:122` | 仓库的 common git 目录（所有工作树共用）：`git rev-parse --git-common-dir` 经同一个只读 git 执行口，相对输出按根解析再 realpath；不在工作树里、没有 git 或命令失败为 null | 组合层定项目库位置（`projectStoreLocation`）时；不要另起 git 进程 |
 | `ensureKnowledgeDirectory` | `src/core/workspace/knowledge-exclude.ts:89` | 建 `<root>/.workbench/`；已有就不动，根不在既不建也不报（交给调用方自己的打开去报） | 命令要把知识目录挂成只读之前（Work Run 启动、工作台命令）和 Host 登记工作区时；不要另写 mkdir |
 | `applyKnowledgeExclude` | `src/core/workspace/knowledge-exclude.ts:56` | 打开或关闭一个检出的“只留在本机”：在 `<git-common-dir>/info/exclude` 按字节加上或删掉标记块（写临时文件再换名），回 `{ path, changed }`，读写失败回 `unavailable`、原文件不动 | Host 设置路由 `knowledge-local`；不要另写忽略文件的读写 |
 | `uncommittedFilesOf` | `src/core/workspace/uncommitted-files.ts:36` | 给定路径相对当前 HEAD 的 clean/uncommitted/unknown 和加减行 | 要按文件看未提交改动时；不要另跑 git diff/status |
-| `readKnowledgeGitState` | `src/core/workspace/workspace-change-capture.ts:224` | 一个检出 `.workbench/` 的 git 状态：status 列出的路径（改了、暂存、未跟踪，改名两边都算）、索引 stage 0 的 blob、HEAD 的 blob，路径都相对检出根；任一条失败回 null（调用方当全部未提交） | 知识对账判“已提交”（在 `ls-files -s` 里且不在 status 里）和 HEAD 的 blob；不要另起 git |
-| `readKnowledgeChanges` | `src/core/workspace/workspace-change-capture.ts:257` | R21：一个检出 `.workbench/` 未提交的处数和路径数（`local/` 不算）：未跟踪一处，别的每个 XY 里改了的一边算一处；改名算新路径；未跟踪的文件夹逐个文件列（`--untracked-files=all`）；git 失败抛错 | `LineKnowledge.status`；不要另写计数 |
-| `readPathBlobs`、`hasNodePathChanges` | `src/core/workspace/workspace-change-capture.ts:303`、`src/core/workspace/workspace-change-capture.ts:350` | 节点级审核：给定路径的工作树原始 blob（和遍历同一算法，符号链接取目标，不存在是 null，根不是 git 顶层或路径是目录就抛），人读后内容守卫比的是它；这组路径提交会不会记下东西（勘误 7，由 git 判：HEAD 有的路径看 `git diff HEAD` 列不列，经仓库的换行转换和 clean filter，只改 mode 也算；HEAD 没有的路径看工作树里有没有；暂存后又改回 HEAD 的不算） | 节点审核读和提交前的比对；不要拿 `git status` 或原始 blob 判有无可提交 |
-| `commitNodePaths`、`findNodeCommit` | `src/core/workspace/workspace-change-capture.ts:368`、`src/core/workspace/workspace-change-capture.ts:390` | 节点提交：`--literal-pathspecs` 的 `git add -A` 和 `git commit -F -`，只含提交会记下东西的节点路径（和 `hasNodePathChanges` 同一个判断；一条都没有就失败，不让空 pathspec 提交整棵树），add/commit 各 120 秒、`rev-parse` 15 秒，说明经标准输入（大节点的完整快照不受单个参数长度限制），末尾三行是记录快照、identity、fingerprint；失败回 git 原话，不重试、不改配置、不 `--amend`、不推送。`findNodeCommit` 在 HEAD 的可达历史里找最后两行是这个 identity 的提交：fingerprint 也对就给 sha 和记录快照，不对就是冲突 | 只给节点审核 owner（经组合根的 git 适配）；不要另起 git 写 |
-| `commitKnowledgeFiles` | `src/core/workspace/workspace-change-capture.ts:286` | R21：平台的两种 git 写之一（另一种是节点提交 `commitNodePaths`），`git add`、`git commit -m <说明>`，pathspec 都是 `.workbench/` 去掉 `local/`（人暂存的代码不进提交、也不被取消暂存）；失败回 git 的原话（stderr；没有就取 stdout 最后一行，如“没有可提交的”），不重试、不改配置、不 `--amend`；这两条命令的超时是 120 秒（钩子的时间算在里面，超时也是失败），别的 git 调用照旧 15 秒；成功回 HEAD 的完整 id | 只给 `LineKnowledge.commit`（`ops.commit` 在写队列和租约里调它）；不要另起 git 写 |
-| `identifyCheckout`、`readCheckoutBranch` | `src/core/workspace/workspace-change-capture.ts:147`、`src/core/workspace/workspace-change-capture.ts:138` | 一个检出的身份：`folder` 是根的 realpath（根不在时抛错，组合层接住回 `unavailable`）；不在 git 里是 `not_git`；在 git 里给仓库身份（common git 目录）、分支（`symbolic-ref`，detached 或失败是 `HEAD`，刚 `git init` 的空仓库也拿得到分支名）和对象格式（`show-object-format`，失败按 sha1）；不读第一个提交；`readCheckoutBranch` 只读分支 | 组合根解析一条知识线（`src/composition/line-knowledge.ts`）；分支每次重读，人随时可能切 |
+| `readKnowledgeGitState` | `src/core/workspace/workspace-change-capture.ts:238` | 一个检出 `.workbench/` 的 git 状态：status 列出的路径（改了、暂存、未跟踪，改名两边都算）、索引 stage 0 的 blob、HEAD 的 blob，路径都相对检出根；任一条失败回 null（调用方当全部未提交） | 知识对账判“已提交”（在 `ls-files -s` 里且不在 status 里）和 HEAD 的 blob；不要另起 git |
+| `readKnowledgeChanges` | `src/core/workspace/workspace-change-capture.ts:271` | R21：一个检出 `.workbench/` 未提交的处数和路径数（`local/` 不算）：未跟踪一处，别的每个 XY 里改了的一边算一处；改名算新路径；未跟踪的文件夹逐个文件列（`--untracked-files=all`）；git 失败抛错 | `LineKnowledge.status`；不要另写计数 |
+| `readPathBlobs`、`hasNodePathChanges` | `src/core/workspace/workspace-change-capture.ts:317`、`src/core/workspace/workspace-change-capture.ts:364` | 节点级审核：给定路径的工作树原始 blob（和遍历同一算法，符号链接取目标，不存在是 null，根不是 git 顶层或路径是目录就抛），人读后内容守卫比的是它；这组路径提交会不会记下东西（勘误 7，由 git 判：HEAD 有的路径看 `git diff HEAD` 列不列，经仓库的换行转换和 clean filter，只改 mode 也算；HEAD 没有的路径看工作树里有没有；暂存后又改回 HEAD 的不算） | 节点审核读和提交前的比对；不要拿 `git status` 或原始 blob 判有无可提交 |
+| `commitNodePaths`、`findNodeCommit` | `src/core/workspace/workspace-change-capture.ts:382`、`src/core/workspace/workspace-change-capture.ts:404` | 节点提交：`--literal-pathspecs` 的 `git add -A` 和 `git commit -F -`，只含提交会记下东西的节点路径（和 `hasNodePathChanges` 同一个判断；一条都没有就失败，不让空 pathspec 提交整棵树），add/commit 各 120 秒、`rev-parse` 15 秒，说明经标准输入（大节点的完整快照不受单个参数长度限制），末尾三行是记录快照、identity、fingerprint；失败回 git 原话，不重试、不改配置、不 `--amend`、不推送。`findNodeCommit` 在 HEAD 的可达历史里找最后两行是这个 identity 的提交：fingerprint 也对就给 sha 和记录快照，不对就是冲突 | 只给节点审核 owner（经组合根的 git 适配）；不要另起 git 写 |
+| `commitKnowledgeFiles` | `src/core/workspace/workspace-change-capture.ts:300` | R21：平台的两种 git 写之一（另一种是节点提交 `commitNodePaths`），`git add`、`git commit -m <说明>`，pathspec 都是 `.workbench/` 去掉 `local/`（人暂存的代码不进提交、也不被取消暂存）；失败回 git 的原话（stderr；没有就取 stdout 最后一行，如“没有可提交的”），不重试、不改配置、不 `--amend`；这两条命令的超时是 120 秒（钩子的时间算在里面，超时也是失败），别的 git 调用照旧 15 秒；成功回 HEAD 的完整 id | 只给 `LineKnowledge.commit`（`ops.commit` 在写队列和租约里调它）；不要另起 git 写 |
+| `identifyCheckout`、`readCheckoutBranch`、`checkoutIdentityOf` | `src/core/workspace/workspace-change-capture.ts:156`、`src/core/workspace/workspace-change-capture.ts:147`、`src/core/workspace/workspace-change-capture.ts:140` | 一个检出的身份：`folder` 是根的 realpath（根不在时抛错，组合层接住回 `unavailable`）；不在 git 里是 `not_git`；在 git 里给仓库身份（common git 目录）、分支（`symbolic-ref`，detached 或失败是 `HEAD`，刚 `git init` 的空仓库也拿得到分支名）和对象格式（`show-object-format`，失败按 sha1），和第一个提交（`rev-list --max-parents=0 HEAD`，空仓库为 null；KLS-3a 认另一份克隆用它）；`checkoutIdentityOf` 是一个检出的线（不在 git 里的文件夹自成仓库，分支 `''`，第一个提交 null）；`readCheckoutBranch` 只读分支 | 组合根解析一条知识线（`src/composition/line-knowledge.ts`）；分支每次重读，人随时可能切 |
 | `readWorkspaceBaselineFromBundle` | `src/core/workspace/workspace-baseline-artifact.ts:34` | 读 prepared manifest 内的 baseline，坏/缺都降级为 null | 需要 run 起始快照且不能因坏 Artifact 失败时 |
 | `readWorkspaceCaptureChanges` | `src/core/workspace/workspace-baseline-artifact.ts:60` | 读 `WorkspaceCaptureV1` 背后的完整变更记录 | 需要变更全量分类、而不是样本时 |
 | `readContinuationBaselineBlob` | `src/core/workspace/continuation-diff-reads.ts:89` | 用 `git cat-file blob` 读 diff 旧侧，失败返回 typed unavailable；给了 signal 时每次读后查取消，取消了就抛 | continuation 文件 diff 的旧侧；坏了的知识文件按 HEAD 的 blob 恢复时读它在 HEAD 里的字节 |
@@ -90,7 +90,7 @@
 | `namesInRanges` | `src/core/workspace/single-file-syntax.ts:183` | 范围原文里按词边界找名字，每一处标 `free`/`other` | 第一档判断名字还在不在、是不是自由标识符时 |
 | `createReferenceAnalyzer` | `src/core/workspace/reference-analyzer.ts:55` | 建第二档的 `ReferenceAnalyzerPort`：`verify` 一次建一个程序，按 `priority` 排队；`close` 停分析线程 | 组合根建一个、接进注记的工作区；依赖传句柄的 `readWorkspaceFiles`、`listWorkspaceInputs` |
 | `createNativeSingleFile` | `src/core/workspace/native-single-file.ts:105` | 建 `NativeSingleFilePort`：`lookup` 查一个 Python/C++ 文件的函数、类；`read` 只用留着的翻译单元、没有就退回单文件解析并后台预热，`write` 照真实编译参数解析；`close` 停两个常驻进程 | 第一档读 Python/C++ 定位、一般注记写 Python/C++ 符号；一个 Host 只建一个 |
-| `changedPythonSyntaxProblems` | `src/core/workspace/python-syntax.ts:17` | 一批路径里只留 Python 的、去重排序，一次批量读，再逐文件 `lookup`；只收 `syntax_error`，按 `(path, line)` 排序 | 安全点检查这次 Run 改过的 Python 文件；不要另写解析或读取 |
+| `changedPythonSyntaxProblems` | `src/core/workspace/python-syntax.ts:17` | 一批路径里只留 Python 的、去重排序，一次批量读，再逐文件 `lookup`；只收 `syntax_error`，按 `(path, line)` 排序 | 安全点（Run 内）和检查轮收口（B06-N1）检查这次 Run 改过的 Python 文件；不要另写解析或读取 |
 | `createResidentAnalyzer` | `src/core/workspace/analysis-runner.ts:583` | 分析脚本的常驻模式：同一套起进程、行读取、输出上限、超时、杀进程；`exchange` 一次一个，`close` 先关输入、等它退出，超时再杀 | 要长住的分析进程时；不另写进程管理 |
 | `CppSourceIndex` | `src/core/workspace/cpp-source-index.ts:16` | 权限过滤后的 C/C++ 来源查询 | 探索工具要 C/C++ 符号/import 时 |
 | `PythonSourceIndex` | `src/core/workspace/python-source-index.ts:17` | 权限过滤后的 Python 来源查询 | 探索工具要 Python 符号/import 时 |

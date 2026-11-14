@@ -11,6 +11,7 @@ import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-
 import { PLAN_GOVERNANCE_RECORD_SCHEMAS, PLAN_STATE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-record-codecs.js';
 import { KNOWLEDGE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/knowledge-record-codecs.js';
+import { LINE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/line-record-codecs.js';
 import { createArchitectureCatalogService } from '../../src/core/work-graph/architecture/catalog-service.js';
 import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
@@ -35,13 +36,14 @@ const schemas: RecordBackendSchemas = {
   records: [...materialRecordSchemas().records, ...PLAN_GOVERNANCE_RECORD_SCHEMAS.records,
     ...PLAN_RECORD_SCHEMAS.records, ...PLAN_STATE_RECORD_SCHEMAS.records,
     ...KNOWLEDGE_RECORD_SCHEMAS.records,
+    ...LINE_RECORD_SCHEMAS.records,
     ...ARCHITECTURE_CATALOG_SCHEMAS.records],
   events: [...materialRecordSchemas().events, ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events,
     ...PLAN_RECORD_SCHEMAS.events, ...PLAN_STATE_RECORD_SCHEMAS.events,
     ...KNOWLEDGE_RECORD_SCHEMAS.events,
     ...ARCHITECTURE_CATALOG_SCHEMAS.events, ...PROJECT_BOOTSTRAP_RECORD_SCHEMAS.events],
   lookups: [...(PLAN_RECORD_SCHEMAS.lookups ?? []), ...(PLAN_STATE_RECORD_SCHEMAS.lookups ?? []),
-    ...(KNOWLEDGE_RECORD_SCHEMAS.lookups ?? []),
+    ...(KNOWLEDGE_RECORD_SCHEMAS.lookups ?? []), ...(LINE_RECORD_SCHEMAS.lookups ?? []),
     ...(ARCHITECTURE_CATALOG_SCHEMAS.lookups ?? [])],
 };
 const artifactRef: ArtifactRef = { kind: 'artifact', contentType: 'text/plain', digest: 'a'.repeat(64),

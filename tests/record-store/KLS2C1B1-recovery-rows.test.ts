@@ -26,7 +26,7 @@ const backends = [
 const LINE = '["ws","main"]';
 const PATH = '.workbench/notes/ws/aaaa.md';
 const row = (itemNo: number, change: Partial<KnowledgeRecoveryRow> = {}): KnowledgeRecoveryRow => ({
-  noticeId: 'n1', itemNo, kind: 'write_unconfirmed', writeId: `w${itemNo}`, lineRef: LINE, path: `${PATH}.${itemNo}`,
+  noticeId: 'n1', itemNo, kind: 'write_unconfirmed', writeId: `w${itemNo}`, lineRef: LINE, branch: 'main', path: `${PATH}.${itemNo}`,
   takenAt: null, expectedBlob: null, ...change });
 const stamp = (second: number): string => `2026-11-12T00:00:${String(second).padStart(2, '0')}.000Z`;
 

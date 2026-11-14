@@ -30,6 +30,7 @@ import type { PlanRevisionRef } from "../../../contracts/plan.js";
 import { canonicalJson, canonicalKey, type JsonValue } from "../../../contracts/fingerprint.js";
 import { defineShape, f, type InferShape } from "../../../contracts/data-format.js";
 import { GoalRefShape, SessionMessageRefShape } from "../../../contracts/data-format-refs.js";
+import { LineRefShape } from "../../../contracts/line.js";
 import { checkShape } from "../../../contracts/validation/data-format.js";
 import {
   invalid, isNonNeg, isRecord, nonEmpty, parseTaggedObject,
@@ -316,12 +317,14 @@ function isGoalDesiredState(value: unknown): value is GoalDesiredState {
 }
 
 /**
- * The two copy fields of a Goal (slice-6-SPEC L12) as one field table: a Goal
- * not born as a copy holds `continuedFrom: null` and `copiedInterventions: []`.
- * The table checks the stored fields only; which versions the copy read is the
- * copy owner's.
+ * The birth fields of a Goal beside its settings, as one field table: the two
+ * copy fields (slice-6-SPEC L12; a Goal not born as a copy holds
+ * `continuedFrom: null` and `copiedInterventions: []`) and the line it works on
+ * (kls-design §2.3.1; null when the workspace had no line). The table checks the
+ * stored fields only; which versions the copy read is the copy owner's.
  */
 export const GoalCopyFieldsShape = defineShape({ name: "GoalSnapshot", fields: {
+  lineRef: f.nullable(f.ref(LineRefShape)),
   continuedFrom: f.nullable(f.object({
     goal: f.ref(GoalRefShape), sourceRevision: f.integer({ min: 1 }),
     understanding: f.nullable(f.object({ noteId: f.string({ min: 1, unit: "codePoints" }), version: f.integer({ min: 1 }) })),
@@ -337,7 +340,7 @@ function goalCopyFieldsProblem(value: UnknownRecord): string | null {
   // Compile-time check: the table's type and the Goal's two copy fields are each
   // assignable to the other (otherwise `false` does not satisfy `true`).
   type Table = InferShape<(typeof GoalCopyFieldsShape)["fields"]>;
-  type OfGoal = Pick<GoalSnapshot, "continuedFrom" | "copiedInterventions">;
+  type OfGoal = Pick<GoalSnapshot, "lineRef" | "continuedFrom" | "copiedInterventions">;
   type MustHold<T extends true> = T;
   type TableMatchesGoal = MustHold<[Table, OfGoal] extends [OfGoal, Table] ? true : false>;
   const fields: UnknownRecord = {};
@@ -555,7 +558,7 @@ function hasExactKeys(value: unknown, keys: readonly string[]): boolean {
  * table also refuses unknown keys inside the two copy fields).
  */
 const WRITTEN_GOAL_KEYS: readonly string[] = [
-  "ref", "workspaceRef", "objective", "desiredState", "desiredStateRevision", "desiredStateRequestedBy",
+  "ref", "workspaceRef", "lineRef", "objective", "desiredState", "desiredStateRevision", "desiredStateRequestedBy",
   "activePlanRevision", "revision", "settings", "continuedFrom", "copiedInterventions", "since",
 ];
 
@@ -817,6 +820,7 @@ export function decodeGoalSnapshot(record: EncodedRecord): DecodeResult<GoalSnap
     value: {
       ref,
       workspaceRef,
+      lineRef: parsed.lineRef,
       // Returned verbatim: a historical objective is never re-normalized here.
       objective: parsed.objective,
       // D-9: the stored value; GoalCreated still writes only "active".
@@ -879,6 +883,7 @@ export function decodeGoalCreatedEvent(event: EncodedDomainEvent): DecodeResult<
         settings: parsed.payload.settings,
         continuedFrom: parsed.payload.continuedFrom,
         copiedInterventions: parsed.payload.copiedInterventions,
+        lineRef: parsed.payload.lineRef,
       },
     },
   };
@@ -899,6 +904,7 @@ export function goalSnapshotFromCreatedEvent(event: GoalCreatedEvent): PendingGo
       projectId: event.projectId,
       workspaceId: event.workspaceId,
     },
+    lineRef: event.payload.lineRef,
     objective: event.payload.objective,
     desiredState: event.payload.desiredState,
     desiredStateRevision: 1,
