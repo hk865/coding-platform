@@ -14,6 +14,7 @@
  * - GV-5 counts only required, active work in the gate's scope: a fix Task an operator adds (W16) and then
  *   cancels unsatisfied leaves the FAIL gate at GV-9 again, without `gate_fix_in_progress`.
  */
+import { unavailableWitnessFacts } from '../helpers/witness-stub.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -55,7 +56,7 @@ function executed(exitCode: number): CheckProcessObservation {
 /** An evidence owner over the fixture's ledger with the successor-round dependencies. */
 function reverifier(fixture: R3eEvidenceFixture): EvidencePort {
   let sequence = 0;
-  return createEvidenceService({ knowledge: knowledgeLinesOver(fixture.records, fixture.workspaceHost),
+  return createEvidenceService({ witnessFacts: unavailableWitnessFacts, knowledge: knowledgeLinesOver(fixture.records, fixture.workspaceHost),
     records: fixture.records, commitIdentities: fixture.b2.base.commitIdentities, materials: fixture.materials,
     executions: createRunStateReader({ records: fixture.records }), workspaceHost: fixture.workspaceHost,
     source: new VerificationWorkspaceReader(),

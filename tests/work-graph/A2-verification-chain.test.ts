@@ -24,6 +24,7 @@
  * - §9.3 Workflow order: an interrupted check does not hold the pending ones,
  *   and a round left with interrupted and finished checks finalizes.
  */
+import { unavailableWitnessFacts } from '../helpers/witness-stub.js';
 import { afterEach, expect, it } from 'vitest';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
@@ -125,7 +126,7 @@ function evidenceOver(fixture: R3eEvidenceFixture, tag: string, overrides: {
   records?: R3eEvidenceFixture['records']; source?: VerificationRoundSourcePort; minted?: string[];
 } = {}): EvidencePort {
   let sequence = 0;
-  return createEvidenceService({ knowledge: knowledgeLinesOver(fixture.records, fixture.workspaceHost),
+  return createEvidenceService({ witnessFacts: unavailableWitnessFacts, knowledge: knowledgeLinesOver(fixture.records, fixture.workspaceHost),
     records: overrides.records ?? fixture.records, commitIdentities: fixture.b2.base.commitIdentities,
     materials: fixture.materials,
     executions: createRunStateReader({ records: fixture.records }),

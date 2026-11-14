@@ -12,6 +12,7 @@
  * services. No successful port result is mocked; the Host configuration callback
  * is the same trusted test double the frozen B2 fixture uses.
  */
+import { unavailableWitnessEvidence } from '../helpers/witness-stub.js';
 import { knowledgeLinesFor } from '../helpers/KLS2-knowledge-lines.js';
 import { rename, rm, writeFile } from 'node:fs/promises';
 import { withBackendOrderedLookup } from '../helpers/ordered-lookup-forward.js';
@@ -380,7 +381,7 @@ export async function createAdmissionFixture(kind: ClaimFixtureKind): Promise<Ad
   const executions = createRunStateReader({ records, bodies });
   const inputs = createTaskContextInputService({ records, materials, bodies, hostActor });
   const graph = createGraphContextReader({ records, goals: base.plans, plans: base.plans, architecture,
-    sessions: base.sessionsPort, executions, inputs, hostActor });
+    sessions: base.sessionsPort, executions, inputs, hostActor, evidence: unavailableWitnessEvidence });
   const adHost = preparationHost({ configurationRevision: HOST_CONFIG_REVISION,
     permissions: HOST_PERMISSIONS, hostTemplate: HOST_TEMPLATE });
 

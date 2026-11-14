@@ -17,6 +17,7 @@
  * In part 1 every method throws `not implemented: …`, so the cases are RED by
  * design; this file must still compile and run all 36 cases (18 cases × M/S).
  */
+import { unavailableWitnessFacts } from '../helpers/witness-stub.js';
 import { knowledgeLinesFor, knowledgeLinesOfRoots, knowledgeLinesOver } from '../helpers/KLS2-knowledge-lines.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -599,7 +600,7 @@ async function createInputFixture(
       signal: new AbortController().signal };
     const evidenceMaterials = createMaterialService({ bodies: rawBodies, authority: baseAuthority, now: () => AT });
     let evidenceSeq = 0;
-    const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(backend.records, workspaceHost),
+    const evidence = createEvidenceService({ witnessFacts: unavailableWitnessFacts, knowledge: knowledgeLinesOver(backend.records, workspaceHost),
       records: backend.records, commitIdentities: backend.commitIdentities, materials: evidenceMaterials,
       executions: createRunStateReader({ records: backend.records }), workspaceHost,
       source: new VerificationWorkspaceReader(), configuration, now: () => AT,

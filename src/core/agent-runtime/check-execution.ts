@@ -151,6 +151,11 @@ export function createRegisteredCheckRunner(deps: RegisteredCheckRunnerDependenc
             const check = round.checks.find(candidate => candidate.checkId === request.input.checkId);
             if (check === undefined) return reject('invalid', `the round has no registered check ${request.input.checkId}`);
             if (check.phase !== 'pending') return { status: 'ready', value: round };
+            // B06 W-6: a witness has no process window; the Evidence owner settles it in one write.
+            if (check.definition.kind === 'witness') {
+                const result = await deps.evidence.recordWitness(ctx, request);
+                return result.status === 'committed' ? { status: 'ready', value: result.value } : result;
+            }
 
             const configuration = round.configuration;
             const resolved = await deps.workspaceHost.resolveRoot(configuration.workspace);

@@ -841,6 +841,19 @@ describe('every checker: a satisfying world and a violating world per clause (ex
       .toEqual([`check inv-check of round ${r3} is finished with fields [true,true,false,true] (§9.1)`]);
     expect(changed((records) => { records.round1!.checks[0]!.incompleteCause = 'host_restart'; }))
       .toEqual([`check inv-check of round ${r1} is finished FAIL with cause host_restart (C5)`]);
+    // B06 G2: a finished witness check (no invocation, no report) FAILs, or is INCONCLUSIVE without a cause.
+    const witness = { checkId: 'inv-check', kind: 'witness', requiredReadPaths: [] };
+    expect(changed((records) => {
+      Object.assign(records.round1!.checks[0]!, { definition: witness, invocationId: null, reportRef: null });
+    })).toEqual([]);
+    expect(changed((records) => {
+      Object.assign(records.round3!.checks[0]!, { definition: witness, invocationId: null, reportRef: null, outcome: 'PASS' });
+    })).toEqual([`check inv-check of round ${r3} is finished with fields [false,true,false,true] (§9.1)`]);
+    expect(changed((records) => {
+      records.round3!.outcome = 'INCONCLUSIVE';
+      Object.assign(records.round3!.checks[0]!, { definition: witness, invocationId: null, reportRef: null,
+        outcome: 'INCONCLUSIVE', incompleteCause: null });
+    })).toEqual([]);
     // Cross-step: a finalized round, a settled check and the chain never change.
     expect(changed((records) => { records.round1!.gaps.push({ code: 'late', message: 'a late gap' }); }, flow.final))
       .toEqual([`finalized round ${r1} changed`]);

@@ -182,6 +182,8 @@ import type { RunControlPort } from '../core/work-graph/tasks/control-contracts.
 import { CONTROL_RECORD_SCHEMAS } from '../core/work-graph/persistence/control-record-codecs.js';
 import type { ExecutionHistoryWritePort } from '../core/work-graph/model/execution-history-contracts.js';
 import { createGraphExecutionHistoryReader } from '../core/agent-runtime/graph-execution-history.js';
+import { readWitnessFacts } from '../core/agent-runtime/witness-facts.js';
+import type { WitnessFactsPort } from '../core/work-graph/model/witness-facts-contracts.js';
 import { createRunStateReader } from '../core/work-graph/tasks/run-state-service.js';
 import type { ExecutionReadPort } from '../core/work-graph/model/execution-read-contracts.js';
 import { createExecutionHistoryReader } from '../core/agent-runtime/observation-recovery.js';
@@ -2385,6 +2387,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     const executionHistory = createExecutionHistoryReader({ history: sessionOperations });
     const historyWriter = createExecutionHistoryService({ records: backend.records, now, eventId: randomUUID });
     const graphHistory = createGraphExecutionHistoryReader({ executions: executionReader, history: executionHistory });
+    // B06: the Runtime witness facts over the same Run-scoped history read; internal to the Evidence owner.
+    const witnessFacts: WitnessFactsPort = { read: (ctx, request) => readWitnessFacts({ graphHistory }, ctx, request) };
     const sourceAuthority = createSourceAuthorityReader({ authority: reads.authority, records: backend.records });
     // R3e.1: the ONE trusted verification/evidence service and its thin Host
     // check runner share the existing records/material/execution instances. The
@@ -2428,7 +2432,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       queries: { readQueryJob: (c, r) => queryJobs.readQueryJob(c, r), readQueryAnswer: (c, r) => queryJobs.readQueryAnswer(c, r) },
       sessionDuty: { readSession: (c, r, s) => sessionDirectory.readSession(c, r, s),
         dutyOfRole: (c, role) => sessionDutyResolver(role, c) },
-      materials: rawMaterials, executions: executionReader,
+      materials: rawMaterials, executions: executionReader, witnessFacts,
       workspaceHost: options.workspace, source: verificationWorkspaceReader,
       ...(options.checks === undefined ? {} : { configuration: options.checks }),
       configurationFor: currentCheckConfiguration,
@@ -2522,6 +2526,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       sessions: sessionDirectory,
       executions: executionReader,
       inputs: taskInputsOwner,
+      // B06 W-7: the `evidence` relation reads through the same Evidence instance.
+      evidence: rawEvidence,
       // The ONE basis read the mailbox already holds; the reader builds no second instance.
       dispatchBasis,
       hostActor: SYSTEM_ACTOR,
@@ -3122,12 +3128,14 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     const evidence: EvidencePort = {
       openVerification: (...args) => trackedCall(() => rawEvidence.openVerification(...args), unavailable),
       readVerification: (...args) => trackedCall(() => rawEvidence.readVerification(...args), unavailable),
+      readEvidence: (...args) => trackedCall(() => rawEvidence.readEvidence(...args), unavailable),
       // The chain-head reads delegate to the raw Evidence owner's formal
       // RecordStore candidate lookups; no second store, table or manager.
       queryOriginalVerification: (...args) => trackedCall(() => rawEvidence.queryOriginalVerification!(...args), unavailable),
       queryRoundChainHead: (...args) => trackedCall(() => rawEvidence.queryRoundChainHead!(...args), unavailable),
       beginCheck: (...args) => trackedCall(() => rawEvidence.beginCheck(...args), unavailable),
       recordCheckResult: (...args) => trackedCall(() => rawEvidence.recordCheckResult(...args), unavailable),
+      recordWitness: (...args) => trackedCall(() => rawEvidence.recordWitness(...args), unavailable),
       finalizeChecks: (...args) => trackedCall(() => rawEvidence.finalizeChecks(...args), unavailable),
       // A.2 step 5.9 (VR-14): the successor round or its policy refusal (`verification/reverify`).
       reverifyRound: (...args) => trackedCall(() => rawEvidence.reverifyRound!(...args), unavailable),
@@ -4946,7 +4954,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
         readGoalTerminalState: goal => readGoalTerminalState(backend.records, goal),
       },
       // The same scope map `readInstalledChecks` reads: `null` is "no configuration at all", while a
-      // configuration with zero checks keeps the empty array (plan-readers' `planChecks` contract).
+      // configuration with zero checks is the empty array (plan-readers' `planChecks` then appends only the
+      // built-in witness capability).
       checks: async scope => {
         const configuration = currentCheckConfiguration(scope);
         return { status: 'ready', value: configuration === undefined ? null : [...configuration.checks] };

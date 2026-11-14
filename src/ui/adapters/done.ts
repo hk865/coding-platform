@@ -23,6 +23,7 @@ import { asText } from '../values.js';
 import { goalHref, type NavData } from './nav.js';
 import { taskProgressOf } from './goals.js';
 import { briefRowsOf } from './member.js';
+import { WITNESS_CHECK_WORD } from './chain.js';
 import {
   CHECK_RESULT_WORD, FAILURE_CLASS_WORD, goalDisplayState, reworkLines, taskStateOfRow,
 } from './task-map.js';
@@ -40,7 +41,8 @@ export type DoneRoundRead = {
       checks: {
         roundOrdinal: number; checkId: string; outcome: EvidenceOutcome | null;
         incompleteCause: string | null; reportRef: ArtifactRef | null;
-        executor: CheckHostActor; command: string;
+        /** Null for the platform witness check (B06). */
+        executor: CheckHostActor; command: string | null;
       }[];
     }[];
     summary: {
@@ -217,7 +219,7 @@ function requirementsOf(round: DoneRoundRead): DoneRequirement[] {
       key: requirement.obligationId + '/' + requirement.requirementId,
       req: requirement.description,
       gate: requirement.obligationTitle,
-      check: first === null ? NO_CHECK : first.command,
+      check: first === null ? NO_CHECK : first.command ?? WITNESS_CHECK_WORD,
       who: first === null ? NO_CHECK : CHECK_ACTOR_WORD[first.executor.kind] ?? first.executor.kind,
       report: digestShort(firstReport),
       reportRef: firstReport,

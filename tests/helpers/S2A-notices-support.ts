@@ -3,6 +3,7 @@
  *
  * Builds the real S5 decision world plus the real notice owners.
  */
+import { unavailableWitnessFacts } from './witness-stub.js';
 import { expect } from 'vitest';
 import type { NoticeCategoryV1, NoticePositionV1 } from '../../src/contracts/goal-decisions.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
@@ -327,7 +328,7 @@ export function openReverifyChain(f: S5DecisionFixture, policy: TaskAutomationPo
     async authorize() { return { status: 'ready' as const, value: { subjectKey: 's2a-notice-host',
       permissionRevision: 's2a-notice-permission', allowsRead: () => true } }; },
   };
-  const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(f.records, workspaceHost), records: f.records,
+  const evidence = createEvidenceService({ witnessFacts: unavailableWitnessFacts, knowledge: knowledgeLinesOver(f.records, workspaceHost), records: f.records,
     commitIdentities: f.b2.base.commitIdentities, executions: reads, materials, workspaceHost, configuration,
     automationPolicy: () => policy,
     source: { async capture() { return { status: 'ready' as const, sourceDigest: sha256Hex(`s2a-source-${source.revision}`),

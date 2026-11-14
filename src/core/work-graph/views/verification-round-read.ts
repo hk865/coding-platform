@@ -18,7 +18,7 @@ import type { EvidenceCoverageV1, EvidenceOutcome, EvidenceSnapshot } from '../.
 import { canonicalOf, sameJson } from '../../../contracts/fingerprint.js';
 import type { PlanRevisionRef, PlanRevisionSnapshot, RuntimeTask } from '../../../contracts/plan.js';
 import type {
-  CheckHostActor, RoundCheckIncompleteCause, RoundCheckSnapshot, RoundReverifyFactV1, RoundSnapshot,
+  CheckHostActor, RoundCheckDefinition, RoundCheckIncompleteCause, RoundCheckSnapshot, RoundReverifyFactV1, RoundSnapshot,
   VerificationRoundRef,
 } from '../../../contracts/verification.js';
 import { reviewPacketItemOf } from '../../../contracts/verification.js';
@@ -44,7 +44,8 @@ export type VerificationRoundCheckReadV1 = {
   /** Legacy checks without the field read as null. */
   incompleteCause: RoundCheckIncompleteCause | null;
   reportRef: ArtifactRef | null;
-  command: string;
+  /** The registered command; null for the platform witness, which runs none (B06). */
+  command: string | null;
   /** The first matching gap message, or null; the report body is not opened. */
   reason: string | null;
 };
@@ -75,7 +76,8 @@ export type VerificationRoundDeliveryRequirementV1 = {
     incompleteCause: RoundCheckIncompleteCause | null;
     reportRef: ArtifactRef | null;
     executor: CheckHostActor;
-    command: string;
+    /** Null for the platform witness (B06). */
+    command: string | null;
   }[];
 };
 
@@ -200,9 +202,14 @@ function checksOf(round: RoundSnapshot): VerificationRoundCheckReadV1[] {
     outcome: check.outcome,
     incompleteCause: check.incompleteCause ?? null,
     reportRef: check.reportRef,
-    command: check.definition.command,
+    command: commandOf(check.definition),
     reason: checkReasonOf(round, check),
   }));
+}
+
+/** B06: the check's command, or null for the platform witness (never an invented command). */
+function commandOf(definition: RoundCheckDefinition): string | null {
+  return definition.kind === 'witness' ? null : definition.command;
 }
 
 function failingCheckIdsOf(round: RoundSnapshot): string[] {
@@ -315,7 +322,7 @@ function deliveryOf(plan: PlanRevisionSnapshot, subject: TaskTriple, taskKind: '
           incompleteCause: check.incompleteCause ?? null,
           reportRef: check.reportRef,
           executor: round.executor,
-          command: check.definition.command,
+          command: commandOf(check.definition),
         })),
       };
     }));

@@ -178,7 +178,7 @@ BEGIN_INITIAL_PLAN_EXAMPLE
     },
     "completionPolicy": {
       "schemaVersion": 1,
-      "requirementKinds": ["static"],
+      "requirementKinds": ["static","witness"],
       "minimumRequiredRequirementsPerObligation": 1
     },
     "checks": [

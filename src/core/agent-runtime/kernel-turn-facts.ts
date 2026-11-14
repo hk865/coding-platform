@@ -53,6 +53,20 @@ export function reduceTurnFromStart(records: readonly DecodedKernelRecord[], ker
   return applyTurnEvents(createInitialRunState(start.run), records, kernel, start.position);
 }
 /**
+ * The Turn's final assistant message named by `finalMessageId`, or `null`.
+ * The one "finalMessageId → transcript message" rule; each caller maps a
+ * missing message itself (the handoff brief: `no_formal_final_answer`; the
+ * witness: `absent`, after its own non-blank rule).
+ */
+export function finalAssistantMessageOf(
+  state: RunState, finalMessageId: string,
+): Extract<RunState['transcript'][number], { kind: 'assistant_message' }> | null {
+  for (const entry of state.transcript) {
+    if (entry.kind === 'assistant_message' && entry.message.messageId === finalMessageId) return entry;
+  }
+  return null;
+}
+/**
  * Apply this Turn's `agent.event` records after `afterPosition` to an already
  * reduced state. Events of another Run/Turn in the same Session are skipped.
  */

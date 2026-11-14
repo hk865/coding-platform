@@ -18,6 +18,7 @@
  * Only the workspace root path and the trusted check configuration are test
  * data; no record is written directly.
  */
+import { unavailableWitnessFacts } from './witness-stub.js';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
@@ -127,7 +128,7 @@ export function createLineCheckSupport(input: {
     },
   };
 
-  const evidence: EvidencePort = createEvidenceService({ knowledge: knowledgeLinesOver(records, workspaceHost),
+  const evidence: EvidencePort = createEvidenceService({ witnessFacts: unavailableWitnessFacts, knowledge: knowledgeLinesOver(records, workspaceHost),
     records, commitIdentities: base.commitIdentities, materials, executions, workspaceHost,
     source: new VerificationWorkspaceReader(), configuration, now: () => AT, newId,
   });

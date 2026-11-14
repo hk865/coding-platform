@@ -1219,16 +1219,21 @@ export function checkI7RoundConsistency(world: InvariantWorld, prev?: InvariantW
       }
     }
     for (const check of round.checks) {
+      // B06: a finished witness check has no invocation and may have no report; its INCONCLUSIVE carries
+      // `source_not_matched` only when the source moved, so the cause is optional there.
+      const witness = check.phase === 'finished' && check.definition.kind === 'witness';
+      const reportRequired = !witness || check.outcome === 'PASS';
       const fields = [check.invocationId, check.outcome, check.reportRef, check.sourceStatus].map((value) => value !== null);
       const shape = check.phase === 'pending' ? [false, false, false, false]
-        : check.phase === 'finished' ? [true, true, true, true] : [true, false, false, false];
+        : check.phase === 'finished' ? [!witness, true, reportRequired ? true : fields[2], true] : [true, false, false, false];
       if (fields.some((value, position) => value !== shape[position])) {
         out.push(finding('I-7', round.ref, `check ${check.checkId} of round ${id} is ${check.phase} with fields ${JSON.stringify(fields)} (§9.1)`));
       }
       const cause = check.incompleteCause ?? null;
       const needsCause = check.phase === 'interrupted' || (check.phase === 'finished' && check.outcome === 'INCONCLUSIVE');
       const allowed = check.phase === 'interrupted' ? INTERRUPTED_CAUSES : INCONCLUSIVE_CAUSES;
-      if (needsCause !== (cause !== null) || (cause !== null && !allowed.includes(cause))) {
+      const optionalCause = witness && check.outcome === 'INCONCLUSIVE';
+      if ((!optionalCause && needsCause !== (cause !== null)) || (cause !== null && !allowed.includes(cause))) {
         const message = `check ${check.checkId} of round ${id} is ${check.phase} ${String(check.outcome)} with cause ${String(cause)} (C5)`;
         out.push(check.incompleteCause === undefined ? legacy('I-7', round.ref, `${message}; no cause field`) : finding('I-7', round.ref, message));
       }

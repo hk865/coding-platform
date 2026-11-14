@@ -31,6 +31,7 @@
  * openResponsibility, linkSessionWork establishes P->T after the real claim.
  * Lifecycle owners use Date directly: builders freeze Date only and close restores it.
  */
+import { unavailableWitnessEvidence } from './witness-stub.js';
 import { join } from 'node:path';
 import { vi } from 'vitest';
 import * as kernelApi from '../../vendor/coding-agent/dist/public-api.js';
@@ -213,7 +214,7 @@ async function createHandoverWorkflow(b2: B2ExecutionFixture, options: HandoverW
   const deps: WorkflowDependencies = {
     tasks: base.goals, plans: base.plans, sessions: base.sessionsPort, claims, executions: reads,
     runtime: { ...runtime.port, createSession: sessionOperations.createSession },
-    evidence: { openVerification: forbiddenCheck, readVerification: forbiddenCheck, beginCheck: forbiddenCheck,
+    evidence: { ...unavailableWitnessEvidence, openVerification: forbiddenCheck, readVerification: forbiddenCheck, beginCheck: forbiddenCheck,
       recordCheckResult: forbiddenCheck, finalizeChecks: forbiddenCheck },
     checks: { runRegisteredCheck: forbiddenCheck }, sourceAuthority: createSourceAuthorityReader({ authority }),
     configuration: options.configuration, sessionLifecycle, sessionFacts, sessionAnomalies, controls,

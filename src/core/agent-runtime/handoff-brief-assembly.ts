@@ -52,6 +52,7 @@ import type { ExecutionReadPort, TaskExecutionRecord } from '../work-graph/model
 import type { RoleScopeV1 } from '../../contracts/role-lines.js';
 import type { HandoffBriefMaterialAssembler } from '../work-graph/sessions/session-handoff-service.js';
 import { readPreviousTurn } from './continuation-brief-assembly.js';
+import { finalAssistantMessageOf } from './kernel-turn-facts.js';
 import type { SessionHistoryCursorOwner } from './session-operations.js';
 
 /** The one Query answer cut: 2 KiB of UTF-8, as §2.3/§3.6 fix it. */
@@ -394,11 +395,8 @@ async function readConclusion(
   if (outcome === null || outcome.kind !== 'completed') {
     return { value: { absent: 'no_formal_final_answer' } };
   }
-  const message = turn.state.transcript.find(entry =>
-    entry.kind === 'assistant_message' && entry.message.messageId === outcome.finalMessageId);
-  if (message === undefined || message.kind !== 'assistant_message') {
-    return { value: { absent: 'no_formal_final_answer' } };
-  }
+  const message = finalAssistantMessageOf(turn.state, outcome.finalMessageId);
+  if (message === null) return { value: { absent: 'no_formal_final_answer' } };
   return {
     value: { run: input.sourceRun, finalMessageId: outcome.finalMessageId, body: message.message.content },
   };

@@ -21,6 +21,7 @@
  *
  * Scripted model replies only; no real model is called.
  */
+import { unavailableWitnessFacts } from '../../helpers/witness-stub.js';
 import { existsSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -2184,7 +2185,7 @@ export class AgentFuzz {
       now, eventId, delegatedWrites: this.delegatedWrites });
     // The 5.9 evidence owner (as tests/work-graph/R3e-reverify.test.ts builds it): the R3e checks configuration for
     // this scope, the fuzz's automation policy and the Agent admission.
-    this.evidence = createEvidenceService({ knowledge: knowledgeLinesOver(records, r3e.workspaceHost), records,
+    this.evidence = createEvidenceService({ witnessFacts: unavailableWitnessFacts, knowledge: knowledgeLinesOver(records, r3e.workspaceHost), records,
       commitIdentities: b2.base.commitIdentities, materials: r3e.materials, executions: reads,
       workspaceHost: r3e.workspaceHost, source: new VerificationWorkspaceReader(),
       configurationFor: (scope) => scope.projectId === r3e.scope.projectId && scope.workspaceId === r3e.scope.workspaceId ? r3e.configuration : undefined,

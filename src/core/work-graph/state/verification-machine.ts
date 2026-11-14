@@ -353,6 +353,19 @@ export type CheckEvent =
     /** L16（决定 55）：owner 从观察里读出的内存上限命中，随本次提交写进检查快照；没有就不带。 */
     resourceCapHit?: NonNullable<RoundCheckSnapshot['resourceCapHit']>;
   }
+  /**
+   * B06 W-5: the in-memory witness result. A witness has no process, so there is
+   * no `observation` and no `invocationId`; the outcome, its cause and the report
+   * are the owner's read facts (a null `reportRef` is a legal absent/unknown report).
+   */
+  | {
+    kind: 'check_result_recorded'; witness: true; checkId: string; invocationId: null;
+    witnessed: {
+      outcome: EvidenceOutcome; reportRef: ArtifactRef | null;
+      sourceStatus: Exclude<CheckSourceStatus, null>;
+      incompleteCause?: RoundCheckIncompleteCause | null;
+    };
+  }
   /** VR-04 (R): start-up reconcile under the instance lease. */
   | { kind: 'check_interrupted'; checkId: string; invocationId: string; cause: 'host_restart'; hostInstanceId: string }
   /** VR-13 (P): the runner's ticket is incomplete; `ticketProblem` is the proof (`check-execution.ts:108-109`). */
@@ -363,7 +376,11 @@ export type CheckEvent =
 /** The identity part of a check event that the pre-IO admission reads. */
 export type CheckEventHead =
   | { kind: 'check_begun'; checkId: string }
-  | { kind: 'check_result_recorded' | 'check_abandoned'; checkId: string; invocationId: string }
+  /** The command result: the running invocation is part of its identity. */
+  | { kind: 'check_result_recorded'; checkId: string; invocationId: string }
+  /** B06 W-5: the witness result's identity only (no invocation, no `witnessed`). */
+  | { kind: 'check_result_recorded'; checkId: string; witness: true }
+  | { kind: 'check_abandoned'; checkId: string; invocationId: string }
   | { kind: 'check_interrupted'; checkId: string; invocationId: string; cause: CheckInterruptionCause };
 
 /** The part of a round event that the pre-IO admission reads. */
@@ -932,6 +949,14 @@ export function pendingRoundChecks(
   for (const planCheck of verificationPlan.checks) {
     // Slice 9: the review item is answered by a review Query, not by a registered command check.
     if (planCheck.satisfactionPath === 'review-packet') continue;
+    // B06: the platform witness reads no configuration; its definition carries only the paths to read.
+    if (planCheck.kind === 'witness') {
+      checks.push({ checkId: planCheck.checkId,
+        definition: { checkId: planCheck.checkId, kind: 'witness', requiredReadPaths: planCheck.requiredReadPaths ?? [] },
+        coverage: planCheck.coverage.map((entry) => ({ ...entry })),
+        phase: 'pending', invocationId: null, outcome: null, reportRef: null, sourceStatus: null });
+      continue;
+    }
     const definition = configuration.checks.find((candidate) => candidate.checkId === planCheck.checkId);
     if (definition === undefined) return { ok: false, checkId: planCheck.checkId };
     checks.push({ checkId: planCheck.checkId, definition, coverage: planCheck.coverage.map((entry) => ({ ...entry })),
@@ -969,12 +994,22 @@ function uncoveredRequirementGaps(verificationPlan: VerificationPlanV1): RoundGa
 export type CheckPhaseChange =
   /** VR-02. */
   | { phase: 'executing'; invocationId: string }
-  /** VR-03 (the INCONCLUSIVE cause of `outcomeFor`; PASS/FAIL leave it out, §9.1 "null 或缺省"). */
+  /**
+   * VR-03 (the INCONCLUSIVE cause of `outcomeFor`; PASS/FAIL leave it out, §9.1 "null 或缺省").
+   * `witness?: false` makes `change.witness` readable on the union.
+   */
   | {
-    phase: 'finished'; outcome: EvidenceOutcome; reportRef: ArtifactRef; sourceStatus: Exclude<CheckSourceStatus, null>;
+    phase: 'finished'; witness?: false; outcome: EvidenceOutcome; reportRef: ArtifactRef;
+    sourceStatus: Exclude<CheckSourceStatus, null>;
     incompleteCause?: RoundCheckIncompleteCause | null;
     /** L16（决定 55）：VR-03 写下的内存上限命中，只有检查结果那一步带它。 */
     resourceCapHit?: NonNullable<RoundCheckSnapshot['resourceCapHit']>;
+  }
+  /** B06 W-5: the witness result, pending → finished in one write; the report may be null, no resource cap. */
+  | {
+    phase: 'finished'; witness: true; outcome: EvidenceOutcome; reportRef: ArtifactRef | null;
+    sourceStatus: Exclude<CheckSourceStatus, null>;
+    incompleteCause?: RoundCheckIncompleteCause | null;
   }
   /** VR-04, VR-13: the invocation is kept, the result fields stay null. */
   | { phase: 'interrupted'; incompleteCause: CheckInterruptionCause }
@@ -983,9 +1018,10 @@ export type CheckPhaseChange =
 
 /**
  * The one phase each change leaves (§9.3): VR-02 pending → executing; VR-03
- * executing → finished; VR-04, VR-13 executing → interrupted; VR-05
- * executing → pending. Every other source is a §9.4 row (D-12: interrupted
- * never returns to pending and never runs again in the same round).
+ * executing → finished (a witness result: pending → finished); VR-04, VR-13
+ * executing → interrupted; VR-05 executing → pending. Every other source is a
+ * §9.4 row (D-12: interrupted never returns to pending and never runs again in
+ * the same round).
  */
 const CHECK_PHASE_SOURCE: Readonly<Record<CheckPhaseChange['phase'], CheckPhase>> = {
   executing: 'pending',
@@ -1009,7 +1045,7 @@ export function withCheckPhase(round: RoundSnapshot, checkId: string, change: Ch
   }
   const current = round.checks.find((check) => check.checkId === checkId);
   if (current === undefined) throw new Error(`the round has no registered check ${checkId}`);
-  const source = CHECK_PHASE_SOURCE[change.phase];
+  const source = change.phase === 'finished' && change.witness === true ? 'pending' : CHECK_PHASE_SOURCE[change.phase];
   if (current.phase !== source) {
     throw new Error(`the check ${checkId} is ${current.phase}; it becomes ${change.phase} only from ${source}`);
   }
@@ -1029,6 +1065,8 @@ function changedCheck(check: RoundCheckSnapshot, change: CheckPhaseChange): Roun
       const finished: RoundCheckSnapshot = { ...check, phase: 'finished', outcome: change.outcome,
         reportRef: change.reportRef, sourceStatus: change.sourceStatus };
       const withCause = change.incompleteCause === undefined ? finished : { ...finished, incompleteCause: change.incompleteCause };
+      // B06 W-5: a witness never carries a resource cap; the command arm keeps L16.
+      if (change.witness === true) return withCause;
       return change.resourceCapHit === undefined ? withCause : { ...withCause, resourceCapHit: change.resourceCapHit };
     }
     case 'interrupted':
@@ -1323,6 +1361,25 @@ export function checkEventAdmission(state: RoundSnapshot, head: CheckEventHead, 
       case 'interrupted':
         return reject('illegal', 'busy', `the check ${check.checkId} is already ${check.phase}`);
       default: return unreachable(check.phase, 'check phase');
+    }
+  }
+  // B06 W-5: a witness result has no invocation and no executing window, so it
+  // is judged here, before the executing-only table and the invocation check.
+  // Each direction of a kind mismatch is refused (coordination: a check has one
+  // result writer, the witness owner or the command runner).
+  if (head.kind === 'check_result_recorded') {
+    if ('witness' in head) {
+      if (check.definition.kind !== 'witness') {
+        return reject('illegal', 'invalid', `the check ${check.checkId} is not a witness check; a witness event cannot finish it`);
+      }
+      if (pinIsStale(state, ctx)) return staleRound();
+      if (check.phase !== 'pending') {
+        return reject('illegal', 'busy', `the witness check ${check.checkId} is ${check.phase}, not pending`);
+      }
+      return null;
+    }
+    if (check.definition.kind === 'witness') {
+      return reject('illegal', 'invalid', `the check ${check.checkId} is a witness check; a command event cannot finish it`);
     }
   }
   const phaseProblem = executingPhaseProblem(check, head);
@@ -1688,6 +1745,16 @@ export function transitionCheck(state: RoundSnapshot, event: CheckEvent, ctx: Ro
         'VerificationCheckBegun', [{ kind: 'guard_begin_read_set' }]);
     }
     case 'check_result_recorded': {
+      // B06 W-5: the command arm has no `witness` field, so the witness result is
+      // told apart with `in`. Its outcome is the owner's read fact: no process
+      // observation, so no `outcomeFor`.
+      if ('witness' in event) {
+        return checkWritten(state, event.checkId, { phase: 'finished', witness: true,
+          outcome: event.witnessed.outcome, reportRef: event.witnessed.reportRef,
+          sourceStatus: event.witnessed.sourceStatus,
+          ...(event.witnessed.incompleteCause === undefined ? {} : { incompleteCause: event.witnessed.incompleteCause }) },
+        'VerificationCheckResultRecorded');
+      }
       // VR-03: an INCONCLUSIVE result carries its `outcomeFor` cause (C5).
       const verdict = outcomeFor(event.observation, event.sourceStatus);
       return checkWritten(state, event.checkId, { phase: 'finished', outcome: verdict.outcome,

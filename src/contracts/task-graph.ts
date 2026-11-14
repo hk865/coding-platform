@@ -10,6 +10,7 @@ import type {
   DependencyRequirement, Disposition, Phase, PlanRevisionSnapshot, RuntimeTask, TaskDispositionChangeV1,
   TaskInputRequirementV2, TaskRelationV2,
 } from './plan.js';
+import type { TaskReductionSnapshot } from './reduction.js';
 import type { TaskFailureFactsV1, TaskPhaseCauseV1, TaskReworkSummaryV1 } from './task-failure.js';
 import type { TaskRequeueRef } from './task-requeue.js';
 import type {
@@ -94,6 +95,8 @@ export type TaskRow = { ref: TaskTriple; definition: RuntimeTask; effectivePhase
   dispositionChange?: TaskDispositionChangeV1;
   /** K3 L7: the selected Run's review record; absent when no key exists. */
   unknownCallReview?: TaskUnknownCallReview;
+  /** R3e.3 (B06 W-7): the Task's persisted completion reduction; absent (not null) when it has none. */
+  reduction?: TaskReductionSnapshot;
 };
 /**
  * R3e.3 formal Goal completion projection. It is INDEPENDENT of the advisory

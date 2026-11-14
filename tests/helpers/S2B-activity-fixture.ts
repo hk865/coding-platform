@@ -23,6 +23,7 @@
  * `workTaskIds` to `openS2BActivityFixture` without changing every other world.
  * Nothing here writes a record directly, calls a model or touches the network.
  */
+import { unavailableWitnessFacts } from './witness-stub.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { SessionRef, VersionPin } from '../../src/contracts/core/identity.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
@@ -257,7 +258,7 @@ export async function openS2BActivityFixture(
     checks: [1, 2, 3, 4].map((n) => ({ checkId: `check-${String(n)}`, kind: 'static', command: 'fixture-check',
       cwd: '.', timeoutMs: 1000, taskIds: 'all' })),
   };
-  const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(baseRecords),
+  const evidence = createEvidenceService({ witnessFacts: unavailableWitnessFacts, knowledge: knowledgeLinesOver(baseRecords),
     records: baseRecords,
     commitIdentities: b2.base.commitIdentities,
     executions: createRunStateReader({ records: baseRecords }),

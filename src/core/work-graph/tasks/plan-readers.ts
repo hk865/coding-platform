@@ -40,7 +40,7 @@ import {
   systemRoundContext, systemRoundOfText, systemRoundRequestId,
   type PlanFixReadV1, type PlanningQuestionGroupV1,
 } from '../../../contracts/plan-round.js';
-import type { CheckCapabilityV1, RegisteredCommandCheck } from '../../../contracts/verification.js';
+import { checkCapabilitiesOf, type CheckCapabilityV1, type RegisteredCommandCheck } from '../../../contracts/verification.js';
 import type {
   TaskRequeueRef, TaskRequeueSnapshotV1, TaskReworkRefusalRef, TaskReworkRefusalSnapshotV1,
 } from '../../../contracts/task-requeue.js';
@@ -2872,9 +2872,7 @@ export function createPlanReaders(deps: PlanReadersDependencies): PlanReaders {
       const read = await deps.checks(scope);
       if (read.status === 'ready') {
         if (read.value === null) return { status: 'ready', value: null };
-        return { status: 'ready', value: read.value.map(check => ({
-          checkId: check.checkId, kind: check.kind, coversKinds: [check.kind], replayable: false,
-        })) };
+        return { status: 'ready', value: checkCapabilitiesOf(read.value) };
       }
       if (read.status === 'rejected') return read;
       if (read.status === 'not_ready') return read;

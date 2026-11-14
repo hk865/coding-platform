@@ -42,6 +42,7 @@
  * claim time; AN07 can claim existing implement-b before consuming A's output.
  * plan-machine.ts:1244-1253 requires GE04's newly added future Task untraced.
  */
+import { unavailableWitnessEvidence } from './witness-stub.js';
 import { knowledgeLinesFor } from './KLS2-knowledge-lines.js';
 import { vi } from 'vitest';
 import { join } from 'node:path';
@@ -134,7 +135,7 @@ function graphOwners(b2: B2ExecutionFixture) {
     knowledge: knowledgeLinesFor({ root: base.directory, ...base.scope, records: base.records }) });
   function graphReader(extensions: GraphContextReaderDependencies['extensions']): GraphContextReadPort {
     return createGraphContextReader({ records: base.records, goals: base.plans, plans: base.plans,
-      architecture, sessions: base.sessionsPort, executions, inputs, hostActor,
+      architecture, sessions: base.sessionsPort, executions, inputs, hostActor, evidence: unavailableWitnessEvidence,
       ...(extensions === undefined ? {} : { extensions }) });
   }
   return { executions, materials, inputs, graphReader };

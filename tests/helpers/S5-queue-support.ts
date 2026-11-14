@@ -1,4 +1,5 @@
 /** Group 6 setup only. All commands use the same observed P/W records port. */
+import { unavailableWitnessFacts } from './witness-stub.js';
 import { expect } from 'vitest';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
 import { artifactBodyDigest } from '../../src/contracts/artifact.js';
@@ -410,7 +411,7 @@ export async function noticeWork(f: S5DecisionFixture) {
     executor: OPERATOR, permissionRevision: 's5-notice-permission', sourceAccess: 'verification_workspace', processAccess: 'all_except_denied',
     deniedPrefixes: [], checks: [{ checkId: 'static', kind: 'static', command: 'fixture-check', cwd: '.', timeoutMs: 1000, taskIds: 'all' }] };
   let roundId = 0;
-  const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(f.records, workspaceHost), records: f.records,
+  const evidence = createEvidenceService({ witnessFacts: unavailableWitnessFacts, knowledge: knowledgeLinesOver(f.records, workspaceHost), records: f.records,
     commitIdentities: f.b2.base.commitIdentities, executions: reads, materials, workspaceHost, configuration,
     automationPolicy: () => automationPolicy.current,
     source: { async capture() { return { status: 'ready', sourceDigest: sha256Hex(`nr-source-${source.revision}`),

@@ -10,6 +10,7 @@
  * store. Expected steps and literal reasons come from §3.4 and L10; no database
  * is read to verify.
  */
+import { unavailableWitnessEvidence } from '../helpers/witness-stub.js';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.js';
 import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
@@ -172,7 +173,7 @@ async function makeWorld(kind: 'memory' | 'sqlite'): Promise<NoRecordWorld> {
     observeRun: async () => unsupported('the review-row test never observes'),
     reviewCapability: async () => ({ status: 'available' }),
   };
-  const evidence: EvidencePort = {
+  const evidence: EvidencePort = { ...unavailableWitnessEvidence,
     openVerification: async () => unsupported('a review row never opens checks'),
     readVerification: async () => unsupported('no round read'),
     beginCheck: async () => unsupported('no begin'),
@@ -239,7 +240,7 @@ async function makeRealWorld(
     reviewCapability: async () => world.capability === 'available'
       ? { status: 'available' } : { status: 'unavailable', reason: 'switch off' },
   } : options.runtime(cardWorld);
-  const evidence: EvidencePort = {
+  const evidence: EvidencePort = { ...unavailableWitnessEvidence,
     openVerification: async () => unsupported('a review row never opens checks'),
     readVerification: async () => unsupported('no round read'),
     beginCheck: async () => unsupported('no begin'),

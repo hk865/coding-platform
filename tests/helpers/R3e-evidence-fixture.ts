@@ -23,6 +23,7 @@
  * `EvidencePort` is the production skeleton, so target assertions are expected
  * RED on its first `unsupported`.
  */
+import { unavailableWitnessFacts } from './witness-stub.js';
 import { cp, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -332,7 +333,7 @@ export async function createR3eEvidenceFixture(
         const countedSource: VerificationRoundSourcePort = {
             capture(root) { sourceCaptures += 1; return verificationSource.capture(root); },
         };
-        const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(b2.base.records, workspaceHost),
+        const evidence = createEvidenceService({ witnessFacts: unavailableWitnessFacts, knowledge: knowledgeLinesOver(b2.base.records, workspaceHost),
             records: b2.base.records, commitIdentities: b2.base.commitIdentities, materials, executions,
             workspaceHost, source: countedSource, configuration, now, newId,
         });

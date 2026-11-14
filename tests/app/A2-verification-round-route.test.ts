@@ -37,7 +37,7 @@ type Platform = Awaited<ReturnType<typeof createTargetPlatform>>;
 
 type RoundCheckView = {
   checkId: string; phase: string; outcome: string | null; incompleteCause: string | null;
-  reportRef: ArtifactRef | null; command: string; reason: string | null;
+  reportRef: ArtifactRef | null; command: string | null; reason: string | null;
 };
 type RoundView = {
   roundRef: VerificationRoundRef; revision: number; status: string; displayStatus: string;

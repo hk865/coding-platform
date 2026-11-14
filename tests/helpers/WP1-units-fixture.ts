@@ -15,6 +15,7 @@
  * completed by the real evidence/completion owners, never cancelled or patched.
  * All other fixtures use p/w. No new WP1 production symbol is imported here.
  */
+import { unavailableWitnessEvidence, unavailableWitnessFacts } from './witness-stub.js';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { vi } from 'vitest';
@@ -236,7 +237,7 @@ export async function openDutyMaintenanceFixture(
     };
     const materials = createMaterialService({ bodies: b2.bodies,
       authority: createMaterialRecordReaders(records).authority, now: () => T0 });
-    const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(records, workspaceHost), records,
+    const evidence = createEvidenceService({ witnessFacts: unavailableWitnessFacts, knowledge: knowledgeLinesOver(records, workspaceHost), records,
       commitIdentities: base.commitIdentities, materials, executions, workspaceHost,
       source: new VerificationWorkspaceReader(), now: () => T0, newId: id,
       configuration: { configurationRevision: 'wp1-cu-checks', workspace: base.workspaceRef, executor: actor,
@@ -594,7 +595,7 @@ export async function startRefusalWorkflow(
     claims: { claimTask: forbidden }, executions: { readExecution: forbidden },
     runtime: { createSession: forbidden, prepareExecution: forbidden, observeRun: forbidden,
       async startRun(ctx, request) { calls.push({ ctx, request }); return startResult; } },
-    evidence: { openVerification: forbidden, readVerification: forbidden, beginCheck: forbidden,
+    evidence: { ...unavailableWitnessEvidence, openVerification: forbidden, readVerification: forbidden, beginCheck: forbidden,
       recordCheckResult: forbidden, finalizeChecks: forbidden },
     checks: { runRegisteredCheck: forbidden }, sourceAuthority: { load: forbidden, readQuerySubmission: forbidden },
   };

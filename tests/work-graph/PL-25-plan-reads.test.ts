@@ -121,6 +121,8 @@ describe('PL-25 plan reads', () => {
     const world = await openS6AHostWorld({ backend: 'memory' });
     worlds.push(world);
     const readers = openPlanReaders(world);
+    // B06: every capability table ends with the built-in witness, zero registered checks included.
+    const witness = { checkId: 'platform:witness', kind: 'witness', coversKinds: ['witness'], replayable: false };
 
     // The Host registered no configuration for this workspace: `null`, not `[]`.
     expect(await readers.planChecks(S6A_SCOPE)).toEqual({ status: 'ready', value: null });
@@ -131,12 +133,12 @@ describe('PL-25 plan reads', () => {
     });
     expect(await readers.planChecks(S6A_SCOPE)).toEqual({ status: 'ready', value: [{
       checkId: 'ag2b-static', kind: 'static', coversKinds: ['static'], replayable: false,
-    }] });
+    }, witness] });
 
-    // A configuration that exists but lists no check stays `[]`.
+    // A configuration that exists but lists no check still offers the witness.
     world.platform.registerCheckConfiguration({
       configuration: { ...ag2bChecksConfiguration({ actor: world.ag2b.actor, command: 'true' }), checks: [] },
     });
-    expect(await readers.planChecks(S6A_SCOPE)).toEqual({ status: 'ready', value: [] });
+    expect(await readers.planChecks(S6A_SCOPE)).toEqual({ status: 'ready', value: [witness] });
   }, 120_000);
 });

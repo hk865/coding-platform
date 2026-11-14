@@ -23,6 +23,7 @@
  * public creation results) so the Query session bridge has a canonical
  * QueryJobSubmitted event and a persisted Session binding.
  */
+import { unavailableWitnessFacts } from '../helpers/witness-stub.js';
 import { knowledgeLinesFor, knowledgeLinesOver } from '../helpers/KLS2-knowledge-lines.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { withBackendOrderedLookup } from '../helpers/ordered-lookup-forward.js';
@@ -652,7 +653,7 @@ async function createFixture(kind: 'memory' | 'sqlite', options: FixtureOptions 
   });
   const evidenceIds = ['ra', 'ra-event', variant.roundBId, `${variant.roundBId}-event`];
   let evidenceSeq = 0;
-  const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(rawRecords, workspaceHost),
+  const evidence = createEvidenceService({ witnessFacts: unavailableWitnessFacts, knowledge: knowledgeLinesOver(rawRecords, workspaceHost),
     records: rawRecords, commitIdentities: base.commitIdentities, materials: evidenceMaterials,
     executions: createRunStateReader({ records: rawRecords }),
     workspaceHost, source: new VerificationWorkspaceReader(), configuration, now,
@@ -800,7 +801,7 @@ async function createFixture(kind: 'memory' | 'sqlite', options: FixtureOptions 
 
   const graph = createGraphContextReader({
     records: readerRecords, goals: readerPlans, plans: readerPlans, architecture,
-    sessions, executions, inputs, hostActor: HOST_ACTOR,
+    sessions, executions, inputs, hostActor: HOST_ACTOR, evidence,
     ...(extensions === undefined ? {} : { extensions }),
   });
 

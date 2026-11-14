@@ -30,6 +30,7 @@
  *
  * Specification: docs/refactor/tasks/W1-future-plan-skeleton.md §8.
  */
+import { unavailableWitnessFacts } from '../helpers/witness-stub.js';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -381,7 +382,7 @@ async function setup(sourceDraft: PlanDraftV2 = initialDraft()): Promise<W1Fixtu
     };
     const materials = createMaterialService({ bodies: b2.bodies,
       authority: createMaterialRecordReaders(records).authority, now });
-    const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(records, workspaceHost), records,
+    const evidence = createEvidenceService({ witnessFacts: unavailableWitnessFacts, knowledge: knowledgeLinesOver(records, workspaceHost), records,
       commitIdentities: b2.base.commitIdentities, materials, executions, workspaceHost,
       source: new VerificationWorkspaceReader(), configuration, now, newId });
     const runner = createRegisteredCheckRunner({ evidence, workspaceHost, kernel, now });

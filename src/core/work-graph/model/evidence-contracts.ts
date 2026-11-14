@@ -171,6 +171,15 @@ export interface EvidencePort {
         ref: VerificationRoundRef,
     ): Promise<ReadResult<RoundSnapshot>>;
     /**
+     * B06 W-7: one Evidence record by ref (the `graph/look` `evidence` relation). Within one project stored
+     * platform material has no workspace limit (decision 104-1); another project's is `forbidden`. A missing or
+     * damaged record is `unavailable`, never `not_found`.
+     */
+    readEvidence(
+        ctx: CoreCallContext,
+        ref: EvidenceRef,
+    ): Promise<ReadResult<EvidenceSnapshot>>;
+    /**
      * Optional narrow read: the chain head (open or finalized) of exactly this
      * subject Run's work chain, whatever Plan opened it (`queryRoundChainHead`
      * with `subjectRunRef`). A formal zero result is 'not_found'; an invalid
@@ -237,6 +246,15 @@ export interface EvidencePort {
             invocationId: string;
             observation: CheckProcessObservation;
         }>,
+    ): Promise<WriteResult<RoundSnapshot>>;
+    /**
+     * B06 W-3: settle a pending platform witness check in one commit (receipt first). The owner reads the subject
+     * Run, the Runtime witness facts, the source and the stored RunActivity, stores the report body when the final
+     * text is present, and judges mechanically; every unreadable fact is a gap (INCONCLUSIVE), never a refusal.
+     */
+    recordWitness(
+        ctx: CoreCallContext,
+        request: GraphWrite<{ roundRef: VerificationRoundRef; checkId: string }>,
     ): Promise<WriteResult<RoundSnapshot>>;
     finalizeChecks(
         ctx: CoreCallContext,

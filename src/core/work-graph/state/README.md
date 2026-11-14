@@ -75,9 +75,9 @@
 - `goal-settings-machine.ts` — Goal 设置机器与启动准入、决策依据匹配、Goal 冲突事实（模块说法按模块比，文件只按同一路径比）。
 - `plan-machine.ts` — PlanProposal 机器与 PlanRevision 派生：candidate→accepted 与 Goal 指针同一提交；候选与提案事件带必填可空的 `sourceMessageRef`（干预消息，其他写者为 `null`）。
 - `architecture-proposal-machine.ts` — `ArchitectureProposal` 状态机：写入时 `pending`，之后只改 `state`（`pending → applied | rejected | stale`）与一次进入冻结批的 `batchRef`；内容（pin/ops/moves/reason/proposer/operation ref）不可变，`ARCHITECTURE_PROPOSAL_STATES` 是闭集，`newArchitectureProposalRecord`/`transitionArchitectureProposal` 只复制记录并改 revision/state/batchRef；无存储、时钟或 id。
-- `plan-candidate.ts` — 计划候选的纯决定与机械诊断（§6.1.3、§6.2）：`decidePlanCandidate` 按审阅/修复读与采用策略给出请求审阅、请求修复、采用、出卡或等待（首次匹配即返回，不读存储）；`diagnosePlanCandidate` 用验证计划编译器的同一份 `compileVerificationCoverage` 逐条报 `no_registered_check`（审阅类要求由 `review-packet` 项覆盖，第 9 片起不再报），`checks: null` 是覆盖未知、永不采用，`checks: []` 是已配置但没有注册检查。
-- `verification-machine.ts` — VerificationRound / round-check / TaskEvidenceIndex 机器与链、折叠、重验证、证据索引。第 9 片加 VR-16 `review_recorded`（`RoundEventHead`、`RoundEvent` 各一臂）：`roundOnReviewRecorded`（`src/core/work-graph/state/verification-machine.ts:1418`）恰四条 effect：`guard_round_unchanged`、`admit_verdict_evidence`（每个 pair 一条、同一个 ref）、`append_task_evidence_index`、`emit_event VerificationReviewEvidenceRecorded`，不写 Round；`pendingRoundChecks` 与 `foldSteps` 跳过 `satisfactionPath:'review-packet'` 项；`roundReviewerEvidenceProblem` 对任何个数回 null（审阅 ref 由 owner 读完事实后归属）。
-- `witness-check.ts` — 见证检查的纯判定（B06 G1）：`effectsOf` 只从已存 `RunActivityFactsV1` 判 Run 的三态 effects（`status:'unknown'` → unknown；已确认改动 → changed；仅可能改动/窗口未终结/未决调用 → unknown；`changedLines.complete` 不参与判 none，不重新 tally）；`runWitnessCheck` 由三态输入给 `EvidenceOutcome`（`knownFailure` 四支判 FAIL 且优先，`hasGap` 六支判 INCONCLUSIVE，`incompleteCause` 只在 INCONCLUSIVE、Run 适用且来源不是 matched 时是 `source_not_matched`，`missingPaths` 只取 absent 且不落库）。不读存储、不调 `outcomeFor`；G2 的见证 owner 调用它们。
+- `plan-candidate.ts` — 计划候选的纯决定与机械诊断（§6.1.3、§6.2）：`decidePlanCandidate` 按审阅/修复读与采用策略给出请求审阅、请求修复、采用、出卡或等待（首次匹配即返回，不读存储）；`diagnosePlanCandidate` 用验证计划编译器的同一份 `compileVerificationCoverage` 逐条报 `no_registered_check`（审阅类要求由 `review-packet` 项覆盖，第 9 片起不再报），`checks: null` 是覆盖未知、永不采用，`checks: []` 是已配置但没有注册检查（B06 G2 起生产的 `planChecks` 总带内置见证能力，零命令检查得到 `[platform:witness]`）。
+- `verification-machine.ts` — VerificationRound / round-check / TaskEvidenceIndex 机器与链、折叠、重验证、证据索引。第 9 片加 VR-16 `review_recorded`（`RoundEventHead`、`RoundEvent` 各一臂）：`roundOnReviewRecorded`（`src/core/work-graph/state/verification-machine.ts:1475`）恰四条 effect：`guard_round_unchanged`、`admit_verdict_evidence`（每个 pair 一条、同一个 ref）、`append_task_evidence_index`、`emit_event VerificationReviewEvidenceRecorded`，不写 Round；`pendingRoundChecks` 与 `foldSteps` 跳过 `satisfactionPath:'review-packet'` 项；`roundReviewerEvidenceProblem` 对任何个数回 null（审阅 ref 由 owner 读完事实后归属）。B06 G2 加见证臂：`pendingRoundChecks` 按计划的见证项合成 pending 检查（定义只带 `requiredReadPaths`，不查配置）；`CheckEvent`、`CheckEventHead`、`CheckPhaseChange` 各一条见证臂；`checkEventAdmission` 在执行中表之前判见证结果，两个方向的种类错配都是 `invalid`（一个检查只有一个结果写入者），见证只从 pending 一步到 finished；`transitionCheck` 直接写 owner 读出的结果（不调 `outcomeFor`），见证不带 `resourceCapHit`。
+- `witness-check.ts` — 见证检查的纯判定（B06 G1）：`effectsOf` 只从已存 `RunActivityFactsV1` 判 Run 的三态 effects（`status:'unknown'` → unknown；已确认改动 → changed；仅可能改动/窗口未终结/未决调用 → unknown；`changedLines.complete` 不参与判 none，不重新 tally）；`runWitnessCheck` 由三态输入给 `EvidenceOutcome`（`knownFailure` 四支判 FAIL 且优先，`hasGap` 六支判 INCONCLUSIVE，`incompleteCause` 只在 INCONCLUSIVE、Run 适用且来源不是 matched 时是 `source_not_matched`，`missingPaths` 只取 absent 且不落库）。不读存储、不调 `outcomeFor`；见证 owner `recordWitness` 调用它们。
 - `autonomy-rules.ts` — 自主规则的纯半边：`validateAutonomyRule`（唯一校验：先查 actions/scope 是数组、limits/limits.open 是对象，再查 actions 非空且都是 `RuleActionV1`（否则 `invalid/rule_action_fixed`）、scope 非空、每职责上限不超过项目 `open` 上限（否则 `invalid/rule_limit_over_cap`）、`expiresAt` 是 ISO 时间或 null）、`matchAutonomyRule`（active、未到期、动作在列、每个责任对象在规则 scope 和调用方责任上限内、工具与建成员授权、动作之后的计数不超过规则的每职责上限）、`nextAutonomyRuleSetRevision`；记录与 codec 在 contracts 和 sessions，三个写命令在 `tasks/autonomy-rule-service.ts`。
 - `role-capacity-episode.ts` — 容量 episode 的三个纯函数：`nextCapacityEpisode`（同一项目同一职责的下一个编号）、`capacityEpisodeCloses`（回到上限以下，或上限变了就关）、`closeCapacityEpisode`（revision 加一、写 `closedAt`）；记录格式是 contracts 的 `RoleCapacityEpisodeFormat`。
 - `decision-policy.ts` — 五层动作策略 `decisionActionPolicy`（`DecisionPolicyInputV1` 只在旧入参上做加法，结果是 `DecisionPolicyVerdictV1`）：总是问你的九个动作 → 同一动作已有待答卡 → 匹配到的自主规则（`automatic_notice`）→ 出厂默认（四个角色线动作与 `create_member`/`short_change_duty` 有一个受影响目标是每步问就出卡，否则人做直接做、别的调用方发通知；`module_maintainer` 照旧；其余旧动作照旧表）→ 越界出卡；另有用户消息准入、自动化确认原因、gate 覆盖与修复判定。
@@ -300,23 +300,23 @@
 | `unknownCallReviewRouteOf` | `src/core/work-graph/state/unknown-call-review.ts:196` | 结果未知记录分两层的去处：参谋 / 先问参谋再升人 / 人（带新的升层原因；今天的卡清掉旧的，人自己的方案回来保留旧的） | 定稿、批准和参谋答复落实；不要另写分层判断 |
 | `unknownCallReviewSaferMethodOpen`、`approvedMethodsOf` | `src/core/work-graph/state/unknown-call-review.ts:221`、`src/core/work-graph/state/unknown-call-review.ts:226` | “换稳妥跑法”还能不能选（有可提对象、剩两个轮次空位）；批准时的方案清单 | 卡的选项、参谋落实、owner 的批准 |
 | `ARCHITECTURE_PROPOSAL_STATES`、`newArchitectureProposalRecord`、`transitionArchitectureProposal` | `src/core/work-graph/state/architecture-proposal-machine.ts:45`、`:34`、`:45` | 提案状态闭集与记录的唯一构造/迁移：进入批或到终态，只改 state/batchRef 与 revision，内容不可变 | 提案 owner 的写入、冻结与答复提交 |
-| `transitionRound` | `src/core/work-graph/state/verification-machine.ts:1402` | 验证轮主迁移（VR-01..16）；`round_finalized` 的 ref 数 = admissions + reviewerEvidenceCount（命令 ref 在前、审阅 ref 在后） | 轮生命周期写入 |
-| `transitionCheck` | `src/core/work-graph/state/verification-machine.ts:1679` | 单项检查迁移 | 检查开始/结果/中断 |
-| `buildOpenedRound` | `src/core/work-graph/state/verification-machine.ts:950` | 建已开启的轮 | 开轮提交 |
-| `buildSuccessorRound` | `src/core/work-graph/state/verification-machine.ts:639` | 建后继轮 | 重验证 |
-| `finalizeRoundOutcome` | `src/core/work-graph/state/verification-machine.ts:836` | 折叠检查并定轮结果；第 9 片把 `RoundFoldFactsV1.review`（outcome/gaps/refs）当成一个不进 admissions 的候选，它的 gap 跟在检查 gap 后面；B06-N1 的 `PYTHON_SYNTAX_GAP_CODE`/`pythonSyntaxGaps`/`python_syntax_error` 是 context gap，一文件一条（`path:line: message`） | 轮收尾 |
-| `foldVerdictChecks` | `src/core/work-graph/state/verification-machine.ts:798` | 按验证计划折叠检查判定 | 轮收尾/展示 |
-| `roundChainHead` | `src/core/work-graph/state/verification-machine.ts:487` | 一轮链的头（最新/最高轮次） | 链相关守卫 |
-| `roundTaskSignal` | `src/core/work-graph/state/verification-machine.ts:714` | 轮链给 Task 相位的信号 | Task 相位投影 |
-| `reverifyAdmissionProblem` | `src/core/work-graph/state/verification-machine.ts:1488` | 能否开重验证轮 | 重验证前 |
-| `reverifyExemption` | `src/core/work-graph/state/verification-machine.ts:560` | 重验证的豁免判定 | 自动重做计数 |
-| `roundWriteAdmission` | `src/core/work-graph/state/verification-machine.ts:1119` | 轮写入的通用准入；VR-16 `review_recorded`：无轮 invalid、已 finalize busy、非执行者 forbidden、pin 旧 revision_conflict | 任何轮写入 |
-| `roundSubjectRunProblem` | `src/core/work-graph/state/verification-machine.ts:1255` | VD-3：被审 Run 正式以 `completed` 结束且对账缺省或 `done` | 开轮守卫；VR-16 的终态读复用（不为 null 就记 INCONCLUSIVE） |
-| `taskEvidenceIndexRefOf` | `src/core/work-graph/state/verification-machine.ts:1069` | 轮对应的证据索引 ref | 追加证据 |
-| `displayRoundStatus` | `src/core/work-graph/state/verification-machine.ts:440` | 展示用轮状态 | 读模型 |
+| `transitionRound` | `src/core/work-graph/state/verification-machine.ts:1459` | 验证轮主迁移（VR-01..16）；`round_finalized` 的 ref 数 = admissions + reviewerEvidenceCount（命令 ref 在前、审阅 ref 在后） | 轮生命周期写入 |
+| `transitionCheck` | `src/core/work-graph/state/verification-machine.ts:1736` | 单项检查迁移 | 检查开始/结果/中断 |
+| `buildOpenedRound` | `src/core/work-graph/state/verification-machine.ts:975` | 建已开启的轮 | 开轮提交 |
+| `buildSuccessorRound` | `src/core/work-graph/state/verification-machine.ts:656` | 建后继轮 | 重验证 |
+| `finalizeRoundOutcome` | `src/core/work-graph/state/verification-machine.ts:853` | 折叠检查并定轮结果；第 9 片把 `RoundFoldFactsV1.review`（outcome/gaps/refs）当成一个不进 admissions 的候选，它的 gap 跟在检查 gap 后面；B06-N1 的 `PYTHON_SYNTAX_GAP_CODE`/`pythonSyntaxGaps`/`python_syntax_error` 是 context gap，一文件一条（`path:line: message`） | 轮收尾 |
+| `foldVerdictChecks` | `src/core/work-graph/state/verification-machine.ts:815` | 按验证计划折叠检查判定 | 轮收尾/展示 |
+| `roundChainHead` | `src/core/work-graph/state/verification-machine.ts:504` | 一轮链的头（最新/最高轮次） | 链相关守卫 |
+| `roundTaskSignal` | `src/core/work-graph/state/verification-machine.ts:731` | 轮链给 Task 相位的信号 | Task 相位投影 |
+| `reverifyAdmissionProblem` | `src/core/work-graph/state/verification-machine.ts:1545` | 能否开重验证轮 | 重验证前 |
+| `reverifyExemption` | `src/core/work-graph/state/verification-machine.ts:577` | 重验证的豁免判定 | 自动重做计数 |
+| `roundWriteAdmission` | `src/core/work-graph/state/verification-machine.ts:1157` | 轮写入的通用准入；VR-16 `review_recorded`：无轮 invalid、已 finalize busy、非执行者 forbidden、pin 旧 revision_conflict | 任何轮写入 |
+| `roundSubjectRunProblem` | `src/core/work-graph/state/verification-machine.ts:1293` | VD-3：被审 Run 正式以 `completed` 结束且对账缺省或 `done` | 开轮守卫；VR-16 的终态读复用（不为 null 就记 INCONCLUSIVE） |
+| `taskEvidenceIndexRefOf` | `src/core/work-graph/state/verification-machine.ts:1107` | 轮对应的证据索引 ref | 追加证据 |
+| `displayRoundStatus` | `src/core/work-graph/state/verification-machine.ts:457` | 展示用轮状态 | 读模型 |
 | `isFinalizedNonPass` | `src/core/work-graph/state/verification-machine.ts:103` | 已定稿且非 PASS | 失败事实/重验证 |
 | `copyInterventionCandidateOf`、`CopyInterventionFactsV1` | `src/core/work-graph/state/copy-intervention.ts:16`、`src/core/work-graph/state/copy-intervention.ts:6` | 复制取消的纯候选规则与事实形状：按书的表序（先排除，再投递/未投递）判一条消息是否候选、可选/可撤回及原因；`null` 不是候选 | 分页读可复制干预时；不要另写状态判定 |
-| `effectsOf`、`runWitnessCheck` | `src/core/work-graph/state/witness-check.ts:14`、`src/core/work-graph/state/witness-check.ts:36` | 见证检查的纯判定：Run 的三态 effects（changed 先于 unknown）与三态输入 → `WitnessCheckResult`（FAIL 优先、cause 与 `missingPaths` 的取法） | G2 的见证 owner 在 `recordWitness` 里调用；不要另写 effects 或三态口径 |
+| `effectsOf`、`runWitnessCheck` | `src/core/work-graph/state/witness-check.ts:14`、`src/core/work-graph/state/witness-check.ts:36` | 见证检查的纯判定：Run 的三态 effects（changed 先于 unknown）与三态输入 → `WitnessCheckResult`（FAIL 优先、cause 与 `missingPaths` 的取法） | 见证 owner 在 `recordWitness` 里调用；不要另写 effects 或三态口径 |
 
 ## 内部用
 

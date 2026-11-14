@@ -28,6 +28,7 @@
  *   observations (CD-1..CD-3), `ExecutionEntryAuthorized.activePlanRef` (C6) and
  *   the compiler-owned `dispositionRecord` (C7).
  */
+import { unavailableWitnessFacts } from '../helpers/witness-stub.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -400,7 +401,7 @@ type EvidenceOwner = ReturnType<typeof createEvidenceService>;
 /** The real evidence owner over the fixture ledger, with this Host's owned instance lease (VR-04). */
 function evidenceWithRestart(fixture: R3eEvidenceFixture): EvidenceOwner {
   let sequence = 0;
-  return createEvidenceService({ knowledge: knowledgeLinesOver(fixture.records, fixture.workspaceHost),
+  return createEvidenceService({ witnessFacts: unavailableWitnessFacts, knowledge: knowledgeLinesOver(fixture.records, fixture.workspaceHost),
     records: fixture.records, commitIdentities: fixture.b2.base.commitIdentities, materials: fixture.materials,
     executions: createRunStateReader({ records: fixture.records }),
     workspaceHost: fixture.workspaceHost, source: new VerificationWorkspaceReader(),

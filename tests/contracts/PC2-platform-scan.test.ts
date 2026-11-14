@@ -73,11 +73,12 @@ type ExemptionV1 = { templateId: string; word: string; line: number; reason: str
  * is not a whole-name match for `check`. The list holds the hits that remain.
  */
 const EXEMPTIONS: readonly ExemptionV1[] = [
-    { templateId: 'initial-planning-answer', word: 'check', line: 16, reason: "planning answer's checks field sentence" },
-    { templateId: 'initial-planning-answer', word: 'check', line: 17, reason: "planning answer's plain 'check' (what to propose)" },
-    { templateId: 'initial-planning-answer', word: 'check', line: 22, reason: "planning answer's plain 'check' (shape sample disclaimer)" },
-    { templateId: 'initial-planning-answer', word: 'check', line: 56, reason: "planning answer's plain 'check' (sample verification text)" },
-    { templateId: 'initial-planning-answer', word: 'check', line: 86, reason: "planning answer's checks sample field" },
+    { templateId: 'initial-planning-answer', word: 'read', line: 10, reason: "planning answer's witness paragraph (read-only, files that must be read)" },
+    { templateId: 'initial-planning-answer', word: 'check', line: 17, reason: "planning answer's checks field sentence" },
+    { templateId: 'initial-planning-answer', word: 'check', line: 18, reason: "planning answer's plain 'check' (what to propose)" },
+    { templateId: 'initial-planning-answer', word: 'check', line: 23, reason: "planning answer's plain 'check' (shape sample disclaimer)" },
+    { templateId: 'initial-planning-answer', word: 'check', line: 57, reason: "planning answer's plain 'check' (sample verification text)" },
+    { templateId: 'initial-planning-answer', word: 'check', line: 87, reason: "planning answer's checks sample field" },
     { templateId: 'skill-platform-work', word: 'check', line: 58, reason: 'record_note receipt field, not the reserved Kernel tool' },
     { templateId: 'skill-platform-secretary', word: 'check', line: 45, reason: 'record_note receipt field, not the reserved Kernel tool' },
     { templateId: 'skill-platform-adviser', word: 'check', line: 68, reason: 'record_note receipt field, not the reserved Kernel tool' },

@@ -48,6 +48,15 @@ export type RegisteredCommandCheck = {
     taskIds: "all" | readonly string[];
 };
 
+/** B06: the platform witness check a round carries: no command and no process, only the paths it must read. */
+export type RegisteredWitnessCheck = {
+    checkId: string;
+    kind: "witness";
+    requiredReadPaths: readonly string[];
+};
+/** What a round check runs: a registered command, or the platform witness. */
+export type RoundCheckDefinition = RegisteredCommandCheck | RegisteredWitnessCheck;
+
 /** The isolated trusted configuration a round is opened under. It is supplied
  * with the factory and never taken from an open/begin request or model input. */
 export type TrustedCheckConfiguration = {
@@ -137,7 +146,7 @@ export const ROUND_CHECK_INCOMPLETE_CAUSES: readonly RoundCheckIncompleteCause[]
 
 export type RoundCheckSnapshot = {
     checkId: string;
-    definition: RegisteredCommandCheck;
+    definition: RoundCheckDefinition;
     coverage: EvidenceCoverageV1[];
     phase: "pending" | "executing" | "finished" | "interrupted";
     invocationId: string | null;
@@ -301,6 +310,18 @@ export const PLATFORM_WITNESS_CHECK_ID = "platform:witness";
 /** Whether a check id is the reserved platform witness id (the Host gates refuse it). */
 export function isPlatformReservedCheckId(checkId: string): boolean {
     return checkId === PLATFORM_WITNESS_CHECK_ID;
+}
+
+/** The built-in witness capability: the single original both capability tables append. */
+export function platformWitnessCapability(): CheckCapabilityV1 {
+    return { checkId: PLATFORM_WITNESS_CHECK_ID, kind: "witness", coversKinds: ["witness"], replayable: false };
+}
+
+/** The one table builder both readers call: the registered command checks, then the built-in witness capability. */
+export function checkCapabilitiesOf(checks: readonly RegisteredCommandCheck[]): CheckCapabilityV1[] {
+    return [...checks.map(check => ({
+        checkId: check.checkId, kind: check.kind, coversKinds: [check.kind], replayable: false,
+    })), platformWitnessCapability()];
 }
 
 /**

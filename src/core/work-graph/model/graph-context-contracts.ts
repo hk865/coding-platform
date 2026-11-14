@@ -9,6 +9,7 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { RunRef, RunSnapshot, TaskTriple } from '../../../contracts/dispatch.js';
+import type { EvidenceV1 } from '../../../contracts/evidence.js';
 import type {
   AttentionGraphReadRequestV1, ContextExtensionsV1, ContextSourceV1, GraphAttentionFactsV1,
   GraphNodeRefV1, InputDeclarationV1, InputSelectionV1,
@@ -74,12 +75,14 @@ export type NodeCardV1 = {
   inputDeclarations: InputDeclarationV1[];
   indexes: ContextExtensionsV1;
   sources: ContextSourceV1[];
+  /** B06 W-7: only the `evidence` relation fills it (the round's Evidence, `[]` with none); other relations omit it. */
+  evidence?: EvidenceV1[];
 };
 export type GraphLookRequestV1 = {
   /** `null` is the project branch (no goal); Goal-owned targets and relations then refuse. */
   goalRef: GoalRef | null;
   target: { kind: 'node'; node: GraphNodeRefV1 } | { kind: 'path'; path: string };
-  relation: 'card' | 'children' | 'neighbours' | 'executions' | 'checks';
+  relation: 'card' | 'children' | 'neighbours' | 'executions' | 'checks' | 'evidence';
   page: { afterCursor: string | null; limit: number };
   /** KC-3: the architecture read; `recorded` (a knowledge_conflict repair round's context) is the last adopted one. */
   base?: KnowledgeReadBaseV1;

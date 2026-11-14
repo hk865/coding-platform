@@ -3,6 +3,7 @@
  * domain setup is performed through the production writers on both backends.
  */
 
+import { unavailableWitnessEvidence } from './witness-stub.js';
 import { join } from 'node:path';
 import { withBackendOrderedLookup } from './ordered-lookup-forward.js';
 import { type CoreCallContext } from '../../src/contracts/core/call-context.js';
@@ -718,7 +719,7 @@ export async function workflowForFixture(b2: B2ExecutionFixture, options: {
     tasks: base.goals, plans: options.plans ?? base.plans, sessions: base.sessionsPort, claims, executions: reads,
     ...planReads,
     runtime: { ...runtime.port, createSession: sessionOperations.createSession },
-    evidence: { openVerification: forbiddenCheck, readVerification: forbiddenCheck, beginCheck: forbiddenCheck,
+    evidence: { ...unavailableWitnessEvidence, openVerification: forbiddenCheck, readVerification: forbiddenCheck, beginCheck: forbiddenCheck,
       recordCheckResult: forbiddenCheck, finalizeChecks: forbiddenCheck },
     checks: { runRegisteredCheck: forbiddenCheck }, sourceAuthority: createSourceAuthorityReader({ authority }),
     configuration: { consumerId: prefix, bindings: [{ workspace: base.scope,

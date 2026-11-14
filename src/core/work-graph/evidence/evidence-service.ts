@@ -58,10 +58,10 @@ import {
 } from '../../../contracts/task-requeue.js';
 import { MIB } from '../../../contracts/resource-caps.js';
 import type {
-    CheckCapabilityV1, CheckExecutionTicket, CheckProcessObservation, RoundCheckSnapshot, RoundSnapshot,
-    TrustedCheckConfiguration, VerificationRoundRef,
+    CheckExecutionTicket, CheckProcessObservation, RoundCheckSnapshot, RoundSnapshot,
+    TrustedCheckConfiguration, VerificationRoundRef, WitnessCheckInput, WitnessReadSet, WitnessReport, WitnessRunState,
 } from '../../../contracts/verification.js';
-import { reviewPacketItemOf } from '../../../contracts/verification.js';
+import { checkCapabilitiesOf, reviewPacketItemOf } from '../../../contracts/verification.js';
 import type {
     VerificationRoundMaterialIdentity, VerificationRoundSourcePort, VerificationRoundSourceResult,
 } from '../../../contracts/verification-context.js';
@@ -152,6 +152,9 @@ import {
     type ReviewQueryReads, type ReviewSessionDuty, type RoundChainHeadQuery,
 } from '../model/evidence-contracts.js';
 import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
+import type { WitnessFactsPort } from '../model/witness-facts-contracts.js';
+import { effectsOf, runWitnessCheck } from '../state/witness-check.js';
+import { pathVerdictsOf } from './witness-path-verdicts.js';
 import {
     agentActorOf, toolCommitLookupResult, toolCommitLookupUnknownTool, toolCommitRequestId,
 } from '../model/tool-commit-arguments.js';
@@ -923,6 +926,8 @@ export type EvidenceServiceDependencies = {
     knowledge: KnowledgeLines;
     materials: MaterialPort;
     executions: ExecutionReadPort;
+    /** B06: the Runtime witness facts (final text, successful reads); internal, never published on the platform. */
+    witnessFacts: WitnessFactsPort;
     workspaceHost: WorkspaceHostBindings;
     source: VerificationRoundSourcePort;
     /** Legacy frozen trusted checks configuration. Kept byte-compatible for
@@ -956,7 +961,8 @@ export type EvidenceServiceDependencies = {
     queries?: ReviewQueryReads;
     /** Slice 9 VR-16: the reviewer Session's duty read; absent makes `recordReviewEvidence` `unsupported`. */
     sessionDuty?: ReviewSessionDuty;
-    /** B06-N1: the subject Run's recorded changed files; absent skips the check. */
+    /** B06-N1: the subject Run's recorded changed files; absent skips the check. B06: the witness effects read it too
+     * (absent there is `unknown` effects). */
     runActivity?: Pick<RunActivityPort, 'readRunActivity'>;
     /** B06-N1: parse the changed Python files; absent skips the check. */
     pythonSyntax?: (ctx: CoreCallContext, input: { workspace: WorkspaceRef; paths: readonly string[] })
@@ -997,6 +1003,28 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         return { ok: true, ref: stored.ref };
     }
 
+    /**
+     * B06: the witness report is ONE structured body `{roundRef, subjectRunRef, reportText}` (the executor's untrimmed
+     * text); `storeArtifact` is the only size meter. `size_exceeded` is the one null ref; any other store refusal is a
+     * retryable `unavailable` and nothing is committed.
+     */
+    async function storeWitnessReport(ctx: CoreCallContext, round: RoundSnapshot, reportText: string, requestId: string):
+    Promise<{ ok: true; ref: ArtifactRef | null } | { ok: false; rejection: CoreRejection }> {
+        const body = JSON.stringify({ roundRef: round.ref, subjectRunRef: round.subjectRunRef, reportText });
+        let stored;
+        try {
+            stored = await deps.materials.storeArtifact(ctx, { contentType: REPORT_CONTENT_TYPE, body,
+                sources: roundReportSources(round),
+                origin: { kind: 'platform_operation', projectId: round.subjectRunRef.projectId,
+                    workspaceId: round.configuration.workspace.workspaceId, requestId, actor: round.executor } });
+        } catch (error) {
+            return { ok: false, rejection: unavailable(`the witness report could not be stored: ${messageOf(error)}`) };
+        }
+        if (stored.status === 'stored') return { ok: true, ref: stored.ref };
+        if (stored.code === 'size_exceeded') return { ok: true, ref: null };
+        return { ok: false, rejection: unavailable(`the witness report was rejected: ${stored.reason}`) };
+    }
+
     async function evaluateSource(
         ctx: CoreCallContext,
         configuration: TrustedCheckConfiguration,
@@ -1015,6 +1043,44 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         } catch {
             return 'unavailable';
         }
+    }
+
+    /** B06: the effects from the stored RunActivity (pyg's per-Run read); non-Git or an unreadable tally is `unknown`. */
+    async function readWitnessEffects(ctx: CoreCallContext, round: RoundSnapshot): Promise<WitnessCheckInput['effects']> {
+        if (round.sourceProof.kind !== 'git-head-worktree' || deps.runActivity === undefined) return 'unknown';
+        const read = await deps.runActivity.readRunActivity(ctx, round.subjectRunRef);
+        return read.status === 'ready' && read.value !== null ? effectsOf(read.value) : 'unknown';
+    }
+
+    /**
+     * B06: the witness basis, all owner-side IO. A subject Run that cannot be read short-circuits (no history, source
+     * or activity read); every other unreadable fact is `unknown` and the commit still goes ahead, never a refusal.
+     * Order: the Run, the facts port (only with a history binding), the paths, the one source capture, the stored
+     * RunActivity.
+     */
+    async function readWitnessBasis(ctx: CoreCallContext, round: RoundSnapshot, required: readonly string[]):
+    Promise<WitnessCheckInput> {
+        const unknownBasis = (run: Exclude<WitnessRunState, { state: 'applicable' }>): WitnessCheckInput => ({
+            run, report: { state: 'unknown', reason: run.reason }, reads: { state: 'unknown', reason: run.reason },
+            paths: required.map(path => ({ path, state: 'unknown' })), source: 'unavailable', effects: 'unknown' });
+        const execution = await deps.executions.readExecution(ctx, round.subjectRunRef);
+        if (execution.status !== 'ready') return unknownBasis({ state: 'unknown', reason: 'the subject Run is not readable' });
+        const run = execution.value.run;
+        let report: WitnessReport;
+        let reads: WitnessReadSet;
+        const binding = run.executionHistory?.kernel;
+        if (binding === undefined) {
+            // A history gap, not a short-circuit: the port is not called; the source and the activity still are.
+            const reason = 'the subject Run has no execution history binding';
+            report = { state: 'unknown', reason };
+            reads = { state: 'unknown', reason };
+        } else {
+            ({ report, reads } = await deps.witnessFacts.read(ctx, { runRef: round.subjectRunRef, kernel: binding }));
+        }
+        const paths = pathVerdictsOf(required, reads);
+        const source = await evaluateSource(ctx, round.configuration, round);
+        const effects = await readWitnessEffects(ctx, round);
+        return { run: { state: 'applicable' }, report, reads, paths, source, effects };
     }
 
     type RoundPreparation = {
@@ -1089,12 +1155,10 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         let configurationDigest: string;
         try { configurationDigest = digestOf(configuration); }
         catch { return failure(invalid('the trusted check configuration is not canonical JSON')); }
-        const capabilities: CheckCapabilityV1[] = configuration.checks.map(check => ({
-            checkId: check.checkId, kind: check.kind, coversKinds: [check.kind], replayable: false }));
         const compiled = compileVerificationPlan({
             schemaVersion: 1, taskRef: input.subject, planRef: input.planRef, planSnapshot: plan,
             workspaceRevision: resolvedRoot.value.workspaceRevision, changeScope: captured.changeScope,
-            semanticChange: 'semantic', checkCapabilities: capabilities,
+            semanticChange: 'semantic', checkCapabilities: checkCapabilitiesOf(configuration.checks),
             policy: { requirementKinds: [...policyRead.policyContent.requirementKinds],
                 ...(policyRead.policyContent.fastPathDiffClasses === undefined
                     ? {} : { fastPathDiffClasses: [...policyRead.policyContent.fastPathDiffClasses] }) },
@@ -1316,6 +1380,25 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
     }
 
     /**
+     * B06 W-7: one Evidence by ref. Safety: another project's evidence is `forbidden` (project isolation); within one
+     * project stored platform material is readable from any workspace (decision 104-1, PRODUCT :540). Coordination: a
+     * missing or damaged record is `unavailable`, never `not_found` (the ref came from a stored round).
+     */
+    async function readEvidence(ctx: CoreCallContext, ref: EvidenceRef): Promise<ReadResult<EvidenceSnapshot>> {
+        const ownedCtx = bindTrustedContext(ctx);
+        if (!ownedCtx.ok) return ownedCtx.rejection;
+        if (ref.projectId !== ownedCtx.scope.projectId) return forbidden('the evidence ref is outside the trusted Host project');
+        const key = canonicalOf(ref);
+        if (key === null) return invalid('the evidence ref is not canonical JSON');
+        const read = await readBatch(records, [key]);
+        if (read.status !== 'ready') return unavailable(`the evidence is not readable: ${read.reason}`);
+        const record = read.batch.present.get(key);
+        const decoded = record === undefined ? null : decodeEvidenceSnapshot(record);
+        if (decoded === null || decoded.status !== 'decoded') return unavailable('the evidence is missing or damaged');
+        return { status: 'ready', value: decoded.value };
+    }
+
+    /**
      * VD-14: the head of one subject's round chain, open or finalized. Work
      * (`subjectRunRef` given): the chain of that subject Run; gate
      * (`subjectRunRef: null`): the gate's one chain, whatever producer anchors
@@ -1407,6 +1490,11 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         const loaded = await readRoundRecord(records, input.roundRef);
         if (!loaded.ok) return loaded.rejection;
         const round = loaded.round;
+        // B06 W-5: a witness check has no process, so no ticket (coordination: one result writer per check, the
+        // witness owner). Refused before the admission row, the activity read and the source capture; the same local
+        // feeds the ticket below.
+        const definition = round.checks.find(candidate => candidate.checkId === input.checkId)?.definition;
+        if (definition?.kind === 'witness') return invalid('a witness check has no process to begin');
         // VR-02 before any IO: open round, executor, registered check, pin, then `pending`.
         const guardCtx = roundCtx(round.executor, actor, checked.revision);
         const admitted = refusalOf(checkEventAdmission(round, { kind: 'check_begun', checkId: input.checkId }, guardCtx), round);
@@ -1441,12 +1529,11 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         const decided = transitionCheck(round, { kind: 'check_begun', checkId: input.checkId, invocationId, observed,
             activity: activity.facts }, guardCtx);
         if (!decided.ok) return refusalOf(decided, round);
-        const definition = round.checks.find(candidate => candidate.checkId === input.checkId)!.definition;
         const ticket: CheckExecutionTicket = { roundRef: round.ref, checkId: input.checkId, invocationId,
             configurationRevision: configuration.configurationRevision, configurationDigest: round.configurationDigest,
             executor: round.executor, workspace: configuration.workspace, workspaceRoot: round.identity.workspaceRoot,
             permissionRevision: configuration.permissionRevision, sourceDigest: round.identity.sourceDigest,
-            processAccess: configuration.processAccess, deniedPrefixes: configuration.deniedPrefixes, definition };
+            processAccess: configuration.processAccess, deniedPrefixes: configuration.deniedPrefixes, definition: definition! };
         const occurredAt = deps.now();
         return await commitRoundWrite(records, signal, { identity, fingerprint, effects: decided.effects, round: decided.next,
             readSet: activity.guards,
@@ -1490,6 +1577,11 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         const loaded = await readRoundRecord(records, input.roundRef);
         if (!loaded.ok) return loaded.rejection;
         const round = loaded.round;
+        // B06 W-5: a witness result is recorded through `recordWitness` (coordination: one result writer per check);
+        // a caller error, not INCONCLUSIVE.
+        if (round.checks.find(candidate => candidate.checkId === input.checkId)?.definition.kind === 'witness') {
+            return invalid('a witness check records through recordWitness');
+        }
         // VR-03 before any IO: open round, executor, registered check, `executing`, the begun invocation, then the pin.
         const guardCtx = roundCtx(round.executor, actor, checked.revision);
         const admitted = refusalOf(checkEventAdmission(round, { kind: 'check_result_recorded', checkId: input.checkId,
@@ -1508,6 +1600,74 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         const decided = transitionCheck(round, { kind: 'check_result_recorded', checkId: input.checkId,
             invocationId: input.invocationId, observation: input.observation, sourceStatus, reportRef: report.ref,
             ...(resourceCapHit === undefined ? {} : { resourceCapHit }) }, guardCtx);
+        if (!decided.ok) return refusalOf(decided, round);
+        const occurredAt = deps.now();
+        return await commitRoundWrite(records, signal, { identity, fingerprint, effects: decided.effects, round: decided.next,
+            event: { eventId: deps.newId(), eventType: VERIFICATION_CHECK_RESULT_RECORDED_EVENT_TYPE, schemaVersion: 1,
+                occurredAt, identityKey: identity, roundRef: round.ref, actor, fingerprint, result: decided.next },
+            value: decided.next, cancelled: null });
+    }
+
+    /**
+     * B06 W-3: settle a pending witness check. Receipt first; then the pin, the round and the machine's witness
+     * admission (one guard context); then the subject Run, the Runtime facts, the paths, the source and the stored
+     * RunActivity; then the body (present only), the pure verdict and ONE commit of round@rev+1 + finished check +
+     * event + receipt. No Evidence and no task index (finalizeChecks owns them); no second capture or size measure.
+     */
+    async function recordWitness(ctx: CoreCallContext, request: GraphWrite<{ roundRef: VerificationRoundRef; checkId: string }>):
+    Promise<WriteResult<RoundSnapshot>> {
+        const ownedCtx = bindTrustedContext(ctx);
+        if (!ownedCtx.ok) return ownedCtx.rejection;
+        const { scope, actor, signal } = ownedCtx;
+        const owned = isolateWrite(request);
+        if (!owned.ok) return owned.rejection;
+        const input = owned.input;
+        const refProblem = roundRefProblem(input.roundRef);
+        if (refProblem !== null) return invalid(refProblem);
+        if (!nonEmpty(input.checkId)) return invalid('recordWitness requires a checkId');
+        if (input.roundRef.projectId !== scope.projectId || input.roundRef.workspaceId !== scope.workspaceId) {
+            return forbidden('the round ref is outside the trusted Host scope');
+        }
+        let identity = '';
+        let fingerprint = '';
+        try {
+            identity = identityKeyOf('b06-witness:', actor, scope.projectId, scope.workspaceId, owned.requestId);
+            fingerprint = fingerprintOf({ kind: 'b06-witness', roundRef: input.roundRef, checkId: input.checkId,
+                expected: owned.expected });
+        } catch { return invalid('the witness request is not canonicalizable JSON'); }
+        // The same requestId with another `meta.expected[0]` changes the fingerprint: `idempotency_conflict` here,
+        // before any pin or state check.
+        const lookup = await lookupReceipt(records, identity, fingerprint);
+        if (lookup.status === 'failed') return lookup.rejection;
+        if (lookup.status === 'found') {
+            return await replayEvent(records, lookup.receipt, identity, fingerprint,
+                VERIFICATION_CHECK_RESULT_RECORDED_EVENT_TYPE) as WriteResult<RoundSnapshot>;
+        }
+        const checked = checkRoundPin(owned.expected, input.roundRef);
+        if ('status' in checked) return checked;
+        const loaded = await readRoundRecord(records, input.roundRef);
+        if (!loaded.ok) return loaded.rejection;
+        const round = loaded.round;
+        const guardCtx = roundCtx(round.executor, actor, checked.revision);
+        const admitted = refusalOf(checkEventAdmission(round,
+            { kind: 'check_result_recorded', checkId: input.checkId, witness: true }, guardCtx), round);
+        if (admitted !== null) return admitted;
+        const { definition } = round.checks.find(candidate => candidate.checkId === input.checkId)!;
+        // The admission proved a witness definition; this narrows the type, it is not a second guard.
+        const required = definition.kind === 'witness' ? definition.requiredReadPaths : [];
+        const witnessInput = await readWitnessBasis(ownedCtx.ctx, round, required);
+        const verdict = runWitnessCheck(witnessInput);
+        let reportRef: ArtifactRef | null = null;
+        if (witnessInput.report.state === 'present') {
+            const stored = await storeWitnessReport(ownedCtx.ctx, round, witnessInput.report.text, owned.requestId);
+            if (!stored.ok) return stored.rejection;
+            reportRef = stored.ref;
+        }
+        // PASS needs its report: the only PASS that can still lack a ref is a size_exceeded body.
+        const outcome = verdict.outcome === 'PASS' && reportRef === null ? 'INCONCLUSIVE' : verdict.outcome;
+        const decided = transitionCheck(round, { kind: 'check_result_recorded', witness: true, checkId: input.checkId,
+            invocationId: null, witnessed: { outcome, reportRef, sourceStatus: witnessInput.source,
+                incompleteCause: verdict.incompleteCause ?? null } }, guardCtx);
         if (!decided.ok) return refusalOf(decided, round);
         const occurredAt = deps.now();
         return await commitRoundWrite(records, signal, { identity, fingerprint, effects: decided.effects, round: decided.next,
@@ -1935,7 +2095,9 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         for (const check of foldVerdictChecks(round)) {
             const evidence: EvidenceV1 = {
                 schemaVersion: 1, evidenceId: deps.newId(), kind: 'verdict', outcome: check.outcome ?? 'INCONCLUSIVE',
-                source: { actor: round.executor, runRef: null, checkId: check.checkId }, subject: { ...round.subject },
+                // B06 W-4: a witness verdict names the subject Run it read; a command verdict names none.
+                source: { actor: round.executor, runRef: check.definition.kind === 'witness' ? round.subjectRunRef : null,
+                    checkId: check.checkId }, subject: { ...round.subject },
                 coverage: check.coverage.map(entry => ({ ...entry })), anchor: anchorOf(round),
                 verificationPlanRef: { planId: round.verificationPlan.planId, planDigest: round.verificationPlan.planDigest },
                 summary: { text: boundedSummary(`check ${check.checkId} ${check.outcome ?? 'INCONCLUSIVE'}`), artifactRef: check.reportRef },
@@ -2670,8 +2832,9 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         return toolCommitLookupResult(lookup);
     };
 
-    return { openVerification, readVerification, queryOriginalVerification, queryRoundChainHead, beginCheck, recordCheckResult,
-        abandonCheck, interruptCheck, finalizeChecks, recordReviewEvidence, reverifyRound, reverifyApprovedByCard, lookupToolCommit };
+    return { openVerification, readVerification, readEvidence, queryOriginalVerification, queryRoundChainHead, beginCheck,
+        recordCheckResult, recordWitness, abandonCheck, interruptCheck, finalizeChecks, recordReviewEvidence, reverifyRound,
+        reverifyApprovedByCard, lookupToolCommit };
 }
 
 /** UI1 (`verification/round`): the chain read the round view reuses, so the 32-row limit,

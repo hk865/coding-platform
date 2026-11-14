@@ -24,6 +24,9 @@ import {
 import { dutyWordOf, lineHref, lineStatusView, type LineKey, type NavData, type NavLine } from './nav.js';
 import { requeueVisible } from './line-shared.js';
 
+/** B06: the word a check row shows for the platform witness, which runs no command (never a literal "null"). */
+export const WITNESS_CHECK_WORD = '平台只读核对';
+
 /** One `verification/round` read, cut to the fields the chain shows: the
  * round itself, its checks, and the chain's own counts (§2.4). */
 type RoundRead = {
@@ -32,7 +35,8 @@ type RoundRead = {
   outcome: string | null;
   checks: Array<{
     checkId: string; phase: string; outcome: string | null;
-    incompleteCause: string | null; command: string; reason: string | null;
+    /** Null for the platform witness check, which runs no command (B06). */
+    incompleteCause: string | null; command: string | null; reason: string | null;
   }>;
   chain: {
     ordinal: number;
@@ -249,7 +253,8 @@ function roundViewOf(read: RoundRead): ChainRound {
     pass: chainRound?.counts.pass ?? read.checks.filter((check) => check.outcome === 'PASS').length,
     fail: chainRound?.counts.fail ?? read.checks.filter((check) => check.outcome === 'FAIL').length,
     checks: read.checks.map((check) => ({
-      checkId: check.checkId, command: check.command, outcomeWord: checkWordOf(check),
+      // B06: the witness runs no command; the page shows what it is, never a literal "null".
+      checkId: check.checkId, command: check.command ?? WITNESS_CHECK_WORD, outcomeWord: checkWordOf(check),
       fail: check.outcome === 'FAIL', reason: check.reason ?? check.incompleteCause,
     })),
   };

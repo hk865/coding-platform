@@ -12,6 +12,7 @@
  * Specification: docs/refactor/tasks/R3e-completion-skeleton.md §4–5, §8 and the
  * R3e.1 mid-review repair §5.
  */
+import { unavailableWitnessFacts } from '../helpers/witness-stub.js';
 import { afterEach, expect, it } from 'vitest';
 import type { CheckProcessObservation, RoundSnapshot, TrustedCheckConfiguration } from '../../src/contracts/verification.js';
 import { createEvidenceService } from '../../src/core/work-graph/evidence/evidence-service.js';
@@ -277,7 +278,7 @@ it('freezes an open round configuration and resolves a fresh round from the curr
   const fixture = await openFixture();
   const current: { configuration: TrustedCheckConfiguration } = { configuration: { ...fixture.configuration } };
   let sequence = 0;
-  const scoped = createEvidenceService({ knowledge: knowledgeLinesOver(fixture.records, fixture.workspaceHost),
+  const scoped = createEvidenceService({ witnessFacts: unavailableWitnessFacts, knowledge: knowledgeLinesOver(fixture.records, fixture.workspaceHost),
     records: fixture.records,
     commitIdentities: fixture.b2.base.commitIdentities,
     materials: fixture.materials,

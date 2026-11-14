@@ -33,6 +33,7 @@
  * adoption commit waits at an A3 wrapper. Refusal rows sit in `rejects:` blocks with a public read before
  * and after; every service-layer row runs on the memory and the SQLite record backend.
  */
+import { unavailableWitnessFacts } from '../helpers/witness-stub.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -313,7 +314,7 @@ async function setup(kind: ClaimFixtureKind): Promise<Fixture> {
     };
     const materials = createMaterialService({ bodies: b2.bodies,
       authority: createMaterialRecordReaders(records).authority, now });
-    const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(records, workspaceHost), records,
+    const evidence = createEvidenceService({ witnessFacts: unavailableWitnessFacts, knowledge: knowledgeLinesOver(records, workspaceHost), records,
       commitIdentities: base.commitIdentities, materials, executions, workspaceHost,
       source: new VerificationWorkspaceReader(), configuration, now, newId });
     const runner = createRegisteredCheckRunner({ evidence, workspaceHost, kernel, now });

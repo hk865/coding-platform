@@ -21,6 +21,7 @@
  *   paused + COMPLETED, §2.4); a pause landing inside `beginCheck` refuses the
  *   begin by its VD-9 read set (VR-02), no ticket is issued.
  */
+import { unavailableWitnessFacts } from '../helpers/witness-stub.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ActorRef } from '../../src/contracts/command-event.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
@@ -478,7 +479,7 @@ describe('VD-9 begin read set (VR-02: the begin guards Goal@rev and the active P
     let armed = false;
     const reader = new VerificationWorkspaceReader();
     let sequence = 0;
-    const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(fixture.records, fixture.workspaceHost),
+    const evidence = createEvidenceService({ witnessFacts: unavailableWitnessFacts, knowledge: knowledgeLinesOver(fixture.records, fixture.workspaceHost),
       records: fixture.records, commitIdentities: fixture.b2.base.commitIdentities, materials: fixture.materials,
       executions: createRunStateReader({ records: fixture.records }), workspaceHost: fixture.workspaceHost,
       source: { async capture(root) {

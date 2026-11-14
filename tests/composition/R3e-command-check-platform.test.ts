@@ -80,6 +80,8 @@ function checkRequest(round: { ref: Parameters<Platform['checks']['runRegistered
 
 it('executes the fixed commands through the real sandbox and admits mechanical Evidence without completing the Task', async () => {
   const { fixture, platform } = await prepared();
+  // B06: the witness owner is published in the evidence group beside the command-check owners.
+  expect(typeof platform.evidence.recordWitness).toBe('function');
   const opened = await platform.evidence.openVerification(fixture.ctx, fixture.openRequest());
   expect(opened, 'formal open must commit').toMatchObject({ status: 'committed', value: { status: 'open' } });
   if (opened.status !== 'committed') throw Error('open did not commit');

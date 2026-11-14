@@ -55,6 +55,8 @@ E3-7 的新文件：`tests/contracts/E37-line-edit-counts-pure.test.ts`（`gitLi
 
 7D2 B06G1 的新文件：`tests/work-graph/SB06-pure.test.ts`（纯表：P1 见证判定 `runWitnessCheck`，FAIL 先于 INCONCLUSIVE 先于 PASS，每个失败和缺口原因各一格；P2 `pathVerdictsOf` 按要求的顺序精确比，不安全或带通配符的路径记 unknown；P3 `effectsOf` 只读存下的活动事实，已确认改动先于可疑改动，借 `S2B-activity-fixture.ts` 的 `countedFacts`；C 经 `compileVerificationPlan` 核见证项带的路径并集）、`tests/work-graph/SB06-plan.test.ts`（经公开 `plans/propose` 送字符串的 `requiredReadPaths` 被计划 codec 拒，同一 requestId 改成数组后提交，memory）；`tests/app/host-settings.test.ts` 的 rejects 块加了 B06 R1 两格（`checks/approve` 请求或存下的 Answer 带保留 id `platform:witness`，各由自己那道闸拒，设置不变）。
 
+7D2 B06G2 的新文件：`tests/helpers/SB06-witness-fixture.ts`（SB06 唯一世界：S6A Host + Git 根（`git: false` 留普通根，它只有 `src/module.ts` 和 `tsconfig.json`）+ 收 static/witness/reviewer 的政策 + `plans/propose`/`plans/apply` + 每个 work 任务一条线；`driveSB06` 停在 `run_check` 前或 `finalize_checks` 后；读 `graph/look` card/evidence、`tasks/query`、`materials/open`），`tests/work-graph/SB06-flow|witness|read.test.ts`、`tests/scenarios/SB06-restart.test.ts`。
+
 7D2 K3L-1 施工方的新文件：`tests/work-graph/K3L1-owner.test.ts`（结果未知分两层在 owner 层、验收行到不了的规则：真实的阻塞记录经 owner 的 `settleReview{adviserAvailable:true}` 进 `awaiting_advice`；只换 Query 读口（`queries`，答复正文用契约自己的 `unknownCallAdviceAnswerText` 写），职责读口也是替身（这个世界没有 Session 目录），原命令读口一直失败（A2）。O1 参谋的“照原样重跑”落实一次、来源 `adviser`、同一答复重放（memory 和 SQLite）；O2 冻结在旧版本的答复 `revision_conflict`；O3 答复冻结之后人把目标改成每步确认（目标内容变了，T02），原答复 `revision_conflict`、记录不变；O5 参谋上报，第二层卡的摘要两行、没有“照建议”；O6 纯表：去处规则的连续两种和方案的来源；O7 人点了“我来处理”之后，钉在旧版本上的参谋答复 `revision_conflict`、记录不变；O8 原命令读失败时，连续第二次中断（V5 的第二个 Run）带参谋的“跳过”照样升人、建议记在 escalation 里；R1 答复的 Session 不是参谋 `forbidden`；R2 Query 还在跑（还没有 answerRef）`incomplete`、记录不变；R3（K3L-3）Query 是别的回答形状（`plan_round`）、答复正文能解析，照样 `invalid`、记录不变（答复只经参谋那一轮的提交工具写）；O9（K3L-3）参谋线在另一个工作区，答复经发件回执给的真实 ref 读到并落实；其余只跑 memory）。
 
 7D2 CTXFIT 的新文件：`tests/kernel/CTXFIT-latest-exchange.test.ts`（Kernel 选择策略的尾段，`selectContext` 的公开入口加 `PC-kernel-fixture.ts` 的 `bytePreview`；最新一段已闭合的当前交换不再整段删，本轮较早的几段都删光仍装不下时，按最长可行前缀截它的结果正文、正文后接“结果过长，本次上下文只放得下前 c 字节（原 M 字节）；需要其余部分请缩小范围或分页再读”，截断计入 `removed.toolResultBody`；三格：调用和截断后的结果仍成对出现、两个结果共用一个 c 并各计一次、c=0 也装不下时回 `required_content_over_budget`。今天 dist 还是旧行为，三格都红，包落地后转绿）。
@@ -319,6 +321,7 @@ commit 闸门、阻塞替身、store/Kernel 读故障和崩溃重启；只在规
 
 笔记、memory、全文索引和证据链；写入经 `platform.notes`/evidence owner，读故障也只在允许的端口上包。
 
+- `witness-stub.ts` — B06 G2 的编译迁移桩（一份，不在各处另写）：`unavailableWitnessFacts` 用真实 `readWitnessFacts` 读一个不可用的历史、只给 unknown，给不跑见证检查的 `createEvidenceService` 构造点；`unavailableWitnessEvidence`（`recordWitness`/`readEvidence` 都答 unavailable）给 `EvidencePort` 双打和 graph reader 的 `evidence`。
 - `R3e-evidence-fixture.ts` — 在真实 B2 执行世界上经公共操作装 R3e bootstrap/evidence schema、真实 Project bootstrap 和独立 static CompletionPolicy，再测证据；换到新工作区根时把认领世界根里的 `.workbench/` 一起拷过去；`tests/app/RL-34-wiring-resource-caps.test.ts` 在用。
 - `S4A-note-fixture.ts` — 真实 `createTargetPlatform`（memory/SQLite）+ 临时 workspace、catalog、Goal/Plan、Run，给注记 W1 行；Host 的根表也是平台的知识工作区清单，`addWorkspaceRoot(projectId, workspaceId)` 给别的 (项目, 工作区) 一个自己的临时根；`tests/app/S4C2-scribe-reminders.test.ts` 在用。
 - `S4A-note-scope-fixture.ts` — 4A group G：真实平台 + 显式 `containment.parentOf` catalog 和多 scope，给 N-20/21/22 与按 scope 计数；Host 的根表也是知识工作区清单（主工作区在前），`addWorkspaceRoot(workspaceId)` 给行后来登记的工作区一个单独的空临时根；`tests/work-graph/S4A-note-failures.test.ts` 在用。

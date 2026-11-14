@@ -988,6 +988,8 @@ function taskRow(plan: PlanRevisionSnapshot, goalId: string,
     : (facts.requeuesByTaskId.get(taskId) ?? []).find((requeue) => sameJson(requeue.ref, coveringRequeueRef))?.budget ?? null;
   // C7 (TD-4): the latest disposition change as the read Plan records it; no history walk.
   const dispositionChange = plan.dispositionRecord?.entries.find((entry) => entry.taskId === taskId);
+  // B06 W-7: the same canonical window's reduction; no new store read.
+  const reduction = facts.reductionsByTaskId.get(taskId);
   return {
     ref: { projectId: plan.ref.projectId, goalId, taskId },
     definition,
@@ -1004,6 +1006,7 @@ function taskRow(plan: PlanRevisionSnapshot, goalId: string,
     ...(selectedRun === undefined ? {} : { attemptOrdinal: attemptOrdinalOf(selectedRun, executionRuns) }),
     disposition: definition.disposition,
     ...(dispositionChange === undefined ? {} : { dispositionChange }),
+    ...(reduction === undefined ? {} : { reduction }),
     currentAttempt: state.currentAttempt,
     execution: state.execution,
     // L7: the selected Run's review record, or its fail-closed `unreadable`.

@@ -39,6 +39,7 @@
  *   admission seam and an Agent note are refused; an Agent Run that ends
  *   between the admission and the commit writes nothing.
  */
+import { unavailableWitnessFacts } from '../helpers/witness-stub.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -119,7 +120,7 @@ function reverifier(fixture: R3eEvidenceFixture, tag: string, extra: Partial<Evi
   const source: VerificationRoundSourcePort = { capture(root) { captures += 1; return reader.capture(root); } };
   const configuration = { current: fixture.configuration };
   const policy = { current: { ...DEFAULT_TASK_AUTOMATION_POLICY } };
-  const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(fixture.records, fixture.workspaceHost),
+  const evidence = createEvidenceService({ witnessFacts: unavailableWitnessFacts, knowledge: knowledgeLinesOver(fixture.records, fixture.workspaceHost),
     records: fixture.records, commitIdentities: fixture.b2.base.commitIdentities, materials: fixture.materials,
     executions: createRunStateReader({ records: fixture.records }),
     workspaceHost: fixture.workspaceHost, source,
@@ -472,7 +473,7 @@ it.each(KINDS)('%s: two reverifies of one head, and a reverify racing a requeue 
   let race = synchronizeB2Commits(fixture.records);
   const raced = (tag: string) => {
     let sequence = 0;
-    return createEvidenceService({ knowledge: knowledgeLinesOver(race.records, fixture.workspaceHost), records: race.records,
+    return createEvidenceService({ witnessFacts: unavailableWitnessFacts, knowledge: knowledgeLinesOver(race.records, fixture.workspaceHost), records: race.records,
       commitIdentities: fixture.b2.base.commitIdentities, materials: fixture.materials,
       executions: createRunStateReader({ records: fixture.records }), workspaceHost: fixture.workspaceHost,
       source: new VerificationWorkspaceReader(), configuration: fixture.configuration, now: () => B2_AT,

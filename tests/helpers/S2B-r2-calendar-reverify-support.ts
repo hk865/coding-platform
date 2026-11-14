@@ -9,6 +9,7 @@
  * the public `recordCheckResult` / `finalizeChecks` / `reverifyRound` all run on
  * the real owner. Nothing here writes a record directly.
  */
+import { unavailableWitnessFacts } from './witness-stub.js';
 import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { PlanRevisionRef } from '../../src/contracts/plan.js';
 import type { CheckExecutionTicket, CheckProcessObservation, RoundSnapshot, TrustedCheckConfiguration } from '../../src/contracts/verification.js';
@@ -52,7 +53,7 @@ export async function openCalendarReverifyFixture(kind: 'memory' | 'sqlite'): Pr
     checks: [1, 2, 3, 4].map((n) => ({ checkId: `check-${String(n)}`, kind: 'static', command: 'fixture-check',
       cwd: '.', timeoutMs: 1000, taskIds: 'all' })),
   };
-  const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(records),
+  const evidence = createEvidenceService({ witnessFacts: unavailableWitnessFacts, knowledge: knowledgeLinesOver(records),
     records,
     commitIdentities: f.b2.base.commitIdentities,
     executions: createRunStateReader({ records }),

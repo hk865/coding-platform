@@ -29,6 +29,7 @@
  * steps returned (or a public task-timeline or task-graph read), never
  * recomputed here.
  */
+import { unavailableWitnessFacts } from '../helpers/witness-stub.js';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -225,7 +226,7 @@ async function setupPlans(): Promise<PlanFixture> {
     const executions = createRunStateReader({ records });
     const materials = createMaterialService({ bodies: b2.bodies,
       authority: createMaterialRecordReaders(records).authority, now: () => AT });
-    const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(records, workspaceHost), records,
+    const evidence = createEvidenceService({ witnessFacts: unavailableWitnessFacts, knowledge: knowledgeLinesOver(records, workspaceHost), records,
       commitIdentities: b2.base.commitIdentities, materials, executions, workspaceHost,
       source: new VerificationWorkspaceReader(), configuration, now: () => AT, newId });
     const runner = createRegisteredCheckRunner({ evidence, workspaceHost, kernel, now: () => AT });

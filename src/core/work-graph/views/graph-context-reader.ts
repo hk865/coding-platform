@@ -25,6 +25,7 @@ import { messageOf } from '../../../contracts/error-message.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { RunRef, RunSnapshot, TaskTriple } from '../../../contracts/dispatch.js';
+import type { EvidenceRef, EvidenceV1 } from '../../../contracts/evidence.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import { edgeDeclarationId, legacyDeclarationId } from '../../../contracts/input-declaration-id.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
@@ -60,6 +61,7 @@ import type {
   GraphFindRequestV1, GraphLookRequestV1, GraphReadPageV1, GraphTaskCardV1, NodeCardV1,
 } from '../model/graph-context-contracts.js';
 import type { DispatchBasisReadPort } from '../model/dispatch-basis-contracts.js';
+import type { EvidencePort } from '../model/evidence-contracts.js';
 import { createDispatchBasisReader } from '../tasks/dispatch-basis.js';
 import { createGoalPointerFacts } from './pointer-facts.js';
 import { decodeRun } from '../materials/run-snapshot-decoder.js';
@@ -83,6 +85,8 @@ export type GraphContextReaderDependencies = {
   sessions: Pick<SessionDirectoryPort, 'findSessions' | 'readSession'>;
   executions: ExecutionReadPort & Required<Pick<ExecutionReadPort, 'listExecutions'>>;
   inputs: TaskContextInputPort;
+  /** B06 W-7: the `evidence` relation reads each round Evidence through the owner. */
+  evidence: Pick<EvidencePort, 'readEvidence'>;
   hostActor: Extract<ActorRef, { kind: 'human' | 'system' }>;
   extensions?: ContextExtensionsReaderV1;
   /** The one consistent basis read injected by the composition; absent builds the default over `records`. */
@@ -98,7 +102,7 @@ export type GraphContextReaderDependencies = {
 const KIND_ORDER: Record<GraphNodeRefV1['kind'], number> = {
   goal: 0, stage: 1, task: 2, module: 3, session: 4, run: 5, round: 6,
 };
-const GRAPH_RELATIONS = ['card', 'children', 'neighbours', 'executions', 'checks'] as const;
+const GRAPH_RELATIONS = ['card', 'children', 'neighbours', 'executions', 'checks', 'evidence'] as const;
 /** Fixed in-call page budget for every underlying owner list. Reaching it is
  * `incomplete`: a partial candidate list is never published as the full set. */
 const GRAPH_PAGE_BUDGET = 50;
@@ -1357,7 +1361,7 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
   }
 
   function buildCard(node: GraphNodeRefV1, universe: Universe, indexes: ContextExtensionsV1,
-    dispatchBasis: DispatchBasisV1 | null): NodeCardV1 {
+    dispatchBasis: DispatchBasisV1 | null, evidence: ReadonlyMap<string, EvidenceV1> | null): NodeCardV1 {
     const presentation = presentationOf(node, universe);
     const task = node.kind === 'task' ? taskCardOf(node, universe) : null;
     const goal = node.kind === 'goal' ? universe.goal : null;
@@ -1386,6 +1390,10 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
     const rounds: VerificationRoundRef[] = node.kind === 'task'
       ? [...universe.roundCache.values()].filter(candidate => candidate.subject.taskId === node.ref.taskId).map(candidate => candidate.ref)
       : [];
+    // B06 W-7: only the `evidence` relation passes the page's Evidence (a round with none shows `[]`).
+    const roundEvidence = round !== null && evidence !== null
+      ? round.evidenceRefs.map(ref => evidence.get(canonicalJson(ref as unknown as JsonValue))!)
+      : undefined;
     return {
       node,
       name: presentation.name,
@@ -1407,6 +1415,7 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
       inputDeclarations: node.kind === 'task' && universe.plan !== null ? declarationsForTask(universe.plan, node.ref.taskId) : [],
       indexes,
       sources: cardSources(universe, node),
+      ...(roundEvidence === undefined ? {} : { evidence: roundEvidence }),
     };
   }
 
@@ -1523,7 +1532,7 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
    * a page that shows a Goal card; its failure is the page's rejection, never a null field. */
   async function pageOfMatches(universe: Universe, matched: readonly GraphNodeRefV1[], indexes: ContextExtensionsV1,
     scopeKey: string, queryKey: string, afterOffset: number, limit: number, basisKey: string,
-    ctx: CoreCallContext, goalRef: GoalRef | null):
+    ctx: CoreCallContext, goalRef: GoalRef | null, evidenceCtx: CoreCallContext | null):
   Promise<ReadResult<GraphReadPageV1<NodeCardV1>>> {
     const sorted = dedupeSort(matched);
     const pageItems = sorted.slice(afterOffset, afterOffset + limit);
@@ -1537,14 +1546,40 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
       if (basis.status !== 'ready') return propagate(basis);
       dispatchBasis = basis.value;
     }
+    // B06 W-7: the page's Evidence, read after paging; any ref that is not ready fails the whole page.
+    let evidence: ReadonlyMap<string, EvidenceV1> | null = null;
+    if (evidenceCtx !== null) {
+      const read = await evidenceOfPage(evidenceCtx, universe, pageItems);
+      if (read.status !== 'ready') return propagate(read);
+      evidence = read.value;
+    }
     return {
       status: 'ready',
       value: {
-        items: pageItems.map(node => buildCard(node, universe, indexes, dispatchBasis)),
+        items: pageItems.map(node => buildCard(node, universe, indexes, dispatchBasis, evidence)),
         nextCursor,
         readThrough: universe.graph?.sourceCursor ?? null,
       },
     };
+  }
+
+  /** The page's distinct round EvidenceRefs, each read once through the owner. */
+  async function evidenceOfPage(ctx: CoreCallContext, universe: Universe, pageItems: readonly GraphNodeRefV1[]):
+  Promise<ReadResult<ReadonlyMap<string, EvidenceV1>>> {
+    const refs = new Map<string, EvidenceRef>();
+    for (const node of pageItems) {
+      if (node.kind !== 'round') continue;
+      for (const ref of universe.roundCache.get(nodeKey(node))?.evidenceRefs ?? []) {
+        refs.set(canonicalJson(ref as unknown as JsonValue), ref);
+      }
+    }
+    const byRef = new Map<string, EvidenceV1>();
+    for (const [key, ref] of refs) {
+      const read = await deps.evidence.readEvidence(ctx, ref);
+      if (read.status !== 'ready') return propagate(read);
+      byRef.set(key, read.value.evidence);
+    }
+    return { status: 'ready', value: byRef };
   }
 
   /** The request path's own workspace, projected to bare module paths. */
@@ -1737,6 +1772,11 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
               .map(round => ({ kind: 'round', ref: round.ref }));
             break;
           }
+          case 'evidence':
+            // B06 W-7: a round's Evidence; the relation names a round, other targets are a caller error.
+            if (node.kind !== 'round') return rejected('invalid', 'the evidence relation requires a round target');
+            relationNodes = [node];
+            break;
           default:
             return rejected('invalid', 'lookGraph relation is not recognized');
         }
@@ -1757,7 +1797,8 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
       if (indexes.status !== 'ready') return propagate(indexes);
       const basisKey = basisKeyOf(universe);
       if (cursorBasis !== null && cursorBasis !== basisKey) return revisionConflict(universe, ctx, goalRef);
-      return pageOfMatches(universe, relationNodes, indexes.value, scopeKey, queryKey, afterOffset, page.limit, basisKey, ctx, goalRef);
+      return pageOfMatches(universe, relationNodes, indexes.value, scopeKey, queryKey, afterOffset, page.limit, basisKey, ctx, goalRef,
+        request.relation === 'evidence' ? executionCtx : null);
     }
 
     const loaded = await loadProjectUniverse(ctx,
@@ -1794,7 +1835,8 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
     if (indexes.status !== 'ready') return propagate(indexes);
     const basisKey = basisKeyOf(universe);
     if (cursorBasis !== null && cursorBasis !== basisKey) return revisionConflict(universe, ctx, null);
-    return pageOfMatches(universe, relationNodes, indexes.value, scopeKey, queryKey, afterOffset, page.limit, basisKey, ctx, goalRef);
+    return pageOfMatches(universe, relationNodes, indexes.value, scopeKey, queryKey, afterOffset, page.limit, basisKey, ctx, goalRef,
+      null);
   }
 
   // ---------------------------------------------------------------------- //
@@ -1851,7 +1893,8 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
       if (cursorBasis !== null && cursorBasis !== basisKey) return revisionConflict(universe, ctx, goalRef);
       const matched = await matchedNodes(ctx, universe, candidates, needle);
       if (matched.status !== 'ready') return propagate(matched);
-      return pageOfMatches(universe, matched.value, indexes.value, scopeKey, queryKey, afterOffset, page.limit, basisKey, ctx, goalRef);
+      return pageOfMatches(universe, matched.value, indexes.value, scopeKey, queryKey, afterOffset, page.limit, basisKey, ctx, goalRef,
+        null);
     }
 
     const loaded = await loadProjectUniverse(ctx, { sessions: true });
@@ -1870,7 +1913,8 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
     if (cursorBasis !== null && cursorBasis !== basisKey) return revisionConflict(universe, ctx, null);
     const matched = await matchedNodes(ctx, universe, candidates, needle);
     if (matched.status !== 'ready') return propagate(matched);
-    return pageOfMatches(universe, matched.value, indexes.value, scopeKey, queryKey, afterOffset, page.limit, basisKey, ctx, goalRef);
+    return pageOfMatches(universe, matched.value, indexes.value, scopeKey, queryKey, afterOffset, page.limit, basisKey, ctx, goalRef,
+      null);
   }
 
   // ---------------------------------------------------------------------- //

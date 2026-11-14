@@ -38,6 +38,7 @@
  *
  * Nothing here touches the network.
  */
+import { unavailableWitnessFacts } from './witness-stub.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { SessionRef, VersionPin } from '../../src/contracts/core/identity.js';
 import type { ArchiveStepRefV1, RequestSessionArchiveInput } from '../../src/contracts/core/session-archive.js';
@@ -224,7 +225,7 @@ export async function openS2BTimelineFixture(kind: ClaimFixtureKind = 'memory'):
     checks: [{ checkId: 'check-1', kind: 'static', command: 'fixture-check',
       cwd: '.', timeoutMs: 1000, taskIds: 'all' }],
   };
-  const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(baseRecords),
+  const evidence = createEvidenceService({ witnessFacts: unavailableWitnessFacts, knowledge: knowledgeLinesOver(baseRecords),
     records: baseRecords, commitIdentities: b2.base.commitIdentities, executions: runReads, materials,
     workspaceHost: {
       async resolveRoot() { return { status: 'ready' as const, value: { root: b2.base.directory, workspaceRevision: 1 } }; },

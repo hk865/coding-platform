@@ -23,6 +23,7 @@
  * The real prepare is wired; entered and end are still handwritten because
  * W1-15 is BLOCKED. No model, no network.
  */
+import { unavailableWitnessFacts } from './witness-stub.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import { withBackendOrderedLookup } from './ordered-lookup-forward.js';
 import type { SessionRef, VersionPin, RoleConfigurationRef } from '../../src/contracts/core/identity.js';
@@ -193,7 +194,7 @@ export async function openS2BTrackFixture(kind: S2BTrackFixtureKind = 'memory'):
     checks: [1, 2, 3, 4].map((n) => ({ checkId: `check-${String(n)}`, kind: 'static', command: 'fixture-check',
       cwd: '.', timeoutMs: 1000, taskIds: 'all' })),
   };
-  const evidence = createEvidenceService({ knowledge: knowledgeLinesOver(baseRecords),
+  const evidence = createEvidenceService({ witnessFacts: unavailableWitnessFacts, knowledge: knowledgeLinesOver(baseRecords),
     records: baseRecords,
     commitIdentities: b2.base.commitIdentities,
     executions: runReads,

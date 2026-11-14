@@ -77,7 +77,7 @@
 - `reviewer-work.ts` — 独立审查聚合：`TaskReviewProtocolRef`、`ReviewWorkRef`、绑定与 `ReviewWorkSnapshot`。
 - `verification-context.ts` — 验证轮来源证明、来源端口、范围与材料身份。
 - `verification-import.ts` — `VerificationScope`：验证的目标范围。
-- `verification.ts` — 检查/验证轮/风险契约与 `CHANGE_SCOPE_MAX_FILES`、`ROUND_CHECK_INCOMPLETE_CAUSES` 等常量；检查种类含见证 `witness`，保留 id 的唯一正本 `PLATFORM_WITNESS_CHECK_ID` 与判定 `isPlatformReservedCheckId`，计划的 `requiredReadPaths` 与七个见证三态类型（`WitnessRunState`、`WitnessReport`、`WitnessReadSet`、`WitnessPathVerdict`、`WitnessFacts`、`WitnessCheckInput`、`WitnessCheckResult`）。
+- `verification.ts` — 检查/验证轮/风险契约与 `CHANGE_SCOPE_MAX_FILES`、`ROUND_CHECK_INCOMPLETE_CAUSES` 等常量；检查种类含见证 `witness`，保留 id 的唯一正本 `PLATFORM_WITNESS_CHECK_ID` 与判定 `isPlatformReservedCheckId`，计划的 `requiredReadPaths` 与七个见证三态类型（`WitnessRunState`、`WitnessReport`、`WitnessReadSet`、`WitnessPathVerdict`、`WitnessFacts`、`WitnessCheckInput`、`WitnessCheckResult`）；B06 G2：轮次检查的定义 `RoundCheckDefinition` 是登记的命令检查或平台见证 `RegisteredWitnessCheck`（只带要读的路径，没有命令、没有进程），能力表的唯一 builder `checkCapabilitiesOf` 在登记的命令检查之后无条件追加 `platformWitnessCapability()`（零命令检查也得到见证能力）。
 
 ### 材料与架构
 做架构目录/观察/源码快照、artifact、材料授权与路径归属的去这组。
@@ -280,10 +280,11 @@
 | `DEFAULT_RUNTIME_BUDGET`、`MAX_RESPONSE_TOKENS` | `src/contracts/runtime-budget.ts:19`、`src/contracts/runtime-budget.ts:21` | 默认预算与单次响应 token 上限。 | 归一预算时。 |
 | `WORKFLOW_AUTOMATION_ACTOR`、`GOAL_FAN_OUT_ACTOR`、`SESSION_ARCHIVE_AUTOMATION_ACTOR`、`STRUCTURAL_AUTO_APPROVAL_ACTOR`、`PLATFORM_AUTOMATION_ACTORS`、`REWORK_FAILURE_CLASSES`、`DEFAULT_AUTO_REWORK_LIMIT`、`MAX_AUTO_REWORK_LIMIT`、`DEFAULT_TASK_AUTOMATION_POLICY`、`TASK_REWORK_REASON_MAX_CHARS`、`TASK_REWORK_REFUSAL_CODES` | `src/contracts/task-requeue.ts:231` | 自动化 actor 闭集、返工失败分类、自动返工上限与默认策略。 | 归类 actor、校验返工与拒绝原因。 |
 | `UNKNOWN_CALL_APPROVED_METHODS_MAX_BYTES`、`UNKNOWN_CALL_REVIEW_T02_REASON` | `src/contracts/unknown-call-review.ts:210`、`src/contracts/unknown-call-review.ts:210` | 已批准方法文本上限与 T02 原因文本。 | 生成/展示审查记录时。 |
-| `CHANGE_SCOPE_MAX_FILES`、`ROUND_CHECK_INCOMPLETE_CAUSES`、`INTERRUPTED_CHECK_GAP_CODE`、`ROUND_CHAIN_MAX` | `src/contracts/verification.ts:159` | 变更范围上限、未完成原因闭集、中断缺口码与轮链上限。 | 验证轮校验。 |
-| `PLATFORM_WITNESS_CHECK_ID`、`isPlatformReservedCheckId` | `src/contracts/verification.ts:299`、`src/contracts/verification.ts:302` | 保留的平台见证检查 id（`platform:witness`）的唯一正本，以及它唯一的比较入口；Host 两道闸各调一次，别处不得再写这个字面量。 | 校验 Host 注册/提议的检查 id 时；不要另写字面量或第二份谓词。 |
-| `compileVerificationCoverage` | `src/contracts/verification.ts:334` | 必需义务覆盖的纯编译：按已注册检查能力的覆盖顺序给出检查计划与未覆盖项；第 9 片起 reviewer 要求无条件放进一个 `{checkId:'review-packet', kind:'reviewer', satisfiesKind:'reviewer', satisfactionPath:'review-packet'}` 项（按 pair 去重，永不进 uncovered）。 | 验证计划编译与计划候选诊断共用；不要另写覆盖规则。 |
-| `reviewPacketItemOf` | `src/contracts/verification.ts:324` | 第 9 片：取计划里唯一的 `review-packet` 项（Task 的审阅 pair）；没有审阅要求时为空。 | 状态机的 fold/VR-16、evidence 的审阅事实、轮次读的审阅显示都用它找审阅项；不要再写 `checks.find(satisfactionPath === 'review-packet')`。 |
+| `CHANGE_SCOPE_MAX_FILES`、`ROUND_CHECK_INCOMPLETE_CAUSES`、`INTERRUPTED_CHECK_GAP_CODE`、`ROUND_CHAIN_MAX` | `src/contracts/verification.ts:168` | 变更范围上限、未完成原因闭集、中断缺口码与轮链上限。 | 验证轮校验。 |
+| `PLATFORM_WITNESS_CHECK_ID`、`isPlatformReservedCheckId` | `src/contracts/verification.ts:308`、`src/contracts/verification.ts:311` | 保留的平台见证检查 id（`platform:witness`）的唯一正本，以及它唯一的比较入口；Host 两道闸各调一次，别处不得再写这个字面量。 | 校验 Host 注册/提议的检查 id 时；不要另写字面量或第二份谓词。 |
+| `platformWitnessCapability`、`checkCapabilitiesOf` | `src/contracts/verification.ts:316`、`src/contracts/verification.ts:321` | 内置见证能力的唯一原件，和两张能力表（开轮编译、`planChecks`）共用的 builder：登记的命令检查各一项，最后总是内置见证。 | 给编译器或计划诊断造能力表时；不要另写 map 或另加见证项。 |
+| `compileVerificationCoverage` | `src/contracts/verification.ts:355` | 必需义务覆盖的纯编译：按已注册检查能力的覆盖顺序给出检查计划与未覆盖项；第 9 片起 reviewer 要求无条件放进一个 `{checkId:'review-packet', kind:'reviewer', satisfiesKind:'reviewer', satisfactionPath:'review-packet'}` 项（按 pair 去重，永不进 uncovered）。 | 验证计划编译与计划候选诊断共用；不要另写覆盖规则。 |
+| `reviewPacketItemOf` | `src/contracts/verification.ts:345` | 第 9 片：取计划里唯一的 `review-packet` 项（Task 的审阅 pair）；没有审阅要求时为空。 | 状态机的 fold/VR-16、evidence 的审阅事实、轮次读的审阅显示都用它找审阅项；不要再写 `checks.find(satisfactionPath === 'review-packet')`。 |
 | `CopyInterventionStateV1`、`CopyInterventionCandidateV1` | `src/contracts/goal-copy-retraction.ts:11`、`src/contracts/goal-copy-retraction.ts:11` | 复制取消的候选状态闭集（`withdrawn`/`applied`/`rejected`/`copied`/`delivered`/`not_delivered`）与候选 DTO（消息 ref、版本、状态、可选/可撤回及各自原因）。 | 候选规则与 copy 端口引用候选类型时；不要另写候选形状。 |
 
 ## 内部用
