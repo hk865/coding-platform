@@ -3,7 +3,7 @@
 **当前状态。** 先读 [STATUS](docs/refactor/STATUS.md)（当前状态、缺口和下一步），再读 [HANDOFF 顶部](docs/refactor/HANDOFF.md)（决定 1–121，现行读法见[决定表](docs/refactor/DECISIONS.md)）。整个 MVP 还没有完成。
 - **这段为什么变短。** 2026-11-12 以前，这一段逐包列了落地提交和全量数字，约 45KB。这个文件每个 agent 都会装，所以挪走了（决定 121-94）。
 - **旧内容在哪。** 原文可以用 `git show ba9fe9a7:AGENTS.md` 看第 3、4 行。同样的内容按包记在 HANDOFF 的各条决定和 STATUS 的“已完成”里。
-- **推送。** 远端 `feat/orchestration-slices` 在 `bf0d849d`（用户 11-13 晚推送），之后的提交等用户推送。远端 `next-main` 不动。本地主检出目录（`next-main`）还在 `8f7d158f`，等快进。
+- **推送。** 远端 `feat/orchestration-slices` 在 `6c906545`（用户 11-14 下午推送，到第八批文档），之后的提交等用户推送。远端 `next-main` 不动。本地主检出目录（`next-main`）还在 `8f7d158f`，等快进。
 
 *界面基线。* 新原型在 [Design 画布](https://claude.ai/artifact/3e5ynF3rwtMQfvJuim9mL2)上，只有用户本人能打开。
 - 用户 2026-10-05 批准了原型（画布第 9 版）。2026-10-06 按 HANDOFF 决定 25–30 改版，发布为画布第 14 版；2026-10-07 按决定 33 改了左栏工作线的点击，发布为画布第 16 版。用户确认后冻结（决定 35），画板文件和设计说明复制进 [docs/ui-reference/workbench-2026-10](docs/ui-reference/workbench-2026-10/README.md)。
