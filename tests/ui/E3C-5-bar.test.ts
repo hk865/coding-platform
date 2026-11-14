@@ -7,6 +7,7 @@ import {
   UUID_V4, buttonText, callsOf, controlPins, memberSearch, metaOf, openMemberW4, press, settle, worldSlot,
 } from './helpers/E3M-world.js';
 import { countRoute, textOf } from './helpers/E3N-page.js';
+import { pressKey } from './helpers/E3N-interact.js';
 import type { FakeElement } from './helpers/dom.js';
 
 /**
@@ -109,6 +110,16 @@ describe('E3C-5 the task bar and its controls', () => {
         /* The page read the selected line it would cancel (§1.4), then wrote nothing.
            具名改坏: 确认框一开就发 `cancel`；本条目的零请求红。 */
         expect(countRoute(log, 'lines/read')).toBeGreaterThanOrEqual(1);
+        expect(countRoute(log, 'controls/submit')).toBe(0);
+        const keep = buttonText(confirmDialog(page.root), '不取消');
+        /* 具名改坏: 卡打开时不把焦点移到“不取消”；本行红。 */
+        expect(document.activeElement).toBe(keep);
+        /* 具名改坏: 卡上不接 Esc；卡仍在，本行的 `dialog` 断言红。 */
+        pressKey(keep!, 'Escape');
+        await settle(() => confirmDialog(page.root) === undefined);
+        expect(confirmDialog(page.root)).toBeUndefined();
+        /* 具名改坏: Esc 后不把焦点还给打开它的“取消”；本行红。 */
+        expect(document.activeElement).toBe(buttonText(taskBar(page.root), '取消'));
         expect(countRoute(log, 'controls/submit')).toBe(0);
         return;
       }

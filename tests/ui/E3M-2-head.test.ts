@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { findClass, findElement, type BootedPage } from './helpers/boot-page.js';
 import { countRoute, hasClass, textOf, type PageLog } from './helpers/E3N-page.js';
+import { pressKey } from './helpers/E3N-interact.js';
 import { openW1 } from './helpers/E3N-world.js';
 import {
   UUID_V4, bootMemberAt, bootMemberOnHost, buttonText, callsOf, controlPins, headFact, memberSearch, metaOf, receiptBody,
@@ -84,6 +85,31 @@ describe('E3M-2 the Member head', () => {
       await page.restore();
     }
   }, 120_000);
+
+  it('R12b 取消 confirm focuses 不取消; Esc keeps it, returns focus and writes nothing', async () => {
+    const w = await w2();
+    const { page, log } = await bootMemberAt(w.s7c.world, memberSearch('s7c-goal', w.module));
+    try {
+      const opener = buttonText(acts(page), '取消');
+      press(opener, '取消');
+      const dialog = () => findElement(page.root, (element) => element.getAttribute('role') === 'alertdialog');
+      await settle(() => dialog() !== undefined);
+      const keep = buttonText(dialog(), '不取消');
+      expect(keep).toBeDefined();
+      /* 具名改坏: 卡打开时不把焦点移到“不取消”；本行红。 */
+      expect(document.activeElement).toBe(keep);
+      expect(countRoute(log, 'controls/submit')).toBe(0);
+      /* 具名改坏: 卡上不接 Esc；卡仍在、`controls/submit` 仍零，但 `dialog` 断言红。 */
+      pressKey(keep!, 'Escape');
+      await settle(() => dialog() === undefined);
+      expect(dialog()).toBeUndefined();
+      /* 具名改坏: 按 Esc 后不把焦点还给打开它的“取消”；本行红。 */
+      expect(document.activeElement).toBe(opener);
+      expect(countRoute(log, 'controls/submit')).toBe(0);
+    } finally {
+      await page.restore();
+    }
+  });
 
   it('R13 取消执行 submits one cancel (M14/M30/G08/G18)', async () => {
     const w = await w2();

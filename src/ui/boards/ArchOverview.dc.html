@@ -111,7 +111,7 @@ body { margin: 0; background: #1F1F1F; }
 
   <!-- ================= HEADER ================= -->
   <header class="ov-bar">
-    <a class="btn btn-sm ov-back" href="Main.dc.html">
+    <a class="btn btn-sm ov-back" href="{{mainHref}}">
       <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="m10 4-4 4 4 4"></path></svg>
       返回工作台
     </a>
@@ -372,7 +372,7 @@ body { margin: 0; background: #1F1F1F; }
             <sc-for list="{{det.acts}}" as="a" hint-placeholder-count="1">
               <button class="btn-text" type="button" onClick="{{a.go}}">{{a.label}}</button>
             </sc-for>
-            <a class="btn-text" href="Main.dc.html">在工作台里看</a>
+            <a class="btn-text" href="{{mainHref}}">在工作台里看</a>
           </div>
         </section>
       </sc-if>
@@ -2631,6 +2631,7 @@ class Component extends DCLogic {
     const blankNoop = () => {};
     return {
       rootMod: theme === 'light' ? 't-light' : '',
+      mainHref: this.props.mainHref || 'Main.dc.html',
       themeLabel: theme === 'light' ? '切换到深色' : '切换到浅色',
       toggleTheme: () => set({ theme: theme === 'light' ? 'dark' : 'light' }),
       crumbs: [],
@@ -2889,6 +2890,7 @@ class Component extends DCLogic {
       : '来源：分组取自 module-target.json、边界检查' + (SS[lid] ? '与 ' + SS[lid] : '、模块文档与 WorkGraph 拆分提案') + '；连线是 ' + this.dataHead() + ' 的源码 import';
     const out = {
       rootMod: theme === 'light' ? 't-light' : '',
+      mainHref: this.props.mainHref || 'Main.dc.html',
       themeLabel: theme === 'light' ? '切换到深色' : '切换到浅色',
       toggleTheme: () => set({ theme: theme === 'light' ? 'dark' : 'light' }),
       crumbs: crumbs,

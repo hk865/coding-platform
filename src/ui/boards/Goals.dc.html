@@ -339,7 +339,7 @@ body { margin: 0; background: #1F1F1F; }
         <!-- data/taskpanel.snippet.html [1], the link (the approved 树 / 大纲 switch stays): the full page = DAG + 大纲 + 轨道. Review
              fix: the title says which goal opens — the canvas has one DAG page, goal 1's; this map holds goals 1 and 2 -->
         <sc-if value="{{tpIsTask}}" hint-placeholder-val="{{ false }}">
-          <a class="btn-text plink" href="TaskMap.dc.html" title="整页的任务图：依赖图（DAG）、大纲和轨道">
+          <a class="btn-text plink" href="{{taskMapHref}}" title="整页的任务图：依赖图（DAG）、大纲和轨道">
             整页查看
             <svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.25 2.75h4v4M13.25 2.75 7.75 8.25"></path><path d="M11.75 9.5v3.75h-9V4.25h3.75"></path></svg>
           </a>
@@ -2023,14 +2023,15 @@ class Component extends DCLogic {
     const current = data.goals.filter((g) => g.id === data.selectedGoalId)[0] || data.goals.filter((g) => g.current)[0] || null;
     const headSub = [data.projectId, String(data.goals.length) + ' 个目标', current ? current.name : ''].filter(Boolean).join(' · ')
       + (err ? ' · ' + err : '');
-    const backHref = data.selectedGoalId ? 'Main.dc.html?goal=' + encodeURIComponent(data.selectedGoalId) : 'Main.dc.html';
 
     return {
       rootMod: (theme === 'light' ? 't-light' : '') + (s.panel === false ? ' no-panel' : ''),
       themeLabel: theme === 'light' ? '切换到深色' : '切换到浅色',
       toggleTheme: () => set({ theme: theme === 'light' ? 'dark' : 'light' }),
       togglePanel: () => set({ panel: (this.state || {}).panel === false, axNew: false }),
-      backHref: backHref, archHref: this.props.archHref || 'ArchOverview.dc.html',
+      backHref: this.props.mainHref || 'Main.dc.html',
+      taskMapHref: this.props.taskMapHref || 'TaskMap.dc.html',
+      archHref: this.props.archHref || 'ArchOverview.dc.html',
       headSub: headSub, listSize: data.goals.length,
       ax: ax, isMap: isMap, isArch: isArch, isTaskTab: isTaskTab, isPage: !!page,
 

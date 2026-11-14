@@ -691,11 +691,11 @@ button.bq-ref:hover { color: var(--text); }
         </div>
 
         <sc-if value="{{gb.confirm}}" hint-placeholder-val="{{ false }}">
-          <div class="decision" role="alertdialog" aria-label="确认取消目标">
+          <div class="decision" role="alertdialog" aria-label="确认取消目标" onKeyDown="{{gb.key}}">
             <p class="dc-line">取消目标：进行中的执行会停下，已完成的步骤和记录保留，之后可以重新入队。</p>
             <div class="dc-foot">
-              <button class="btn btn-sm first" type="button" onClick="{{gb.keep}}">不取消</button>
-              <button class="btn btn-sm btn-primary" type="button" onClick="{{gb.cancel}}">取消目标</button>
+              <button class="btn btn-sm first" type="button" onClick="{{gb.keep}}" onKeyDown="{{gb.key}}" ref="{{gb.keepRef}}">不取消</button>
+              <button class="btn btn-sm btn-primary" type="button" onClick="{{gb.cancel}}" onKeyDown="{{gb.key}}">取消目标</button>
             </div>
           </div>
         </sc-if>
@@ -1069,12 +1069,12 @@ button.bq-ref:hover { color: var(--text); }
       <div class="dock">
         <div class="dock-col">
           <sc-if value="{{lv.confirm.show}}" hint-placeholder-val="{{ false }}">
-            <div class="decision" role="alertdialog" aria-label="确认取消这次执行">
+            <div class="decision" role="alertdialog" aria-label="确认取消这次执行" onKeyDown="{{lv.confirm.key}}">
               <p class="dc-title">取消这次执行？</p>
               <p class="dc-line">{{lv.confirm.line}}</p>
               <div class="dc-foot">
-                <button class="btn btn-sm first" type="button" onClick="{{lv.confirm.keep}}">不取消</button>
-                <button class="btn btn-sm btn-primary" type="button" onClick="{{lv.confirm.go}}">取消执行</button>
+                <button class="btn btn-sm first" type="button" onClick="{{lv.confirm.keep}}" onKeyDown="{{lv.confirm.key}}" ref="{{lv.confirm.keepRef}}">不取消</button>
+                <button class="btn btn-sm btn-primary" type="button" onClick="{{lv.confirm.go}}" onKeyDown="{{lv.confirm.key}}">取消执行</button>
               </div>
             </div>
           </sc-if>
@@ -1370,7 +1370,7 @@ button.bq-ref:hover { color: var(--text); }
                     <span class="lane-name wl-fname" title="{{l.title}}">{{l.name}}</span>
                   </sc-if>
                   <sc-if value="{{l.isMore}}" hint-placeholder-val="{{ false }}">
-                    <a class="lane-name wl-moreln" href="TaskMap.dc.html" title="{{l.title}}">{{l.name}}</a>
+                    <a class="lane-name wl-moreln" href="{{taskMapHref}}" title="{{l.title}}">{{l.name}}</a>
                   </sc-if>
                   <sc-if value="{{l.isArch}}" hint-placeholder-val="{{ false }}">
                     <button class="lane-name wl-arch" type="button" onClick="{{l.toggle}}" aria-expanded="{{l.ex}}" title="{{l.title}}">{{l.name}}</button>
@@ -1750,6 +1750,32 @@ class Component extends DCLogic {
        state or expanded sample folders; the sample mount keeps them. */
     if (this.props.readState !== undefined && this.props.readState !== null) {
       Object.assign(this.state, { axPages: [], axDiff: null, axCmd: {}, axDirs: {} });
+    }
+  }
+
+
+  /* pff F3/F4: the cancel confirm's 不取消 gets focus when the card opens; Esc
+     in the card is 不取消 and returns focus to the button that opened it. No
+     focus trap: the page around the card stays reachable (F5). */
+  cancelOpened(kind, event) {
+    this[kind + 'CancelOpener'] = event && event.currentTarget ? event.currentTarget : null;
+    this[kind + 'CancelFocus'] = true;
+  }
+  cancelClosed(kind) {
+    this[kind + 'CancelFocus'] = false;
+    const opener = this[kind + 'CancelOpener'];
+    if (opener && typeof opener.focus === 'function') opener.focus();
+  }
+  cancelRef(kind, element) {
+    if (element && this[kind + 'CancelFocus']) {
+      this[kind + 'CancelFocus'] = false;
+      if (typeof element.focus === 'function') element.focus();
+    }
+  }
+  cancelKey(kind, event, close) {
+    if (event && event.key === 'Escape') {
+      event.preventDefault();
+      close();
     }
   }
 
@@ -3170,7 +3196,6 @@ class Component extends DCLogic {
     const goalId = s.navGoalId !== undefined ? s.navGoalId : data.selectedGoalId || null;
     const selectedGoal = (data.goals || []).filter((g) => g.goalId === goalId)[0] || null;
     const goalsHref = goalId ? 'Goals.dc.html?goal=' + encodeURIComponent(goalId) : 'Goals.dc.html';
-    const taskMapHref = goalId ? 'TaskMap.dc.html?goal=' + encodeURIComponent(goalId) : 'TaskMap.dc.html';
     const goals = (data.goals || []).map((g, i) => ({
       ord: g.ordinal === null || g.ordinal === undefined ? i + 1 : g.ordinal,
       name: g.name, sq: 'sq z10 s-' + g.st, sub: g.sub, hasSub: !!g.hasSub, notices: g.notices,
@@ -3342,11 +3367,13 @@ class Component extends DCLogic {
       pause: () => control('pause'),
       resume: () => control('resume'),
       confirm: !!s.confirmCancel,
-      askCancel: () => this.setState({ confirmCancel: true }),
-      keep: () => this.setState({ confirmCancel: false }),
+      askCancel: (e) => { this.cancelOpened('goal', e); this.setState({ confirmCancel: true }); },
+      keep: () => { this.cancelClosed('goal'); this.setState({ confirmCancel: false }); },
+      keepRef: (el) => this.cancelRef('goal', el),
+      key: (e) => this.cancelKey('goal', e, () => { this.cancelClosed('goal'); this.setState({ confirmCancel: false }); }),
       cancel: () => { this.setState({ confirmCancel: false }); control('cancel'); }
     });
-    return Object.assign({}, base, { goalsHref: goalsHref, taskMapHref: taskMapHref,
+    return Object.assign({}, base, { goalsHref: goalsHref, taskMapHref: this.props.taskMapHref || 'TaskMap.dc.html',
       /* LEAD-1: never the sample's goal; DC4's empty sentence only when the read says the project has none */
       headTitle: selectedGoal ? selectedGoal.objective : this.noGoalText(),
       inbox: inbox, goals: goals, rail: rail, lvr: lvr, lv: lv, gb: gb });
@@ -4015,8 +4042,10 @@ class Component extends DCLogic {
           const P = this.railLines().rows.filter((r) => r.word === '已暂停'); const mine = (r, k) => !!C[r.id] && C[r.id].st === k;
           const n = P.filter((r) => !mine(r, 'paused') && !mine(r, 'cancelled')).length; const kept = P.filter((r) => mine(r, 'paused')).map((r) => r.name);
           pushLog([{ isSys: true, text: '已继续：' + (n ? n + ' 条工作线' : '目标') + '从停下的地方接续' + (kept.length ? '；' + kept.join('、') + ' 仍暂停（你单独暂停的）' : ''), goal: 'g1' }], { paused: false, stops: stopEnd('pause', c) }); },
-        askCancel: () => set({ confirmCancel: true, dec: null }),
-        keep: () => set({ confirmCancel: false }),
+        askCancel: (e) => { this.cancelOpened('goal', e); set({ confirmCancel: true, dec: null }); },
+        keep: () => { this.cancelClosed('goal'); set({ confirmCancel: false }); },
+        keepRef: (el) => this.cancelRef('goal', el),
+        key: (e) => this.cancelKey('goal', e, () => { this.cancelClosed('goal'); set({ confirmCancel: false }); }),
         cancel: () => { const c = ((this.state || {}).clock || 14) + 1; pushLog([{ isSys: true, text: '已取消目标：进行中的执行已停下，记录保留', goal: 'g1' }], { cancelled: true, cancelledAt: '14:' + pad(c), paused: false, confirmCancel: false, stops: stopAdd('cancel', c) }); },
         requeue: () => { const c = ((this.state || {}).clock || 14) + 1; pushLog([{ isSys: true, text: '已重新入队：目标重新开始推进', goal: 'g1' }], { cancelled: false, stops: stopEnd('cancel', c) }); },
         confirm: !!s.confirmCancel
@@ -7375,8 +7404,8 @@ class Component extends DCLogic {
           { k: 'sep', text: '第 ' + k + ' 次尝试 · 接续' },
           { k: 'brief', rows: [['上次停在', c0.stopWhere || sp.stop], ['停下原因', '你取消了这次执行（' + (c0.stopT || tt.t) + '），失败类别：已取消']] },
           { k: 'run', id: 'lvr' + n, label: '第 ' + k + ' 次尝试', t: tt.t, live: true, att: k, steps: [{ ic: 'file', verb: '读取', obj: '接续说明', live: true }] }])) })); };
-    const askCancel = () => set({ lvConfirm: id, lvTip: null });
-    const keep = () => set({ lvConfirm: null });
+    const askCancel = (e) => { this.cancelOpened('line', e); set({ lvConfirm: id, lvTip: null }); };
+    const keepConfirm = () => { this.cancelClosed('line'); set({ lvConfirm: null }); };
     const confirmCancel = () => { const x = cur(); const c0 = ctlOf(x) || { att: att }; const tt = T(x);
       if (st === 'paused') {
         set(Object.assign({}, tt.patch, { lvConfirm: null, lvCtl: ctlPut(x, Object.assign({}, c0, { st: 'cancelled', stopT: tt.t, stopWhere: c0.stopWhere || sp.stop })),
@@ -7593,7 +7622,7 @@ class Component extends DCLogic {
         pause: pause, resume: resume, askCancel: askCancel, requeue: requeue, tipPause: tipTo('pause'), tipResume: tipTo('resume'), tipCancel: tipTo('cancel'), tipRequeue: tipTo('requeue') },
       tipAt: { acts: ['pause', 'resume', 'cancel', 'requeue'].indexOf(tip) >= 0, state: tip === 'arrive', mode: tip === 'ask' || tip === 'act' }, tc: tc, untip: untip,
       banner: { has: !!banner, text: banner }, items: items,
-      confirm: { show: confirmOpen, line: (st === 'paused' ? '它已停在安全点，取消立即生效' : '它会在下一个安全点停下（' + sp.when + '），然后取消生效') + '：任务记为“已取消”，之后只有你能重新入队；改动和工作记录保留。', keep: keep, go: confirmCancel },
+      confirm: { show: confirmOpen, line: (st === 'paused' ? '它已停在安全点，取消立即生效' : '它会在下一个安全点停下（' + sp.when + '），然后取消生效') + '：任务记为“已取消”，之后只有你能重新入队；改动和工作记录保留。', keep: keepConfirm, keepRef: (el) => this.cancelRef('line', el), key: (e) => this.cancelKey('line', e, keepConfirm), go: confirmCancel },
       cm: { show: !confirmOpen, isAsk: isAsk, isAct: !isAsk, actOff: ended, groupLabel: '怎么发给 ' + L.name,
         askCls: 'mode-btn lv-mb' + (isAsk ? ' is-on' : ''), actCls: 'mode-btn lv-mb' + (!isAsk ? ' is-on' : '') + (ended ? ' is-off' : ''),
         pickAsk: () => set({ lvMode: 'ask' }), pickAct: () => { if (!ended) set({ lvMode: 'act' }); }, tipAsk: tipTo('ask'), tipAct: tipTo('act'),

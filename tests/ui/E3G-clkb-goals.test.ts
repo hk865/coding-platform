@@ -83,6 +83,25 @@ describe('E3G CLKB Goals rows', () => {
     }
   }, 60_000);
 
+  it('P16-6 the Plan 整页查看 link takes the read Goal when the URL has none', async () => {
+    const w = await openPAW1();
+    worlds.push(w.world);
+    const { page, log } = await bootE3N(w.world, 'Plan', { search: '' });
+    await planReady(log);
+    try {
+      const link = findLink(page.root, '整页查看', 'TaskMap.dc.html');
+      expect(link).toBeDefined();
+      /* 具名改坏: `boot.ts` 读成功后不把 Plan 的 `taskMapHref` 换成读到的目标；
+         本行的 goal 断言红。 */
+      const url = boardUrlOf(link!.getAttribute('href'), 'Plan.dc.html');
+      expect(url.pathname).toBe('/workbench/TaskMap.dc.html');
+      expect(url.searchParams.get('goal')).toBe(w.world.goals.first.goalId);
+      expect(page.assigned()).toEqual([]);
+    } finally {
+      await page.restore();
+    }
+  });
+
   it('P16-6 the Plan 整页查看 link keeps the current Goal in the TaskMap address', async () => {
     const w = await openPAW1();
     worlds.push(w.world);

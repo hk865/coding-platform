@@ -55,9 +55,13 @@ export class FakeElement {
       listener({ type: name, target: this, preventDefault() {}, stopPropagation() {}, ...init });
     }
   }
+  focus(): void {
+    if (typeof document !== 'undefined') (document as unknown as FakeDocument).activeElement = this;
+  }
 }
 
 export type FakeDocument = {
+  activeElement: FakeElement | null;
   createElement(tag: string): FakeElement;
   createElementNS(namespace: string, tag: string): FakeElement;
   createTextNode(text: string): FakeText;
@@ -69,6 +73,7 @@ let installed = false;
 
 export function installFakeDom(): FakeDocument {
   const document: FakeDocument = {
+    activeElement: null,
     createElement: (tag) => new FakeElement(tag),
     createElementNS: (_namespace, tag) => new FakeElement(tag),
     createTextNode: (text) => new FakeText(text),

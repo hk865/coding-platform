@@ -2,11 +2,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   bootDone, openDoneDeliveryWorld, openDoneTerminalOnlyWorld,
 } from './helpers/E3DN-done-world.js';
-import { findClass } from './helpers/boot-page.js';
+import { findClass, findElement } from './helpers/boot-page.js';
 import { byLabel, goalSectionRows } from './helpers/E3C-world.js';
-import { buttonText, settle, worldSlot } from './helpers/E3M-world.js';
-import { notConnected } from './helpers/E3N-interact.js';
-import { bootE3N, descendants, textOf } from './helpers/E3N-page.js';
+import { buttonText, press, settle, worldSlot } from './helpers/E3M-world.js';
+import { notConnected, pressKey } from './helpers/E3N-interact.js';
+import { bootE3N, countRoute, descendants, textOf } from './helpers/E3N-page.js';
 import { openInterruptedWorld, seePlanAdoptions } from './helpers/E3D-world.js';
 import { s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
 import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
@@ -75,6 +75,31 @@ describe('E3DN-1 the rail and the goal bar', () => {
       await scenario.dispose();
     }
   }, 180_000);
+
+  it('D02b 取消 focuses 不取消; Esc keeps it, returns focus and writes nothing', async () => {
+    const done = await openWorld();
+    const { page, log } = await bootDone(done.world, GOAL_ONE);
+    const dialog = () => findElement(page.root, (element) => element.getAttribute('role') === 'alertdialog');
+    try {
+      const bar = () => byLabel(page.root, '目标状态');
+      await settle(() => bar() !== undefined && buttonText(bar(), '取消') !== undefined);
+      const opener = buttonText(bar(), '取消');
+      press(opener, '取消');
+      await settle(() => dialog() !== undefined);
+      const keep = buttonText(dialog(), '不取消');
+      /* 具名改坏: 卡打开时不把焦点移到“不取消”；本行红。 */
+      expect(document.activeElement).toBe(keep);
+      /* 具名改坏: 卡上不接 Esc；卡仍在，本行的 `dialog` 断言红。 */
+      pressKey(keep!, 'Escape');
+      await settle(() => dialog() === undefined);
+      expect(dialog()).toBeUndefined();
+      /* 具名改坏: Esc 后不把焦点还给打开它的“取消”；本行红。 */
+      expect(document.activeElement).toBe(opener);
+      expect(countRoute(log, 'goals/control')).toBe(0);
+    } finally {
+      await page.restore();
+    }
+  });
 
   it.each([
     { entry: '① 活跃目标', goal: GOAL_ONE, has: ['暂停'], lacks: ['继续'] },

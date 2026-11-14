@@ -145,7 +145,7 @@ button.deliv:hover .on { color: var(--text); }
       <sc-for list="{{wl.rows}}" as="m" hint-placeholder-count="12">
         <sc-if value="{{m.isLink}}" hint-placeholder-val="{{ false }}">
           <div class="lv-rw">
-            <a class="{{m.cls}}" href="Main.dc.html" onMouseEnter="{{m.hover}}" onMouseLeave="{{m.unhover}}" onFocus="{{m.hover}}" onBlur="{{m.unhover}}">
+            <a class="{{m.cls}}" href="{{mainHref}}" onMouseEnter="{{m.hover}}" onMouseLeave="{{m.unhover}}" onFocus="{{m.hover}}" onBlur="{{m.unhover}}">
               <span class="row-lead"><span class="{{m.dot}}" aria-hidden="true"></span></span>
               <span class="row-main"><span class="row-name">{{m.name}}</span><span class="row-sub">{{m.word}}</span></span>
             </a>
@@ -278,7 +278,7 @@ button.deliv:hover .on { color: var(--text); }
         <div class="mh-f">
           <span class="mh-k">任务</span>
           <span class="mh-v">
-            <a class="mh-task" href="Main.dc.html" onMouseEnter="{{tipTask}}" onMouseLeave="{{untip}}" onFocus="{{tipTask}}" onBlur="{{untip}}"><span class="{{hs.taskSq}}" aria-hidden="true"></span>{{hs.taskName}}</a>
+            <a class="mh-task" href="{{mainHref}}" onMouseEnter="{{tipTask}}" onMouseLeave="{{untip}}" onFocus="{{tipTask}}" onBlur="{{untip}}"><span class="{{hs.taskSq}}" aria-hidden="true"></span>{{hs.taskName}}</a>
           </span>
           <sc-if value="{{tipAt.task}}" hint-placeholder-val="{{ false }}">
             <div class="hcard" role="tooltip">
@@ -560,12 +560,12 @@ button.deliv:hover .on { color: var(--text); }
     <div class="dock">
       <div class="dock-col">
         <sc-if value="{{confirmOpen}}" hint-placeholder-val="{{ false }}">
-          <div class="decision" role="alertdialog" aria-label="确认取消这次执行">
+          <div class="decision" role="alertdialog" aria-label="确认取消这次执行" onKeyDown="{{cancelKey}}">
             <p class="dc-title">取消这次执行？</p>
             <p class="dc-line">{{confirmLine}}</p>
             <div class="dc-foot">
-              <button class="btn btn-sm first" type="button" onClick="{{keepGoing}}">不取消</button>
-              <button class="btn btn-sm btn-primary" type="button" onClick="{{confirmCancel}}">取消执行</button>
+              <button class="btn btn-sm first" type="button" onClick="{{keepGoing}}" onKeyDown="{{cancelKey}}" ref="{{keepRef}}">不取消</button>
+              <button class="btn btn-sm btn-primary" type="button" onClick="{{confirmCancel}}" onKeyDown="{{cancelKey}}">取消执行</button>
             </div>
           </div>
         </sc-if>
@@ -624,7 +624,7 @@ button.deliv:hover .on { color: var(--text); }
           </button>
         </sc-if>
         <sc-if value="{{lv.isBackLink}}" hint-placeholder-val="{{ false }}">
-          <a class="btn-text lv-back" href="Main.dc.html" title="{{lv.backTip}}">
+          <a class="btn-text lv-back" href="{{mainHref}}" title="{{lv.backTip}}">
             <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="m10 4-4 4 4 4"></path></svg>
             {{lv.backLabel}}
           </a>
@@ -687,7 +687,7 @@ button.deliv:hover .on { color: var(--text); }
               <span class="lv-k">任务</span>
               <span class="lv-v">
                 <sc-if value="{{lv.task.isBtn}}" hint-placeholder-val="{{ true }}"><button class="lv-task" type="button" onClick="{{lv.task.go}}" title="在任务图里看这个任务"><span class="{{lv.task.sq}}" aria-hidden="true"></span>{{lv.task.name}}</button></sc-if>
-                <sc-if value="{{lv.task.isLink}}" hint-placeholder-val="{{ false }}"><a class="lv-task" href="Main.dc.html" title="在主画面的任务图里看这个任务"><span class="{{lv.task.sq}}" aria-hidden="true"></span>{{lv.task.name}}</a></sc-if>
+                <sc-if value="{{lv.task.isLink}}" hint-placeholder-val="{{ false }}"><a class="lv-task" href="{{mainHref}}" title="在主画面的任务图里看这个任务"><span class="{{lv.task.sq}}" aria-hidden="true"></span>{{lv.task.name}}</a></sc-if>
                 <sc-if value="{{lv.task.isPlain}}" hint-placeholder-val="{{ false }}"><span class="lv-task is-plain" title="{{lv.task.tip}}"><sc-if value="{{lv.task.hasSq}}" hint-placeholder-val="{{ false }}"><span class="{{lv.task.sq}}" aria-hidden="true"></span></sc-if>{{lv.task.name}}</span></sc-if>
               </span>
             </div>
@@ -778,7 +778,7 @@ button.deliv:hover .on { color: var(--text); }
                 <span class="{{e.sq}}" aria-hidden="true"></span>
                 <sc-if value="{{e.noGo}}" hint-placeholder-val="{{ true }}"><span>{{e.text}}</span></sc-if>
                 <sc-if value="{{e.goBtn}}" hint-placeholder-val="{{ false }}"><button class="ref" type="button" onClick="{{e.go}}" title="{{e.goTip}}">{{e.text}}</button></sc-if>
-                <sc-if value="{{e.goLink}}" hint-placeholder-val="{{ false }}"><a class="ref" href="Main.dc.html" title="{{e.goTip}}">{{e.text}}</a></sc-if>
+                <sc-if value="{{e.goLink}}" hint-placeholder-val="{{ false }}"><a class="ref" href="{{mainHref}}" title="{{e.goTip}}">{{e.text}}</a></sc-if>
                 <span class="t">{{e.t}}</span>
               </div>
             </sc-if>
@@ -875,7 +875,7 @@ button.deliv:hover .on { color: var(--text); }
                   </sc-if>
                   <sc-if value="{{e.noteOnly}}" hint-placeholder-val="{{ true }}"><p class="pnote">{{e.note}}</p></sc-if>
                   <sc-if value="{{e.noteGo}}" hint-placeholder-val="{{ false }}"><p class="pnote">{{e.noteA}}<button class="ref" type="button" onClick="{{e.go}}" title="{{e.goTip}}">需要你决定</button>{{e.noteB}}</p></sc-if>
-                  <sc-if value="{{e.noteLink}}" hint-placeholder-val="{{ false }}"><p class="pnote">{{e.noteA}}<a class="ref" href="Main.dc.html" title="{{e.goTip}}">需要你决定</a>{{e.noteB}}</p></sc-if>
+                  <sc-if value="{{e.noteLink}}" hint-placeholder-val="{{ false }}"><p class="pnote">{{e.noteA}}<a class="ref" href="{{mainHref}}" title="{{e.goTip}}">需要你决定</a>{{e.noteB}}</p></sc-if>
                 </div>
                 <sc-if value="{{e.hasReply}}" hint-placeholder-val="{{ false }}">
                   <div class="msg-agent"><p class="prose">{{e.reply}}</p></div>
@@ -890,12 +890,12 @@ button.deliv:hover .on { color: var(--text); }
       <div class="dock">
         <div class="dock-col">
           <sc-if value="{{lv.confirm.show}}" hint-placeholder-val="{{ false }}">
-            <div class="decision" role="alertdialog" aria-label="确认取消这次执行">
+            <div class="decision" role="alertdialog" aria-label="确认取消这次执行" onKeyDown="{{lv.confirm.key}}">
               <p class="dc-title">取消这次执行？</p>
               <p class="dc-line">{{lv.confirm.line}}</p>
               <div class="dc-foot">
-                <button class="btn btn-sm first" type="button" onClick="{{lv.confirm.keep}}">不取消</button>
-                <button class="btn btn-sm btn-primary" type="button" onClick="{{lv.confirm.go}}">取消执行</button>
+                <button class="btn btn-sm first" type="button" onClick="{{lv.confirm.keep}}" onKeyDown="{{lv.confirm.key}}" ref="{{lv.confirm.keepRef}}">不取消</button>
+                <button class="btn btn-sm btn-primary" type="button" onClick="{{lv.confirm.go}}" onKeyDown="{{lv.confirm.key}}">取消执行</button>
               </div>
             </div>
           </sc-if>
@@ -1160,6 +1160,31 @@ class Component extends DCLogic {
     const s = this.state || {};
     if (prev && prev.theme !== this.props.theme && s.theme) this.setState({ theme: null });
     if (prev && prev.start !== this.props.start && s.mode) this.setState({ mode: null });
+  }
+
+  /* pff F3/F4: the cancel confirm's 不取消 gets focus when the card opens; Esc
+     in the card is 不取消 and returns focus to the button that opened it. No
+     focus trap: the page around the card stays reachable (F5). */
+  cancelOpened(kind, event) {
+    this[kind + 'CancelOpener'] = event && event.currentTarget ? event.currentTarget : null;
+    this[kind + 'CancelFocus'] = true;
+  }
+  cancelClosed(kind) {
+    this[kind + 'CancelFocus'] = false;
+    const opener = this[kind + 'CancelOpener'];
+    if (opener && typeof opener.focus === 'function') opener.focus();
+  }
+  cancelRef(kind, element) {
+    if (element && this[kind + 'CancelFocus']) {
+      this[kind + 'CancelFocus'] = false;
+      if (typeof element.focus === 'function') element.focus();
+    }
+  }
+  cancelKey(kind, event, close) {
+    if (event && event.key === 'Escape') {
+      event.preventDefault();
+      close();
+    }
   }
 
   /* ------------------------------------------------------------ small helpers */
@@ -2247,7 +2272,7 @@ class Component extends DCLogic {
       canRequeue: line !== null && line.canRequeue,
       pause: () => control('pause'), resume: () => control('resume'),
       requeue: () => { this.props.actions.requeueLine().catch(report); },
-      askCancel: () => set({ confirm: true, tip: null, densMenu: false }),
+      askCancel: (e) => { this.cancelOpened('goal', e); set({ confirm: true, tip: null, densMenu: false }); },
       tipPause: tipTo('pause'), tipResume: tipTo('resume'), tipCancel: tipTo('cancel'), tipRequeue: tipTo('requeue'),
     };
     const confirmOpen = !!s.confirm && c.canCancel;
@@ -2474,12 +2499,15 @@ class Component extends DCLogic {
       acts: { canPause: line !== null && line.canPause, canResume: line !== null && line.canResume,
         canCancel: line !== null && line.canCancel, canRequeue: line !== null && line.canRequeue,
         pause: () => control('pause'), resume: () => control('resume'),
-        askCancel: () => set({ lvConfirm: true, tip: null }), requeue: () => { this.props.actions.requeueLine().catch(report); },
+        askCancel: (e) => { this.cancelOpened('line', e); set({ lvConfirm: true, tip: null }); }, requeue: () => { this.props.actions.requeueLine().catch(report); },
         tipPause: tipTo('pause'), tipResume: tipTo('resume'), tipCancel: tipTo('cancel'), tipRequeue: tipTo('requeue') },
       banner: { has: false, text: '' }, items: lvRows,
       confirm: { show: !!s.lvConfirm && line !== null && line.canCancel,
         line: '任务记为“已取消”，之后只有你能重新入队；改动和工作记录保留。',
-        keep: () => set({ lvConfirm: false }), go: () => { set({ lvConfirm: false }); control('cancel'); } },
+        keep: () => { this.cancelClosed('line'); set({ lvConfirm: false }); },
+        keepRef: (el) => this.cancelRef('line', el),
+        key: (e) => this.cancelKey('line', e, () => { this.cancelClosed('line'); set({ lvConfirm: false }); }),
+        go: () => { set({ lvConfirm: false }); control('cancel'); } },
       cm: { show: !(!!s.lvConfirm && line !== null && line.canCancel), isAsk: lvAsk, isAct: !lvAsk,
         actOff: line === null || !line.canIntervene,
         groupLabel: '怎么发给 ' + (line === null ? '' : line.title),
@@ -2567,9 +2595,12 @@ class Component extends DCLogic {
       runA: { open: false, cls: 'run', toggle: () => {} },
       items: items, blank: blank,
       trace: trace, hasRaw: !!rawRow, raw: rawRow === null ? '' : (rawRow.raw || ''),
+      mainHref: this.props.mainHref || 'Main.dc.html',
       confirmOpen: confirmOpen, composerOpen: !confirmOpen,
       confirmLine: cancelWhen + '：任务记为“已取消”，之后只有你能重新入队；改动和工作记录保留。',
-      keepGoing: () => set({ confirm: false }), confirmCancel: () => { set({ confirm: false }); control('cancel'); },
+      keepGoing: () => { this.cancelClosed('goal'); set({ confirm: false }); }, confirmCancel: () => { set({ confirm: false }); control('cancel'); },
+      keepRef: (el) => this.cancelRef('goal', el),
+      cancelKey: (e) => this.cancelKey('goal', e, () => { this.cancelClosed('goal'); set({ confirm: false }); }),
       isBranch: isBranch, isIntervene: !isBranch,
       modeBranchCls: 'mode-btn' + (isBranch ? ' is-on' : ''), modeIntCls: 'mode-btn' + (!isBranch ? ' is-on' : '') + (line === null || !line.canIntervene ? ' is-off' : ''),
       modeIntOff: line === null || !line.canIntervene,
@@ -2725,7 +2756,7 @@ class Component extends DCLogic {
     const c = {
       canPause: ctl === 'working', canResume: ctl === 'paused', canCancel: ctl === 'working' || ctl === 'pausing' || ctl === 'paused', canRequeue: ctl === 'cancelled',
       pause: () => this.doPause(), resume: () => this.doResume(), requeue: () => this.doRequeue(),
-      askCancel: () => set({ confirm: true, tip: null, densMenu: false }),
+      askCancel: (e) => { this.cancelOpened('goal', e); set({ confirm: true, tip: null, densMenu: false }); },
       tipPause: tipTo('pause'), tipResume: tipTo('resume'), tipCancel: tipTo('cancel'), tipRequeue: tipTo('requeue')
     };
     const confirmOpen = !!s.confirm && c.canCancel;
@@ -2897,9 +2928,12 @@ class Component extends DCLogic {
 
       trace: trace, hasRaw: !!rawRow, raw: rawRow ? rawRow.json : '',
 
+      mainHref: this.props.mainHref || 'Main.dc.html',
       confirmOpen: confirmOpen, composerOpen: !confirmOpen,
       confirmLine: cancelWhen + '：任务记为“已取消”，之后只有你能重新入队；改动和工作记录保留。',
-      keepGoing: () => set({ confirm: false }), confirmCancel: () => this.doConfirmCancel(),
+      keepGoing: () => { this.cancelClosed('goal'); set({ confirm: false }); }, confirmCancel: () => this.doConfirmCancel(),
+      keepRef: (el) => this.cancelRef('goal', el),
+      cancelKey: (e) => this.cancelKey('goal', e, () => { this.cancelClosed('goal'); set({ confirm: false }); }),
       isBranch: isBranch, isIntervene: !isBranch,
       modeBranchCls: 'mode-btn' + (isBranch ? ' is-on' : ''), modeIntCls: 'mode-btn' + (!isBranch ? ' is-on' : ''),
       modeIntOff: false, interveneTip: '',
@@ -3239,8 +3273,8 @@ class Component extends DCLogic {
           { k: 'sep', text: '第 ' + k + ' 次尝试 · 接续' },
           { k: 'brief', rows: [['上次停在', c0.stopWhere || sp.stop], ['停下原因', '你取消了这次执行（' + (c0.stopT || tt.t) + '），失败类别：已取消']] },
           { k: 'run', id: 'lvr' + n, label: '第 ' + k + ' 次尝试', t: tt.t, live: true, att: k, steps: [{ ic: 'file', verb: '读取', obj: '接续说明', live: true }] }])) })); };
-    const askCancel = () => set({ lvConfirm: id, lvTip: null });
-    const keep = () => set({ lvConfirm: null });
+    const askCancel = (e) => { this.cancelOpened('line', e); set({ lvConfirm: id, lvTip: null }); };
+    const keepConfirm = () => { this.cancelClosed('line'); set({ lvConfirm: null }); };
     const confirmCancel = () => { const x = cur(); const c0 = ctlOf(x) || { att: att }; const tt = T(x);
       if (st === 'paused') {
         set(Object.assign({}, tt.patch, { lvConfirm: null, lvCtl: ctlPut(x, Object.assign({}, c0, { st: 'cancelled', stopT: tt.t, stopWhere: c0.stopWhere || sp.stop })),
@@ -3452,7 +3486,7 @@ class Component extends DCLogic {
         pause: pause, resume: resume, askCancel: askCancel, requeue: requeue, tipPause: tipTo('pause'), tipResume: tipTo('resume'), tipCancel: tipTo('cancel'), tipRequeue: tipTo('requeue') },
       tipAt: { acts: ['pause', 'resume', 'cancel', 'requeue'].indexOf(tip) >= 0, state: tip === 'arrive', mode: tip === 'ask' || tip === 'act' }, tc: tc, untip: untip,
       banner: { has: !!banner, text: banner }, items: items,
-      confirm: { show: confirmOpen, line: (st === 'paused' ? '它已停在安全点，取消立即生效' : '它会在下一个安全点停下（' + sp.when + '），然后取消生效') + '：任务记为“已取消”，之后只有你能重新入队；改动和工作记录保留。', keep: keep, go: confirmCancel },
+      confirm: { show: confirmOpen, line: (st === 'paused' ? '它已停在安全点，取消立即生效' : '它会在下一个安全点停下（' + sp.when + '），然后取消生效') + '：任务记为“已取消”，之后只有你能重新入队；改动和工作记录保留。', keep: keepConfirm, keepRef: (el) => this.cancelRef('line', el), key: (e) => this.cancelKey('line', e, keepConfirm), go: confirmCancel },
       cm: { show: !confirmOpen, isAsk: isAsk, isAct: !isAsk, actOff: ended, groupLabel: '怎么发给 ' + L.name,
         askCls: 'mode-btn lv-mb' + (isAsk ? ' is-on' : ''), actCls: 'mode-btn lv-mb' + (!isAsk ? ' is-on' : '') + (ended ? ' is-off' : ''),
         pickAsk: () => set({ lvMode: 'ask' }), pickAct: () => { if (!ended) set({ lvMode: 'act' }); }, tipAsk: tipTo('ask'), tipAct: tipTo('act'),

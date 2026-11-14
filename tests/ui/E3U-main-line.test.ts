@@ -6,7 +6,7 @@ import {
   routesSince, sentWrite, settledN, textOf, treeNames, waitFor,
   type E3NTarget, type PageLog,
 } from './helpers/E3N-page.js';
-import { click, hover } from './helpers/E3N-interact.js';
+import { click, pressKey, hover } from './helpers/E3N-interact.js';
 import { lineOrder, openW1, openW2, openW4 } from './helpers/E3N-world.js';
 import {
   buttonText, controlPins, elementsOf, openMemberS7C, openMemberW4, openMemberW6, radio, worldSlot, type E3MHost, type E3MW1,
@@ -315,7 +315,16 @@ describe('E3U Main line view', () => {
          具名改坏: `Main.dc.html` 的 SPEC-5 覆盖不改 `line`（原型的“它会在下一个安全点停下（…）”）；这一句红。 */
       expect(textOf(findClass(dialog ?? page.root, 'dc-line')))
         .toBe('它已停在安全点，取消立即生效：任务记为“已取消”，之后只有你能重新入队；改动和工作记录保留。');
-      click(findButton(dialog!, '取消执行')!);
+      const keep = findButton(dialog!, '不取消');
+      /* 具名改坏: 卡打开时不把焦点移到“不取消”；本行红。 */
+      expect(document.activeElement).toBe(keep);
+      /* 具名改坏: 卡上不接 Esc；卡仍在，本行的 `dialog` 断言红。 */
+      pressKey(keep!, 'Escape');
+      await waitFor(() => findElement(page.root, (element) => element.getAttribute('role') === 'alertdialog') === undefined);
+      expect(document.activeElement).toBe(lineAct(page.root, '取消'));
+      expect(countRoute(log, 'controls/submit')).toBe(0);
+      click(lineAct(page.root, '取消')!);
+      click(findButton(findElement(page.root, (element) => element.getAttribute('role') === 'alertdialog')!, '取消执行')!);
       await settledN(log, 'controls/submit', 1);
       expect(sentWrite(callsTo(log, 'controls/submit')[0]).input).toEqual({ runRef: w.run, kind: 'cancel', reason: null });
     });

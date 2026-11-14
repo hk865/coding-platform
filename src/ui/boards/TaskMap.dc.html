@@ -673,7 +673,7 @@ body { margin: 0; background: #1F1F1F; }
           </dl>
           <div class="d-acts">
             <sc-if value="{{det.canHandle}}" hint-placeholder-val="{{ false }}">
-              <a class="btn-text" href="Main.dc.html" title="需要你决定、失败和受阻的任务在工作台的“需要你决定”和对话里处理">在工作台里处理</a>
+              <a class="btn-text" href="{{mainHref}}" title="需要你决定、失败和受阻的任务在工作台的“需要你决定”和对话里处理">在工作台里处理</a>
             </sc-if>
             <sc-for list="{{det.acts}}" as="ac" hint-placeholder-count="2">
               <button class="btn-text" type="button" onClick="{{ac.go}}">{{ac.label}}</button>
@@ -3193,7 +3193,7 @@ class Component extends DCLogic {
         rootMod: theme === 'light' ? 't-light' : '',
         /* §2.2: loading, empty and error keep the same return link the ready
            page carries, so a Goal without an adopted Plan can still leave. */
-        backHref: goal && goal.id ? 'Main.dc.html?goal=' + encodeURIComponent(String(goal.id)) : 'Main.dc.html',
+        backHref: this.props.mainHref || 'Main.dc.html',
         themeLabel: theme === 'light' ? '切换到深色' : '切换到浅色',
         toggleTheme: () => set({ theme: theme === 'light' ? 'dark' : 'light' }),
         legend: !!s.legend, legendCls: 'seg-btn' + (s.legend ? ' is-on' : ''), toggleLegend: () => set({ legend: !(this.state || {}).legend }),
@@ -3346,12 +3346,9 @@ class Component extends DCLogic {
           if (actions.readMore) actions.readMore({ detailTaskId: go.shownTask(left), lineKey: null }); },
         acts: det0.acts.concat([{ label: pinned ? '取消固定' : '固定', go: pinned ? unpin : pinIt(det0.id, []) }]) });
     })() : null;
-    /* §2.2: the return link carries this page's Goal, encoded once; a page with
-       no Goal keeps the plain file name. */
-    const goalId = data.goal && data.goal.id ? String(data.goal.id) : '';
     return {
       rootMod: theme === 'light' ? 't-light' : '',
-      backHref: goalId === '' ? 'Main.dc.html' : 'Main.dc.html?goal=' + encodeURIComponent(goalId),
+      backHref: this.props.mainHref || 'Main.dc.html', mainHref: this.props.mainHref || 'Main.dc.html',
       goalName: this.goalLabel(data.goal), hasGoal: true, goalSq: this.sqAt(data.goal.st), goalWord: data.goal.word,
       /* in replay (no reread text standing): the lines working and waiting at the cursor, and when (prototype:4048);
          with the track or the timeline unread, no number */

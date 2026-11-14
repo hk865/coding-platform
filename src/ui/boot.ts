@@ -264,18 +264,12 @@ export async function bootBoardPage(): Promise<void> {
   const lineProject = search.get('lineProject');
   const lineSession = search.get('lineSession');
   const boardName = boardNameOf(location.href);
-  /* A1/A24: the frozen template keeps `Main.dc.html`; the ArchOverview copy
-     carries the Goal through the one `goalHref` encoding. TaskMap's detail action
-     and Goals/Plan's 整页查看 are the same cross-page links (clk-current P02-9,
-     P16-6), so they carry the current Goal too. */
+  /* A1/A24: the frozen template keeps `Main.dc.html`; every live page reaches
+     the cross-page links through the `mainHref`/`taskMapHref` props, so the
+     mount value is the URL's Goal and a successful read can move them to the
+     Goal the page shows. Done's sample card keeps its static link. */
   const source = await fetchPageText(location.href);
-  const mainSource = boardName === 'ArchOverview' || boardName === 'Chain' || boardName === 'Decide'
-    || boardName === 'Member' || boardName === 'TaskMap'
-    ? source.split('href="Main.dc.html"').join('href="' + goalHref('Main.dc.html', goalId) + '"')
-    : source;
-  const board = parseBoard(document.title, boardName === 'Goals' || boardName === 'Plan' || boardName === 'Main'
-    ? mainSource.split('href="TaskMap.dc.html"').join('href="' + goalHref('TaskMap.dc.html', goalId) + '"')
-    : mainSource);
+  const board = parseBoard(document.title, source);
   if (board.helmetHtml.length > 0) hoistHelmet(board.helmetHtml);
 
   const documentToken = readPlatformToken(document);
@@ -287,7 +281,12 @@ export async function bootBoardPage(): Promise<void> {
 
   /* The page's 完整架构图 link keeps the current Goal: the URL's Goal until a
      read says which Goal the page shows. A failed read falls back to the URL. */
-  const defaults = { ...board.defaults, archHref: goalHref('ArchOverview.dc.html', goalId) };
+  const defaults = {
+    ...board.defaults,
+    archHref: goalHref('ArchOverview.dc.html', goalId),
+    mainHref: goalHref('Main.dc.html', goalId),
+    taskMapHref: goalHref('TaskMap.dc.html', goalId),
+  };
   const view = new BoardView(board, { ...defaults, readState: { status: 'loading' } });
   view.mount(root);
   let token = documentToken;
@@ -455,12 +454,19 @@ export async function bootBoardPage(): Promise<void> {
     },
     pickGoal(next: string): void {
       /* §2.9: the same refresh loop rereads the chrome for the new Goal; the
-       * URL is not rewritten and no draft table is built. */
+       * URL is not rewritten and no draft table is built. The two cross-page
+       * links move with the pick at once; a failed reread falls back to the
+       * URL Goal through `defaults`. */
       goalId = next === '' ? null : next;
       demand.lineKey = null;
       demand.archive = false;
       /* §2.3: a Goal pick goes back to the conversation's first page. */
       demand.mainPages = 1;
+      view.updateProps({
+        ...view.instance.props,
+        mainHref: goalHref('Main.dc.html', goalId),
+        taskMapHref: goalHref('TaskMap.dc.html', goalId),
+      });
       void refresh.reread();
     },
     openLine(key: TaskMapSessionRef | null): void {
@@ -1103,6 +1109,21 @@ export async function bootBoardPage(): Promise<void> {
         }
       }
       const props = pageProps(defaults, snapshot, restart, actions);
+      if (snapshot.error === null && snapshot.data !== null) {
+        /* The one Goal the page's own read published; a failed read keeps the
+           URL Goal through `defaults`. */
+        let linksGoal: string | null;
+        if (boardName === 'Goals') linksGoal = (snapshot.data as GoalsData).selectedGoalId;
+        else if (boardName === 'Main' || boardName === 'Plan') linksGoal = (snapshot.data as NavData).selectedGoalId;
+        else if (boardName === 'Decide') linksGoal = (snapshot.data as DecideData).nav.selectedGoalId;
+        else if (boardName === 'Done') linksGoal = (snapshot.data as DoneData).nav.selectedGoalId;
+        else if (boardName === 'Member') linksGoal = (snapshot.data as MemberData).goal?.id ?? null;
+        else if (boardName === 'Chain') linksGoal = (snapshot.data as ChainData).goal?.id ?? null;
+        else if (boardName === 'TaskMap') linksGoal = (snapshot.data as TaskMapData).goal?.id ?? null;
+        else linksGoal = goalId;
+        props.mainHref = goalHref('Main.dc.html', linksGoal);
+        props.taskMapHref = goalHref('TaskMap.dc.html', linksGoal);
+      }
       if (boardName === 'Goals') {
         props.archHref = goalHref('ArchOverview.dc.html', latestGoals?.selectedGoalId ?? goalId);
       } else if (boardName === 'Main' || boardName === 'Plan') {

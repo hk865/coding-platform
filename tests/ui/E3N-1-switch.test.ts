@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { boardUrlOf, findElement, findLink } from './helpers/boot-page.js';
-import { bootE3N, goalRows, mainHeadTitle, textOf } from './helpers/E3N-page.js';
+import { bootE3N, goalRows, mainHeadTitle, quietPage, textOf } from './helpers/E3N-page.js';
 import { click } from './helpers/E3N-interact.js';
 import { cancelGoal, openW1 } from './helpers/E3N-world.js';
 import type { S6ARequestWorld } from '../helpers/S6A-request-fixture.js';
@@ -56,6 +56,26 @@ describe('E3N-1 switching boards and Goals', () => {
       await page.restore();
     }
   }, 60_000);
+
+  it('N02b the Main 整页查看 link follows a Goal picked after mount', async () => {
+    const opened = await openW1();
+    worlds.push(opened.world);
+    const { page, log } = await bootE3N(opened.world, 'Main', { search: '' });
+    await quietPage(log);
+    try {
+      const rows = goalRows(page.root);
+      expect(rows).toHaveLength(2);
+      click(rows[1]!);
+      /* 具名改坏: `boot.ts` 读成功后不把 Main 的 `taskMapHref` 换成读到的目标；
+         本行的 goal 断言红。 */
+      const link = findLink(page.root, '整页查看', 'TaskMap.dc.html');
+      expect(urlOf(link?.getAttribute('href') ?? null, 'Main').searchParams.get('goal'))
+        .toBe(opened.world.goals.second.goalId);
+      expect(page.assigned()).toEqual([]);
+    } finally {
+      await page.restore();
+    }
+  });
 
   it('N03 the rail lists the real Goals and marks the one named by ?goal=', async () => {
     const opened = await openW1();

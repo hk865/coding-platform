@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { findButton, findClass, findElement } from './helpers/boot-page.js';
 import { bootE3N, callsTo, countRoute, hasClass, quietPage, sentWrite, textOf, waitFor } from './helpers/E3N-page.js';
-import { click, notConnected } from './helpers/E3N-interact.js';
+import { click, notConnected, pressKey } from './helpers/E3N-interact.js';
 import { labelled, typeInto } from './helpers/E3D-page.js';
 import { cancelGoal } from './helpers/E3N-world.js';
 import { openE3GW0, openE3GW1 } from './helpers/E3G-world.js';
@@ -158,6 +158,17 @@ describe('E3P Plan goal bar', () => {
       await quietPage(log);
       /* 具名改坏: 直接发取消；这一句红。 */
       expect(countRoute(log, 'goals/control')).toBe(0);
+      const keep = findButton(dialog()!, '不取消');
+      /* 具名改坏: 卡打开时不把焦点移到“不取消”；本行红。 */
+      expect(document.activeElement).toBe(keep);
+      /* 具名改坏: 卡上不接 Esc；卡仍在，本行的 `dialog` 断言红。 */
+      pressKey(keep!, 'Escape');
+      await waitFor(() => dialog() === undefined);
+      /* 具名改坏: Esc 后不把焦点还给打开它的“取消”；本行红。 */
+      expect(document.activeElement).toBe(goalbarButton(page.root, '取消'));
+      expect(countRoute(log, 'goals/control')).toBe(0);
+      click(goalbarButton(page.root, '取消')!);
+      await waitFor(() => dialog() !== undefined);
       click(findButton(dialog()!, '取消目标')!);
       const reply = await answerOf(log, 'goals/control');
       expect(countRoute(log, 'goals/control')).toBe(1);
