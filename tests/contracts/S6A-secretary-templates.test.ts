@@ -27,13 +27,13 @@ const EXISTING_DIGESTS = {
     'work-input': 'f3ebad58e28d7f5a2d8bc8831b7974b03057c0590982d23fc325be933f5aed7a',
     'query-planning-input': 'ac29545b215361ea2ce479007f2c3ffcc3daa87a2bbacaf89957b49aa4022a77',
     'query-copy-input': '89ee28b2dc868787a7e41a063edadf9765e474e93b3bb477b038f93909808e20',
-    'initial-planning-answer': 'cf2c3e1250ad24ee5828cee5ef7bd28d29cea05c756ae83442267ffcc099ab34',
+    'initial-planning-answer': 'b8ce6951f21c0207cc0f6a521ce7f06c1359b53bd416ab4a3fcdec295be4d0cc',
     base: 'cee15946501a2db933e00e1ea9954e8332542ab130268cd32c6962c91061958c',
     'skill-platform-work': 'fee248cc70c5ed0a07bc8e679bd8357fa6e678976818b121e6f837cdf29ec7b3',
     'skill-platform-secretary': '0bb59d33dcba00898fbb35ca971580b3acfde7ccffc4b2ca168c3fb957e6780a',
-    'skill-platform-adviser': 'b96a3e5867ab98f821bb34926568b2f21325607254cf583a978dbd35c59c3628',
+    'skill-platform-adviser': '479429b59b3681902eb367d6cb3d7cb8821b8fcba76964e9d282af67e36baee0',
     'skill-platform-scribe': '06eaa54bb819486d3b7e3e69bd4bdcfe0a5cfb7e5a73a893296500710ec7b65d',
-    'skill-platform-reviewer': '7cd261e9a6611af0941f9ba42c3d0a6dbfe6e70d8a931fae88e1a4c7e03d8e9a',
+    'skill-platform-reviewer': '730e2ee4693fbd17776a2adfb5c6b8edaeab2c5ba7ed102aec0ba49aec9307a6',
 } as const;
 
 const secretaryAnswerText = [
@@ -52,7 +52,7 @@ const secretaryAnswerText = [
     + '(its definition, acceptance, disposition or dependencies), adds no gate or obligation for an existing Task, '
     + 'and does not change the Goal objective, you may skip the ideas and call submit_plan_round directly: answerKind '
     + '"plan", a one-sentence summary, and one segment that holds only the new Tasks with their assignments plus one '
-    + 'new obligation carrying them. Put them in an existing stage, or open a new stage with its own required stage '
+    + 'new required obligation carrying them. Put them in an existing stage, or open a new stage with its own required stage '
     + 'gate. The platform adopts a change this small under its own identity without review, and the person sees '
     + '"arranged"; anything larger stays a candidate for the person. If the change is not small or you are unsure, '
     + 'keep using submit_secretary_answer.\n'
@@ -72,7 +72,7 @@ function textsOf(secretaryRound: string): PromptTextsV1 {
 describe('the platform secretary templates', () => {
     it('declares the round at version 2 and the answer at version 4, with their code-owned slots and digests', () => {
         const versions = {
-            'secretary-round': 2, 'secretary-answer': 4,
+            'secretary-round': 2, 'secretary-answer': 5,
             'handoff-write-understanding-secretary': 1, 'handoff-brief-secretary': 1,
         } as const;
         for (const id of [
@@ -105,7 +105,7 @@ describe('the platform secretary templates', () => {
         expect(sha256Hex(PACK.templates['secretary-round']!))
             .toBe('1fbe219c936568074193d9f4f57dd5a15e963f6487be2838a78d040429b3cc7c');
         expect(sha256Hex(PACK.templates['secretary-answer']!))
-            .toBe('6de01c878a178ac3f108130eb73463d318eb8157ba7eeb24fb515240029ba3cf');
+            .toBe('09cbe058425e7a84ecc4ca4e70e4060626a9188519b089c8ab7686a49debb8b0');
         expect(sha256Hex(PACK.templates['handoff-write-understanding-secretary']!))
             .toBe('d7afe976edbe02c6dd541b644b3c2b7f314bb186ff4458432e817a4fae7483c6');
         expect(sha256Hex(PACK.templates['handoff-brief-secretary']!))
@@ -307,5 +307,30 @@ describe('the state guard requires the secretary goal and task sections', () => 
         expect(problem).toMatchObject({ status: 'rejected', code: 'invalid' });
         if (problem === null || problem.status !== 'rejected') return;
         expect(problem.reason).toContain('task section');
+    });
+});
+
+/**
+ * CPL C9 (decision 121-128, `cpl-rulings.md` CPL-3 and row C9): the rendered initial planning instructions (the prose
+ * before the shape sample) ask for the one goal gate and say that checks cannot read `.git`.
+ * Red today (54b74ac3) in all three cells: no prose line names a `"gate"` task with scope `{kind:"goal"}` and its
+ * `taskIds`, no line mentions `.git`, and the old "Apart from those stage gates and their obligations" sentence is still
+ * there (`initial-planning-answer.txt:17`, `:21-22`). Green once CPL-3 rewrites those lines and regenerates the pack.
+ * Mutation: delete either new sentence, or put the old one back -> its cell fails.
+ */
+describe('CPL C9: the initial planning instructions ask for the goal gate and say checks cannot read .git', () => {
+    const prose = renderTemplate(PACK, 'initial-planning-answer', {}, []).text
+        .split('BEGIN_INITIAL_PLAN_EXAMPLE')[0]!.split('\n');
+    it.each([
+        { cell: 'the one goal gate: a "gate" task with scope {kind:"goal"} listed in an obligation\'s taskIds',
+            holds: (line: string) => /taskKind"?:?\s*"gate"/.test(line) && /kind"?:\s*"goal"/.test(line)
+                && line.includes('taskIds') },
+        { cell: 'the sentence that checks cannot read .git', holds: (line: string) => line.includes('.git') },
+    ])('carries $cell', ({ holds }) => {
+        expect(prose.some(holds)).toBe(true);
+    });
+
+    it('no longer limits the gates a plan may add to the stage gates', () => {
+        expect(prose.join('\n')).not.toContain('Apart from those stage gates and their obligations, never invent');
     });
 });

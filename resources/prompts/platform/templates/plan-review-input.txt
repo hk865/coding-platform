@@ -13,7 +13,7 @@
 ## 你要回答
 1. 任务边界是否合适；2. 任务书够不够让执行者不猜（范围、先看什么、怎么做、接口、验收、不做什么、复用什么）；
 3. 依赖和并行安排；4. 前提对不对；5. 有没有漏掉义务；6. 有没有该复用的；
-7. 这一版写到的每一段有没有阶段 gate（`taskKind: gate`、`scope: stage`，已采用计划里已有的也算）及其义务；缺了写成 finding，写清哪一段。
+7. 这一版写到的每一段有没有阶段 gate（`taskKind: gate`、`scope: stage`，已采用计划里已有的也算）及其义务；缺了写成 finding，写清哪一段。整份计划有没有恰好一个目标 gate（`taskKind: gate`、`scope: goal`，已采用计划里已有的也算），列在一条必需义务的 `taskIds` 里；必需的 `request_execution` 工作任务是不是都列在某条必需义务里。缺了写成 finding，写清缺哪个。
 结论只能是 pass 或 fix；fix 时每条 finding 写清哪个任务、要改什么。
 {{#tool:submit_plan_review}}用 `submit_plan_review` 填这张表：`verdict` 和 `findings` 是你要填的全部；`schemaVersion`/`kind` 由工具填。pass 可以不带 findings，fix 至少要一条。{{/tool:submit_plan_review}}
 如果这一轮没有这个工具（例如夹具直接写文字），按同一 JSON 形状交出全文，目标循环同样解析。

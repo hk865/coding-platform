@@ -71,6 +71,8 @@ beforeAll(async () => {
     { stageId: 'e33-b-stage', title: 'E33 阶段 B' },
   ];
   draft.tasks = draft.tasks.map((task) => {
+    // The gate stays the plan's goal gate (`plan-validation.ts` goal-gate template).
+    if (task.taskKind === 'gate') return task;
     const stageId = task.taskId === 'e33-a' ? 'e33-a-stage' : 'e33-b-stage';
     return { ...task, stageId, scope: { kind: 'stage' as const, stageId } };
   });

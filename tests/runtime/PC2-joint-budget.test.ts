@@ -89,8 +89,10 @@ const TASK_TEXT = '## Accepted task\n'
   + 'requirementLevel: required\n'
   + 'disposition: active\n'
   + 'phase: running\n'
-  + 'obligations: 未定义\n'
-  + 'acceptance: 未定义\n'
+  // The new Task is mapped by the plan's required obligation (`plan-validation.ts` goal-gate template), so its
+  // obligations and acceptance are defined.
+  + 'obligations: [{"obligationId":"obligation-1","requirementLevel":"required","taskIds":["implement-a","implement-b","gate-goal","pc2-j08-inputs"],"title":"Deliver implementation","verificationRequirements":[{"description":"Tests pass","kind":"test","requirementId":"check-1","requirementLevel":"required"}]}]\n'
+  + 'acceptance: [{"description":"Tests pass","kind":"test","requirementId":"check-1","requirementLevel":"required"}]\n'
   + 'upstream: [{"consumer":{"goalId":"r4c-claim-goal","projectId":"r4c-claim-project","taskId":"pc2-j08-inputs"},"declarationId":"legacy:pc2-j08-input-1","legacyArtifactRef":{"contentType":"text/plain","digest":"f6ec1dc45d2714bac9e6059061c6ad66fdcf42899f846188860e5d1a11650d71","kind":"artifact","sizeBytes":29,"source":{"kind":"workspace","refId":"r4c-claim-workspace","revision":"1"}},"planRef":{"aggregateType":"PlanRevision","planId":"pc2-j08-input-plan","projectId":"r4c-claim-project"},"requires":{"kind":"artifact","label":"pc2-j08-input-1"},"upstream":null}]\n'
   + 'downstream: null\n'
   + 'failure: null\n'
@@ -119,7 +121,7 @@ const BRIEF_BODY = `[continuation-brief v1 sha256:<brief-digest>]
 
 ### 检查
 - 轮次 <round-id>（第 1 轮）未通过的检查：无
-- 缺口：source_changed
+- 缺口：source_changed、uncovered_requirement
 
 ### 重新入队
 - 原因（人工）：Continue PC work
@@ -280,7 +282,9 @@ describe('PC2 J-08: a zero resident budget omits every present optional section 
         assignments: [...structuredClone(plan.assignments ?? []), {
           taskId: NEW_TASK_ID, role: 'builder', instruction: 'Exercise the J-08 input section',
         }],
-        obligations: structuredClone(plan.obligations),
+        // Required work to run is mapped by a required obligation (`plan-validation.ts` goal-gate template).
+        obligations: structuredClone(plan.obligations).map((obligation, index) => index === 0
+          ? { ...obligation, taskIds: [...obligation.taskIds, NEW_TASK_ID] } : obligation),
         taskHierarchy: structuredClone(plan.taskHierarchy),
         executionDag: structuredClone(plan.executionDag),
         taskRelations: structuredClone(plan.taskRelations ?? []),

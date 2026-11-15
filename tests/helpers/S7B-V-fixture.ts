@@ -92,25 +92,42 @@ export function planAnswer(plan: Record<string, unknown>): string {
     summary: `S7B3 V ${String(plan['planId'])}`, plan });
 }
 
+/**
+ * The new work's own required obligation; the goal gate (one per plan, `plan-validation.ts` goal-gate template)
+ * joins the first plan that has required work to run, carried by the same obligation.
+ */
+function workAcceptance(label: string, taskId: string, tasks: readonly PlanRevisionSnapshot['tasks'][number][]) {
+  const gate = tasks.some(task => task.taskKind === 'gate' && task.scope.kind === 'goal') ? []
+    : [{ taskId: `s7b3-v-${label}-goal-gate`, title: `S7B3 V ${label} goal gate`, requirementLevel: 'required' as const,
+      taskKind: 'gate' as const, disposition: 'active' as const, phase: 'pending' as const, scope: { kind: 'goal' as const } }];
+  return { gate, obligation: { obligationId: `s7b3-v-${label}-obligation`, title: `S7B3 V ${label} delivery`,
+    requirementLevel: 'required' as const, taskIds: [taskId, ...gate.map(task => task.taskId)],
+    verificationRequirements: [{ requirementId: `s7b3-v-${label}-static`, requirementLevel: 'required' as const,
+      kind: 'static', description: `S7B3 V ${label} static check` }] } };
+}
+
 export function firstPlan(input: { label: string; taskId: string; role: string }): string {
+  const acceptance = workAcceptance(input.label, input.taskId, []);
   return planAnswer({
     schemaVersion: 2, planId: `s7b3-v-${input.label}`, planRevision: 1, goalId: '',
-    stages: [], tasks: [workTask(input.taskId, `S7B3 V ${input.taskId} work`)],
+    stages: [], tasks: [workTask(input.taskId, `S7B3 V ${input.taskId} work`), ...acceptance.gate],
     assignments: [{ taskId: input.taskId, role: input.role, instruction: `S7B3 V ${input.label}` }],
-    obligations: [], taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] },
+    obligations: [acceptance.obligation], taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] },
   });
 }
 
 export function refinementPlanFrom(active: PlanRevisionSnapshot, goalRef: GoalRef,
   input: { label: string; taskId: string; role: string; planId?: string; summary?: string }): string {
-  const tasks = [workTask(input.taskId, `S7B3 V ${input.taskId} work`), ...active.tasks];
+  const acceptance = workAcceptance(input.label, input.taskId, active.tasks);
+  const tasks = [workTask(input.taskId, `S7B3 V ${input.taskId} work`), ...acceptance.gate, ...active.tasks];
   const assignments = [...(active.assignments ?? []),
     { taskId: input.taskId, role: input.role, instruction: `S7B3 V ${input.label}` }];
   return JSON.stringify({ schemaVersion: 2, kind: 'plan',
     summary: input.summary ?? `S7B3 V ${input.label}`,
     plan: { schemaVersion: 2, planId: input.planId ?? `s7b3-v-${input.label}`,
       planRevision: active.planRevision + 1, goalId: goalRef.goalId, stages: active.stages, tasks, assignments,
-      obligations: active.obligations, taskHierarchy: active.taskHierarchy, executionDag: active.executionDag } });
+      obligations: [...active.obligations, acceptance.obligation], taskHierarchy: active.taskHierarchy,
+      executionDag: active.executionDag } });
 }
 
 export async function refinementPlan(world: S6AHostWorld, goalRef: GoalRef,

@@ -610,11 +610,17 @@ export async function openS7D2ColdStartWorld(
         // The cold start's Plan has no obligation (`coldStartPlanText`). A `request_execution` task adopted into it
         // would fail `open_checks` (`verification-plan.ts:72`), park the Goal driver with no wait, and the next plan
         // adoption would wake nobody (RL-24 step 7). The adopted task carries the registered static obligation.
+        // Required work to run also needs the plan's goal gate (`plan-validation.ts` goal-gate template): the first
+        // such adoption brings it, mapped by the same obligation.
+        const goalGate = active.tasks.some(entry => entry.taskKind === 'gate' && entry.scope.kind === 'goal') ? []
+          : [{ taskId: 'c1t-goal-gate', title: 'C1T goal gate', requirementLevel: 'required' as const,
+            taskKind: 'gate' as const, disposition: 'active' as const, phase: 'pending' as const,
+            scope: { kind: 'goal' as const } }];
         const draft = draftFrom(active, `c1t-${input.label}`,
-          current => ({ ...current, tasks: [...current.tasks, task],
+          current => ({ ...current, tasks: [...current.tasks, task, ...goalGate],
             obligations: [...current.obligations, { obligationId: `c1t-${input.label}-obligation`,
               title: `C1T ${input.label} delivery`, requirementLevel: 'required' as const,
-              taskIds: [input.taskId], verificationRequirements: [{ requirementId: 'ag2b-static',
+              taskIds: [input.taskId, ...goalGate.map(gate => gate.taskId)], verificationRequirements: [{ requirementId: 'ag2b-static',
                 requirementLevel: 'required' as const, kind: 'static' as const,
                 description: 'Registered static command check' }] }],
             assignments: [...(current.assignments ?? []), { taskId: input.taskId, role: PL_ADVISER_ROLE.templateId,

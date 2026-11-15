@@ -370,7 +370,7 @@ export type FutureCoverageVerdict =
 export type PlanDraftAdmissionFacts = {
   /** L10 (8B §3.5): `unknownModuleTasksOf` against the adoption's catalog; `'ok'` with no module task. */
   modules: 'ok' | CoreRejection;
-  /** `validatePlanDraft(draft, policy)`. */
+  /** `validatePlanDraft(draft, policy)` plus `uncoveredRequirementIssues` over the workspace's installed checks. */
   draftIssues: readonly PlanValidationError[];
   /** `validatePlanAssignments(draft)`. */
   assignmentReasons: readonly string[];

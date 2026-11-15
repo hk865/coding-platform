@@ -48,6 +48,7 @@ import {
   type CommandRerunAdviceSubjectV1, type CommandRerunAdviceV1,
 } from '../../contracts/command-rerun-advice.js';
 import type { InitialPlanningSetupV2 } from '../../contracts/initial-planning.js';
+import { checkCapabilitiesOf } from '../../contracts/verification.js';
 import type { ToolTextV1 } from '../../contracts/prompts/prompt-pack.js';
 import type {
   SecretaryPreparationFactsPort, SecretaryPreparationFactsV1,
@@ -55,7 +56,7 @@ import type {
 import { ideasIssues } from '../work-graph/model/request-ideas.js';
 import { goalCardDraftCheck, parseSecretaryAnswer, planDraftIndexOf } from '../work-graph/queries/secretary-answer.js';
 import {
-  unknownModuleTasksOf, validatePlanAssignments, validatePlanDraft,
+  uncoveredRequirementIssues, unknownModuleTasksOf, validatePlanAssignments, validatePlanDraft,
 } from '../work-graph/tasks/plan-validation.js';
 import { unservedRoles } from '../work-graph/tasks/initialization-adoption-service.js';
 import { completionPolicyContentProblem } from '../work-graph/configuration/project-bootstrap-record-codecs.js';
@@ -673,7 +674,11 @@ export function answerProblems(
       if (contentProblem === null) policy = setup.completionPolicy;
       else problems.push({ section: 'setup', reason: contentProblem });
     }
-    for (const issue of validatePlanDraft(plan, policy)) {
+    // Adoption installs this answer's setup.checks as the workspace's checks (`initialization-adoption.ts` checks
+    // stage), so they are the list each required requirement must find its kind in.
+    for (const issue of [...validatePlanDraft(plan, policy),
+      ...uncoveredRequirementIssues(plan, { checks: checkCapabilitiesOf(setup.checks), checksAt: 'setup.checks',
+        policyKinds: policy?.requirementKinds ?? null })]) {
       problems.push({ section: 'plan', reason: issue.message });
     }
     for (const reason of validatePlanAssignments(plan)) {

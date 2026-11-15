@@ -311,11 +311,28 @@ it('initial required plan_only saves without assignment/acceptance/gate and surv
     })), 'w2-intent-omit');
     expect(omitted, JSON.stringify(omitted)).toMatchObject({ status: 'rejected', code: 'invalid' });
 
-    const activated = await proposeAndApply(f, goalRef, assigned.value.ref, futureDraftFrom(assigned.value, 'w2-intent-plan-3-active', (draft) => ({
+    // A required `request_execution` work needs the goal-gate template the Goal's completion reads (product rule
+    // 97-3: every Goal ends at its goal gate). Turning the intent on alone is refused and the active plan stays.
+    const bare = await proposeAndApply(f, goalRef, assigned.value.ref, futureDraftFrom(assigned.value, 'w2-intent-plan-3-active', (draft) => ({
       ...draft,
       tasks: draft.tasks.map((task) => task.taskId === 'explore'
         ? { ...task, executionIntent: 'request_execution' as const } : task),
     })), 'w2-intent-activate');
+    expect(bare, JSON.stringify(bare)).toMatchObject({ status: 'rejected', code: 'incomplete' });
+    expect(await f.plans.queryGoal(f.ctx, goalRef)).toMatchObject({ status: 'ready',
+      value: { goal: { activePlanRevision: assigned.value.ref } } });
+    // The same activation with the goal gate and a required obligation carrying both is adopted and claimable.
+    const activated = await proposeAndApply(f, goalRef, assigned.value.ref, futureDraftFrom(assigned.value, 'w2-intent-plan-3-accepted', (draft) => ({
+      ...draft,
+      tasks: [...draft.tasks.map((task) => task.taskId === 'explore'
+        ? { ...task, executionIntent: 'request_execution' as const } : task),
+      { taskId: 'w2-goal-gate', title: 'Goal gate', requirementLevel: 'required' as const, taskKind: 'gate' as const,
+        disposition: 'active' as const, phase: 'pending' as const, scope: { kind: 'goal' as const } }],
+      obligations: [...draft.obligations, { obligationId: 'w2-acceptance', title: 'Explore is accepted',
+        requirementLevel: 'required' as const, taskIds: ['explore', 'w2-goal-gate'],
+        verificationRequirements: [{ requirementId: 'w2-check', requirementLevel: 'required' as const,
+          kind: 'test', description: 'Tests pass' }] }],
+    })), 'w2-intent-activate-accepted');
     expect(activated, JSON.stringify(activated)).toMatchObject({ status: 'committed' });
     if (activated.status !== 'committed') throw new Error('explicit activation did not commit');
     const activationRequest = await f.buildRequest({ input: { goalRef, planRef: activated.value.ref, taskId: 'explore' },

@@ -5,7 +5,7 @@
   "templates": {
     "initial-planning-answer": {
       "file": "templates/initial-planning-answer.txt",
-      "version": 7,
+      "version": 8,
       "mentionsTools": []
     },
     "consultation-received-input": {
@@ -70,7 +70,7 @@
     },
     "plan-review-input": {
       "file": "templates/plan-review-input.txt",
-      "version": 1,
+      "version": 2,
       "mentionsTools": []
     },
     "exec-review-input": {
@@ -137,7 +137,7 @@
     },
     "secretary-answer": {
       "file": "templates/secretary-answer.txt",
-      "version": 4,
+      "version": 5,
       "mentionsTools": []
     },
     "handoff-write-understanding-secretary": {
@@ -191,7 +191,7 @@
     },
     "skill-platform-adviser": {
       "file": "templates/skill-platform-adviser.txt",
-      "version": 14,
+      "version": 15,
       "mentionsTools": []
     },
     "skill-platform-scribe": {
@@ -201,7 +201,7 @@
     },
     "skill-platform-reviewer": {
       "file": "templates/skill-platform-reviewer.txt",
-      "version": 4,
+      "version": 5,
       "mentionsTools": []
     }
   },

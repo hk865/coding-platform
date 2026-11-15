@@ -142,10 +142,12 @@ const ROUND_ACTOR: WorkbenchActor = { kind: 'human', id: 's6a-round-operator' };
 
 /** A valid check configuration with no checks (a Host input): a round opens and no check command runs. The
  * permission revision binds the executor to the world's workspace and its read prefix `.`. */
-const EMPTY_CHECKS: TrustedCheckConfiguration = {
+// The adopted ag2b plan's required static requirement needs an installed static check (adoption judges the coverage).
+const STATIC_CHECKS: TrustedCheckConfiguration = {
   configurationRevision: 's6a-empty-checks@1', workspace: { aggregateType: 'Workspace', ...S6A_SCOPE },
   executor: ROUND_ACTOR, permissionRevision: permissionRevision(ROUND_ACTOR, S6A_SCOPE, ['.']),
-  sourceAccess: 'verification_workspace', processAccess: 'all_except_denied', deniedPrefixes: ['.git'], checks: [],
+  sourceAccess: 'verification_workspace', processAccess: 'all_except_denied', deniedPrefixes: ['.git'],
+  checks: [{ checkId: 's6a-static', kind: 'static', command: 'true', cwd: '.', timeoutMs: 60_000, taskIds: 'all' }],
 };
 
 /** A Goal's real Plan, Stage, Task and Run, each made by a public step: the
@@ -384,7 +386,7 @@ describe.each(BACKENDS)('rejects: a graph operation that needs a goal with no go
   });
 
   it('rejects a look whose target is a verification round', async () => {
-    const { world } = await seededHostWorld(backend, { actor: ROUND_ACTOR, extraHostOptions: { checks: EMPTY_CHECKS } });
+    const { world } = await seededHostWorld(backend, { actor: ROUND_ACTOR, extraHostOptions: { checks: STATIC_CHECKS } });
     const receipts: WorkflowStepReceipt[] = [];
     await realObjects(world, receipts);
     const roundRef = openedRound(receipts);

@@ -42,10 +42,10 @@ describe('A-01: the plan-review input template', () => {
   it('carries the template and both planning tools, with the bumped versions', () => {
     expect(PACK.templates['plan-review-input']).toBeTypeOf('string');
     expect(PACK.manifest.templates['plan-review-input']).toEqual({
-      file: 'templates/plan-review-input.txt', version: 1, mentionsTools: [],
+      file: 'templates/plan-review-input.txt', version: 2, mentionsTools: [],
     });
-    expect(PACK.manifest.templates['skill-platform-adviser']?.version).toBe(14);
-    expect(PACK.manifest.templates['initial-planning-answer']?.version).toBe(7);
+    expect(PACK.manifest.templates['skill-platform-adviser']?.version).toBe(15);
+    expect(PACK.manifest.templates['initial-planning-answer']?.version).toBe(8);
     expect(Object.keys(PACK.tools)).toEqual(expect.arrayContaining(['submit_plan_round', 'submit_plan_review']));
     expect(PACK.tools['submit_plan_review']?.description).toBeTruthy();
     expect(PACK.tools['submit_plan_round']?.description).toBeTruthy();

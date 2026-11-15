@@ -45,7 +45,11 @@ export type PLSkeletonInput = {
   moduleGate?: PLModuleGateInput;
   /** Stage 2's executable `request_execution` tasks instead of the stage placeholder (G-02/G-12). */
   stageTwoTaskIds?: readonly string[];
-  /** Add a required `scope.kind === 'goal'` gate (G-02). */
+  /**
+   * The required `scope.kind === 'goal'` gate `pl-gate-goal` with its own required obligation; default on, since
+   * every adopted plan with required work to run needs it (`plan-validation.ts` goal-gate template).
+   * `false` leaves it out (a draft that is never adopted).
+   */
   goalGate?: boolean;
   /** Replace the stage-2 placeholder's disposition (PL-18a uses `deferred`). */
   placeholderDisposition?: 'active' | 'deferred';
@@ -130,7 +134,7 @@ export function plSkeletonDraft(goal: GoalRef, input: PLSkeletonInput = {}): Pla
   const label = input.label ?? 'pl';
   const stageOne = input.stageOneTaskIds ?? ['pl-a', 'pl-b'];
   const stageTwo = input.stageTwoTaskIds ?? [];
-  const goalGateId = input.goalGate === true ? 'pl-gate-goal' : null;
+  const goalGateId = input.goalGate === false ? null : 'pl-gate-goal';
   const stageTwoEmpty = stageTwo.length === 0 && input.omitStagePlaceholder === true;
   const stages = [{ stageId: 'pl-stage-1', title: 'PL stage 1' },
     ...(stageTwoEmpty ? [] : [{ stageId: 'pl-stage-2', title: 'PL stage 2' }])];
@@ -242,7 +246,7 @@ export async function adoptPLTwoStageSkeleton(main: S6ACardsWorkspace, goal: Goa
     : (input.omitStagePlaceholder === true ? [] : ['pl-placeholder-pl-stage-2']);
   const placeholderTaskIds = stageTwo.length === 0 && input.omitStagePlaceholder !== true
     ? ['pl-placeholder-pl-stage-2'] : [];
-  const goalGateId = input.goalGate === true ? 'pl-gate-goal' : null;
+  const goalGateId = input.goalGate === false ? null : 'pl-gate-goal';
   const stageTwoGate = stageTwo.length === 0 && input.omitStagePlaceholder === true ? [] : ['pl-gate-pl-stage-2'];
   const stageGateIds = ['pl-gate-pl-stage-1', ...stageTwoGate, ...(input.moduleGate === undefined
     ? [] : [input.moduleGate.taskId ?? 'pl-gate-module']), ...(goalGateId === null ? [] : [goalGateId])];
@@ -427,7 +431,8 @@ export function plSingleStageDraft(goal: GoalRef, input: {
       : { ...task, estimatedLines: input.estimatedLines });
   const obligation = base.obligations.find(entry => entry.obligationId === 'pl-obligation-stage-1');
   if (obligation === undefined) throw new Error('PL workflow: the single-stage obligation is missing');
-  const gate = input.goalGate === true ? goalGate('pl-gate-goal') : null;
+  const gate = input.goalGate === false ? null : goalGate('pl-gate-goal');
+  const carriers = [...(input.carrierTaskIds ?? [...taskIds, 'pl-gate-pl-stage-1'])];
   return {
     ...base,
     planId: `pl-plan-${label}`,
@@ -435,8 +440,12 @@ export function plSingleStageDraft(goal: GoalRef, input: {
     tasks: gate === null ? tasks : [...tasks, gate],
     assignments: (base.assignments ?? []).filter(assignment => taskIds.includes(assignment.taskId)),
     obligations: [
-      { ...obligation, taskIds: [...(input.carrierTaskIds ?? [...taskIds, 'pl-gate-pl-stage-1'])] },
-      ...(gate === null ? [] : [gateObligation('pl-obligation-goal', [gate.taskId], 'pl-requirement-goal')]),
+      { ...obligation, taskIds: carriers },
+      // A work task or the stage gate the carrier list leaves out joins the goal obligation: required work to run
+      // and every required gate are always mapped (`plan-validation.ts` goal-gate template).
+      ...(gate === null ? [] : [gateObligation('pl-obligation-goal',
+        [...[...taskIds, 'pl-gate-pl-stage-1'].filter(taskId => !carriers.includes(taskId)), gate.taskId],
+        'pl-requirement-goal')]),
     ],
   };
 }

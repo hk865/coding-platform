@@ -22,16 +22,23 @@ import { waitFor } from './harness.js';
 vi.mock('../../src/core/record-store/in-memory-record-store.js', async (importOriginal) =>
   (await import('../helpers/S6A-commit-barrier.js')).inMemoryBarrierModule(importOriginal));
 const SMK_TASK_ID = 'smk-initial-work';
-const smkSetup = (): InitialPlanningSetupV2 => ({ architecture: { baselineId: 'smk-baseline', description: 'SMK governance', constraints: [], catalog: { requireDag: true, dependencies: [], modules: [] } }, completionPolicy: { schemaVersion: 1, requirementKinds: ['test'], minimumRequiredRequirementsPerObligation: 1 }, checks: [] });
+const smkSetup = (): InitialPlanningSetupV2 => ({ architecture: { baselineId: 'smk-baseline', description: 'SMK governance', constraints: [], catalog: { requireDag: true, dependencies: [], modules: [] } }, completionPolicy: { schemaVersion: 1, requirementKinds: ['static'], minimumRequiredRequirementsPerObligation: 1 }, checks: [{ checkId: 'smk-static', kind: 'static', command: 'true', cwd: '.', timeoutMs: 60_000, taskIds: 'all' }] });
 /** One whole v2 `kind: 'plan'` answer: two card drafts, the legal setup, the named `planDraftIndex`, one required
  *  executable work Task assigned to `role`. */
 const smkPlanText = (input: { label: string; planDraftIndex: 0 | 1; role: string }): string => JSON.stringify({
   schemaVersion: 2, kind: 'plan', summary: `SMK ${input.label} coordination`,
   plan: { schemaVersion: 2, stages: [], tasks: [{ taskId: SMK_TASK_ID, title: `SMK ${input.label} work`,
       requirementLevel: 'required', taskKind: 'work', disposition: 'active', phase: 'pending', scope: { kind: 'goal' },
-      executionIntent: 'request_execution' }],
+      executionIntent: 'request_execution' },
+    // Every adopted plan with required work to run carries one goal gate (`plan-validation.ts` goal-gate template);
+    // the required requirement needs an installed check of its kind (adoption judges the coverage).
+    { taskId: 'smk-goal-gate', title: `SMK ${input.label} goal gate`, requirementLevel: 'required', taskKind: 'gate',
+      disposition: 'active', phase: 'pending', scope: { kind: 'goal' } }],
     assignments: [{ taskId: SMK_TASK_ID, role: input.role, instruction: `SMK ${input.label} work` }],
-    obligations: [], taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] } },
+    obligations: [{ obligationId: 'smk-obligation', title: `SMK ${input.label} delivery`, requirementLevel: 'required',
+      taskIds: [SMK_TASK_ID, 'smk-goal-gate'], verificationRequirements: [{ requirementId: 'smk-static',
+        requirementLevel: 'required', kind: 'static', description: `SMK ${input.label} static check` }] }],
+    taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] } },
   goalCardDrafts: [
     { objective: `SMK ${input.label} draft 0`, completion: [`SMK ${input.label} criterion 0`], autonomy: 'every_step', screening: null },
     { objective: `SMK ${input.label} draft 1`, completion: [`SMK ${input.label} criterion 1`], autonomy: 'after_plan_confirmation', screening: null },

@@ -23,6 +23,8 @@ async function adoptDeferredPlan(label: string): Promise<void> {
     { stageId: 'e34-10-stage-b', title: 'E34-10 阶段 B' },
   ];
   draft.tasks = draft.tasks.map((task) => {
+    // The gate stays the plan's goal gate (`plan-validation.ts` goal-gate template).
+    if (task.taskKind === 'gate') return task;
     const stageId = task.taskId === 'e34-10-a' ? 'e34-10-stage-a' : 'e34-10-stage-b';
     return { ...task, stageId, title: '独立工作 ' + task.taskId, scope: { kind: 'stage' as const, stageId } };
   });

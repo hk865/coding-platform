@@ -22,7 +22,7 @@
 
 - 只读调查目标与来源，返回一个 JSON 对象，`schemaVersion` 为 `2`，`kind` 为 `"plan"` 或 `"needs_decision"`；不要输出 markdown 代码围栏。
 - `plan`：提供 `summary` 与 `plan`（`schemaVersion:2`、stages、tasks、assignments、obligations、`taskHierarchy:{parentOf:[]}`、`executionDag:{dependsOn:[]}`；可选 `taskRelations`）。不要自造 `planId`/`planRevision`/`goalId`/`origin`：平台从已保存的 Job project/goal/intentId 确定性推导身份，原 Goal/Workspace 版本与回答正文 digest 记入 origin。
-- `plan_only` 任务可以没有 assignment/验收；`request_execution` 任务必须恰好一条 `{taskId,role,instruction}` assignment。骨架每一段都要有阶段 gate（规则见“规划细化”）；除此之外不要补 gate、依赖、验收、分配或虚构 Role binding；缺项如实保留，由原 validator 与后续消费者裁决。
+- `plan_only` 任务可以没有 assignment/验收；`request_execution` 任务必须恰好一条 `{taskId,role,instruction}` assignment，必需的还要列在一条必需义务的 `taskIds` 里。骨架每一段都要有阶段 gate，整份计划恰好一个目标 gate（规则见“规划细化”）；除了这些 gate 和它们的义务以外，不要补 gate、依赖、验收、分配或虚构 Role binding；缺项如实保留，由原 validator 与后续消费者裁决。
 - `needs_decision` 只列真正需要产品或授权决定的问题，不是每份计划的必经人工确认，也不写候选。
 
 ## 已有采用 Plan 的未来修订
@@ -46,6 +46,7 @@
 - 依赖和并行：用 `executionDag` 写真实版本化输入/输出依赖；`taskRelations` 只写建议，不当事前并行门禁。重叠模块先定接口约定再派工；不在计划里写“按顺序”来代替真实依赖。
 - 只输出这一段：细化请求只写这一段的 stages/tasks/assignments/obligations/依赖；不重抄别的段；不删任务（用 disposition）；复用占位任务的 taskId，或新增任务并标 superseded。
 - 阶段 gate：每一段恰好一条必需的 gate 任务（`taskKind: 'gate'`、`scope: { kind: 'stage', stageId }`），它列在这一段验收义务的 `taskIds` 里；你写、审阅者查，平台不替你补。细化时已有的 gate 和义务原样沿用，新增的段带上自己的。
+- 目标 gate：整份计划恰好一条必需、活动的 gate 任务（`taskKind: 'gate'`、`scope: { kind: 'goal' }`），列在一条必需义务（目标验收）的 `taskIds` 里；没有它，任务做完目标也判不了完成。必需的 `request_execution` 工作任务都要列在某条必需义务的 `taskIds` 里，`plan_only` 占位可以不列。细化或补段时，已有的目标 gate 和它的义务原样沿用。
 - 第 7 节的三种答复：执行者在等时，可以改计划、回答或问人；系统软超线（`growth` 或 `lines`）时，可以改计划、回答（判断写“请知悉”）或问人；已有停因（`budget`/`stop`）时，只能改计划或问人，不写“回答能解除停因”。答复的格式和后果按第 7 节，让参谋知道什么时候写候选、什么时候回复原消息、什么时候出卡。
 - 执行者上报的收件人：执行者用现有发信找它认到的参谋线{{#tool:find_related_sessions}}（技能里用 `find_related_sessions` 认人）{{/tool:find_related_sessions}}，带 `waitAfterSend: true`；执行者不是 Host，不能调 `resolveDutyRecipient`。平台侧的系统轮和通知才按 L35。
 - 任务书不写全的后果：审阅轮会看任务书够不够让执行者不猜；平台不代替模型补语义。

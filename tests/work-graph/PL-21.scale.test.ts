@@ -132,8 +132,12 @@ function basePlan(goal: GoalRef, planId = 'pl21-base', planRevision = 1): BasePl
       ...Array.from({ length: STAGE_COUNT }, (_unused, index) => {
         const stage = index + 1;
         const stageId = stageIdForIndex(stage);
+        // Required work to run is mapped by a required obligation (`plan-validation.ts` goal-gate template): the
+        // stage obligation carries every `request_execution` task of its stage.
         const carriers = [stageGateTask(stageId).taskId];
-        if (stage === 1) carriers.push(taskIdOf(1, 1));
+        for (let index = 1; index <= TASKS_PER_STAGE; index += 1) {
+          if (!((stage === 3 || stage >= 4) && index === TASKS_PER_STAGE)) carriers.push(taskIdOf(stage, index));
+        }
         if (stage === 3) carriers.push(PLACEHOLDER_TASK_ID);
         return obligation(`pl21-stage-${String(stage)}-obligation`, carriers);
       }),
@@ -164,6 +168,12 @@ function oneToOneSegment(goal: GoalRef, _base: BasePlan): Record<string, unknown
   };
 }
 
+/**
+ * The 1:many segment's one new required obligation carrying both refined tasks: required work to run is mapped
+ * (`plan-validation.ts` goal-gate template), and a segment keeps every existing obligation unchanged.
+ */
+const REFINED_OBLIGATION = obligation('pl21-refined-obligation', REFINED_TASK_IDS);
+
 /** One placeholder refined into two tasks: the placeholder is `superseded`, real tasks are added. */
 function oneToManySegment(goal: GoalRef, _base: BasePlan): Record<string, unknown> {
   return {
@@ -179,7 +189,7 @@ function oneToManySegment(goal: GoalRef, _base: BasePlan): Record<string, unknow
       { taskId: REFINED_TASK_IDS[0], role: S6A_WORK_ROLE.templateId, instruction: 'PL-21 refined A' },
       { taskId: REFINED_TASK_IDS[1], role: S6A_WORK_ROLE.templateId, instruction: 'PL-21 refined B' },
     ],
-    obligations: [], taskHierarchy: { parentOf: [] },
+    obligations: [REFINED_OBLIGATION], taskHierarchy: { parentOf: [] },
     executionDag: { dependsOn: [{ taskId: REFINED_TASK_IDS[1], dependsOnId: REFINED_TASK_IDS[0],
       requires: { kind: 'output-contract', label: 'refined A output contract' } }] },
     taskRelations: [], inputRequirements: [],
@@ -188,9 +198,10 @@ function oneToManySegment(goal: GoalRef, _base: BasePlan): Record<string, unknow
 
 const VARIANTS = [
   { label: '1:1', slug: '1to1', segment: oneToOneSegment, refinedTaskId: PLACEHOLDER_TASK_ID,
-    answerTaskIds: [PLACEHOLDER_TASK_ID], addedTasks: 0 },
+    answerTaskIds: [PLACEHOLDER_TASK_ID], addedTasks: 0, addedObligations: [] },
   { label: '1:many', slug: '1tomany', segment: oneToManySegment, refinedTaskId: REFINED_TASK_IDS[0],
-    answerTaskIds: [PLACEHOLDER_TASK_ID, ...REFINED_TASK_IDS], addedTasks: REFINED_TASK_IDS.length },
+    answerTaskIds: [PLACEHOLDER_TASK_ID, ...REFINED_TASK_IDS], addedTasks: REFINED_TASK_IDS.length,
+    addedObligations: [REFINED_OBLIGATION] },
 ] as const;
 
 const worlds: S6AHostWorld[] = [];
@@ -227,7 +238,7 @@ function seedPlanAnswer(): string {
       })),
       obligations: [
         obligation('pl21-goal-obligation', [GOAL_GATE_TASK_ID]),
-        obligation('pl21-stage-1-obligation', [stageGateId, seedWorkTaskIds[0]!]),
+        obligation('pl21-stage-1-obligation', [stageGateId, ...seedWorkTaskIds]),
       ],
       taskHierarchy: { parentOf: [] },
       executionDag: { dependsOn: [{ taskId: seedWorkTaskIds[1]!, dependsOnId: seedWorkTaskIds[0]!,
@@ -384,7 +395,9 @@ describe('PL-21: a few-hundred-task Plan refined by one segment', () => {
         expect(taskOf(draft, gateId), `gate ${gateId} keeps its definition`)
           .toEqual(taskOf(base.draft, gateId));
       }
-      expect(draft.obligations).toEqual(base.draft.obligations);
+      // Every base obligation stays exactly as it was, and the segment adds exactly its own new ones.
+      expect(draft.obligations.slice(0, base.draft.obligations.length)).toEqual(base.draft.obligations);
+      expect(draft.obligations.slice(base.draft.obligations.length)).toEqual(row.addedObligations);
 
       // The merged draft passes the existing admission and is a real candidate.
       expect(validatePlanDraft(draft, null)).toEqual([]);

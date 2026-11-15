@@ -13,7 +13,7 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "63a96293763fd40b5d55e9ce2353c8a3e278b21502a4c3e5cc9d58555a8fa0db"
+    "sha256": "9c11707d9ffb4db73d7c8e2f202eb4ce08c0f0edd37a74cc843313fc64f56258"
   },
   {
     "path": "resources/prompts/platform/strings.json",
@@ -21,7 +21,7 @@
   },
   {
     "path": "resources/prompts/platform/templates/initial-planning-answer.txt",
-    "sha256": "cf2c3e1250ad24ee5828cee5ef7bd28d29cea05c756ae83442267ffcc099ab34"
+    "sha256": "b8ce6951f21c0207cc0f6a521ce7f06c1359b53bd416ab4a3fcdec295be4d0cc"
   },
   {
     "path": "resources/prompts/platform/templates/consultation-received-input.txt",
@@ -61,7 +61,7 @@
   },
   {
     "path": "resources/prompts/platform/templates/plan-review-input.txt",
-    "sha256": "44a78e42d580621a367badc2f592113fff2e5b58edf779a51d086bb6eef93d9a"
+    "sha256": "468637cc805ea0013469616483037ce016a680a37c5d6ea610825cb23434a67c"
   },
   {
     "path": "resources/prompts/platform/templates/scribe-reminder.txt",
@@ -101,7 +101,7 @@
   },
   {
     "path": "resources/prompts/platform/templates/secretary-answer.txt",
-    "sha256": "6de01c878a178ac3f108130eb73463d318eb8157ba7eeb24fb515240029ba3cf"
+    "sha256": "09cbe058425e7a84ecc4ca4e70e4060626a9188519b089c8ab7686a49debb8b0"
   },
   {
     "path": "resources/prompts/platform/templates/handoff-write-understanding-secretary.txt",
@@ -141,7 +141,7 @@
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-adviser.txt",
-    "sha256": "b96a3e5867ab98f821bb34926568b2f21325607254cf583a978dbd35c59c3628"
+    "sha256": "479429b59b3681902eb367d6cb3d7cb8821b8fcba76964e9d282af67e36baee0"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-scribe.txt",
@@ -149,7 +149,7 @@
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-reviewer.txt",
-    "sha256": "7cd261e9a6611af0941f9ba42c3d0a6dbfe6e70d8a931fae88e1a4c7e03d8e9a"
+    "sha256": "730e2ee4693fbd17776a2adfb5c6b8edaeab2c5ba7ed102aec0ba49aec9307a6"
   },
   {
     "path": "resources/prompts/platform/tools/query_task_graph.json",
@@ -309,7 +309,7 @@
   },
   {
     "path": "resources/prompts/platform/tools/submit_initial_plan.json",
-    "sha256": "6ce401f2b6f089b6c0cd530f6ddb2bf4ec35ee490a860e1222c99fc5edc0a8b1"
+    "sha256": "4164324437a782afe79708b48fdd20d8346ef3cf1f1fd37cf81e13aac95a81ed"
   },
   {
     "path": "resources/prompts/platform/tools/submit_initial_questions.json",

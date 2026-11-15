@@ -60,7 +60,9 @@ it('PL-31: an entered Run keeps v1 while v2 only changes B and adds C; changing 
       assignments: [...(skeleton.plan.assignments ?? []).map(assignment => assignment.taskId === 'pl-b'
         ? { ...assignment, instruction: 'PL-31 changed B instruction' } : assignment),
       { taskId: 'pl-c', role: S6A_WORK_ROLE.templateId, instruction: 'PL-31 added C instruction' }],
-      obligations: skeleton.plan.obligations,
+      // Required work to run is mapped by a required obligation (`plan-validation.ts` goal-gate template).
+      obligations: skeleton.plan.obligations.map(obligation => obligation.obligationId === 'pl-obligation-stage-1'
+        ? { ...obligation, taskIds: [...obligation.taskIds, 'pl-c'] } : obligation),
     });
     const proposed = (await workflow.main.post('plans/propose', graphWrite(S6A_SCOPE, {
       goalRef: workflow.goal, basedOn: skeleton.plan.ref, draft: v2Draft,

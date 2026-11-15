@@ -46,7 +46,7 @@ import {
   InitializationSourceShape, type InitializationSourceV1,
 } from '../../../contracts/initial-planning.js';
 import { checkShape } from '../../../contracts/validation/data-format.js';
-import type { Phase, PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot,
+import type { Phase, PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot, PlanValidationError,
   RuntimeTask, TaskInputRequirementV2, TaskRelationV2 } from '../../../contracts/plan.js';
 import {
   DEFAULT_TASK_AUTOMATION_POLICY, isAutomationActor, reworkActorClassOf, type ReworkActorClass,
@@ -54,7 +54,7 @@ import {
 } from '../../../contracts/task-requeue.js';
 import type { ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';
 import type { GoalDesiredState } from '../../../contracts/ledger.js';
-import type { TrustedCheckConfiguration } from '../../../contracts/verification.js';
+import { checkCapabilitiesOf, type TrustedCheckConfiguration } from '../../../contracts/verification.js';
 import type { ToolCommitLookupInput, ToolCommitLookupResult } from '../../../contracts/unknown-call-review.js';
 import {
   agentActorOf, toolCommitLookupResult, toolCommitLookupUnknownTool, toolCommitRequestId,
@@ -187,6 +187,7 @@ import {
   removedTaskProblem,
   type FuturePlanDelta,
   unchangedTerminalTaskIds,
+  uncoveredRequirementIssues,
   unknownModuleRejection,
   unknownModuleTasksOf,
   validateFutureObligationCoverage,
@@ -246,8 +247,12 @@ export type PlanServiceDependencies = { records: GoalRecordTransactionPort & Rec
    * workspace (the evidence owner's `configurationFor`); a reverify refusal
    * that stored a configuration revision is stale once it differs. Absent (or
    * no configuration) reads as an unknown revision, which never makes one stale.
+   * Plan adoption judges its checks: every required verification requirement
+   * needs an installed check of its kind (absent = unknown coverage, not judged);
+   * a change adoption judges only the obligations it adds or alters.
    */
-  configurationFor?(scope: { projectId: string; workspaceId: string }): Pick<TrustedCheckConfiguration, 'configurationRevision'> | undefined;
+  configurationFor?(scope: { projectId: string; workspaceId: string }):
+    Pick<TrustedCheckConfiguration, 'configurationRevision' | 'checks'> | undefined;
   /**
    * Slice 5 §3.2: the exact configured operator a request-candidate
    * adoption/abandon is compared against. Absent leaves the frozen fixtures
@@ -1625,7 +1630,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
         const sourceProof = await proveFutureAdoptionSource(records, ctx.signal, candidate);
         if ('status' in sourceProof) return sourceProof;
         return applyFutureRevision({ records, read, adoption, receipt: receiptExpected,
-          operatorActor: deps.operatorActor,
+          operatorActor: deps.operatorActor, configurationFor: deps.configurationFor,
           extraGuards: sourceProof.guards, eventId: deps.eventId, now: deps.now, decisionProof,
           catalogWindow });
       }
@@ -1705,7 +1710,9 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       refused = ask({ modules });
       if (refused !== null) return refusalOf(refused);
       // The draft validators run one after the other, each only once the one before it holds.
-      const draftIssues = validatePlanDraft(candidate.draft, resolved!.policyContent);
+      const draftIssues = [...validatePlanDraft(candidate.draft, resolved!.policyContent),
+        ...installedCoverageIssues(deps.configurationFor, candidate.ref, candidate.draft.obligations,
+          resolved!.policyContent.requirementKinds)];
       refused = ask({ draftIssues });
       if (refused !== null) return refusalOf(refused);
       const assignmentReasons = validatePlanAssignments(candidate.draft);
@@ -3093,6 +3100,23 @@ async function readAdoption(
     horizon: proposalRead.readThrough ?? scoped.scope.readThrough };
 }
 
+/**
+ * The adopted plan runs its check rounds under the workspace's installed checks (an initial adoption's checks stage
+ * installs the answer's own before this apply), so each required requirement of `obligations` none of them covers
+ * refuses the adoption. No installed configuration is unknown coverage, as on the candidate card: the check round
+ * reports it.
+ */
+function installedCoverageIssues(
+  configurationFor: PlanServiceDependencies['configurationFor'],
+  ref: PlanCommit['proposal']['ref'],
+  obligations: PlanCommit['proposal']['draft']['obligations'],
+  policyKinds: readonly string[] | null,
+): PlanValidationError[] {
+  const configuration = configurationFor?.({ projectId: ref.projectId, workspaceId: ref.workspaceId });
+  return uncoveredRequirementIssues({ obligations }, { policyKinds, checksAt: "the workspace's installed checks",
+    checks: configuration === undefined ? null : checkCapabilitiesOf(configuration.checks) });
+}
+
 /** PLAN-04/05 over the adoption facts read so far: each read joins them and the machine is asked again. */
 function adoptionAsk<F extends object>(candidate: PlanCommit['proposal'], adoption: AcceptedPlanEvent,
   contextOf: (facts: Partial<F>) => PlanProposalReadFacts): (read: Partial<F>) => MachineRefusalOf | null {
@@ -3155,6 +3179,8 @@ async function applyFutureRevision(input: {
   receipt: ApplyReceipt;
   /** Slice 5 §3.2: the exact configured operator, or absent (the trusted Host actor). */
   operatorActor?: PlanServiceDependencies['operatorActor'];
+  /** The workspace's installed checks, for the coverage rule (`installedCoverageIssues`). */
+  configurationFor: PlanServiceDependencies['configurationFor'];
   /** The V-01 intervention source-proof guards joined to this CAS. */
   extraGuards: readonly RecordGuard[];
   eventId: () => string;
@@ -3257,7 +3283,18 @@ async function applyFutureRevision(input: {
   refused = ask({ modules });
   if (refused !== null) return refusalOf(refused);
   // The draft validators run one after the other, each only once the one before it holds.
-  const draftIssues = validatePlanDraft(proposal.draft, pinnedPolicyContent);
+  // Coverage is this change's own: only a change that adds an obligation (the one that reads the pinned policy
+  // above) judges it, over the obligations it adds or whose level or requirements it alters (an optional obligation
+  // made required is judged now). An obligation carried unchanged was judged when it was adopted; a later change of
+  // the installed checks is not this change's to answer.
+  const changedObligations = hasNewObligation ? proposal.draft.obligations.filter((obligation) => {
+    const carried = source.obligations.find((entry) => entry.obligationId === obligation.obligationId);
+    return carried === undefined || carried.requirementLevel !== obligation.requirementLevel
+      || !sameJson(carried.verificationRequirements, obligation.verificationRequirements);
+  }) : [];
+  const draftIssues = [...validatePlanDraft(proposal.draft, pinnedPolicyContent),
+    ...installedCoverageIssues(input.configurationFor, proposal.ref, changedObligations,
+      pinnedPolicyContent?.requirementKinds ?? null)];
   refused = ask({ draftIssues });
   if (refused !== null) return refusalOf(refused);
   const assignmentReasons = validatePlanAssignments(proposal.draft);

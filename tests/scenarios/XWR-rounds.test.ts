@@ -132,12 +132,18 @@ async function adoptTwoScribeTasks(world: XWS2AWorld, label: string) {
   const draft = {
     schemaVersion: 2, planId: `${label}-plan`, planRevision: 1, goalId: goal.goalId,
     stages: [{ stageId, title: 'XWR-ON stage' }],
-    tasks: taskIds.map(taskId => ({ taskId, title: taskId, requirementLevel: 'required', taskKind: 'work',
+    tasks: [...taskIds.map(taskId => ({ taskId, title: taskId, requirementLevel: 'required', taskKind: 'work',
       disposition: 'active', phase: 'pending', scope: { kind: 'module', stageId, moduleRef: XWS2A_MODULE_ID },
       executionIntent: 'request_execution', sizeClass: 'small', estimatedLines: 10 })),
+    // Every adopted plan with required work to run carries one goal gate (`plan-validation.ts` goal-gate template).
+    { taskId: `${label}-goal-gate`, title: 'XWR-ON goal gate', requirementLevel: 'required', taskKind: 'gate',
+      disposition: 'active', phase: 'pending', scope: { kind: 'goal' } }],
     assignments: taskIds.map(taskId => ({ taskId, role: S6A_SCRIBE_ROLE.templateId,
       instruction: `XWR-ON ${taskId}` })),
-    obligations: [], taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] }, taskRelations: [],
+    obligations: [{ obligationId: `${label}-obligation`, title: 'XWR-ON delivery', requirementLevel: 'required',
+      taskIds: [...taskIds, `${label}-goal-gate`], verificationRequirements: [{ requirementId: `${label}-static`,
+        requirementLevel: 'required', kind: 'static', description: 'XWR-ON static check' }] }],
+    taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] }, taskRelations: [],
     inputRequirements: [],
   };
   const proposed = valueOf<{ ref: unknown; revision: number }>(await b.post('plans/propose',

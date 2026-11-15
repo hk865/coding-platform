@@ -325,12 +325,15 @@ export async function createAdmissionFixture(kind: ClaimFixtureKind): Promise<Ad
         disposition: 'active', phase: 'pending', scope: { kind: 'goal' }, executionIntent: 'request_execution' },
       { taskId: 'tB', stageId: 's', title: 'B', requirementLevel: 'required', taskKind: 'work',
         disposition: 'active', phase: 'pending', scope: { kind: 'goal' }, executionIntent: 'request_execution' },
+      // Every adopted plan with required work to run carries one goal gate (`plan-validation.ts` goal-gate template).
+      { taskId: 'tG', title: 'Goal gate', requirementLevel: 'required', taskKind: 'gate',
+        disposition: 'active', phase: 'pending', scope: { kind: 'goal' } },
     ],
     assignments: [
       { taskId: 'tA', role: 'builder', instruction: 'Implement A' },
       { taskId: 'tB', role: 'builder', instruction: 'Implement B' },
     ],
-    obligations: [{ obligationId: 'oB', title: 'Deliver B', requirementLevel: 'required', taskIds: ['tB'],
+    obligations: [{ obligationId: 'oB', title: 'Deliver B', requirementLevel: 'required', taskIds: ['tB', 'tA', 'tG'],
       verificationRequirements: [{ requirementId: 'vB', requirementLevel: 'required', kind: 'static',
         description: 'node check-b.js' }] }],
     taskHierarchy: { parentOf: [] },

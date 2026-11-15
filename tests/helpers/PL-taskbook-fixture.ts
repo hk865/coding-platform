@@ -117,6 +117,11 @@ export function twoStageDraft(goal: GoalRef, planId = 'pl-taskbook-two-stage',
         disposition: 'active', phase: 'pending', scope: { kind: 'stage', stageId: 'stage-one' },
       },
       ...nextTasks,
+      // Every adopted plan with required work to run carries one goal gate (`plan-validation.ts` goal-gate template).
+      {
+        taskId: 'goal-gate', title: 'Goal gate', requirementLevel: 'required', taskKind: 'gate',
+        disposition: 'active', phase: 'pending', scope: { kind: 'goal' },
+      },
   ];
   const draft: PlanRevisionDraft = {
     schemaVersion: 2,
@@ -132,6 +137,13 @@ export function twoStageDraft(goal: GoalRef, planId = 'pl-taskbook-two-stage',
       verificationRequirements: [{
         requirementId: 'stage-check', requirementLevel: 'required', kind: 'static',
         description: 'The stage one check passes.',
+      }],
+    }, {
+      obligationId: 'goal-obligation', title: 'The goal is delivered', requirementLevel: 'required',
+      taskIds: ['goal-gate'],
+      verificationRequirements: [{
+        requirementId: 'goal-check', requirementLevel: 'required', kind: 'static',
+        description: 'The goal check passes.',
       }],
     }],
     taskHierarchy: { parentOf: [] },

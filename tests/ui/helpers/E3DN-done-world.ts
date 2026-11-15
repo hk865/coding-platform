@@ -390,14 +390,25 @@ async function planWorld(label: string, draft: (goal: GoalRef) => PlanRevisionDr
 }
 
 /**
- * ④/⑥'s Plan: stage 1's `done-a` and `done-b` (`request_execution`, so no gate is required, `plan-validation.ts:92`)
- * and no stage gate; `goalGate` adds the goal-scope gate `pl-gate-goal` with its own required obligation.
+ * A plan with no goal gate is adoptable only while its required work is all future intent: required work to run
+ * brings the goal-gate template (`plan-validation.ts`). ④/⑤ keep their gateless shapes with `plan_only` work.
+ */
+function asFutureIntents(draft: PlanRevisionDraft): PlanRevisionDraft {
+  return { ...draft, tasks: draft.tasks.map(task => task.taskKind === 'work' ? { ...task, executionIntent: 'plan_only' as const } : task) };
+}
+
+/**
+ * ④/⑥'s Plan: stage 1's `done-a` and `done-b` and no stage gate; `goalGate` adds the goal-scope gate `pl-gate-goal`
+ * with its own required obligation, which carries both (④ without it holds them as `plan_only`).
  */
 function doneWorkOnlyDraft(goal: GoalRef, label: string, goalGate: boolean): PlanRevisionDraft {
   const base = plSkeletonDraft(goal, { label, stageOneTaskIds: [DONE_TASK_A, DONE_TASK_B], omitStagePlaceholder: true, goalGate });
+  if (!goalGate) return asFutureIntents({ ...base, tasks: base.tasks.filter(task => task.taskKind !== 'gate'), obligations: [] });
+  // The goal obligation carries the two work tasks too: no stage gate is left to carry them.
   return { ...base,
     tasks: base.tasks.filter(task => task.taskKind !== 'gate' || task.scope.kind === 'goal'),
-    obligations: (base.obligations ?? []).filter(obligation => obligation.obligationId === 'pl-obligation-goal') };
+    obligations: (base.obligations ?? []).filter(obligation => obligation.obligationId === 'pl-obligation-goal')
+      .map(obligation => ({ ...obligation, taskIds: [DONE_TASK_A, DONE_TASK_B, ...obligation.taskIds] })) };
 }
 
 /** ① No Goal at all: the seed's project and workspace only (`defaultGoals: false`, no `goals/create`). */
@@ -432,15 +443,15 @@ export async function openDoneNoPlanWorld(): Promise<DoneEmptyWorld & { readonly
   });
 }
 
-/** ④ An adopted Plan with no gate (only `done-a` and `done-b`), through `plans/propose`/`plans/apply`. */
+/** ④ An adopted Plan with no gate (only `done-a` and `done-b`, `plan_only`), through `plans/propose`/`plans/apply`. */
 export async function openDoneNoGateWorld(): Promise<DonePlanWorld> {
   return await planWorld('done4', goal => doneWorkOnlyDraft(goal, 'done4', false));
 }
 
-/** ⑤ Two stage gates (`pl-gate-pl-stage-1`, `pl-gate-pl-stage-2`) and no goal gate: the two-stage skeleton. */
+/** ⑤ Two stage gates (`pl-gate-pl-stage-1`, `pl-gate-pl-stage-2`) and no goal gate: the two-stage skeleton, `plan_only`. */
 export async function openDoneTwoStageGateWorld(): Promise<DonePlanWorld> {
-  return await planWorld('done5', goal => plSkeletonDraft(goal,
-    { label: 'done5', stageOneTaskIds: [DONE_TASK_A, DONE_TASK_B], omitStagePlaceholder: false, goalGate: false }));
+  return await planWorld('done5', goal => asFutureIntents(plSkeletonDraft(goal,
+    { label: 'done5', stageOneTaskIds: [DONE_TASK_A, DONE_TASK_B], omitStagePlaceholder: false, goalGate: false })));
 }
 
 /** ⑥ ④'s Plan plus the goal gate `pl-gate-goal`, never driven: the gate has no round. */

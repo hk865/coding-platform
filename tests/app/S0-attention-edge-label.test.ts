@@ -150,6 +150,9 @@ function planDraft(requires: DependencyRequirement, planRevision: number): PlanR
         phase: 'pending', scope: { kind: 'goal' }, executionIntent: 'request_execution' },
       { taskId: 't2', title: 'T2', requirementLevel: 'required', taskKind: 'work', disposition: 'active',
         phase: 'pending', scope: { kind: 'goal' }, executionIntent: 'request_execution' },
+      // Every adopted plan with required work to run carries one goal gate (`plan-validation.ts` goal-gate template).
+      { taskId: 'g', title: 'Goal gate', requirementLevel: 'required', taskKind: 'gate', disposition: 'active',
+        phase: 'pending', scope: { kind: 'goal' } },
     ],
     assignments: [
       { taskId: 't1', role: 'builder', instruction: 'Do T1' },
@@ -157,7 +160,7 @@ function planDraft(requires: DependencyRequirement, planRevision: number): PlanR
     ],
     obligations: [{
       obligationId: 's0-obligation', title: 'Deliver the dependency edge', requirementLevel: 'required',
-      taskIds: ['t1', 't2'],
+      taskIds: ['t1', 't2', 'g'],
       verificationRequirements: [{ requirementId: 's0-check', requirementLevel: 'required', kind: 'static',
         description: 'The registered static check' }],
     }],

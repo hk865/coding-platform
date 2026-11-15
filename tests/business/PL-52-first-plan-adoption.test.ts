@@ -45,16 +45,23 @@ const firstPlanAnswer = (): string => JSON.stringify({
     stages: [{ stageId: FIRST_STAGE, title: 'PL-52 stage', description: 'The first stage.' }],
     tasks: [{ taskId: 'pl-52-work', stageId: FIRST_STAGE, title: 'PL-52 work', requirementLevel: 'required',
       taskKind: 'work', disposition: 'active', phase: 'pending', scope: { kind: 'stage', stageId: FIRST_STAGE },
-      executionIntent: 'request_execution' }],
+      executionIntent: 'request_execution' },
+    // Every adopted plan with required work to run carries one goal gate (`plan-validation.ts` goal-gate template).
+    { taskId: 'pl-52-goal-gate', title: 'PL-52 goal gate', requirementLevel: 'required', taskKind: 'gate',
+      disposition: 'active', phase: 'pending', scope: { kind: 'goal' } }],
     assignments: [{ taskId: 'pl-52-work', role: 'local-workbench', instruction: FIRST_INSTRUCTION }],
-    obligations: [], taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] } },
+    obligations: [{ obligationId: 'pl-52-obligation', title: 'PL-52 delivery', requirementLevel: 'required',
+      taskIds: ['pl-52-work', 'pl-52-goal-gate'], verificationRequirements: [{ requirementId: 'pl-52-static',
+        requirementLevel: 'required', kind: 'static', description: 'PL-52 static check' }] }],
+    taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] } },
   goalCardDrafts: [0, 1].map(index => ({ objective: `PL-52 draft ${String(index)}`,
     completion: [`PL-52 criterion ${String(index)}`], autonomy: 'every_step', screening: null })),
   planDraftIndex: 0,
   setup: { architecture: { baselineId: 'pl-52-baseline', description: 'PL-52 governance', constraints: [],
     catalog: { requireDag: true, dependencies: [], modules: [] } },
-  completionPolicy: { schemaVersion: 1, requirementKinds: ['test'], minimumRequiredRequirementsPerObligation: 1 },
-  checks: [] },
+  // The required requirement needs an installed check of its kind (adoption judges the coverage).
+  completionPolicy: { schemaVersion: 1, requirementKinds: ['static'], minimumRequiredRequirementsPerObligation: 1 },
+  checks: [{ checkId: 'pl-52-static', kind: 'static', command: 'true', cwd: '.', timeoutMs: 60_000, taskIds: 'all' }] },
 });
 
 const cells = [

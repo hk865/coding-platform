@@ -33,9 +33,8 @@ beforeAll(async () => {
   draft.goalId = S6A_GOAL_1.goalId;
   draft.stages = [{ stageId: 'e34-3-s1', title: 'E34 五十阶段一' }, { stageId: 'e34-3-s2', title: 'E34 五十阶段二' }];
   draft.tasks = draft.tasks.map((task) => {
-    if (task.taskKind === 'gate') {
-      return { ...task, title: 'E34 fifty goal gate', stageId: 'e34-3-s2', scope: { kind: 'stage' as const, stageId: 'e34-3-s2' } };
-    }
+    // The gate stays the plan's goal gate (`plan-validation.ts` goal-gate template).
+    if (task.taskKind === 'gate') return { ...task, title: 'E34 fifty goal gate' };
     const index = Number(task.taskId.slice('e34-3-'.length));
     const stageId = index % 2 === 0 ? 'e34-3-s1' : 'e34-3-s2';
     return { ...task, title: name(task.taskId), stageId, scope: { kind: 'stage' as const, stageId } };

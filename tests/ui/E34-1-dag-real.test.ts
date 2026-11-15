@@ -20,11 +20,11 @@ beforeAll(async () => {
   draft.planId = 'e34-1-plan';
   draft.goalId = S6A_GOAL_1.goalId;
   draft.stages = [{ stageId: 'e34-1-stage', title: 'E34 阶段' }];
-  draft.tasks = draft.tasks.map((task) => ({
-    ...task, stageId: 'e34-1-stage',
-    title: task.taskKind === 'gate' ? 'E34 goal gate' : `Independent work ${task.taskId}`,
+  // The gate stays the plan's goal gate (`plan-validation.ts` goal-gate template); the work moves into the stage.
+  draft.tasks = draft.tasks.map((task) => task.taskKind === 'gate' ? { ...task, title: 'E34 goal gate' } : {
+    ...task, stageId: 'e34-1-stage', title: `Independent work ${task.taskId}`,
     scope: { kind: 'stage' as const, stageId: 'e34-1-stage' },
-  }));
+  });
   draft.executionDag = { dependsOn: [
     { taskId: 'e34-b', dependsOnId: 'e34-a', requires: { kind: 'output-contract', label: 'E34 A output' } },
     { taskId: 'ag2b-gate', dependsOnId: 'e34-b', requires: { kind: 'gate-result', label: 'E34 B result' } },

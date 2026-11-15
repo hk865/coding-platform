@@ -13,6 +13,8 @@ import type { CoreRejection } from '../../../contracts/core/results.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import { isRecord } from '../../../contracts/validation/common.js';
 import { projectModuleIdOfFile } from '../../../contracts/workspace-module-id.js';
+import type { CheckCapabilityV1 } from '../../../contracts/verification.js';
+import { diagnosePlanCandidate } from '../state/plan-candidate.js';
 import type { FutureCarrierRemovalV1, FutureDispositionChangeV1 } from '../state/plan-machine.js';
 import {
   buildFrozenTaskDefinitions, executionDefinitionsAgree, frozenTaskDefinitionsAgree, isBasisUnsupported,
@@ -28,12 +30,6 @@ export type PlanTaskView = Pick<RuntimeTask,
 export type PlanDraftView = Pick<PlanRevisionDraft,
   'stages' | 'assignments' | 'obligations' | 'taskHierarchy' | 'executionDag' | 'taskRelations' | 'inputRequirements'>
   & { tasks: readonly PlanTaskView[] };
-
-/** Task ids that actually carry an explicit `executionIntent` in this draft.
- * The new exemption branches must key on this, never on a raw legacy count. */
-export function explicitExecutionIntentTaskIds(draft: Pick<PlanDraftView, 'tasks'>): string[] {
-  return (draft.tasks ?? []).filter((task) => task.executionIntent !== undefined).map((task) => task.taskId);
-}
 
 /**
  * Domain admission of an initial plan (the closed PlanValidationCode vocabulary).
@@ -59,7 +55,6 @@ export function validatePlanDraft(draft: PlanDraftView, policy: CompletionPolicy
     }
     seenTaskIds.add(task.taskId);
   }
-  const explicitIntentTaskIds = new Set(explicitExecutionIntentTaskIds(draft));
   // The old "at least one required executable task" gate is count-orthogonal to
   // an explicit v2 intent: an optional/active or required/deferred `plan_only`
   // node is a real adopted intent even though it is not a required+active work.
@@ -85,28 +80,33 @@ export function validatePlanDraft(draft: PlanDraftView, policy: CompletionPolicy
     issues.push(planValidationError('tasks', 'missing_required_executable_task',
       'at least one required executable task (required+work+active) is required'));
   }
-  // The legacy complete-work definition applies only to active required work
-  // nodes that do NOT declare an explicit execution intent. Explicit intent
-  // nodes are exempt from the "one work + one goal gate + one required
-  // obligation" template; a mixed plan keeps the legacy rule for its unmarked
-  // nodes because this branch requires at least one unmarked required work.
-  const legacyRequiredWork = requiredWork.filter((task) => !explicitIntentTaskIds.has(task.taskId));
-  const requiredGoalGates = tasks.filter((task) => task.requirementLevel === 'required'
-    && task.taskKind === 'gate' && task.disposition === 'active' && task.scope.kind === 'goal');
+  // Goal completion (`completion-policy.ts` evaluateGoalCompletion) needs one active required GoalGate, a required
+  // obligation, and a formal reduction of every active required work and gate. So every required active work that
+  // is meant to run (no intent, or `request_execution`) brings that template, or the adopted plan could never
+  // complete: the goal gate exists, and that work and every required active gate (goal, stage or module) is listed
+  // in a required obligation, since only a mapped gate can be formally satisfied. Only a `plan_only` future intent
+  // may stand without acceptance (product 09-26), so a plan whose required work is all `plan_only` keeps no template.
+  const executableRequiredWork = requiredWork.filter((task) => task.executionIntent !== 'plan_only');
+  const requiredGates = tasks.filter((task) => task.requirementLevel === 'required'
+    && task.taskKind === 'gate' && task.disposition === 'active');
+  const requiredGoalGates = requiredGates.filter((task) => task.scope.kind === 'goal');
   const requiredObligations = (draft.obligations ?? []).filter((obligation) => obligation.requirementLevel === 'required');
-  if (legacyRequiredWork.length > 0) {
+  if (executableRequiredWork.length > 0) {
     if (requiredGoalGates.length === 0) {
       issues.push(planValidationError('tasks', 'missing_active_required_goal_gate',
-        'at least one active required GoalGate task (required+gate+active+scope=goal) is required'));
+        'at least one active required GoalGate task (required+gate+active+scope=goal) is required: add one required '
+        + 'active gate task with scope {kind:"goal"} and list it in a required obligation\'s taskIds'));
     }
     if (requiredObligations.length === 0) {
       issues.push(planValidationError('obligations', 'missing_required_obligation',
-        'at least one required AcceptanceObligation is required'));
+        'at least one required AcceptanceObligation is required: add one with requirementLevel "required" whose '
+        + 'taskIds list the required work and the goal gate'));
     }
-    for (const task of [...legacyRequiredWork, ...requiredGoalGates]) {
+    for (const task of [...executableRequiredWork, ...requiredGates]) {
       if (!requiredObligations.some((obligation) => obligation.taskIds.includes(task.taskId))) {
         issues.push(planValidationError(`tasks[${task.taskId}]`, 'task_obligation_mapping',
-          `required task ${task.taskId} is not mapped by any required obligation`));
+          `required task ${task.taskId} is not mapped by any required obligation: `
+          + `list ${task.taskId} in a required obligation's taskIds`));
       }
     }
   }
@@ -213,6 +213,29 @@ export function validatePlanDraft(draft: PlanDraftView, policy: CompletionPolicy
     });
   }
   return issues;
+}
+
+/**
+ * Every required verification requirement needs a check of its kind, or no check round could ever pass it and the
+ * plan could never complete. The coverage is the one `diagnosePlanCandidate` compiles for the candidate card and the
+ * check round: a reviewer requirement is never uncovered, a witness one is the platform's. Kind legality is
+ * `validatePlanDraft`'s (`unknown_requirement_kind`): every kind the draft names counts as known to the coverage, and
+ * a kind outside a known policy (`policyKinds`) is left to that one problem, so one requirement gets one problem.
+ * `checks` are the capabilities of the check list the plan will run under (`checkCapabilitiesOf`); `null` (no
+ * installed configuration) is unknown coverage and judges nothing. `checksAt` names that list for the one who must
+ * add a check.
+ */
+export function uncoveredRequirementIssues(draft: Pick<PlanDraftView, 'obligations'>, input: {
+  checks: readonly CheckCapabilityV1[] | null; checksAt: string; policyKinds: readonly string[] | null;
+}): PlanValidationError[] {
+  const { checks, checksAt, policyKinds } = input;
+  const kinds = draft.obligations.flatMap((obligation) => obligation.verificationRequirements.map((requirement) => requirement.kind));
+  return (diagnosePlanCandidate({ candidate: draft, catalogPin: null, requirementKinds: kinds, checks }) ?? [])
+    .filter((entry) => policyKinds === null || policyKinds.includes(entry.kind)).map((entry) =>
+    planValidationError(`obligations[${entry.obligationId}].verificationRequirements[${entry.requirementId}]`,
+      'uncovered_verification_requirement',
+      `requirement ${entry.requirementId} of obligation ${entry.obligationId} needs a check of kind ${entry.kind}, but no `
+      + `check of that kind is in ${checksAt}: add a check of kind ${entry.kind} to ${checksAt}, or change the requirement`));
 }
 
 /**

@@ -237,8 +237,8 @@
 | `headerExtrasOf` | `src/contracts/note.ts:362` | link/flow 注记 header 的可选扩展片段（到/从锚点），供渲染用 | 渲染 link 或 flow 注记时；不要另写一份 header 拼接 |
 | `isSemanticRelation` | `src/contracts/note.ts:117` | 值是不是六种联系关系之一 | 写注记的 link 门和注记文件的解析都用它；不要另写一份关系表 |
 | `isLinkEvidenceRole` | `src/contracts/note.ts:132` | 值是不是七种证据角色之一 | 写注记的 link 门和注记文件的解析都用它；按关系的角色表在 `link-evidence.ts` |
-| `planValidationError` | `src/contracts/plan.ts:318` | 构造 `{path,code,message}` 计划校验错误。 | 计划校验累积错误时。 |
-| `revisionAssignments` | `src/contracts/plan.ts:324` | 取计划 assignment；显式空数组覆盖 origin。 | 读取已接受计划的分配。 |
+| `planValidationError` | `src/contracts/plan.ts:319` | 构造 `{path,code,message}` 计划校验错误。 | 计划校验累积错误时。 |
+| `revisionAssignments` | `src/contracts/plan.ts:325` | 取计划 assignment；显式空数组覆盖 origin。 | 读取已接受计划的分配。 |
 | `DEFAULT_PLAN_LOOP_LIMITS`、`GROWTH_UNIT_TOKENS`、`growthUnitsOf` | `src/contracts/plan-loop-limits.ts:31`、`src/contracts/plan-loop-limits.ts:28`、`src/contracts/plan-loop-limits.ts:31` | 规划环的纯默认上限（按任务档位的提醒/两倍 token、行倍数、两个阶段预算）与增长单位换算（token ÷ 64，不取整）。 | 计划环读阶段预算、显示增长单位；生效值由 Host 设置层发布，不要另写默认值。 |
 | `execReviewAnswerText`、`parseExecReviewAnswer` | `src/contracts/exec-review.ts:24`、`src/contracts/exec-review.ts:36` | 执行结果审阅回答的唯一正文构造与唯一严格解析（恰五个成员，`basis` ≤4096 字节，整段 ≤16 KiB）。 | `submit_exec_review` 写正文、短回复和之后的入账读回审阅结论；不要另写解析。 |
 | `commandReviewSubjectProblem`、`commandReviewAnswerText`、`parseCommandReviewAnswer`、`COMMAND_REVIEW_CONCLUSIONS`、`commandReviewSubjectOfText` | `src/contracts/scribe-review.ts:60`、`src/contracts/scribe-review.ts:86`、`src/contracts/scribe-review.ts:96`、`src/contracts/scribe-review.ts:43`、`src/contracts/plan-round.ts:298` | 书记审查轮的 subject 形状检查、答复正文、严格解析、结论闭集，以及 `scr:` 第二行的冻结 subject 读回。 | 书记提交工具写正文、准备/执行读 subject、干预收尾读答复共用；不要另写解析或结论字面量。 |

@@ -61,7 +61,10 @@ function l46Draft(input: { goalId: string; planId: string; planRevision: number;
     obligations: [
       ...carriedObligations.map(obligation => structuredClone(obligation)),
       { obligationId: 's7b3-obligation', title: 'S7B3 L46 work', requirementLevel: 'required',
-        taskIds: [...work.filter(taskId => currentTask(taskId) === undefined || taskId === ids.A), ids.C],
+        // Required work to run stays mapped (`plan-validation.ts` goal-gate template): an earlier task no carried
+        // obligation lists keeps its place in this one.
+        taskIds: [...work.filter(taskId => currentTask(taskId) === undefined || taskId === ids.A
+          || !carriedObligations.some(obligation => obligation.taskIds.includes(taskId))), ids.C],
         verificationRequirements: [{ requirementId: 's7b3-static',
           requirementLevel: 'required', kind: 'static', description: 'S7B3 static check' }] },
     ],

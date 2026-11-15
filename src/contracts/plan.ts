@@ -49,7 +49,8 @@ export type RuntimeTask = {
      *   assignment、义务/验收、依赖、精确输入都可缺省；即使后来补上 assignment
      *   也不会自动变成可领取候选。
      * - `request_execution`：本节点要求正式执行，必须已有且仅有一条合法的
-     *   role/instruction assignment；验收、依赖、精确输入仍可不齐全。
+     *   role/instruction assignment；必需且活动的这种任务要列在一条必需义务的
+     *   taskIds 里（验收），计划也要有活动的必需目标关口；依赖、精确输入仍可不齐全。
      *
      * 它不是角色授权、资源许可、实际 ready、Run 状态或完成判定；phase /
      * disposition / requirementLevel / taskKind 的含义与它保持正交。缺省保留
@@ -240,7 +241,7 @@ export type PlanRevisionDraft = PlanRevisionDraftBase & { schemaVersion: 2;
 // ------------------------------------------------------------------------ //
 // PlanValidationError                                                        //
 // ------------------------------------------------------------------------ //
-type PlanValidationCode = "missing_required_executable_task" | "missing_active_required_goal_gate" | "missing_required_obligation" | "task_obligation_mapping" | "obligation_task_mapping" | "empty_verification_requirements" | "unknown_requirement_kind" | "dangling_task_ref" | "dangling_stage_ref" | "self_dependency" | "dag_cycle" | "hierarchy_cycle" | "duplicate_requirement_id" | "obligation_semantics_changed" | "gate_definition_changed" | "role_not_authorized" | "task_removed" | "duplicate_task_id" | "unsupported_execution_change" | "missing_task_assignment";
+type PlanValidationCode = "missing_required_executable_task" | "missing_active_required_goal_gate" | "missing_required_obligation" | "task_obligation_mapping" | "obligation_task_mapping" | "empty_verification_requirements" | "unknown_requirement_kind" | "dangling_task_ref" | "dangling_stage_ref" | "self_dependency" | "dag_cycle" | "hierarchy_cycle" | "duplicate_requirement_id" | "obligation_semantics_changed" | "gate_definition_changed" | "role_not_authorized" | "task_removed" | "duplicate_task_id" | "unsupported_execution_change" | "missing_task_assignment" | "uncovered_verification_requirement";
 export type PlanValidationError = {
     path: string;
     code: PlanValidationCode;
