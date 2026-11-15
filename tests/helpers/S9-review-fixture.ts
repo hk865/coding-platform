@@ -21,6 +21,7 @@
  *   returned. The caller scripts the reviewer line (`world.scripted.script(review.reviewLine,
  *   …)`) before calling it; the fixture never answers, books or finalizes.
  */
+import type { CommitCursor } from '../../src/contracts/command-event.js';
 import type { RunRef, TaskTriple } from '../../src/contracts/dispatch.js';
 import type { EvidenceRef } from '../../src/contracts/evidence.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
@@ -183,7 +184,9 @@ Promise<{ second: S7D2SecondWorkspace; line: S6ASession }> {
 /** G3's review step after the command checks, or today's finalize: where the subject drive stops. */
 const reviewStep = (op: { kind: string }): boolean => op.kind === 'send_system_round' || op.kind === 'finalize_checks';
 
-export async function openS9ReviewRound(input: { review: S9ReviewWorld; stopBefore?: string }): Promise<S9ReviewRound> {
+/** The opened round also carries its opening commit: the `open_checks` receipt's cursor (the Store's `since`). */
+export async function openS9ReviewRound(input: { review: S9ReviewWorld; stopBefore?: string }):
+Promise<S9ReviewRound & { readonly openCursor: CommitCursor }> {
   const { world, goal, task, workLine } = input.review;
   await world.scripted.script(workLine, [{ kind: 'text', text: `S9 subject work done ${S9_HISTORY_MARKER}` }]);
   const claim = await advanceUntil(world.ag2b, { schemaVersion: 1, goalRef: goal, flowId: 's9-review-subject',
@@ -191,12 +194,13 @@ export async function openS9ReviewRound(input: { review: S9ReviewWorld; stopBefo
   const receipts: WorkflowStepReceipt[] = [];
   const steps = await driveWorkflow(world.ag2b, claim, { receipts,
     stopBefore: op => op.kind === input.stopBefore || reviewStep(op) });
-  const opened = receiptOf(receipts, 'open_checks')?.result as { value?: { ref?: VerificationRoundRef } } | undefined;
-  if (opened?.value?.ref === undefined) {
+  const opened = receiptOf(receipts, 'open_checks')?.result as
+    { value?: { ref?: VerificationRoundRef }; cursor?: CommitCursor } | undefined;
+  if (opened?.value?.ref === undefined || opened.cursor === undefined) {
     throw new Error(`S9: the subject drive opened no round: ${JSON.stringify(receipts.map(receipt => receipt.kind))}`);
   }
   return { roundRef: opened.value.ref, subjectRunRef: claimedRunOf(receipts, task.taskId).run,
-    next: steps.at(-1)?.next ?? null };
+    openCursor: opened.cursor, next: steps.at(-1)?.next ?? null };
 }
 
 export async function openS9ReviewQuery(input: {

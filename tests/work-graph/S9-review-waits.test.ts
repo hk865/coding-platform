@@ -22,7 +22,7 @@ import { advanceUntil, driveWorkflow } from '../helpers/A2-restart-fixture.js'; 
 import { readBody, sessionQueries } from '../helpers/IV-host-fixture.js'; import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
 import { ready } from '../helpers/S7A-fixture.js'; import { listed } from '../helpers/S7B-fixture.js';
 import { systemRoundMessageRef } from '../helpers/system-round-ref.js';
-import { advanceS9Review, answerS9Review, openS9ReviewLine, openS9ReviewQuery, openS9ReviewRound,
+import { advanceS9Review, answerS9Review, openS9ReviewQuery, openS9ReviewRound,
   openS9ReviewWorld, type S9ReviewReply, type S9ReviewWorld } from '../helpers/S9-review-fixture.js';
 
 const worlds: S9ReviewWorld[] = []; const restores: (() => void)[] = [];
@@ -128,8 +128,8 @@ describe('R7: the review line opens after the Host and the round', () => {
     const review = await openS9ReviewWorld({ reviewLine: 'none' }); worlds.push(review);
     const round = await openS9ReviewRound({ review }); const before = (await roundCards(review)).items;
     expect(before).toHaveLength(1);
-    expect(await advanceS9Review(review)).toMatchObject({ status: 'ready', value: { state: 'waiting', reason: 'no_review_line', receipt: null } });
-    await openS9ReviewLine(review.world); const send = nextOfS9(await advanceS9Review(review));
+    // The platform opened the missing review line at the round's review step (inside the subject drive).
+    const send = nextOfS9(await advanceS9Review(review));
     expect(opOf(send)).toBe('send_system_round');
     if (send.kind !== 'perform' || send.operation.kind !== 'send_system_round'
       || send.operation.request.round.kind !== 'exec_review') {

@@ -64,12 +64,13 @@ export const SECRETARY_ROUND_TEMPLATE_V1 =
   '{{prelude}}\n\n{{role}}{{goal}}{{notes}}{{task_round}}{{task_batched}}{{task_earlier}}';
 
 /** The platform pack's versions of the two secretary templates (the answer mentions no tool at pack level). */
-export const SECRETARY_TEMPLATE_VERSIONS = { 'secretary-round': 2, 'secretary-answer': 5 } as const;
+export const SECRETARY_TEMPLATE_VERSIONS = { 'secretary-round': 2, 'secretary-answer': 6 } as const;
 
 /** `secretary-answer.txt` rendered for a `semantic_query` round: its one submit block. */
 export const SECRETARY_ANSWER_FORMAT_V1 =
   "Answer only by calling submit_secretary_answer with this round's answer, as the last and only call of this reply; "
-  + 'never write the answer as text. If it returns problems, fix every one and call it again in this round.';
+  + 'never write the answer as text, because a text answer changes nothing. If it returns problems, fix every one and '
+  + 'call it again in this round.';
 
 /** `secretary-answer.txt` rendered for an `initial_coordination` round: its plan and questions blocks. */
 export const SECRETARY_INITIAL_ANSWER_FORMAT =

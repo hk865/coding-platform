@@ -13,7 +13,7 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "9c11707d9ffb4db73d7c8e2f202eb4ce08c0f0edd37a74cc843313fc64f56258"
+    "sha256": "b8ddfb83711fca5b4607867ae2bef4dca2716c1594921dfe4e5498cd4ca84a08"
   },
   {
     "path": "resources/prompts/platform/strings.json",
@@ -101,7 +101,7 @@
   },
   {
     "path": "resources/prompts/platform/templates/secretary-answer.txt",
-    "sha256": "09cbe058425e7a84ecc4ca4e70e4060626a9188519b089c8ab7686a49debb8b0"
+    "sha256": "d0b767d52f27031688ba601ebd6e2f100124084683a7d50ef59b26c90e2b0e94"
   },
   {
     "path": "resources/prompts/platform/templates/handoff-write-understanding-secretary.txt",
@@ -137,7 +137,7 @@
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-secretary.txt",
-    "sha256": "0bb59d33dcba00898fbb35ca971580b3acfde7ccffc4b2ca168c3fb957e6780a"
+    "sha256": "da3380211ac07defcb938eb3dba47d8ac1b0083174a1b8e688909c491cb2c48a"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-adviser.txt",

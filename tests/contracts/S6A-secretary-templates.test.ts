@@ -30,7 +30,7 @@ const EXISTING_DIGESTS = {
     'initial-planning-answer': 'b8ce6951f21c0207cc0f6a521ce7f06c1359b53bd416ab4a3fcdec295be4d0cc',
     base: 'cee15946501a2db933e00e1ea9954e8332542ab130268cd32c6962c91061958c',
     'skill-platform-work': 'fee248cc70c5ed0a07bc8e679bd8357fa6e678976818b121e6f837cdf29ec7b3',
-    'skill-platform-secretary': '0bb59d33dcba00898fbb35ca971580b3acfde7ccffc4b2ca168c3fb957e6780a',
+    'skill-platform-secretary': 'da3380211ac07defcb938eb3dba47d8ac1b0083174a1b8e688909c491cb2c48a',
     'skill-platform-adviser': '479429b59b3681902eb367d6cb3d7cb8821b8fcba76964e9d282af67e36baee0',
     'skill-platform-scribe': '06eaa54bb819486d3b7e3e69bd4bdcfe0a5cfb7e5a73a893296500710ec7b65d',
     'skill-platform-reviewer': '730e2ee4693fbd17776a2adfb5c6b8edaeab2c5ba7ed102aec0ba49aec9307a6',
@@ -38,8 +38,8 @@ const EXISTING_DIGESTS = {
 
 const secretaryAnswerText = [
     '{{#tool:submit_secretary_answer}}Answer only by calling submit_secretary_answer with this round\'s answer, as '
-    + 'the last and only call of this reply; never write the answer as text. If it returns problems, fix every one '
-    + 'and call it again in this round.{{/tool:submit_secretary_answer}}'
+    + 'the last and only call of this reply; never write the answer as text, because a text answer changes nothing. '
+    + 'If it returns problems, fix every one and call it again in this round.{{/tool:submit_secretary_answer}}'
     + '{{#tool:submit_initial_plan}}When this round\'s answer is a plan, answer only by calling submit_initial_plan '
     + 'with it, as the last and only call of this reply; never write the answer as text. If it returns problems, fix '
     + 'every one and call it again in this round.',
@@ -72,7 +72,7 @@ function textsOf(secretaryRound: string): PromptTextsV1 {
 describe('the platform secretary templates', () => {
     it('declares the round at version 2 and the answer at version 4, with their code-owned slots and digests', () => {
         const versions = {
-            'secretary-round': 2, 'secretary-answer': 5,
+            'secretary-round': 2, 'secretary-answer': 6,
             'handoff-write-understanding-secretary': 1, 'handoff-brief-secretary': 1,
         } as const;
         for (const id of [
@@ -105,7 +105,7 @@ describe('the platform secretary templates', () => {
         expect(sha256Hex(PACK.templates['secretary-round']!))
             .toBe('1fbe219c936568074193d9f4f57dd5a15e963f6487be2838a78d040429b3cc7c');
         expect(sha256Hex(PACK.templates['secretary-answer']!))
-            .toBe('09cbe058425e7a84ecc4ca4e70e4060626a9188519b089c8ab7686a49debb8b0');
+            .toBe('d0b767d52f27031688ba601ebd6e2f100124084683a7d50ef59b26c90e2b0e94');
         expect(sha256Hex(PACK.templates['handoff-write-understanding-secretary']!))
             .toBe('d7afe976edbe02c6dd541b644b3c2b7f314bb186ff4458432e817a4fae7483c6');
         expect(sha256Hex(PACK.templates['handoff-brief-secretary']!))
@@ -332,5 +332,23 @@ describe('CPL C9: the initial planning instructions ask for the goal gate and sa
 
     it('no longer limits the gates a plan may add to the stage gates', () => {
         expect(prose.join('\n')).not.toContain('Apart from those stage gates and their obligations, never invent');
+    });
+});
+
+/**
+ * SRV-2, row V4 (SRV rulings "测试行"): the secretary Skill says what happens after its answer: text written only in
+ * the reply body, outside the submit tool, changes nothing; without an adoption receipt it never says "已改". Rendered
+ * with the secretary's two submit tools granted, so a sentence gated on either tool renders too; each cell needs both
+ * of its ruling fragments on one line. Mutation: the section deleted → both cells red.
+ * Today (no SRV) both cells are red: `skill-platform-secretary.txt` has no such section; green once SRV-2 adds it.
+ */
+describe('SRV V4: the secretary Skill says what happens after its answer', () => {
+    const lines = renderTemplate(PACK, 'skill-platform-secretary', {},
+        ['submit_secretary_answer', 'submit_plan_round']).text.split('\n');
+    it.each([
+        { cell: 'text only in the reply body changes nothing', parts: ['正文', '不会改动'] },
+        { cell: 'no "已改" without an adoption receipt', parts: ['采用的回执', '已改'] },
+    ])('carries the line: $cell', ({ parts }) => {
+        expect(lines.some(line => parts.every(part => line.includes(part)))).toBe(true);
     });
 });

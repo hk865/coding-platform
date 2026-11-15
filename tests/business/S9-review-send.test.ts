@@ -21,6 +21,7 @@ import { byIdentityPrefix, commitBarrier } from '../helpers/S6A-commit-barrier.j
 import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
 import { ready } from '../helpers/S7A-fixture.js';
 import { listed, readS7BMessage } from '../helpers/S7B-fixture.js';
+import { readS7D1Limits, setS7D1Open } from '../helpers/S7D1-allocation-world.js';
 import {
   advanceS9Review, openS9ReviewRound, openS9ReviewWorld, openS9SecondReviewLine, type S9ReviewWorld,
 } from '../helpers/S9-review-fixture.js';
@@ -70,13 +71,16 @@ describe('W2-send: send_system_round only from not_sent', () => {
     expect(await sessionQueries(world, review.reviewLine!)).toHaveLength(1);
   }, 120_000);
 
-  it('no reviewer line: two advances wait with no receipt and no message or Query', async () => {
+  it('no reviewer line, the platform\'s open refused: two advances wait with no receipt and no message or Query', async () => {
     const review = await openS9ReviewWorld({ reviewLine: 'none' });
     worlds.push(review);
+    // A product rule refuses the automatic open: the person's executor open limit 1, held by the Work line.
+    await setS7D1Open(review.world, 'executor', 1, (await readS7D1Limits(review.world)).revision, 's9-w2-cap');
     const round = await openS9ReviewRound({ review });
     for (const pass of [1, 2]) {
       expect(await advanceS9Review(review), `advance ${String(pass)}`).toMatchObject({ status: 'ready',
-        value: { state: 'waiting', reason: 'no_review_line', receipt: null, next: null } });
+        value: { state: 'waiting', receipt: null, next: null,
+          reason: 'no_review_line: at_cap: executor has 1 holder(s) and 0 reservation(s) against open limit 1' } });
     }
     const messageRef = systemRoundMessageRef(S6A_SCOPE, `execreview:${round.roundRef.roundId}`);
     if (messageRef.status !== 'ready') throw new Error('W2: no message ref for the round');

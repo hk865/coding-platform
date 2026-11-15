@@ -96,6 +96,8 @@ E3-7 的新文件：`tests/contracts/E37-line-edit-counts-pure.test.ts`（`gitLi
 
 7D2 acc 的验收行（写测试方）：`tests/work-graph/S7D2-DNR-delivery-acceptance.test.ts`（ACC-T01–T11；“知道了”只写确认记录、守卫/幂等/重放、`goals/delivery` 的秘书与新旧交付、三个动作不改确认、SQLite 重开；业务行只跑 memory，ACC-T03/04/05/10 在 memory 和 SQLite 上跑同一张表，ACC-T09 只在 SQLite 上重开 Host；ACC-T05/T11 的第二次完成各用一套 flowId/requestId，E6）。`tests/app/S7D2-DNR-routes.test.ts` 另加 `queries/ask`（plain，`workflow.askLine`）、`goals/delivery`（plain，`delivery.readGoalDelivery`）和 `goals/accept-delivery`（graph_write，`goalDelivery.acceptDelivery`）的路由表行。
 
+7D2 SRV 的验收行（写测试方）：`tests/business/SRV-review-line.test.ts`（V1–V3，S9 审阅世界 `reviewLine: 'none'`，只读 `role-lines/read`、`role-lines/operations`、`decisions/queue` 和 `workflow/advance` 的结果）。V1（memory）：执行结果审阅到期、项目里没有审阅线时，推进先开出一条职责 reviewer 的线，审阅发到这条线，再推进不开第二条。V2（memory）：经 `projects/role-limits/set` 把 executor 的开线上限设成 1（Work 线已占这一个席位，审阅线也占 executor 席位），开线被拒；等待原因以 `no_review_line` 开头、带拒绝原文，没有审阅线，reviewer 的开线操作只有一条，`exec-review-no-line:` 通知还在。V3（只跑 SQLite，A2 崩溃夹具）：开线已提交、线在 `session-register:` 提交前被按住时 Host 停下，新 Host 推进后只有一条线、一条开线操作，审阅发到这条线。V5（memory，审查后的 R1）：自动开出的线经 `sessions/archive` 归档后再推进，开出一条新的审阅线（Session id 不同），审阅发到新线。V4 在 `tests/contracts/S6A-secretary-templates.test.ts` 末尾：秘书 Skill 渲染出的文本里，“只写在正文里的文字不会改动”和“没有看到采用的回执就不要说已改”各占一行。包落地前五行都红。
+
 ## tests/helpers/ 的夹具
 
 ### Host 和平台

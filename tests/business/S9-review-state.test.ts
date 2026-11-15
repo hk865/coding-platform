@@ -10,6 +10,7 @@ import type { WorkflowAdvanceResult } from '../../src/business/workflow/contract
 import { readPlanningQuery, waitForResponse } from '../helpers/IV-host-fixture.js';
 import { byIdentityPrefix, commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import { readS7BMessage } from '../helpers/S7B-fixture.js';
+import { readS7D1Limits, setS7D1Open } from '../helpers/S7D1-allocation-world.js';
 import {
   advanceS9Review, answerS9Review, openS9ReviewRound, openS9ReviewWorld, type S9ReviewWorld,
 } from '../helpers/S9-review-fixture.js';
@@ -58,11 +59,14 @@ describe('W1-read: readReviewState through workflow/advance', () => {
     expect(inputOf(answered)).toEqual({ roundRef: round.roundRef });
   }, 120_000);
 
-  it('no reviewer line → waiting(no_review_line)', async () => {
+  it('no reviewer line, the platform\'s open refused → waiting(no_review_line: <refusal>)', async () => {
     const review = await openS9ReviewWorld({ reviewLine: 'none' });
     worlds.push(review);
+    // A product rule refuses the automatic open: the person's executor open limit 1, held by the Work line.
+    await setS7D1Open(review.world, 'executor', 1, (await readS7D1Limits(review.world)).revision, 's9-w1-cap');
     await openS9ReviewRound({ review });
-    expect(await selectReview(review)).toMatchObject({ state: 'waiting', reason: 'no_review_line', next: null });
+    expect(await selectReview(review)).toMatchObject({ state: 'waiting', next: null,
+      reason: 'no_review_line: at_cap: executor has 1 holder(s) and 0 reservation(s) against open limit 1' });
   }, 120_000);
 
   it('closed (ended without a verdict) → finalize_checks with no reviewerEvidence key', async () => {

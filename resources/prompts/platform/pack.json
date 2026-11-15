@@ -137,7 +137,7 @@
     },
     "secretary-answer": {
       "file": "templates/secretary-answer.txt",
-      "version": 5,
+      "version": 6,
       "mentionsTools": []
     },
     "handoff-write-understanding-secretary": {
@@ -186,7 +186,7 @@
     },
     "skill-platform-secretary": {
       "file": "templates/skill-platform-secretary.txt",
-      "version": 9,
+      "version": 10,
       "mentionsTools": []
     },
     "skill-platform-adviser": {

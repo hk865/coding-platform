@@ -3899,6 +3899,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       sessionDuty: sessionDutyResolver,
       // L33: the two Workflow triggers allocate through the one queue owner (a deferred read of the const above).
       goalAdviserQueue: { allocate: (ctx, input) => goalAdviserQueue.allocate(ctx, input) },
+      // The exec review arm opens a missing review line through the SAME role_line owner the routes and the Host bind.
+      reviewLines: { open: (ctx, input) => roleLineOperations.open(ctx, input) },
       recipients: lateRecipients,
       // 121-112: the scribe review's two platform effects for the intervention close-out: the person's notice
       // through the one project-notice writer, and the Host's "look again".

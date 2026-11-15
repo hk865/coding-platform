@@ -19,6 +19,7 @@ import { heartbeatUntil } from '../helpers/IV-host-fixture.js';
 import { byIdentityPrefix, commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
 import { ready } from '../helpers/S7A-fixture.js';
+import { readS7D1Limits, setS7D1Open } from '../helpers/S7D1-allocation-world.js';
 import {
   advanceS9Review, openS9ReviewLine, openS9ReviewRound, openS9ReviewWorld, type S9ReviewWorld,
 } from '../helpers/S9-review-fixture.js';
@@ -48,13 +49,22 @@ describe('W3-notice: exec-review-no-line', () => {
       const review = await openS9ReviewWorld({ reviewLine: 'none', checks });
       worlds.push(review);
       const { world, goal } = review;
+      // The platform's automatic open is refused (executor open limit 1, held by the Work line): the line stays missing.
+      await setS7D1Open(world, 'executor', 1, (await readS7D1Limits(world)).revision, 's9-w3-cap');
       const opened = await openS9ReviewRound({ review, stopBefore: 'run_check' });
       const atOpen = await noticeQueue(review);
+      // The position: the finished check's result commit, else the round's opening commit. The platform's refused open
+      // commits right after it in the same call, so the check's cursor is read while that open waits before its write.
+      let cursor = opened.openCursor;
       if (opened.next?.kind === 'perform' && opened.next.operation.kind === 'run_check') {
-        await driveWorkflow(world.ag2b, opened.next, { stopBefore: op =>
+        const open = commitBarrier.hold(byIdentityPrefix('role-line-operation:'));
+        const drive = driveWorkflow(world.ag2b, opened.next, { stopBefore: op =>
           op.kind === 'finalize_checks' || op.kind === 'send_system_round' });
+        await open.reached;
+        cursor = (await roundCard(review, opened.roundRef)).readThrough;
+        open.release();
+        await drive;
       }
-      const cursor = (await roundCard(review, opened.roundRef)).readThrough;
       if (checks === 'command') expect(compareCursors(cursor, atOpen.sourceCursor)).toBeGreaterThan(0);
       const itemKey = `exec-review-no-line:${goal.goalId}:${opened.roundRef.roundId}`;
       for (const read of [await noticeQueue(review), await noticeQueue(review)]) {
@@ -68,6 +78,7 @@ describe('W3-notice: exec-review-no-line', () => {
       const main = ready<{ notices: { itemKey: string }[] }>(await world.post('main/read', {
         scope: { ...S6A_SCOPE }, input: { goalId: goal.goalId, cursor: null } }), 'main/read');
       expect(main.notices.filter(item => item.itemKey === itemKey)).toHaveLength(1);
+      await setS7D1Open(world, 'executor', 3, (await readS7D1Limits(world)).revision, 's9-w3-raise');
       await openS9ReviewLine(world);
       expect(noLine(await noticeQueue(review))).toEqual([]);
       const selected = await advanceS9Review(review);

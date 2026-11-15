@@ -1,5 +1,5 @@
 import type { CoreCallContext, HostPrincipal } from '../../contracts/core/call-context.js';
-import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
+import type { CoreRejection, ReadResult, WriteResult } from '../../contracts/core/results.js';
 import type { EffectWriteResultV1, SessionMessageRef } from '../../contracts/core/session-message.js';
 import type { TaskClaim } from '../../contracts/core/task-claim.js';
 import type { SessionRef, VersionPin } from '../../contracts/core/identity.js';
@@ -971,6 +971,13 @@ export function createWorkflow(deps: WorkflowDependencies & {
    */
   commandRerunRequests?: Pick<CommandRerunRequestReadPort, 'listTaskRequests'>
     & Pick<CommandRerunRequestPort, 'applyAdviserAnswer' | 'escalateRerun'>;
+  /**
+   * The one role-line open (`role-line-operations.ts` `open`), bound by the composition root and declared
+   * structurally, so the Workflow builds no sessions owner. The exec review arm opens the project's review line through
+   * it when the project has none (`openReviewLine`). Absent, that arm answers `unsupported` (not wired).
+   */
+  reviewLines?: { open(ctx: CoreCallContext, input: { commandId: string; duty: 'reviewer'; scope: [{ kind: 'project' }] }):
+    Promise<WriteResult<{ session: SessionRef | null }>> };
 }): WorkflowPort
   & Required<Pick<WorkflowPort, 'consumeConsultation' | 'resolveDecision' | 'orderGoalAdvances'
     | 'handleIntervention' | 'readDeliveryEligibilityFacts'>> {
@@ -1381,8 +1388,9 @@ export function createWorkflow(deps: WorkflowDependencies & {
 
   /**
    * Slice 9 §3.2: the review arm at the chain head, after the command checks and before the finalize. Its one step
-   * per state: send from `not_sent` (the pending basis rides along so the driver registers before it sends), book an
-   * `answered` review, finalize a `closed` one without a ref; a wait returns to the task loop, which skips this Task.
+   * per state: send from `not_sent` (the pending basis rides along so the driver registers before it sends), open the
+   * project's review line when there is none (`openReviewLine`), book an `answered` review, finalize a `closed` one
+   * without a ref; a wait returns to the task loop, which skips this Task.
    */
   async function reviewArm(owned: Owned, base: Base, round: RoundSnapshot, receipt: WorkflowStepReceipt | null):
   Promise<WorkflowAdvanceResult> {
@@ -1397,10 +1405,51 @@ export function createWorkflow(deps: WorkflowDependencies & {
           recipient: state.recipient, text: execReviewPacketText(packet.value),
         } }), null, null, reviewWaitBasisOf(roundGoalRef(round), 'exec_review_pending'));
       }
-      case 'waiting': return waiting(receipt, state.reason, undefined, state.basis);
+      case 'waiting':
+        if (state.reason === 'no_review_line') return await openReviewLine(owned, round, receipt, state.basis);
+        return waiting(receipt, state.reason, undefined, state.basis);
       case 'settlement_pending': return waiting(receipt, 'settlement_pending', undefined, state.basis);
       case 'answered': return advancing(receipt, makePerform(base, recordReviewStep(base, round)));
       case 'closed': return advancing(receipt, finalizeChecksStep(base, round));
+    }
+  }
+
+  /**
+   * No review line in the project: the platform opens one; it neither sends the plan back nor cards the person. The
+   * open is the one role-line open (`deps.reviewLines`) as the Workflow's automation, so it is saved as `role_line_add`
+   * and, being a reviewer, never judged as an adjustment; duty `reviewer`, project scope.
+   *
+   * The command identity starts at the project's (`review-line-open:<projectId>`), so a repeat or a restart replays the
+   * same unfinished open and never opens a second line. Each identity's line is judged by the same `reviewLineOf` the
+   * next pass reads: a line there is `review_line_opened` (the line's `Session` wakes the wait and the next pass sends);
+   * a replayed open whose finished line is no longer there (archived) names the next identity after that line's
+   * Session (`review-line-open:<projectId>:after:<sessionId>`) and opens again; an open still without a usable line
+   * waits `review_line_pending`. A refused open keeps the `no_review_line` wait with the refusal's own text after that
+   * fixed prefix (121-111: the refusal names its reason), and the no-line plan notice stays; the person can open a line
+   * themselves.
+   */
+  async function openReviewLine(owned: Owned, round: RoundSnapshot, receipt: WorkflowStepReceipt | null,
+    basis: GoalWaitBasisV1): Promise<WorkflowAdvanceResult> {
+    const lines = deps.reviewLines;
+    if (lines === undefined) return rejection('unsupported', 'the review-line opener is not wired');
+    const ctx = automationContext(owned);
+    let commandId = `review-line-open:${round.ref.projectId}`;
+    for (;;) {
+      const opened = await lines.open(ctx, { commandId, duty: 'reviewer', scope: [{ kind: 'project' }] });
+      if (opened.status !== 'committed') return waiting(receipt, `no_review_line: ${opened.reason}`, undefined, basis);
+      // `readReviewState` answered `no_review_line`, so the duty resolver is wired.
+      const line = await reviewLineOf(suggestionDutyRecipient!, ctx, round.ref.projectId);
+      if (line.status !== 'ready') return readRejection(line);
+      if (line.value !== null) {
+        return waiting(receipt, 'review_line_opened: the platform opened the project\'s review line; the review is '
+          + 'sent to it once the line is there', undefined, basis);
+      }
+      const session = opened.value.session;
+      if (!opened.replayed || session === null) {
+        return waiting(receipt, `review_line_pending: the platform's review line open (${commandId}) has no usable line `
+          + 'yet; the review is sent once the line is there', undefined, basis);
+      }
+      commandId = `review-line-open:${round.ref.projectId}:after:${session.sessionId}`;
     }
   }
 
