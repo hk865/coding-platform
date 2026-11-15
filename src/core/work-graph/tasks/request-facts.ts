@@ -158,6 +158,8 @@ export function deriveRequestCore(
   if (facts.reply) reasons.push('reply');
   if (facts.release) reasons.push('release');
   if (facts.candidate !== null) reasons.push('candidate');
+  // G6F F4: the source an intervention_new_goal request's root round keeps.
+  const source = rounds.find((round) => keyOf(round.ref) === keyOf(facts.requestRoot))?.job.interventionSource;
 
   return {
     requestRoot: { ...facts.requestRoot },
@@ -174,6 +176,7 @@ export function deriveRequestCore(
     candidate: facts.candidate === null ? null : {
       proposalRef: facts.candidate.proposalRef, state: facts.candidate.state, stale: facts.candidate.stale,
     },
+    ...(source === undefined ? {} : { source: structuredClone(source) }),
   };
 }
 

@@ -34,7 +34,7 @@ import { canonicalKey as keyOf, canonicalJson, sameJson, sha256Hex, type JsonVal
 import {
   queryJobRefFor, type QueryJobIntentV1, type QueryJobRef, type QueryJobSnapshot,
   type QueryRunRef, type QueryRunSnapshot, type RequestCommandReceiptV1,
-  type RequestReferenceInputV1, type RequestReferenceV1,
+  type RequestInterventionSourceV1, type RequestReferenceInputV1, type RequestReferenceV1,
   type RequestUnderstandingCommandV1,
 } from '../../../contracts/query-job.js';
 import { rejected } from '../../../contracts/core/rejections.js';
@@ -1050,10 +1050,12 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       const { identityKey, fingerprint } = receiptKeysOf(ctx, command)!;
       const replayed = await replayInternal(identityKey, fingerprint, null);
       if (replayed !== null) return replayed;
+      // G6F F4: the request keeps where it came from (the completed Goal and the message on its line).
       return withTailRetries(() => prepareSubmit(ctx, principal, {
         kind: 'submit', commandId: command.operationId, goalId: null, text: command.text,
         continues: null, recipient: null, references: [],
-      }, { assignTo: null, createdLine: false, capacityBlocked: true }, identityKey, fingerprint),
+      }, { assignTo: null, createdLine: false, capacityBlocked: true }, identityKey, fingerprint,
+      { goalRef: { ...command.goalRef }, messageRef: { ...command.sourceMessageRef } }),
       (prepared) => commitPrepared(identityKey, fingerprint, prepared));
     }
     if (command.kind === 'cold_start_route') {
@@ -1188,7 +1190,7 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       ctx, principal, commandId: command.operationId, identityKey, fingerprint, occurredAt: deps.now(),
       requestRoot: { ...command.requestRoot }, kind: command.kind, requestGoalId: facts.requestGoalId,
       text: root!.job.intent.question, selectedIdea: null, relatedCardRefs: [], references: [],
-      relatedMessageRef: { ...command.messageRef }, createdLine: false, receiptKind: command.kind,
+      relatedMessageRef: { ...command.messageRef }, interventionSource: null, createdLine: false, receiptKind: command.kind,
       facts, goalGuard: null, assignment: assignment.value,
     });
   }
@@ -1230,6 +1232,7 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
   async function prepareSubmit(
     ctx: CoreCallContext, principal: HostPrincipal, command: Extract<RequestPublicCommandV1, { kind: 'submit' }>,
     plan: RequestPlanV1, identityKey: string, fingerprint: string,
+    interventionSource: RequestInterventionSourceV1 | null = null,
   ): Promise<PreparedOutcome> {
     // The facts this command guards (a follow-up reads its request).
     let facts: RequestRoundsFactsV1 | null = null;
@@ -1257,7 +1260,7 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       ctx, principal, commandId: command.commandId, identityKey, fingerprint, occurredAt: deps.now(),
       requestRoot: command.continues, kind: command.continues === null ? 'request' : 'followup',
       requestGoalId: command.continues === null ? command.goalId : facts!.requestGoalId,
-      text: command.text, selectedIdea: null, relatedCardRefs: [], relatedMessageRef: null,
+      text: command.text, selectedIdea: null, relatedCardRefs: [], relatedMessageRef: null, interventionSource,
       references: normalizeRequestReferences(command.references),
       createdLine: plan.createdLine, receiptKind: 'submit', facts, goalGuard, assignment: assignment.value,
     });
@@ -1333,6 +1336,8 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
     createdLine: boolean; receiptKind: 'submit' | 'select_idea' | 'ask' | 'reply' | 'expiry';
     /** The message a reply/expiry round answers: the round's own and its receipt's `relatedMessageRef`. */
     relatedMessageRef: SessionMessageRef | null;
+    /** G6F F4: an `intervention_new_goal` request's source, on its root round only; null on every other round. */
+    interventionSource: RequestInterventionSourceV1 | null;
     facts: RequestRoundsFactsV1 | null; goalGuard: RecordGuard | null; assignment: Assignment;
   };
 
@@ -1372,6 +1377,7 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       relatedMessageRef: input.relatedMessageRef, receipt, requestReferences: input.references,
       submission: requestTailSubmissionOf(input.identityKey, input.fingerprint, eventId), submittedAt: input.occurredAt,
       understanding: null,
+      ...(input.interventionSource === null ? {} : { interventionSource: input.interventionSource }),
     });
     const records: EncodedRecord[] = [encodeQueryJobSnapshot(pair.job), encodeQueryRunSnapshotRecord(pair.run)];
     const claims: UniqueClaimChange[] = [moveTailClaim(input.facts, requestRoot, roundRef)];
@@ -1591,7 +1597,7 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       ctx, principal, commandId: command.commandId, identityKey, fingerprint, occurredAt: deps.now(),
       requestRoot, kind: 'followup', requestGoalId: facts.requestGoalId, text, selectedIdea,
       relatedCardRefs: command.kind === 'ask' ? command.cardRefs.map((ref) => structuredClone(ref)) : [],
-      references: [], relatedMessageRef: null, createdLine: plan.createdLine, receiptKind: command.kind, facts,
+      references: [], relatedMessageRef: null, interventionSource: null, createdLine: plan.createdLine, receiptKind: command.kind, facts,
       goalGuard: null,
       assignment: assignment.value,
     });

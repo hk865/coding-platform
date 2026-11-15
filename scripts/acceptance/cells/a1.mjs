@@ -116,11 +116,11 @@ export async function planningCell(ctx, rec, { project, modelId, window, target,
   }
   judgeFirst(rec, first, read, close, target, terminal(read));
   if (meterStop !== null) {
-    // Quick check 补充1: the stop this request caused is lifted once its rejection is proven (one more full reading);
-    // any other stop, or this one unproven, goes on up.
+    // Quick check 补充1: the stop this request caused is lifted once its Query has ended (one more full reading): counted
+    // 0 for a proven rejection, else at its reservation (G6F F1); any other stop, or this Query still open, goes on up.
     await ctx.budget.read();
     if (ctx.budget.stop !== null) throw ctx.budget.stop;
-    rec.note(`the meter stop held for request ${first?.requestId} was lifted after its proven rejection; the run goes on`);
+    rec.note(`the meter stop held for request ${first?.requestId} was lifted after its Query ended; the run goes on`);
   }
 }
 
@@ -156,9 +156,9 @@ function judgeFirst(rec, first, read, close, target, ended) {
       occurredAt: read?.run?.run?.endedAt ?? null, autoRetry: false, recoveryPath: 'none (no silent downgrade)' };
     rec.fail('accepted', `provider 没有接受：Query ${read?.run?.run?.status}，close ${close?.code ?? '-'}：${close?.message ?? ''}`);
     // Lead ruling 11-14 (A1/B1): a rejection the terminal failure proves is a known outcome; the meter counts the
-    // request as unbilled 0 and the run goes on. Without that proof the meter stops the run (budget `#provenRejection`).
+    // request as unbilled 0 and the run goes on. Without that proof the meter counts it at its reservation (G6F F1).
     rec.note(proven ? `请求 ${first.requestId} 是 provider 拒收（终态失败，来源 model_service / provider_request_failed）：预算按未计费 0 计，运行继续`
-      : `请求 ${first.requestId} 用量未知，终态没有 provider 失败来源：计量停下，后面的单元不跑`);
+      : `请求 ${first.requestId} 用量未知，终态没有 provider 失败来源：预算按预留上限计，运行继续`);
   }
   rec.uncover('not-truncated', 'not-run', '请求没有被接受，不判截断');
 }

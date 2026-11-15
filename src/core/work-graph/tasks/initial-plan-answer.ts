@@ -339,11 +339,12 @@ export function createInitialPlanAnswerReader(deps: InitialPlanAnswerDependencie
     } else if (source.kind === 'request_followup') {
       // A request round whose frozen tool list carries the planning submit: a plan-round followup, or a secretary
       // round the preparation offered `submit_plan_round` beside its own submit. The round need not carry
-      // `selectedIdea` itself; preparation already checked the request's full round list.
+      // `selectedIdea` itself; preparation already checked the request's full round list. Its Goal is the frozen
+      // manifest's (the request's effective goal), not the Job's own: a no-goal request whose Goal card was
+      // confirmed plans for that Goal (G6F F3a).
       if (job.job.intent.execution.kind !== 'semantic_query'
         || (job.job.roundKind !== 'followup' && job.job.roundKind !== 'request')
         || job.job.requestRoot === null
-        || job.job.goalId === null
         || !manifest.promptSet.toolNames.includes('submit_plan_round')) {
         return rejected('source_stale', 'the frozen Query is not a request round that could answer with a plan');
       }

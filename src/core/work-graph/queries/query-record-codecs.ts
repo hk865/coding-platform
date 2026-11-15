@@ -993,6 +993,15 @@ function jobIssues(value: unknown, expectedRef: QueryJobRef | null): string[] {
     issues.push('job.intakeSession must be null or a SessionRef');
   }
   issues.push(...receiptIssues(value['receipt']));
+  // G6F F4: an intervention_new_goal request's root round keeps its source; a record without the key reads as before.
+  const interventionSource = value['interventionSource'];
+  if (interventionSource !== undefined) {
+    const problem = !isRecord(interventionSource) ? 'must be an object'
+      : checkShape(GoalRefShape, interventionSource['goalRef'], 'stored')
+        ?? checkShape(SessionMessageRefShape, interventionSource['messageRef'], 'stored');
+    if (problem !== null) issues.push(`job.interventionSource is not a { goalRef, messageRef } pair: ${problem}`);
+    else if (value['roundKind'] !== 'request') issues.push('job.interventionSource belongs only to a request root round');
+  }
   const understanding = normalizeUnderstandingCommand(value['understanding']);
   if (understanding.kind === 'damaged') issues.push(`job.understanding is invalid: ${understanding.reason}`);
   if (!nonEmpty(value['submittedAt'])) issues.push('job.submittedAt must be a non-empty string');

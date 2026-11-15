@@ -60,46 +60,83 @@ async function run(ctx, rec) {
   // Quick check #8: the chain by identity only, link by link. The executor's report message (its own successful
   // `send_session_message` naming parseDate, with the message ref from the tool result) → the decision whose source is
   // that message, or a message the adviser sent in a turn whose input names that message → the Plan revision that
-  // decision's receipt adopted → that Plan's replacement relation → the replacing Task's Runs under that Plan and their
-  // actual input. Time order, title changes or counts never stand in for a link: a link that cannot be read is
-  // `uncovered` with that link named.
+  // decision's receipt adopted → the Tasks that version supersedes and their successors → the successors' Runs under
+  // that Plan and their actual input. Time order, title changes or counts never stand in for a link.
+  // G6F R1: complete records that show a link was not met → `fail`; the link before it did not happen → `uncovered
+  // (not-run)`; a read that did not answer or a record that lacks the fact → `uncovered (env-unavailable)` with the
+  // read's own words. None of these links lacks a public entry, so none is `entry-missing`.
+  const gaps = [];
+  const rows = await lines(project, gaps);
+  const dutyOf = new Map(rows.map(row => [row.key.sessionId, row.duty]));
   const turnsByDuty = { executor: [], adviser: [] };
-  for (const row of await lines(project)) {
+  for (const row of rows) {
     if (row.duty === 'secretary') continue;
-    turnsByDuty[row.duty === 'adviser' ? 'adviser' : 'executor'].push(...await sessionTurns(project, row.key));
+    turnsByDuty[row.duty === 'adviser' ? 'adviser' : 'executor'].push(...await sessionTurns(project, row.key, gaps));
   }
-  const refOf = result => findAll(result.values, node => typeof node.messageId === 'string' && typeof node.sessionId === 'string')[0] ?? null;
+  const unread = gaps.length === 0 ? null : `读不全：${gaps.join('；')}`;
+  const said = body => `${body?.status ?? 'no answer'} ${body?.code ?? ''} ${body?.reason ?? ''}`.trim();
+  const notRun = (ids, text) => { for (const id of ids) rec.uncover(id, 'not-run', text); };
+  const unreadable = (ids, text) => { for (const id of ids) rec.uncover(id, 'env-unavailable', text); };
+  // A sent message's ref is `{ aggregateType: 'SessionMessage', projectId, workspaceId, messageId }`: the tool result
+  // carries the saved record (`communication-tools.ts:482-486`, `contracts/mailbox.ts:131-132`); it has no sessionId
+  // (G6F F5: the old test asked for one, so no report ever linked).
+  const refOf = result => findAll(result.values, node => node.aggregateType === 'SessionMessage' && typeof node.messageId === 'string')[0] ?? null;
   const reportResult = turnsByDuty.executor.flatMap(turn => turn.results)
     .find(result => result.name === 'send_session_message' && /parseDate/.test(JSON.stringify(result.args ?? {})));
   const reportRef = reportResult === undefined ? null : refOf(reportResult);
-  rec.check('executor-reports', reportResult !== undefined,
-    reportResult === undefined ? '执行者没有成功发出提到 parseDate 的 send_session_message' : `执行者上报 ${reportRef?.messageId ?? '（结果里没有消息引用）'}：${JSON.stringify(reportResult.args)}`);
-  const missing = (ids, text) => { for (const id of ids) rec.uncover(id, 'entry-missing', `接不上：${text}`); };
+  const later = ['adviser-explains', 'person-decides', 'new-version'];
   if (reportResult === undefined) {
-    for (const id of ['adviser-explains', 'person-decides', 'new-version']) rec.uncover(id, 'not-run', '没有执行者的上报，后面的链无从关联');
+    if (unread !== null) unreadable(['executor-reports', ...later], `${unread}；读到的历史里没有执行者提到 parseDate 的 send_session_message`);
+    else {
+      rec.fail('executor-reports', '执行者没有成功发出提到 parseDate 的 send_session_message');
+      notRun(later, '没有执行者的上报，后面这几环没有发生');
+    }
   } else if (reportRef === null) {
-    missing(['adviser-explains', 'person-decides', 'new-version'], '上报工具结果里读不到消息引用');
+    rec.pass('executor-reports', `执行者上报：${JSON.stringify(reportResult.args)}`);
+    unreadable(later, `上报的工具结果里没有消息引用（记录不全，结果文字：${reportResult.text.slice(0, 300)}），后面这几环无从关联`);
   } else {
+    rec.pass('executor-reports', `执行者上报 ${reportRef.messageId}：${JSON.stringify(reportResult.args)}`);
+    const recipient = reportResult.args?.recipient?.sessionId ?? null;
+    const recipientDuty = dutyOf.get(recipient) ?? null;
     // The adviser turns that received this message (their input names its message id) and what they sent.
     const received = turnsByDuty.adviser.filter(turn => turn.input.includes(reportRef.messageId));
     const explained = received.find(turn => turn.final !== null && /api\.js/.test(turn.final) && /report\.js/.test(turn.final));
-    if (received.length === 0) missing(['adviser-explains'], `参谋的 turn 输入里没有这条上报消息的 id ${reportRef.messageId}`);
-    else rec.check('adviser-explains', explained !== undefined, `收到上报 ${reportRef.messageId} 的参谋轮 ${received.length} 个；最终答复同时点到 api.js 和 report.js 的：${explained?.turnId ?? '无'}`);
+    if (received.length > 0) {
+      rec.check('adviser-explains', explained !== undefined, `收到上报 ${reportRef.messageId} 的参谋轮 ${received.length} 个；最终答复同时点到 api.js 和 report.js 的：${explained?.turnId ?? '无'}`);
+    } else if (unread !== null) {
+      unreadable(['adviser-explains'], `${unread}；读到的参谋轮输入里没有上报 ${reportRef.messageId}`);
+    } else if (recipientDuty !== 'adviser') {
+      // Run 3: the report went to an ordinary member line; the adviser never received it.
+      rec.uncover('adviser-explains', 'not-run', `上报 ${reportRef.messageId} 发给了 ${recipientDuty ?? '不在 lines/list 里的'} 线 ${recipient}，没有发给参谋；没有参谋轮收到它，参谋解释这一环没有发生`);
+    } else {
+      rec.uncover('adviser-explains', 'not-run', `上报 ${reportRef.messageId} 发给了参谋线 ${recipient}，但参谋的 ${turnsByDuty.adviser.length} 个轮的输入里都没有它：参谋还没处理这条上报`);
+    }
     const sources = [reportRef, ...received.flatMap(turn => turn.results.filter(result => result.name === 'send_session_message').map(refOf)).filter(Boolean)];
     const decision = committedAnswers.find(entry => entry.card.source.kind === 'message'
       && sources.some(ref => JSON.parse(entry.card.source.key).messageRef?.messageId === ref.messageId));
     if (decision === undefined) {
-      missing(['person-decides', 'new-version'], `人提交成功的 ${committedAnswers.length} 张卡里，没有一张的来源是这条上报或参谋为它发出的消息`);
+      if (rec.results.get('adviser-explains')?.status === 'pass') {
+        rec.fail('person-decides', `参谋解释了上报 ${reportRef.messageId}，但人提交成功的 ${committedAnswers.length} 张卡里没有一张的来源是这条上报或参谋为它发出的消息：冲突没有交给人决定`);
+        notRun(['new-version'], '没有人对这次冲突的决定，新版本这一环没有发生');
+      } else {
+        notRun(['person-decides', 'new-version'], `参谋没有解释这条上报（${rec.results.get('adviser-explains')?.status ?? '未判'}），人对它的决定和新版本这两环没有发生`);
+      }
     } else {
       rec.check('person-decides', decision.card.source.pins.length > 0, `${decision.at} 人答卡 ${decision.card.cardKey}（来源 ${JSON.parse(decision.card.source.key).messageRef.messageId}），钉住 ${JSON.stringify(decision.card.source.pins)}`);
       const adopted = findAll(decision.answer, node => node.aggregateType === 'PlanRevision')[0] ?? null;
-      const graph = ready(await host.client.read('tasks/query', project.scope, { goalRef }));
-      const relations = findAll(graph, node => typeof node.fromTaskId === 'string' && typeof node.toTaskId === 'string' && /replac|supersed/i.test(String(node.kind ?? node.relation ?? '')));
-      if (adopted === null) missing(['new-version'], '决定的回执里没有它采用的计划版本');
-      else if (JSON.stringify(graph?.plan?.ref) !== JSON.stringify(adopted)) missing(['new-version'], `决定采用的 ${adopted.planId} 不是现在的计划 ${graph?.plan?.ref?.planId}，替换关系读不到那一版`);
-      else if (relations.length === 0) missing(['new-version'], `采用的 ${adopted.planId} 在 tasks/query 里没有可读的替换关系`);
+      // The adopted version itself, even when a later one followed (`tasks/query` takes a planRef, plan-contracts.ts:210).
+      const graphBody = adopted === null ? null : await host.client.read('tasks/query', project.scope, { goalRef, planRef: adopted });
+      const graph = ready(graphBody);
+      // The product's replacement: a superseded Task names the Task that takes it over (`replacedByTaskId`,
+      // contracts/plan.ts:71-77); the advisory relations (`coordination`/`expected_dependency`) never mean replacement.
+      const superseded = graph === null ? [] : [...new Map(findAll(graph, node => typeof node.taskId === 'string'
+        && typeof node.replacedByTaskId === 'string').map(node => [node.taskId, node])).values()];
+      if (adopted === null) notRun(['new-version'], `人答卡 ${decision.card.cardKey} 的回执里没有采用的计划版本：这次决定没有产生新版本，替换这一环没有发生`);
+      else if (graph === null) unreadable(['new-version'], `tasks/query ${adopted.planId}：${said(graphBody)}`);
+      else if (superseded.length === 0) rec.fail('new-version', `决定采用的 ${adopted.planId} 里没有被取代（replacedByTaskId）的任务：受影响的任务没有被替换`);
       else {
-        const replacing = [...new Set(relations.map(relation => relation.fromTaskId))];
+        const replacing = [...new Set(superseded.map(node => node.replacedByTaskId))];
+        const relations = superseded.map(node => ({ fromTaskId: node.replacedByTaskId, toTaskId: node.taskId }));
         const fed = [];
         const ranUnder = [];
         for (const item of (await executions(project, goalRef)).filter(entry => replacing.includes(entry.run.task.taskId)

@@ -1,10 +1,12 @@
 // E12: look through both graphs, history, messages and completion evidence; reads change nothing; then a normal
 // close, a new Host on the same ledger, and related new work through the old line (draft §1.5; slice-9-SPEC.md:664,
 // :690). New work is never `driver-start(oldGoalRef)`: a person's message to a COMPLETED Goal's line becomes the
-// Workflow's own `intervention_new_goal` request (`intervention.ts:169-176`), then confirm → adopt → the new Goal.
+// Workflow's own `intervention_new_goal` request (`intervention.ts:169-176`), then card → confirm → select an idea →
+// the request's plan candidate → `plans/apply` (G6F F3: the project is initialized, so not `initialization/adopt`)
+// → `driver-start` of the new Goal.
 import { newId, ready } from '../lib/http.mjs';
-import { adoptBinding, broken, chooseModel, coldStart, driverStart, executions, lines, openProject, runHistory, sessionHistory,
-  sessionQueries, settleAutonomy, textOf, turnsOf, waitFor, waitGoal, waitRequest } from '../lib/flows.mjs';
+import { broken, chooseModel, coldStart, driverStart, executions, lines, newGoalInProject, openProject, runHistory, sessionHistory,
+  sessionQueries, textOf, turnsOf, waitFor, waitGoal } from '../lib/flows.mjs';
 
 const MINUTE = 60_000;
 const SEED = {
@@ -120,17 +122,9 @@ async function run(ctx, rec) {
     const main = ready(await host.client.read('main/read', project.scope, { goalId: null, cursor: null }));
     return (main?.requests ?? []).find(entry => !known.has(JSON.stringify(entry.requestRoot))) ?? null;
   }, value => value !== null, { timeoutMs: 20 * MINUTE });
-  const view = await waitRequest(ctx, project, request.requestRoot);
-  const round = [...view.rounds].reverse().find(entry => entry.goalCardDrafts.length > 0);
-  if (round === undefined) throw broken(ctx, 'the new request gave no Goal card draft', 'new-goal');
-  const confirmed = await host.client.command('goals/confirm-draft', project.scope,
-    { commandId: newId('confirm'), round: round.ref, index: round.goalCardDrafts[0].index });
-  const binding = confirmed?.value?.binding;
-  if (binding === undefined) throw broken(ctx, `goals/confirm-draft: ${confirmed?.code} ${confirmed?.reason}`, 'new-goal');
-  const newGoal = binding.goalRef;
-  rec.ownGoal(project, newGoal, binding.goalRevision);
-  const adopted = await adoptBinding(ctx, project, binding);
-  await settleAutonomy(ctx, project, newGoal, rec);
+  // One follow-up asking for the Goal card before judging (G6F F4, R3).
+  const created = await newGoalInProject(ctx, project, request.requestRoot, rec, 'new-goal', 1);
+  const newGoal = created.goalRef;
   const fresh = ready(await host.client.read('tasks/query', project.scope, { goalRef: newGoal }));
   const flowId = newId('e12-new');
   const first = await driverStart(ctx, project, newGoal, { flowId });
@@ -142,7 +136,7 @@ async function run(ctx, rec) {
   const oldAgain = ready(await host.client.read('goals/display', project.scope, { goalRef: oldGoal }));
   rec.check('new-goal', newGoal.goalId !== oldGoal.goalId && oldAgain?.display?.phase === 'COMPLETED' && fresh !== null
     && fresh.tasks.length > 0 && fresh.tasks.every(task => task.effectivePhase !== 'satisfied') && newDone.display.phase === 'COMPLETED',
-  `新 Goal ${newGoal.goalId}（采用 ${adopted.status}，起步时 ${fresh?.tasks?.length ?? 0} 个任务都没满足）→ ${newDone.display.phase}；旧 Goal 仍 ${oldAgain?.display?.phase}`);
+  `新 Goal ${newGoal.goalId}（采用 ${created.applied.status}，起步时 ${fresh?.tasks?.length ?? 0} 个任务都没满足）→ ${newDone.display.phase}；旧 Goal 仍 ${oldAgain?.display?.phase}`);
   // C-220, judged on what the new work actually got back (#12): a successful tool result of its Runs that names the
   // old Goal or one of its Runs is a query of the completed work with its source kept.
   const oldIds = [oldGoal.goalId, ...runs.map(item => item.run.ref.runId)];

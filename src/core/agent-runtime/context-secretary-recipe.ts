@@ -151,6 +151,11 @@ export type SecretaryHandoffPromptFactsV1 =
   | { kind: 'understanding'; goals: readonly GoalRef[] }
   | { kind: 'brief'; brief: HandoffBriefV1 };
 
+/** `目标 n · <goalId>` when the Goal has its number, else the id alone (the Goals list and the source line). */
+function goalLabel(goalId: string, ordinal: number | null): string {
+  return `${ordinal === null ? '' : `目标 ${String(ordinal)} · `}${goalId}`;
+}
+
 /** A reference line: the aggregate then the identifying fields as canonical JSON, one line. */
 function goalReferenceText(ref: GoalRef): string {
   return `Goal ${canonicalJson({ projectId: ref.projectId, goalId: ref.goalId })}`;
@@ -331,8 +336,8 @@ export async function assembleSecretaryContext(
     ...(secretary.goals.length === 0
       ? [packString(texts, 'context.none')]
       : secretary.goals.map((entry) =>
-        `- ${entry.ordinal === null ? '' : `目标 ${String(entry.ordinal)} · `}${entry.goalId} `
-          + `[${entry.desiredState}] ${goalLineObjective(entry.objective)}`)),
+        `- ${goalLabel(entry.goalId, entry.ordinal)} `
+          + `[${entry.desiredState}${entry.phase === null ? '' : ` · ${entry.phase}`}] ${goalLineObjective(entry.objective)}`)),
   ];
   const goalSection = [...goalLines, goalPayloadText].join('\n');
 
@@ -353,8 +358,13 @@ export async function assembleSecretaryContext(
   const handoffSection = input.handoff === undefined
     ? null
     : handoffPromptText(input.handoff, texts, input.toolNames);
+  // G6F F4: while an intervention_new_goal request has no goal yet, the round says where it came from and that a
+  // Goal card comes first; once a card is confirmed the request has its goal and the line drops.
+  const source = effectiveGoalId === null ? secretary.request.interventionSource : null;
+  const sourceLine = source === null ? '' : `${packString(texts, 'secretary.interventionSource')} ${goalLabel(source.goalRef.goalId,
+    secretary.goals.find((entry) => entry.goalId === source.goalRef.goalId)?.ordinal ?? null)}\n`;
   const taskRoundSection = `${handoffSection === null ? '' : `${handoffSection}\n\n`}`
-    + `${packString(texts, 'secretary.roundHeading')}\n`
+    + `${packString(texts, 'secretary.roundHeading')}\n${sourceLine}`
     + `${roundMaterial(secretary.request.round, texts, input.toolNames)}\n\n${answerFormat}`;
   const taskBatchedSection = secretary.request.batch.length === 0
     ? null

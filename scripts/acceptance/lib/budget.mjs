@@ -9,6 +9,9 @@
 // (`compaction.ts:314`) and is not in `activity/runs`, so the meter undercounts those; recorded, not filled in.
 // There is no budget abort entry, so a stop comes after the request that crossed the cap; in-flight requests are not
 // aborted. A reading where any read does not answer is not used: the meter stops new work instead.
+// A request of a closed Query whose usage stayed unknown (e.g. a Host close cut it) is counted at its reservation,
+// `reservedInput + reservedOutput`, the platform's own rule (`model-budget.ts:85-91`; G6F F1): an upper bound, so
+// "stop once over the cap" still holds; only an unreadable reservation stops the meter.
 import { ready } from './http.mjs';
 import { Abort } from './report.mjs';
 
@@ -16,7 +19,7 @@ const POLL_MS = 20_000;
 const keyOf = value => JSON.stringify(value);
 const scopeKey = scope => `${scope.projectId}/${scope.workspaceId}`;
 const sessionRefOf = ref => ({ projectId: ref.projectId, sessionId: ref.sessionId });
-const zero = () => ({ input: 0, output: 0, cached: 0, queryRequests: 0, unbilled: 0, runs: 0, runsWithoutUsage: 0 });
+const zero = () => ({ input: 0, output: 0, cached: 0, queryRequests: 0, unbilled: 0, bounded: 0, runs: 0, runsWithoutUsage: 0 });
 
 /** A stop from the budget: `total` or `scenario` cap crossed, or `meter` (the reading is incomplete). */
 export class BudgetStop extends Abort {
@@ -93,17 +96,24 @@ class Meter {
             if (this.seen.has(key) || request.usageStatus === 'reserved') continue;
             if (request.usageStatus !== 'reported') {
               // A rejection the Query's own terminal failure proves (lead ruling 11-14 on A1/B1) is a known outcome: the
-              // request is counted as unbilled, 0. Unknown usage with no such terminal fact is not zero: the meter stops.
+              // request is counted as unbilled, 0. Unknown usage with no such terminal fact is not zero: it is counted
+              // at its reservation (G6F F1).
               if (snapshot.run?.status !== 'closed') {
-                // Held until its Query's terminal fact (quick check 补充1): new work stops meanwhile; if the Query then
-                // closes with a proven rejection the request is counted 0 and only this stop is lifted (`read`).
+                // Held until its Query's terminal fact (quick check 补充1): new work stops meanwhile; once the Query
+                // closes the request is counted (0 or its reservation) and only this stop is lifted (`read`).
                 const held = new BudgetStop('meter', `request ${request.requestId} of ${snapshot.ref.queryJobId} has usage ${request.usageStatus} and its Query has not ended yet; new work waits for its terminal fact`);
                 held.pendingKey = key;
                 throw held;
               }
               const known = await this.#knownEnd(scope, snapshot);
               if (known === null) {
-                throw new BudgetStop('meter', `request ${request.requestId} of ${snapshot.ref.queryJobId} has usage ${request.usageStatus} and its Query ended with neither a provider failure nor the driver's own cancel; the meter cannot count it, so no new work starts`);
+                if (!Number.isSafeInteger(request.reservedInput) || !Number.isSafeInteger(request.reservedOutput)) {
+                  throw new BudgetStop('meter', `request ${request.requestId} of ${snapshot.ref.queryJobId} has usage ${request.usageStatus}, its Query ended with neither a provider failure nor the driver's own cancel, and its reservation cannot be read; the meter cannot count it, so no new work starts`);
+                }
+                found.push({ key, scope, kind: 'query', input: request.reservedInput, output: request.reservedOutput, cached: 0, bounded: true,
+                  detail: { queryRunRef: snapshot.ref, sessionRef, requestId: request.requestId, reservedOutput: request.reservedOutput,
+                    bounded: `usage ${request.usageStatus}; Query closed ${snapshot.run?.outcome ?? '?'}; counted at the reservation (upper bound)` } });
+                continue;
               }
               found.push({ key, scope, kind: 'query', input: 0, output: 0, cached: 0, unbilled: true, detail: { queryRunRef: snapshot.ref, sessionRef,
                 requestId: request.requestId, reservedOutput: request.reservedOutput, unbilled: known } });
@@ -208,7 +218,11 @@ export class Budget {
     totals.input += item.input ?? 0;
     totals.output += item.output ?? 0;
     totals.cached += item.cached ?? 0;
-    if (item.kind === 'query') { totals.queryRequests += 1; if (item.unbilled) { totals.unbilled += 1; this.report.note(`${unit}: request ${item.detail.requestId} counted as unbilled 0 (${item.detail.unbilled})`); } }
+    if (item.kind === 'query') {
+      totals.queryRequests += 1;
+      if (item.unbilled) { totals.unbilled += 1; this.report.note(`${unit}: request ${item.detail.requestId} counted as unbilled 0 (${item.detail.unbilled})`); }
+      if (item.bounded) { totals.bounded += 1; this.report.note(`${unit}: request ${item.detail.requestId} counted at its reservation ${item.input}+${item.output} (${item.detail.bounded})`); }
+    }
     else { totals.runs += 1; if (item.noUsage) totals.runsWithoutUsage += 1; if (item.unbilled) { totals.unbilled += 1; this.report.note(`${unit}: Run ${item.detail.runRef.runId} counted with its reported part only, the rest 0 (${item.detail.unbilled})`); } }
     this.report.modelCall({ at: new Date().toISOString(), host: hostName, unit, kind: item.kind, ...item.detail,
       inputTokens: item.input ?? null, outputTokens: item.output ?? null, cachedInputTokens: item.cached ?? null });
@@ -259,7 +273,7 @@ export class Budget {
     // is lifted; nothing else is.
     const held = this.stop?.pendingKey;
     if (held !== undefined && [...this.meters.values()].some(meter => meter.seen.has(held))) {
-      this.report.note(`the stop held for ${held} is lifted: its Query reached a known end (a proven provider rejection, or the driver's own cancel), counted unbilled 0`);
+      this.report.note(`the stop held for ${held} is lifted: its Query ended and the request is counted (unbilled 0 for a proven provider rejection or the driver's own cancel, else at its reservation)`);
       this.stop = null;
     }
     const used = this.used();
@@ -311,11 +325,11 @@ export class Budget {
     return [
       `上限：总量 ${this.caps.total}，每个场景/格 ${this.caps.perScenario}（acceptance.config.json \`tokenCaps\`）。`,
       `口径：用量 = inputTokens + outputTokens（Kernel 的 inputTokens 已含缓存命中，cachedInputTokens 另记、不再相加）；每条按它所在项目的归属场景/格计，不按读到的时间。`,
-      `合计：用量 ${used.spent}（输入 ${used.input}，输出 ${used.output}；缓存命中 ${used.cached}）；Query 请求 ${used.queryRequests} 次（含 Query 的压缩摘要请求，公开记录分不出）；结束的 Work Run ${used.runs} 个，其中 ${used.runsWithoutUsage} 个是公开证明的零（没进入 Kernel）；未知或不完整的用量不算零，会让计量停下。`,
+      `合计：用量 ${used.spent}（输入 ${used.input}，输出 ${used.output}；缓存命中 ${used.cached}）；Query 请求 ${used.queryRequests} 次（含 Query 的压缩摘要请求，公开记录分不出）；结束的 Work Run ${used.runs} 个，其中 ${used.runsWithoutUsage} 个是公开证明的零（没进入 Kernel）；未知或不完整的用量不算零：已关闭 Query 里用量未知的请求按预留上限（输入预留 + 输出预留）计，只会多算；Work Run 的用量未知或不完整、或请求的预留读不到时，计量停下。`,
       '已知缺口：Work Run 的压缩摘要请求在另一个 Kernel Session 里跑，不在 `activity/runs` 里，计量少算了它们；驱动不读数据库补数（lead 裁定 11-14 #3）。400M/50M 上限远高于预期用量，这是记下的缺口，不是阻断。',
       `最后一次完整读数时在途：Query ${inFlight.queries}，Work Run ${inFlight.runs}（Work Run 的用量要等 Run 结束才在 \`activity/runs\` 出现，所以超限后的停止点是第一次能看到超出的读数）。`,
       ...(this.stop?.cap === 'meter' ? [`计量不可用：${this.stop.message}`] : []),
-      ...[...this.units.entries()].map(([unit, item]) => `${unit}：用量 ${item.input + item.output}（输入 ${item.input}，输出 ${item.output}，缓存命中 ${item.cached}；Query 请求 ${item.queryRequests}（其中按未计费 0 计的 ${item.unbilled}：provider 拒收，或驱动自己取消截断的请求），结束的 Run ${item.runs}）`),
+      ...[...this.units.entries()].map(([unit, item]) => `${unit}：用量 ${item.input + item.output}（输入 ${item.input}，输出 ${item.output}，缓存命中 ${item.cached}；Query 请求 ${item.queryRequests}（其中按未计费 0 计的 ${item.unbilled}：provider 拒收，或驱动自己取消截断的请求；按预留上限计的 ${item.bounded}：Query 已关闭、用量未知），结束的 Run ${item.runs}）`),
     ];
   }
 }

@@ -1425,12 +1425,16 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
             continue;
           }
           const job = read.value.job;
+          // G6F F3a: the round's goal is the one frozen at its preparation (`prepared.requestEffectiveGoalId`): a
+          // confirmed draft's attribution round moves a no-goal request there, while `job.goalId` stays the goal at
+          // submit. A round whose effective goal is still null writes no candidate, as before.
+          const goalId = read.value.run.run.executionState?.prepared?.requestEffectiveGoalId ?? null;
           // 121-112: a request's first round may carry the planning submit too;
           // a later round without a selected idea still reaches the entry and
           // answers `no_plan` there.
           if (!isRequestRound(job)
             || (job.job.roundKind !== 'followup' && job.job.roundKind !== 'request')
-            || job.job.requestRoot === null || job.job.goalId === null || job.job.status !== 'answered') {
+            || job.job.requestRoot === null || goalId === null || job.job.status !== 'answered') {
             turns.delete(key);
             continue;
           }
@@ -1450,7 +1454,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
                 ? { ...ctx.materialReader, actor: { ...requestFacts.value.initiator } } : ctx.materialReader }
             : ctx;
           const result = await propose.call(platform.workflow, turnCtx, { ref: round, answerRef,
-            requestRoot: job.job.requestRoot, goalId: job.job.goalId });
+            requestRoot: job.job.requestRoot, goalId });
           if (result.status === 'done') { turns.delete(key); continue; }
           if (result.status === 'skipped') {
             if (!result.transient) turns.delete(key);

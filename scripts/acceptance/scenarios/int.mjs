@@ -3,8 +3,8 @@
 // (the UI's `interveneLine`); with a task to continue there is no `intervention_planning`, without one there is;
 // a message to a COMPLETED Goal's line is confirmed as a new Goal first; pause only queues.
 import { newId, ready } from '../lib/http.mjs';
-import { broken, chooseModel, coldStart, executions, lines, openProject, orNull, sessionQueries, sleep, TERMINAL, textOf,
-  waitFor, waitGoal, waitRequest } from '../lib/flows.mjs';
+import { broken, chooseModel, coldStart, confirmNewGoal, driverStart, executions, lines, newGoalInProject, openProject, orNull,
+  sessionQueries, sleep, submitRequest, TERMINAL, textOf, waitFor, waitGoal } from '../lib/flows.mjs';
 
 const MINUTE = 60_000;
 const SEED = {
@@ -93,7 +93,13 @@ async function run(ctx, rec) {
   const doneRuns = await executions(project, done.goalRef);
   const doneLine = (await lines(project)).find(row => doneRuns.some(item => item.outbox?.claim?.sessionRef?.sessionId === row.key.sessionId));
 
-  const busy = await coldStart(ctx, project, LONG_REQUEST, rec);
+  // The project is initialized now: the second Goal takes the product's request path on one request (G6F F3), and
+  // the person starts it (`plans/apply` does not start the Goal driver; the cold start's adoption did).
+  const longSubmitted = await submitRequest(project, LONG_REQUEST);
+  if (longSubmitted?.status !== 'queued') throw broken(ctx, `requests/submit: ${longSubmitted?.code} ${longSubmitted?.reason}`);
+  const busy = await newGoalInProject(ctx, project, longSubmitted.requestRoot, rec);
+  const busyStart = await driverStart(ctx, project, busy.goalRef, { flowId: newId('int-long') });
+  rec.note(`driver-start ${busy.goalRef.goalId}: ${busyStart?.status} ${busyStart?.value?.state ?? busyStart?.code ?? ''}`);
   const running = await waitFor(ctx, 'a running Run on the long Goal', async () =>
     (await executions(project, busy.goalRef)).find(item => item.run.status === 'running') ?? null, value => value !== null, { timeoutMs: 40 * MINUTE });
   const line = (await lines(project)).find(row => row.key.sessionId === running.outbox?.claim?.sessionRef?.sessionId);
@@ -200,14 +206,11 @@ async function run(ctx, rec) {
   const request = await waitFor(ctx, 'the new-Goal request', async () =>
     (ready(await host.client.read('main/read', project.scope, { goalId: null, cursor: null }))?.requests ?? [])
       .find(entry => !known.has(JSON.stringify(entry.requestRoot))) ?? null, value => value !== null, { timeoutMs: 20 * MINUTE });
-  const requestView = await waitRequest(ctx, project, request.requestRoot);
-  const draftRound = [...requestView.rounds].reverse().find(round => round.goalCardDrafts.length > 0);
-  const confirmed = draftRound === undefined ? null : await host.client.command('goals/confirm-draft', project.scope,
-    { commandId: newId('confirm'), round: draftRound.ref, index: draftRound.goalCardDrafts[0].index });
+  // The same card step as every new Goal in an initialized project (G6F F3/F4): a round without a card gets a follow-up.
+  const confirmed = await confirmNewGoal(ctx, project, request.requestRoot, rec, 'completed-goal');
   const oldAfter = ready(await host.client.read('goals/display', project.scope, { goalRef: done.goalRef }));
-  rec.check('completed-goal', confirmed?.status === 'committed' && confirmed.value.binding.goalRef.goalId !== done.goalRef.goalId
-    && oldAfter?.display?.phase === 'COMPLETED',
-  `新 Goal ${confirmed?.value?.binding?.goalRef?.goalId ?? '无'}；原 Goal 仍 ${oldAfter?.display?.phase}`);
+  rec.check('completed-goal', confirmed.goalRef.goalId !== done.goalRef.goalId && oldAfter?.display?.phase === 'COMPLETED',
+    `新 Goal ${confirmed.goalRef.goalId}；原 Goal 仍 ${oldAfter?.display?.phase}`);
 }
 
 export default { ...def, run };

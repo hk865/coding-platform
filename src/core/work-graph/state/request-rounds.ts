@@ -21,6 +21,7 @@ import type {
   QueryRunSnapshot,
   QuerySubmissionBindingV1,
   RequestCommandReceiptV1,
+  RequestInterventionSourceV1,
   RequestReferenceV1,
   RequestUnderstandingCommandV1,
   SecretaryRoundMaterialV1,
@@ -59,6 +60,8 @@ export type NewRequestRoundInput = {
   understanding: RequestUnderstandingCommandV1 | null;
   /** The submit's structured references; every new round passes the list (empty when it has none). */
   requestReferences: RequestReferenceV1[];
+  /** G6F F4: only the root round of an `intervention_new_goal` request passes its source; no other round has one. */
+  interventionSource?: RequestInterventionSourceV1;
 };
 
 /**
@@ -92,6 +95,7 @@ export function newRequestRound(input: NewRequestRoundInput): PendingQueryLifecy
       receipt: structuredClone(input.receipt),
       understanding: input.understanding === null ? null : structuredClone(input.understanding),
       requestReferences: structuredClone(input.requestReferences),
+      ...(input.interventionSource === undefined ? {} : { interventionSource: structuredClone(input.interventionSource) }),
     },
   };
   return { job, run: pending.run };

@@ -39,11 +39,14 @@ the window.
   crossed the window total or a 50M scenario/cell cap; the rest of that unit is `uncovered (not-run)`. Each item
   belongs to the unit that owns its project, not to whichever unit was running when it was read; E06 takes E05's
   project over only when E05's work was shown stopped, otherwise E06 is `not-run`. A stop once seen ends every later
-  wait at once. A reading is used only when every read answered `ready` and every usage is known: a request with
-  `unknown` usage, or an ended Run whose usage is unknown or incomplete, stops the meter (only the public proof of a
-  zero, a Run that never entered the Kernel, counts as zero). A request whose Query reached its terminal failure from
-  the model service (`provider_request_failed`) is a proven rejection: it counts as unbilled 0 (noted), A1/B1 judge it
-  `fail` with that source, and the run goes on. **Known gap:** a Work Run's compaction summary request runs in its
+  wait at once. A reading is used only when every read answered `ready` and every usage is counted: a request with
+  `unknown` usage holds the meter until its Query closes; an ended Run whose usage is unknown or incomplete stops the
+  meter (only the public proof of a zero, a Run that never entered the Kernel, counts as zero). A request whose Query
+  reached its terminal failure from the model service (`provider_request_failed`) is a proven rejection: it counts as
+  unbilled 0 (noted), A1/B1 judge it `fail` with that source, and the run goes on. Any other request of a closed Query
+  with unknown usage (e.g. a Host close cut it) counts at its reservation, `reservedInput + reservedOutput` (noted;
+  the platform's own rule, an upper bound); only an unreadable reservation stops the meter.
+  **Known gap:** a Work Run's compaction summary request runs in its
   own Kernel Session and is not in `activity/runs`, so the meter undercounts those; the driver does not read the
   database to fill it in (the caps are far above the expected use).
 - **Unit end and last close.** When a unit ends, and before a Host's last close, the driver asks the Goals not
@@ -54,8 +57,16 @@ the window.
   means new work was not shown stopped: no later unit runs, and the Hosts get their bounded last close. A restart
   (E06, E12, waiting) is the scenario's subject, so it only takes one reading; a close that does not end with exit 0
   fails that restart's check and no second Host is started on that ledger.
+- **New Goal in an initialized project.** The cold start's `initialization/adopt` takes only the first Goal of a
+  project. A later Goal (intervention's long Goal, E12's and intervention's work on a completed Goal's line) goes the
+  product's request path on one request (`lib/flows.mjs` `newGoalInProject`; MVP-BEHAVIOR.md:343): the secretary's
+  Goal card (a round without one gets follow-ups asking for it: up to three, one in E12) → `goals/confirm-draft` →
+  `requests/select-idea` of the first idea → the plan round writes the new Goal's request candidate →
+  `plans/apply` by the person → `workflow/driver-start`.
 - **Node review.** Under `every_step` (E08) the person reviews each finished node from `goals/delivery` and commits
-  it with `nodes/commit`, as the product requires before the next node.
+  it with `nodes/commit`, as the product requires before the next node. The objective change there is a secretary
+  round that answers with ideas (no `submit_plan_round` under `every_step`); the person selects the first, and the
+  plan round that follows writes the candidate the person applies.
 - **Check rounds.** A work Task's rounds are read by each of its Runs (`subjectRunRef`); a gate's by the Task.
 - **Waiting.** The wait lives where the product allows it: the member's Work Run asks the secretary line through
   `send_session_message` with `waitAfterSend` (a Query round is refused that combination). The chain is followed until
@@ -96,7 +107,7 @@ the window.
 | `run.mjs` | CLI: precheck, Hosts, the order (A1, B1, the eight, attached, B06, compaction), rows, report |
 | `lib/http.mjs` | the two prefixes, the token header, `graph_write` envelopes, the call log |
 | `lib/host.mjs` | start/close/restart a Host, the token read |
-| `lib/flows.mjs` | the person's shared steps (open project, provider, cold start, explicit plan, cards, waits) and the scenario record |
+| `lib/flows.mjs` | the person's shared steps (open project, provider, cold start, new Goal in an initialized project, explicit plan, cards, waits) and the scenario record |
 | `lib/budget.mjs` | the token meter and the caps |
 | `lib/lag.mjs` | the event-loop lag probe |
 | `lib/report.mjs` | result.json, README, checks/* and the seven reason codes |

@@ -756,6 +756,7 @@ export const PLATFORM_PROMPT_PACK_V1 = {
     "secretary.goalsHeading": "## Goals",
     "secretary.noGoal": "This request has no goal yet.",
     "secretary.roundHeading": "## This round",
+    "secretary.interventionSource": "This request came from a message on the line of a goal that is COMPLETED; a completed goal takes no new work, so this work is a new goal: answer with a Goal card (goalCardDrafts) first. Source goal:",
     "secretary.referencesHeading": "## References",
     "secretary.selectedIdea": "Selected idea:",
     "secretary.cardsHeading": "## Cards",

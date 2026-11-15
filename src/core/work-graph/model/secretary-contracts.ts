@@ -13,7 +13,7 @@ import type { OperationRef } from '../../../contracts/core/operations.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import type { GoalDesiredState, GoalRef } from '../../../contracts/ledger.js';
 import type {
-  QueryJobRef, QueryRunRef, SecretaryRoundMaterialV1,
+  QueryJobRef, QueryRunRef, RequestInterventionSourceV1, SecretaryRoundMaterialV1,
 } from '../../../contracts/query-job.js';
 import type { RecordGuard } from '../../record-store/ports.js';
 
@@ -45,12 +45,15 @@ export type SecretaryPreparationFactsV1 = {
     earlier: SecretaryHistoryEntryV1[];
     briefRef: OperationRef | null;
     understandingGrants: GoalRef[];
+    /** G6F F4: the source an `intervention_new_goal` request's root round keeps; null for every other request. */
+    interventionSource: RequestInterventionSourceV1 | null;
   };
   workspace: { workspaceId: string; revision: number };
   executionRoles: readonly string[];
   architecture: { baselineId: string; revision: number; catalog: AdoptedArchitecture } | null;
   completionPolicy: { policyId: string; revision: number } | null;
-  goals: { goalId: string; desiredState: GoalDesiredState; objective: string; ordinal: number | null }[];
+  /** `phase` is the formal GoalPhase (`COMPLETED` for the active Plan, `readGoalTerminalState`), else null (G6F F4). */
+  goals: { goalId: string; desiredState: GoalDesiredState; phase: 'COMPLETED' | null; objective: string; ordinal: number | null }[];
   executionKind: 'semantic_query' | 'initial_coordination';
   guards: RecordGuard[];
   watermark: CommitCursor | null;

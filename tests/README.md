@@ -98,6 +98,8 @@ E3-7 的新文件：`tests/contracts/E37-line-edit-counts-pure.test.ts`（`gitLi
 
 7D2 SRV 的验收行（写测试方）：`tests/business/SRV-review-line.test.ts`（V1–V3，S9 审阅世界 `reviewLine: 'none'`，只读 `role-lines/read`、`role-lines/operations`、`decisions/queue` 和 `workflow/advance` 的结果）。V1（memory）：执行结果审阅到期、项目里没有审阅线时，推进先开出一条职责 reviewer 的线，审阅发到这条线，再推进不开第二条。V2（memory）：经 `projects/role-limits/set` 把 executor 的开线上限设成 1（Work 线已占这一个席位，审阅线也占 executor 席位），开线被拒；等待原因以 `no_review_line` 开头、带拒绝原文，没有审阅线，reviewer 的开线操作只有一条，`exec-review-no-line:` 通知还在。V3（只跑 SQLite，A2 崩溃夹具）：开线已提交、线在 `session-register:` 提交前被按住时 Host 停下，新 Host 推进后只有一条线、一条开线操作，审阅发到这条线。V5（memory，审查后的 R1）：自动开出的线经 `sessions/archive` 归档后再推进，开出一条新的审阅线（Session id 不同），审阅发到新线。V4 在 `tests/contracts/S6A-secretary-templates.test.ts` 末尾：秘书 Skill 渲染出的文本里，“只写在正文里的文字不会改动”和“没有看到采用的回执就不要说已改”各占一行。包落地前五行都红。
 
+7D2 G6F 的验收行（写测试方）：`tests/scenarios/G6F-completed-goal-secretary.test.ts`（G1、G2，只跑 memory；S7B-V 的完成目标世界 `openS7BPlanningWorld` 加 `completeS7BGoal`，干预把目标 1 线上的消息转成无目标请求，秘书一轮经 `queries/claim`、`queries/prepare`、`queries/start` 跑完，读脚本化模型收到的输入）。G1：`## Goals` 里目标 1 那一行有 `active` 和 `COMPLETED`，目标 2 那一行没有 `COMPLETED`。G2：`## This round` 下有一行同时点名目标 1（id 或“目标 1”）、写明已完成、要先出目标卡（措辞归施工方，只配这三件事）；`requests/read` 的 `goalId`、`effectiveGoalId` 仍是 null，读值里有目标 1 的 id。`tests/scenarios/G6F-new-goal-plan-round.test.ts`（G3，只跑 memory；S6C 请求候选世界，即带请求驱动的 S6A Host 世界加 `initializeProject`）：无目标请求的秘书答一张目标卡和三条思路 → `goals/confirm-draft` → 同一请求 `requests/select-idea` → 计划轮调 `submit_plan_round` → `plans/request-candidate` 读到新目标的候选 → `plans/apply` 采用成第 1 版。
+
 ## tests/helpers/ 的夹具
 
 ### Host 和平台

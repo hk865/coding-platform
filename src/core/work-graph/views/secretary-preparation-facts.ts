@@ -48,7 +48,7 @@ import { liveUnderstandingGrants } from '../state/request-rounds.js';
 import { readGoalOrdinals } from '../tasks/plan-readers.js';
 import { readAnswers } from '../tasks/request-facts.js';
 import { readInitializationPointers } from '../tasks/initialization-pointers.js';
-import { listWorkspaceGoals, readWatermark } from './goal-conflicts.js';
+import { listWorkspaceGoals, readGoalTerminalState, readWatermark } from './goal-conflicts.js';
 
 export type SecretaryPreparationFactsDependencies = {
   records: Pick<GoalRecordTransactionPort, 'readMany' | 'eventAt'> & RecordLookupPort & RecordOrderedLookupPort;
@@ -479,12 +479,19 @@ async function readSecretaryFactsOnce(
   }
   if (listed.truncated) return rejected('incomplete', 'the workspace Goal list is truncated');
   const ordinals = await readGoalOrdinals(deps.records, projectId);
-  const goals: SecretaryPreparationFactsV1['goals'] = listed.goals.map((goal) => ({
-    goalId: goal.ref.goalId,
-    desiredState: goal.desiredState,
-    objective: goal.objective,
-    ordinal: ordinals?.get(goal.ref.goalId) ?? null,
-  }));
+  const goals: SecretaryPreparationFactsV1['goals'] = [];
+  for (const goal of listed.goals) {
+    // G6F F4: the list shows the Goal's phase beside its desired state (a completed Goal stays `active`).
+    const terminal = await readGoalTerminalState(deps.records, goal);
+    if (terminal.status !== 'ready') return terminal;
+    goals.push({
+      goalId: goal.ref.goalId,
+      desiredState: goal.desiredState,
+      phase: terminal.value.completed ? 'COMPLETED' : null,
+      objective: goal.objective,
+      ordinal: ordinals?.get(goal.ref.goalId) ?? null,
+    });
+  }
   const goalGuards: RecordGuard[] = listed.goals.map((goal) => ({
     refKey: canonicalJson(goal.ref as unknown as JsonValue), expectedRevision: goal.revision,
   }));
@@ -537,6 +544,8 @@ async function readSecretaryFactsOnce(
         earlier,
         briefRef,
         understandingGrants,
+        interventionSource: structuredClone(
+          facts.rounds.find((round) => sameJson(round.ref, requestRoot))?.job.interventionSource ?? null),
       },
       workspace,
       executionRoles,

@@ -14,7 +14,7 @@ import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type {
   GoalCardDraftV1, QueryCloseDetailV1, QueryJobIntentV1, QueryJobRef, QueryRoundKind, RequestCommandReceiptV1,
-  RequestReferenceV1, RequestUnderstandingCommandV1,
+  RequestInterventionSourceV1, RequestReferenceV1, RequestUnderstandingCommandV1,
 } from '../../../contracts/query-job.js';
 import type { RuntimeBudget } from '../../../contracts/runtime-budget.js';
 import type { RecordGuard } from '../../record-store/ports.js';
@@ -132,6 +132,8 @@ export type RequestCoreViewV1 = {
   reasons: ('round' | 'reply' | 'release' | 'candidate')[];
   rounds: RequestRoundViewV1[];
   candidate: { proposalRef: PlanProposalRef; state: string; stale: boolean } | null;
+  /** G6F F4: present only on an `intervention_new_goal` request: the completed Goal and the message it came from. */
+  source?: RequestInterventionSourceV1;
 };
 
 /** The request's latest answered round: the LAST round the caller counts as answered; one order for every reader. */

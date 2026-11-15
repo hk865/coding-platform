@@ -1,7 +1,9 @@
 // E08: change the Goal's objective/acceptance during execution under `every_step` (draft §1.3; ruling 14:0x §9.1).
 // This tree has no dedicated "change goal" route: 6C rides on a Plan candidate (`reason.objective`, new obligations,
 // cancelled tasks) adopted only by the person with `plans/apply` (`plan-service.ts:1607-1612`), started here with
-// `requests/submit {goalId}`. `goals/settings/set` only sets autonomy (C-126/C-133a).
+// `requests/submit {goalId}`. Under `every_step` the secretary's round has no `submit_plan_round`
+// (`query-preparation.ts:532-535`): it answers with ideas, the person selects one, and the plan round that follows
+// writes the candidate (G6F F2). `goals/settings/set` only sets autonomy (C-126/C-133a).
 // Under `every_step` a finished node waits for the person's `nodes/commit` (decision 121-45); `waitGoal` does that
 // review from `goals/delivery` for an every_step unit (`flows.mjs` `reviewNodes`).
 import { newId, ready } from '../lib/http.mjs';
@@ -85,7 +87,15 @@ async function run(ctx, rec) {
   const change = await submitRequest(project, CHANGE, { goalId: goalRef.goalId });
   if (change?.status !== 'queued') throw broken(ctx, `requests/submit with goalId: ${change?.code} ${change?.reason}`);
   rec.facts.userCommand.push(CHANGE);
-  await waitRequest(ctx, project, change.requestRoot, 40 * MINUTE);
+  const changeView = await waitRequest(ctx, project, change.requestRoot, 40 * MINUTE);
+  // The person's decision on the change starts with an idea (G6F F2): the first one of the round that gave ideas.
+  const ideasRound = changeView.rounds.at(-1);
+  if (ideasRound.ideas.length > 0) {
+    const picked = await host.client.command('requests/select-idea', project.scope, { commandId: newId('idea'), round: ideasRound.ref, index: 0 });
+    if (picked?.status !== 'queued') throw broken(ctx, `requests/select-idea on the change: ${picked?.code} ${picked?.reason}`, 'versions');
+    rec.note(`the person selected idea 1 of ${ideasRound.ideas.length} on the change: ${ideasRound.ideas[0].title}`);
+    await waitRequest(ctx, project, change.requestRoot, 40 * MINUTE);
+  }
   const candidate = await waitFor(ctx, 'the changed plan candidate', async () =>
     ready(await host.client.read('plans/request-candidate', project.scope, { goalRef, requestRef: change.requestRoot })),
   value => value?.head !== null && value?.head !== undefined && value.status === 'candidate', { timeoutMs: 30 * MINUTE });

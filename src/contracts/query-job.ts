@@ -526,7 +526,14 @@ export type QueryJobV1 = {
     understanding: RequestUnderstandingCommandV1 | null;
     /** The submit's structured file selections (UI1 request-refs); every request round writes the list. */
     requestReferences?: RequestReferenceV1[];
+    /**
+     * G6F F4: the COMPLETED Goal and the message on its line an `intervention_new_goal` request came from. Only that
+     * request's root round carries it; every other round and every record written before it has no key.
+     */
+    interventionSource?: RequestInterventionSourceV1;
 };
+/** Where an `intervention_new_goal` request came from: the completed Goal and the person's message on its line. */
+export type RequestInterventionSourceV1 = { goalRef: GoalRef; messageRef: SessionMessageRef };
 // ------------------------------------------------------------------------ //
 // Events (query v1)                                                         //
 // ------------------------------------------------------------------------ //

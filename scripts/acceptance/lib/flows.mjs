@@ -1,5 +1,6 @@
 // The person's public steps every scenario shares: open a project directory, pick the provider once per
-// scenario, the cold start (request -> Goal card -> confirm -> adopt), the explicit Goal/plan path, answering
+// scenario, the cold start (request -> Goal card -> confirm -> adopt), a new Goal in an initialized project
+// (card -> confirm -> select an idea -> request candidate -> apply), the explicit Goal/plan path, answering
 // cards, starting the driver and waiting. Only CLI + HTTP: no TS fixture, no SQLite, no `runtimeProvider`.
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -362,6 +363,15 @@ export async function coldStart(ctx, project, text, rec) {
   if (round === undefined) {
     throw broken(ctx, `the secretary gave no Goal card draft after three rounds (closes: ${view.rounds.map(entry => entry.closeCode ?? 'ok').join(', ')})`);
   }
+  const { draft, binding, goalsBeforeConfirm } = await confirmCard(ctx, project, round, rec);
+  const adopted = await adoptBinding(ctx, project, binding);
+  rec.link('plan', adopted.receipt.plan, null);
+  await settleAutonomy(ctx, project, binding.goalRef, rec);
+  return { goalRef: binding.goalRef, requestRoot, round, draft, binding, plan: adopted.receipt.plan, goalsBeforeConfirm };
+}
+
+/** The person confirms the round's first Goal card draft (`goals/confirm-draft`); a refusal is the platform's on `check`. */
+async function confirmCard(ctx, project, round, rec, check) {
   const draft = round.goalCardDrafts[0];
   // What existed before the person's confirm: the draft must not have become a Goal by itself (C-46).
   const goalsBeforeConfirm = (ready(await project.host.client.read('goals/list', project.scope, { workspace: project.scope }))?.goals ?? [])
@@ -369,12 +379,9 @@ export async function coldStart(ctx, project, text, rec) {
   const confirmed = await project.host.client.command('goals/confirm-draft', project.scope,
     { commandId: newId('confirm'), round: round.ref, index: draft.index });
   const binding = committed(confirmed)?.binding;
-  if (binding === undefined) throw broken(ctx, `goals/confirm-draft: ${said(confirmed)}`);
+  if (binding === undefined) throw broken(ctx, `goals/confirm-draft: ${said(confirmed)}`, check);
   rec.ownGoal(project, binding.goalRef, binding.goalRevision);
-  const adopted = await adoptBinding(ctx, project, binding);
-  rec.link('plan', adopted.receipt.plan, null);
-  await settleAutonomy(ctx, project, binding.goalRef, rec);
-  return { goalRef: binding.goalRef, requestRoot, round, draft, binding, plan: adopted.receipt.plan, goalsBeforeConfirm };
+  return { draft, binding, goalsBeforeConfirm };
 }
 
 /** `initialization/adopt` from a confirmed binding; a `pending` answer is retried with the same command (`:55`). */
@@ -406,6 +413,77 @@ export async function settleAutonomy(ctx, project, goalRef, rec) {
   const set = await project.host.client.write('goals/settings/set', project.scope,
     { goalRef, autonomy: rec.autonomy, waitForGoalRef: null }, [{ ref: goalRef, revision: goal.goal.revision }]);
   rec.note(`${goalRef.goalId}: the draft chose ${goal.goal.settings.autonomy}; set to ${rec.autonomy} after adoption (${set?.status} ${set?.code ?? ''})`);
+}
+
+// ---------------------------------------------------------------------------- a new Goal in an initialized project
+
+const CARD_ASK = '这是一项新工作：请先给出它的目标卡（单独成一个新目标），再给 2–3 个做法思路。';
+const IDEAS_ASK = '目标卡我确认了。请给 2–3 个做法思路，我来选一个。';
+/** The request's latest answered round; confirm and select-idea only take that one (`request-service.ts:780-783`). */
+const latestAnswered = view => [...view.rounds].reverse().find(round => round.answer !== null);
+
+/**
+ * The confirmed Goal card of a no-goal request in an initialized project (MVP-BEHAVIOR.md:343; G6F F3, F4 E12): the
+ * latest answered round's card, after at most `maxCardFollowups` follow-ups asking for one (default 3, the cold start's
+ * count; E12 passes 1, G6F R3), without the cold start's idea selection (an idea selected before the card is confirmed
+ * makes every later round of the request a plan round with no goal), then `goals/confirm-draft`. No card or a refused
+ * confirm is the platform's failure on `check`.
+ */
+export async function confirmNewGoal(ctx, project, requestRoot, rec, check, maxCardFollowups = 3) {
+  let view = await waitRequest(ctx, project, requestRoot);
+  let asks = 0;
+  for (; asks < maxCardFollowups && !(latestAnswered(view)?.goalCardDrafts.length > 0); asks += 1) {
+    const asked = await submitRequest(project, CARD_ASK, { continues: requestRoot });
+    if (asked?.status !== 'queued') throw broken(ctx, `request follow-up asking for a Goal card: ${said(asked)}`, check);
+    view = await waitRequest(ctx, project, requestRoot);
+  }
+  const round = latestAnswered(view);
+  if (round === undefined || round.goalCardDrafts.length === 0) {
+    throw broken(ctx, `the secretary gave no Goal card draft after ${asks} follow-up(s) asking for one (cap ${maxCardFollowups}; closes: ${
+      view.rounds.map(entry => entry.closeCode ?? 'ok').join(', ')})`, check);
+  }
+  const { draft, binding, goalsBeforeConfirm } = await confirmCard(ctx, project, round, rec, check);
+  return { goalRef: binding.goalRef, requestRoot, view, round, draft, binding, goalsBeforeConfirm };
+}
+
+/**
+ * A new Goal in an initialized project, on the same request (MVP-BEHAVIOR.md:343; G6F F3): the confirmed card
+ * (`confirmNewGoal`) → `requests/select-idea` of the first idea (one follow-up asks for ideas when the card round has
+ * none) → the plan round writes the new Goal's request candidate (F3a) → the person's `plans/apply`. Never
+ * `initialization/adopt` (an initialized project's rounds are `semantic_query`, `initial-planning-parse.ts:26` refuses
+ * their answer) and never `plans/propose`. Starting the Goal is the caller's `workflow/driver-start`.
+ */
+export async function newGoalInProject(ctx, project, requestRoot, rec, check, maxCardFollowups = 3) {
+  const confirmed = await confirmNewGoal(ctx, project, requestRoot, rec, check, maxCardFollowups);
+  const goalRef = confirmed.goalRef;
+  let view = confirmed.view;
+  if (latestAnswered(view).ideas.length === 0) {
+    const asked = await submitRequest(project, IDEAS_ASK, { continues: requestRoot });
+    if (asked?.status !== 'queued') throw broken(ctx, `request follow-up asking for ideas: ${said(asked)}`, check);
+    view = await waitRequest(ctx, project, requestRoot);
+  }
+  const ideasRound = latestAnswered(view);
+  if (ideasRound === undefined || ideasRound.ideas.length === 0) {
+    throw broken(ctx, `the secretary gave no idea to select after ${goalRef.goalId} was confirmed`, check);
+  }
+  const picked = await project.host.client.command('requests/select-idea', project.scope,
+    { commandId: newId('idea'), round: ideasRound.ref, index: 0 });
+  if (picked?.status !== 'queued') throw broken(ctx, `requests/select-idea: ${said(picked)}`, check);
+  rec.note(`${goalRef.goalId}: the person selected idea 1 of ${ideasRound.ideas.length} (${ideasRound.ideas[0].title})`);
+  await waitRequest(ctx, project, requestRoot);
+  const candidate = await waitFor(ctx, `the request candidate of ${goalRef.goalId}`, async () =>
+    ready(await project.host.client.read('plans/request-candidate', project.scope, { goalRef, requestRef: requestRoot })),
+  value => value?.head !== null && value?.head !== undefined && value.status === 'candidate', { timeoutMs: 30 * MINUTE, check });
+  const goal = ready(await project.host.client.read('goals/read', project.scope, goalRef));
+  if (goal === null) throw broken(ctx, `goals/read of ${goalRef.goalId} did not answer before plans/apply`, check);
+  const applied = await project.host.client.write('plans/apply', project.scope,
+    { proposalRef: candidate.head.ref, expectedProposalRevision: candidate.head.revision, decisionRefs: [] },
+    [{ ref: goalRef, revision: goal.goal.revision }]);
+  const plan = committed(applied);
+  if (plan === null) throw broken(ctx, `plans/apply of ${goalRef.goalId}'s request candidate: ${said(applied)}`, check);
+  rec.link('plan', plan.ref, plan.revision);
+  await settleAutonomy(ctx, project, goalRef, rec);
+  return { ...confirmed, plan: plan.ref, applied };
 }
 
 // ---------------------------------------------------------------------------- the explicit Goal and Plan path
@@ -507,13 +585,18 @@ export async function sessionQueries(project, sessionRef) {
   return items;
 }
 
-export async function sessionHistory(project, sessionRef) {
+/** Every page of a line's raw history; a page that does not answer ends the read and, given `gaps`, is named there. */
+export async function sessionHistory(project, sessionRef, gaps = null) {
   const items = [];
   let afterCursor = null;
   do {
-    const page = ready(await project.host.client.read('sessions/history', project.scope,
-      { sessionRef, afterCursor, throughCursor: null, limit: 200 }));
-    if (page === null) break;
+    const body = await project.host.client.read('sessions/history', project.scope,
+      { sessionRef, afterCursor, throughCursor: null, limit: 200 });
+    const page = ready(body);
+    if (page === null) {
+      gaps?.push(`sessions/history ${sessionRef.sessionId}: ${said(body)}`);
+      break;
+    }
     items.push(...page.items);
     afterCursor = page.nextCursor ?? null;
   } while (afterCursor !== null);
@@ -617,8 +700,8 @@ export async function projectSessions(project) {
   return refs;
 }
 
-export async function sessionTurns(project, sessionRef) {
-  return turnsOf(await sessionHistory(project, sessionRef));
+export async function sessionTurns(project, sessionRef, gaps = null) {
+  return turnsOf(await sessionHistory(project, sessionRef, gaps));
 }
 
 /** The Goal's display phase, or null when the read did not answer. */
@@ -693,8 +776,12 @@ export async function executions(project, goalRef) {
   return items;
 }
 
-export async function lines(project) {
-  return ready(await project.host.client.read('lines/list', project.scope, { workspace: project.scope }))?.rows ?? [];
+/** The project's lines; a read that does not answer gives none and, given `gaps`, is named there. */
+export async function lines(project, gaps = null) {
+  const body = await project.host.client.read('lines/list', project.scope, { workspace: project.scope });
+  const rows = ready(body)?.rows;
+  if (rows === undefined) gaps?.push(`lines/list: ${said(body)}`);
+  return rows ?? [];
 }
 
 export const textOf = value => JSON.stringify(value ?? null);
