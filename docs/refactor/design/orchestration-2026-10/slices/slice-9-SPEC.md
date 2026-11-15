@@ -694,6 +694,8 @@ answer = readQueryAnswer(answerRef).answer.answer
 | 直接干预 | `messages/send`（到工作线）→ 领取/驱动 | 干预消息、`intervention_planning`、提案/采用、决定卡 | `queries/read`（`execution.kind=intervention_planning`）、`messages/view`/`inbox`、`plans/proposal`、`decisions/queue` |
 | 等待 | 成员经真实工具发 `waitAfterSend` → 回复/到期 | 发送、回答、到期、转交 | `sessions/facts`（`waits`）、`messages/read`（`consumesWait`/`withdrawnAt`）、`requests/read`、`executions/read` |
 
+**决定 121-131 修改（2026-11-16）：** 已初始化的项目里，第二个目标（E12 重启后的新工作、intervention 的长目标）的首个方案不走 `initialization/adopt`。改走请求路径：目标卡 → `goals/confirm-draft` → 同一请求里 `requests/select-idea` → 计划轮写出新目标的请求候选 → `plans/apply`，然后 `workflow/driver-start`。计划轮用这一轮冻结的生效目标（F3a，`host.ts` 计划轮表、`initial-plan-answer.ts`）。上表 E12 一行里的 `initialization/adopt` 照此理解；冻结的开工裁定原文不改。
+
 ### 5.5 131072 两格
 
 **代码事实（F11）。** 每请求默认 4096（`contracts/runtime-budget.ts:19`）；本地工作台 profile 覆盖为 16384（`app/runtime-configuration.ts:122`）；硬上限 393216（`runtime-budget.ts:21`）；本地模型 1M 窗口只特判 `deepseek-flash`/`deepseek-v4-pro`（`host.ts:339-344`）；实际请求取 `min(request.maxOutputTokens ?? perResponseTokens, perResponseTokens, 剩余累计输出)`（`model-budget.ts:92`）；没有 131072 常量，没有 `planningOutputReserveTokens`。
