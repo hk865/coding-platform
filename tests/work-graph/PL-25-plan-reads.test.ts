@@ -122,7 +122,8 @@ describe('PL-25 plan reads', () => {
     worlds.push(world);
     const readers = openPlanReaders(world);
     // B06: every capability table ends with the built-in witness, zero registered checks included.
-    const witness = { checkId: 'platform:witness', kind: 'witness', coversKinds: ['witness'], replayable: false };
+    const witness = { checkId: 'platform:witness', kind: 'witness', coversKinds: ['witness'], replayable: false,
+      taskIds: 'all' };
 
     // The Host registered no configuration for this workspace: `null`, not `[]`.
     expect(await readers.planChecks(S6A_SCOPE)).toEqual({ status: 'ready', value: null });
@@ -132,7 +133,7 @@ describe('PL-25 plan reads', () => {
       configuration: ag2bChecksConfiguration({ actor: world.ag2b.actor, command: 'true' }),
     });
     expect(await readers.planChecks(S6A_SCOPE)).toEqual({ status: 'ready', value: [{
-      checkId: 'ag2b-static', kind: 'static', coversKinds: ['static'], replayable: false,
+      checkId: 'ag2b-static', kind: 'static', coversKinds: ['static'], replayable: false, taskIds: 'all',
     }, witness] });
 
     // A configuration that exists but lists no check still offers the witness.

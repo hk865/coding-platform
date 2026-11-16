@@ -749,6 +749,12 @@ export type InitialPlanAnswerFacts = {
     manifest: PreparedQueryManifestV1;
     answerText: string;
     resolution: InitialPlanSourceResolutionV1;
+    /**
+     * The project's main workspace, read with the facts (a read result, not stored): the answer's module ids are
+     * written in the round's workspace frame, so a merge of its segment onto a base puts the base back in that frame
+     * first (`planInCallerView`) and the propose qualifies the merged plan once.
+     */
+    mainWorkspaceId: string;
 };
 
 /**

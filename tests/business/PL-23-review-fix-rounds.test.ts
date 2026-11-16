@@ -552,8 +552,10 @@ it('PL-23(e): a planfix ended unsettled, the Goal cancelled: the adviser line ar
     .toBe('fix');
   await performOne(workflow, 'pl-23-c-fix-p1', 'send_system_round');
   const fix = await plSystemRoundRef(workflow, adviser, `planfix:${p1.ref.proposalId}:1`);
-  await heartbeatUntil(world, () => readPlanningQuery(world, fix), query => (query?.run.run.executionState ?? null) !== null);
+  // G7 W2: one Host pass now takes the planfix round from its submit to its closing notice, so the fault is armed
+  // before that pass.
   commitBarrier.failCommitOnce(byIdentityPrefix('session-message-send:'));   // the Host's closing notice
+  await heartbeatUntil(world, () => readPlanningQuery(world, fix), query => (query?.run.run.executionState ?? null) !== null);
   await heartbeatUntil(world, () => readPlanningQuery(world, fix), query => query?.job.job.status === 'answered'
     || query?.run.run.status === 'closed' || query?.run.run.executionState?.phase === 'settled');
   await cancelS7AGoal(world, workflow.goal);

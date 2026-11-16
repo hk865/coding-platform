@@ -12,7 +12,7 @@
 ## 文件
 
 - `evidence-service.ts` — 唯一可信 Evidence/verification 服务（KLS-3b：轮次在主体 Run 的线的根上冻结、捕获和比对源，开轮用 Run 快照里的线，开检查、源比对和读上下文时经 `deps.executions` 读回主体 Run 再 `resolveRoot(workspace, line)`，第二条线的检查不再被当成根变了）：开启与读取轮次、检查执行与结果、finalize、后继轮与链头读取。 7C-1 的 `reverifyApprovedByCard` 从卡片批准走同一条后继轮提交，`lookupToolCommit` 只服务 `request_recheck` 的已提交查询。B06 G2：`recordWitness` 收一条 pending 见证检查（回执先、一个 guardCtx、一次提交）：读 subject Run（读不到就短路成 unknown），有执行历史绑定才经 `witnessFacts` 读最终文字与成功读取，再 `pathVerdictsOf`、一次 `evaluateSource`、经 `runActivity` 读已存的 RunActivity（非 Git 或读不到是 unknown），交 `runWitnessCheck` 判；最终文字存在时才存一份结构化报告 body `{roundRef, subjectRunRef, reportText}`，`size_exceeded` 记空 ref 且 PASS 降 INCONCLUSIVE；读不出的事实都记缺口，不拒绝。`readEvidence` 按 ref 读一条 Evidence：别的项目 `forbidden`，同项目任何工作区可读（决定 104-1），缺失或损坏 `unavailable`。`beginCheck`/`recordCheckResult` 对见证检查回 `invalid`（一个检查只有一个结果写入者）；finalize 的见证 verdict 的 `source.runRef` 是 subject Run；开轮能力表改调 `checkCapabilitiesOf`。
-- `verification-plan.ts` — 确定性、内容寻址的 `VerificationPlan` 纯编译器；同 tuple 同 digest，不读 store。`platform:witness` 项在编译结果上带 `requiredReadPaths`（只从它覆盖的见证要求取路径，去重保首次出现序）；命令项原对象原样返回。
+- `verification-plan.ts` — 确定性、内容寻址的 `VerificationPlan` 纯编译器；同 tuple 同 digest，不读 store。覆盖经 `taskVerificationCoverage`（`state/plan-candidate.ts`）：只用适用于本任务检查轮的检查，没有适用检查的必需要求记 `uncovered`（轮次判 INCONCLUSIVE，不按空集合判 PASS）。`platform:witness` 项在编译结果上带 `requiredReadPaths`（只从它覆盖的见证要求取路径，去重保首次出现序）；命令项原对象原样返回。
 - `witness-path-verdicts.ts` — 每条必须读取路径的三态 `pathVerdictsOf`：词法上不是单个字面源文件（不安全路径或带 `*`/`?` 的 glob）或读取集未知 → `unknown`，否则在成功读取的 Set 上精确判 `present`/`absent`；不 resolve、不 normalize、不做大小写折叠，不写第二套路径校验器（路径规则用 `workspace/path-validation.ts` 的 `isLiteralSourceFilePath`）。见证 owner `recordWitness` 调用它。
 
 ## 可以复用的能力

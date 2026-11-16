@@ -18,7 +18,11 @@ const SEED = {
   'README.md': '# g6-wait\n\nNumber helpers.\n',
   'num.js': 'export function double(n) {\n  return n * 2;\n}\n',
 };
-const SEED_REQUEST = '初始化这个项目：在 README.md 末尾加一行用法示例。验收：node --test 通过。只改 README.md。';
+// G7 W4 (after review): the seed's registered `node --test` check is the one the waiting Goal's `static` requirements
+// use, and a check applies only to the Tasks it lists, so the person says plainly it is the whole project's check (the
+// secretary then lists `"all"`). A propose that still refuses is recorded by `proposeAndApply`'s `broken` with its issues.
+const SEED_REQUEST = '初始化这个项目：在 README.md 末尾加一行用法示例。验收：node --test 通过。'
+  + 'node --test 是整个项目的检查，这个项目以后所有任务都用它验收。只改 README.md。';
 const QUESTION = 'num.js 现在有哪些导出函数？';
 const SECOND_QUESTION = 'README 的标题要不要改成中文？';
 const instruction = secretary => [
@@ -54,8 +58,15 @@ function draft(goalId, secretary) {
       { taskId: 'gate', title: 'Goal gate', requirementLevel: 'required', taskKind: 'gate', disposition: 'active', phase: 'pending', scope: { kind: 'goal' } },
     ],
     assignments: [{ taskId: 't-wait', role: 'local-workbench', instruction: instruction(secretary) }],
+    // G7 W4: the seed adoption's policy asks for up to two required requirements per obligation (CPL; the G6 run 4
+    // seed chose 2 here, `empty_verification_requirements`), so the one obligation names both things the Task must
+    // show. Both are `static`, the kind the seed's registered `node --test` check covers.
     obligations: [{ obligationId: 'o-tests', title: '测试通过', requirementLevel: 'required', taskIds: ['t-wait', 'gate'],
-      verificationRequirements: [{ requirementId: 'r-tests', requirementLevel: 'required', kind: 'static', description: 'node --test 全部通过' }] }],
+      verificationRequirements: [
+        { requirementId: 'r-tests', requirementLevel: 'required', kind: 'static', description: 'node --test 全部通过' },
+        { requirementId: 'r-triple', requirementLevel: 'required', kind: 'static',
+          description: 'num.js 导出 triple(n)，test/triple.test.js 用 node:test 覆盖它并通过' },
+      ] }],
     taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] }, taskRelations: [], inputRequirements: [],
   };
 }

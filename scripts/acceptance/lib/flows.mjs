@@ -6,6 +6,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { scopeKey } from './budget.mjs';
 import { committed, newId, ready } from './http.mjs';
 import { Abort } from './report.mjs';
 
@@ -14,8 +15,16 @@ export const sha256 = text => createHash('sha256').update(text).digest('hex');
 const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
 export const TERMINAL = ['COMPLETED', 'FAILED', 'CANCELLED', 'ACCEPTED_PARTIAL'];
 const MINUTE = 60_000;
+/**
+ * The Task stops only a person continues: the UI's 要决定 set (`src/ui/adapters/goals.ts:185` TASK_DECIDE_STOPS),
+ * copied here because the driver never imports UI code.
+ */
+const TASK_DECIDE_STOPS = new Set(['gate_needs_fix', 'auto_rework_cap_reached', 'no_new_basis', 'verification_uncovered',
+  'unknown_outcome']);
+/** G7 W3(b): above the longest wait a scenario sets (`wait.mjs` LONG_DEADLINE_MS, 30 min) plus one Host heartbeat. */
+const STALL_MS = 32 * MINUTE;
 
-/** A wait that ran out: its check is already judged `fail`; the unit stops unless the caller takes it (`orNull`). */
+/** A wait that ran out or ended early: its check is already judged `fail`; the unit stops unless the caller takes it (`orNull`). */
 class WaitTimeout extends Abort {
   constructor(text) {
     super('not-run', text);
@@ -214,15 +223,18 @@ async function profilesOf(host, scope) {
  * nothing waits forever): `check` names it, else the unit's next unjudged check in plan order. The note names what
  * was waited for and how long; the unit then stops and the checks after it are `uncovered (not-run)`. Environment
  * causes (provider unreachable or refusing, the window ending) stay `uncovered` through their own `Abort`.
+ * `ended(value)` (G7 W3) names a reason the platform can no longer finish by itself; the wait then ends at once and is
+ * judged the same way, with that reason as the note.
  */
-export async function waitFor(ctx, what, read, done, { timeoutMs, everyMs = 10_000, check }) {
+export async function waitFor(ctx, what, read, done, { timeoutMs, everyMs = 10_000, check, ended = () => null }) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     await ctx.budget.tick();
     const value = await read();
     if (done(value)) return value;
-    if (Date.now() > deadline) {
-      const text = `timed out after ${Math.round(timeoutMs / MINUTE)} min waiting for ${what}`;
+    const early = ended(value);
+    if (early !== null || Date.now() > deadline) {
+      const text = early ?? `timed out after ${Math.round(timeoutMs / MINUTE)} min waiting for ${what}`;
       broken(ctx, text, check);
       throw new WaitTimeout(text);
     }
@@ -261,16 +273,24 @@ export async function waitingCards(project, goalRef = null) {
 
 /**
  * Wait for the Goal to reach one of `until` (default: the terminal phases), answering waiting cards the way
- * `answer(card)` says (default: approve). `onPoll(display)` lets a scenario read what it watches meanwhile.
+ * `answer(card)` says (default: approve). `onPoll(display)` lets a scenario read what it watches meanwhile. The wait
+ * ends early (G7 W3, `endedEarly`) when the platform shows it cannot go on by itself.
  */
 export async function waitGoal(ctx, project, goalRef, { until = TERMINAL, timeoutMs, answer = approve, onPoll, rec = null, check, committedAnswers = [] }) {
   const answered = new Set();
+  const quiet = { seen: null, since: Date.now() };
+  let ended = null;
   return waitFor(ctx, `${goalRef.goalId} to reach ${until.join('/')}`, async () => {
     const display = ready(await project.host.client.read('goals/display', project.scope, { goalRef }));
-    for (const card of await waitingCards(project, goalRef)) {
-      if (answered.has(card.cardKey)) continue;
+    const queue = ready(await project.host.client.read('decisions/queue', project.scope, { workspace: project.scope, goalRef,
+      sections: ['waiting_answer', 'answered_pending_application'], page: { limit: 50 } }));
+    // The cards the person still has in hand: answered and not yet applied, or waiting and taken by `answer`.
+    let open = queue?.answeredPendingApplication?.length ?? 0;
+    for (const card of queue?.waitingAnswer ?? []) {
+      if (answered.has(card.cardKey)) { open += 1; continue; }
       const selection = answer(card);
       if (selection === null) continue;
+      open += 1;
       // Only a committed answer counts as the person's decision (`committedAnswers` collects them with the time).
       const receipt = await answerCard(ctx, project, card, selection, '', rec);
       if (receipt) {
@@ -280,8 +300,42 @@ export async function waitGoal(ctx, project, goalRef, { until = TERMINAL, timeou
     }
     if (rec?.autonomy === 'every_step') await reviewNodes(project, goalRef, rec);
     if (onPoll !== undefined) await onPoll(display);
+    ended = await endedEarly(ctx, project, goalRef, { display, queue, open, quiet });
     return display;
-  }, display => display !== null && until.includes(display.display.phase), { timeoutMs, check });
+  }, display => display !== null && until.includes(display.display.phase), { timeoutMs, check, ended: () => ended });
+}
+
+/**
+ * G7 W3: the reason a Goal wait ends before its deadline, or null. Judged like a wait that ran out (G6F R1: the
+ * complete record proves the step was not reached; the checks after it are `uncovered (not-run)`). A poll whose
+ * display or queue did not answer is no evidence either way.
+ * (a) The Goal's own headline says a person decides on a Task stop of the UI's 要决定 set (the GOAL-23/GOAL-30 row:
+ *     phase NEEDS_DECISION, a required Task, no live Run, no automatic rework pending, `goal-machine.ts:1176-1194`),
+ *     and the queue holds no card the person still has in hand.
+ * (b) Nothing public changed (display, cards) for STALL_MS and the meter's last complete reading has no Query and no
+ *     Work Run in flight in the project. The display's `sourceCursor` is the ledger-wide watermark (any commit in the
+ *     project moves it), so it is not compared. The reason names the last phase, cause and driver wait reason seen.
+ */
+async function endedEarly(ctx, project, goalRef, { display, queue, open, quiet }) {
+  if (display === null || queue === null) return null;
+  const { phase, cause } = display.display;
+  if (phase === 'NEEDS_DECISION' && TASK_DECIDE_STOPS.has(cause?.code) && open === 0) {
+    return `the platform stopped: ${cause.code} on ${cause.taskId}`;
+  }
+  const { sourceCursor: _watermark, ...goalFacts } = display;
+  const seen = JSON.stringify({ display: goalFacts, cards: [...queue.waitingAnswer, ...queue.answeredPendingApplication]
+    .map(card => [card.cardKey, card.state]) });
+  if (seen !== quiet.seen) {
+    quiet.seen = seen;
+    quiet.since = Date.now();
+    return null;
+  }
+  if (Date.now() - quiet.since < STALL_MS) return null;
+  const busy = ctx.budget.inFlight({ scopes: [scopeKey(project.scope)] });
+  if (busy.queries > 0 || busy.runs > 0) return null;
+  const driver = ready(await project.host.client.read('workflow/driver-read', project.scope, { goalRef }));
+  return `stalled: no change for ${Math.floor((Date.now() - quiet.since) / MINUTE)} min, nothing in flight (last seen: goal phase ${
+    phase}, cause ${cause?.code ?? 'none'}; driver ${driver?.state ?? 'unread'}, wait reason ${driver?.reason ?? 'none'})`;
 }
 
 /**
@@ -419,8 +473,44 @@ export async function settleAutonomy(ctx, project, goalRef, rec) {
 
 const CARD_ASK = '这是一项新工作：请先给出它的目标卡（单独成一个新目标），再给 2–3 个做法思路。';
 const IDEAS_ASK = '目标卡我确认了。请给 2–3 个做法思路，我来选一个。';
+/** G7 W5: the person's fixed answer to a plan round's questions. */
+export const PLAN_QUESTIONS_ANSWER = '按你推荐的做法；没提到的按最简单的处理';
 /** The request's latest answered round; confirm and select-idea only take that one (`request-service.ts:780-783`). */
 const latestAnswered = view => [...view.rounds].reverse().find(round => round.answer !== null);
+/** The round's saved answer is the plan round's questions (`needs_decision`, `answer-tools.ts:262-266`). */
+const askedQuestions = round => {
+  try { return JSON.parse(round?.answer ?? 'null')?.kind === 'needs_decision'; } catch { return false; }
+};
+
+/**
+ * The person's follow-ups on one request while `needed(view)` holds, at most `max`: each is `text` on the same
+ * request (`continues`, plus `extra`), then the rounds settle. Returns the last view and how many were sent; a refused
+ * follow-up is the platform's failure on `check`.
+ */
+async function followUps(ctx, project, requestRoot, view, { needed, text, max, extra = {}, what, check, onSent }) {
+  let asks = 0;
+  for (; asks < max && needed(view); asks += 1) {
+    const sent = await submitRequest(project, text, { continues: requestRoot, ...extra });
+    if (sent?.status !== 'queued') throw broken(ctx, `request follow-up ${what}: ${said(sent)}`, check);
+    onSent?.();
+    view = await waitRequest(ctx, project, requestRoot);
+  }
+  return { view, asks };
+}
+
+/**
+ * G7 W5: a plan round that asked the person questions (instead of writing the candidate) is answered the way the
+ * request thread takes it, at most `max` times (default 2): one follow-up with `PLAN_QUESTIONS_ANSWER`, recorded in
+ * `userCommand`. A request round's question cards resume nothing (`plan-readers.ts:2729`: only intervention rounds
+ * form a group), so the person's channel is the request itself. Returns the request view after the last answer.
+ */
+export async function answerPlanQuestions(ctx, project, requestRoot, view, rec, { max = 2, extra = {}, check } = {}) {
+  const answered = await followUps(ctx, project, requestRoot, view, { needed: current => askedQuestions(current.rounds.at(-1)),
+    text: PLAN_QUESTIONS_ANSWER, max, extra, what: "answering the plan round's questions", check,
+    onSent: () => { rec.facts.userCommand.push(PLAN_QUESTIONS_ANSWER); } });
+  if (answered.asks > 0) rec.note(`the plan round asked questions; the person answered ${answered.asks} time(s) (cap ${max})`);
+  return answered.view;
+}
 
 /**
  * The confirmed Goal card of a no-goal request in an initialized project (MVP-BEHAVIOR.md:343; G6F F3, F4 E12): the
@@ -430,13 +520,9 @@ const latestAnswered = view => [...view.rounds].reverse().find(round => round.an
  * confirm is the platform's failure on `check`.
  */
 export async function confirmNewGoal(ctx, project, requestRoot, rec, check, maxCardFollowups = 3) {
-  let view = await waitRequest(ctx, project, requestRoot);
-  let asks = 0;
-  for (; asks < maxCardFollowups && !(latestAnswered(view)?.goalCardDrafts.length > 0); asks += 1) {
-    const asked = await submitRequest(project, CARD_ASK, { continues: requestRoot });
-    if (asked?.status !== 'queued') throw broken(ctx, `request follow-up asking for a Goal card: ${said(asked)}`, check);
-    view = await waitRequest(ctx, project, requestRoot);
-  }
+  const { view, asks } = await followUps(ctx, project, requestRoot, await waitRequest(ctx, project, requestRoot), {
+    needed: current => !(latestAnswered(current)?.goalCardDrafts.length > 0), text: CARD_ASK, max: maxCardFollowups,
+    what: 'asking for a Goal card', check });
   const round = latestAnswered(view);
   if (round === undefined || round.goalCardDrafts.length === 0) {
     throw broken(ctx, `the secretary gave no Goal card draft after ${asks} follow-up(s) asking for one (cap ${maxCardFollowups}; closes: ${

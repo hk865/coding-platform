@@ -124,8 +124,8 @@ const PLAN: PlanRevisionSnapshot = {
   taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] },
 };
 const CAPABILITIES: CheckCapabilityV1[] = [
-  { checkId: 'lint', kind: 'static', coversKinds: ['static'], replayable: false },
-  { checkId: 'platform:witness', kind: 'witness', coversKinds: ['witness'], replayable: false },
+  { checkId: 'lint', kind: 'static', coversKinds: ['static'], replayable: false, taskIds: 'all' },
+  { checkId: 'platform:witness', kind: 'witness', coversKinds: ['witness'], replayable: false, taskIds: 'all' },
 ];
 const witnessItem = (coverage: { obligationId: string; requirementId: string }[], requiredReadPaths: string[]) =>
   ({ checkId: 'platform:witness', kind: 'witness', satisfiesKind: 'witness', coverage, satisfactionPath: 'predicate',

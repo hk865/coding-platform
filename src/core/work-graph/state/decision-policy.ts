@@ -214,7 +214,8 @@ export function automationConfirmationCause(input: {
  * covered Tasks' requirement/disposition/effective phase into GV-5, so the
  * emitted gate card and its §8.2-paused re-derivation cannot diverge.
  */
-export function gateCoveredTaskIds(tasks: readonly RuntimeTask[], gate: RuntimeTask): string[] {
+export function gateCoveredTaskIds(tasks: readonly Pick<RuntimeTask, 'taskId' | 'taskKind' | 'scope'>[],
+  gate: Pick<RuntimeTask, 'taskId' | 'taskKind' | 'scope'>): string[] {
   if (gate.taskKind !== 'gate') return [];
   const scope = gate.scope;
   return tasks.filter((task) => {

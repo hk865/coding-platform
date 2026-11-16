@@ -2,10 +2,12 @@
  * Mechanical plan diagnosis and the candidate decision (slice-PL-SPEC §6.2,
  * §6.1.3).
  *
- * Diagnosis's one rule: every REQUIRED verification requirement must have a registered
- * check that covers it; reviewer requirements are covered by the review item
- * (slice 9), so every uncovered required requirement reports `no_registered_check`. Coverage is
- * compiled by the same pure function the VerificationPlan compiler uses.
+ * Diagnosis's one rule: every REQUIRED verification requirement must have, on
+ * each active Task its obligation maps, a registered check that covers it and
+ * applies to that Task's round; reviewer requirements are covered by the review
+ * item (slice 9), so every uncovered required requirement reports
+ * `no_registered_check`. Coverage is compiled per Task by the same function the
+ * VerificationPlan compiler uses (`taskVerificationCoverage`).
  *
  * `checks: null` means the registered coverage is unknown: it is not an empty
  * configuration and it never becomes an empty finding list. `checks: []` means
@@ -15,12 +17,15 @@
  * module existence is not checked here.
  */
 import type { KnowledgePinV1 } from '../../../contracts/knowledge.js';
-import type { PlanRevisionDraft, PlanRevisionRef } from '../../../contracts/plan.js';
+import type { AcceptanceObligation, PlanRevisionRef, RuntimeTask } from '../../../contracts/plan.js';
 import type { PlanDiagnosisFindingV1, PlanReviewReadV1 } from '../../../contracts/plan-review.js';
 import type { PlanFixReadV1 } from '../../../contracts/plan-round.js';
 import { systemRoundRequestId } from '../../../contracts/plan-round.js';
-import type { CheckCapabilityV1 } from '../../../contracts/verification.js';
+import type {
+  CheckCapabilityV1, VerificationCheckKind, VerificationCoverageV1,
+} from '../../../contracts/verification.js';
 import { compileVerificationCoverage } from '../../../contracts/verification.js';
+import { gateCoveredTaskIds } from './decision-policy.js';
 import type { PlanProposalRef } from './plan-machine.js';
 
 // ------------------------------------------------------------------------ //
@@ -120,10 +125,69 @@ export function decidePlanCandidate(facts: PlanCandidateFactsV1): PlanCandidateD
 
 const NO_REGISTERED_CHECK_MESSAGE = '没有已注册的检查能覆盖这条必需验证要求。';
 
+/** The Task members the coverage reads: the round's own id and kind, and the scope a gate covers by. */
+export type CoverageTaskV1 = Pick<RuntimeTask, 'taskId' | 'taskKind' | 'scope' | 'disposition'>;
+
+/**
+ * The checks one Task's check round may use: a check applies when its `taskIds` is `"all"` or names the Task, or,
+ * for a gate, a work Task the gate covers (`gateCoveredTaskIds`).
+ */
+export function checksApplyingTo(tasks: readonly CoverageTaskV1[], task: CoverageTaskV1,
+  checks: readonly CheckCapabilityV1[]): CheckCapabilityV1[] {
+  const roundTaskIds = [task.taskId, ...gateCoveredTaskIds(tasks, task)];
+  return checks.filter(check => check.taskIds === 'all' || roundTaskIds.some(taskId => check.taskIds.includes(taskId)));
+}
+
+/**
+ * The one coverage of one Task's check round: the obligations that map the Task, under only the checks that apply
+ * to it (`checksApplyingTo`). The runtime round (`compileVerificationPlan`), the adoption and the submit-time check
+ * (`planCoverageGaps`) all call this one function.
+ */
+export function taskVerificationCoverage(input: {
+  tasks: readonly CoverageTaskV1[];
+  obligations: readonly AcceptanceObligation[];
+  task: CoverageTaskV1;
+  requirementKinds: readonly string[];
+  checks: readonly CheckCapabilityV1[];
+}): VerificationCoverageV1 {
+  return compileVerificationCoverage({
+    obligations: input.obligations.filter(obligation => obligation.taskIds.includes(input.task.taskId)),
+    requirementKinds: input.requirementKinds,
+    checks: checksApplyingTo(input.tasks, input.task, input.checks),
+  });
+}
+
+/** One required requirement a Task's check round cannot cover. */
+export type PlanCoverageGapV1 = { taskId: string; obligationId: string; requirementId: string; kind: VerificationCheckKind };
+
+/**
+ * Every required requirement that some Task's round could never cover: each active Task a required obligation maps
+ * (in obligation, then `taskIds` order) gets its round's coverage. A cancelled, superseded or deferred Task opens no
+ * round, so it is not judged.
+ */
+export function planCoverageGaps(input: {
+  tasks: readonly CoverageTaskV1[];
+  obligations: readonly AcceptanceObligation[];
+  requirementKinds: readonly string[];
+  checks: readonly CheckCapabilityV1[];
+}): PlanCoverageGapV1[] {
+  const taskById = new Map(input.tasks.map(task => [task.taskId, task]));
+  const roundTasks: CoverageTaskV1[] = [];
+  for (const obligation of input.obligations) {
+    if (obligation.requirementLevel !== 'required') continue;
+    for (const taskId of obligation.taskIds) {
+      const task = taskById.get(taskId);
+      if (task !== undefined && task.disposition === 'active' && !roundTasks.includes(task)) roundTasks.push(task);
+    }
+  }
+  return roundTasks.flatMap(task => taskVerificationCoverage({ ...input, task }).uncovered
+    .map(entry => ({ taskId: task.taskId, ...entry })));
+}
+
 /** Read-only facts only: no storage, no clock, no tools, no module lookup. */
 export function diagnosePlanCandidate(input: {
-  /** The candidate draft's obligations and their verification requirements. */
-  candidate: Pick<PlanRevisionDraft, 'obligations'>;
+  /** The candidate draft's Tasks, obligations and their verification requirements. */
+  candidate: { tasks: readonly CoverageTaskV1[]; obligations: readonly AcceptanceObligation[] };
   /** The knowledge files the candidate was checked against; a review-input fact only. */
   catalogPin: KnowledgePinV1 | null;
   /** The resolved policy's requirement kinds. */
@@ -132,16 +196,16 @@ export function diagnosePlanCandidate(input: {
   checks: readonly CheckCapabilityV1[] | null;
 }): PlanDiagnosisFindingV1[] | null {
   if (input.checks === null) return null;
-  const coverage = compileVerificationCoverage({
-    obligations: input.candidate.obligations,
-    requirementKinds: input.requirementKinds,
-    checks: input.checks,
-  });
-  return coverage.uncovered.map(entry => ({
-    obligationId: entry.obligationId,
-    requirementId: entry.requirementId,
-    kind: entry.kind,
-    code: 'no_registered_check',
-    message: NO_REGISTERED_CHECK_MESSAGE,
-  }));
+  // A requirement uncovered on several Tasks is one finding: the card names the requirement, not the Task.
+  const seen = new Set<string>();
+  const findings: PlanDiagnosisFindingV1[] = [];
+  for (const gap of planCoverageGaps({ tasks: input.candidate.tasks, obligations: input.candidate.obligations,
+    requirementKinds: input.requirementKinds, checks: input.checks })) {
+    const key = `${gap.obligationId}\u0000${gap.requirementId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    findings.push({ obligationId: gap.obligationId, requirementId: gap.requirementId, kind: gap.kind,
+      code: 'no_registered_check', message: NO_REGISTERED_CHECK_MESSAGE });
+  }
+  return findings;
 }

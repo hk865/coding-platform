@@ -12,9 +12,12 @@ import { ag2bPlanDraft, graphWrite } from '../helpers/AG2b-collaboration-fixture
 const worlds: S6ARequestWorld[] = [];
 afterEach(async () => { await Promise.all(worlds.splice(0).map(world => world.close())); });
 
+// G7 P3: a witness requirement belongs only on an exploration task's obligation, so `sb06-work` explores.
+const witnessDraft = ag2bPlanDraft(['sb06-work']);
 const proposeWitnessDraft = (world: S6ARequestWorld, requiredReadPaths: unknown) => world.post('plans/propose', graphWrite(S6A_SCOPE, {
   goalRef: S6A_GOAL_1, basedOn: null,
-  draft: { ...ag2bPlanDraft(['sb06-work']), planId: 'sb06-plan', goalId: S6A_GOAL_1.goalId,
+  draft: { ...witnessDraft, planId: 'sb06-plan', goalId: S6A_GOAL_1.goalId,
+    tasks: witnessDraft.tasks.map(task => task.taskId === 'sb06-work' ? { ...task, sizeClass: 'explore' as const } : task),
     obligations: [{ obligationId: 'sb06-obligation', title: 'Explore the source', requirementLevel: 'required',
       taskIds: ['sb06-work'], verificationRequirements: [{ requirementId: 'sb06-witness', requirementLevel: 'required',
         kind: 'witness', description: 'The report read the named source', requiredReadPaths }] }] },

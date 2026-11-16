@@ -22,7 +22,7 @@ const PACK: ResolvedPromptPackV1 = PLATFORM_PROMPT_PACK_V1;
 const V2_TEMPLATES = {
     'base': 'cee15946501a2db933e00e1ea9954e8332542ab130268cd32c6962c91061958c',
     'skill-platform-work': 'fee248cc70c5ed0a07bc8e679bd8357fa6e678976818b121e6f837cdf29ec7b3',
-    'skill-platform-secretary': 'da3380211ac07defcb938eb3dba47d8ac1b0083174a1b8e688909c491cb2c48a',
+    'skill-platform-secretary': '263748a27aba5a5401092ac910c43af72d7ba12a5ec30e717bdafdcce9455968',
     'skill-platform-adviser': '479429b59b3681902eb367d6cb3d7cb8821b8fcba76964e9d282af67e36baee0',
     'skill-platform-scribe': '06eaa54bb819486d3b7e3e69bd4bdcfe0a5cfb7e5a73a893296500710ec7b65d',
     'skill-platform-reviewer': '730e2ee4693fbd17776a2adfb5c6b8edaeab2c5ba7ed102aec0ba49aec9307a6',
@@ -31,7 +31,7 @@ const V2_TEMPLATES = {
 /** The v1 Skill texts PC-1 pinned plus the decision 89, 8E L3 row 4 and 121-128 (goal gate) paragraphs, hand-written. */
 const V1_SKILL_DIGESTS = {
     'skill-platform-work': '65d0bd9fca305c43d84ab2ebee1d8de00a76567aa69721243de78a181d00953c',
-    'skill-platform-secretary': 'e7f8d824bb4b98a2bc15bade83c872bda2849b21062881290fe2aa3b5d2d9553',
+    'skill-platform-secretary': '1b0aad5f4959e8b2dee7785df44f70c0f978f11f3021fbfe78147c6a6388796f',
     'skill-platform-adviser': '177e6d85204008fc09a91d760a8b24dba713267d00937e545db30a1a0c993c3a',
     'skill-platform-scribe': '5c4d9ebc3a3abb6b7d56bcb957728247789186588f4290d451d3c1efe2f46fd1',
     'skill-platform-reviewer': '36fcce8c4354c4ac131f4bc64759a76695b4781c0937ab47c3c44704f7b9ed20',
@@ -53,7 +53,7 @@ describe('platform prompt pack v2 (rulings 17–18)', () => {
             expect(manifest.templates[id], `manifest entry ${id}`).toEqual({
                 file: `templates/${id}.txt`,
                 version: id === 'base' ? 3 : id === 'skill-platform-adviser' ? 15 : id === 'skill-platform-work' ? 11
-                    : id === 'skill-platform-reviewer' ? 5 : id === 'skill-platform-secretary' ? 10 : 9, // scribe 9 (SCRV, +1 in its tree)
+                    : id === 'skill-platform-reviewer' ? 5 : id === 'skill-platform-secretary' ? 11 : 9, // scribe 9 (SCRV, +1 in its tree)
                 mentionsTools: [],
             });
             const text = templates[id];
@@ -101,7 +101,7 @@ describe('platform prompt pack v2 (rulings 17–18)', () => {
         // Every platform template id with its pack, version and mentions, hand-written:
         // no key or version is read from the manifest or the generated origins.
         expect(PACK.origins).toEqual({
-            'initial-planning-answer': { packId: 'platform', version: 8, mentionsTools: [] },
+            'initial-planning-answer': { packId: 'platform', version: 9, mentionsTools: [] },
             'consultation-received-input': { packId: 'platform', version: 1, mentionsTools: [] },
             'user-decision-response': { packId: 'platform', version: 1, mentionsTools: [] },
             'action-request-delivery': { packId: 'platform', version: 1, mentionsTools: [] },
@@ -138,7 +138,7 @@ describe('platform prompt pack v2 (rulings 17–18)', () => {
             'handoff-brief-adviser': { packId: 'platform', version: 2, mentionsTools: ['read'] },
             base: { packId: 'platform', version: 3, mentionsTools: [] },
             'skill-platform-work': { packId: 'platform', version: 11, mentionsTools: [] },
-            'skill-platform-secretary': { packId: 'platform', version: 10, mentionsTools: [] },
+            'skill-platform-secretary': { packId: 'platform', version: 11, mentionsTools: [] },
             'skill-platform-adviser': { packId: 'platform', version: 15, mentionsTools: [] },
             'skill-platform-scribe': { packId: 'platform', version: 9, mentionsTools: [] },
             'skill-platform-reviewer': { packId: 'platform', version: 5, mentionsTools: [] },

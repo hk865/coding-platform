@@ -185,7 +185,8 @@ function isGoalRef(value: unknown): value is GoalRef {
 }
 /**
  * slice-PL-SPEC §6.1.4: a candidate wait also observes `Session`, so a review or adviser line
- * created after the Goal started still wakes it. Both registration sites merge the same kind.
+ * created after the Goal started still wakes it. Every registration site merges the same kind:
+ * the decision loop's two and a Run watch's hand-back (G7 W1).
  */
 function withSessionWaitKind(basis: GoalWaitBasisV1): GoalWaitBasisV1 {
   return basis.recordKinds.includes('Session') ? basis
@@ -979,7 +980,30 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
   }
 
   function startLaneLoop(lane: Lane): void {
-    lane.done = runLane(lane).catch(() => { /* runLane records its own reason */ });
+    lane.done = runLane(lane).catch(() => { /* runLane records its own reason */ })
+      .then(() => drainHandedBack(lane));
+  }
+
+  /**
+   * G7 W1: a watch that handed a registered wait back runs the Host's one goal-wait drain once, after its loop has
+   * returned: the decision loop's register-then-drain (slice-PL-SPEC §5.5.1 steps 5–6). A commit the watch's own step
+   * wrote before the register (the review line it opened) already marked the wait, and nothing later may commit.
+   * Never inside `runLane`: the drain's wake re-opens this watch (`reopenHandedBack`) or kicks the decision, and both
+   * must find this loop ended, its `finally` done and its Task out of `activeTaskIds`.
+   */
+  async function drainHandedBack(lane: Lane): Promise<void> {
+    const basis = lane.handedBack;
+    if (basis === null || lane.stopRequested) return;
+    try {
+      await dependencies.drainGoalWaits?.({ projectId: basis.projectId, workspaceId: lane.workspaceId });
+    } catch (error) {
+      // As the decision loop's own drain: a failed drain is this watch's failure with its reason; the mark stays.
+      if (lane.handedBack === basis && !lane.stopRequested) {
+        lane.state = 'failed';
+        lane.reason = `the Workflow advancement failed: ${messageOf(error)}`;
+        changed(lane);
+      }
+    }
   }
 
   /**
@@ -1011,13 +1035,16 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
     return { projectId: handle.projectId, goalId: handle.goalRef.goalId,
       recordKinds: [...GOAL_WAIT_WAKE_AGGREGATE_TYPES, 'QueryRun'], reasons: ['running_cap'] };
   }
+  /** Register the running-cap wait; a watch's drain runs after its loop returned (`drainHandedBack`). */
+  function registerRunningCapWait(handle: Handle, cursorAtRead: CommitCursor): void {
+    dependencies.goalWaits?.({ projectId: handle.projectId, workspaceId: handle.workspaceId })
+      ?.register(runningCapBasisOf(handle), cursorAtRead);
+  }
   /** Register the running-cap wait, then run the Host's one admission drain; the drain is awaited. */
   async function holdRunningCapWait(handle: Handle, cursorAtRead: CommitCursor | null): Promise<void> {
     if (cursorAtRead === null) return;
-    const scope = { projectId: handle.projectId, workspaceId: handle.workspaceId };
-    const waits = dependencies.goalWaits?.(scope);
-    waits?.register(runningCapBasisOf(handle), cursorAtRead);
-    await dependencies.drainGoalWaits?.(scope);            // merge, order, page
+    registerRunningCapWait(handle, cursorAtRead);
+    await dependencies.drainGoalWaits?.({ projectId: handle.projectId, workspaceId: handle.workspaceId }); // merge, order, page
   }
 
   /**
@@ -1262,22 +1289,23 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
           if (value.reason === 'running_cap') {
             lane.state = 'waiting'; lane.reason = value.reason;
             if (cursorAtRead !== null) {
-              lane.handedBack = runningCapBasisOf(lane);      // hand the watch back BEFORE the register/drain below
+              lane.handedBack = runningCapBasisOf(lane);      // handed back; the drain runs once this loop returned
               lane.driver.registered = true;
               lane.state = 'waiting_for_reply';                // the existing wake re-opens this watch
+              registerRunningCapWait(lane, cursorAtRead);
             }
-            await holdRunningCapWait(lane, cursorAtRead);
             return;                                            // no yielded pump, no terminal
           }
           if (value.waitBasis !== undefined && cursorAtRead !== null) {
             lane.state = 'waiting_for_reply'; lane.reason = value.reason;
             lane.handedBack = structuredClone(value.waitBasis);
             // The watch never registers, but the driver must hold this wait even
-            // when no Goal-scope start was accepted (only Task watches).
+            // when no Goal-scope start was accepted (only Task watches). The drain runs once this loop returned
+            // (`drainHandedBack`); the basis also observes `Session`, as the decision loop's registrations do.
             const waits = dependencies.goalWaits?.({ projectId: value.waitBasis.projectId,
               workspaceId: lane.workspaceId });
             if (waits !== undefined) {
-              waits.register(value.waitBasis, cursorAtRead);
+              waits.register(withSessionWaitKind(value.waitBasis), cursorAtRead);
               driver.registered = true;
             }
             return;

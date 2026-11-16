@@ -24,6 +24,7 @@ import { reviewQueryEnded } from '../../core/work-graph/model/evidence-contracts
 import { interventionQueryWorkspaceOf, planSourceLineageOf } from '../../core/work-graph/tasks/plan-lineage.js';
 import { planProposalIdFor } from '../../core/work-graph/tasks/plan-service.js';
 import { mergeStageRefinement } from '../../core/work-graph/tasks/stage-segment.js';
+import { planInCallerView } from '../../core/work-graph/tasks/plan-validation.js';
 import { applyCommandReview } from './command-review.js';
 import { asRejection } from './consultation.js';
 import { planningAnswerShapeOf } from './plan-round.js';
@@ -595,7 +596,10 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
             draft = normalized.draft;
           } else {
             const { origin: _segmentOrigin, ...segment } = normalized.draft;
-            const merged = mergeStageRefinement(basis.base, { ...segment, planRevision: targetPlanRevision });
+            // The segment is in the Goal workspace's frame: the base goes back to it, the propose qualifies once.
+            const merged = mergeStageRefinement(
+              planInCallerView(basis.base, owned.workspaceId, facts.value.mainWorkspaceId),
+              { ...segment, planRevision: targetPlanRevision });
             if (merged.status !== 'merged') return refusedPlan(merged);
             draft = merged.draft;
           }

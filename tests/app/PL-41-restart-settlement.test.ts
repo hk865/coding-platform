@@ -285,10 +285,13 @@ describe('PL-41 (c): an accepted candidate whose M is a real executor\'s wait', 
     expect(await readS7BMessage(world, m.message.ref)).toEqual(replied);
     expect(await readProposal(world, proposalRef)).toEqual(adopted);
     // Forward work goes on (the new Task's member request is its own message and Query); M gets no second one.
+    // G7 W2: the pass that wrote the candidate also closed the adviser's round (`candidate`), so the inbox holds that
+    // Host `notify` too; a notify is never a planning Query's source.
     const inbox = await listed(world, 'inbox', adviser);
     expect(inbox.filter(message => message.sender.kind !== 'host').map(message => message.ref)).toEqual([m.message.ref]);
     expect((await sessionQueries(world, adviser)).map(run => run.ref.queryJobId).sort())
-      .toEqual(inbox.map(message => interventionPlanningQueryRefs(message.ref).queryJobRef.queryJobId).sort());
+      .toEqual(inbox.filter(message => message.intent !== 'notify')
+        .map(message => interventionPlanningQueryRefs(message.ref).queryJobRef.queryJobId).sort());
     expect((await candidateCards(world, goal)).filter(card => card.state === 'waiting_answer')).toEqual([]);
   }, 120_000);
 });

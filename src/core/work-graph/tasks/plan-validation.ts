@@ -10,21 +10,27 @@ import type {
 import { planValidationError, revisionAssignments } from '../../../contracts/plan.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import type { CoreRejection } from '../../../contracts/core/results.js';
-import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalJson, sameJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import type { InitialPlanningResponsePlanV2 } from '../../../contracts/initial-planning.js';
 import { isRecord } from '../../../contracts/validation/common.js';
-import { projectModuleIdOfFile } from '../../../contracts/workspace-module-id.js';
+import { fileModuleId, projectModuleIdOfFile } from '../../../contracts/workspace-module-id.js';
 import type { CheckCapabilityV1 } from '../../../contracts/verification.js';
-import { diagnosePlanCandidate } from '../state/plan-candidate.js';
+import { checksApplyingTo, planCoverageGaps } from '../state/plan-candidate.js';
 import type { FutureCarrierRemovalV1, FutureDispositionChangeV1 } from '../state/plan-machine.js';
 import {
   buildFrozenTaskDefinitions, executionDefinitionsAgree, frozenTaskDefinitionsAgree, isBasisUnsupported,
   type FrozenObligation, type FrozenTaskDefinition,
 } from './plan-task-basis.js';
 import { buildTaskAdjacency, hasCycleInEdges, hasDirectedCycle } from '../model/task-index.js';
+import { mergeStageRefinement } from './stage-segment.js';
+import type { PlanAdmissionFactsV1 } from '../model/secretary-contracts.js';
+import {
+  draftHasModuleTask, futureChangeTraceProblem, tracedDispositionChangeProblem, type TracedTaskFactsV1,
+} from '../state/plan-machine.js';
 
 /** One task member as these rules read it: a v2 answer's task carries no `phase` yet, and no reader here needs one. */
 export type PlanTaskView = Pick<RuntimeTask,
-  'taskId' | 'stageId' | 'requirementLevel' | 'taskKind' | 'disposition' | 'scope' | 'executionIntent'>;
+  'taskId' | 'stageId' | 'requirementLevel' | 'taskKind' | 'disposition' | 'scope' | 'executionIntent' | 'sizeClass'>;
 
 /** The plan members the admission rules read, so the answer's `InitialPlanningResponsePlanV2` passes directly. */
 export type PlanDraftView = Pick<PlanRevisionDraft,
@@ -38,9 +44,12 @@ export type PlanDraftView = Pick<PlanRevisionDraft,
  *
  * v2 structure is validated structurally by the record codec; here only
  * plan-membership is judged, so a malformed list is skipped (the codec rejects
- * it before persistence) instead of throwing.
+ * it before persistence) instead of throwing. `source` is the adopted Plan the
+ * draft revises (null for a first plan): a witness mapping it carries unchanged
+ * is not judged again.
  */
-export function validatePlanDraft(draft: PlanDraftView, policy: CompletionPolicyContentV1 | null): PlanValidationError[] {
+export function validatePlanDraft(draft: PlanDraftView, policy: CompletionPolicyContentV1 | null,
+  source: Pick<PlanRevisionSnapshot, 'obligations' | 'tasks'> | null): PlanValidationError[] {
   const issues: PlanValidationError[] = [];
   const tasks = draft.tasks ?? [];
   const taskById = new Map(tasks.map((task) => [task.taskId, task]));
@@ -122,6 +131,33 @@ export function validatePlanDraft(draft: PlanDraftView, policy: CompletionPolicy
         issues.push(planValidationError(`obligations[${obligation.obligationId}].taskIds`, 'obligation_task_mapping',
           `required obligation ${obligation.obligationId} references a non-work/gate or unknown task ${taskId}`));
       }
+    }
+  }
+  // A witness proves only that the Run read its files and changed none (`witness-check.ts`), so a work task that
+  // edits files fails it on every round. It belongs only on an obligation whose work tasks are all exploration tasks
+  // (sizeClass "explore", not plan_only); a gate the obligation lists runs no Run and is not judged. Adopted plans
+  // are not judged again: a mapping the source carries unchanged (the same obligation and requirements already listing
+  // the task, whose size class and intent did not change) passes; a new or changed mapping is judged.
+  const sourceObligations = new Map((source?.obligations ?? []).map((obligation) => [obligation.obligationId, obligation]));
+  const sourceTasks = new Map((source?.tasks ?? []).map((task) => [task.taskId, task]));
+  for (const obligation of draft.obligations ?? []) {
+    if (!obligation.verificationRequirements.some((requirement) => requirement.kind === 'witness')) continue;
+    const carried = sourceObligations.get(obligation.obligationId);
+    const sameRequirements = carried !== undefined
+      && sameJson(carried.verificationRequirements, obligation.verificationRequirements);
+    for (const taskId of obligation.taskIds) {
+      const task = taskById.get(taskId);
+      if (task === undefined || task.taskKind !== 'work') continue;
+      if (task.sizeClass === 'explore' && task.executionIntent !== 'plan_only') continue;
+      const before = sourceTasks.get(taskId);
+      if (sameRequirements && carried.taskIds.includes(taskId) && before !== undefined
+        && before.sizeClass === task.sizeClass && before.executionIntent === task.executionIntent) continue;
+      issues.push(planValidationError(`obligations[${obligation.obligationId}].verificationRequirements`,
+        'obligation_task_mapping',
+        `obligation ${obligation.obligationId} carries a witness requirement, but its task ${taskId} is not an `
+        + 'exploration task (sizeClass "explore" and not plan_only): a witness proves the Run only read files and '
+        + `changed none, so it fails on every round of a task that edits files. Keep the witness only on the `
+        + `obligation that maps exploration tasks alone, and give ${taskId}'s obligation a requirement of another kind`));
     }
   }
   if (policy !== null) {
@@ -216,26 +252,57 @@ export function validatePlanDraft(draft: PlanDraftView, policy: CompletionPolicy
 }
 
 /**
- * Every required verification requirement needs a check of its kind, or no check round could ever pass it and the
- * plan could never complete. The coverage is the one `diagnosePlanCandidate` compiles for the candidate card and the
- * check round: a reviewer requirement is never uncovered, a witness one is the platform's. Kind legality is
- * `validatePlanDraft`'s (`unknown_requirement_kind`): every kind the draft names counts as known to the coverage, and
- * a kind outside a known policy (`policyKinds`) is left to that one problem, so one requirement gets one problem.
- * `checks` are the capabilities of the check list the plan will run under (`checkCapabilitiesOf`); `null` (no
- * installed configuration) is unknown coverage and judges nothing. `checksAt` names that list for the one who must
- * add a check.
+ * Every required verification requirement needs, on each active Task its obligation maps, a check of its kind that
+ * applies to that Task's round, or that round could never pass it and the plan could never complete. The coverage is
+ * the one the check round compiles (`planCoverageGaps` over `taskVerificationCoverage`): a reviewer requirement is
+ * never uncovered, a witness one is the platform's. Kind legality is `validatePlanDraft`'s (`unknown_requirement_kind`):
+ * every kind the draft names counts as known to the coverage, and a kind outside a known policy (`policyKinds`) is
+ * left to that one problem, so one requirement gets one problem, naming every Task it is uncovered on. `checks` are
+ * the capabilities of the check list the plan will run under (`checkCapabilitiesOf`); `null` (no installed
+ * configuration) is unknown coverage and judges nothing. `checksAt` names that list: the answer's own `setup.checks`,
+ * where the one who plans may add a check, or the workspace's `installed` checks, which only the person's check
+ * approval changes, so that problem names the installed checks that do apply and says to use a kind they cover.
  */
-export function uncoveredRequirementIssues(draft: Pick<PlanDraftView, 'obligations'>, input: {
-  checks: readonly CheckCapabilityV1[] | null; checksAt: string; policyKinds: readonly string[] | null;
+export function uncoveredRequirementIssues(draft: Pick<PlanDraftView, 'obligations' | 'tasks'>, input: {
+  checks: readonly CheckCapabilityV1[] | null; checksAt: 'setup.checks' | 'installed'; policyKinds: readonly string[] | null;
 }): PlanValidationError[] {
   const { checks, checksAt, policyKinds } = input;
+  if (checks === null) return [];
+  const taskById = new Map(draft.tasks.map((task) => [task.taskId, task]));
   const kinds = draft.obligations.flatMap((obligation) => obligation.verificationRequirements.map((requirement) => requirement.kind));
-  return (diagnosePlanCandidate({ candidate: draft, catalogPin: null, requirementKinds: kinds, checks }) ?? [])
-    .filter((entry) => policyKinds === null || policyKinds.includes(entry.kind)).map((entry) =>
-    planValidationError(`obligations[${entry.obligationId}].verificationRequirements[${entry.requirementId}]`,
-      'uncovered_verification_requirement',
-      `requirement ${entry.requirementId} of obligation ${entry.obligationId} needs a check of kind ${entry.kind}, but no `
-      + `check of that kind is in ${checksAt}: add a check of kind ${entry.kind} to ${checksAt}, or change the requirement`));
+  const byRequirement = new Map<string, { obligationId: string; requirementId: string; kind: string; taskIds: string[] }>();
+  for (const gap of planCoverageGaps({ tasks: draft.tasks, obligations: draft.obligations, requirementKinds: kinds, checks })) {
+    if (policyKinds !== null && !policyKinds.includes(gap.kind)) continue;
+    const key = `${gap.obligationId}\u0000${gap.requirementId}`;
+    const entry = byRequirement.get(key);
+    if (entry === undefined) byRequirement.set(key, { ...gap, taskIds: [gap.taskId] });
+    else entry.taskIds.push(gap.taskId);
+  }
+  return [...byRequirement.values()].map((entry) => {
+    const tasks = entry.taskIds.join(', ');
+    const path = `obligations[${entry.obligationId}].verificationRequirements[${entry.requirementId}]`;
+    const needs = `requirement ${entry.requirementId} of obligation ${entry.obligationId} needs a check of kind `
+      + `${entry.kind} that applies to task ${tasks}`;
+    if (checksAt === 'setup.checks') {
+      return planValidationError(path, 'uncovered_verification_requirement', `${needs}, but no check of that kind in `
+        + 'setup.checks does: a check applies to every task when its taskIds is "all", else only to the tasks it lists '
+        + `(a gate also takes a check listing a task it covers). Add a check of kind ${entry.kind} whose taskIds include `
+        + `${tasks} (or "all") to setup.checks, or change the requirement`);
+    }
+    // The platform's own witness is not an installed check; only the registered commands are named.
+    const named = entry.taskIds.map((taskId) => checksApplyingTo(draft.tasks, taskById.get(taskId)!, checks)
+      .filter((check) => check.kind !== 'witness').map((check) => `${check.checkId} (${check.kind})`));
+    const applying = entry.taskIds.map((taskId, index) =>
+      `${taskId}: ${named[index]!.length === 0 ? 'none' : named[index]!.join(', ')}`);
+    const none = named.every((list) => list.length === 0);
+    return planValidationError(path, 'uncovered_verification_requirement', `${needs}, but no installed check of that `
+      + `kind does. The installed checks that apply, by task: ${applying.join('; ')}. ` + (none
+      ? 'No installed check applies to these tasks, and a new check needs the person\'s check approval, which cannot '
+        + `be given in this round: answer with questions that ask the person to approve a check of kind ${entry.kind} `
+        + `for ${tasks}`
+      : 'In this round use a requirement kind those checks cover; a new check needs the person\'s check approval and '
+        + 'cannot be added in this round'));
+  });
 }
 
 /**
@@ -576,7 +643,10 @@ export function validateFutureObligationCoverage(input: {
     if (canonicalObligation(obligation) !== canonicalObligation(candidate)) {
       if (!input.personAdopts || changedRequirementKeepsOldId(obligation, candidate)) {
         issues.push(planValidationError(`obligations[${obligation.obligationId}]`, 'obligation_semantics_changed',
-          `source obligation ${obligation.obligationId} changed its title, strength or verification requirements`));
+          `source obligation ${obligation.obligationId} changed its title, strength or verification requirements: an `
+          + 'adopted obligation keeps them (a person adopting may change a requirement only under a new requirementId). '
+          + `Leave ${obligation.obligationId} as adopted and put the changed acceptance in a new obligation with a new `
+          + 'obligationId and new requirementIds, carried by the new or replacement work task'));
         continue;
       }
     }
@@ -610,7 +680,9 @@ export function validateFutureObligationCoverage(input: {
     if (isBasisUnsupported(agree)) return { status: 'unsupported', reason: agree.reason };
     if (!agree) {
       issues.push(planValidationError(`tasks[${task.taskId}]`, 'gate_definition_changed',
-        `source gate task ${task.taskId} changed its definition or acceptance relationships`));
+        `source gate task ${task.taskId} changed its definition or acceptance relationships: an adopted gate keeps `
+        + 'its definition and exactly the obligations that list it, with their content. Leave the gate and those '
+        + 'obligations as adopted; a new obligation lists the new work tasks and, when it needs a gate, a new gate task'));
     }
   }
 
@@ -694,6 +766,159 @@ export function validateFutureObligationCoverage(input: {
   return issues.length > 0 ? { status: 'rejected', issues } : { status: 'supported' };
 }
 
+/**
+ * The obligations a future change answers for: only a change that adds a new obligationId reads the source plan's
+ * pinned policy and is judged, over the obligations it adds or whose level or requirements it alters (an optional
+ * obligation made required is judged now). An obligation carried unchanged was judged when it was adopted; a later
+ * change of the installed checks is not this change's to answer.
+ */
+export function changedObligationsOf(source: Pick<PlanRevisionSnapshot, 'obligations'>,
+  target: Pick<PlanRevisionDraft, 'obligations'>): { hasNewObligation: boolean; changed: AcceptanceObligation[] } {
+  const sourceObligationIds = new Set(source.obligations.map((obligation) => obligation.obligationId));
+  const hasNewObligation = target.obligations.some((obligation) => !sourceObligationIds.has(obligation.obligationId));
+  const changed = hasNewObligation ? target.obligations.filter((obligation) => {
+    const carried = source.obligations.find((entry) => entry.obligationId === obligation.obligationId);
+    return carried === undefined || carried.requirementLevel !== obligation.requirementLevel
+      || !sameJson(carried.verificationRequirements, obligation.verificationRequirements);
+  }) : [];
+  return { hasNewObligation, changed };
+}
+
+/**
+ * L10 (`book-8c.md:809`): the Tasks a draft's module fact judges and the unknown ones among them: every Task but the
+ * ones `source` carries forward as unchanged terminal history (`unchangedTerminalTaskIds` over the source's canonical
+ * closure, `terminalTaskIds`). A first draft has no source and is judged whole. The adoption's module fact
+ * (`plan-service.ts` `moduleFactOf`) and a plan answer's submit check share it.
+ */
+export function moduleCheckOf(draft: PlanRevisionDraft, catalog: AdoptedArchitecture, source: PlanRevisionSnapshot | null,
+  terminalTaskIds: ReadonlySet<string>): { tasks: PlanRevisionDraft['tasks']; unknown: UnknownModuleTaskV1[] } {
+  const exempt = source === null ? new Set<string>() : unchangedTerminalTaskIds(source, draft, terminalTaskIds);
+  const tasks = exempt.size === 0 || !Array.isArray(draft.tasks) ? draft.tasks
+    : draft.tasks.filter((task) => !exempt.has(task.taskId));
+  return { tasks, unknown: unknownModuleTasksOf({ tasks }, catalog) };
+}
+
+/** A module scope's id written in the round's workspace, put in the project view as the formal proposal puts it. */
+function qualifiedOrProblem(draft: PlanRevisionDraft, workspaceId: string, mainWorkspaceId: string):
+PlanRevisionDraft | string {
+  try {
+    return qualifyPlanDraft(draft, workspaceId, mainWorkspaceId);
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
+function unknownModuleReasons(unknown: readonly UnknownModuleTaskV1[], catalog: AdoptedArchitecture): string[] {
+  const validModules = catalog.modules.map((module) => module.ref.moduleId).join(', ') || '(none)';
+  return unknown.map((entry) => `task ${entry.taskId} names module ${entry.moduleId}, `
+    + `which is not a module of the catalog (modules: ${validModules})`);
+}
+
+/**
+ * An initial plan answer's module scopes against the catalog its propose reads: the draft in the project view
+ * (`qualifyPlanDraft`), then the module fact a first draft gets (`moduleCheckOf`, no source).
+ */
+export function planModuleIssues(input: { plan: InitialPlanningResponsePlanV2; catalog: AdoptedArchitecture;
+  workspaceId: string; mainWorkspaceId: string }): string[] {
+  const qualified = qualifiedOrProblem({ ...input.plan, planId: '', planRevision: 1, goalId: '' },
+    input.workspaceId, input.mainWorkspaceId);
+  if (typeof qualified === 'string') return [qualified];
+  return unknownModuleReasons(moduleCheckOf(qualified, input.catalog, null, new Set()).unknown, input.catalog);
+}
+
+/** A trace-free Task: one a candidate adds is new to the Goal (Plans never drop a Task), so nothing ran it. */
+function untracedFacts(taskId: string): TracedTaskFactsV1 {
+  return { taskId, runs: [], lease: null, reduction: null, selectedRun: null, pointerIntent: null };
+}
+
+/**
+ * 97-3: the plan rules a planning round's plan answer is held to when it is submitted, so the secretary fixes it in
+ * the same round instead of meeting them at adoption. They are the adoption's own judgements on the facts the
+ * adoption reads (`PlanAdmissionFactsV1`): the answer's segment merged onto its base put back in the round's frame
+ * (`planInCallerView`, `mergeStageRefinement`) and the merged plan qualified once (`qualifyPlanDraft`), as the formal
+ * candidate is merged and proposed; for a first plan the initial adoption's draft checks
+ * under the active policy; for a later one the future adoption's (`deriveFuturePlanDelta`,
+ * `validateFutureObligationCoverage`, the draft checks over `changedObligationsOf` under the base's pinned policy when
+ * an obligation is added, the untraced rule `futureChangeTraceProblem` and the traced disposition guards
+ * `tracedDispositionChangeProblem` over the base Tasks' execution facts); and the module fact (`moduleCheckOf`, with
+ * its unchanged-terminal exemption) against the current catalog the propose reads and, for a first plan, against the
+ * catalog governance selected, which the first adoption reads. Acceptance is judged as a person adopts (the request's
+ * candidate is the person's), so the guard a system adopter alone meets (guard 9) is the adoption's. The adoption
+ * judges everything again.
+ */
+export function planRoundAnswerIssues(input: {
+  plan: InitialPlanningResponsePlanV2;
+  admission: PlanAdmissionFactsV1;
+  /** The project's active policy content: what a first plan is judged under. */
+  activePolicy: CompletionPolicyContentV1 | null;
+  checks: readonly CheckCapabilityV1[] | null;
+  /** The round's workspace: the frame the answer's module ids are written in. */
+  workspaceId: string;
+  /** The answer's `reason.affectedTaskIds`, which the traced disposition guards read. */
+  affectedTaskIds: readonly string[] | undefined;
+}): string[] {
+  const { plan, admission, checks } = input;
+  const base = admission.base;
+  const reasons: string[] = [];
+  const rendered = (issue: PlanValidationError): string => `${issue.path}: ${issue.message}`;
+  const segment: PlanRevisionDraft = { ...plan, planId: base?.plan.planId ?? '',
+    planRevision: (base?.plan.planRevision ?? 0) + 1, goalId: base?.plan.goalRef.goalId ?? '' };
+  let written = segment;
+  if (base !== null) {
+    const merged = mergeStageRefinement(planInCallerView(base.plan, input.workspaceId, admission.mainWorkspaceId), segment);
+    if (merged.status !== 'merged') return [merged.reason];
+    written = merged.draft;
+  }
+  const draft = qualifiedOrProblem(written, input.workspaceId, admission.mainWorkspaceId);
+  if (typeof draft === 'string') return [draft];
+  let judged = draft.obligations;
+  let policy = input.activePolicy;
+  if (base !== null) {
+    const delta = deriveFuturePlanDelta(base.plan, draft);
+    if (delta.status !== 'supported') return [delta.reason];
+    const coverage = validateFutureObligationCoverage({ source: base.plan, target: draft, delta: delta.delta,
+      personAdopts: true });
+    if (coverage.status === 'unsupported') return [coverage.reason];
+    if (coverage.status === 'rejected') reasons.push(...coverage.issues.map(rendered));
+    const changed = changedObligationsOf(base.plan, draft);
+    judged = changed.changed;
+    policy = null;
+    if (changed.hasNewObligation) {
+      if (base.pinnedPolicy.status === 'resolved') policy = base.pinnedPolicy.content;
+      else reasons.push(base.pinnedPolicy.reason);
+    }
+    const executionFactsOf = (taskIds: readonly string[]): TracedTaskFactsV1[] => taskIds.map((taskId) =>
+      base.tasks.find((task) => task.taskId === taskId) ?? untracedFacts(taskId));
+    const trace = futureChangeTraceProblem(executionFactsOf(
+      [...new Set([...delta.delta.changedTaskIds, ...delta.delta.addedTaskIds])]), delta.delta.carrierRemovals);
+    if (trace !== null) reasons.push(trace.detail);
+    const traced = tracedDispositionChangeProblem({ goalDesiredState: base.goalDesiredState,
+      tasks: executionFactsOf(delta.delta.dispositionOnlyTaskIds), affectedTaskIds: input.affectedTaskIds,
+      adopterClass: 'human', changes: delta.delta.dispositionChanges });
+    if (traced !== null) reasons.push(traced.detail);
+  }
+  for (const issue of [...validatePlanDraft(draft, policy, base?.plan ?? null), ...uncoveredRequirementIssues(
+    { tasks: draft.tasks, obligations: judged },
+    { checks, checksAt: 'installed', policyKinds: policy?.requirementKinds ?? null })]) {
+    reasons.push(rendered(issue));
+  }
+  reasons.push(...validatePlanAssignments(draft));
+  if (admission.catalog !== null) {
+    reasons.push(...unknownModuleReasons(moduleCheckOf(draft, admission.catalog, base?.plan ?? null,
+      new Set(base?.terminalTaskIds ?? [])).unknown, admission.catalog));
+  } else if (base !== null && draftHasModuleTask(draft)) {
+    reasons.push('the project has no active architecture catalog');
+  }
+  // A first plan's adoption checks its module scopes against the catalog governance selected, beside the propose's.
+  const selected = admission.firstAdoptionCatalog;
+  if (selected !== null && draftHasModuleTask(draft)) {
+    const selectedReasons = selected.status === 'rejected' ? [selected.reason]
+      : unknownModuleReasons(moduleCheckOf(draft, selected.catalog, null, new Set()).unknown, selected.catalog);
+    reasons.push(...selectedReasons.filter((reason) => !reasons.includes(reason)));
+  }
+  return reasons;
+}
+
 /** L10 (8B §3.3): one module-scoped task whose moduleRef names no module of the catalog. */
 export type UnknownModuleTaskV1 = { taskId: string; moduleId: string };
 
@@ -727,17 +952,35 @@ export function unknownModuleRejection(tasks: readonly UnknownModuleTaskV1[]): C
  */
 export function qualifyPlanDraft(draft: PlanRevisionDraft, goalWorkspaceId: string,
   mainWorkspaceId: string): PlanRevisionDraft {
-  if (!Array.isArray(draft.tasks)) return draft;
-  const tasks = draft.tasks.map(task => {
+  return withModuleRefs(draft, (moduleRef, taskId) => {
+    try {
+      return projectModuleIdOfFile(moduleRef, goalWorkspaceId, mainWorkspaceId);
+    } catch {
+      throw new Error(`task ${String(taskId)}: ${moduleRef} is not a module id`);
+    }
+  });
+}
+
+/**
+ * The inverse of `qualifyPlanDraft` on the ids it writes: every module scope's `moduleRef` from the project view back
+ * to the caller frame of `goalWorkspaceId` (`fileModuleId`), so `qualifyPlanDraft(planInCallerView(plan, w, m), w, m)`
+ * holds exactly the module ids of `plan`. A round's segment is written in that frame: it merges onto the base put back
+ * this way, and the merged plan is qualified once, where the propose reads it and where a submit judges it.
+ */
+export function planInCallerView<P extends PlanRevisionSnapshot | PlanRevisionDraft>(plan: P, goalWorkspaceId: string,
+  mainWorkspaceId: string): P {
+  return withModuleRefs(plan, (moduleRef) => fileModuleId(moduleRef, goalWorkspaceId, mainWorkspaceId));
+}
+
+/** Every module scope's `moduleRef` through `reframe`; a task or scope that is not an object stays as it is. */
+function withModuleRefs<P extends PlanRevisionSnapshot | PlanRevisionDraft>(plan: P,
+  reframe: (moduleRef: string, taskId: unknown) => string): P {
+  if (!Array.isArray(plan.tasks)) return plan;
+  const tasks = plan.tasks.map(task => {
     if (!isRecord(task) || !isRecord(task.scope) || task.scope.kind !== 'module' || typeof task.scope.moduleRef !== 'string') {
       return task;
     }
-    try {
-      return { ...task, scope: { ...task.scope,
-        moduleRef: projectModuleIdOfFile(task.scope.moduleRef, goalWorkspaceId, mainWorkspaceId) } };
-    } catch {
-      throw new Error(`task ${String(task.taskId)}: ${task.scope.moduleRef} is not a module id`);
-    }
+    return { ...task, scope: { ...task.scope, moduleRef: reframe(task.scope.moduleRef, task.taskId) } };
   });
-  return { ...draft, tasks };
+  return { ...plan, tasks };
 }

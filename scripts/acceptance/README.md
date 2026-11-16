@@ -76,9 +76,19 @@ the window.
 - **Seed Goals.** A settings-opened workspace gets its trusted checks, policy and architecture only from a cold-start
   adoption (`src/app/host-settings-types.ts:170-182`), which is the real product path. So E05 and B06 (and B06-W5's
   non-Git project) first run one small cold-start Goal, then the explicit `goals/create` → `plans/propose/apply` Goal.
-- **Planning rounds are slow by design.** The Host's idle consume pass runs once a minute per workspace, and an
-  `intervention_planning` Query moves one stage per pass (submit, claim, prepare + start). So the first planning
-  request comes about 3 minutes after the `refine:` round is sent (A1/B1 wait up to 30).
+- **Planning rounds.** The Host's idle consume pass runs once a minute per workspace and takes an
+  `intervention_planning` Query through its stages in one pass (G7 W2: submit, claim, prepare + start; the proposal
+  once answered). So the first planning request comes within about a minute of the `refine:` round (A1/B1 wait up to
+  30).
+- **Plan-round questions.** When a plan round answers with questions (`needs_decision`) instead of a candidate, the
+  person answers in the same request: one follow-up, "按你推荐的做法；没提到的按最简单的处理", at most twice, recorded
+  in `userCommand`, then the candidate wait (`lib/flows.mjs` `answerPlanQuestions`; iteration, both requests).
+- **Goal waits end early.** `waitGoal` ends before its deadline, judged like a wait that ran out, when (a) the Goal's
+  display headline is NEEDS_DECISION on a Task stop of the UI's 要决定 set (`src/ui/adapters/goals.ts:185`) and no card
+  is left for the person (`the platform stopped: <code> on <taskId>`), or (b) nothing public changed for 32 minutes
+  (above the waiting scenario's 30-minute wait plus a heartbeat) and the meter's last complete reading has nothing in
+  flight in the project (`stalled: …`, with the last phase, cause and driver wait reason). "Public" is the Goal's
+  display without its `sourceCursor` (the ledger-wide watermark that any commit in the project moves) and its cards.
 - **Verdicts.** Three words only: a failed check → `fail`; none failed but one not run → `uncovered` with one of the
   seven reason codes; all ran and passed → `pass`. An existing capability that ran and did the wrong thing, or did not
   happen in time (a refused route, no Goal card draft, a failed adoption, a wait that runs out), judges its check

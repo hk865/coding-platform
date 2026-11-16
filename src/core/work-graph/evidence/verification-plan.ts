@@ -16,7 +16,7 @@
 import type { AcceptanceObligation, PlanRevisionRef, PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type { TaskTriple } from '../../../contracts/dispatch.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
-import { compileVerificationCoverage } from '../../../contracts/verification.js';
+import { taskVerificationCoverage } from '../state/plan-candidate.js';
 import type {
     ChangeScopeV1, CheckCapabilityV1, SemanticChangeClassification,
     VerificationCheckPlan, VerificationIssue, VerificationPlanV1,
@@ -92,7 +92,8 @@ export function compileVerificationPlan(input: VerificationPlanCompileInput): Ve
         || plan.goalRef.projectId !== input.taskRef.projectId || plan.goalRef.goalId !== input.taskRef.goalId) {
         return rejected('pin_mismatch', [{ path: 'planRef', message: 'the Plan revision does not belong to the requested task/goal' }]);
     }
-    if (!plan.tasks.some(task => task.taskId === input.taskRef.taskId)) {
+    const subject = plan.tasks.find(task => task.taskId === input.taskRef.taskId);
+    if (subject === undefined) {
         return rejected('missing_pin', [{ path: 'taskRef', message: 'the adopted Plan does not define the requested task' }]);
     }
     const requiredObligations = plan.obligations.filter(obligation => obligation.requirementLevel === 'required');
@@ -100,9 +101,10 @@ export function compileVerificationPlan(input: VerificationPlanCompileInput): Ve
         return rejected('invalid', [{ path: 'obligations', message: 'the adopted Plan has no required acceptance obligation' }]);
     }
 
-    const coverage = compileVerificationCoverage({
-        // Slice 9: only the obligations of this Task, so the one review item covers exactly this Task's pairs.
-        obligations: plan.obligations.filter(obligation => obligation.taskIds.includes(input.taskRef.taskId)),
+    // Slice 9: only the obligations of this Task, so the one review item covers exactly this Task's pairs; only the
+    // checks that apply to this Task's round, so a requirement no applicable check covers stays `uncovered`.
+    const coverage = taskVerificationCoverage({
+        tasks: plan.tasks, obligations: plan.obligations, task: subject,
         requirementKinds: input.policy.requirementKinds,
         checks: input.checkCapabilities,
     });

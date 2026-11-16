@@ -302,6 +302,12 @@ export type CheckCapabilityV1 = {
     /** Policy requirement kinds this check can produce PASS/FAIL evidence for. */
     coversKinds: string[];
     replayable: boolean;
+    /**
+     * The Tasks whose check round may use this check: `"all"`, or exactly the listed task ids (the registered
+     * check's own `taskIds`). A registered check names no Goal while task ids are unique only within a Goal, so a
+     * list matches that task id in every Goal of the workspace.
+     */
+    taskIds: "all" | readonly string[];
 };
 
 /** The one reserved platform check id; no Host may register it as a command. */
@@ -314,20 +320,22 @@ export function isPlatformReservedCheckId(checkId: string): boolean {
 
 /** The built-in witness capability: the single original both capability tables append. */
 export function platformWitnessCapability(): CheckCapabilityV1 {
-    return { checkId: PLATFORM_WITNESS_CHECK_ID, kind: "witness", coversKinds: ["witness"], replayable: false };
+    return { checkId: PLATFORM_WITNESS_CHECK_ID, kind: "witness", coversKinds: ["witness"], replayable: false,
+        taskIds: "all" };
 }
 
 /** The one table builder both readers call: the registered command checks, then the built-in witness capability. */
 export function checkCapabilitiesOf(checks: readonly RegisteredCommandCheck[]): CheckCapabilityV1[] {
     return [...checks.map(check => ({
-        checkId: check.checkId, kind: check.kind, coversKinds: [check.kind], replayable: false,
+        checkId: check.checkId, kind: check.kind, coversKinds: [check.kind], replayable: false, taskIds: check.taskIds,
     })), platformWitnessCapability()];
 }
 
 /**
  * Coverage of the required verification requirements by the registered check
- * capabilities. This is the pure loop shared by the VerificationPlan compiler
- * and the plan diagnosis; it never reads the store and never invents a check.
+ * capabilities. This is the pure loop under `taskVerificationCoverage`
+ * (`state/plan-candidate.ts`), which the VerificationPlan compiler and the plan
+ * diagnosis share; it never reads the store and never invents a check.
  */
 export type VerificationCoverageV1 = {
     /** One entry per covering capability, in first-covered order, with its coverage. */
@@ -349,8 +357,9 @@ export function reviewPacketItemOf(plan: Pick<VerificationPlanV1, "checks">): Ve
 /**
  * Compile the required-obligation coverage. Inputs are already-resolved facts:
  * the policy's requirement kinds and the read-only registered check
- * capabilities. Check order is the first-coverage order; `uncovered` keeps the
- * obligation order and then the requirement order.
+ * capabilities, already narrowed to the ones that apply to the round's Task
+ * (`taskVerificationCoverage`). Check order is the first-coverage order;
+ * `uncovered` keeps the obligation order and then the requirement order.
  */
 export function compileVerificationCoverage(input: {
     obligations: readonly AcceptanceObligation[];

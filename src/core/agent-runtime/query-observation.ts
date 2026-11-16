@@ -505,7 +505,10 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
     let answer: QueryJobAnswerV1 | null = null;
     let answerCheck: AnswerCheck | null = null;
     if (outcome === 'answered') {
-      const request = shape === 'secretary' || shape === 'initial'
+      // The submit's own shape decides how the answer books (`submitShapeOf`): it differs from the frozen shape only
+      // on a paired round, where the secretary's text submit on a planning round books as a secretary answer (G7 P4).
+      const answerShape = submitted === null ? shape : submitShapeOf(shape!, submitted.name);
+      const request = answerShape === 'secretary' || answerShape === 'initial'
         ? manifest.request === null
           ? null
           : { executionKind: manifest.request.executionKind, hasGoal: manifest.goal !== null }
@@ -520,7 +523,6 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
       // first successful submit's arguments; no accepted submit keeps the final
       // text reading, and any later assistant text is ignored.
       let final: FinalText;
-      const answerShape = submitted === null ? shape : submitShapeOf(shape!, submitted.name);
       if (submitted === null) {
         // Safety (121-112): a form round's answer is only its accepted submit; without one the round has no
         // answer (`gap`) and the model text stays in the history. Other shapes keep the final-text reading (97-3).

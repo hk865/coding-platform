@@ -178,7 +178,7 @@ function recordedEvent(
   association: { requestRef?: QueryJobRef | null; replaces?: { proposalRef: PlanProposalRef; revision: number } | null } = {},
 ): RecordedEvent {
   const draft = draftOf(planId, planRevision);
-  const issues = validatePlanDraft(draft, null);
+  const issues = validatePlanDraft(draft, null, null);
   expect(issues).toEqual([]);
   return {
     type: 'proposal_recorded', writer: 'host', ref, goalRef: GOAL_B, basedOn,
@@ -192,7 +192,7 @@ const SOURCE_B1: PlanSourceFacts = { ref: PB1, goalRef: GOAL_B, planId: 'PB1', p
 /** PLAN-05: PB1 and the candidate retain the same legal plan_only task; only the Plan identity changes. */
 const FUTURE_OK: FutureAdoptionFacts = {
   modules: 'ok',
-  draftIssues: validatePlanDraft(draftOf('PB2', 2), null),
+  draftIssues: validatePlanDraft(draftOf('PB2', 2), null, null),
   assignmentReasons: validatePlanAssignments(draftOf('PB2', 2)),
   phaseReasons: planPhaseGuardReasons(draftOf('PB2', 2).tasks),
   targetExists: false,

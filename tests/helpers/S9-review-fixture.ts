@@ -11,16 +11,18 @@
  *   `sessions/create`). The reviewer binding and its Query profile are Host input (`lineBinding`, as the PL worlds
  *   give theirs, with the built-in reviewer's read set `read`/`look_graph`/`find_graph`, `host.ts`
  *   `LOCAL_REVIEWER_TOOL_NAMES`), so the Host consumes the line's system rounds. `checks: 'none'` leaves the work
- *   Task without a command requirement (only the review item).
+ *   Task without a command requirement (only the review item); `write` lets the subject Run change files (GP-5).
  * - `openS9ReviewRound` (`W-open`): the subject Run runs to its normal end on the public `workflow/advance`, the
  *   command check runs, and the drive stops before the review step (G3's `send_system_round`) and before any
  *   `finalize_checks`, or earlier before `stopBefore`; the unperformed step is returned as `next`.
  * - `openS9ReviewQuery` (`W-open` → the Query of `W-sent`): from that round the drive performs the review send and
- *   stops before any `finalize_checks`; the send names the message, the Host consumes it (a `beforeEnd` runs at the
- *   Query's claim, before the pass that prepares, runs and ends it), and the prepared Query's refs and manifest are
+ *   stops before any `finalize_checks`; the send names the message, the Host consumes it (one pass takes the Query
+ *   from its submit to its end, G7 W2; a `beforeEnd` runs while that pass waits on the reviewer line's model request:
+ *   the Query taken and prepared, not ended), and the prepared Query's refs and manifest are
  *   returned. The caller scripts the reviewer line (`world.scripted.script(review.reviewLine,
  *   …)`) before calling it; the fixture never answers, books or finalizes.
  */
+import type { WorkbenchRuntimeBinding } from '../../src/app/runtime-configuration.js';
 import type { CommitCursor } from '../../src/contracts/command-event.js';
 import type { RunRef, TaskTriple } from '../../src/contracts/dispatch.js';
 import type { EvidenceRef } from '../../src/contracts/evidence.js';
@@ -38,7 +40,7 @@ import type {
 import { platformRoleProfile } from '../../src/core/agent-runtime/role-profiles.js';
 import { advanceUntil, driveWorkflow } from './A2-restart-fixture.js';
 import { plain } from './AG2b-collaboration-fixture.js';
-import { heartbeatUntil, readPlanningQuery } from './IV-host-fixture.js';
+import { heartbeatUntil, heartbeatUntilModel, readPlanningQuery } from './IV-host-fixture.js';
 import { lineBinding } from './PL-taskbook-fixture.js';
 import { adoptPLPlanDraft } from './PL-workflow-fixture.js';
 import { s6aCardsWorkspace, type S6ACardsWorkspace } from './S6A-cards-fixture.js';
@@ -124,9 +126,15 @@ export function s9ReviewerBinding(): S6AExtraBinding {
 export async function openS9ReviewWorld(options: {
   backend?: S6ABackend; reviewLine?: 'open' | 'none'; checks?: 'command' | 'none';
   draft?: (goal: GoalRef) => PlanRevisionDraft;
+  /** GP-5 (lead 11-16): the workspace's write grant and the native `write` tool on the Work binding (Host input,
+   *  rule A8; the SB06 world's merge), so the subject Run can change a file. Absent: the read-only main scope. */
+  write?: true;
 } = {}): Promise<S9ReviewWorld> {
+  const write = { binding: { id: 's6a-work-binding' } as WorkbenchRuntimeBinding, mergeTools: ['write'],
+    mergeWriteScope: ['.'] };
   const world = await openS6AHostWorld({ backend: options.backend ?? 'memory',
-    extraBindings: [s9ReviewerBinding()],
+    extraBindings: options.write === true ? [s9ReviewerBinding(), write] : [s9ReviewerBinding()],
+    ...(options.write === true ? { workspaceGrants: { writePrefixes: ['.'] } } : {}),
     extraHostOptions: {
       checks: checkConfiguration({ kind: 'human', id: OPERATOR.id }),
       inputConsumers: [{ scope: S6A_SCOPE, sessionRef: { projectId: S6A_SCOPE.projectId,
@@ -221,15 +229,16 @@ export async function openS9ReviewQuery(input: {
     throw new Error(`S9: the drive after the command checks sent no exec review round; the next step is ${
       next?.kind === 'perform' ? next.operation.kind : JSON.stringify(next)}`);
   }
-  // The Host creates the Query in one pass, claims it in the next, and prepares, runs and ends it in one more: a
-  // row's `beforeEnd` runs at the claim, the last point where the Query is taken but not ended.
+  // G7 W2: one Host pass submits, claims, prepares, runs and ends the Query. A row's `beforeEnd` runs while that pass
+  // waits on the reviewer line's model request, the last point where the Query is taken but not ended.
   if (input.beforeEnd !== undefined) {
-    const claimed = await heartbeatUntil(world, () => readPlanningQuery(world, messageRef),
-      value => (value?.run.run.executionState ?? null) !== null, 32);
-    if (claimed?.run.run.executionState?.phase !== 'claimed') {
-      throw new Error(`S9: the review Query of ${messageRef.messageId} was not seen at its claim`);
-    }
+    const reviewLine = input.review.reviewLine;
+    if (reviewLine === null) throw new Error('S9: a beforeEnd needs the reviewer line the Query runs on');
+    const request = await world.gates.modelRequest(reviewLine);
+    const pass = await heartbeatUntilModel(world, request, 32);
     await input.beforeEnd();
+    request.release();
+    await pass.settled;
   }
   const record = await heartbeatUntil(world, () => readPlanningQuery(world, messageRef),
     value => value?.run.run.executionState?.prepared !== null && value?.run.run.executionState?.prepared !== undefined,

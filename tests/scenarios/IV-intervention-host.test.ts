@@ -34,8 +34,11 @@ import {
 } from '../helpers/IV-host-fixture.js';
 import { byIdentityPrefix, commitBarrier } from '../helpers/S6A-commit-barrier.js';
 
-// The SQLite commit barrier is the S6A fixture's (tests/RULES.md A3): the IV-END-3 row holds one prepared Query
-// commit across a real crash and one notice send across the system-withdraw guard arm. Memory rows never reach it.
+// The commit barrier is the S6A fixture's (tests/RULES.md A3): the IV-END-3 row holds one prepared Query commit
+// across a real crash and one notice send across the system-withdraw guard arm. G7 W2: one consume pass now takes the
+// planning Query's stages in a row, so IV-4 and IV-5 (memory) hold that pass on one Query commit the same way.
+vi.mock('../../src/core/record-store/in-memory-record-store.js', async (importOriginal) =>
+  (await import('../helpers/S6A-commit-barrier.js')).inMemoryBarrierModule(importOriginal));
 vi.mock('../../src/core/record-store/sqlite-record-store.js', async (importOriginal) =>
   (await import('../helpers/S6A-commit-barrier.js')).sqliteBarrierModule(importOriginal));
 
@@ -135,13 +138,19 @@ describe('IV: intervention on an idle line through the real Host consume loop', 
         { label: 'iv4-newer', taskId: 'iv4-newer-task', role: S6A_WORK_ROLE.templateId }) },
     ]);
 
-    const claimed = await awaitClaimedPlanning(world, released.message.ref);
+    // G7 W2: the pass that submits and claims the source's Query goes on to prepare it; the row holds that pass on the
+    // prepared commit, so the newer message comes while the source's Query is `claimed`.
+    const prepared = world.gates.beforePrepared(line);
+    const pass = await heartbeatUntilModel(world, prepared, 12);
+    const claimed = await readPlanningQuery(world, released.message.ref);
     expect(claimed?.run.run.executionState?.phase, 'the source planning Query is claimed').toBe('claimed');
     const newer = await sendS7A2PersonMessage(world, { label: 'iv4-newer', recipient: line.ref,
       goal: world.goals.second });
     const held = await consumeView(world, line);
     expect(held?.nextMessage?.messageRef, 'the claimed planning keeps its source ahead of the newer message')
       .toEqual(released.message.ref);
+    prepared.release();
+    await pass.settled;
 
     const answered = await awaitPlanningAnswer(world, released.message.ref);
     expect(answered?.job.job.status, 'the current planning finishes first').toBe('answered');
@@ -172,9 +181,15 @@ describe('IV: intervention on an idle line through the real Host consume loop', 
     await world.scripted.script(line, [{ kind: 'text', text: await refinementPlan(world, world.goals.second,
       { label: 'iv5', taskId: 'iv5-task', role: S6A_WORK_ROLE.templateId }) }]);
 
-    const claimed = await awaitClaimedPlanning(world, messageRef);
-    expect(claimed?.run.run.executionState?.phase, 'the planning Query is claimed before the pause').toBe('claimed');
+    // G7 W2: one pass takes the Query's stages in a row and each stage re-reads the Goal. The row holds that pass on
+    // the claim commit and pauses the Goal there; once the claim lands, the next stage reads the paused Goal and stops.
+    const claim = world.gates.beforeClaim(line);
+    const pass = await heartbeatUntilModel(world, claim, 12);
     await pauseS7AGoal(world, world.goals.second);
+    claim.release();
+    await pass.settled;
+    const claimed = await awaitClaimedPlanning(world, messageRef);
+    expect(claimed?.run.run.executionState?.phase, 'the planning Query stays claimed under the pause').toBe('claimed');
     const before = (await world.scripted.requests(line)).length;
     for (let pass = 0; pass < 3; pass += 1) await heartbeat(world);
 
@@ -338,10 +353,11 @@ describe('IV-END-3 restart-no-answer (SQLite only): the saved Query pair continu
     const prepared = world.gates.beforePrepared(line);
     const sent = await sendS7A2PersonMessage(world, { label: 'iv-end-3', recipient: line.ref,
       goal: world.goals.second });
-    const pair = await awaitClaimedPlanning(world, sent.ref);
-    expect(pair?.run.run.executionState?.phase, 'the planning Query is claimed').toBe('claimed');
-    // The consumer runs on the injected clock: keep passing until the prepared commit is held, then crash.
+    // The consumer runs on the injected clock: keep passing until the prepared commit is held, then crash. G7 W2: that
+    // same pass submits and claims first, so the QueryRun reads `claimed` while its prepared commit is held.
     await heartbeatUntilModel(world, prepared, 12);
+    const pair = await readPlanningQuery(world, sent.ref);
+    expect(pair?.run.run.executionState?.phase, 'the planning Query is claimed').toBe('claimed');
 
     await world.crash();
     // Still the original Job/Run pair: the restart continues the saved claim, never a new Query.

@@ -31,7 +31,7 @@ import type { MessageExpiryPort } from '../communication/message-expiry.js';
 import type { SessionMailboxPort } from '../model/communication-contracts.js';
 import type { ServedRolesPort } from '../model/initialization-adoption-contracts.js';
 import type {
-  SecretaryHistoryEntryV1, SecretaryPreparationFactsPort, SecretaryPreparationFactsV1,
+  PlanAdmissionFactsV1, SecretaryHistoryEntryV1, SecretaryPreparationFactsPort, SecretaryPreparationFactsV1,
 } from '../model/secretary-contracts.js';
 import { SECRETARY_HISTORY_ROUNDS } from '../model/request-contracts.js';
 import { decodeGoalSnapshot, decodeWorkspaceSnapshot } from '../persistence/record-codecs.js';
@@ -45,7 +45,14 @@ import {
 import { operationRefKey, plainSessionRefToAggregate } from '../sessions/session-record-codecs.js';
 import { successorOperationsOf } from '../sessions/session-handoff-service.js';
 import { liveUnderstandingGrants } from '../state/request-rounds.js';
-import { readGoalOrdinals } from '../tasks/plan-readers.js';
+import {
+  readGoal, readGoalOrdinals, readPinnedCompletionPolicy, readPlan, readPlanExecutionFacts, readSelectedCatalog,
+  resolveGovernance, type PlanCheckResolver,
+} from '../tasks/plan-readers.js';
+import type { VerifiedGovernance } from '../tasks/plan-commit-compiler.js';
+import { readCurrentCatalogWindow } from '../architecture/catalog-service.js';
+import type { KnowledgeLines } from '../model/line-knowledge.js';
+import type { GoalRef } from '../../../contracts/ledger.js';
 import { readAnswers } from '../tasks/request-facts.js';
 import { readInitializationPointers } from '../tasks/initialization-pointers.js';
 import { listWorkspaceGoals, readGoalTerminalState, readWatermark } from './goal-conflicts.js';
@@ -59,6 +66,10 @@ export type SecretaryPreparationFactsDependencies = {
   messages: Pick<SessionMailboxPort, 'readMessage' | 'readMessageBody'>;
   /** The expiry chain count of an expiry round's stored message (`MessageExpiryPort.readExpiryCount`). */
   expiryCount: MessageExpiryPort['readExpiryCount'];
+  /** The workspace's installed checks, the same resolver the plan readers' `planChecks` reads. */
+  checks: PlanCheckResolver;
+  /** The knowledge lines a plan answer's catalog window and module frame are read from (as the propose reads them). */
+  knowledge: KnowledgeLines;
 };
 
 /** A Run in one of these phases has a live attempt and is not part of the batch. */
@@ -74,7 +85,7 @@ function exactQueryRunRef(value: unknown): value is QueryRunRef {
  * port runs it between two watermarks and only returns a stable window.
  */
 async function readSecretaryFactsOnce(
-  deps: SecretaryPreparationFactsDependencies, ctx: CoreCallContext, queryRunRef: QueryRunRef,
+  deps: SecretaryPreparationFactsDependencies, ctx: CoreCallContext, queryRunRef: QueryRunRef, withAdmission: boolean,
 ): Promise<ReadResult<SecretaryPreparationFactsV1>> {
   const projectId = ctx.projectId;
   const workspaceId = queryRunRef.workspaceId;
@@ -531,6 +542,24 @@ async function readSecretaryFactsOnce(
   if (!merged.ok) return merged.rejection;
   const executionKind = architecture !== null && pointers.value.completionPolicy !== null
     ? 'semantic_query' : 'initial_coordination';
+  // 97-3: a planning answer is checked at submit against the policy its adoption reads and the installed checks.
+  // Governance resolves only once both pointers are present; its content records never change after install.
+  let effectivePolicy: SecretaryPreparationFactsV1['effectivePolicy'] = null;
+  let governance: VerifiedGovernance | null = null;
+  if (executionKind === 'semantic_query') {
+    const governanceRead = await resolveGovernance(deps.records, projectId);
+    if (governanceRead.status !== 'resolved') return governanceRead;
+    effectivePolicy = { digest: governanceRead.governance.completionPolicy.digest, content: governanceRead.policyContent };
+    governance = governanceRead.governance;
+  }
+  const installedChecks = await deps.checks({ projectId, workspaceId });
+  if (installedChecks.status !== 'ready') return installedChecks;
+  let admission: SecretaryPreparationFactsV1['admission'] = null;
+  if (withAdmission) {
+    const read = await readPlanAdmission(deps, ctx, projectId, facts.effectiveGoalId, governance);
+    if (read.status !== 'ready') return read;
+    admission = read.value;
+  }
 
   return {
     status: 'ready',
@@ -551,6 +580,9 @@ async function readSecretaryFactsOnce(
       executionRoles,
       architecture,
       completionPolicy: pointers.value.completionPolicy,
+      effectivePolicy,
+      installedChecks: installedChecks.value,
+      admission,
       goals,
       executionKind,
       guards: merged.guards,
@@ -559,11 +591,53 @@ async function readSecretaryFactsOnce(
   };
 }
 
+/**
+ * 97-3: the facts a plan answer's submit check judges, read the way the propose and the adoption read them: the
+ * current catalog window, the main workspace, and for an effective Goal with an adopted Plan that Plan, its pinned
+ * policy (a failed read is kept: only a change that adds an obligation needs it), every Task's execution facts and
+ * the closed ones (one canonical read, `readPlanExecutionFacts`); for a first plan the catalog governance selected
+ * (`governance` is null before it resolves).
+ */
+async function readPlanAdmission(deps: SecretaryPreparationFactsDependencies, ctx: CoreCallContext, projectId: string,
+  goalId: string | null, governance: VerifiedGovernance | null): Promise<ReadResult<PlanAdmissionFactsV1>> {
+  const window = await readCurrentCatalogWindow(deps.records, projectId, { lines: deps.knowledge, caller: ctx });
+  if (window.status !== 'ready' && window.status !== 'not_found') return window;
+  const workspaces = await deps.knowledge.workspaces(ctx);
+  if (workspaces.status !== 'ready') return rejected('unavailable', workspaces.reason);
+  const head = { catalog: window.status === 'ready' ? window.catalog.catalog : null, mainWorkspaceId: workspaces.value[0]! };
+  if (goalId !== null) {
+    const goalRef: GoalRef = { aggregateType: 'Goal', projectId, goalId };
+    const goalRead = await readGoal(deps.records, goalRef);
+    if (goalRead.status !== 'ready') return goalRead;
+    const active = goalRead.goal.activePlanRevision;
+    if (active !== null) {
+      const planRead = await readPlan(deps.records, active);
+      if (planRead.status !== 'ready') return planRead;
+      const plan = planRead.plan;
+      const pinned = await readPinnedCompletionPolicy(deps.records, plan.effectiveCompletionPolicy);
+      const execution = await readPlanExecutionFacts(deps.records, plan);
+      if (execution.status !== 'ready') return execution;
+      return { status: 'ready', value: { ...head, firstAdoptionCatalog: null, base: { plan,
+        goalDesiredState: goalRead.goal.desiredState,
+        pinnedPolicy: pinned.status === 'resolved' ? { status: 'resolved', content: pinned.policyContent }
+          : { status: 'rejected', reason: pinned.reason },
+        tasks: execution.tasks, terminalTaskIds: [...execution.terminalTaskIds] } } };
+    }
+  }
+  let firstAdoptionCatalog: PlanAdmissionFactsV1['firstAdoptionCatalog'] = null;
+  if (governance !== null) {
+    const selected = await readSelectedCatalog(deps.records, governance);
+    firstAdoptionCatalog = selected.status === 'ready' ? { status: 'ready', catalog: selected.value }
+      : { status: 'rejected', reason: selected.reason };
+  }
+  return { status: 'ready', value: { ...head, firstAdoptionCatalog, base: null } };
+}
+
 export function createSecretaryPreparationFacts(
   deps: SecretaryPreparationFactsDependencies,
 ): SecretaryPreparationFactsPort {
   return {
-    async read(ctx: CoreCallContext, input: { queryRunRef: QueryRunRef }): Promise<ReadResult<SecretaryPreparationFactsV1>> {
+    async read(ctx: CoreCallContext, input: { queryRunRef: QueryRunRef; admission?: true }): Promise<ReadResult<SecretaryPreparationFactsV1>> {
       const rawRef: unknown = input?.queryRunRef;
       if (!exactQueryRunRef(rawRef)) {
         return rejected('invalid', 'the secretary preparation requires a complete QueryRunRef');
@@ -586,7 +660,7 @@ export function createSecretaryPreparationFacts(
           return rejected('unavailable', `the secretary facts watermark could not be read: ${messageOf(error)}`);
         }
         if (before.status !== 'ready') return before;
-        const result = await readSecretaryFactsOnce(deps, ctx, queryRunRef);
+        const result = await readSecretaryFactsOnce(deps, ctx, queryRunRef, input.admission === true);
         let after: ReadResult<CommitCursor | null>;
         try {
           after = await readWatermark(deps.records);

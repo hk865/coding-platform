@@ -56,11 +56,13 @@ import type {
 import { ideasIssues } from '../work-graph/model/request-ideas.js';
 import { goalCardDraftCheck, parseSecretaryAnswer, planDraftIndexOf } from '../work-graph/queries/secretary-answer.js';
 import {
-  uncoveredRequirementIssues, unknownModuleTasksOf, validatePlanAssignments, validatePlanDraft,
+  planModuleIssues, planRoundAnswerIssues, uncoveredRequirementIssues, validatePlanAssignments, validatePlanDraft,
 } from '../work-graph/tasks/plan-validation.js';
 import { unservedRoles } from '../work-graph/tasks/initialization-adoption-service.js';
 import { completionPolicyContentProblem } from '../work-graph/configuration/project-bootstrap-record-codecs.js';
 import { validateAdoptedArchitecture } from '../work-graph/architecture/catalog-record-codecs.js';
+import { catalogInProjectView } from '../work-graph/architecture/catalog-service.js';
+import { messageOf } from '../../contracts/error-message.js';
 import { moduleRefOf } from '../work-graph/notes/note-anchors.js';
 import { goalRefFor } from '../work-graph/persistence/commit-compiler.js';
 import {
@@ -93,9 +95,14 @@ export function answerSubmitNamesIn(toolNames: readonly string[]): readonly Answ
   return ANSWER_TOOL_NAMES.filter(name => frozen.has(name));
 }
 
-/** The submit names one answer shape builds, in the frozen `ANSWER_TOOL_NAMES` order. */
-export function answerToolNamesOf(kind: AnswerToolKind | null, smallPlan = false): readonly AnswerToolName[] {
-  if (kind === 'secretary') return smallPlan ? ['submit_secretary_answer', 'submit_plan_round'] : ['submit_secretary_answer'];
+/**
+ * The submit names one answer shape builds, in the frozen `ANSWER_TOOL_NAMES` order. `paired` offers the secretary's
+ * text submit and the planning submit together: a secretary round that may arrange a small change itself (121-112),
+ * or a question about the candidate on a planning round (G7 P4).
+ */
+export function answerToolNamesOf(kind: AnswerToolKind | null, paired = false): readonly AnswerToolName[] {
+  if ((kind === 'secretary' || kind === 'plan_round') && paired) return ['submit_secretary_answer', 'submit_plan_round'];
+  if (kind === 'secretary') return ['submit_secretary_answer'];
   if (kind === 'initial') return ['submit_initial_plan', 'submit_initial_questions'];
   if (kind === 'plan_round') return ['submit_plan_round'];
   if (kind === 'plan_review') return ['submit_plan_review'];
@@ -116,9 +123,14 @@ export function answerBoundBytes(shape: QueryAnswerShapeV1 | null, name?: string
     ? PLANNING_MAX_ANSWER_BYTES : MAX_ANSWER_BYTES;
 }
 
-/** 121-112: the planning submit of a secretary round answers in the planning shape; every other submit keeps the frozen one. */
+/**
+ * A paired round's two submits answer in their own shapes: the planning submit in the planning shape (121-112), the
+ * secretary's text submit in the secretary shape (G7 P4); every other submit keeps the frozen one.
+ */
 export function submitShapeOf(frozen: QueryAnswerShapeV1, name: string): QueryAnswerShapeV1 {
-  return name === 'submit_plan_round' ? 'plan_round' : frozen;
+  if (name === 'submit_plan_round') return 'plan_round';
+  if (name === 'submit_secretary_answer') return 'secretary';
+  return frozen;
 }
 
 /** One form value the platform fills before writing the protocol text. */
@@ -597,7 +609,8 @@ export function answerProblems(
 ): AnswerProblem[] {
   // The planning round's one format gate is the v2 parser; it also enforces the
   // non-empty `needs_decision` questions and the plan body. The only extra rule
-  // is the short summary the reply derives from.
+  // is the short summary the reply derives from; a request round's plan also
+  // meets its adoption's plan rules (97-3).
   if (shape === 'plan_round') {
     const round = form as PlanRoundForm;
     const problems: AnswerProblem[] = [];
@@ -611,6 +624,14 @@ export function answerProblems(
     if (round.summary.length === 0
       || Buffer.byteLength(round.summary, 'utf8') > 16 * 1024) {
       problems.push({ section: 'summary', reason: 'the plan summary must be non-empty and at most 16 KiB of UTF-8' });
+    }
+    if (facts !== null && facts.admission !== null && parsed.status === 'parsed' && parsed.response.kind === 'plan') {
+      for (const reason of planRoundAnswerIssues({ plan: parsed.response.plan, admission: facts.admission,
+        activePolicy: facts.effectivePolicy?.content ?? null,
+        checks: facts.installedChecks === null ? null : checkCapabilitiesOf(facts.installedChecks),
+        workspaceId: facts.workspace.workspaceId, affectedTaskIds: parsed.response.reason?.affectedTaskIds })) {
+        problems.push({ section: 'plan', reason });
+      }
     }
     return problems;
   }
@@ -676,7 +697,7 @@ export function answerProblems(
     }
     // Adoption installs this answer's setup.checks as the workspace's checks (`initialization-adoption.ts` checks
     // stage), so they are the list each required requirement must find its kind in.
-    for (const issue of [...validatePlanDraft(plan, policy),
+    for (const issue of [...validatePlanDraft(plan, policy, null),
       ...uncoveredRequirementIssues(plan, { checks: checkCapabilitiesOf(setup.checks), checksAt: 'setup.checks',
         policyKinds: policy?.requirementKinds ?? null })]) {
       problems.push({ section: 'plan', reason: issue.message });
@@ -684,17 +705,27 @@ export function answerProblems(
     for (const reason of validatePlanAssignments(plan)) {
       problems.push({ section: 'assignments', reason });
     }
-    let catalog: AdoptedArchitecture | null = requestFacts.architecture?.catalog ?? null;
+    // The current architecture as the propose reads it (`readCurrentCatalogWindow`); a first install judges its own,
+    // put in the project view as its adoption puts it (`adoptInitialArchitecture`).
+    let catalog: AdoptedArchitecture | null = requestFacts.admission!.catalog;
     if (catalog === null) {
       const adopted = validateAdoptedArchitecture(setup.architecture.catalog, projectId);
-      if (adopted.status === 'ok') catalog = adopted.value;
-      else problems.push({ section: 'setup', reason: adopted.reason });
+      if (adopted.status !== 'ok') problems.push({ section: 'setup', reason: adopted.reason });
+      else {
+        try {
+          catalog = catalogInProjectView(adopted.value, requestFacts.workspace.workspaceId,
+            requestFacts.admission!.mainWorkspaceId);
+        } catch (error) {
+          problems.push({ section: 'setup', reason: `a module id is not a module id of the caller frame: ${messageOf(error)}` });
+        }
+      }
     }
-    if (catalog !== null) {
-      const validModules = catalog.modules.map(module => module.ref.moduleId).join(', ') || '(none)';
-      for (const unknown of unknownModuleTasksOf(plan, catalog)) {
-        problems.push({ section: 'plan', reason: `task ${unknown.taskId} names module ${unknown.moduleId}, `
-          + `which is not a module of the catalog (modules: ${validModules})` });
+    // The module fact judges the plan the answer text holds (a format failure is the observer gate's refusal).
+    const answered = parseInitialPlanningResponseV2(built);
+    if (catalog !== null && answered.status === 'parsed' && answered.response.kind === 'plan') {
+      for (const reason of planModuleIssues({ plan: answered.response.plan, catalog,
+        workspaceId: requestFacts.workspace.workspaceId, mainWorkspaceId: requestFacts.admission!.mainWorkspaceId })) {
+        problems.push({ section: 'plan', reason });
       }
     }
   }
@@ -756,7 +787,7 @@ export type AnswerToolsConfig = {
   hasGoal?: boolean;
   /** `manifest.request.effectiveGoalId === null`: the form carries drafts (request shapes). */
   goalLess?: boolean;
-  /** `deps.secretaryFacts`: the same read preparation used, at submit time (request shapes only). */
+  /** `deps.secretaryFacts`: the same read preparation used, at submit time (request rounds only). */
   secretaryFacts?: SecretaryPreparationFactsPort;
   /** CallIds this round's handler accepted; the barrier yields on one of them. */
   acceptedCallIds: Set<string>;
@@ -831,16 +862,20 @@ export function createAnswerTools(config: AnswerToolsConfig): AnswerToolsHandle 
         reason: `the answer over the ${String(kib)} KiB answer bound; shorten the body or the plan` },
       `the form builds an answer over the ${String(kib)} KiB answer bound`);
     }
-    // 2. Request shapes check against the same facts read preparation used; the
-    // planning shapes never read project facts.
+    // 2. Request shapes, and a request round's plan answer (97-3), check against
+    // the same facts read preparation used; every other planning answer reads none.
+    // A plan answer also reads the facts its adoption judges (`admission`).
+    const planCheck = shape === 'plan_round' && config.secretaryFacts !== undefined
+      && (call.arguments as unknown as PlanRoundForm).answerKind === 'plan';
+    const planAnswer = planCheck || (shape === 'initial' && call.name === 'submit_initial_plan');
     let factsValue: SecretaryPreparationFactsV1 | null = null;
-    if (requestShape) {
+    if (requestShape || planCheck) {
       if (config.secretaryFacts === undefined) {
         return rejectedResult(callId, { status: 'rejected', code: 'unavailable',
           reason: 'the secretary facts read is not bound' }, 'the request answer cannot be checked');
       }
       const facts = await config.secretaryFacts.read({ ...config.hostContext, signal },
-        { queryRunRef: config.queryRunRef });
+        { queryRunRef: config.queryRunRef, ...(planAnswer ? { admission: true as const } : {}) });
       if (facts.status !== 'ready') {
         return rejectedResult(callId, facts,
           'the current project facts could not be read; the answer was not checked');

@@ -27,6 +27,7 @@ import type { RawArtifactStorePort } from '../../record-store/body-ports.js';
 import type { GoalRecordTransactionPort, RecordGuard } from '../../record-store/ports.js';
 import type { InitializationBindingReadPort } from '../model/goal-card-contracts.js';
 import type { MaterialPort } from '../model/material-contracts.js';
+import type { KnowledgeLines } from '../model/line-knowledge.js';
 import type { PlanProposal } from '../model/plan-contracts.js';
 import { sessionMessageRefFromValue } from '../persistence/plan-record-codecs.js';
 import {
@@ -52,6 +53,8 @@ type InitialPlanAnswerDependencies = {
   /** The binding owner's read port. Absent makes only the binding source arm `unavailable`; the plain and
    *  prepared_goal arms never read it. */
   bindings?: InitializationBindingReadPort;
+  /** The project's workspaces; the first is the main one the facts name (`planDraftInProjectView` reads the same). */
+  knowledge: Pick<KnowledgeLines, 'workspaces'>;
 };
 
 /** The answer read plus the intervention source proof's own version guards. */
@@ -413,9 +416,11 @@ export function createInitialPlanAnswerReader(deps: InitialPlanAnswerDependencie
       resolution = { kind: 'binding', source, bindingRef: { ...binding.ref },
         goal: { ...binding.goalRef }, goalRevision: 1 };
     }
+    const workspaces = await deps.knowledge.workspaces(ctx);
+    if (workspaces.status !== 'ready') return rejected('unavailable', workspaces.reason);
     return { status: 'ready', value: {
       answer: answer.answer, answerRef: { ...answer.ref }, job, run, manifest,
-      answerText: answer.answer.answer, resolution,
+      answerText: answer.answer.answer, resolution, mainWorkspaceId: workspaces.value[0]!,
       ...(sourceGuards.length === 0 ? {} : { sourceGuards }) } };
   }
 

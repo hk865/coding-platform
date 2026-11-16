@@ -82,7 +82,7 @@ import type {
   UniqueClaimChange,
 } from '../../record-store/ports.js';
 import {
-  planPinOf, readCatalogPointerRevision, readCurrentCatalogWindow, readPlanPin, readRevisionByRef,
+  planPinOf, readCatalogPointerRevision, readCurrentCatalogWindow, readPlanPin,
   type CurrentCatalogWindow, type PlanPinRead,
 } from '../architecture/catalog-service.js';
 import type { KnowledgeLines } from '../model/line-knowledge.js';
@@ -168,10 +168,11 @@ import {
   candidateRequestRef,
   architectureRefFromBody,
   policyRefFromBody,
+  readSelectedCatalog,
   resolveGovernance,
   sameCursor,
-  taskClosureOf,
   taskRecordRefKey,
+  terminalTaskIdsOf,
   tryPolicyContent,
   GOAL_BY_CONTINUED_FROM_INDEX,
   type CanonicalTaskFacts,
@@ -181,15 +182,15 @@ import {
 } from './plan-readers.js';
 import { asWriteRejection, mapStoreReadFailure, type Owned, type Rejection } from './plan-result-helpers.js';
 import {
+  changedObligationsOf,
   deriveFuturePlanDelta,
+  moduleCheckOf,
   planPhaseGuardReasons,
   qualifyPlanDraft,
   removedTaskProblem,
   type FuturePlanDelta,
-  unchangedTerminalTaskIds,
   uncoveredRequirementIssues,
   unknownModuleRejection,
-  unknownModuleTasksOf,
   validateFutureObligationCoverage,
   validatePlanAssignments,
   validatePlanDraft,
@@ -1219,12 +1220,12 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     }
 
     const policyRead = await tryPolicyContent(records, goalRef.projectId);
-    const issues = validatePlanDraft(input.draft, policyRead.policy);
     // L10 (`book-8c.md:809`): the based-on Plan is the source whose unchanged terminal history the module fact
     // leaves out. It is read once here and the removal check below reuses it; an unreadable source is not a refusal
-    // of its own there.
+    // of its own there. The draft's carried witness mappings are judged against it as well.
     const sourceRead = input.basedOn === null ? null : await readPlan(records, input.basedOn);
     const source = sourceRead !== null && sourceRead.status === 'ready' ? sourceRead.plan : null;
+    const issues = validatePlanDraft(input.draft, policyRead.policy, source);
     let candidate: PlanProposal;
     let replacedRecord: CandidatePlanProposal | null = null;
     let requestSlotEffect: Extract<PlanProposalEffect, { kind: 'request_slot' }> | null = null;
@@ -1701,17 +1702,15 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       // Governance's guards already hold the pointer and the baseline, and the catalog row is create-only.
       let modules: 'ok' | CoreRejection = 'ok';
       if (draftHasModuleTask(candidate.draft)) {
-        const selected = await readRevisionByRef(records, resolved!.governance.architectureBaseline.ref);
-        if (selected.status === 'ready') modules = (await moduleFactOf(records, candidate.draft, selected.value.catalog.catalog, null)).fact;
-        else if (selected.status === 'not_found') {
-          modules = rejected('unavailable', 'the governance architecture baseline has no catalog row');
-        } else modules = asWriteRejection(selected, 'the governance architecture catalog is unavailable');
+        const selected = await readSelectedCatalog(records, resolved!.governance);
+        if (selected.status === 'ready') modules = (await moduleFactOf(records, candidate.draft, selected.value, null)).fact;
+        else modules = rejected(selected.code, selected.reason);
       }
       refused = ask({ modules });
       if (refused !== null) return refusalOf(refused);
       // The draft validators run one after the other, each only once the one before it holds.
-      const draftIssues = [...validatePlanDraft(candidate.draft, resolved!.policyContent),
-        ...installedCoverageIssues(deps.configurationFor, candidate.ref, candidate.draft.obligations,
+      const draftIssues = [...validatePlanDraft(candidate.draft, resolved!.policyContent, null),
+        ...installedCoverageIssues(deps.configurationFor, candidate.ref, candidate.draft.tasks, candidate.draft.obligations,
           resolved!.policyContent.requirementKinds)];
       refused = ask({ draftIssues });
       if (refused !== null) return refusalOf(refused);
@@ -2706,21 +2705,6 @@ function planSourceFactsOf(plan: PlanRevisionSnapshot): PlanSourceFacts {
   return { ref: plan.ref, goalRef: plan.goalRef, planId: plan.planId, planRevision: plan.planRevision };
 }
 
-/**
- * The SOURCE Plan's canonical Task closure (`readCanonicalTaskFacts` +
- * `taskClosureOf`) — the same non-open set the delete rule's `module_in_use`
- * reads. A read failure is the fact itself, never "still open".
- */
-async function terminalTaskIdsOf(records: TaskFactRecordPort, source: PlanRevisionSnapshot):
-Promise<{ status: 'ready'; value: ReadonlySet<string> } | CoreRejection> {
-  const facts = await readCanonicalTaskFacts(records, source.goalRef, source);
-  if (facts.status !== 'ready') return facts;
-  const terminal = new Set<string>();
-  for (const task of source.tasks) {
-    if (taskClosureOf(source, facts.value, task.taskId).closed) terminal.add(task.taskId);
-  }
-  return { status: 'ready', value: terminal };
-}
 
 /**
  * L10 (`book-8c.md:809`): a draft's module fact against one catalog — `'ok'`, or the one `unknown_module` refusal.
@@ -2730,16 +2714,14 @@ Promise<{ status: 'ready'; value: ReadonlySet<string> } | CoreRejection> {
  */
 async function moduleFactOf(records: TaskFactRecordPort, draft: PlanRevisionDraft, catalog: AdoptedArchitecture,
   source: PlanRevisionSnapshot | null): Promise<{ fact: 'ok' | CoreRejection; tasks: PlanRevisionDraft['tasks'] }> {
-  let exempt: ReadonlySet<string> = new Set<string>();
+  let terminal: ReadonlySet<string> = new Set<string>();
   if (source !== null) {
-    const terminal = await terminalTaskIdsOf(records, source);
-    if (terminal.status !== 'ready') return { fact: terminal, tasks: [] };
-    exempt = unchangedTerminalTaskIds(source, draft, terminal.value);
+    const read = await terminalTaskIdsOf(records, source);
+    if (read.status !== 'ready') return { fact: read, tasks: [] };
+    terminal = read.value;
   }
-  const checked = exempt.size === 0 ? draft : { tasks: Array.isArray(draft.tasks)
-    ? draft.tasks.filter((task) => !exempt.has(task.taskId)) : draft.tasks };
-  const unknown = unknownModuleTasksOf(checked, catalog);
-  return { fact: unknown.length === 0 ? 'ok' : unknownModuleRejection(unknown), tasks: checked.tasks };
+  const checked = moduleCheckOf(draft, catalog, source, terminal);
+  return { fact: checked.unknown.length === 0 ? 'ok' : unknownModuleRejection(checked.unknown), tasks: checked.tasks };
 }
 
 /**
@@ -3102,18 +3084,19 @@ async function readAdoption(
 
 /**
  * The adopted plan runs its check rounds under the workspace's installed checks (an initial adoption's checks stage
- * installs the answer's own before this apply), so each required requirement of `obligations` none of them covers
- * refuses the adoption. No installed configuration is unknown coverage, as on the candidate card: the check round
- * reports it.
+ * installs the answer's own before this apply), so each required requirement of `obligations` that no installed check
+ * applying to one of its Tasks covers refuses the adoption. No installed configuration is unknown coverage, as on the
+ * candidate card: the check round reports it.
  */
 function installedCoverageIssues(
   configurationFor: PlanServiceDependencies['configurationFor'],
   ref: PlanCommit['proposal']['ref'],
+  tasks: PlanCommit['proposal']['draft']['tasks'],
   obligations: PlanCommit['proposal']['draft']['obligations'],
   policyKinds: readonly string[] | null,
 ): PlanValidationError[] {
   const configuration = configurationFor?.({ projectId: ref.projectId, workspaceId: ref.workspaceId });
-  return uncoveredRequirementIssues({ obligations }, { policyKinds, checksAt: "the workspace's installed checks",
+  return uncoveredRequirementIssues({ tasks, obligations }, { policyKinds, checksAt: 'installed',
     checks: configuration === undefined ? null : checkCapabilitiesOf(configuration.checks) });
 }
 
@@ -3243,9 +3226,7 @@ async function applyFutureRevision(input: {
   // policy (ref + digest); its local record guard joins this one commit. No new
   // obligation means NO policy read: existing commitments are protected
   // structurally. Propose keeps its opportunistic current-policy diagnosis.
-  const sourceObligationIds = new Set(source.obligations.map((obligation) => obligation.obligationId));
-  const hasNewObligation = proposal.draft.obligations
-    .some((obligation) => !sourceObligationIds.has(obligation.obligationId));
+  const { hasNewObligation, changed: changedObligations } = changedObligationsOf(source, proposal.draft);
   let pinnedPolicy: FutureAdoptionFacts['pinnedPolicy'] = 'not_needed';
   let pinnedPolicyContent: CompletionPolicyContentV1 | null = null;
   let pinnedPolicyGuards: readonly RecordGuard[] = [];
@@ -3282,18 +3263,10 @@ async function applyFutureRevision(input: {
   }
   refused = ask({ modules });
   if (refused !== null) return refusalOf(refused);
-  // The draft validators run one after the other, each only once the one before it holds.
-  // Coverage is this change's own: only a change that adds an obligation (the one that reads the pinned policy
-  // above) judges it, over the obligations it adds or whose level or requirements it alters (an optional obligation
-  // made required is judged now). An obligation carried unchanged was judged when it was adopted; a later change of
-  // the installed checks is not this change's to answer.
-  const changedObligations = hasNewObligation ? proposal.draft.obligations.filter((obligation) => {
-    const carried = source.obligations.find((entry) => entry.obligationId === obligation.obligationId);
-    return carried === undefined || carried.requirementLevel !== obligation.requirementLevel
-      || !sameJson(carried.verificationRequirements, obligation.verificationRequirements);
-  }) : [];
-  const draftIssues = [...validatePlanDraft(proposal.draft, pinnedPolicyContent),
-    ...installedCoverageIssues(input.configurationFor, proposal.ref, changedObligations,
+  // The draft validators run one after the other, each only once the one before it holds. Coverage is this change's
+  // own (`changedObligationsOf`).
+  const draftIssues = [...validatePlanDraft(proposal.draft, pinnedPolicyContent, source),
+    ...installedCoverageIssues(input.configurationFor, proposal.ref, proposal.draft.tasks, changedObligations,
       pinnedPolicyContent?.requirementKinds ?? null)];
   refused = ask({ draftIssues });
   if (refused !== null) return refusalOf(refused);
@@ -3672,7 +3645,7 @@ async function proposePlanAsAgent(
       }
     }
     const policyRead = await tryPolicyContent(records, input.goalRef.projectId);
-    const issues = validatePlanDraft(draft, policyRead.policy);
+    const issues = validatePlanDraft(draft, policyRead.policy, source);
     // L10: the catalog fact is judged once every other refusal point has passed; a replacement's head is judged first.
     const catalog = await proposeCatalogFacts(records, input.goalRef.projectId, draft, source, catalogWindow, pinRead);
     const ctxFacts: PlanProposalGuardContext = { ...readFacts, modules: catalog.modules };

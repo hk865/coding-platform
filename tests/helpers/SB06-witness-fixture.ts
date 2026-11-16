@@ -48,12 +48,13 @@ export const sb06Witness = (paths?: readonly string[], id = 'sb06-read'): SB06Ob
   ({ id, taskIds: [SB06_TASK], kind: 'witness', ...(paths === undefined ? {} : { paths }) });
 
 export function sb06Draft(goal: GoalRef, obligations: readonly SB06Obligation[],
-  workTasks: readonly string[] = [SB06_TASK]): PlanRevisionDraft {
+  workTasks: readonly string[] = [SB06_TASK], exploreTasks: readonly string[] = [SB06_TASK]): PlanRevisionDraft {
   return {
     schemaVersion: 2, planId: 'sb06-plan', planRevision: 1, goalId: goal.goalId, stages: [],
     tasks: [...workTasks.map(taskId => ({ taskId, title: `SB06 ${taskId}`, requirementLevel: 'required' as const,
       taskKind: 'work' as const, disposition: 'active' as const, phase: 'pending' as const, scope: { kind: 'goal' as const },
-      executionIntent: 'request_execution' as const, ...(taskId === SB06_TASK ? { sizeClass: 'explore' as const } : {}) })),
+      executionIntent: 'request_execution' as const,
+      ...(exploreTasks.includes(taskId) ? { sizeClass: 'explore' as const } : {}) })),
     { taskId: 'sb06-gate', title: 'SB06 Goal gate', requirementLevel: 'required', taskKind: 'gate', disposition: 'active',
       phase: 'pending', scope: { kind: 'goal' } }],
     assignments: workTasks.map(taskId => ({ taskId, role: S6A_WORK_ROLE.templateId, instruction: `Read for ${taskId}` })),

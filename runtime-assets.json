@@ -13,7 +13,7 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "b8ddfb83711fca5b4607867ae2bef4dca2716c1594921dfe4e5498cd4ca84a08"
+    "sha256": "7c51f0202a08e3d01475f38c23a27a6eddd6d8443ab98f65db7242d0c53d3513"
   },
   {
     "path": "resources/prompts/platform/strings.json",
@@ -21,7 +21,7 @@
   },
   {
     "path": "resources/prompts/platform/templates/initial-planning-answer.txt",
-    "sha256": "b8ce6951f21c0207cc0f6a521ce7f06c1359b53bd416ab4a3fcdec295be4d0cc"
+    "sha256": "494a7a515c17e79fd475a9d346b4d95c6934a7f268826535a4f09fc84cfb520a"
   },
   {
     "path": "resources/prompts/platform/templates/consultation-received-input.txt",
@@ -137,7 +137,7 @@
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-secretary.txt",
-    "sha256": "da3380211ac07defcb938eb3dba47d8ac1b0083174a1b8e688909c491cb2c48a"
+    "sha256": "263748a27aba5a5401092ac910c43af72d7ba12a5ec30e717bdafdcce9455968"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-adviser.txt",

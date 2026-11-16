@@ -406,7 +406,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         // The planning submit is part of the answer format, read back from the
         // same frozen pack the preparation wrote; the whole list is compared
         // below, so a moved selection still answers `forbidden`.
-        answerPlanTool: shape === 'secretary'
+        answerPlanTool: manifest.promptSet.toolNames.includes('submit_secretary_answer')
           && manifest.promptSet.toolNames.includes('submit_plan_round'),
         owners: {
           mailbox: false, decisionMessages: false, applicationReceipt: false,
@@ -661,8 +661,10 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         }
         let answerTools: AnswerToolsHandle | null = null;
         if (submitNames.length > 0) {
-          const requestShape = shape === 'secretary' || shape === 'initial';
-          if (requestShape && deps.secretaryFacts === undefined) {
+          // Every request round's answers, its planning answer included (97-3), check against the secretary facts;
+          // a planning round may also hold the secretary's text submit (G7 P4).
+          const requestRound = manifest.request !== null;
+          if (requestRound && deps.secretaryFacts === undefined) {
             return rejected('unsupported', 'the secretary answer tools require the secretary facts read');
           }
           answerTools = createAnswerTools({
@@ -671,7 +673,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
             hostContext: owned,
             queryRunRef,
             shape: shape!,
-            ...(requestShape ? {
+            ...(requestRound ? {
               kind: manifest.request!.executionKind,
               hasGoal: manifest.goal !== null,
               goalLess: manifest.request!.effectiveGoalId === null,

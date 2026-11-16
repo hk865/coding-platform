@@ -56,7 +56,7 @@ import type {
   StoreResult,
 } from '../../record-store/ports.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
-import { readCatalogModuleFacts } from '../architecture/catalog-service.js';
+import { readCatalogModuleFacts, readRevisionByRef } from '../architecture/catalog-service.js';
 import type { KnowledgeLines } from '../model/line-knowledge.js';
 import { readArchitectureCatalogRef } from '../architecture/catalog-record-codecs.js';
 import { readAllOrdered } from '../persistence/lookup-ordered-all.js';
@@ -540,7 +540,7 @@ export async function readGoalScope(
 }
 
 export async function readPlan(
-  records: GoalRecordTransactionPort,
+  records: RecordReadPort,
   ref: PlanRevisionRef,
 ): Promise<{ status: 'ready'; plan: PlanRevisionSnapshot; readThrough: CommitCursor | null } | Rejected> {
   const key = planRevisionRefKey(ref);
@@ -946,7 +946,7 @@ function architectureBaselineDigest(body: Record<string, unknown>): string | nul
 }
 
 export async function resolveGovernance(
-  records: GoalRecordTransactionPort,
+  records: RecordReadPort,
   projectId: string,
 ): Promise<GovernanceRead> {
   const policyActiveKey = canonicalJson({ aggregateType: 'ProjectCompletionPolicyActive', projectId } as unknown as JsonValue);
@@ -1039,7 +1039,7 @@ export type PinnedCompletionPolicyRead =
  * The returned local guard is merged into the caller's existing commit.
  */
 export async function readPinnedCompletionPolicy(
-  records: GoalRecordTransactionPort,
+  records: RecordReadPort,
   pin: CompletionPolicyPin,
 ): Promise<PinnedCompletionPolicyRead> {
   const key = canonicalJson(pin.ref as unknown as JsonValue);
@@ -1587,7 +1587,7 @@ export function createNoteRunTaskResolver(records: GoalRecordTransactionPort): N
  * none; a missing or damaged intent is never guessed.
  */
 export async function readPointerIntents(
-  records: GoalRecordTransactionPort, runs: readonly RunSnapshot[],
+  records: RecordReadPort, runs: readonly RunSnapshot[],
 ): Promise<{ status: 'ready'; intents: ReadonlyMap<string, ControlIntentSnapshotV1> } | Rejected> {
   const keyed: { runId: string; key: string }[] = [];
   for (const run of runs) {
@@ -2235,8 +2235,21 @@ export type DispositionChangeTaskFacts = {
   guards: readonly RecordGuard[];
 };
 
+/** A Task's state, Runs and selected Run in one canonical read; a state or a selected Run the read lacks is `unavailable`. */
+function taskRunFactsOf(facts: CanonicalTaskFacts, taskId: string): Rejected
+  | { status: 'ready'; state: CanonicalTaskState; runs: RunSnapshot[]; selectedRun: RunSnapshot | null } {
+  const state = facts.byTaskId.get(taskId);
+  if (state === undefined) return unavailable(`the directed task state of ${taskId} was not read`);
+  const runs = [...(facts.runsByTaskId.get(taskId) ?? [])];
+  const execution = state.execution;
+  const selectedRun = execution === null ? null
+    : runs.find((run) => canonicalJson(run.ref as unknown as JsonValue) === canonicalJson(execution as unknown as JsonValue)) ?? null;
+  if (execution !== null && selectedRun === null) return unavailable(`the selected Run of task ${taskId} was not read`);
+  return { status: 'ready', state, runs, selectedRun };
+}
+
 export async function readDispositionChangeTaskFacts(
-  records: GoalRecordTransactionPort & RecordLookupPort,
+  records: TaskFactRecordPort,
   goalRef: GoalRef,
   plan: PlanRevisionSnapshot,
   taskIds: readonly string[],
@@ -2248,13 +2261,9 @@ export async function readDispositionChangeTaskFacts(
     const read = await readCanonicalTaskFacts(records, goalRef, plan, taskId);
     if (read.status !== 'ready') return read;
     const facts = read.value;
-    const state = facts.byTaskId.get(taskId);
-    if (state === undefined) return unavailable(`the directed task state of ${taskId} was not read`);
-    const runs = facts.runsByTaskId.get(taskId) ?? [];
-    const execution = state.execution;
-    const selectedRun = execution === null ? null
-      : runs.find((run) => canonicalJson(run.ref as unknown as JsonValue) === canonicalJson(execution as unknown as JsonValue)) ?? null;
-    if (execution !== null && selectedRun === null) return unavailable(`the selected Run of task ${taskId} was not read`);
+    const own = taskRunFactsOf(facts, taskId);
+    if (own.status !== 'ready') return own;
+    const { state, runs, selectedRun } = own;
     let pointerIntent: ControlIntentSnapshotV1 | null = null;
     if (selectedRun !== null) {
       const pointers = await readPointerIntents(records, [selectedRun]);
@@ -2277,6 +2286,65 @@ export async function readDispositionChangeTaskFacts(
     });
   }
   return { status: 'ready', tasks };
+}
+
+/**
+ * The SOURCE Plan's canonical Task closure (`readCanonicalTaskFacts` + `taskClosureOf`) — the same non-open set the
+ * delete rule's `module_in_use` reads. A read failure is the fact itself, never "still open". The adoption's module
+ * fact and a plan answer's submit check read it.
+ */
+export async function terminalTaskIdsOf(records: TaskFactRecordPort, source: PlanRevisionSnapshot):
+Promise<{ status: 'ready'; value: ReadonlySet<string> } | Rejected> {
+  const facts = await readCanonicalTaskFacts(records, source.goalRef, source);
+  if (facts.status !== 'ready') return facts;
+  return { status: 'ready', value: closedTaskIdsOf(source, facts.value) };
+}
+
+function closedTaskIdsOf(source: PlanRevisionSnapshot, facts: CanonicalTaskFacts): ReadonlySet<string> {
+  const terminal = new Set<string>();
+  for (const task of source.tasks) {
+    if (taskClosureOf(source, facts, task.taskId).closed) terminal.add(task.taskId);
+  }
+  return terminal;
+}
+
+/**
+ * 97-3: every Task's execution facts and the closed Tasks of one Plan from ONE canonical read and one pointer-intent
+ * read, the facts a plan answer's submit check judges. The adoption reads its changed Tasks one by one with their
+ * commit guards (`readDispositionChangeTaskFacts`) and the closure apart (`terminalTaskIdsOf`); the projection
+ * (`taskRunFactsOf`, `closedTaskIdsOf`) is the same.
+ */
+export async function readPlanExecutionFacts(records: TaskFactRecordPort, plan: PlanRevisionSnapshot):
+Promise<{ status: 'ready'; tasks: TracedTaskFactsV1[]; terminalTaskIds: ReadonlySet<string> } | Rejected> {
+  const read = await readCanonicalTaskFacts(records, plan.goalRef, plan);
+  if (read.status !== 'ready') return read;
+  const facts = read.value;
+  const owned: { taskId: string; runs: RunSnapshot[]; selectedRun: RunSnapshot | null }[] = [];
+  for (const task of plan.tasks) {
+    const own = taskRunFactsOf(facts, task.taskId);
+    if (own.status !== 'ready') return own;
+    owned.push({ taskId: task.taskId, runs: own.runs, selectedRun: own.selectedRun });
+  }
+  const pointers = await readPointerIntents(records,
+    owned.flatMap((entry) => entry.selectedRun === null ? [] : [entry.selectedRun]));
+  if (pointers.status !== 'ready') return pointers;
+  return { status: 'ready', terminalTaskIds: closedTaskIdsOf(plan, facts), tasks: owned.map(({ taskId, runs, selectedRun }) => ({
+    taskId, runs, lease: facts.leasesByTaskId.get(taskId) ?? null, reduction: facts.reductionsByTaskId.get(taskId) ?? null,
+    selectedRun, pointerIntent: selectedRun === null ? null : pointers.intents.get(selectedRun.ref.runId) ?? null })) };
+}
+
+/**
+ * L10: the catalog a Goal's first Plan is adopted against, the one governance selected whatever a candidate pinned
+ * (governance's guards hold the pointer and the baseline; the catalog row is create-only). The first adoption and a
+ * first plan answer's submit check read it.
+ */
+export async function readSelectedCatalog(records: RecordReadPort, governance: VerifiedGovernance):
+Promise<{ status: 'ready'; value: AdoptedArchitecture } | Rejected> {
+  const selected = await readRevisionByRef(records, governance.architectureBaseline.ref);
+  if (selected.status === 'ready') return { status: 'ready', value: selected.value.catalog.catalog };
+  if (selected.status === 'not_found') return unavailable('the governance architecture baseline has no catalog row');
+  if (selected.status === 'not_ready') return incomplete('the governance architecture catalog is unavailable');
+  return selected;
 }
 
 /** The origin Plans a basis comparison actually needs. */

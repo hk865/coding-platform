@@ -63,6 +63,7 @@ import type { PlanningQuestionReader } from '../work-graph/tasks/planning-questi
 import { hostContextIn } from '../work-graph/tasks/plan-lineage.js';
 import type { PlanProposal } from '../work-graph/model/plan-contracts.js';
 import { deriveFuturePlanDelta, type FuturePlanDelta } from '../work-graph/tasks/plan-validation.js';
+import { isQuestionAskRound } from '../work-graph/tasks/request-service.js';
 import { effectiveDuty, queryPlanSummary } from './context-fact-text.js';
 import {
   promptDeclarationProblem, promptRenderProblem, resolvePromptPack, selectPromptSkills,
@@ -529,10 +530,13 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
       // lets the platform refine it may also arrange a small change directly.
       // The first plan stays the person's (no focusPlan, no tool); the Host only
       // hands over request/followup rounds.
-      const answerPlanTool = shape === 'secretary' && goal !== null && focusPlan !== null
+      // G7 P4: a question about the candidate on a planning round may be answered in text, beside the planning
+      // submit; a regeneration stays planning-only.
+      const answerPlanTool = (shape === 'secretary' && goal !== null && focusPlan !== null
         && (record.job.job.roundKind === 'request' || record.job.job.roundKind === 'followup')
         && decisionActionPolicy({ autonomy: goal.settings.autonomy, action: 'refine_future',
-          actorClass: 'system', countedNext: null, cap: 0 }) === 'automatic';
+          actorClass: 'system', countedNext: null, cap: 0 }) === 'automatic')
+        || (shape === 'plan_round' && isQuestionAskRound(record.job));
       const finalNames = finalToolNamesOf({
         callKind: 'query',
         explorationRound,
@@ -853,6 +857,7 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         ...(execution.base === undefined ? {} : { base: execution.base }),
         ...(record5 === undefined ? {} : { record5 }),
         ...(secretaryFacts === null ? {} : { secretaryFacts }),
+        ...(secretaryFacts !== null && shape === 'plan_round' ? { planRound: true } : {}),
         ...(handoff === undefined ? {} : { handoff }),
         ...(consultationFacts === undefined ? {} : { consultationFacts }),
       };

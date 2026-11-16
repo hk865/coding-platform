@@ -83,6 +83,8 @@ export async function assembleQueryContext(
     record5?: Pick<FrozenHandoffBriefV1, 'binding' | 'material'>;
     /** The one facts value preparation read; the secretary recipe renders it and reads no port. */
     secretaryFacts?: SecretaryPreparationFactsV1;
+    /** A request round frozen as a planning round (G7 P4); the secretary recipe picks its answer format by it. */
+    planRound?: true;
     /** SR3 item 6: the round's hand-off material preparation read once; the recipe renders it and derives nothing. */
     handoff?: NonNullable<Parameters<ContextAssembler['assembleQuery']>[1]['handoff']>;
     /** §3.15 item 5: the frozen platform facts preparation read and resolved once. */

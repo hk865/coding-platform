@@ -17,7 +17,8 @@ import { Abort } from './report.mjs';
 
 const POLL_MS = 20_000;
 const keyOf = value => JSON.stringify(value);
-const scopeKey = scope => `${scope.projectId}/${scope.workspaceId}`;
+/** The meter's key of one project scope (`inFlight({ scopes })` takes these). */
+export const scopeKey = scope => `${scope.projectId}/${scope.workspaceId}`;
 const sessionRefOf = ref => ({ projectId: ref.projectId, sessionId: ref.sessionId });
 const zero = () => ({ input: 0, output: 0, cached: 0, queryRequests: 0, unbilled: 0, bounded: 0, runs: 0, runsWithoutUsage: 0 });
 

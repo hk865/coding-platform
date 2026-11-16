@@ -246,8 +246,13 @@ it('G1 a late adviser conclusion for command A, after B started in the same Work
     { kind: 'text', text: 'scrv-g1 done' },
   ] }));
   await waitFor(async () => existsSync(join(r.world.root, 'scrv-g1-a-started')), started => started, 'G1: command A');
+  // G7 W2: one Host pass now takes the scribe's round from its message to its conclusion; the row holds that pass at
+  // its Query's prepared commit (taken, not started), so the conclusion still comes after B started. The clock moves
+  // without the barrier while it is held.
+  const review = r.world.gates.beforePrepared(r.scribe);
   r.world.clock.advance(PAST_LINE);
-  const first = await roundsAfter(r, 1);
+  await reachK3L3(r.k, review, 'G1: the scribe\'s round held at its prepared commit');
+  const first = await rounds(r);
   expect(first, 'G1: command A\'s one round').toHaveLength(1);
   const runRef = (await commands(r))[0]!.run.runRef;
   await writeFile(join(r.world.root, 'scrv-g1-go-a'), 'go');
@@ -256,6 +261,7 @@ it('G1 a late adviser conclusion for command A, after B started in the same Work
   r.world.clock.advance(11 * 60_000);
   const second = await waitFor(() => commands(r), items => items.length === 1, 'G1: command B listed');
   expect(second[0]!.run.runRef, 'G1: B is the same Work Run as A').toMatchObject(runRef);
+  review.release();
   await answerK3L3Round(r.k, first[0]!.message, []);
   await heartbeatUntil(r.world, async () => null, () => false, 4);
   expect(await commands(r), 'G1: the late conclusion stopped command B').toHaveLength(1);

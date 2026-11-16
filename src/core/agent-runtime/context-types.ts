@@ -175,6 +175,8 @@ export interface ContextAssembler {
     record5?: Pick<FrozenHandoffBriefV1, 'binding' | 'material'>;
     /** The one facts value preparation read before the final tool list; the recipe never reads the port. */
     secretaryFacts?: SecretaryPreparationFactsV1;
+    /** A request round frozen as a planning round: the planning answer format, even beside the text submit (G7 P4). */
+    planRound?: true;
     /** SR3 item 6: the round's hand-off material preparation read once; the recipe renders it and derives nothing. */
     handoff?: SecretaryHandoffPromptFactsV1;
     /**

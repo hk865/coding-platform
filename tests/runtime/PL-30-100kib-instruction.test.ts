@@ -37,7 +37,7 @@ import { driveWorkflow, readQuery } from '../helpers/A2-restart-fixture.js';
 import { driverRead, startGoalDriver } from '../helpers/DRV-fixture.js';
 import { plPlanChangeDraft } from '../helpers/PL-workflow-fixture.js';
 import { listed } from '../helpers/S7B-fixture.js';
-import { awaitProposal, heartbeatUntil, proposalRefOf, readBody, readPlanningQuery } from '../helpers/IV-host-fixture.js';
+import { heartbeatUntil, proposalRefOf, readBody, readPlanningQuery } from '../helpers/IV-host-fixture.js';
 import { s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
 import { openS6AHostWorld, type S6AHostWorld } from '../helpers/S6A-host-fixture.js';
 import {
@@ -206,10 +206,12 @@ describe('PL-30: a 100 KiB task instruction reaches the Work Run and the review 
         kind: 'intervention_planning', answerShape: 'plan_round', sourceMessageRef: person.ref,
       });
 
-      // The Host's close-out writes the candidate from the saved plan answer.
-      const candidate = ready<PlanProposal>(await awaitProposal(opened, proposalRefOf(person.ref, goal)),
-        'the PL-30 candidate');
-      expect(candidate.status).toBe('candidate');
+      // The Host's close-out writes the candidate from the saved plan answer. G7 W2: the same consume pass goes on to
+      // the policy's adoption, so the candidate is read once it exists, already accepted.
+      const candidate = ready<PlanProposal>(await heartbeatUntil(opened, async () => (await opened.post('plans/proposal',
+        plain(S6A_SCOPE, proposalRefOf(person.ref, goal)))).body as ReadResult<PlanProposal>,
+      read => read.status === 'ready', 12), 'the PL-30 candidate');
+      expect(candidate.status).toBe('accepted');
       const assignment = (candidate.draft.assignments ?? []).find(entry => entry.taskId === LONG_TASK_ID);
       expect(assignment?.instruction.length).toBe(102_400);
       expect(Buffer.byteLength(assignment?.instruction ?? '', 'utf8')).toBe(102_400);

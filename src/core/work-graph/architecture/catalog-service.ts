@@ -556,7 +556,7 @@ export function moduleRefInProjectView(ref: ModuleRef, callerWorkspaceId: string
   return { ...ref, moduleId: projectModuleIdOfFile(ref.moduleId, callerWorkspaceId, mainWorkspaceId) };
 }
 
-function catalogInProjectView(catalog: AdoptedArchitecture, callerWorkspaceId: string,
+export function catalogInProjectView(catalog: AdoptedArchitecture, callerWorkspaceId: string,
   mainWorkspaceId: string): AdoptedArchitecture {
   const view = (ref: ModuleRef): ModuleRef => moduleRefInProjectView(ref, callerWorkspaceId, mainWorkspaceId);
   return {
@@ -622,7 +622,8 @@ function readCatalogBesideBaseline(baselineRef: ArchitectureBaselineRevisionRef,
 /** Reads one immutable baseline revision and the catalog row beside it. Exported
  * for the 8A formal-vs-observed comparison, which must resolve the pin through
  * the recorded baseline rather than trusting the caller's raw catalog ref. */
-export async function readRevisionByRef(records: GoalRecordTransactionPort, ref: ArchitectureBaselineRevisionRef): Promise<ReadResult<ArchitectureRevision>> {
+export async function readRevisionByRef(records: Pick<GoalRecordTransactionPort, 'readMany'>,
+  ref: ArchitectureBaselineRevisionRef): Promise<ReadResult<ArchitectureRevision>> {
   const baselineKey = canonicalJson(ref as unknown as JsonValue);
   const catalogKey = canonicalJson(catalogRefFor(ref.projectId, ref.baselineId, ref.revision) as unknown as JsonValue);
   const read = await records.readMany([baselineKey, catalogKey]);

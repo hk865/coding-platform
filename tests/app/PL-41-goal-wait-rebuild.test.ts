@@ -25,7 +25,7 @@ import { readS7BMessage } from '../helpers/S7B-fixture.js';
 import { completeS7BGoal, firstPlan, refinementPlan } from '../helpers/S7B-V-fixture.js';
 import { readActivePlan, proposeCandidate } from '../scenarios/support/S5-decisions.js';
 import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
-import { cancelS7AGoal, committed, ready } from '../helpers/S7A-fixture.js';
+import { cancelS7AGoal, committed, ready, setS7AAutonomy } from '../helpers/S7A-fixture.js';
 import { openConsumeWorld, openIdleLine, createLine, awaitPlanningAnswer, awaitProposal, candidateCards,
   heartbeat, notices, proposalRefOf, readProposal } from '../helpers/IV-host-fixture.js';
 import { createPLAdviserLine, needsDecisionAnswer, openPLConsumptionWorld, seedPLHistoryQuestion,
@@ -218,6 +218,9 @@ describe('PL-41 goal-wait rebuild, adopted-unreplied recovery', () => {
     const p2 = await adoptIntervention(world, p2Message, 'pl41-p2-apply');
     expect((await readS7BMessage(world, p2Message)).response, 'P2\'s M stays open').toBeNull();
 
+    // G7 W2: one consume pass now goes from P3's proposal to the platform's own adoption of a refinement under
+    // `after_plan_confirmation`; every-step keeps it the person's card, so the person adopts it as before.
+    await setS7AAutonomy(world, world.goals.second, 'every_step');
     const p3Line = await createLine(world, 'pl41-p3-line');
     await world.scripted.script(p3Line, [{ kind: 'text', text: await refinementPlan(world, world.goals.second,
       { label: 'pl41-p3', taskId: 'pl41-p3-task', role: S6A_WORK_ROLE.templateId }) }]);

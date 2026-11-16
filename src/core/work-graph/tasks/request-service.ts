@@ -296,6 +296,17 @@ export function askInputText(input: { regenerate: boolean; text: string }): stri
 }
 
 /**
+ * G7 P4: an `ask` round that asks about the candidate rather than for a new one. The round stores no `regenerate`
+ * flag; `askInputText` writes it into the round's input, and this is its exact inverse. A person's own question that
+ * is the fixed sentence, or opens with it and a blank line, reads as a regeneration: it asks for exactly that.
+ */
+export function isQuestionAskRound(job: QueryJobSnapshot): boolean {
+  if (job.job.receipt?.kind !== 'ask') return false;
+  const text = job.job.intent.question;
+  return text !== ASK_REGENERATE_TEXT && !text.startsWith(`${ASK_REGENERATE_TEXT}\n\n`);
+}
+
+/**
  * The answer to the read of the card objects an `ask` names: a type the store
  * keeps no records of is `invalid` (asking again cannot help); any other failed
  * read is `unavailable`; a read the store answered lets the `ask` through.

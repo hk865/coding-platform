@@ -37,7 +37,11 @@ import {
   architectureSample, secretaryInputText, selectIdeaInputText,
   type SampleEarlierEntry, type SampleRound, type SecretaryInputSample,
 } from '../helpers/S6A-prompt-samples.js';
-import { S6A_GOAL_1, S6A_SCOPE, type S6ASession } from '../helpers/S6A-request-fixture.js';
+import { S6A_GOAL_1, S6A_SCOPE, S6A_WORK_ROLE, type S6ASession } from '../helpers/S6A-request-fixture.js';
+import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
+import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
+import { plToolPlanOf } from '../helpers/PL-workflow-fixture.js';
+import { firstPlan } from '../helpers/S7B-V-fixture.js';
 import { claimWithSecretaryProfile } from '../helpers/request-claim-steps.js';
 import { ready } from '../helpers/S5-application-support.js';
 
@@ -53,9 +57,15 @@ vi.mock('../../src/core/record-store/sqlite-record-store.js', async (importOrigi
 const PLAN_ROUND_ANSWER_FORMAT = renderTemplate(PLATFORM_PROMPT_PACK_V1, 'initial-planning-answer', {},
   ['submit_plan_round']).text;
 
-/** The empty plan body the scripted plan-round answers carry: no task is what these rows are about. */
-const PLAN_BODY = { executionDag: { dependsOn: [] }, obligations: [], stages: [],
-  taskHierarchy: { parentOf: [] }, tasks: [] };
+/**
+ * The plan body the scripted plan-round answers carry. A plan round's plan answer meets its adoption's plan rules
+ * when it is submitted (G7 P2), so it is the smallest admissible first plan (one work task, the goal gate and their
+ * static obligation); its tasks are not what these rows are about. Keys are sorted at every level, as the saved
+ * answer text holds them.
+ */
+const PLAN_BODY = JSON.parse(canonicalJson(plToolPlanOf((JSON.parse(firstPlan({ label: 's6a-plan',
+  taskId: 's6a-plan-work', role: S6A_WORK_ROLE.templateId })) as { plan: PlanRevisionDraft }).plan) as JsonValue)) as
+  { tasks: Record<string, unknown>[] } & Record<string, unknown>;
 
 function planRoundReply(callId: string, summary: string): S6AReply {
   return { kind: 'calls', calls: [{ callId, name: 'submit_plan_round',
@@ -63,8 +73,9 @@ function planRoundReply(callId: string, summary: string): S6AReply {
 }
 
 function planRoundAnswer(summary: string): string {
+  // The platform fills the plan's schemaVersion and every new task's `pending` phase.
   return JSON.stringify({ schemaVersion: 2, kind: 'plan', summary,
-    plan: { ...PLAN_BODY, schemaVersion: 2 } });
+    plan: { ...PLAN_BODY, schemaVersion: 2, tasks: PLAN_BODY.tasks.map(task => ({ ...task, phase: 'pending' })) } });
 }
 
 const worlds: S6AHostWorld[] = [];

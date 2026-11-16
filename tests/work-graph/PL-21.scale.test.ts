@@ -400,7 +400,7 @@ describe('PL-21: a few-hundred-task Plan refined by one segment', () => {
       expect(draft.obligations.slice(base.draft.obligations.length)).toEqual(row.addedObligations);
 
       // The merged draft passes the existing admission and is a real candidate.
-      expect(validatePlanDraft(draft, null)).toEqual([]);
+      expect(validatePlanDraft(draft, null, null)).toEqual([]);
       expect(proposal.status).toBe('candidate');
       expect(proposal.sourceMessageRef).not.toBeNull();
       // The segment's freshly normalized planId is the new revision's id, never the base's.

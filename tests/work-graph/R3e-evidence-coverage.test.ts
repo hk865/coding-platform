@@ -94,7 +94,8 @@ it('an empty required-obligation set is rejected by the compiler and a no-target
     workspaceRevision: 1,
     changeScope: { diffClass: 'code-change', changedFiles: [], writeSummary: 'R3e coverage empty-obligation case' },
     semanticChange: 'semantic',
-    checkCapabilities: [{ checkId: f.passCheck.checkId, kind: 'static', coversKinds: ['static'], replayable: false }],
+    checkCapabilities: [{ checkId: f.passCheck.checkId, kind: 'static', coversKinds: ['static'], replayable: false,
+      taskIds: 'all' }],
     policy: { requirementKinds: ['static'] },
   };
   expect(compileVerificationPlan(input)).toMatchObject({ status: 'rejected', code: 'invalid' });

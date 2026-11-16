@@ -48,8 +48,8 @@ const PLAN: PlanRevisionSnapshot = {
   taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] },
 };
 const CHECKS: CheckCapabilityV1[] = [
-  { checkId: 'lint', kind: 'static', coversKinds: ['static'], replayable: false },
-  { checkId: 'unit', kind: 'dynamic', coversKinds: ['dynamic'], replayable: false },
+  { checkId: 'lint', kind: 'static', coversKinds: ['static'], replayable: false, taskIds: 'all' },
+  { checkId: 'unit', kind: 'dynamic', coversKinds: ['dynamic'], replayable: false, taskIds: 'all' },
 ];
 const KINDS = ['static', 'dynamic', 'reviewer'];
 
@@ -92,7 +92,7 @@ describe('E6-plan: the reviewer requirement compiles into one review-packet item
     { order: 'reviewer first', requirements: [required('r5', 'reviewer'), required('s5', 'static')] },
   ])('a command named review-packet and the review item stay apart ($order)', ({ requirements }) => {
     const plan = planOf('t1', KINDS, [obligation('ob5', 'required', 't1', ...requirements)],
-      [{ checkId: 'review-packet', kind: 'static', coversKinds: ['static'], replayable: false }]);
+      [{ checkId: 'review-packet', kind: 'static', coversKinds: ['static'], replayable: false, taskIds: 'all' }]);
     expect(plan.checks.filter(item => item.kind === 'reviewer'))
       .toEqual([reviewItem({ obligationId: 'ob5', requirementId: 'r5' })]);
     expect(plan.checks.filter(item => item.kind !== 'reviewer')).toEqual([{ checkId: 'review-packet', kind: 'static',
@@ -106,7 +106,7 @@ describe('E6-plan: the reviewer requirement compiles into one review-packet item
   });
 
   it('diagnosePlanCandidate finds nothing: no reviewer_not_supported', () => {
-    expect(diagnosePlanCandidate({ candidate: { obligations: OBLIGATIONS }, catalogPin: null, requirementKinds: KINDS,
+    expect(diagnosePlanCandidate({ candidate: { tasks: PLAN.tasks, obligations: OBLIGATIONS }, catalogPin: null, requirementKinds: KINDS,
       checks: CHECKS })).toEqual([]);
   });
 });

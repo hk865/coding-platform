@@ -5,7 +5,7 @@
   "templates": {
     "initial-planning-answer": {
       "file": "templates/initial-planning-answer.txt",
-      "version": 8,
+      "version": 9,
       "mentionsTools": []
     },
     "consultation-received-input": {
@@ -186,7 +186,7 @@
     },
     "skill-platform-secretary": {
       "file": "templates/skill-platform-secretary.txt",
-      "version": 10,
+      "version": 11,
       "mentionsTools": []
     },
     "skill-platform-adviser": {

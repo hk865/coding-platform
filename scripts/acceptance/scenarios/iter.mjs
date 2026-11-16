@@ -3,7 +3,8 @@
 // answers from the saved version (draft §1.6; MVP-BEHAVIOR.md:94-116; slice-9-SPEC.md:665, :691). Ideas need an
 // already governed project (C-108: semantic_query), so a small cold-start seed Goal comes first.
 import { newId, ready } from '../lib/http.mjs';
-import { broken, chooseModel, coldStart, openProject, sessionTurns, submitRequest, waitFor, waitGoal, waitRequest } from '../lib/flows.mjs';
+import { answerPlanQuestions, broken, chooseModel, coldStart, openProject, sessionTurns, submitRequest, waitFor, waitGoal,
+  waitRequest } from '../lib/flows.mjs';
 import { Abort } from '../lib/report.mjs';
 
 const MINUTE = 60_000;
@@ -67,6 +68,9 @@ async function run(ctx, rec) {
   const planRound = latestRound(view);
   rec.check('select', selected?.status === 'queued' && /第\s*1|1\s*个|#1|idea 1/i.test(JSON.stringify(planRound.input ?? '')),
     `select-idea ${selected?.status}；下一轮输入提到所选：${/第\s*1|1\s*个/.test(JSON.stringify(planRound.input ?? ''))}`);
+  // G7 W5: a plan round that asks the person questions gets the person's answer (at most twice), then the candidate.
+  const onGoal = { extra: { goalId: goalRef.goalId } };
+  view = await answerPlanQuestions(ctx, project, root, view, rec, onGoal);
   const first = await waitFor(ctx, 'the request candidate', () => candidateOf(project, goalRef, root),
     value => value?.head !== null && value?.head !== undefined, { timeoutMs: 20 * MINUTE });
   rec.check('candidate', first.status === 'candidate', `候选 ${first.head.ref.proposalId}（${first.status}）`);
@@ -74,7 +78,7 @@ async function run(ctx, rec) {
 
   const iterated = await submitRequest(project, ITERATE, { continues: root, goalId: goalRef.goalId });
   rec.facts.userCommand.push(ITERATE);
-  view = await waitRequest(ctx, project, root);
+  view = await answerPlanQuestions(ctx, project, root, await waitRequest(ctx, project, root), rec, onGoal);
   const iterRound = latestRound(view);
   const second = await candidateOf(project, goalRef, root);
   rec.check('what-changed', /改了|改动|变更|changed/.test(iterRound.answer ?? '') && second?.head?.ref?.proposalId !== first.head.ref.proposalId,
@@ -108,6 +112,8 @@ async function run(ctx, rec) {
     await host.client.command('requests/select-idea', project.scope, { commandId: newId('idea'), round: otherIdeas.ref, index: 0 });
     otherView = await waitRequest(ctx, project, other.requestRoot);
   }
+  // G7 W5: the second request's plan round may ask too (G6 run 4: four questions); the same answer, the same cap.
+  otherView = await answerPlanQuestions(ctx, project, other.requestRoot, otherView, rec, onGoal);
   const otherCandidate = await waitFor(ctx, 'the second request candidate', () => candidateOf(project, goalRef, other.requestRoot),
     value => value?.head !== null && value?.head !== undefined, { timeoutMs: 20 * MINUTE });
   const goal = ready(await host.client.read('goals/read', project.scope, goalRef));

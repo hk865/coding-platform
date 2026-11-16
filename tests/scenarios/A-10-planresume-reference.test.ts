@@ -35,7 +35,7 @@ import { interventionPlanningQueryRefs } from '../../src/contracts/query-job.js'
 import { systemRoundRequestId } from '../../src/contracts/plan-round.js';
 import { systemRoundMessageRef } from '../helpers/system-round-ref.js';
 import {
-  answerCard, heartbeat, heartbeatUntil, proposalRefOf, questionCards, readBody, readPlanningQuery,
+  answerCard, heartbeat, heartbeatUntil, heartbeatUntilModel, proposalRefOf, questionCards, readBody, readPlanningQuery,
   sessionQueries, settleHost, waitForResponse,
 } from '../helpers/IV-host-fixture.js';
 import { readS7BMessage } from '../helpers/S7B-fixture.js';
@@ -414,17 +414,22 @@ describe('A-10: planresume carries a reference; the assembled input carries the 
     if (resumeRef.status !== 'ready') return;
     const refs = interventionPlanningQueryRefs(resumeRef.value);
 
+    // G7 W2: the Host pass that submits the planresume Query goes straight on to claim it; the row holds that pass at
+    // its claim commit, so the row's own claim below takes the round and the Host's held claim then finds it moved.
+    const hostClaim = world.gates.beforeClaim(adviser);
     await sendPLPlanResume(world, { line: adviser, goal,
       originalQueryJobId: originalQuery.queryJobRef.queryJobId, originalMessageRef: m.message.ref,
       followupOf: root });
-    const query = await heartbeatUntil(world, () => readPlanningQuery(world, resumeRef.value),
-      record => record !== null, 40);
+    const pass = await heartbeatUntilModel(world, hostClaim, 40);
+    const query = await readPlanningQuery(world, resumeRef.value);
     expect(query, 'the planresume Query exists before preparation').not.toBeNull();
     if (query === null) return;
 
-    // Claim the round ourselves before the next Host pass so this preparation is the one observed.
+    // Claim the round ourselves before the Host's claim so this preparation is the one observed.
     const claimed = await claimQuery(world, query.job.ref, adviser, null, 'a10-read-claim');
     expect(claimed.status, 'the planresume Query is claimed for this preparation').toBe('committed');
+    hostClaim.release();
+    await pass.settled;
 
     fault.arm();
     const prepared = (await world.post('queries/prepare', { scope: S6A_SCOPE,

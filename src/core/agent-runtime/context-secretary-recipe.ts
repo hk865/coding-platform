@@ -223,6 +223,8 @@ export async function assembleSecretaryContext(
     handoff?: SecretaryHandoffPromptFactsV1;
     /** The one facts value preparation read; this recipe never reads the port. */
     secretaryFacts?: SecretaryPreparationFactsV1;
+    /** A request round frozen as a planning round: it takes the planning answer format (G7 P4). */
+    planRound?: true;
   },
 ): Promise<ReadResult<AssembledContextV1>> {
   const texts = input.texts ?? PLATFORM_PROMPT_PACK_V1;
@@ -343,9 +345,12 @@ export async function assembleSecretaryContext(
 
   // The final tool list decides the answer format: a plan-round-only list carries
   // the planning submit tool; a secretary round offered both keeps the secretary
-  // format, whose own `submit_plan_round` block renders beside its submit tool.
+  // format, whose own `submit_plan_round` block renders beside its submit tool. A
+  // planning round offered both (a question about the candidate, G7 P4) keeps the
+  // planning format, whose own `submit_secretary_answer` block says when to use it.
   const answerFormatText = renderTemplate(texts,
-    input.toolNames.includes('submit_plan_round') && !input.toolNames.includes('submit_secretary_answer')
+    input.toolNames.includes('submit_plan_round')
+      && (input.planRound === true || !input.toolNames.includes('submit_secretary_answer'))
       ? 'initial-planning-answer' : 'secretary-answer',
     {}, input.toolNames).text;
   const answerFormat = secretary.executionKind === 'semantic_query'

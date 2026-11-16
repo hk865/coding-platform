@@ -28,9 +28,10 @@ import {
 
 const worlds: SB06World[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const sb of worlds.splice(0)) await sb.close(); });
-const openRow = async (obligations: readonly SB06Obligation[], options: { git?: boolean; write?: boolean; tasks?: string[] } = {}) => {
+const openRow = async (obligations: readonly SB06Obligation[],
+  options: { git?: boolean; write?: boolean; tasks?: string[]; explore?: string[] } = {}) => {
   const sb = await openSB06World({ git: options.git, write: options.write,
-    draft: goal => sb06Draft(goal, obligations, options.tasks) });
+    draft: goal => sb06Draft(goal, obligations, options.tasks, options.explore) });
   worlds.push(sb); return sb; };
 const pairOf = (id: string) => ({ obligationId: id, requirementId: `${id}-req` });
 const READ = pairOf('sb06-read');
@@ -121,7 +122,9 @@ describe('W9: each round takes only its subject Task\'s witness obligations', ()
   it('explore and work rounds: own + shared witness pairs and paths; the command item unchanged; explore completes', async () => {
     const sb = await openRow([sb06Witness(['src/module.ts']), { id: 'sb06-work-read', taskIds: ['sb06-work'], kind: 'witness',
       paths: ['README.md'] }, { id: 'sb06-shared', taskIds: [SB06_TASK, 'sb06-work'], kind: 'witness', paths: ['tsconfig.json'] },
-    { id: 'sb06-cmd', taskIds: [SB06_TASK, 'sb06-work'], kind: 'static' }], { tasks: [SB06_TASK, 'sb06-work'] });
+    // G7 P3: a witness belongs only on an exploration task's obligation, so the second witness-carrying task explores too.
+    { id: 'sb06-cmd', taskIds: [SB06_TASK, 'sb06-work'], kind: 'static' }],
+    { tasks: [SB06_TASK, 'sb06-work'], explore: [SB06_TASK, 'sb06-work'] });
     const explore = await driveSB06(sb, { to: 'end', replies: sb06Reads(['src/module.ts', 'tsconfig.json'], REPORT) });
     expect(receiptOf(explore.receipts, 'complete_task')?.result).toMatchObject({ status: 'committed' });
     const work = await driveSB06(sb, { to: 'run_check', taskId: 'sb06-work', replies: sb06Reads(['README.md'], REPORT) });

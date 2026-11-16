@@ -95,6 +95,7 @@ import {
 } from '../contracts/goal-decisions.js';
 import type { NoticeItemV1 } from '../core/work-graph/model/decision-contracts.js';
 import { compareNoticePositions } from '../core/work-graph/views/notice-position.js';
+import type { ConsumableSessionV1 } from '../core/work-graph/views/consumable-sessions.js';
 import { missingQueryActivityGoalOf } from '../core/work-graph/views/activity-read-helpers.js';
 import { createChangeFeed } from './change-feed.js';
 import type { WorkflowAdvanceResult } from '../business/workflow/contracts.js';
@@ -211,6 +212,12 @@ export type WorkbenchInputConsumer = {
 
 /** The heartbeat opens at most this many Sessions. */
 const CONSUME_BATCH = 8;
+/**
+ * G7 W2: the most `progressed` steps one consume pass takes on an idle line's message, one per stage of
+ * `planOnIdleLine` (its only `progressed` source): the planning Query's submit, claim and prepare + start, the
+ * proposal and the adoption. Any other answer ends the chain as before; `claimed` still ends the Session's scan.
+ */
+const IDLE_LINE_STAGES = 5;
 /** The Host's consumer status: the last heartbeat's skips; one write per heartbeat, never persisted. `unreadable` is
  *  a line the consumable view skipped because its own facts could not be read. */
 export type HostConsumeSkipV1 = { sessionRef: SessionRef; reason: 'no_profile' | 'no_goal' | 'unreadable' };
@@ -2977,107 +2984,119 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   }
   /**
    * One workspace's consume batch over C's published view: up to `CONSUME_BATCH` candidate Sessions in
-   * Session-key order, each at most one turn, and the next continuation key. A Session with no matching
-   * profile or no Goal is skipped with its reason and stays queued; `notify` never reaches this loop because
-   * C's `nextMessage` is never a notify. A non-ready page returns the same `after` so the next heartbeat
-   * retries it, never "nothing to do". The view's unreadable lines come first in the skips, then the others.
+   * Session-key order, each at most one turn, and the next continuation key. G7 W2: the page's Sessions advance
+   * independently and this one workspace job waits for all of them, so one line's model call never holds another
+   * line's submit or claim; an idle line's intervention takes its stages one after another in the same pass (at most
+   * `IDLE_LINE_STAGES`). A Session with no matching profile or no Goal is skipped with its reason and stays queued;
+   * `notify` never reaches this pass because C's `nextMessage` is never a notify. A non-ready page returns the same
+   * `after` so the next heartbeat retries it, never "nothing to do". The view's unreadable lines come first in the
+   * skips, then the others in page order. A Session whose turn threw fails the pass once every Session settled (the
+   * first in page order): the skips are not published and the cursor stays, as when the one-by-one loop threw.
    */
   async function consumeIdle(scope: WorkspaceScope, after: string | null): Promise<string | null> {
     const ctx = hostContext(scope);
     const project = projects.get(scope.projectId);
     if (project === undefined) return after;
-    const platform = project.runtime.platform;
-    const page = await platform.consumableSessions.readConsumableSessions(ctx,
+    const page = await project.runtime.platform.consumableSessions.readConsumableSessions(ctx,
       { workspace: scope, after, limit: CONSUME_BATCH });
     if (page.status !== 'ready') return after;
-    const skips: HostConsumeSkipV1[] = page.value.skipped.map(skip =>
-      ({ sessionRef: skip.session, reason: 'unreadable' as const }));
-    for (const candidate of page.value.items) {
-      // notify-only (and every other no-offer candidate): no turn, zero model calls.
-      const offer = candidate.nextMessage;
-      if (offer === null) continue;
-      // Never guess the model: the first configured profile whose scope and sessionRole match this Session.
-      const profile = queryProfileOf(scope, candidate.role);
-      if (profile === undefined) {
-        skips.push({ sessionRef: candidate.session, reason: 'no_profile' });
-        continue;
+    const settled = await Promise.allSettled(page.value.items.map(candidate =>
+      consumeCandidate(ctx, scope, project, candidate)));
+    const failed = settled.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+    if (failed !== undefined) throw failed.reason;
+    lastConsumeSkips = [
+      ...page.value.skipped.map(skip => ({ sessionRef: skip.session, reason: 'unreadable' as const })),
+      ...settled.flatMap(result => result.status === 'fulfilled' && result.value !== null ? [result.value] : []),
+    ];
+    return page.value.next;
+  }
+  /** One candidate Session of a consume page: at most one turn; its skip, or null when it is not skipped. */
+  async function consumeCandidate(ctx: CoreCallContext, scope: WorkspaceScope, project: HostProject,
+    candidate: ConsumableSessionV1): Promise<HostConsumeSkipV1 | null> {
+    const platform = project.runtime.platform;
+    // notify-only (and every other no-offer candidate): no turn, zero model calls.
+    const offer = candidate.nextMessage;
+    if (offer === null) return null;
+    // Never guess the model: the first configured profile whose scope and sessionRole match this Session.
+    const profile = queryProfileOf(scope, candidate.role);
+    if (profile === undefined) return { sessionRef: candidate.session, reason: 'no_profile' };
+    const read = await platform.messages.readMessage(ctx, offer.messageRef);
+    if (read.status !== 'ready') return null;                      // the next heartbeat re-reads
+    const goalRef = read.value.goalRef
+      ?? (read.value.taskRef === null ? null : { aggregateType: 'Goal' as const,
+        projectId: read.value.taskRef.projectId, goalId: read.value.taskRef.goalId });
+    if (offer.kind === 'person_message' || offer.kind === 'action_request') {
+      // §5.3.5: only a Host system round is the planning-round profile; its reserve is
+      // the one formula against this profile's own window, frozen as the request-side budget.
+      const planningRound = offer.kind === 'action_request'
+        && read.value.sender.kind === 'host' && read.value.sender.actor.kind === 'system';
+      // The one public intervention dispatch; a claimed turn ends this Session's scan, and every
+      // other message of the Session stays queued for a later safe point.
+      const interventionInput = {
+        messageRef: offer.messageRef, roleBinding: profile.roleBinding,
+        runtimeBudget: planningRound ? planningRoundRuntimeBudget(profile) : profile.runtimeBudget,
+        budget: profile.budget, consumerId: profile.consumerId,
+      };
+      // G7 W2: a `progressed` stage is followed at once by the next one, not one stage per heartbeat.
+      let claimed = await platform.workflow.handleIntervention?.(ctx, interventionInput);
+      for (let step = 1; step < IDLE_LINE_STAGES && claimed?.status === 'progressed'; step += 1) {
+        claimed = await platform.workflow.handleIntervention?.(ctx, interventionInput);
       }
-      const read = await platform.messages.readMessage(ctx, offer.messageRef);
-      if (read.status !== 'ready') continue;                       // the next heartbeat re-reads
-      const goalRef = read.value.goalRef
-        ?? (read.value.taskRef === null ? null : { aggregateType: 'Goal' as const,
-          projectId: read.value.taskRef.projectId, goalId: read.value.taskRef.goalId });
-      if (offer.kind === 'person_message' || offer.kind === 'action_request') {
-        // §5.3.5: only a Host system round is the planning-round profile; its reserve is
-        // the one formula against this profile's own window, frozen as the request-side budget.
-        const planningRound = offer.kind === 'action_request'
-          && read.value.sender.kind === 'host' && read.value.sender.actor.kind === 'system';
-        // The one public intervention dispatch; a claimed turn ends this Session's scan, and every
-        // other message of the Session stays queued for a later safe point.
-        const interventionInput = {
-          messageRef: offer.messageRef, roleBinding: profile.roleBinding,
-          runtimeBudget: planningRound ? planningRoundRuntimeBudget(profile) : profile.runtimeBudget,
-          budget: profile.budget, consumerId: profile.consumerId,
-        };
-        const claimed = await platform.workflow.handleIntervention?.(ctx, interventionInput);
-        if (claimed?.status === 'claimed') {
-          // The claimed Task's Goal may live in another workspace than the message: the claim names it.
-          const addressed = claimed.claim.task;
-          await announceInterruption({ ...reconcileContext(scope), signal: ctx.signal }, project.hostNotices, {
-            scope: { projectId: addressed.projectId, workspaceId: claimed.claim.workspaceId },
-            sessionRef: candidate.session,
-            personMessageRef: offer.messageRef,
-          });
-          await project.collaborationDriver.start(hostScopeContext({ projectId: addressed.projectId,
-            workspaceId: claimed.claim.workspaceId }, actor), {
-            advance: { schemaVersion: 1, flowId: `intervention:${claimed.claim.runRef.runId}`,
-              goalRef: { aggregateType: 'Goal' as const, projectId: addressed.projectId, goalId: addressed.goalId },
-              sessionHint: claimed.claim.sessionRef, kind: 'select_work', taskId: addressed.taskId },
-            queryProfileIds: [profile.id],
-          });
-        } else if (claimed?.status === 'answer_ready') {
-          // The closing's one notice is committed BEFORE the reply; a failed notice leaves the next pass to retry,
-          // never a reply without its explanation. `questions` sends no notice: the cards carry the questions.
-          if (claimed.reason !== 'questions') {
-            const notice = await platform.messages.sendMessage(ctx, interventionClosingNoticeRequest({
-              recipient: candidate.session, messageRef: offer.messageRef, reason: claimed.reason,
-              goalRef: read.value.goalRef,
-            }));
-            if (notice.status !== 'committed') continue;
-          }
-          // §5.2.4/C-25: only an executor's open wait defers M on a candidate/question close-out;
-          // every terminal answer still replies it. R itself is associated in both cases.
-          const candidateOrQuestions = claimed.reason === 'candidate' || claimed.reason === 'questions';
-          const executorWait = candidateOrQuestions && await executorWaitOf(ctx, read.value);
-          await platform.workflow.handleIntervention?.(ctx, { ...interventionInput,
-            completion: 'associate_answer', replyToOriginal: !executorWait });
-        } else if (claimed?.status === 'no_answer') {
-          // The third ending is a real termination: the fixed notice, then the source withdrawal. Both carry the
-          // fixed identities, so a crash between them replays the one already committed and finishes the other.
-          const key = sessionMessageRefKey(offer.messageRef);
+      if (claimed?.status === 'claimed') {
+        // The claimed Task's Goal may live in another workspace than the message: the claim names it.
+        const addressed = claimed.claim.task;
+        await announceInterruption({ ...reconcileContext(scope), signal: ctx.signal }, project.hostNotices, {
+          scope: { projectId: addressed.projectId, workspaceId: claimed.claim.workspaceId },
+          sessionRef: candidate.session,
+          personMessageRef: offer.messageRef,
+        });
+        await project.collaborationDriver.start(hostScopeContext({ projectId: addressed.projectId,
+          workspaceId: claimed.claim.workspaceId }, actor), {
+          advance: { schemaVersion: 1, flowId: `intervention:${claimed.claim.runRef.runId}`,
+            goalRef: { aggregateType: 'Goal' as const, projectId: addressed.projectId, goalId: addressed.goalId },
+            sessionHint: claimed.claim.sessionRef, kind: 'select_work', taskId: addressed.taskId },
+          queryProfileIds: [profile.id],
+        });
+      } else if (claimed?.status === 'answer_ready') {
+        // The closing's one notice is committed BEFORE the reply; a failed notice leaves the next pass to retry,
+        // never a reply without its explanation. `questions` sends no notice: the cards carry the questions.
+        if (claimed.reason !== 'questions') {
           const notice = await platform.messages.sendMessage(ctx, interventionClosingNoticeRequest({
-            recipient: candidate.session, messageRef: offer.messageRef, reason: 'no_answer',
+            recipient: candidate.session, messageRef: offer.messageRef, reason: claimed.reason,
             goalRef: read.value.goalRef,
           }));
-          if (notice.status !== 'committed') continue;
-          await platform.messages.withdrawMessage(ctx, { input: { messageRef: offer.messageRef },
-            meta: { requestId: `intervention:${key}:withdraw`, expected: [] } });
-        } else if (goalRef === null) {
-          skips.push({ sessionRef: candidate.session, reason: 'no_goal' });
+          if (notice.status !== 'committed') return null;
         }
-        continue;
+        // §5.2.4/C-25: only an executor's open wait defers M on a candidate/question close-out;
+        // every terminal answer still replies it. R itself is associated in both cases.
+        const candidateOrQuestions = claimed.reason === 'candidate' || claimed.reason === 'questions';
+        const executorWait = candidateOrQuestions && await executorWaitOf(ctx, read.value);
+        await platform.workflow.handleIntervention?.(ctx, { ...interventionInput,
+          completion: 'associate_answer', replyToOriginal: !executorWait });
+      } else if (claimed?.status === 'no_answer') {
+        // The third ending is a real termination: the fixed notice, then the source withdrawal. Both carry the
+        // fixed identities, so a crash between them replays the one already committed and finishes the other.
+        const key = sessionMessageRefKey(offer.messageRef);
+        const notice = await platform.messages.sendMessage(ctx, interventionClosingNoticeRequest({
+          recipient: candidate.session, messageRef: offer.messageRef, reason: 'no_answer',
+          goalRef: read.value.goalRef,
+        }));
+        if (notice.status !== 'committed') return null;
+        await platform.messages.withdrawMessage(ctx, { input: { messageRef: offer.messageRef },
+          meta: { requestId: `intervention:${key}:withdraw`, expected: [] } });
+      } else if (goalRef === null) {
+        return { sessionRef: candidate.session, reason: 'no_goal' };
       }
-      if (goalRef === null) { skips.push({ sessionRef: candidate.session, reason: 'no_goal' }); continue; }
-      // An ordinary late reply is the existing consultation's response input; an inquiry keeps no part.
-      const part = offer.kind === 'late_reply' ? 'response' as const : undefined;
-      await platform.workflow.consumeConsultation?.(ctx, {
-        schemaVersion: 1, ...(part === undefined ? {} : { part }), messageRef: offer.messageRef, goalRef,
-        roleBinding: profile.roleBinding, runtimeBudget: profile.runtimeBudget, budget: profile.budget,
-        consumerId: profile.consumerId });
-      continue;                                                     // a consultation ends this Session's scan
+      return null;
     }
-    lastConsumeSkips = skips;
-    return page.value.next;
+    if (goalRef === null) return { sessionRef: candidate.session, reason: 'no_goal' };
+    // An ordinary late reply is the existing consultation's response input; an inquiry keeps no part.
+    const part = offer.kind === 'late_reply' ? 'response' as const : undefined;
+    await platform.workflow.consumeConsultation?.(ctx, {
+      schemaVersion: 1, ...(part === undefined ? {} : { part }), messageRef: offer.messageRef, goalRef,
+      roleBinding: profile.roleBinding, runtimeBudget: profile.runtimeBudget, budget: profile.budget,
+      consumerId: profile.consumerId });
+    return null;                                                    // a consultation ends this Session's scan
   }
   // Slice 4C-2 §11.5/U-10: the scribe reminder shell. One check per configured
   // workspace per heartbeat; the to-do port and the recipient resolver are the
@@ -3832,11 +3851,15 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       // One consume batch per workspace, the same list the expiry pass walks. The throttle
       // stays on the wall clock: the fixtures inject a FIXED `now`, and gating this scan on
       // it would stop an idle Session from ever re-scanning. One `inputJobs` key per
-      // workspace keeps a slow pass from overlapping the next heartbeat.
+      // workspace keeps a slow pass from overlapping the next heartbeat. G7 W2: the gate is half
+      // a period. The loop already sleeps a whole period on the monotonic timer between two passes,
+      // and the wall clock may run slower than that timer (WSL measured 55.9 s of `Date.now()` per
+      // 60 s sleep), so a whole-period gate skipped every other heartbeat; a fixture's frozen
+      // `Date.now()` still opens it only when the row moves its clock.
       for (const workspace of workspaces) {
         if (!ownedProject(workspace.scope.projectId)) continue;
         const key = scopeKey(workspace.scope);
-        if (inputJobs.has(key) || Date.now() - (lastInputScan.get(key) ?? 0) < period) continue;
+        if (inputJobs.has(key) || Date.now() - (lastInputScan.get(key) ?? 0) < period / 2) continue;
         lastInputScan.set(key, Date.now());
         const after = consumeCursors.get(key) ?? null;
         const job = consumeIdle(workspace.scope, after)

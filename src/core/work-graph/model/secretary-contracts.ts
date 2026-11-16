@@ -7,6 +7,8 @@
  */
 import type { AdoptedArchitecture } from '../../../contracts/architecture-catalog.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
+import type { CompletionPolicyContentV1 } from '../../../contracts/governance.js';
+import type { RegisteredCommandCheck } from '../../../contracts/verification.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { OperationRef } from '../../../contracts/core/operations.js';
@@ -16,6 +18,31 @@ import type {
   QueryJobRef, QueryRunRef, RequestInterventionSourceV1, SecretaryRoundMaterialV1,
 } from '../../../contracts/query-job.js';
 import type { RecordGuard } from '../../record-store/ports.js';
+import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
+import type { TracedTaskFactsV1 } from '../state/plan-machine.js';
+
+/**
+ * 97-3: what a plan answer's submit check reads, as the propose and the adoption read it, so the two judge the same
+ * facts: the current architecture (`readCurrentCatalogWindow`; null when none is active), which the propose checks
+ * every plan's module scopes against and a later plan's adoption too; for a first plan the catalog governance
+ * selected (`readSelectedCatalog`), which the first adoption checks them against (null for a later plan or before
+ * governance resolves; a failed read is kept, since the adoption reads it only for a module-scoped task); the main
+ * workspace a draft's module ids are qualified against (`qualifyPlanDraft`); and the effective Goal's adopted Plan
+ * the round's segment merges into with the base's pinned policy, every base Task's execution facts and its closed
+ * Tasks (`readPlanExecutionFacts`). `base` is null for a first plan.
+ */
+export type PlanAdmissionFactsV1 = {
+  catalog: AdoptedArchitecture | null;
+  firstAdoptionCatalog: null | { status: 'ready'; catalog: AdoptedArchitecture } | { status: 'rejected'; reason: string };
+  mainWorkspaceId: string;
+  base: null | {
+    plan: PlanRevisionSnapshot;
+    goalDesiredState: GoalDesiredState;
+    pinnedPolicy: { status: 'resolved'; content: CompletionPolicyContentV1 } | { status: 'rejected'; reason: string };
+    tasks: readonly TracedTaskFactsV1[];
+    terminalTaskIds: readonly string[];
+  };
+};
 
 /** One earlier round of the same request that ran on another Session. */
 export type SecretaryHistoryEntryV1 = {
@@ -52,6 +79,15 @@ export type SecretaryPreparationFactsV1 = {
   executionRoles: readonly string[];
   architecture: { baselineId: string; revision: number; catalog: AdoptedArchitecture } | null;
   completionPolicy: { policyId: string; revision: number } | null;
+  /**
+   * 97-3: what a planning answer's submit check reads beside the catalog. The active policy's content with its
+   * digest (null until both governance pointers are present), and the workspace's installed checks (null: no
+   * configuration at all).
+   */
+  effectivePolicy: { digest: string; content: CompletionPolicyContentV1 } | null;
+  installedChecks: readonly RegisteredCommandCheck[] | null;
+  /** Read only when the caller asks (`admission: true`, a plan answer's submit); null otherwise. */
+  admission: PlanAdmissionFactsV1 | null;
   /** `phase` is the formal GoalPhase (`COMPLETED` for the active Plan, `readGoalTerminalState`), else null (G6F F4). */
   goals: { goalId: string; desiredState: GoalDesiredState; phase: 'COMPLETED' | null; objective: string; ordinal: number | null }[];
   executionKind: 'semantic_query' | 'initial_coordination';
@@ -60,5 +96,5 @@ export type SecretaryPreparationFactsV1 = {
 };
 
 export interface SecretaryPreparationFactsPort {
-  read(ctx: CoreCallContext, input: { queryRunRef: QueryRunRef }): Promise<ReadResult<SecretaryPreparationFactsV1>>;
+  read(ctx: CoreCallContext, input: { queryRunRef: QueryRunRef; admission?: true }): Promise<ReadResult<SecretaryPreparationFactsV1>>;
 }

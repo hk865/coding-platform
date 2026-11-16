@@ -24,7 +24,7 @@ import { planProposalIdFor } from '../../core/work-graph/tasks/plan-service.js';
 import {
   normalizeInitialPlanningResponseV2, parseInitialPlanningResponseV2,
 } from '../../core/work-graph/tasks/initial-plan.js';
-import { deriveFuturePlanDelta } from '../../core/work-graph/tasks/plan-validation.js';
+import { deriveFuturePlanDelta, planInCallerView } from '../../core/work-graph/tasks/plan-validation.js';
 import { mergeStageRefinement } from '../../core/work-graph/tasks/stage-segment.js';
 import { automationContext, ownContext } from './workflow.js';
 import type {
@@ -166,7 +166,9 @@ export async function proposeFromPlanTurn(
     const graphRead = await deps.plans.queryTaskGraph(ctx, { goalRef, planRef: basedOn });
     if (graphRead.status !== 'ready') return failureOfRead(graphRead);
     const { origin: _segmentOrigin, ...segment } = normalized.draft;
-    const merged = mergeStageRefinement(graphRead.value.plan,
+    // The segment is written in the round's workspace frame: the base goes back to that frame for the merge, and the
+    // propose qualifies the merged plan once.
+    const merged = mergeStageRefinement(planInCallerView(graphRead.value.plan, workspaceId, facts.mainWorkspaceId),
       { ...segment, planRevision: graphRead.value.plan.planRevision + 1 });
     if (merged.status !== 'merged') return skipped('no_plan', false);
     draft = merged.draft;

@@ -205,7 +205,7 @@ import type { PlanServiceDependencies } from '../core/work-graph/tasks/plan-serv
 import { createPlanAdoptionStop } from './plan-adoption-stop.js';
 import { PLAN_RECORD_SCHEMAS } from '../core/work-graph/persistence/plan-record-codecs.js';
 import { DECISION_RECORD_SCHEMAS } from '../core/work-graph/persistence/decision-record-codecs.js';
-import { PLAN_STATE_RECORD_SCHEMAS, PLAN_GOVERNANCE_RECORD_SCHEMAS, GOAL_BY_WORKSPACE_INDEX, createPlanReaders, createSessionResponsibilityBasisReader, createNoteRunTaskResolver, readCanonicalTaskFacts, readEffectiveRegionAdviser, readGoal, readGoalPhase, readGoalPlanWindow, readGoalsByProject, readGoalRunsForCount, readOpenResponsibilityLines, readTaskClosure, taskClosureOf, type PlanReaders, type TaskClosureV1 } from '../core/work-graph/tasks/plan-readers.js';
+import { PLAN_STATE_RECORD_SCHEMAS, PLAN_GOVERNANCE_RECORD_SCHEMAS, GOAL_BY_WORKSPACE_INDEX, createPlanReaders, createSessionResponsibilityBasisReader, createNoteRunTaskResolver, readCanonicalTaskFacts, readEffectiveRegionAdviser, readGoal, readGoalPhase, readGoalPlanWindow, readGoalsByProject, readGoalRunsForCount, readOpenResponsibilityLines, readTaskClosure, taskClosureOf, type PlanCheckResolver, type PlanReaders, type TaskClosureV1 } from '../core/work-graph/tasks/plan-readers.js';
 import { createSessionDirectory } from '../core/work-graph/sessions/session-directory.js'; import { createDutyRecipient } from '../core/work-graph/sessions/duty-recipient.js';
 import { createConsumableSessions, type ConsumableSessionsPort }
   from '../core/work-graph/views/consumable-sessions.js';
@@ -1863,6 +1863,9 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       records: backend.records, architecture: catalog, roles: { readServedRoles },
       messages: mailbox,
       expiryCount: (ctx, input) => messageExpiry.readExpiryCount(ctx, input),
+      // Called at read time, after `readInstalledCheckList` below is defined.
+      checks: scope => readInstalledCheckList(scope),
+      knowledge: knowledgeLines,
     });
     // L8 (book ruling 6): the SAME catalog instance resolves an omitted capture
     // `mappings`, so the automatic/manual capture and the reminder read share
@@ -1889,6 +1892,13 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
           && options.checks.workspace.projectId === scope.projectId
           && options.checks.workspace.workspaceId === scope.workspaceId
           ? options.checks : undefined);
+    // The same scope map `readInstalledChecks` reads: `null` is "no configuration at all", while a configuration
+    // with zero checks is the empty array (plan-readers' `planChecks` then appends only the built-in witness
+    // capability). The plan readers and the secretary facts read it.
+    const readInstalledCheckList: PlanCheckResolver = async scope => {
+      const configuration = currentCheckConfiguration(scope);
+      return { status: 'ready', value: configuration === undefined ? null : [...configuration.checks] };
+    };
     const planDependencies: PlanServiceDependencies = { records: backend.records, materials: rawMaterials, now, eventId: randomUUID,
       automationPolicy: currentAutomationPolicy, configurationFor: currentCheckConfiguration,
       // Slice 5 §3.2: the SAME resolved operator the settings/message owners use,
@@ -4958,13 +4968,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
         listWorkspaceGoals: workspace => listWorkspaceGoals(backend.records, workspace),
         readGoalTerminalState: goal => readGoalTerminalState(backend.records, goal),
       },
-      // The same scope map `readInstalledChecks` reads: `null` is "no configuration at all", while a
-      // configuration with zero checks is the empty array (plan-readers' `planChecks` then appends only the
-      // built-in witness capability).
-      checks: async scope => {
-        const configuration = currentCheckConfiguration(scope);
-        return { status: 'ready', value: configuration === undefined ? null : [...configuration.checks] };
-      },
+      checks: readInstalledCheckList,
     });
     // PL L-03 (§AGENTS 3): each published goal-loop read joins the close drain
     // through the ONE trackedCall path; the internal injections above keep the

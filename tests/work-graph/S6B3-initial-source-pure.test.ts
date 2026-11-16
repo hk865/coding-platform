@@ -45,6 +45,7 @@ function factsFor(resolution: InitialPlanSourceResolutionV1,
     manifest: { goal: manifestGoal, workspace: { ref: { workspaceId: WORKSPACE }, revision: 11 } } as unknown as PreparedQueryManifestV1,
     answerText: 'the saved initialization answer',
     resolution,
+    mainWorkspaceId: WORKSPACE,
   };
 }
 
