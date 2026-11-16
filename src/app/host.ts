@@ -62,6 +62,7 @@ import {
 } from '../core/workspace/workspace-change-capture.js';
 import { lineRefOf, sameCheckout, type LineSnapshot } from '../contracts/line.js';
 import { nextLineStatus } from '../core/work-graph/state/line-machine.js';
+import { derivePlanProposalReadVerdict } from '../core/work-graph/state/plan-machine.js';
 import type { WorkspaceHostBindings } from '../core/workspace/access.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { SessionRef, WorkspaceScope } from '../contracts/core/identity.js';
@@ -862,6 +863,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   // rounds stay on record for a later Host with the driver on.
   let requestWakeSink: ((scope: WorkspaceScope, source: 'request_command') => void) | undefined;
   let armMessageRelease: ((scope: WorkspaceScope) => void) | undefined;
+  /** 121-136 A3: the settings queue every adoption takes once settings exist (`runExclusive`); see `wrapPlanChange`. */
+  let adoptionGate: (<T>(operation: () => Promise<T>) => Promise<T>) | undefined;
   /** Every open project's drivers, by project id. */
   const projects = new Map<string, HostProject>();
   /** Set once the settings exist: from then on a project's stage two is built with its stage one. */
@@ -1001,7 +1004,10 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       // L-02 §6.4.3: an automatic adoption runs through the SAME wrapper at the
       // commit itself; the published `platform.plans` stays raw (the route binding
       // already wraps it, so wrapping both would export one adoption twice).
-      wrapPlanChange: raw => adoptAndExport(raw, (result, [ctx]) => result.status === 'committed'
+      // 121-136 A3: the platform's own adoption runs in the settings queue, the one a person's adoption of a plan's
+      // checks and their take-back hold, so it never commits between a take-back's read and its write.
+      wrapPlanChange: raw => adoptAndExport((...args: Parameters<typeof raw>) => adoptionGate === undefined
+        ? raw(...args) : adoptionGate(() => raw(...args)), (result, [ctx]) => result.status === 'committed'
         ? { plan: result.value, scope: { projectId: result.value.goalRef.projectId,
           workspaceId: ctx.workspaceId ?? '', goalId: result.value.goalRef.goalId } }
         : null),
@@ -2630,7 +2636,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       } };
     },
     // 121-136: the checks a plan candidate brings, from its stored record (creation-only, so the digest names them), and
-    // whether it was adopted.
+    // where its adoption stands: the stored status, then the same read verdict the cards use (stale, Goal cancelled).
     readPlanCheckProposal: async (scope, proposalRef) => {
       const platform = platformFor(scope.projectId);
       if (platform === null) return { status: 'rejected', code: 'unavailable', reason: 'the project store is not available' };
@@ -2641,8 +2647,14 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
           : { status: 'rejected', code: 'unavailable', reason: 'the plan candidate could not be read' };
       }
       const checks = structuredClone(read.value.checks ?? []);
+      const goal = await platform.plans.queryGoal(settingsContext(scope), read.value.goalRef);
+      if (goal.status !== 'ready') {
+        return { status: 'rejected', code: 'unavailable', reason: "the plan candidate's Goal could not be read" };
+      }
+      const verdict = derivePlanProposalReadVerdict(read.value, goal.value.goal.activePlanRevision,
+        goal.value.goal.desiredState);
       return { status: 'ready', value: { checksDigest: sha256Hex(canonicalJson(checks as unknown as JsonValue)), checks,
-        accepted: read.value.status === 'accepted' } };
+        adoption: read.value.status === 'accepted' ? 'adopted' : verdict.status === 'candidate' ? 'open' : 'ended' } };
     },
     openWorkspace: openWorkspaceImpl,
     bootstrap: buildBootstrap,
@@ -2718,6 +2730,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         confirmInstalledChecks: (ctx, input) => projectPlatform(ctx.projectId).confirmInstalledChecks(ctx, input) },
     })
     : undefined;
+  if (hostSettings !== undefined) adoptionGate = operation => hostSettings.runExclusive(operation);
   // Every open project's stage two (its route bindings) now that the settings exist; a project opened later builds
   // both stages at once.
   settingsReady = true;
@@ -4149,23 +4162,25 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     }
     return result;
   };
-  // 121-136 A3: a person's `plans/apply` of a candidate that brings its own checks. The adoption owner's receipt answers
-  // a replay first, so a replay neither reads the current checks nor installs again; then settings adopt it, installing
-  // the checks the workspace does not run yet as one recoverable whole (`adoptWithPlanChecks`). A candidate with none,
-  // or a Host that keeps no settings, is the route's own adoption (whose owner refuses a check that is not installed).
+  // 121-136 A3: a person's `plans/apply` of a candidate that brings its own checks goes through settings
+  // (`adoptWithPlanChecks`): in the settings queue, the adoption owner's receipt answers a replay first, so a replay
+  // neither reads the current checks nor installs again; then the checks the workspace does not run yet are installed
+  // with the adoption as one recoverable whole. Every other adoption is the route's own (whose owner refuses a check
+  // that is not installed), in the same queue while settings exist, so it never relies on a check a take-back is
+  // about to remove; a Host that keeps no settings has no take-back and adopts directly.
   const applyPlanWithChecks: CoreRouteBindings['applyPlanChange'] = async (ctx, request) => {
+    if (hostSettings === undefined) return routeBindings.applyPlanChange(ctx, request);
     // The route's own admission judges the body; only a readable candidate that brings checks goes through settings.
     const proposalRef = (request as { input?: { proposalRef?: unknown } } | undefined)?.input?.proposalRef;
-    if (typeof proposalRef !== 'object' || proposalRef === null || hostSettings === undefined) {
-      return routeBindings.applyPlanChange(ctx, request);
+    const proposal = typeof proposalRef === 'object' && proposalRef !== null
+      ? await platform.plans.readPlanProposal(ctx, proposalRef as PlanProposalRef) : null;
+    if (proposal?.status !== 'ready' || proposal.value.checks === undefined) {
+      return hostSettings.runExclusive(() => routeBindings.applyPlanChange(ctx, request));
     }
-    const proposal = await platform.plans.readPlanProposal(ctx, proposalRef as PlanProposalRef);
-    if (proposal.status !== 'ready' || proposal.value.checks === undefined) return routeBindings.applyPlanChange(ctx, request);
-    const original = await platform.plans.lookupPlanChange(ctx, request);
-    if (original.status !== 'not_found') return original;
     const { ref, checks } = proposal.value;
     return hostSettings.adoptWithPlanChecks(ctx, { scope: { projectId: ref.projectId, workspaceId: ref.workspaceId },
-      proposalRef: ref, checks }, () => routeBindings.applyPlanChange(ctx, request));
+      proposalRef: ref, checks }, { replay: () => platform.plans.lookupPlanChange(ctx, request),
+      apply: () => routeBindings.applyPlanChange(ctx, request) });
   };
   // PL §6.4.3 adoption point 2: the `plans/apply` binding is the same wrapper; the
   // accepted snapshot is the export input, and the route result is unchanged.

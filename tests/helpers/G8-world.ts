@@ -168,7 +168,7 @@ export async function openG8Project(label: string, seedChecks: G8Check[]) {
     committed(await world.post('initialization/adopt', plain(steps.scope, { commandId: `${label}-adopt`,
       expectedAnswerDigest: sha256Hex(answerText), source: { kind: 'binding', answerRef, draftIndex: 0 },
       expectedGoal: { ref: seedGoal, revision: 1 } })), 'G8: initialization/adopt');
-    return { ...steps, seedGoal, close };
+    return { ...steps, seedGoal, seedAnswer: answerRef, close };
   } catch (error) {
     await close();
     throw error;

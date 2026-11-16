@@ -255,10 +255,11 @@ export interface HostSettingsAssembly {
   readCheckProposal?(scope: CoreScope, answerRef: QueryJobAnswerRef): Promise<SettingsResponse<{
     answerRef: QueryJobAnswerRef; answerDigest: string; checks: RegisteredCommandCheck[];
   }>>;
-  /** 121-136: read the checks one plan candidate brings, their digest and whether the candidate was adopted
-   *  (`accepted`). Absence means installing them is unsupported. */
+  /** 121-136: read the checks one plan candidate brings, their digest and where its adoption stands: `adopted`
+   *  (accepted, by whoever), `open` (still a candidate the owner may adopt) or `ended` (not adopted, refused, stale, or
+   *  its Goal cancelled). Absence means installing them is unsupported. */
   readPlanCheckProposal?(scope: CoreScope, proposalRef: PlanProposalRef): Promise<SettingsResponse<{
-    checksDigest: string; checks: RegisteredCommandCheck[]; accepted: boolean;
+    checksDigest: string; checks: RegisteredCommandCheck[]; adoption: 'adopted' | 'open' | 'ended';
   }>>;
   /** KLS-2: the checkout behind one registered workspace, through the Host's one line resolution: its repository key
    *  (the real common git directory) or `notGit`. Absence means the setting is unsupported. */
@@ -916,14 +917,16 @@ export async function createHostSettings(
   };
 
   /**
-   * 121-136 A3: settles one workspace's pending plan adoption, if any. The candidate's own record answers whether it was
-   * adopted (`accepted` is written in the adoption's commit, whoever adopted it: this request, or the platform once the
-   * checks were installed). Adopted keeps the checks. Not adopted first takes this plan's checks back out of the saved
-   * and the installed configuration (a workspace left with no saved checks goes back to its start-up checks, or none).
-   * Either way the record then closes. A candidate that cannot be read, or a take-back that cannot be saved or
-   * installed, stays pending and answers why; `null` means nothing is pending.
+   * 121-136 A3: settles one workspace's pending plan adoption, if any, inside the settings queue every adoption entry
+   * takes (the Host runs the platform's own adoptions in it too). The candidate's own record, read here, answers
+   * whether it was adopted (`accepted` is written in the adoption's commit, whoever adopted it). Adopted keeps the
+   * checks. Not adopted first takes this plan's checks back out of the saved configuration and, with `install`, out of
+   * the Host's (a workspace left with no saved checks goes back to its start-up checks, or none); the start passes
+   * `false` and installs once, after every record settled. Either way the record then closes. A candidate that cannot
+   * be read, or a take-back that cannot be saved or installed, stays pending and answers why; `null`: nothing pending.
    */
-  const settlePlanAdoption = async (scope: CoreScope): Promise<ReturnType<typeof rejected<'unavailable'>> | null> => {
+  const settlePlanAdoption = async (scope: CoreScope, install: boolean):
+    Promise<ReturnType<typeof rejected<'unavailable'>> | null> => {
     const index = workspaces.findIndex(entry => scopeKey(entry.scope) === scopeKey(scope));
     const entry = workspaces[index];
     const pending = entry?.planAdoption;
@@ -935,7 +938,7 @@ export async function createHostSettings(
     try { read = await assembly.readPlanCheckProposal?.(scope, pending.proposalRef); }
     catch { read = undefined; }
     if (read?.status !== 'ready') return stillPending('the plan candidate could not be read');
-    if (!read.value.accepted) {
+    if (read.value.adoption !== 'adopted') {
       const kept = (entry.planChecks ?? []).filter(planned => !sameJson(planned.plan.proposalRef, pending.proposalRef));
       const { planChecks: _taken, ...rest } = entry;
       workspaces[index] = kept.length === 0 ? rest : { ...rest, planChecks: kept };
@@ -944,8 +947,10 @@ export async function createHostSettings(
         workspaces[index] = entry;
         return stillPending('taking its checks back could not be written to the settings file');
       }
-      try { await notify(); }
-      catch { return stillPending('the Host did not confirm the configuration without its checks'); }
+      if (install) {
+        try { await notify(); }
+        catch { return stillPending('the Host did not confirm the configuration without its checks'); }
+      }
     }
     await closePlanAdoption(scope);
     return null;
@@ -1102,9 +1107,13 @@ export async function createHostSettings(
       writeAllowed: entry.writeAllowed, commandsAllowed: entry.commandsAllowed })));
     await persist();
   }
-  // 121-136 A3: an adoption that installed a plan's checks and was cut off settles before the first install, so those
-  // checks serve other flows only once their plan is known adopted (one whose candidate cannot be read stays pending).
-  for (const entry of [...workspaces]) await settlePlanAdoption(entry.scope);
+  // 121-136 A3: every adoption that installed a plan's checks and was cut off settles before the first install, which
+  // then publishes the settled configuration once. One that cannot settle stops the start, as a failed restore does:
+  // every listed workspace's project is open here, so its candidate unreadable or the file unwritable is that failure.
+  for (const entry of [...workspaces]) {
+    const pending = await settlePlanAdoption(entry.scope, false);
+    if (pending !== null) throw new Error(pending.reason);
+  }
   await notify();
 
   async function directoriesRoute(input: unknown): Promise<SettingsResponse<DirectoryListing>> {
@@ -1527,31 +1536,43 @@ export async function createHostSettings(
 
   /**
    * 121-136 A3: a person's adoption of a plan that brings its own checks, as one recoverable whole under the settings
-   * queue, in the initialization adoption's order: record with the state before, install, adopt, close. The Host answers
-   * a replay from the adoption owner's receipt before this runs. An earlier adoption of this workspace left pending
-   * settles first. A plan whose checks are all installed already (`proposedCheckSplit`) is the plain adoption, with no
-   * install grant. Otherwise the plan's checks pass the proposal validation a saved Answer's do (`trustedCheckProposal`);
-   * the ones not installed are saved with the plan, the approver and the time in the same write as the pending record
-   * (`planAdoption`), then installed, and `apply` adopts with the request's own identity. Committed closes the record;
-   * any other answer settles it (`settlePlanAdoption`), and a settle that cannot finish answers that it is pending.
+   * queue, in the initialization adoption's order: record with the state before, install, adopt, close. Inside the
+   * queue, in order: an earlier adoption of this workspace left pending settles; the adoption owner's original receipt
+   * answers a replay (`replay`), with no read of the current checks and no install; a candidate whose adoption has
+   * ended (adopted, not adopted, stale) gets the owner's own answer from `apply` with nothing installed; a plan whose
+   * checks are all installed already (`proposedCheckSplit`) is the plain `apply`, with no install grant. Otherwise the
+   * plan's checks pass the proposal validation a saved Answer's do (`trustedCheckProposal`); the ones not installed are
+   * saved with the plan, the approver and the time in the same write as the pending record (`planAdoption`), then
+   * installed, and `apply` adopts with the request's own identity. Committed closes the record; any other answer
+   * settles it (`settlePlanAdoption`), and a settle that cannot finish answers that it is pending.
    */
-  const adoptWithPlanChecks: ChecksAdoptionEntryPort['adoptWithPlanChecks'] = (ctx, input, apply) => serialize(async () => {
+  const adoptWithPlanChecks: ChecksAdoptionEntryPort['adoptWithPlanChecks'] = (ctx, input, { replay, apply }) =>
+    serialize(async () => {
     const { scope, proposalRef } = input;
     const notInstalled = (code: CoreError, reason: string) => rejected(code, `the plan's checks `
       + `${input.checks.map(check => check.checkId).join(', ')} cannot be installed, so the plan was not adopted: ${reason}`);
     const adoption = callbacks.adoption;
-    if (adoption === undefined) return notInstalled('unsupported', 'the Host does not publish the installed-check read');
-    const earlier = await settlePlanAdoption(scope);
+    const readProposal = assembly.readPlanCheckProposal;
+    if (adoption === undefined || readProposal === undefined) {
+      return notInstalled('unsupported', 'the Host does not publish the installed-check or the plan-check read');
+    }
+    const earlier = await settlePlanAdoption(scope, true);
     if (earlier !== null) return earlier;
+    const original = await replay();
+    if (original.status !== 'not_found') return original;
+    let read: Awaited<ReturnType<typeof readProposal>>;
+    try { read = await readProposal(scope, proposalRef); }
+    catch { read = unavailable('the plan candidate could not be read'); }
+    if (read.status !== 'ready') return notInstalled(read.code, read.reason);
+    if (read.value.adoption !== 'open') return await apply();
     const installed = await adoption.confirmInstalledChecks(ctx, { scope });
     if (installed.status !== 'ready') return notInstalled('unavailable', 'the installed checks could not be read');
-    const { added, conflicts } = proposedCheckSplit(installed.value.checks, input.checks);
+    const { added, conflicts } = proposedCheckSplit(installed.value.checks, read.value.checks);
     if (conflicts.length > 0) return notInstalled('invalid', checkConflictProblem(conflicts));
     // 121-136 A1: a check identical to an installed one is installed already; only a real addition needs the grant.
     if (added.length === 0) return await apply();
-    const checked = await trustedCheckProposal(scope, { owner: proposalRef, what: 'plan', read:
-      assembly.readPlanCheckProposal === undefined ? undefined : () => assembly.readPlanCheckProposal!(scope, proposalRef) },
-    null);
+    const ready = read;
+    const checked = await trustedCheckProposal(scope, { owner: proposalRef, what: 'plan', read: async () => ready }, null);
     if (checked.status === 'rejected') return notInstalled(checked.response.code, checked.response.reason);
 
     const index = workspaces.findIndex(entry => scopeKey(entry.scope) === scopeKey(scope));
@@ -1574,11 +1595,11 @@ export async function createHostSettings(
     }
     try { await notify(); }
     catch {
-      return await settlePlanAdoption(scope)
+      return await settlePlanAdoption(scope, true)
         ?? notInstalled('unavailable', 'the Host configuration was not confirmed; retry the same adoption');
     }
     const result = await apply();
-    if (result.status !== 'committed') return await settlePlanAdoption(scope) ?? result;
+    if (result.status !== 'committed') return await settlePlanAdoption(scope, true) ?? result;
     await closePlanAdoption(scope);
     return result;
   });

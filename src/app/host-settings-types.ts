@@ -275,11 +275,13 @@ export interface HostSettingsPort {
 export interface ChecksAdoptionEntryPort
   extends ChecksEntryPort, ChecksConfirmationPort, SavedChecksReadPort, SettingsSerialGatePort {
   /**
-   * 121-136 A3: a person's adoption of a plan that brings its own checks (`checks`, as the candidate's record holds
-   * them): the ones not installed are validated, recorded and installed, then `apply` adopts the plan, as one
-   * recoverable whole under the settings queue; checks all installed already are the plain `apply`.
+   * 121-136 A3: a person's adoption of a plan that brings its own checks (`checks` names them in a refusal), as one
+   * recoverable whole under the settings queue: `replay` is the adoption owner's receipt lookup (the original answer,
+   * or `not_found`), `apply` the adoption itself; the checks not installed are validated, recorded and installed before
+   * `apply`; checks all installed already, or a candidate whose adoption has ended, are the plain `apply`.
    */
   adoptWithPlanChecks<T>(ctx: CoreCallContext,
     input: { scope: CoreScope; proposalRef: PlanProposalRef; checks: readonly RegisteredCommandCheck[] },
-    apply: () => Promise<WriteResult<T>>): Promise<WriteResult<T>>;
+    adopt: { replay: () => Promise<WriteResult<T> | { status: 'not_found' }>; apply: () => Promise<WriteResult<T>> }):
+    Promise<WriteResult<T>>;
 }
