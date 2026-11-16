@@ -56,7 +56,7 @@ import { createQueryGraphToolGroup, finalToolNamesOf, type ToolGroup } from './t
 import { createLinkCheckTools, LINK_CHECK_TOOL_NAMES } from './link-check-tool.js';
 import { createWebLookupTools, WEB_LOOKUP_TOOL_NAMES } from './web-lookup-tools.js';
 import {
-  answerSubmitNamesIn, createAnswerToolBarrier, createAnswerTools, type AnswerToolsHandle,
+  answerSubmitNamesIn, createAnswerToolBarrier, createAnswerTools, unofferedSubmitReason, type AnswerToolsHandle,
 } from './answer-tools.js';
 import { createNoteTools, NOTE_TOOL_NAMES, type NoteToolsHandle } from './note-tool.js';
 import { createWhiteboardTools, WHITEBOARD_TOOL_NAMES } from './whiteboard-tools.js';
@@ -976,6 +976,16 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         },
       };
 
+      // 121-136 A6: a submit tool this round does not offer is refused with this round's own submit tools, before the
+      // Kernel's bare `unknown_tool`; the round stays open for the right call.
+      const submitHook: HookPort = {
+        hookId: 'g8-unoffered-submit', point: 'before_tool', priority: 0,
+        async execute(invocation): Promise<{ point: 'before_tool'; kind: 'continue' } | { point: 'before_tool'; kind: 'block'; reason: string }> {
+          const reason = unofferedSubmitReason(invocation.call.name, submitNames);
+          return reason === null ? { point: 'before_tool', kind: 'continue' } : { point: 'before_tool', kind: 'block', reason };
+        },
+      };
+
       // Ruling 14: the same pure rule runs at start. A Query with a formal basis
       // reads no boundary (C7); without one it reads the real completed boundary.
       let currentHistory;
@@ -1085,6 +1095,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           controlHooks: [
             enteredHook,
             ...(hasFileRead ? [toolPathHook] : []),
+            ...(submitNames.length === 0 ? [] : [submitHook]),
             ...(commandWatch === undefined ? [] : [commandWatch.hook]),
           ],
           ...(modelBarrier === undefined ? {} : { toolGroupBarrier: modelBarrier }),

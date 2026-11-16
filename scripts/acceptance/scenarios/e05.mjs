@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { newId, ready } from '../lib/http.mjs';
 import { broken, chooseModel, coldStart, createGoal, driverStart, ensurePolicy, executions, findAll, openProject, openRoleLine,
-  proposeAndApply, runHistory, taskRounds, textOf, turnsOf, waitGoal } from '../lib/flows.mjs';
+  proposeAndApply, runHistory, taskRounds, testCheck, textOf, turnsOf, waitGoal } from '../lib/flows.mjs';
 
 const MINUTE = 60_000;
 const SEED = {
@@ -78,7 +78,7 @@ function judgeSentence(rec, id, found, wantSame, label) {
   }
 }
 
-function draft(goalId, moduleRef) {
+export function draft(goalId, moduleRef) {
   const work = (taskId, title, files) => ({ taskId, title, requirementLevel: 'required', taskKind: 'work', disposition: 'active',
     phase: 'pending', scope: { kind: 'module', stageId: 'build', moduleRef }, executionIntent: 'request_execution', plannedFiles: files });
   return {
@@ -137,7 +137,8 @@ async function run(ctx, rec) {
   const goalId = newId('g6-e05');
   const goal = await createGoal(ctx, project, goalId, '给 users 和 orders 都加邮箱格式校验，两处用同一条校验规则', rec);
   rec.facts.userCommand.push('goals/create + plans/propose（两个任务：t-users、t-orders）');
-  await proposeAndApply(ctx, project, goal.ref, draft(goalId, module.ref.moduleId), 'E05: 两个并行任务共用一条校验规则', rec);
+  await proposeAndApply(ctx, project, goal.ref, draft(goalId, module.ref.moduleId), 'E05: 两个并行任务共用一条校验规则', rec,
+    [testCheck(goalId, ['t-users', 't-orders', 'gate'])]);
   for (const taskId of ['t-users', 't-orders']) {
     const started = await driverStart(ctx, project, goal.ref, { flowId: `e05-${taskId}`, taskId });
     rec.note(`driver-start ${taskId}: ${started?.status} ${started?.value?.state ?? started?.code ?? ''}`);

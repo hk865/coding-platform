@@ -8,7 +8,7 @@
 // event came, the chain is over (its Task done and every wait of it settled), or the window ends.
 import { newId, ready } from '../lib/http.mjs';
 import { broken, chooseModel, coldStart, createGoal, driverStart, ensurePolicy, executions, findAll, lines, openProject, orNull,
-  proposeAndApply, sessionTurns, sleep, textOf, waitFor, waitGoal } from '../lib/flows.mjs';
+  proposeAndApply, sessionTurns, sleep, testCheck, textOf, waitFor, waitGoal } from '../lib/flows.mjs';
 
 const MINUTE = 60_000;
 const DEADLINE_MS = 2 * MINUTE;
@@ -49,7 +49,7 @@ const def = {
   ],
 };
 
-function draft(goalId, secretary) {
+export function draft(goalId, secretary) {
   return {
     schemaVersion: 2, planId: `${goalId}-plan`, planRevision: 1, goalId, stages: [],
     tasks: [
@@ -141,7 +141,8 @@ async function run(ctx, rec) {
   await ensurePolicy(ctx, project, ['static']);
   const goalId = newId('g6-wait');
   const goal = await createGoal(ctx, project, goalId, '先问清楚 num.js 的导出，再加 triple(n)', rec);
-  await proposeAndApply(ctx, project, goal.ref, draft(goalId, secretary.key.sessionId), 'waiting: the member asks and waits', rec);
+  await proposeAndApply(ctx, project, goal.ref, draft(goalId, secretary.key.sessionId), 'waiting: the member asks and waits', rec,
+    [testCheck(goalId, ['t-wait', 'gate'])]);
   rec.facts.userCommand.push(`goals/create + plans/propose（t-wait 的指令：${instruction(secretary.key.sessionId)}）`);
   await driverStart(ctx, project, goal.ref, { flowId: newId('wait'), taskId: 't-wait' });
 

@@ -3,8 +3,8 @@
 // answers from the saved version (draft §1.6; MVP-BEHAVIOR.md:94-116; slice-9-SPEC.md:665, :691). Ideas need an
 // already governed project (C-108: semantic_query), so a small cold-start seed Goal comes first.
 import { newId, ready } from '../lib/http.mjs';
-import { answerPlanQuestions, broken, chooseModel, coldStart, openProject, sessionTurns, submitRequest, waitFor, waitGoal,
-  waitRequest } from '../lib/flows.mjs';
+import { answerPlanQuestions, broken, chooseModel, coldStart, openProject, sessionTurns, submitRequest, waitCandidate,
+  waitGoal, waitRequest } from '../lib/flows.mjs';
 import { Abort } from '../lib/report.mjs';
 
 const MINUTE = 60_000;
@@ -71,8 +71,8 @@ async function run(ctx, rec) {
   // G7 W5: a plan round that asks the person questions gets the person's answer (at most twice), then the candidate.
   const onGoal = { extra: { goalId: goalRef.goalId } };
   view = await answerPlanQuestions(ctx, project, root, view, rec, onGoal);
-  const first = await waitFor(ctx, 'the request candidate', () => candidateOf(project, goalRef, root),
-    value => value?.head !== null && value?.head !== undefined, { timeoutMs: 20 * MINUTE });
+  const first = await waitCandidate(ctx, project, goalRef, root, 'the request candidate',
+    { timeoutMs: 20 * MINUTE, check: 'candidate', done: value => value?.head !== null && value?.head !== undefined });
   rec.check('candidate', first.status === 'candidate', `候选 ${first.head.ref.proposalId}（${first.status}）`);
   rec.link('plan', first.head.ref, first.head.revision);
 
@@ -114,8 +114,8 @@ async function run(ctx, rec) {
   }
   // G7 W5: the second request's plan round may ask too (G6 run 4: four questions); the same answer, the same cap.
   otherView = await answerPlanQuestions(ctx, project, other.requestRoot, otherView, rec, onGoal);
-  const otherCandidate = await waitFor(ctx, 'the second request candidate', () => candidateOf(project, goalRef, other.requestRoot),
-    value => value?.head !== null && value?.head !== undefined, { timeoutMs: 20 * MINUTE });
+  const otherCandidate = await waitCandidate(ctx, project, goalRef, other.requestRoot, 'the second request candidate',
+    { timeoutMs: 20 * MINUTE, done: value => value?.head !== null && value?.head !== undefined });
   const goal = ready(await host.client.read('goals/read', project.scope, goalRef));
   const adopted = await host.client.write('plans/apply', project.scope,
     { proposalRef: second.head.ref, expectedProposalRevision: second.head.revision, decisionRefs: [] },

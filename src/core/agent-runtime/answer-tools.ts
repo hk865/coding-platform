@@ -48,7 +48,9 @@ import {
   type CommandRerunAdviceSubjectV1, type CommandRerunAdviceV1,
 } from '../../contracts/command-rerun-advice.js';
 import type { InitialPlanningSetupV2 } from '../../contracts/initial-planning.js';
-import { checkCapabilitiesOf } from '../../contracts/verification.js';
+import {
+  checkCapabilitiesOf, checkConflictProblem, checksWithProposed, proposedCheckSplit, type RegisteredCommandCheck,
+} from '../../contracts/verification.js';
 import type { ToolTextV1 } from '../../contracts/prompts/prompt-pack.js';
 import type {
   SecretaryPreparationFactsPort, SecretaryPreparationFactsV1,
@@ -162,9 +164,11 @@ type PlanForm = Pick<PlanRevisionDraft,
   & { tasks: PlanTaskForm[]; inputRequirements?: TaskInputRequirementV2[] };
 export type InitialPlanForm = { summary: string; plan: PlanForm; setup: SetupForm;
   goalCardDrafts?: DraftForm[]; planDraftIndex?: number };
-/** The planning round's one-tool form: exactly one of `plan`/`questions` per `answerKind`. */
+/** The planning round's one-tool form: exactly one of `plan`/`questions` per `answerKind`; a plan may bring its own
+ *  checks (121-136). */
 export type PlanRoundForm = { answerKind: 'plan' | 'questions'; summary: string;
-  plan?: PlanForm; questions?: string[]; reason?: { text: string; affectedTaskIds?: string[]; objective?: string } };
+  plan?: PlanForm; questions?: string[]; reason?: { text: string; affectedTaskIds?: string[]; objective?: string };
+  checks?: RegisteredCommandCheck[] };
 /** The unknown-outcome round's form: the phase and frozen subject are never the model's. */
 export type UnknownCallAdviceForm = {
   choice: UnknownCallAdviceV1['choice'];
@@ -281,6 +285,7 @@ export function buildAnswerText(
       schemaVersion: 2, kind: 'plan', summary: round.summary,
       ...(round.plan === undefined ? {} : { plan: filledPlan(round.plan) }),
       ...(round.reason === undefined ? {} : { reason: round.reason }),
+      ...(round.checks === undefined ? {} : { checks: round.checks }),
     });
   }
   const initial = form as InitialPlanForm | QuestionsForm;
@@ -464,6 +469,18 @@ function planSchema(texts: ToolTextV1['parameters']): z.ZodType {
   }).strict();
 }
 
+/** One registered command check as a form proposes it: a first plan's `setup.checks` and a plan round's `checks`. */
+function checkSchema(): z.ZodType {
+  return z.object({
+    checkId: z.string().min(1),
+    kind: z.enum(['static', 'dynamic']),
+    command: z.string().min(1),
+    cwd: z.string(),
+    timeoutMs: z.number().int().min(1),
+    taskIds: z.union([z.literal('all'), z.array(z.string().min(1))]),
+  }).strict();
+}
+
 function setupSchema(texts: ToolTextV1['parameters']): z.ZodType {
   const interfaceSchema = z.object({
     id: z.string().min(1), description: z.string().min(1), paths: z.array(z.string().min(1)),
@@ -495,18 +512,10 @@ function setupSchema(texts: ToolTextV1['parameters']): z.ZodType {
     minimumRequiredRequirementsPerObligation: z.number().int().min(1),
     fastPathDiffClasses: z.array(z.string().min(1)).optional(),
   }).strict();
-  const checkSchema = z.object({
-    checkId: z.string().min(1),
-    kind: z.enum(['static', 'dynamic']),
-    command: z.string().min(1),
-    cwd: z.string(),
-    timeoutMs: z.number().int().min(1),
-    taskIds: z.union([z.literal('all'), z.array(z.string().min(1))]),
-  }).strict();
   return z.object({
     architecture: textField(architectureSchema, texts, 'setup.architecture'),
     completionPolicy: textField(policySchema, texts, 'setup.completionPolicy'),
-    checks: textField(z.array(checkSchema), texts, 'setup.checks'),
+    checks: textField(z.array(checkSchema()), texts, 'setup.checks'),
   }).strict();
 }
 
@@ -532,6 +541,7 @@ function planRoundSchema(texts: ToolTextV1['parameters']): z.ZodType {
       text: z.string(), affectedTaskIds: z.array(z.string().min(1)).optional(),
       objective: z.string().optional(),
     }).strict().optional(), texts, 'reason'),
+    checks: textField(z.array(checkSchema()).optional(), texts, 'checks'),
   }).strict();
 }
 
@@ -618,6 +628,7 @@ export function answerProblems(
       if (round.questions !== undefined) problems.push({ section: 'questions', reason: 'the plan answer must not carry questions' });
     } else {
       if (round.plan !== undefined) problems.push({ section: 'plan', reason: 'the questions answer must not carry a plan' });
+      if (round.checks !== undefined) problems.push({ section: 'checks', reason: 'the questions answer must not carry checks' });
     }
     const parsed = parseInitialPlanningResponseV2(built);
     if (parsed.status !== 'parsed') problems.push({ section: 'answer', reason: parsed.reason });
@@ -626,10 +637,19 @@ export function answerProblems(
       problems.push({ section: 'summary', reason: 'the plan summary must be non-empty and at most 16 KiB of UTF-8' });
     }
     if (facts !== null && facts.admission !== null && parsed.status === 'parsed' && parsed.response.kind === 'plan') {
+      // 121-136: the plan's own checks join the installed ones for its coverage; one installed under the same id with
+      // other content is refused (C5), and its adoption installs the rest.
+      const proposed = parsed.response.checks ?? [];
+      const installed = facts.installedChecks;
+      if (installed !== null) {
+        const { conflicts } = proposedCheckSplit(installed, proposed);
+        if (conflicts.length > 0) problems.push({ section: 'checks', reason: checkConflictProblem(conflicts) });
+      }
       for (const reason of planRoundAnswerIssues({ plan: parsed.response.plan, admission: facts.admission,
         activePolicy: facts.effectivePolicy?.content ?? null,
-        checks: facts.installedChecks === null ? null : checkCapabilitiesOf(facts.installedChecks),
-        workspaceId: facts.workspace.workspaceId, affectedTaskIds: parsed.response.reason?.affectedTaskIds })) {
+        checks: installed === null ? null : checkCapabilitiesOf(checksWithProposed(installed, proposed)),
+        workspaceId: facts.workspace.workspaceId, affectedTaskIds: parsed.response.reason?.affectedTaskIds,
+        proposedChecks: proposed })) {
         problems.push({ section: 'plan', reason });
       }
     }
@@ -798,6 +818,17 @@ export type AnswerToolsConfig = {
 };
 
 export type AnswerToolsHandle = ToolGroup;
+
+/**
+ * G6 run 5 E08 (121-136 A6): a call to a submit tool this round does not offer is refused before the Kernel would answer
+ * `unknown_tool`, naming the round's own submit tools, so the model can call the right one in the same round; the round
+ * stays open. `null` for a tool that is not a submit tool or that this round offers.
+ */
+export function unofferedSubmitReason(name: string, offered: readonly AnswerToolName[]): string | null {
+  if (!(ANSWER_TOOL_NAMES as readonly string[]).includes(name) || (offered as readonly string[]).includes(name)) return null;
+  return `${name} is not a submit tool of this round. This round's submit tools are: ${offered.join(', ')}. `
+    + 'Call one of them to give this round\'s answer; the round is still open';
+}
 
 /**
  * The barrier that ends the round at the accepted submit. Each submit is its

@@ -40,7 +40,9 @@ import {
   systemRoundContext, systemRoundOfText, systemRoundRequestId,
   type PlanFixReadV1, type PlanningQuestionGroupV1,
 } from '../../../contracts/plan-round.js';
-import { checkCapabilitiesOf, type CheckCapabilityV1, type RegisteredCommandCheck } from '../../../contracts/verification.js';
+import {
+  checkCapabilitiesOf, checksWithProposed, type CheckCapabilityV1, type RegisteredCommandCheck,
+} from '../../../contracts/verification.js';
 import type {
   TaskRequeueRef, TaskRequeueSnapshotV1, TaskReworkRefusalRef, TaskReworkRefusalSnapshotV1,
 } from '../../../contracts/task-requeue.js';
@@ -2684,7 +2686,9 @@ export interface PlanReaders {
   latestAgentCandidate(goalRef: GoalRef): Promise<ReadResult<PlanProposal | null>>;
   completedFixes(goalRef: GoalRef, basedOn: PlanRevisionRef | null): Promise<ReadResult<number>>;
   planCandidates(scope: WorkspaceScope, ctx: CoreCallContext, goalRef?: GoalRef): Promise<ReadResult<PlanCandidatesReadV1>>;
-  planChecks(scope: WorkspaceScope): Promise<ReadResult<readonly CheckCapabilityV1[] | null>>;
+  /** The installed checks' capabilities; with `proposed` (121-136), a candidate's own checks join them. */
+  planChecks(scope: WorkspaceScope, proposed?: readonly RegisteredCommandCheck[]):
+    Promise<ReadResult<readonly CheckCapabilityV1[] | null>>;
   planFixRead(goalRef: GoalRef, proposalRef: PlanProposalRef, revision: number): Promise<ReadResult<PlanFixReadV1>>;
   acceptedCandidatesOf(goalRef: GoalRef): Promise<ReadResult<readonly PlanProposal[]>>;
   readPlanReview(ctx: CoreCallContext, input: {
@@ -2935,12 +2939,12 @@ export function createPlanReaders(deps: PlanReadersDependencies): PlanReaders {
       return { status: 'ready', value: { goals: out } };
     },
 
-    async planChecks(scope) {
+    async planChecks(scope, proposed = []) {
       if (deps.checks === undefined) return unsupportedRead('the installed-check configuration read');
       const read = await deps.checks(scope);
       if (read.status === 'ready') {
         if (read.value === null) return { status: 'ready', value: null };
-        return { status: 'ready', value: checkCapabilitiesOf(read.value) };
+        return { status: 'ready', value: checkCapabilitiesOf(checksWithProposed(read.value, proposed)) };
       }
       if (read.status === 'rejected') return read;
       if (read.status === 'not_ready') return read;

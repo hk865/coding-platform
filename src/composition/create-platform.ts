@@ -3000,6 +3000,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     const plans: typeof planService = {
       ...planService,
       applyPlanChange: (...args) => trackedCall(() => adoptAfterStop(...args), unavailable),
+      lookupPlanChange: (...args) => trackedCall(() => planService.lookupPlanChange(...args), unavailable),
       readAdoptionStopTargets: (...args) =>
         trackedCall(() => planService.readAdoptionStopTargets(...args), unavailable),
       proposeInitialPlanFromAnswer: (...args) =>
@@ -5213,6 +5214,13 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
        */
       registerCheckConfiguration(input: { configuration: TrustedCheckConfiguration }): void {
         registeredCheckConfigurations.set(checkScopeKey(input.configuration.workspace), structuredClone(input.configuration));
+      },
+      /**
+       * 121-136 A3: take one workspace's registration off (a plan's checks taken back from a workspace that had no
+       * approved checks); a fresh round there then resolves the static `options.checks` fallback, or none.
+       */
+      clearCheckConfiguration(input: { scope: { projectId: string; workspaceId: string } }): void {
+        registeredCheckConfigurations.delete(checkScopeKey(input.scope));
       },
       registerWorkflowBinding(input: { consumerId: string; binding: WorkflowHostConfiguration['bindings'][number] }): void {
         const current = workflowDependencies.configuration;

@@ -7,8 +7,8 @@
 // Under `every_step` a finished node waits for the person's `nodes/commit` (decision 121-45); `waitGoal` does that
 // review from `goals/delivery` for an every_step unit (`flows.mjs` `reviewNodes`).
 import { newId, ready } from '../lib/http.mjs';
-import { answerCard, approve, broken, chooseModel, coldStart, executions, openProject, submitRequest, taskRounds, waitFor, waitGoal,
-  waitingCards, waitRequest } from '../lib/flows.mjs';
+import { answerCard, approve, broken, chooseModel, coldStart, executions, openProject, submitRequest, taskRounds, waitCandidate,
+  waitFor, waitGoal, waitingCards, waitRequest } from '../lib/flows.mjs';
 
 const MINUTE = 60_000;
 const SEED = {
@@ -96,9 +96,8 @@ async function run(ctx, rec) {
     rec.note(`the person selected idea 1 of ${ideasRound.ideas.length} on the change: ${ideasRound.ideas[0].title}`);
     await waitRequest(ctx, project, change.requestRoot, 40 * MINUTE);
   }
-  const candidate = await waitFor(ctx, 'the changed plan candidate', async () =>
-    ready(await host.client.read('plans/request-candidate', project.scope, { goalRef, requestRef: change.requestRoot })),
-  value => value?.head !== null && value?.head !== undefined && value.status === 'candidate', { timeoutMs: 30 * MINUTE });
+  const candidate = await waitCandidate(ctx, project, goalRef, change.requestRoot, 'the changed plan candidate',
+    { check: 'versions' });
   const goalBefore = ready(await host.client.read('goals/read', project.scope, goalRef));
   const applied = await host.client.write('plans/apply', project.scope,
     { proposalRef: candidate.head.ref, expectedProposalRevision: candidate.head.revision, decisionRefs: [] },

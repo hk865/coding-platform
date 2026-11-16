@@ -568,6 +568,8 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
         }
         // The model's own change reason travels unchanged; the platform only adds the empty source list (book `:495`).
         const answerReason = parsed.response.kind === 'plan' ? parsed.response.reason : undefined;
+        // 121-136: the plan's own checks travel on the candidate; the person's adoption installs them.
+        const answerChecks = parsed.response.kind === 'plan' ? parsed.response.checks : undefined;
         const normalized = normalizeInitialPlanningResponseV2(parsed.response, facts.value);
         if (normalized.status === 'rejected') {
           return { status: 'answer_ready', branch: 'no_task', answerRef: { ...answerRef }, reason: 'invalid_plan' };
@@ -610,7 +612,8 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
                 ...(answerReason ?? { text: normalized.summary, affectedTaskIds: [] }),
                 sources: [],
               },
-              requestRef: { ...refs.queryJobRef }, sourceMessageRef: { ...message.ref } },
+              requestRef: { ...refs.queryJobRef }, sourceMessageRef: { ...message.ref },
+              ...(answerChecks === undefined ? {} : { checks: answerChecks }) },
             meta: { requestId: `intervention:${key}:propose`,
               expected: [{ ref: goal.ref, revision: goal.revision }] },
           });
@@ -648,7 +651,12 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
               { ref: proposalRef, revision: proposal.revision },
             ] },
           });
-          if (adopted.status !== 'committed') return adopted;
+          // A refusal another pass could change is retried; any other refusal (a candidate that brings a check not
+          // installed yet, 121-136 A4, or another rule only a person's adoption meets) leaves it to the person's card.
+          if (adopted.status !== 'committed') {
+            return PROPOSE_RETRIED_CODES.has(adopted.code) ? adopted
+              : { status: 'awaiting_decision', branch: 'no_task', proposalRef: { ...proposalRef } };
+          }
           const claimed = await claimFirstReady(owned, input, message, goal);
           if (claimed !== null) return claimed;
           return { status: 'progressed', branch: 'no_task', stage: 'adoption' };

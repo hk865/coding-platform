@@ -33,6 +33,8 @@ import type {
 } from "./verification-context.js";
 import type { NewBasisInputRefV1, NoProgressCheckFactV1, SourceStampV1 } from "./no-progress.js";
 import type { ResourceCapsReportV1 } from "./resource-caps.js";
+import { canonicalJson, type JsonValue } from "./canonical-json.js";
+import { isRecord, nonEmpty } from "./validation/common.js";
 import type { ReworkActorClass, ReworkFailureClass } from "./task-requeue.js";
 
 /** Trusted Host actor for a check: a real human/system application host. */
@@ -322,6 +324,49 @@ export function isPlatformReservedCheckId(checkId: string): boolean {
 export function platformWitnessCapability(): CheckCapabilityV1 {
     return { checkId: PLATFORM_WITNESS_CHECK_ID, kind: "witness", coversKinds: ["witness"], replayable: false,
         taskIds: "all" };
+}
+
+/**
+ * The one shape rule of a registered command check: a model-proposed check (a saved answer's `setup.checks`, a plan's
+ * own checks) and a stored one are judged by it before any of them can become trusted.
+ */
+export function isRegisteredCommandCheck(value: unknown): value is RegisteredCommandCheck {
+    return isRecord(value) && nonEmpty(value["checkId"]) && !isPlatformReservedCheckId(value["checkId"])
+        && (value["kind"] === "static" || value["kind"] === "dynamic")
+        && nonEmpty(value["command"]) && typeof value["cwd"] === "string"
+        && typeof value["timeoutMs"] === "number" && Number.isSafeInteger(value["timeoutMs"]) && value["timeoutMs"] > 0
+        && (value["taskIds"] === "all" || (Array.isArray(value["taskIds"]) && value["taskIds"].every(nonEmpty)));
+}
+
+/**
+ * 121-136: the checks a plan proposes, against the workspace's installed ones. Check ids are unique in a workspace:
+ * a proposed check installed with the same content is already installed, one whose id is installed with other content
+ * is a conflict, and every other one is `added` (installed when a person adopts the plan). Form time, the adoption,
+ * the candidate's diagnosis and the Host install all split through this one function.
+ */
+export function proposedCheckSplit(installed: readonly RegisteredCommandCheck[], proposed: readonly RegisteredCommandCheck[]):
+    { added: RegisteredCommandCheck[]; conflicts: RegisteredCommandCheck[] } {
+    const added: RegisteredCommandCheck[] = [];
+    const conflicts: RegisteredCommandCheck[] = [];
+    for (const check of proposed) {
+        const same = installed.find(entry => entry.checkId === check.checkId);
+        if (same === undefined) added.push(check);
+        else if (canonicalJson(same as unknown as JsonValue) !== canonicalJson(check as unknown as JsonValue)) conflicts.push(check);
+    }
+    return { added, conflicts };
+}
+
+/** The check list a plan's coverage is judged against: the installed checks, then the ones the plan adds. */
+export function checksWithProposed(installed: readonly RegisteredCommandCheck[],
+    proposed: readonly RegisteredCommandCheck[]): RegisteredCommandCheck[] {
+    return [...installed, ...proposedCheckSplit(installed, proposed).added];
+}
+
+/** The refusal of proposed checks whose ids are installed with other content (coordination: one check per id). */
+export function checkConflictProblem(conflicts: readonly RegisteredCommandCheck[]): string {
+    return `check ${conflicts.map(check => check.checkId).join(", ")} is already installed in this workspace with other `
+        + "content, and a check id names one check in a workspace: give the new check another checkId, or propose the "
+        + "installed check unchanged";
 }
 
 /** The one table builder both readers call: the registered command checks, then the built-in witness capability. */

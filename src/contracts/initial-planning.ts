@@ -84,4 +84,10 @@ export type InitialPlanningResponseV2 =
       /** Optional additive setup proposal; absent keeps the old v2 exactly. */
       setup?: InitialPlanningSetupV2;
       /** The model's optional change reason; the parser keeps it and the platform never invents it. */
-      reason?: { text: string; affectedTaskIds?: string[]; objective?: string } };
+      reason?: { text: string; affectedTaskIds?: string[]; objective?: string };
+      /**
+       * 121-136: the checks a planning round's plan proposes for its own Tasks (`taskIds` names them, or `"all"`).
+       * They travel on the candidate and are installed when a person adopts it; a first plan's checks stay in
+       * `setup.checks`. Absent when the plan brings none.
+       */
+      checks?: import('./verification.js').RegisteredCommandCheck[] };

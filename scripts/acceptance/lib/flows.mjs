@@ -382,6 +382,25 @@ export async function readRequest(project, requestRoot) {
 
 const settled = round => round.status === 'ended' || round.status === 'unknown';
 
+/**
+ * G8A A7a: wait for a request's plan candidate (`plans/request-candidate`); E08, iteration and every new Goal in an
+ * initialized project (E12, intervention) share it. A request whose last round settled with a close code (closed
+ * without an answer) cannot give a candidate any more, so the wait ends at once and judges `check` failed with that
+ * round's close reason, instead of running out its time.
+ */
+export async function waitCandidate(ctx, project, goalRef, requestRoot, what, { timeoutMs = 30 * MINUTE, check,
+  done = value => value?.head !== null && value?.head !== undefined && value.status === 'candidate' } = {}) {
+  let closed = null;
+  return waitFor(ctx, what, async () => {
+    const last = (await readRequest(project, requestRoot))?.rounds.at(-1);
+    closed = last !== undefined && settled(last) && last.closeCode !== null && last.closeCode !== undefined
+      ? `the request's last round ${last.ref.queryJobId} closed without a candidate: ${last.closeCode}`
+        + `${last.closeMessage ? ` (${last.closeMessage})` : ''}`
+      : null;
+    return ready(await project.host.client.read('plans/request-candidate', project.scope, { goalRef, requestRef: requestRoot }));
+  }, done, { timeoutMs, check, ended: () => closed });
+}
+
 /** Wait until every round of the request has settled; returns the request view. */
 export async function waitRequest(ctx, project, requestRoot, timeoutMs = 30 * MINUTE) {
   return waitFor(ctx, 'the request rounds to settle', () => readRequest(project, requestRoot),
@@ -557,9 +576,8 @@ export async function newGoalInProject(ctx, project, requestRoot, rec, check, ma
   if (picked?.status !== 'queued') throw broken(ctx, `requests/select-idea: ${said(picked)}`, check);
   rec.note(`${goalRef.goalId}: the person selected idea 1 of ${ideasRound.ideas.length} (${ideasRound.ideas[0].title})`);
   await waitRequest(ctx, project, requestRoot);
-  const candidate = await waitFor(ctx, `the request candidate of ${goalRef.goalId}`, async () =>
-    ready(await project.host.client.read('plans/request-candidate', project.scope, { goalRef, requestRef: requestRoot })),
-  value => value?.head !== null && value?.head !== undefined && value.status === 'candidate', { timeoutMs: 30 * MINUTE, check });
+  const candidate = await waitCandidate(ctx, project, goalRef, requestRoot, `the request candidate of ${goalRef.goalId}`,
+    { check });
   const goal = ready(await project.host.client.read('goals/read', project.scope, goalRef));
   if (goal === null) throw broken(ctx, `goals/read of ${goalRef.goalId} did not answer before plans/apply`, check);
   const applied = await project.host.client.write('plans/apply', project.scope,
@@ -625,10 +643,38 @@ export async function ensurePolicy(ctx, project, kinds) {
   return next;
 }
 
-/** `plans/propose` then `plans/apply` (two routes, `core-routes.ts:683-684`); a plan with issues stops here. */
-export async function proposeAndApply(ctx, project, goalRef, draft, reasonText, rec) {
+/**
+ * G8A A7b: a hand-written plan meets the completion policy in force: each required obligation gets at least the
+ * policy's minimum of required requirements, the missing ones repeating its first requirement's kind (and read paths).
+ */
+export function padToPolicy(draft, policy) {
+  const minimum = policy.minimumRequiredRequirementsPerObligation;
+  return { ...draft, obligations: draft.obligations.map(obligation => {
+    if (obligation.requirementLevel !== 'required') return obligation;
+    const requirements = [...obligation.verificationRequirements];
+    const first = requirements.find(requirement => requirement.requirementLevel === 'required');
+    for (let n = requirements.filter(entry => entry.requirementLevel === 'required').length + 1; n <= minimum; n += 1) {
+      requirements.push({ ...first, requirementId: `${first.requirementId}-${n}`,
+        description: `${first.description}（按完成策略补足的第 ${n} 条）` });
+    }
+    return { ...obligation, verificationRequirements: requirements };
+  }) };
+}
+
+/** G8A A7b: the plan's own `node --test` check over its Tasks; the person's `plans/apply` installs it with the plan. */
+export const testCheck = (goalId, taskIds) =>
+  ({ checkId: `${goalId}-node-test`, kind: 'static', command: 'node --test', cwd: '.', timeoutMs: 120_000, taskIds });
+
+/**
+ * `plans/propose` then `plans/apply` (two routes, `core-routes.ts:683-684`); a plan with issues stops here. The draft is
+ * padded to the active completion policy (`completion-policies/read`) and carries the plan's own `checks` (G8A A7b).
+ */
+export async function proposeAndApply(ctx, project, goalRef, draft, reasonText, rec, checks) {
+  const policy = ready(await project.host.client.read('completion-policies/read', project.scope,
+    { projectId: project.scope.projectId }, { expect: ['not_found'] }))?.policy?.content ?? null;
   const proposed = await project.host.client.write('plans/propose', project.scope,
-    { goalRef, basedOn: null, draft, reason: { text: reasonText, sources: [] } }, []);
+    { goalRef, basedOn: null, draft: policy === null ? draft : padToPolicy(draft, policy),
+      reason: { text: reasonText, sources: [] }, checks }, []);
   const proposal = committed(proposed);
   if (proposal === null) throw broken(ctx, `plans/propose: ${said(proposed)}`);
   if (proposal.issues.length > 0) throw broken(ctx, `plans/propose issues: ${JSON.stringify(proposal.issues)}`);

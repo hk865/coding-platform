@@ -54,7 +54,10 @@ import {
 } from '../../../contracts/task-requeue.js';
 import type { ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';
 import type { GoalDesiredState } from '../../../contracts/ledger.js';
-import { checkCapabilitiesOf, type TrustedCheckConfiguration } from '../../../contracts/verification.js';
+import {
+  checkCapabilitiesOf, checkConflictProblem, isRegisteredCommandCheck, proposedCheckSplit,
+  type RegisteredCommandCheck, type TrustedCheckConfiguration,
+} from '../../../contracts/verification.js';
 import type { ToolCommitLookupInput, ToolCommitLookupResult } from '../../../contracts/unknown-call-review.js';
 import {
   agentActorOf, toolCommitLookupResult, toolCommitLookupUnknownTool, toolCommitRequestId,
@@ -185,6 +188,7 @@ import {
   changedObligationsOf,
   deriveFuturePlanDelta,
   moduleCheckOf,
+  planCheckIssues,
   planPhaseGuardReasons,
   qualifyPlanDraft,
   removedTaskProblem,
@@ -441,15 +445,17 @@ function proposeFingerprint(input: {
   replaces?: { proposalRef: PlanProposalRef; revision: number } | null;
   acknowledgement?: SessionMessageRef;
   sourceMessageRef?: SessionMessageRef | null;
+  checks?: readonly RegisteredCommandCheck[];
 }): string {
   // rd7a2b-12: `canonicalJson` is the recursive JCS encoder, not `JSON.stringify` — it takes `Object.keys` of the
   // value and so refuses a `undefined` member (`contracts/fingerprint.ts:24–:45`). An absent key is therefore never
   // resident: the material is expanded present-only, exactly as `applyFingerprint` does (`:414–:429`), and an old call
   // keeps its fingerprint byte for byte.
-  const { acknowledgement, sourceMessageRef, ...base } = input;
+  const { acknowledgement, sourceMessageRef, checks, ...base } = input;
   return sha256Hex(canonicalJson({ schemaVersion: 2, commandType: 'PlanPropose', ...base,
     ...(acknowledgement === undefined ? {} : { acknowledgement }),
     ...(sourceMessageRef === undefined ? {} : { sourceMessageRef }),
+    ...(checks === undefined ? {} : { checks }),
   } as unknown as JsonValue));
 }
 function applyFingerprint(input: {
@@ -1130,6 +1136,8 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     acknowledgement?: SessionMessageRef;
     /** The intervention message this proposal came from; `null` for every other propose. */
     sourceMessageRef: SessionMessageRef | null;
+    /** 121-136: the checks the plan proposes; only the Host `plans.proposePlan` passes them. */
+    checks?: readonly RegisteredCommandCheck[];
   }): Promise<EffectWriteResultV1<PlanProposal>> {
     const { goalRef, workspaceId, requestRef, replaces } = input;
     const ctx = input.ctx;
@@ -1239,6 +1247,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       const event = { type: 'proposal_replaced' as const, writer: input.writer, ref: input.ref, goalRef,
         basedOn: input.basedOn, draft: input.draft, reason: input.reason as unknown as PlanChangeReason,
         issues, catalogPin: catalog.catalogPin, submittedBy: null, sourceMessageRef: input.sourceMessageRef,
+        ...(input.checks === undefined ? {} : { checks: input.checks }),
         expectedHeadRevision: replaces.revision,
         requestedBy: input.actor, at: deps.now(), head: { proposalRef: replaces.proposalRef, revision: replaces.revision },
         replaces, requestRef: requestRef! };
@@ -1258,6 +1267,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       const recorded = { type: 'proposal_recorded' as const, writer: input.writer, ref: input.ref, goalRef,
         basedOn: input.basedOn, draft: input.draft, reason: input.reason as unknown as PlanChangeReason, submittedBy: null,
         sourceMessageRef: input.sourceMessageRef,
+        ...(input.checks === undefined ? {} : { checks: input.checks }),
         ...(requestRef === null ? {} : { requestRef }) };
       // L10: the early ask has no module fact yet, so it stops before it; the catalog fact is judged only after it holds.
       const readFacts = { ...scoped.facts, agentAdmission: null, source: null, initial: null,
@@ -1360,6 +1370,14 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     const requestId = rawMeta['requestId'];
     if (!nonEmpty(requestId)) return rejected('invalid', 'proposePlan requires meta.requestId');
     if (draft.goalId !== goalRef.goalId) return rejected('invalid', 'the draft goalId does not match the GoalRef');
+    // 121-136: the checks the plan proposes for its own Tasks, judged against the plan; present-only in the fingerprint.
+    const checksRaw = rawInput['checks'];
+    if (checksRaw !== undefined && (!Array.isArray(checksRaw) || !checksRaw.every(isRegisteredCommandCheck))) {
+      return rejected('invalid', 'proposePlan checks must be an array of registered command checks');
+    }
+    const checks = checksRaw === undefined ? undefined : checksRaw as RegisteredCommandCheck[];
+    const checkProblems = planCheckIssues(checks ?? [], Array.isArray(draft.tasks) ? draft.tasks : []);
+    if (checkProblems.length > 0) return rejected('invalid', checkProblems.join('; '));
 
     const workspaceId = ctx.workspaceId;
     if (!nonEmpty(workspaceId)) return forbidden('proposePlan requires a workspace-bound context');
@@ -1431,7 +1449,8 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     const proposalId = planProposalIdFor({ projectId: goalRef.projectId, workspaceId, goalId: goalRef.goalId, requestId });
     const ref: PlanProposalRef = { aggregateType: 'PlanProposal', projectId: goalRef.projectId, workspaceId, proposalId };
     const fingerprint = proposeFingerprint({ projectId: goalRef.projectId, workspaceId, goalRef, basedOn, draft, reason: reasonRaw,
-      requestRef, replaces, ...(acknowledgement === undefined ? {} : { acknowledgement }), ...sourceMessageRefArg });
+      requestRef, replaces, ...(acknowledgement === undefined ? {} : { acknowledgement }), ...sourceMessageRefArg,
+      ...(checks === undefined ? {} : { checks }) });
     const qualified = await planDraftInProjectView(deps.knowledge, ctx, draft, workspaceId);
     if (qualified.status !== 'ready') return qualified;
 
@@ -1439,7 +1458,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       ctx, writer: 'host', goalRef, workspaceId, actor: bound.actor, identityKey, fingerprint, proposalId, ref,
       basedOn, draft: qualified.value, reason: reasonRaw, requestId, expected: rawMeta['expected'], extraGuards: [],
       requestRef, replaces, ...(acknowledgement === undefined ? {} : { acknowledgement }),
-      sourceMessageRef,
+      sourceMessageRef, ...(checks === undefined ? {} : { checks }),
     });
   }
 
@@ -1519,13 +1538,32 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       requestRef: null, replaces: null, sourceMessageRef: null });
   }
 
-  async function applyPlanChange(
-    ctx: CoreCallContext,
-    request: GraphWrite<{ proposalRef: PlanProposalRef; expectedProposalRevision: number;
-      decisionRefs: readonly VersionPin[]; acknowledgementRef?: SessionMessageRef;
-      /** [lead S5-T3-D8] proof data only (never authorization); see PlanTaskPort.applyPlanChange. */
-      decisionSource?: DecisionSourceV1 }>,
-  ): Promise<WriteResult<import('../../../contracts/plan.js').PlanRevisionSnapshot>> {
+  type PlanChangeRequest = GraphWrite<{ proposalRef: PlanProposalRef; expectedProposalRevision: number;
+    decisionRefs: readonly VersionPin[]; acknowledgementRef?: SessionMessageRef;
+    /** [lead S5-T3-D8] proof data only (never authorization); see PlanTaskPort.applyPlanChange. */
+    decisionSource?: DecisionSourceV1 }>;
+  type PlanChangeResult = WriteResult<import('../../../contracts/plan.js').PlanRevisionSnapshot>;
+
+  function applyPlanChange(ctx: CoreCallContext, request: PlanChangeRequest): Promise<PlanChangeResult> {
+    return admitPlanChange(ctx, request, false);
+  }
+  /**
+   * 121-136 A3: the adoption's replay rule alone — the same admission, identity, fingerprint and receipt lookup as
+   * `applyPlanChange`, and nothing after them — so a Host step that must not run again on a replay (installing a
+   * plan's checks) answers from the original receipt first: the original result, the admission's refusal, or
+   * `not_found` (no receipt: a first adoption).
+   */
+  function lookupPlanChange(ctx: CoreCallContext, request: PlanChangeRequest):
+    Promise<PlanChangeResult | { status: 'not_found' }> {
+    return admitPlanChange(ctx, request, true);
+  }
+
+  async function admitPlanChange(ctx: CoreCallContext, request: PlanChangeRequest, lookupOnly: false):
+    Promise<PlanChangeResult>;
+  async function admitPlanChange(ctx: CoreCallContext, request: PlanChangeRequest, lookupOnly: true):
+    Promise<PlanChangeResult | { status: 'not_found' }>;
+  async function admitPlanChange(ctx: CoreCallContext, request: PlanChangeRequest, lookupOnly: boolean):
+    Promise<PlanChangeResult | { status: 'not_found' }> {
     if (ctx?.signal?.aborted) return rejected('cancelled', 'plan adoption was cancelled before admission');
     // The model-origin body read below is new I/O: its material identity is owned
     // by this pre-await snapshot, never recovered later from the mutable caller.
@@ -1598,6 +1636,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     }
     if (early.code === 'idempotency_conflict') return rejected('idempotency_conflict', early.reason);
     if (early.code !== 'not_found') return rejected('unavailable', `${early.code}: ${early.reason}`);
+    if (lookupOnly) return { status: 'not_found' };
 
     const evaluate = async (): Promise<WriteResult<PlanRevisionSnapshot>> => {
       const adoption: AcceptedPlanEvent = { type: 'proposal_accepted', adopter: 'host', proposalRef,
@@ -1615,6 +1654,21 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       const adopterClass = reworkActorClassOf(null, bound.actor);
       if (candidate.reason.objective !== undefined && candidate.reason.objective !== null && adopterClass !== 'human') {
         return rejected('invalid', 'only a person may adopt a candidate that changes the objective');
+      }
+      // 121-136: a candidate is adopted only with its own checks installed, so its coverage below reads them among the
+      // installed ones. Only a person's adoption installs them (the Host's `plans/apply` does, first); the platform
+      // never adopts a candidate that brings a new check, which then waits for the person's card (A4).
+      const brought = proposedCheckSplit(deps.configurationFor?.({ projectId: candidate.ref.projectId,
+        workspaceId: candidate.ref.workspaceId })?.checks ?? [], candidate.checks ?? []);
+      if (brought.conflicts.length > 0) return rejected('invalid', checkConflictProblem(brought.conflicts));
+      if (brought.added.length > 0) {
+        const ids = brought.added.map(check => check.checkId).join(', ');
+        return adopterClass === 'human'
+          ? rejected('invalid', `the candidate's checks ${ids} are not installed: a person's adoption through the `
+            + "Host's plans/apply installs them before it adopts the plan, where the Host keeps settings")
+          : rejected('forbidden', `the candidate brings checks that are not installed yet (${ids}): only a person `
+            + 'approves a new check, so the platform does not adopt it; it waits for the person, who installs the '
+            + 'checks by adopting it');
       }
       // Slice 5 §2.8 D8: attribution/proof data only, computed from the answer
       // source captured by the trusted caller; never a new authorization.
@@ -2407,7 +2461,8 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     return toolCommitLookupResult(lookup);
   }
 
-  return { queryGoal, readGoalOrdinal, readPlanProposal, proposePlan, applyPlanChange, proposeInitialPlanFromAnswer,
+  return { queryGoal, readGoalOrdinal, readPlanProposal, proposePlan, applyPlanChange, lookupPlanChange,
+    proposeInitialPlanFromAnswer,
     readInitialPlanAnswerFacts, readAdoptionStopTargets,
     queryTaskGraph, queryReadyTasks, queryGoalDisplay, queryGoalLiveRuns, queryGoalResumeContinuations,
     lookupToolCommit };
@@ -3084,9 +3139,10 @@ async function readAdoption(
 
 /**
  * The adopted plan runs its check rounds under the workspace's installed checks (an initial adoption's checks stage
- * installs the answer's own before this apply), so each required requirement of `obligations` that no installed check
- * applying to one of its Tasks covers refuses the adoption. No installed configuration is unknown coverage, as on the
- * candidate card: the check round reports it.
+ * installs the answer's own before this apply; a person's `plans/apply` installs the candidate's own checks first,
+ * 121-136, and an adoption without them installed was refused above), so each required requirement of `obligations`
+ * that no installed check applying to one of its Tasks covers refuses the adoption. No installed configuration is
+ * unknown coverage, as on the candidate card: the check round reports it.
  */
 function installedCoverageIssues(
   configurationFor: PlanServiceDependencies['configurationFor'],

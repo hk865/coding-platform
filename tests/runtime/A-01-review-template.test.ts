@@ -44,8 +44,8 @@ describe('A-01: the plan-review input template', () => {
     expect(PACK.manifest.templates['plan-review-input']).toEqual({
       file: 'templates/plan-review-input.txt', version: 2, mentionsTools: [],
     });
-    expect(PACK.manifest.templates['skill-platform-adviser']?.version).toBe(15);
-    expect(PACK.manifest.templates['initial-planning-answer']?.version).toBe(9);
+    expect(PACK.manifest.templates['skill-platform-adviser']?.version).toBe(16);
+    expect(PACK.manifest.templates['initial-planning-answer']?.version).toBe(10);
     expect(Object.keys(PACK.tools)).toEqual(expect.arrayContaining(['submit_plan_round', 'submit_plan_review']));
     expect(PACK.tools['submit_plan_review']?.description).toBeTruthy();
     expect(PACK.tools['submit_plan_round']?.description).toBeTruthy();

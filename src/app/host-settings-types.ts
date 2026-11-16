@@ -13,6 +13,9 @@ import type { ReasoningReplayV1 } from '../contracts/prompts/prompt-set.js';
 import type {
   ChecksConfirmationPort, ChecksEntryPort, SavedChecksReadPort, SettingsSerialGatePort,
 } from '../core/work-graph/model/initialization-adoption-contracts.js';
+import type { PlanProposalRef } from '../core/work-graph/model/plan-contracts.js';
+import type { CoreCallContext } from '../contracts/core/call-context.js';
+import type { WriteResult } from '../contracts/core/results.js';
 
 export const SETTINGS_API_PREFIX = '/api/real/settings/';
 /** The Work Run token budget a Host uses until `run-budget/save` stores one. */
@@ -38,15 +41,24 @@ export type SettingsWorkspace = {
   scope: CoreScope; name: string; root: string; modelId: string | null;
   writeAllowed: boolean; commandsAllowed: boolean;
   accessFixed: SettingsAccessFixed | null;
-  /** R6: user-approved registered checks for exactly this workspace scope.
-   * Absent for a scope that never approved any. The model's own suggestion is
-   * never stored here; only an explicit Host user approval is. */
+  /** R6: user-approved registered checks for exactly this workspace scope: an approved answer's, then (121-136) the
+   * ones plans brought and a person approved by adopting them. Absent for a scope that never approved any. The
+   * model's own suggestion is never stored here; only an explicit Host user approval is. */
   checks?: RegisteredCommandCheck[];
+  /** 121-136: for each check a plan brought, where it came from, who approved it and when; absent when none. */
+  checkApprovals?: CheckApprovalV1[];
   /** U8: where the workspace's project store lives; absent for a memory store or a project that is not open. */
   storeLocation?: SettingsStoreLocation;
   /** KLS-2: whether the architecture and notes of this workspace's current checkout stay local and out of git. It is
    *  kept per checkout, so every project mounting the same checkout sees it; a folder in no git work tree is false. */
   knowledgeLocalOnly: boolean;
+};
+/** 121-136: who installed one check of a workspace, and from where: a plan a person approved by adopting it. */
+export type CheckApprovalV1 = {
+  checkId: string;
+  plan: { proposalRef: PlanProposalRef; checksDigest: string };
+  approvedBy: { kind: 'person' };
+  approvedAt: string;
 };
 /** A project store's place and, only for the local data directory, the one sentence saying why. */
 export type SettingsStoreLocation = { place: 'git-common' | 'workspace-local' | 'user-data'; reason: string | null };
@@ -261,4 +273,13 @@ export interface HostSettingsPort {
  * settings writer or installed-configuration map.
  */
 export interface ChecksAdoptionEntryPort
-  extends ChecksEntryPort, ChecksConfirmationPort, SavedChecksReadPort, SettingsSerialGatePort {}
+  extends ChecksEntryPort, ChecksConfirmationPort, SavedChecksReadPort, SettingsSerialGatePort {
+  /**
+   * 121-136 A3: a person's adoption of a plan that brings its own checks (`checks`, as the candidate's record holds
+   * them): the ones not installed are validated, recorded and installed, then `apply` adopts the plan, as one
+   * recoverable whole under the settings queue; checks all installed already are the plain `apply`.
+   */
+  adoptWithPlanChecks<T>(ctx: CoreCallContext,
+    input: { scope: CoreScope; proposalRef: PlanProposalRef; checks: readonly RegisteredCommandCheck[] },
+    apply: () => Promise<WriteResult<T>>): Promise<WriteResult<T>>;
+}

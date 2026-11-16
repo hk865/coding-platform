@@ -16,12 +16,16 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { QueryJobAnswerRef } from '../contracts/query-job.js';
-import { isPlatformReservedCheckId, type RegisteredCommandCheck, type TrustedCheckConfiguration } from '../contracts/verification.js';
+import {
+  checkConflictProblem, isRegisteredCommandCheck, proposedCheckSplit,
+  type RegisteredCommandCheck, type TrustedCheckConfiguration,
+} from '../contracts/verification.js';
 import type {
   ChecksConfigurationPinV1, ChecksConfirmationV1, ChecksSaveResultV1, ChecksSettingsSourceV1,
 } from '../contracts/initialization-adoption.js';
 import { rejected } from '../contracts/core/rejections.js';
-import type { CoreError, ReadResult } from '../contracts/core/results.js';
+import type { CoreError, ReadResult, WriteResult } from '../contracts/core/results.js';
+import type { PlanProposalRef } from '../core/work-graph/model/plan-contracts.js';
 import type {
   ChecksConfirmationPort, StoredChecksStateV1,
 } from '../core/work-graph/model/initialization-adoption-contracts.js';
@@ -71,6 +75,7 @@ import type {
 } from '../core/agent-runtime/execution-contracts.js';
 import type { WorkbenchRuntimeProviderDependencies } from './runtime-configuration.js';
 import type {
+  CheckApprovalV1,
   ChecksAdoptionEntryPort,
   DirectoryListing,
   HostSettingsPort,
@@ -184,6 +189,9 @@ export type HostSettingsPrivateSnapshot = {
     answerRef: QueryJobAnswerRef; answerDigest: string;
     child: { commandId: string; identityKey: string; fingerprint: string } | null;
     checksRevision: number }[];
+  /** 121-136: the checks plans brought for a workspace with no approved answer list (its `checks` entry above already
+   *  ends with them when it has one); the Host installs them after its own start-up checks of that workspace. */
+  planOnlyChecks: { scope: CoreScope; checks: RegisteredCommandCheck[] }[];
   /** C8 automatic-rework policy as stored, or the defaults (3 / true) when the
    * file has none. The Host installs it from A.2 step 5.6 on; `automation/save`
    * (5.8) changes it at runtime. */
@@ -247,6 +255,11 @@ export interface HostSettingsAssembly {
   readCheckProposal?(scope: CoreScope, answerRef: QueryJobAnswerRef): Promise<SettingsResponse<{
     answerRef: QueryJobAnswerRef; answerDigest: string; checks: RegisteredCommandCheck[];
   }>>;
+  /** 121-136: read the checks one plan candidate brings, their digest and whether the candidate was adopted
+   *  (`accepted`). Absence means installing them is unsupported. */
+  readPlanCheckProposal?(scope: CoreScope, proposalRef: PlanProposalRef): Promise<SettingsResponse<{
+    checksDigest: string; checks: RegisteredCommandCheck[]; accepted: boolean;
+  }>>;
   /** KLS-2: the checkout behind one registered workspace, through the Host's one line resolution: its repository key
    *  (the real common git directory) or `notGit`. Absence means the setting is unsupported. */
   knowledgeCheckout?(scope: CoreScope): Promise<SettingsResponse<{ repoKey: RepoKey } | { notGit: true }>>;
@@ -299,7 +312,8 @@ type ReadSavedChecks = (
 export type ChecksAdoptionHostCallbacks = {
   buildConfiguration(input: {
     scope: { projectId: string; workspaceId: string };
-    source: ChecksSettingsSourceV1;
+    /** `null` only for a workspace whose saved checks are only plans' (121-136). */
+    source: ChecksSettingsSourceV1 | null;
     checks: readonly RegisteredCommandCheck[];
   }): TrustedCheckConfiguration;
   confirmInstalledChecks:
@@ -426,7 +440,15 @@ type PersistedWorkspaceV1 = {
   checksChild?: { commandId: string; identityKey: string; fingerprint: string };
   /** The monotonic checks save counter; absent in old files and read as 0. */
   checksRevision?: number;
+  /** 121-136: the checks plans brought, each with where it came from, who approved it and when; installed after
+   *  `checks`. A whole-list approval (`checks/approve`, the initialization's checks stage) replaces them too. */
+  planChecks?: PlanCheckEntryV1[];
+  /** 121-136 A3: the plan a person's adoption installed checks for (in `planChecks`) and is not known adopted yet:
+   *  written in the same save as those checks, removed once settled (`settlePlanAdoption`). */
+  planAdoption?: CheckApprovalV1['plan'];
 };
+/** One check a plan brought, as the settings file keeps it. */
+type PlanCheckEntryV1 = Omit<CheckApprovalV1, 'checkId'> & { check: RegisteredCommandCheck };
 /** One listed workspace as the project list holds it: the Host's start-up manifest. */
 export type PersistedWorkspaceRef = Pick<PersistedWorkspaceV1, 'scope' | 'name' | 'root' | 'writeAllowed' | 'commandsAllowed'>;
 /** The saved-state read's two real outcomes: a saved entry or none at all. */
@@ -470,22 +492,36 @@ function validScope(value: unknown): value is CoreScope {
   return isRecord(value) && nonEmpty(value['projectId']) && nonEmpty(value['workspaceId']);
 }
 
-function validRegisteredCheck(value: unknown): value is RegisteredCommandCheck {
-  return isRecord(value) && nonEmpty(value['checkId'])
-    && !isPlatformReservedCheckId(value['checkId'])
-    && (value['kind'] === 'static' || value['kind'] === 'dynamic')
-    && nonEmpty(value['command']) && typeof value['cwd'] === 'string'
-    && typeof value['timeoutMs'] === 'number' && Number.isSafeInteger(value['timeoutMs']) && value['timeoutMs'] > 0
-    && (value['taskIds'] === 'all'
-      || (Array.isArray(value['taskIds']) && value['taskIds'].every(nonEmpty)));
-}
-
 function parseStoredChecks(value: unknown): RegisteredCommandCheck[] {
-  if (!Array.isArray(value) || !value.every(validRegisteredCheck)) {
+  if (!Array.isArray(value) || !value.every(isRegisteredCommandCheck)) {
     throw new Error('the private host settings file is invalid');
   }
   return value.map(check => structuredClone(check));
 }
+
+/** A plan as a stored check or a pending adoption names it: the candidate and its checks' digest. */
+function validPlanSource(value: unknown): value is CheckApprovalV1['plan'] {
+  return isRecord(value) && isRecord(value['proposalRef']) && value['proposalRef']['aggregateType'] === 'PlanProposal'
+    && nonEmpty(value['proposalRef']['projectId']) && nonEmpty(value['proposalRef']['workspaceId'])
+    && nonEmpty(value['proposalRef']['proposalId']) && nonEmpty(value['checksDigest']);
+}
+
+function parseStoredPlanChecks(value: unknown): PlanCheckEntryV1[] {
+  const valid = (entry: unknown): boolean => isRecord(entry) && isRegisteredCommandCheck(entry['check'])
+    && validPlanSource(entry['plan'])
+    && isRecord(entry['approvedBy']) && entry['approvedBy']['kind'] === 'person' && nonEmpty(entry['approvedAt']);
+  if (!Array.isArray(value) || !value.every(valid)) throw new Error('the private host settings file is invalid');
+  return structuredClone(value as PlanCheckEntryV1[]);
+}
+
+function parseStoredPlanAdoption(value: unknown): CheckApprovalV1['plan'] {
+  if (!validPlanSource(value)) throw new Error('the private host settings file is invalid');
+  return structuredClone(value);
+}
+
+/** The checks plans brought to one workspace, in install order. */
+const savedPlanChecks = (entry: PersistedWorkspaceV1 | undefined): RegisteredCommandCheck[] =>
+  (entry?.planChecks ?? []).map(planned => structuredClone(planned.check));
 
 function parseStoredChecksSource(value: unknown): { answerRef: QueryJobAnswerRef; answerDigest: string } {
   if (!isRecord(value) || !isRecord(value['answerRef']) || !nonEmpty(value['answerDigest'])) {
@@ -701,6 +737,8 @@ function parsePersisted(text: string): PersistedSettingsV1 {
       ...(entry['checksChild'] === undefined ? {} : { checksChild: parseStoredChecksChild(entry['checksChild']) }),
       ...(entry['checksRevision'] === undefined
         ? {} : { checksRevision: parseStoredChecksRevision(entry['checksRevision']) }),
+      ...(entry['planChecks'] === undefined ? {} : { planChecks: parseStoredPlanChecks(entry['planChecks']) }),
+      ...(entry['planAdoption'] === undefined ? {} : { planAdoption: parseStoredPlanAdoption(entry['planAdoption']) }),
     };
   });
   return { schemaVersion: 1, models, selection, workspaces,
@@ -820,10 +858,13 @@ export async function createHostSettings(
       .filter((workspace): workspace is PersistedWorkspaceV1 & { checks: RegisteredCommandCheck[];
         checksSource: { answerRef: QueryJobAnswerRef; answerDigest: string } } =>
         workspace.checks !== undefined && workspace.checksSource !== undefined)
-      .map(workspace => ({ scope: { ...workspace.scope }, checks: structuredClone(workspace.checks),
+      .map(workspace => ({ scope: { ...workspace.scope }, checks: [...structuredClone(workspace.checks), ...savedPlanChecks(workspace)],
         answerRef: structuredClone(workspace.checksSource.answerRef), answerDigest: workspace.checksSource.answerDigest,
         child: workspace.checksChild === undefined ? null : { ...workspace.checksChild },
         checksRevision: workspace.checksRevision ?? 0 })),
+    planOnlyChecks: workspaces
+      .filter(workspace => workspace.checksSource === undefined && savedPlanChecks(workspace).length > 0)
+      .map(workspace => ({ scope: { ...workspace.scope }, checks: savedPlanChecks(workspace) })),
     automation: { ...(automation ?? DEFAULT_TASK_AUTOMATION_POLICY) },
     resourceCaps: {
       memoryMaxBytes: effectiveResourceCaps().memoryMaxMiB * MIB,
@@ -864,6 +905,52 @@ export async function createHostSettings(
     return run;
   };
 
+  /** Closes a settled plan adoption; a close that cannot be written stays in the file only and settles the same way. */
+  const closePlanAdoption = async (scope: CoreScope): Promise<void> => {
+    const index = workspaces.findIndex(entry => scopeKey(entry.scope) === scopeKey(scope));
+    const entry = workspaces[index];
+    if (entry?.planAdoption === undefined) return;
+    const { planAdoption: _settled, ...closed } = entry;
+    workspaces[index] = closed;
+    await persist().catch(() => undefined);
+  };
+
+  /**
+   * 121-136 A3: settles one workspace's pending plan adoption, if any. The candidate's own record answers whether it was
+   * adopted (`accepted` is written in the adoption's commit, whoever adopted it: this request, or the platform once the
+   * checks were installed). Adopted keeps the checks. Not adopted first takes this plan's checks back out of the saved
+   * and the installed configuration (a workspace left with no saved checks goes back to its start-up checks, or none).
+   * Either way the record then closes. A candidate that cannot be read, or a take-back that cannot be saved or
+   * installed, stays pending and answers why; `null` means nothing is pending.
+   */
+  const settlePlanAdoption = async (scope: CoreScope): Promise<ReturnType<typeof rejected<'unavailable'>> | null> => {
+    const index = workspaces.findIndex(entry => scopeKey(entry.scope) === scopeKey(scope));
+    const entry = workspaces[index];
+    const pending = entry?.planAdoption;
+    if (entry === undefined || pending === undefined) return null;
+    const stillPending = (reason: string) => rejected('unavailable', `the adoption of plan candidate `
+      + `${pending.proposalRef.proposalId}, which installed its checks, is still pending: ${reason}; it settles at the `
+      + 'next adoption in this workspace or the next Host start');
+    let read;
+    try { read = await assembly.readPlanCheckProposal?.(scope, pending.proposalRef); }
+    catch { read = undefined; }
+    if (read?.status !== 'ready') return stillPending('the plan candidate could not be read');
+    if (!read.value.accepted) {
+      const kept = (entry.planChecks ?? []).filter(planned => !sameJson(planned.plan.proposalRef, pending.proposalRef));
+      const { planChecks: _taken, ...rest } = entry;
+      workspaces[index] = kept.length === 0 ? rest : { ...rest, planChecks: kept };
+      try { await persist(); }
+      catch {
+        workspaces[index] = entry;
+        return stillPending('taking its checks back could not be written to the settings file');
+      }
+      try { await notify(); }
+      catch { return stillPending('the Host did not confirm the configuration without its checks'); }
+    }
+    await closePlanAdoption(scope);
+    return null;
+  };
+
   /**
    * The saved checks state of one scope, read from the parsed settings map only.
    * A workspace with no saved checks is `not_found`; a direct approval's child is
@@ -885,7 +972,8 @@ export async function createHostSettings(
   /**
    * One checks descriptor save: replaces or appends the workspace entry, persists
    * the whole file and restores the previous descriptor when the write fails. It
-   * never notifies; each caller maps notification failure to its own result.
+   * never notifies; each caller maps notification failure to its own result. A whole
+   * approved list replaces the checks plans brought as well (121-136).
    */
   const saveChecksDescriptor = async (
     scope: CoreScope,
@@ -944,7 +1032,11 @@ export async function createHostSettings(
         writeAllowed: facts.writeAllowed,
         commandsAllowed: facts.commandsAllowed,
         accessFixed: facts.accessFixed,
-        ...(persistedFacts?.checks === undefined ? {} : { checks: structuredClone(persistedFacts.checks) }),
+        ...(persistedFacts?.checks === undefined && persistedFacts?.planChecks === undefined
+          ? {} : { checks: [...structuredClone(persistedFacts.checks ?? []), ...savedPlanChecks(persistedFacts)] }),
+        ...(persistedFacts?.planChecks === undefined ? {} : { checkApprovals: persistedFacts.planChecks.map(planned =>
+          ({ checkId: planned.check.checkId, plan: structuredClone(planned.plan), approvedBy: { ...planned.approvedBy },
+            approvedAt: planned.approvedAt })) }),
         ...(facts.storeLocation === null
           ? {} : { storeLocation: { place: facts.storeLocation.place, reason: facts.storeLocation.reason } }),
         knowledgeLocalOnly: facts.knowledgeRepoKey != null && knowledgeLocalOnly[facts.knowledgeRepoKey] === true,
@@ -1010,6 +1102,9 @@ export async function createHostSettings(
       writeAllowed: entry.writeAllowed, commandsAllowed: entry.commandsAllowed })));
     await persist();
   }
+  // 121-136 A3: an adoption that installed a plan's checks and was cut off settles before the first install, so those
+  // checks serve other flows only once their plan is known adopted (one whose candidate cannot be read stays pending).
+  for (const entry of [...workspaces]) await settlePlanAdoption(entry.scope);
   await notify();
 
   async function directoriesRoute(input: unknown): Promise<SettingsResponse<DirectoryListing>> {
@@ -1155,6 +1250,8 @@ export async function createHostSettings(
       ...(existing?.checksSource === undefined ? {} : { checksSource: structuredClone(existing.checksSource) }),
       ...(existing?.checksChild === undefined ? {} : { checksChild: { ...existing.checksChild } }),
       ...(existing?.checksRevision === undefined ? {} : { checksRevision: existing.checksRevision }),
+      ...(existing?.planChecks === undefined ? {} : { planChecks: structuredClone(existing.planChecks) }),
+      ...(existing?.planAdoption === undefined ? {} : { planAdoption: structuredClone(existing.planAdoption) }),
     };
     const index = workspaces.findIndex(entry => scopeKey(entry.scope) === key);
     // X2 (KLS-1b): the start opens a project from its first listed workspace (its main one, whose root places the
@@ -1211,26 +1308,29 @@ export async function createHostSettings(
     } };
   }
 
-  type ValidatedCheckProposal = {
-    facts: HostSettingsWorkspaceFacts;
-    proposal: { answerRef: QueryJobAnswerRef; answerDigest: string; checks: RegisteredCommandCheck[] };
-  };
+  /** Where proposed checks come from: the owner ref the scope is judged by, its name in a refusal, and its reader. */
+  type CheckProposalSource<P> = { owner: { projectId: string; workspaceId: string }; what: string;
+    read: (() => Promise<SettingsResponse<P>>) | undefined };
+  const answerSource = (scope: CoreScope, answerRef: QueryJobAnswerRef): CheckProposalSource<{
+    answerRef: QueryJobAnswerRef; answerDigest: string; checks: RegisteredCommandCheck[] }> =>
+    ({ owner: answerRef, what: 'saved Answer',
+      read: assembly.readCheckProposal === undefined ? undefined : () => assembly.readCheckProposal!(scope, answerRef) });
 
   /**
-   * The one proposal validation both the direct `checks/approve` route and the
-   * adoption entry use: the Answer scope, the registered workspace and its real
-   * write+command grant, the saved-Answer reader and its error map, the proposed
-   * checks' shape, and — for the direct route — the exact requested list. The
-   * adoption entry passes `null` and compares the proposal against its own frozen
-   * source/digest instead of a request body.
+   * The one proposal validation the direct `checks/approve` route, the adoption entry and (121-136) a person's adoption
+   * of a plan that brings checks use: the source's scope, the registered workspace and its real write+command grant,
+   * the source's reader and its error map, the proposed checks' shape, and — for the direct route — the exact requested
+   * list. The adoption entry passes `null` and compares the proposal against its own frozen source/digest instead of a
+   * request body.
    */
-  async function trustedCheckProposal(
+  async function trustedCheckProposal<P extends { checks: RegisteredCommandCheck[] }>(
     scope: CoreScope,
-    answerRef: QueryJobAnswerRef,
+    source: CheckProposalSource<P>,
     requested: readonly RegisteredCommandCheck[] | null,
-  ): Promise<{ status: 'ready'; value: ValidatedCheckProposal } | { status: 'rejected'; response: SettingsRejection }> {
-    if (answerRef.projectId !== scope.projectId || answerRef.workspaceId !== scope.workspaceId) {
-      return { status: 'rejected', response: invalid('the saved Answer belongs to another workspace scope') };
+  ): Promise<{ status: 'ready'; value: { facts: HostSettingsWorkspaceFacts; proposal: P } }
+    | { status: 'rejected'; response: SettingsRejection }> {
+    if (source.owner.projectId !== scope.projectId || source.owner.workspaceId !== scope.workspaceId) {
+      return { status: 'rejected', response: invalid(`the ${source.what} belongs to another workspace scope`) };
     }
     const facts = assembly.listWorkspaces().find(workspace => scopeKey(workspace.scope) === scopeKey(scope));
     if (facts === undefined) return { status: 'rejected', response: notFound('the workspace is not registered') };
@@ -1238,19 +1338,19 @@ export async function createHostSettings(
       return { status: 'rejected', response: { status: 'rejected', code: 'forbidden',
         reason: 'approving command checks requires the workspace real write and command grant' } };
     }
-    if (assembly.readCheckProposal === undefined) {
+    if (source.read === undefined) {
       return { status: 'rejected', response: { status: 'rejected', code: 'unsupported',
-        reason: 'the Host does not publish the saved-answer check proposal reader' } };
+        reason: `the Host does not publish the ${source.what} check proposal reader` } };
     }
     let proposal;
     try {
-      proposal = await assembly.readCheckProposal(scope, answerRef);
+      proposal = await source.read();
     } catch {
-      return { status: 'rejected', response: unavailable('the saved-answer check proposal could not be read') };
+      return { status: 'rejected', response: unavailable(`the ${source.what} check proposal could not be read`) };
     }
     if (proposal.status !== 'ready') return { status: 'rejected', response: proposal };
-    if (!Array.isArray(proposal.value.checks) || !proposal.value.checks.every(validRegisteredCheck)) {
-      return { status: 'rejected', response: invalid('the saved-answer proposal checks are invalid') };
+    if (!Array.isArray(proposal.value.checks) || !proposal.value.checks.every(isRegisteredCommandCheck)) {
+      return { status: 'rejected', response: invalid(`the ${source.what} proposal checks are invalid`) };
     }
     if (requested !== null) {
       let approvedJson: string;
@@ -1265,14 +1365,7 @@ export async function createHostSettings(
         return { status: 'rejected', response: invalid('the approved checks do not match the saved Answer proposal') };
       }
     }
-    return { status: 'ready', value: {
-      facts,
-      proposal: {
-        answerRef: structuredClone(proposal.value.answerRef),
-        answerDigest: proposal.value.answerDigest,
-        checks: structuredClone(proposal.value.checks),
-      },
-    } };
+    return { status: 'ready', value: { facts, proposal: structuredClone(proposal.value) } };
   }
 
   /**
@@ -1294,11 +1387,12 @@ export async function createHostSettings(
       return invalid('checks/approve requires a complete saved QueryJobAnswerRef');
     }
     const requested = input['checks'];
-    if (!Array.isArray(requested) || !requested.every(validRegisteredCheck)) {
+    if (!Array.isArray(requested) || !requested.every(isRegisteredCommandCheck)) {
       return invalid('checks/approve requires an array of registered command checks');
     }
     const scope = { projectId: input['scope'].projectId, workspaceId: input['scope'].workspaceId };
-    const checked = await trustedCheckProposal(scope, answerRef as unknown as QueryJobAnswerRef, requested);
+    const checked = await trustedCheckProposal(scope, answerSource(scope, answerRef as unknown as QueryJobAnswerRef),
+      requested);
     if (checked.status === 'rejected') return checked.response;
     const { facts, proposal } = checked.value;
     // A direct approval replaces the adoption child that described the old checks;
@@ -1384,7 +1478,7 @@ export async function createHostSettings(
     }
 
     if (source.settings === null) return checksMoved();
-    const checked = await trustedCheckProposal(scope, source.settings.answerRef, null);
+    const checked = await trustedCheckProposal(scope, answerSource(scope, source.settings.answerRef), null);
     if (checked.status === 'rejected') return { status: 'not_saved', rejection: checked.response };
     const { facts, proposal } = checked.value;
     const proposalDigest = sha256Hex(canonicalJson(proposal.checks as unknown as JsonValue));
@@ -1430,6 +1524,64 @@ export async function createHostSettings(
     catch { return { status: 'saved_unconfirmed', value }; }
     return { status: 'saved', value };
   };
+
+  /**
+   * 121-136 A3: a person's adoption of a plan that brings its own checks, as one recoverable whole under the settings
+   * queue, in the initialization adoption's order: record with the state before, install, adopt, close. The Host answers
+   * a replay from the adoption owner's receipt before this runs. An earlier adoption of this workspace left pending
+   * settles first. A plan whose checks are all installed already (`proposedCheckSplit`) is the plain adoption, with no
+   * install grant. Otherwise the plan's checks pass the proposal validation a saved Answer's do (`trustedCheckProposal`);
+   * the ones not installed are saved with the plan, the approver and the time in the same write as the pending record
+   * (`planAdoption`), then installed, and `apply` adopts with the request's own identity. Committed closes the record;
+   * any other answer settles it (`settlePlanAdoption`), and a settle that cannot finish answers that it is pending.
+   */
+  const adoptWithPlanChecks: ChecksAdoptionEntryPort['adoptWithPlanChecks'] = (ctx, input, apply) => serialize(async () => {
+    const { scope, proposalRef } = input;
+    const notInstalled = (code: CoreError, reason: string) => rejected(code, `the plan's checks `
+      + `${input.checks.map(check => check.checkId).join(', ')} cannot be installed, so the plan was not adopted: ${reason}`);
+    const adoption = callbacks.adoption;
+    if (adoption === undefined) return notInstalled('unsupported', 'the Host does not publish the installed-check read');
+    const earlier = await settlePlanAdoption(scope);
+    if (earlier !== null) return earlier;
+    const installed = await adoption.confirmInstalledChecks(ctx, { scope });
+    if (installed.status !== 'ready') return notInstalled('unavailable', 'the installed checks could not be read');
+    const { added, conflicts } = proposedCheckSplit(installed.value.checks, input.checks);
+    if (conflicts.length > 0) return notInstalled('invalid', checkConflictProblem(conflicts));
+    // 121-136 A1: a check identical to an installed one is installed already; only a real addition needs the grant.
+    if (added.length === 0) return await apply();
+    const checked = await trustedCheckProposal(scope, { owner: proposalRef, what: 'plan', read:
+      assembly.readPlanCheckProposal === undefined ? undefined : () => assembly.readPlanCheckProposal!(scope, proposalRef) },
+    null);
+    if (checked.status === 'rejected') return notInstalled(checked.response.code, checked.response.reason);
+
+    const index = workspaces.findIndex(entry => scopeKey(entry.scope) === scopeKey(scope));
+    const previous = index >= 0 ? workspaces[index] : undefined;
+    const { facts, proposal } = checked.value;
+    const plan = { proposalRef: structuredClone(proposalRef), checksDigest: proposal.checksDigest };
+    const approvedAt = (options.now ?? (() => new Date().toISOString()))();
+    const next: PersistedWorkspaceV1 = {
+      ...(previous ?? { scope: { ...scope }, name: facts.name, root: facts.root,
+        writeAllowed: facts.writeAllowed, commandsAllowed: facts.commandsAllowed }),
+      planChecks: [...(previous?.planChecks ?? []), ...added.map(check => ({ check: structuredClone(check),
+        plan: structuredClone(plan), approvedBy: { kind: 'person' as const }, approvedAt }))],
+      planAdoption: plan,
+    };
+    if (previous !== undefined) workspaces[index] = next; else workspaces.push(next);
+    try { await persist(); }
+    catch {
+      if (previous !== undefined) workspaces[index] = previous; else workspaces.pop();
+      return notInstalled('unavailable', 'the settings file could not be written');
+    }
+    try { await notify(); }
+    catch {
+      return await settlePlanAdoption(scope)
+        ?? notInstalled('unavailable', 'the Host configuration was not confirmed; retry the same adoption');
+    }
+    const result = await apply();
+    if (result.status !== 'committed') return await settlePlanAdoption(scope) ?? result;
+    await closePlanAdoption(scope);
+    return result;
+  });
 
   /**
    * C8 / LA-6 (A.2 step 5.8): the Host user's automatic-rework policy. The
@@ -2037,6 +2189,7 @@ export async function createHostSettings(
       return await serialize(() => dispatch(route, input)) as SettingsResponse<SettingsRoutes[K]['value']>;
     },
     applyChecksForAdoption: (ctx, input) => serialize(() => applyChecksForAdoption(ctx, input)),
+    adoptWithPlanChecks,
     readSavedChecks,
     confirmInstalledChecks,
     runExclusive: <T>(operation: () => Promise<T>): Promise<T> => serialize(operation),

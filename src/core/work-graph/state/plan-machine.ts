@@ -53,6 +53,7 @@ import type {
 import type { QueryJobRef } from '../../../contracts/query-job.js';
 import type { TaskReductionSnapshot } from '../../../contracts/reduction.js';
 import type { ReworkActorClass } from '../../../contracts/task-requeue.js';
+import type { RegisteredCommandCheck } from '../../../contracts/verification.js';
 import { runUnresolvedBlocker } from './run-machine.js';
 import { reworkFenceOf } from './task-failure.js';
 import {
@@ -111,6 +112,11 @@ export type CandidatePlanProposal = {
   submittedBy?: PlanWriteProvenanceV1;
   /** The intervention message this candidate was proposed from; required, `null` for every other writer. */
   sourceMessageRef: SessionMessageRef | null;
+  /**
+   * 121-136: the checks this candidate proposes for its own Tasks, installed when a person adopts it. Creation-only;
+   * absent on every candidate recorded before it and on one that brings none.
+   */
+  checks?: RegisteredCommandCheck[];
 };
 
 /** `PlanProposal` (`plan-contracts.ts:36-47`). */
@@ -135,11 +141,14 @@ export function newCandidateProposal(input: {
   catalogPin: KnowledgePinV1 | null;
   submittedBy: PlanWriteProvenanceV1 | null;
   sourceMessageRef: SessionMessageRef | null;
+  /** 121-136: the candidate's own checks; absent or empty when it brings none. */
+  checks?: readonly RegisteredCommandCheck[] | undefined;
 }): CandidatePlanProposal {
   const candidate: CandidatePlanProposal = { kind: 'candidate_v2', ref: input.ref, revision: 1, schemaVersion: 2,
     goalRef: input.goalRef, basedOn: input.basedOn, draft: input.draft, reason: input.reason,
     status: 'candidate', issues: input.issues, catalogPin: input.catalogPin,
-    sourceMessageRef: input.sourceMessageRef };
+    sourceMessageRef: input.sourceMessageRef,
+    ...(input.checks === undefined || input.checks.length === 0 ? {} : { checks: structuredClone([...input.checks]) }) };
   return input.submittedBy === null ? candidate : { ...candidate, submittedBy: input.submittedBy };
 }
 
@@ -265,6 +274,8 @@ export type PlanProposalEvent =
     submittedBy: PlanWriteProvenanceV1 | null;
     /** The intervention message this candidate was proposed from; required, `null` for every other writer. */
     sourceMessageRef: SessionMessageRef | null;
+    /** 121-136: the checks the candidate proposes; absent when it brings none. */
+    checks?: readonly RegisteredCommandCheck[];
     /**
      * S5-PLAN-01 request association (spec §2.4): the first user-initiated
      * request this candidate belongs to, and the head it replaces. Both are
@@ -302,6 +313,8 @@ export type PlanProposalEvent =
     submittedBy: PlanWriteProvenanceV1 | null;
     /** The intervention message this candidate was proposed from; required, `null` for every other writer. */
     sourceMessageRef: SessionMessageRef | null;
+    /** 121-136: the checks the replacement candidate proposes; absent when it brings none. */
+    checks?: readonly RegisteredCommandCheck[];
     expectedHeadRevision: number;
     /**
      * [lead S5-T3-D2] Who replaced the head and when: the old head's
@@ -1034,7 +1047,7 @@ function recordedStep(
     if (event.catalogPin === undefined) return UNREAD;
     const candidate = withRequestRef(newCandidateProposal({ ref: event.ref, goalRef: event.goalRef, basedOn: event.basedOn,
       draft: event.draft, reason: event.reason, issues: [], catalogPin: event.catalogPin,
-      submittedBy: event.submittedBy, sourceMessageRef: event.sourceMessageRef }), event.requestRef);
+      submittedBy: event.submittedBy, sourceMessageRef: event.sourceMessageRef, checks: event.checks }), event.requestRef);
     return sameRecordedCandidate(state, candidate)
       ? reject('duplicate', 'revision_conflict',
         `proposal ${event.ref.proposalId} is already recorded with the same content; only its original receipt replays`)
@@ -1118,7 +1131,7 @@ function onProposalRecorded(
   if (problem !== null) return problem;
   const candidate = withRequestRef(newCandidateProposal({ ref: event.ref, goalRef: event.goalRef, basedOn: event.basedOn,
     draft: event.draft, reason: event.reason, issues: event.issues, catalogPin: event.catalogPin,
-    submittedBy: event.submittedBy, sourceMessageRef: event.sourceMessageRef }), event.requestRef);
+    submittedBy: event.submittedBy, sourceMessageRef: event.sourceMessageRef, checks: event.checks }), event.requestRef);
   /** The writer's own CAS guards: `before` the Goal scope guards, `after` them (the source Plan). */
   let writerGuards: { before: PlanCommitGuard[]; after: PlanCommitGuard[] };
   switch (event.writer) {
@@ -1593,7 +1606,7 @@ function onProposalReplaced(
   if (modules !== null) return modules;
   const candidate = withRequestRef(newCandidateProposal({ ref: event.ref, goalRef: event.goalRef, basedOn: event.basedOn,
     draft: event.draft, reason: event.reason, issues: event.issues, catalogPin: event.catalogPin,
-    submittedBy: event.submittedBy, sourceMessageRef: event.sourceMessageRef }), event.requestRef);
+    submittedBy: event.submittedBy, sourceMessageRef: event.sourceMessageRef, checks: event.checks }), event.requestRef);
   const replaced: CandidatePlanProposal = { ...state, revision: state.revision + 1, status: 'not_adopted',
     notAdopted: { reason: 'replaced', requestedBy: event.requestedBy, at: event.at, replacedBy: candidate.ref } };
   const effects: PlanProposalEffect[] = [

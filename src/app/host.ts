@@ -89,7 +89,7 @@ import {
 } from './startup-reconcile.js';
 import { parseInitialPlanningResponseV2 } from '../core/work-graph/tasks/initial-plan.js';
 import { DEFAULT_TASK_AUTOMATION_POLICY, type TaskRequeueRef } from '../contracts/task-requeue.js';
-import { isPlatformReservedCheckId, type VerificationRoundRef } from '../contracts/verification.js';
+import { isRegisteredCommandCheck, type VerificationRoundRef } from '../contracts/verification.js';
 import {
   decisionSourceKey, decisionSubjectGoalRef, type DecisionSourceV1, type NoticePositionV1,
 } from '../contracts/goal-decisions.js';
@@ -780,7 +780,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     ? narrowProgrammaticRuntime(options.runtime)
     : (seedConfiguration === undefined
       ? undefined : createWorkbenchRuntimeHostBindings(seedConfiguration,
-        versionProvider(versionSecretSource(seedConfiguration, { models: [], selection: {}, checks: [],
+        versionProvider(versionSecretSource(seedConfiguration, { models: [], selection: {}, checks: [], planOnlyChecks: [],
           automation: { ...DEFAULT_TASK_AUTOMATION_POLICY }, resourceCaps: resourceCaps.current(),
           workRunTokenBudget, planLoopLimits: structuredClone(planLoopLimits),
           commandReviewLineMinutes, knowledgeLocalOnly: {},
@@ -2098,14 +2098,15 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   }
 
   /** The one trusted checks configuration of a saved or adopted source: its revision is a function of the exact
-   *  checks AND their saved-Answer digest, so a re-approval of other content or source is a new version. The settings
-   *  restore and the adoption's checks stage both build through it. */
+   *  checks AND their saved-Answer digest (`null` for a workspace whose checks are only plans', 121-136), so a
+   *  re-approval of other content or source is a new version. The settings restore and the adoption's checks stage
+   *  both build through it. */
   const buildCheckConfiguration: ChecksAdoptionHostCallbacks['buildConfiguration'] = input => {
     const workspace = workspaces.find(candidate => scopeKey(candidate.scope) === scopeKey(input.scope));
     if (workspace === undefined) throw new Error('the checks scope has no workspace');
     return {
       configurationRevision: `host-settings-checks:${sha256Hex(canonicalJson({
-        answerDigest: input.source.answerDigest, checks: input.checks,
+        answerDigest: input.source?.answerDigest ?? null, checks: input.checks,
       } as unknown as JsonValue)).slice(0, 16)}`,
       workspace: { aggregateType: 'Workspace', projectId: input.scope.projectId, workspaceId: input.scope.workspaceId },
       executor: { ...actor },
@@ -2119,6 +2120,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
 
   /** The last settings snapshot this Host installed: a project opened later gets it when its drivers are built. */
   let lastSnapshot: HostSettingsPrivateSnapshot | undefined;
+  /** The scopes whose check configuration the last install registered from settings, by scope key. */
+  const settingsCheckScopes = new Map<string, CoreScope>();
   /** The parts of a settings snapshot that live in one project's platform. */
   const installIntoProject = (project: HostProject, snapshot: HostSettingsPrivateSnapshot): void => {
     const platform = project.runtime.platform;
@@ -2154,6 +2157,29 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       platform.registerCheckConfiguration({ configuration: buildCheckConfiguration({ scope: entry.scope,
         source: { answerRef: entry.answerRef, answerDigest: entry.answerDigest }, checks: entry.checks }) });
     }
+    // 121-136: a workspace whose saved checks are only plans' keeps this Host's start-up checks of it, the plans'
+    // checks after them.
+    for (const entry of snapshot.planOnlyChecks) {
+      if (entry.scope.projectId !== project.projectId
+        || !workspaces.some(candidate => scopeKey(candidate.scope) === scopeKey(entry.scope))) continue;
+      const startup = checks !== undefined && scopeKey(checks.workspace) === scopeKey(entry.scope) ? checks : null;
+      platform.registerCheckConfiguration({ configuration: startup === null
+        ? buildCheckConfiguration({ scope: entry.scope, source: null, checks: entry.checks })
+        : { ...structuredClone(startup), checks: [...startup.checks, ...entry.checks],
+          configurationRevision: `${startup.configurationRevision}+plans:${sha256Hex(canonicalJson(
+            entry.checks as unknown as JsonValue)).slice(0, 16)}` } });
+    }
+    // 121-136 A3: a scope this install no longer configures from settings (a plan's checks taken back from a workspace
+    // that had no approved checks) loses its registration and reads its start-up checks again, or none.
+    const configured = [...snapshot.checks, ...snapshot.planOnlyChecks].map(entry => entry.scope)
+      .filter(scope => scope.projectId === project.projectId
+        && workspaces.some(candidate => scopeKey(candidate.scope) === scopeKey(scope)));
+    for (const [key, scope] of settingsCheckScopes) {
+      if (scope.projectId !== project.projectId || configured.some(entry => scopeKey(entry) === key)) continue;
+      platform.clearCheckConfiguration({ scope });
+      settingsCheckScopes.delete(key);
+    }
+    for (const scope of configured) settingsCheckScopes.set(scopeKey(scope), { ...scope });
   };
 
   const installFromSettings = (snapshot: HostSettingsPrivateSnapshot): void => {
@@ -2492,24 +2518,6 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     }
   }
 
-  /**
-   * R6 cold-start: the saved Answer is model output, so its suggested checks
-   * are re-validated structurally before they can become a trusted
-   * configuration. A malformed candidate is an explicit failure, never a
-   * silently trusted check.
-   */
-  function validProposalCheck(value: unknown): boolean {
-    if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
-    const check = value as Record<string, unknown>;
-    return typeof check.checkId === 'string' && check.checkId.length > 0
-      && !isPlatformReservedCheckId(check.checkId)
-      && (check.kind === 'static' || check.kind === 'dynamic')
-      && typeof check.command === 'string' && check.command.length > 0
-      && typeof check.cwd === 'string'
-      && typeof check.timeoutMs === 'number' && Number.isSafeInteger(check.timeoutMs) && check.timeoutMs > 0
-      && (check.taskIds === 'all'
-        || (Array.isArray(check.taskIds) && check.taskIds.every(id => typeof id === 'string' && id.length > 0)));
-  }
 
   const storeLocationOf = (projectId: string): { place: 'git-common' | 'workspace-local' | 'user-data';
     reason: string | null } | null => {
@@ -2612,7 +2620,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         return { status: 'rejected', code: 'not_found', reason: 'the saved Answer carries no initial-plan setup proposal' };
       }
       const checks = parsed.response.setup.checks;
-      if (!Array.isArray(checks) || !checks.every(validProposalCheck)) {
+      if (!Array.isArray(checks) || !checks.every(isRegisteredCommandCheck)) {
         return { status: 'rejected', code: 'invalid', reason: 'the saved Answer setup checks are malformed' };
       }
       return { status: 'ready', value: {
@@ -2620,6 +2628,21 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         answerDigest: sha256Hex(answer.value.answer.answer),
         checks: structuredClone(checks),
       } };
+    },
+    // 121-136: the checks a plan candidate brings, from its stored record (creation-only, so the digest names them), and
+    // whether it was adopted.
+    readPlanCheckProposal: async (scope, proposalRef) => {
+      const platform = platformFor(scope.projectId);
+      if (platform === null) return { status: 'rejected', code: 'unavailable', reason: 'the project store is not available' };
+      const read = await platform.plans.readPlanProposal(settingsContext(scope), proposalRef);
+      if (read.status !== 'ready') {
+        return read.status === 'not_found' || (read.status === 'rejected' && read.code === 'not_found')
+          ? { status: 'rejected', code: 'not_found', reason: 'the plan candidate was not found in this scope' }
+          : { status: 'rejected', code: 'unavailable', reason: 'the plan candidate could not be read' };
+      }
+      const checks = structuredClone(read.value.checks ?? []);
+      return { status: 'ready', value: { checksDigest: sha256Hex(canonicalJson(checks as unknown as JsonValue)), checks,
+        accepted: read.value.status === 'accepted' } };
     },
     openWorkspace: openWorkspaceImpl,
     bootstrap: buildBootstrap,
@@ -4126,10 +4149,28 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     }
     return result;
   };
+  // 121-136 A3: a person's `plans/apply` of a candidate that brings its own checks. The adoption owner's receipt answers
+  // a replay first, so a replay neither reads the current checks nor installs again; then settings adopt it, installing
+  // the checks the workspace does not run yet as one recoverable whole (`adoptWithPlanChecks`). A candidate with none,
+  // or a Host that keeps no settings, is the route's own adoption (whose owner refuses a check that is not installed).
+  const applyPlanWithChecks: CoreRouteBindings['applyPlanChange'] = async (ctx, request) => {
+    // The route's own admission judges the body; only a readable candidate that brings checks goes through settings.
+    const proposalRef = (request as { input?: { proposalRef?: unknown } } | undefined)?.input?.proposalRef;
+    if (typeof proposalRef !== 'object' || proposalRef === null || hostSettings === undefined) {
+      return routeBindings.applyPlanChange(ctx, request);
+    }
+    const proposal = await platform.plans.readPlanProposal(ctx, proposalRef as PlanProposalRef);
+    if (proposal.status !== 'ready' || proposal.value.checks === undefined) return routeBindings.applyPlanChange(ctx, request);
+    const original = await platform.plans.lookupPlanChange(ctx, request);
+    if (original.status !== 'not_found') return original;
+    const { ref, checks } = proposal.value;
+    return hostSettings.adoptWithPlanChecks(ctx, { scope: { projectId: ref.projectId, workspaceId: ref.workspaceId },
+      proposalRef: ref, checks }, () => routeBindings.applyPlanChange(ctx, request));
+  };
   // PL §6.4.3 adoption point 2: the `plans/apply` binding is the same wrapper; the
   // accepted snapshot is the export input, and the route result is unchanged.
   const applyPlanChangeWithExport = adoptAndExport(
-    (...args: Parameters<CoreRouteBindings['applyPlanChange']>) => routeBindings.applyPlanChange(...args),
+    (...args: Parameters<CoreRouteBindings['applyPlanChange']>) => applyPlanWithChecks(...args),
     (result, [ctx]) => result.status === 'committed'
       ? { plan: result.value, scope: { projectId: result.value.goalRef.projectId,
         workspaceId: ctx.workspaceId ?? '', goalId: result.value.goalRef.goalId } }

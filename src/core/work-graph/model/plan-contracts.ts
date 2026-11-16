@@ -15,6 +15,7 @@ import type { FrozenTaskDefinition, PlanRevisionDraft, PlanRevisionRef,
   PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type { TaskGraph, TaskRow } from '../../../contracts/task-graph.js';
 import type { ToolCommitLookup } from '../../../contracts/unknown-call-review.js';
+import type { RegisteredCommandCheck } from '../../../contracts/verification.js';
 import type { GoalDisplayV1, GoalResumeContinuationV1, GoalRunControlCapabilityV1 } from '../state/goal-machine.js';
 import type { PlanChangeReason, PlanProposalRecord, PlanProposalRef } from '../state/plan-machine.js';
 import type { GraphWrite } from './task-contracts.js';
@@ -60,6 +61,8 @@ export type ProposedPlanDraftRequestV1 = {
   acknowledgement?: SessionMessageRef;
   /** The intervention message this proposal came from; present-only in the fingerprint. */
   sourceMessageRef?: SessionMessageRef | null;
+  /** 121-136: the checks this plan proposes for its own Tasks; present-only in the fingerprint. */
+  checks?: RegisteredCommandCheck[];
 };
 export type ProposedPlanSourceRequestV1 = {
   goalRef?: undefined; basedOn: null; draft?: undefined; reason: PlanChangeReason;
@@ -263,4 +266,10 @@ export type PlanServicePort = PlanTaskPort
      * authorization and never writes.
      */
     readAdoptionStopTargets(ctx: CoreCallContext, proposalRef: PlanProposalRef): Promise<ReadResult<AdoptionStopTargetsV1>>;
+    /**
+     * 121-136 A3: `applyPlanChange`'s replay rule alone (its admission, identity, fingerprint and receipt lookup): the
+     * original result, the admission's refusal, or `not_found` when no adoption committed under this request.
+     */
+    lookupPlanChange(ctx: CoreCallContext, request: Parameters<PlanTaskPort['applyPlanChange']>[1]):
+      Promise<Awaited<ReturnType<PlanTaskPort['applyPlanChange']>> | { status: 'not_found' }>;
   };

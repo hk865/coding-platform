@@ -14,7 +14,7 @@ import { canonicalJson, sameJson, type JsonValue } from '../../../contracts/fing
 import type { InitialPlanningResponsePlanV2 } from '../../../contracts/initial-planning.js';
 import { isRecord } from '../../../contracts/validation/common.js';
 import { fileModuleId, projectModuleIdOfFile } from '../../../contracts/workspace-module-id.js';
-import type { CheckCapabilityV1 } from '../../../contracts/verification.js';
+import type { CheckCapabilityV1, RegisteredCommandCheck } from '../../../contracts/verification.js';
 import { checksApplyingTo, planCoverageGaps } from '../state/plan-candidate.js';
 import type { FutureCarrierRemovalV1, FutureDispositionChangeV1 } from '../state/plan-machine.js';
 import {
@@ -259,9 +259,9 @@ export function validatePlanDraft(draft: PlanDraftView, policy: CompletionPolicy
  * every kind the draft names counts as known to the coverage, and a kind outside a known policy (`policyKinds`) is
  * left to that one problem, so one requirement gets one problem, naming every Task it is uncovered on. `checks` are
  * the capabilities of the check list the plan will run under (`checkCapabilitiesOf`); `null` (no installed
- * configuration) is unknown coverage and judges nothing. `checksAt` names that list: the answer's own `setup.checks`,
- * where the one who plans may add a check, or the workspace's `installed` checks, which only the person's check
- * approval changes, so that problem names the installed checks that do apply and says to use a kind they cover.
+ * configuration) is unknown coverage and judges nothing. `checksAt` names that list: a first plan's own `setup.checks`,
+ * or (121-136) the workspace's `installed` checks with the ones this plan proposes (`checksWithProposed`), where the
+ * plan may propose a check that is installed when the person adopts it; that problem names the checks that do apply.
  */
 export function uncoveredRequirementIssues(draft: Pick<PlanDraftView, 'obligations' | 'tasks'>, input: {
   checks: readonly CheckCapabilityV1[] | null; checksAt: 'setup.checks' | 'installed'; policyKinds: readonly string[] | null;
@@ -289,20 +289,40 @@ export function uncoveredRequirementIssues(draft: Pick<PlanDraftView, 'obligatio
         + `(a gate also takes a check listing a task it covers). Add a check of kind ${entry.kind} whose taskIds include `
         + `${tasks} (or "all") to setup.checks, or change the requirement`);
     }
-    // The platform's own witness is not an installed check; only the registered commands are named.
+    // The platform's own witness is not a registered check; only the registered commands are named.
     const named = entry.taskIds.map((taskId) => checksApplyingTo(draft.tasks, taskById.get(taskId)!, checks)
       .filter((check) => check.kind !== 'witness').map((check) => `${check.checkId} (${check.kind})`));
     const applying = entry.taskIds.map((taskId, index) =>
       `${taskId}: ${named[index]!.length === 0 ? 'none' : named[index]!.join(', ')}`);
-    const none = named.every((list) => list.length === 0);
-    return planValidationError(path, 'uncovered_verification_requirement', `${needs}, but no installed check of that `
-      + `kind does. The installed checks that apply, by task: ${applying.join('; ')}. ` + (none
-      ? 'No installed check applies to these tasks, and a new check needs the person\'s check approval, which cannot '
-        + `be given in this round: answer with questions that ask the person to approve a check of kind ${entry.kind} `
-        + `for ${tasks}`
-      : 'In this round use a requirement kind those checks cover; a new check needs the person\'s check approval and '
-        + 'cannot be added in this round'));
+    return planValidationError(path, 'uncovered_verification_requirement', `${needs}, but neither an installed check `
+      + `nor one this plan proposes does. The checks that apply, installed or proposed, by task: ${applying.join('; ')}. `
+      + `Propose in this plan's checks a check of kind ${entry.kind} whose taskIds include ${tasks}: it is installed when `
+      + 'the person adopts the plan (a plan that brings a new check waits for the person, who approves it on adoption, '
+      + 'instead of being adopted automatically). Or use a requirement kind the checks that apply cover');
   });
+}
+
+/**
+ * 121-136: a plan's own checks against the plan: each lists only Tasks of this plan in `taskIds` (or is `"all"`), and
+ * each id is used once in the plan. Form time and the propose share it; whether an id is already installed is the
+ * adoption's (`proposedCheckSplit`).
+ */
+export function planCheckIssues(checks: readonly RegisteredCommandCheck[], tasks: readonly { taskId: string }[]): string[] {
+  const taskIds = new Set(tasks.map((task) => task.taskId));
+  const seen = new Set<string>();
+  const issues: string[] = [];
+  for (const check of checks) {
+    if (seen.has(check.checkId)) {
+      issues.push(`checks: check id ${check.checkId} is used twice in this plan; give each check its own checkId`);
+    }
+    seen.add(check.checkId);
+    const unknown = check.taskIds === 'all' ? [] : check.taskIds.filter((taskId) => !taskIds.has(taskId));
+    if (unknown.length > 0) {
+      issues.push(`checks: check ${check.checkId} lists ${unknown.join(', ')}, not a task of this plan: taskIds lists `
+        + 'the tasks of this plan it checks, or is "all" for a check every later goal keeps using');
+    }
+  }
+  return issues;
 }
 
 /**
@@ -856,6 +876,8 @@ export function planRoundAnswerIssues(input: {
   workspaceId: string;
   /** The answer's `reason.affectedTaskIds`, which the traced disposition guards read. */
   affectedTaskIds: readonly string[] | undefined;
+  /** 121-136: the checks the answer's plan proposes, judged against the merged plan's Tasks (`planCheckIssues`). */
+  proposedChecks: readonly RegisteredCommandCheck[];
 }): string[] {
   const { plan, admission, checks } = input;
   const base = admission.base;
@@ -903,6 +925,7 @@ export function planRoundAnswerIssues(input: {
     reasons.push(rendered(issue));
   }
   reasons.push(...validatePlanAssignments(draft));
+  reasons.push(...planCheckIssues(input.proposedChecks, draft.tasks));
   if (admission.catalog !== null) {
     reasons.push(...unknownModuleReasons(moduleCheckOf(draft, admission.catalog, base?.plan ?? null,
       new Set(base?.terminalTaskIds ?? [])).unknown, admission.catalog));

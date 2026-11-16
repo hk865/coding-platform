@@ -2140,6 +2140,7 @@ function candidateCard(proposal: PlanProposal, goal: GoalSnapshot): DecisionCard
     candidateStatus: closed ? null : stale ? 'stale' : 'candidate', staleReason: stale ? 'basedOn is not the active Plan pointer' : null,
     closedReason: closed ? 'source_resolved' : null, openedAt: null, readOnly: closed, actions,
     taskRef: taskRefOfPins(pins), runRef: runRefOfPins(pins),
+    ...(proposal.checks === undefined ? {} : { proposedChecks: structuredClone(proposal.checks) }),
   };
 }
 
@@ -2225,7 +2226,8 @@ async function candidateDiagnosis(
     if (planRead.status !== 'ready') return null;
     const policyRead = await readPinnedCompletionPolicy(deps.records, planRead.plan.effectiveCompletionPolicy);
     if (policyRead.status !== 'resolved') return null;
-    const checksRead = await deps.planReaders.planChecks(scope);
+    // 121-136: the candidate's own checks join the installed ones, as at form time.
+    const checksRead = await deps.planReaders.planChecks(scope, proposal.checks ?? []);
     if (checksRead.status !== 'ready' || checksRead.value === null) return null;
     return diagnosePlanCandidate({
       candidate: proposal.draft,
@@ -2392,6 +2394,9 @@ function mergeCards(existing: DecisionCardV1, incoming: DecisionCardV1): Decisio
     // field) is unchanged.
     ...(existing.messageRelease === undefined && incoming.messageRelease === undefined
       ? {} : { messageRelease: incoming.messageRelease ?? existing.messageRelease }),
+    // 121-136 A4: the candidate's stored checks, from whichever side read the candidate.
+    ...(existing.proposedChecks === undefined && incoming.proposedChecks === undefined
+      ? {} : { proposedChecks: incoming.proposedChecks ?? existing.proposedChecks }),
   };
 }
 

@@ -5,7 +5,7 @@
   "templates": {
     "initial-planning-answer": {
       "file": "templates/initial-planning-answer.txt",
-      "version": 9,
+      "version": 10,
       "mentionsTools": []
     },
     "consultation-received-input": {
@@ -137,7 +137,7 @@
     },
     "secretary-answer": {
       "file": "templates/secretary-answer.txt",
-      "version": 6,
+      "version": 7,
       "mentionsTools": []
     },
     "handoff-write-understanding-secretary": {
@@ -186,12 +186,12 @@
     },
     "skill-platform-secretary": {
       "file": "templates/skill-platform-secretary.txt",
-      "version": 11,
+      "version": 12,
       "mentionsTools": []
     },
     "skill-platform-adviser": {
       "file": "templates/skill-platform-adviser.txt",
-      "version": 15,
+      "version": 16,
       "mentionsTools": []
     },
     "skill-platform-scribe": {

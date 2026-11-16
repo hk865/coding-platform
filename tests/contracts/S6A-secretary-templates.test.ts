@@ -27,11 +27,11 @@ const EXISTING_DIGESTS = {
     'work-input': 'f3ebad58e28d7f5a2d8bc8831b7974b03057c0590982d23fc325be933f5aed7a',
     'query-planning-input': 'ac29545b215361ea2ce479007f2c3ffcc3daa87a2bbacaf89957b49aa4022a77',
     'query-copy-input': '89ee28b2dc868787a7e41a063edadf9765e474e93b3bb477b038f93909808e20',
-    'initial-planning-answer': '494a7a515c17e79fd475a9d346b4d95c6934a7f268826535a4f09fc84cfb520a',
+    'initial-planning-answer': 'a7f20345b571f80bfa91e35f6a6366ec7069e570737143c721d8aa92d9eded8b',
     base: 'cee15946501a2db933e00e1ea9954e8332542ab130268cd32c6962c91061958c',
     'skill-platform-work': 'fee248cc70c5ed0a07bc8e679bd8357fa6e678976818b121e6f837cdf29ec7b3',
-    'skill-platform-secretary': '263748a27aba5a5401092ac910c43af72d7ba12a5ec30e717bdafdcce9455968',
-    'skill-platform-adviser': '479429b59b3681902eb367d6cb3d7cb8821b8fcba76964e9d282af67e36baee0',
+    'skill-platform-secretary': 'a956d102b3a4e85fc286229d4724a27dd9eeb9a03a5f979bfcec8394aa14e7ed',
+    'skill-platform-adviser': 'b4ff371d1dbd53a51e5eb3415c35c12c45d18ae3e737d053f12394a6a05b8dc9',
     'skill-platform-scribe': '06eaa54bb819486d3b7e3e69bd4bdcfe0a5cfb7e5a73a893296500710ec7b65d',
     'skill-platform-reviewer': '730e2ee4693fbd17776a2adfb5c6b8edaeab2c5ba7ed102aec0ba49aec9307a6',
 } as const;
@@ -56,6 +56,7 @@ const secretaryAnswerText = [
     + 'gate. The platform adopts a change this small under its own identity without review, and the person sees '
     + '"arranged"; anything larger stays a candidate for the person. If the change is not small or you are unsure, '
     + 'keep using submit_secretary_answer.\n'
+    + 'The plan\'s fields (the platform fills schemaVersion, kind and every task\'s phase):\n- stages: array of {stageId, title, description?}. A task references a stage only through its own stageId.\n- tasks: array of {taskId, stageId?, title, requirementLevel, taskKind, disposition, scope, executionIntent?, sizeClass?, estimatedLines?, plannedFiles?, replacedByTaskId?}. requirementLevel is "required" or "optional". taskKind is "work" or "gate". disposition is "active", "deferred", "cancelled" or "superseded". Every task of a NEW plan starts "pending". scope is {kind:"goal"}, {kind:"stage",stageId} or {kind:"module",stageId,moduleRef}. Task scope.moduleRef is a non-empty STRING containing the moduleId, NOT the {projectId,moduleId} object used in the architecture catalog. executionIntent is "plan_only" or "request_execution" and may appear on a work task only. sizeClass is "small", "medium", "large" or "explore"; a placeholder task carries it too. estimatedLines is a positive integer line estimate; when unsure, say so or leave it out instead of inventing a precise number. plannedFiles (optional, work task only) lists the files this task expects to change, as workspace-relative paths such as "src/a/b.ts": no leading "/" or "./", no ".." or backslash, no directory or wildcard, each path once, at most 50. A file the task will create may be listed; a rename lists both paths. It is a hint for people and other tasks, not a limit: the executor may change other files without asking, and those show as not in the plan. List only the files you are fairly sure of, or leave it out; never pad the list. A task that already ran keeps its list. replacedByTaskId points a superseded task at its successor. A task that already ran changes only its disposition (superseded plus replacedByTaskId); its frozen definition and the obligations it carries stay byte-identical. To change acceptance, add a NEW obligation (new obligationId and new requirementId) carried by the replacement task; keep the old obligation and add the replacement task to its taskIds.\n- assignments: array of {taskId, role, instruction}. A work task with executionIntent "request_execution" needs exactly one assignment whose role is one of the AVAILABLE roles/templateId shown in this context; a work task with executionIntent "plan_only" may omit it; a gate task must never carry an assignment or an executionIntent, because a gate conclusion comes from the formal evidence reduction, not from an execution run. A future work task with executionIntent "plan_only" may omit assignment, obligations/acceptance and dependencies; its incompleteness alone is not a reason to answer with questions instead.\n- obligations: array of {obligationId, title, requirementLevel, taskIds, verificationRequirements}. taskIds lists only work/gate tasks of this same plan. Every verificationRequirements entry is {requirementId, requirementLevel, kind, description, requiredReadPaths?}; requirementLevel is "required" or "optional" and kind must be one of the requirementKinds of the effective CompletionPolicy shown in this context. requiredReadPaths is an optional array of workspace-relative paths that a required witness requirement must read. A required obligation needs at least the policy\'s minimum number of required verification requirements.\n- taskHierarchy: {parentOf:[{parentTaskId, childTaskId}]}. It only expresses display grouping.\n- executionDag: {dependsOn:[{taskId, dependsOnId, requires:{kind, label}}]}. requires.kind is "output-contract", "artifact", "decision", "environment-revision" or "gate-result"; use a real versioned input/output dependency, keep the DAG acyclic and never make a task depend on itself.\n- taskRelations: Optional: array of {fromTaskId, toTaskId, kind, note}; kind is "coordination" or "expected_dependency". It is advisory only and never a dispatch prerequisite.\nA plan may carry checks (array of {checkId, kind, command, cwd, timeoutMs, taskIds}, kind "static" or "dynamic") that its tasks need and no installed check runs, taskIds listing its own tasks; the person\'s adoption installs them, so a later goal proposes its own checks.\n'
     + '{{/tool:submit_plan_round}}',
 ].join('\n');
 
@@ -72,7 +73,7 @@ function textsOf(secretaryRound: string): PromptTextsV1 {
 describe('the platform secretary templates', () => {
     it('declares the round at version 2 and the answer at version 4, with their code-owned slots and digests', () => {
         const versions = {
-            'secretary-round': 2, 'secretary-answer': 6,
+            'secretary-round': 2, 'secretary-answer': 7,
             'handoff-write-understanding-secretary': 1, 'handoff-brief-secretary': 1,
         } as const;
         for (const id of [
@@ -105,7 +106,7 @@ describe('the platform secretary templates', () => {
         expect(sha256Hex(PACK.templates['secretary-round']!))
             .toBe('1fbe219c936568074193d9f4f57dd5a15e963f6487be2838a78d040429b3cc7c');
         expect(sha256Hex(PACK.templates['secretary-answer']!))
-            .toBe('d0b767d52f27031688ba601ebd6e2f100124084683a7d50ef59b26c90e2b0e94');
+            .toBe('87a77546af75178a71df63dbac83ecaade0cb04d4a17fcc59016e17744796baf');
         expect(sha256Hex(PACK.templates['handoff-write-understanding-secretary']!))
             .toBe('d7afe976edbe02c6dd541b644b3c2b7f314bb186ff4458432e817a4fae7483c6');
         expect(sha256Hex(PACK.templates['handoff-brief-secretary']!))

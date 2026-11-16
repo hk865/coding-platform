@@ -80,8 +80,8 @@ const EXEMPTIONS: readonly ExemptionV1[] = [
     { templateId: 'initial-planning-answer', word: 'check', line: 59, reason: "planning answer's plain 'check' (sample verification text)" },
     { templateId: 'initial-planning-answer', word: 'check', line: 89, reason: "planning answer's checks sample field" },
     { templateId: 'skill-platform-work', word: 'check', line: 58, reason: 'record_note receipt field, not the reserved Kernel tool' },
-    { templateId: 'skill-platform-secretary', word: 'check', line: 53, reason: 'record_note receipt field, not the reserved Kernel tool' },
-    { templateId: 'skill-platform-adviser', word: 'check', line: 69, reason: 'record_note receipt field, not the reserved Kernel tool' },
+    { templateId: 'skill-platform-secretary', word: 'check', line: 54, reason: 'record_note receipt field, not the reserved Kernel tool' },
+    { templateId: 'skill-platform-adviser', word: 'check', line: 70, reason: 'record_note receipt field, not the reserved Kernel tool' },
     { templateId: 'skill-platform-scribe', word: 'check', line: 35, reason: 'record_note receipt field, not the reserved Kernel tool' },
 ];
 

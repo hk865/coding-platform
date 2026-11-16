@@ -12,7 +12,23 @@ const FILES = {
   'package.json': '{\n  "name": "g6-b06",\n  "type": "module",\n  "scripts": { "test": "node --test" }\n}\n',
   'README.md': '# g6-b06\n\nA module to be read.\n',
   'src/module.js': 'export const answer = () => 42;\n',
+  // G8A A7b (review 5): the facts B06's own check asserts — the module and the files the read Task reads, unchanged.
+  'checks/module.test.mjs': [
+    "import { test } from 'node:test';",
+    "import assert from 'node:assert/strict';",
+    "import { readFileSync } from 'node:fs';",
+    "import { answer } from '../src/module.js';",
+    "const text = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');",
+    "test('src/module.js exports answer(), which returns 42', () => assert.equal(answer(), 42));",
+    "test('package.json still names g6-b06', () => assert.equal(JSON.parse(text('package.json')).name, 'g6-b06'));",
+    "test('README.md keeps its title', () => assert.match(text('README.md'), /^# g6-b06\\n/));",
+    '',
+  ].join('\n'),
 };
+/** G8A A7b: B06's plans bring this check over their own Tasks; it runs the fixture's assertions, never a bare
+ *  `node --test` (the project has no other test, so that would pass checking nothing). */
+export const moduleCheck = goalId => ({ checkId: `${goalId}-module`, kind: 'static',
+  command: 'node --test checks/module.test.mjs', cwd: '.', timeoutMs: 120_000, taskIds: ['read', 'gate'] });
 const SEED_REQUEST = '初始化这个项目：在 README.md 末尾加一行“只读核对用”。验收：node --test 通过。只改 README.md。';
 
 const def = {
@@ -28,7 +44,7 @@ const def = {
   ],
 };
 
-function draft(goalId, instruction, { witness = true, reviewer = false } = {}) {
+export function draft(goalId, instruction, { witness = true, reviewer = false } = {}) {
   const requirements = [
     ...(witness ? [{ requirementId: 'r-witness', requirementLevel: 'required', kind: 'witness', description: '只读见证', requiredReadPaths: READ_PATHS }] : []),
     ...(reviewer ? [{ requirementId: 'r-review', requirementLevel: 'required', kind: 'reviewer', description: '独立审阅' }] : []),
@@ -44,7 +60,8 @@ function draft(goalId, instruction, { witness = true, reviewer = false } = {}) {
     obligations: [
       ...(requirements.length === 0 ? [] : [{ obligationId: 'o-read', title: '只读核对', requirementLevel: 'required', taskIds: ['read'], verificationRequirements: requirements }]),
       { obligationId: 'o-gate', title: 'Goal gate', requirementLevel: 'required', taskIds: requirements.length === 0 ? ['read', 'gate'] : ['gate'],
-        verificationRequirements: [{ requirementId: 'r-gate', requirementLevel: 'required', kind: 'static', description: 'node --test 通过' }] },
+        verificationRequirements: [{ requirementId: 'r-gate', requirementLevel: 'required', kind: 'static',
+          description: 'checks/module.test.mjs 通过：src/module.js 的 answer() 返回 42，package.json 与 README.md 没被改' }] },
     ],
     taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] }, taskRelations: [], inputRequirements: [],
   };
@@ -75,7 +92,8 @@ async function readChain(project, goalRef) {
 async function witnessGoal(ctx, project, rec, label, instruction, options) {
   const goalId = newId(`g6-b06-${label}`);
   const goal = await createGoal(ctx, project, goalId, `B06 ${label}`, rec);
-  await proposeAndApply(ctx, project, goal.ref, draft(goalId, instruction, options), `B06 ${label}`, rec);
+  await proposeAndApply(ctx, project, goal.ref, draft(goalId, instruction, options), `B06 ${label}`, rec,
+    [moduleCheck(goalId)]);
   await driverStart(ctx, project, goal.ref, { flowId: newId(`b06-${label}`), taskId: 'read' });
   // Wait until the read Task's first round is finalized (or the Goal completes), then pause so a FAIL cell does not
   // keep reworking on the budget.

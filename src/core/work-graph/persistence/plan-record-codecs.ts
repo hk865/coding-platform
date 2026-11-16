@@ -37,6 +37,7 @@ import type {
   PlanRevisionSnapshot,
 } from '../../../contracts/plan.js';
 import { PLANNED_FILES_MAX } from '../../../contracts/plan.js';
+import { isRegisteredCommandCheck } from '../../../contracts/verification.js';
 import { isLiteralSourceFilePath } from '../../workspace/path-validation.js';
 import { isArtifactRef } from '../../record-store/body-codec.js';
 import { aggregateRefProblem } from './decision-record-codecs.js';
@@ -851,6 +852,11 @@ function proposalValueIssues(value: unknown, expectedRef: PlanProposalRef | null
       issues.push('candidate_v2.sourceMessageRef must be null or a complete SessionMessageRef');
     }
     if (!('sourceMessageRef' in value)) issues.push('candidate_v2.sourceMessageRef is required (null when absent)');
+    // 121-136: absent on every candidate recorded before it and on one that brings no checks.
+    const checks = value['checks'];
+    if (checks !== undefined && (!Array.isArray(checks) || checks.length === 0 || !checks.every(isRegisteredCommandCheck))) {
+      issues.push('candidate_v2.checks must be a non-empty list of registered command checks');
+    }
     return issues;
   }
   issues.push('PlanProposal.kind must be candidate_v2');

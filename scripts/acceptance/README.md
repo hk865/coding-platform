@@ -74,7 +74,7 @@ the window.
 - **Lag probe.** `lib/lag.mjs` is preloaded into each Host (`NODE_OPTIONS=--import`), samples
   `perf_hooks.monitorEventLoopDelay` and writes p50/p95/p99/max; recorded only, no threshold.
 - **Seed Goals.** A settings-opened workspace gets its trusted checks, policy and architecture only from a cold-start
-  adoption (`src/app/host-settings-types.ts:170-182`), which is the real product path. So E05 and B06 (and B06-W5's
+  adoption (`src/app/host-settings-types.ts:182-194`), which is the real product path. So E05 and B06 (and B06-W5's
   non-Git project) first run one small cold-start Goal, then the explicit `goals/create` → `plans/propose/apply` Goal.
 - **Planning rounds.** The Host's idle consume pass runs once a minute per workspace and takes an
   `intervention_planning` Query through its stages in one pass (G7 W2: submit, claim, prepare + start; the proposal
@@ -83,6 +83,16 @@ the window.
 - **Plan-round questions.** When a plan round answers with questions (`needs_decision`) instead of a candidate, the
   person answers in the same request: one follow-up, "按你推荐的做法；没提到的按最简单的处理", at most twice, recorded
   in `userCommand`, then the candidate wait (`lib/flows.mjs` `answerPlanQuestions`; iteration, both requests).
+- **Candidate waits end early (G8A A7a).** Every wait for a request's plan candidate (E08, iteration, a new Goal in an
+  initialized project: E12, intervention) goes through `lib/flows.mjs` `waitCandidate`: when the request's last round
+  has settled with a close code (closed without an answer), no candidate can come, so the wait ends at once and
+  judges its check `fail` with that round's close code and message, instead of running out its 20–30 minutes.
+- **Hand-written plans (G8A A7b).** `proposeAndApply` reads the active completion policy (`completion-policies/read`)
+  and pads every required obligation to its minimum of required requirements (`padToPolicy`: the missing ones repeat
+  the obligation's first requirement's kind and read paths), and sends the plan's own checks, installed when the
+  person's `plans/apply` adopts it. E05 and waiting send `testCheck` (`node --test` over the plan's own Tasks, which
+  write the tests it runs); B06, whose Tasks only read, sends `moduleCheck` (`node --test checks/module.test.mjs`, the
+  fixture's assertions on `src/module.js`, `package.json` and `README.md`).
 - **Goal waits end early.** `waitGoal` ends before its deadline, judged like a wait that ran out, when (a) the Goal's
   display headline is NEEDS_DECISION on a Task stop of the UI's 要决定 set (`src/ui/adapters/goals.ts:185`) and no card
   is left for the person (`the platform stopped: <code> on <taskId>`), or (b) nothing public changed for 32 minutes

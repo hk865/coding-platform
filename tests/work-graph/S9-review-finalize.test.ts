@@ -202,8 +202,11 @@ describe('R10a: a real plan_round Query never freezes submit_exec_review', () =>
     const refused = (await review.world.scripted.requests(review.workLine)).flatMap(request =>
       request.messages.flatMap(message => message.role === 'tool' && message.callId === 's9-r10a-exec'
         ? [message.result] : []))[0];
-    expect(refused).toMatchObject({ status: 'error', error: { code: 'unknown_tool' } });
-    if (refused?.status !== 'error') throw new Error(`S9: no unknown_tool refusal: ${JSON.stringify(refused)}`);
+    // G8A A6 (121-136): a submit tool this round does not offer is refused before the Kernel's bare `unknown_tool`,
+    // naming the round's own submit tools; the round stays open (the plan-round call below still answers it).
+    expect(refused).toMatchObject({ status: 'error', error: { code: 'hook_blocked',
+      message: expect.stringContaining("This round's submit tools are: submit_plan_round") } });
+    if (refused?.status !== 'error') throw new Error(`S9: no refusal of submit_exec_review: ${JSON.stringify(refused)}`);
     expect(refused.error.code).not.toBe('invalid');
     const after = await readQuery(review.world.ag2b, queryJobRef);
     expect(after.job.job).toMatchObject({ status: 'answered', closeReason: null });

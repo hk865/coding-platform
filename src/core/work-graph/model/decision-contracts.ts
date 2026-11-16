@@ -7,6 +7,7 @@
  */
 import type { AdoptedArchitecture } from '../../../contracts/architecture-catalog.js';
 import type { ArtifactRef } from '../../../contracts/artifact.js';
+import type { RegisteredCommandCheck } from '../../../contracts/verification.js';
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef, VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
@@ -429,6 +430,9 @@ export type DecisionCardV1 = {
    * every read (`deadline` before and after the release, the block, so the three reads cannot disagree). Absent on
    * every other kind (the `NoticeItemV1.actions?` precedent, `:367`). */
   messageRelease?: { deadline: string | null; releaseBlock: MessageReleaseBlockV1 | null };
+  /** 121-136 A4: present only on a `candidate` card whose plan brings checks — the candidate's stored checks (id,
+   *  kind, command, the Tasks they apply to); the person's adoption installs the ones not installed yet. */
+  proposedChecks?: readonly RegisteredCommandCheck[];
 };
 
 export type NoticeItemV1 = {

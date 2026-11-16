@@ -206,13 +206,13 @@
 | `decidePlanCandidate`、`diagnosePlanCandidate` | `src/core/work-graph/state/plan-candidate.ts:90`、`src/core/work-graph/state/plan-candidate.ts:188` | 计划候选的唯一决定表（请求审阅/请求修复/采用/出卡/等待，首次匹配即返回）与机械诊断（必需验证要求在它映射的每个活动任务上都要有适用的已注册检查覆盖；`checks: null` 是覆盖未知、`checks: []` 是全部诊断） | 规划环的候选推进与出卡；不要另写决定顺序或覆盖规则 |
 | `taskVerificationCoverage`、`checksApplyingTo`、`planCoverageGaps`、`CoverageTaskV1` | `src/core/work-graph/state/plan-candidate.ts:146`、`src/core/work-graph/state/plan-candidate.ts:135`、`src/core/work-graph/state/plan-candidate.ts:168`、`src/core/work-graph/state/plan-candidate.ts:129` | 一个任务检查轮的唯一覆盖（义务按任务取，检查经 `checksApplyingTo` 按 `taskIds` 取，闸门也取它覆盖的任务；覆盖不到时的退回文字也用它列出适用的已装检查），和整份计划逐任务的覆盖缺口；检查记录不带目标，`taskIds` 列表按任务编号匹配 | 开轮编译（`compileVerificationPlan`）、交表和采用的覆盖核对（`uncoveredRequirementIssues`）、候选诊断；不要另写检查挑选或覆盖规则 |
 | `transitionNoticeSettings` | `src/core/work-graph/state/notice-settings-machine.ts:45` | 通知已读位置迁移；无前进更新则不写记录 | 标记通知已读 |
-| `newCandidateProposal`、`CandidatePlanProposal` | `src/core/work-graph/state/plan-machine.ts:132`、`src/core/work-graph/state/plan-machine.ts:92` | 建候选计划提案；候选带 `catalogPin`（`KnowledgePinV1`，L3；只在创建时写，不受保护，采用重核不比较），并在它之后写必填可空的 `sourceMessageRef`（干预消息，其他写者为 `null`） | 提交计划草案 |
-| `derivePlanProposalReadVerdict` | `src/core/work-graph/state/plan-machine.ts:197` | 提案的读取结论（含 Goal 状态） | 读计划提案 |
-| `derivePlanRevisionStatus` | `src/core/work-graph/state/plan-machine.ts:219` | adopted/superseded 派生，不落库 | 读计划修订 |
-| `planRevisionTargetOf` | `src/core/work-graph/state/plan-machine.ts:231` | 由提案与草稿算目标修订 ref | 采纳提案前 |
-| `transitionPlanProposal` | `src/core/work-graph/state/plan-machine.ts:1689` | 提案主迁移；采纳与 Goal 指针同一提交 | 计划写入 |
-| `planProposalProblem` | `src/core/work-graph/state/plan-machine.ts:883` | 提案事件的前置检查 | 提案迁移前 |
-| `draftHasModuleTask` | `src/core/work-graph/state/plan-machine.ts:1497` | 草稿里有 module 作用域的任务（`scope.kind === 'module'`），采用时要读 catalog | 采用 effects 需要决定是否加 catalog guard 时 |
+| `newCandidateProposal`、`CandidatePlanProposal` | `src/core/work-graph/state/plan-machine.ts:138`、`src/core/work-graph/state/plan-machine.ts:93` | 建候选计划提案；候选带 `catalogPin`（`KnowledgePinV1`，L3；只在创建时写，不受保护，采用重核不比较），并在它之后写必填可空的 `sourceMessageRef`（干预消息，其他写者为 `null`）；121-136：候选可带自己的 `checks`（只在创建时写，没带就没有这个字段，旧记录照读），人采用时装上 | 提交计划草案 |
+| `derivePlanProposalReadVerdict` | `src/core/work-graph/state/plan-machine.ts:206` | 提案的读取结论（含 Goal 状态） | 读计划提案 |
+| `derivePlanRevisionStatus` | `src/core/work-graph/state/plan-machine.ts:228` | adopted/superseded 派生，不落库 | 读计划修订 |
+| `planRevisionTargetOf` | `src/core/work-graph/state/plan-machine.ts:240` | 由提案与草稿算目标修订 ref | 采纳提案前 |
+| `transitionPlanProposal` | `src/core/work-graph/state/plan-machine.ts:1702` | 提案主迁移；采纳与 Goal 指针同一提交 | 计划写入 |
+| `planProposalProblem` | `src/core/work-graph/state/plan-machine.ts:896` | 提案事件的前置检查 | 提案迁移前 |
+| `draftHasModuleTask` | `src/core/work-graph/state/plan-machine.ts:1510` | 草稿里有 module 作用域的任务（`scope.kind === 'module'`），采用时要读 catalog | 采用 effects 需要决定是否加 catalog guard 时 |
 | `newPendingQueryRecords` | `src/core/work-graph/state/query-run-recovery.ts:533` | 建 pending 的 QueryJob/QueryRun 对 | 新 Query 请求 |
 | `advanceQueryExecutionRecord` | `src/core/work-graph/state/query-run-recovery.ts:608` | 推进 claimed/prepared/entering/entered | Query 进入执行 |
 | `markQueryRunUnknownRecord` | `src/core/work-graph/state/query-run-recovery.ts:688` | 记录 unknown（Job 保持 running） | 结果未知 |

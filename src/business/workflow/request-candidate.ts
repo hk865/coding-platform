@@ -191,6 +191,8 @@ export async function proposeFromPlanTurn(
     }
   }
   const answerReason = parsed.response.kind === 'plan' ? parsed.response.reason : undefined;
+  // 121-136: the plan's own checks travel on the candidate; the person's adoption installs them.
+  const answerChecks = parsed.response.kind === 'plan' ? parsed.response.checks : undefined;
 
   const proposed = await deps.plans.proposePlan(ctx, {
     input: {
@@ -206,6 +208,7 @@ export async function proposeFromPlanTurn(
       requestRef: turn.requestRoot,
       sourceMessageRef: null,
       replaces: head === null ? null : { proposalRef: head.ref, revision: head.revision },
+      ...(answerChecks === undefined ? {} : { checks: answerChecks }),
     },
     meta: { requestId, expected: [{ ref: goal.ref, revision: goal.revision }] },
   });
