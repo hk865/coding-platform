@@ -16,6 +16,9 @@ import { ready } from './http.mjs';
 import { Abort } from './report.mjs';
 
 const POLL_MS = 20_000;
+// 补充 1 的“等它结束”最多等多久（lead 11-17，G6 第六次之后）：和收尾的 30 分钟上限一样；到时还没结束才成为整轮的停止。
+const HOLD_MS = 30 * 60_000;
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const keyOf = value => JSON.stringify(value);
 /** The meter's key of one project scope (`inFlight({ scopes })` takes these). */
 export const scopeKey = scope => `${scope.projectId}/${scope.workspaceId}`;
@@ -265,6 +268,8 @@ export class Budget {
       if (!(error instanceof BudgetStop)) throw error;
       // A held stop never replaces a final one; a final one replaces a held one.
       if (this.stop === null || (this.stop.pendingKey !== undefined && error.pendingKey === undefined)) {
+        // 暂停从第一次看到时算起；同一个暂停之后再读到不重设时间（上面的条件不会用新的暂停替换旧的）。
+        if (error.pendingKey !== undefined) error.heldSince = Date.now();
         this.stop = error;
         this.report.note(error.message);
       }
@@ -297,11 +302,35 @@ export class Budget {
     if (own !== undefined) throw own;
   }
 
+  /** 只读：现在的停止是不是“等一个查询结束”的暂停（还能解除），不是最终的停止。 */
+  get held() {
+    return this.stop?.pendingKey !== undefined;
+  }
+
+  /**
+   * 补充 1（G6 第六次之后补上的等待）：只因一个查询还没结束而暂停时，就在这里等，每 20 秒读一次，直到它结束、
+   * 暂停解除；这期间场景停在原地，不开新工作。等满 HOLD_MS 还没结束，才换成最终的停止。第六次时这里不等，
+   * 驱动约 1 秒后就结束了整轮。
+   */
+  async #waitHeld() {
+    while (this.held) {
+      if (Date.now() - this.stop.heldSince >= HOLD_MS) {
+        this.stop = new BudgetStop('meter', `${this.stop.message}; it did not end within ${HOLD_MS / 60_000} min`);
+        this.report.note(this.stop.message);
+        return;
+      }
+      await sleep(POLL_MS);
+      await this.read();
+    }
+  }
+
   /** Called inside every wait loop: a stop already seen ends the wait at once; otherwise a reading at most every 20 s. */
   async tick(force = false) {
+    await this.#waitHeld();
     this.#stopNow();
     if (!force && Date.now() - this.lastPoll < POLL_MS) return;
     await this.read();
+    await this.#waitHeld();
     this.#stopNow();
   }
 
@@ -309,6 +338,7 @@ export class Budget {
     this.current = id;
     if (!this.units.has(id)) this.units.set(id, zero());
     await this.read();
+    await this.#waitHeld();
     if (this.stop !== null) throw this.stop;
   }
 

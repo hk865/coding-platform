@@ -136,16 +136,17 @@ async function settle(ctx, live, where, ms) {
   const deadline = Date.now() + ms;
   for (;;) {
     await ctx.budget.read();
-    if (ctx.budget.stop?.cap === 'meter') return { ok: false, text: ctx.budget.stop.message, busy: null };
+    // 补充 1：只是在等一个查询结束的暂停不算最终停止，收尾在上限内继续读，等它解除（G6 第六次时这里直接返回，停了整轮）。
+    if (ctx.budget.stop?.cap === 'meter' && !ctx.budget.held) return { ok: false, text: ctx.budget.stop.message, busy: null };
     const busy = ctx.budget.inFlight(where);
     const moving = [];
     for (const { project, ref } of live) {
       const phase = await goalPhase(project, ref);
       if (phase === null || !(TERMINAL.includes(phase) || phase === 'PAUSED')) moving.push(`${ref.goalId}:${phase ?? 'unreadable'}`);
     }
-    if (busy.queries + busy.runs === 0 && moving.length === 0) return { ok: true, busy };
+    if (busy.queries + busy.runs === 0 && moving.length === 0 && !ctx.budget.held) return { ok: true, busy };
     if (Date.now() > deadline) {
-      return { ok: false, busy, text: `after ${ms / MINUTE} min still Query ${busy.queries}, Work Run ${busy.runs}, Goals not paused ${moving.join(', ') || 'none'}` };
+      return { ok: false, busy, text: `after ${ms / MINUTE} min still Query ${busy.queries}, Work Run ${busy.runs}, Goals not paused ${moving.join(', ') || 'none'}${ctx.budget.held ? `; still held: ${ctx.budget.stop.message}` : ''}` };
     }
     await sleep(15_000);
   }
