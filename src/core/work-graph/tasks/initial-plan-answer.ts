@@ -101,8 +101,12 @@ export async function proveInterventionSource(input: {
   if (read.status === 'not_found') return { status: 'ready', value: null };
   if (read.status !== 'ready') return read;
   const message = read.value;
-  if (message.goalRef === null
-    || canonicalJson(message.goalRef as unknown as JsonValue) !== canonicalJson(input.goalRef as unknown as JsonValue)) {
+  // 消息点名了 Goal（`goalRef`；带 `taskRef` 的消息发送时已要求是同一个 Goal），就必须是被证明的 Goal。
+  // 没点名时（界面“直接干预”只带收件线），由这条消息唯一的 Query 证明 Goal：`handleIntervention` 按收件线最近的
+  // 工作选定 Goal、提交 Query 时钉过它的版本，上面已比过 Query 的 Goal 等于被证明的 Goal。
+  // 依据：MVP-BEHAVIOR B20（已做完的执行者线也可这样接新任务）、决定 38。
+  if (message.goalRef !== null
+    && canonicalJson(message.goalRef as unknown as JsonValue) !== canonicalJson(input.goalRef as unknown as JsonValue)) {
     return { status: 'ready', value: null };
   }
   // A withdrawn or unreleased message is never an admitted source.

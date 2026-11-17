@@ -1,0 +1,132 @@
+/**
+ * IPF 的测试行（lead 2026-11-17 裁定 `ipf-rulings.md`；诊断 `int-diag.md`；G6 第九次“干预”卡死 66 分钟）。
+ * 写测试方和施工方同时、独立地从同一份裁定写；只跑 memory（RULES S3：没有存储行）。世界见 `tests/helpers/IPF-world.ts`。
+ *
+ * - F1（R1）：人照界面的形状给做完的线发“直接干预”，不带 `goalRef`、`taskRef`。Host 按这条线最近的工作选了 G，
+ *   开 intervention_planning Query，假模型回一份合法的细化计划。期望：决定队列读得出；回答被读成 G 的候选，
+ *   等人采用；人采用时采用复核再证明一次来源，候选变成已采用；G 的下一件工作的 Run 能准备。
+ *   今天红在第一步：队列 `rejected/source_stale`（来源证明要求消息带 `goalRef`）；候选也写不出，入口返回
+ *   `rejected/source_stale`。R1 落地后转绿；只做 R2 不做 R1 时，队列读得出，红在第二步（候选写不出）。
+ * - F2（R2）：用带 `goalRef` 的消息造出同样的候选（今天就写得出），另一条线的干预回答两个问题、出两张规划问题卡。
+ *   候选等人采用时，人经 `messages/withdraw` 撤回来源消息。期望：决定队列仍读得出，那两张规划问题卡照常，
+ *   G 的下一件工作的 Run 能准备。今天红在撤回之后读队列：`rejected/source_stale`。R2 落地后转绿；只做 R1 时照样红。
+ * - F3（守护）：消息点名了另一个目标（`goalRef` = 目标 1），没有 `taskRef`；Host 照旧按线最近的工作选 G 开 Query。
+ *   期望：证明不成立，入口返回 `rejected/source_stale`，候选不写。今天绿；R1 若改成“不再比较消息的 Goal”就红。
+ *
+ * 改坏演示（写测试方 11-17，在副本里临时给生产代码写替身，演示后还原，`git diff -- src` 为 0）：
+ * R1+R2 三行全绿；只做 R1 → F2 红在撤回之后读队列；只做 R2 → F1 队列读得出，红在第二步（入口 `source_stale`、
+ * 候选 `not_found`）；R1 改成不比较消息的 Goal → F3 红（候选写出）；R2 改成遇到 `source_stale` 就让整个来源回空页
+ * → F2 红在“两张规划问题卡照常”（读到 0 张）。另外探过：撤回之后队列拒绝时，下一件工作的 Run 进不了模型（0 次请求），
+ * 所以第三步本身也能发现 G 的工作停了。
+ */
+import { afterEach, describe, expect, it } from 'vitest';
+import type { ReadResult } from '../../src/contracts/core/results.js';
+import type { PlanProposal } from '../../src/core/work-graph/model/plan-contracts.js';
+import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
+import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
+import { proposalRefOf, readPlanningQuery } from '../helpers/IV-host-fixture.js';
+import {
+  createIpfLine, interveneUntilSettled, openIpfWorld, planningQuestionCards, readIpfQueue, sendIntervention,
+  startIpfNextWork, type IpfWorld,
+} from '../helpers/IPF-world.js';
+import { S6A_SCOPE, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
+import { refinementPlan } from '../helpers/S7B-V-fixture.js';
+
+const worlds: IpfWorld[] = [];
+afterEach(async () => { for (const w of worlds.splice(0)) await w.world.close().catch(() => undefined); });
+
+async function openWorld(label: string): Promise<IpfWorld> {
+  const w = await openIpfWorld(label);
+  worlds.push(w);
+  return w;
+}
+
+/** 做完的线的模型这一轮回一份合法的细化计划：在 G 的 v1 上加一件新的工作。 */
+async function scriptRefinement(w: IpfWorld): Promise<void> {
+  await w.world.scripted.script(w.done, [{ kind: 'text', text: await refinementPlan(w.world, w.goal,
+    { label: `ipf-${w.label}`, taskId: `ipf-${w.label}-new`, role: S6A_WORK_ROLE.templateId }) }]);
+}
+
+/** 一句话的结果：拒绝时带码和理由，红的地方直接看到 `source_stale`。 */
+function outcome(result: { status: string }): string {
+  const refused = result as { status: string; code?: string; reason?: string };
+  return refused.status === 'rejected' ? `rejected/${String(refused.code)}: ${String(refused.reason)}` : refused.status;
+}
+
+async function readProposal(w: IpfWorld, messageRef: SessionMessage['ref']): Promise<ReadResult<PlanProposal>> {
+  return (await w.world.post('plans/proposal', plain(S6A_SCOPE, proposalRefOf(messageRef, w.goal))))
+    .body as ReadResult<PlanProposal>;
+}
+
+describe('IPF: 干预来源证明和规划问题来源', () => {
+  it('F1 界面形状的干预落到做完的线：候选写出、队列读得出、G 的后续 Run 能准备', async () => {
+    const w = await openWorld('f1');
+    await scriptRefinement(w);
+    const sent = await sendIntervention(w, { label: 'f1', recipient: w.done });
+    expect(sent, '界面形状：消息不点名目标和任务').toMatchObject({ goalRef: null, taskRef: null });
+
+    const settled = await interveneUntilSettled(w, sent.ref);
+    const queue = await readIpfQueue(w);
+    // 前两步用 soft：今天两步都红，一次运行就都看得到。
+    expect.soft(outcome(queue), '第一步：G 的决定队列读得出').toBe('ready');
+    expect.soft(outcome(settled), '第二步：回答写成候选，停在人的卡上').toBe('awaiting_decision');
+    expect(await readProposal(w, sent.ref), '候选的来源是这条消息')
+      .toMatchObject({ status: 'ready', value: { status: 'candidate', sourceMessageRef: sent.ref } });
+    if (queue.status !== 'ready') return;
+    const proposalId = proposalRefOf(sent.ref, w.goal).proposalId;
+    expect(queue.value.waitingAnswer.some(card => card.source.kind === 'candidate'
+      && card.objects.some(object => JSON.stringify(object).includes(proposalId))), '候选卡在 G 的队列里').toBe(true);
+    // 人采用：采用复核再证明一次来源（消息仍不点名目标）。
+    const candidate = await readProposal(w, sent.ref);
+    if (candidate.status !== 'ready') throw new Error('候选读不到');
+    expect((await w.world.post('plans/apply', graphWrite(S6A_SCOPE, { proposalRef: proposalRefOf(sent.ref, w.goal),
+      expectedProposalRevision: candidate.value.revision, decisionRefs: [] }, 'ipf-f1-adopt', []))).body, '人采用')
+      .toMatchObject({ status: 'committed' });
+    expect(await readProposal(w, sent.ref), '采用复核通过').toMatchObject({ status: 'ready', value: { status: 'accepted' } });
+    expect(await startIpfNextWork(w), '第三步：G 的下一件工作的 Run 准备好、进了模型').toBe(1);
+  }, 120_000);
+
+  it('F2 候选等人采用时人撤回来源消息：队列仍读得出，其余卡照常，G 的后续 Run 能准备', async () => {
+    const w = await openWorld('f2');
+    // 其余卡：另一条线上点名 G 的干预，模型回两个问题，G 的队列出两张规划问题卡。
+    const asker = await createIpfLine(w, 'asker');
+    await w.world.scripted.script(asker, [{ kind: 'text', text: JSON.stringify({ schemaVersion: 2,
+      kind: 'needs_decision', summary: 'IPF F2 两个问题', questions: ['先做哪一块？', '用哪个检查证明？'] }) }]);
+    const asked = await sendIntervention(w, { label: 'f2-asker', recipient: asker, goalRef: w.goal });
+    expect(await interveneUntilSettled(w, asked.ref), '问题回答停在问题卡上')
+      .toMatchObject({ status: 'answer_ready', reason: 'questions' });
+    // 候选：点名 G 的干预，今天就写得出候选。
+    await scriptRefinement(w);
+    const sent = await sendIntervention(w, { label: 'f2', recipient: w.done, goalRef: w.goal });
+    expect(outcome(await interveneUntilSettled(w, sent.ref)), '候选等人采用').toBe('awaiting_decision');
+    const before = await readIpfQueue(w);
+    expect(outcome(before), '撤回之前队列读得出').toBe('ready');
+    if (before.status !== 'ready') return;
+    expect(planningQuestionCards(before.value), '撤回之前有两张规划问题卡').toHaveLength(2);
+
+    const withdrawn = (await w.world.post('messages/withdraw', graphWrite(S6A_SCOPE, { messageRef: sent.ref },
+      'ipf-f2-withdraw'))).body;
+    expect(withdrawn, '人撤回来源消息').toMatchObject({ status: 'committed', value: { withdrawnAt: expect.any(String) } });
+
+    const after = await readIpfQueue(w);
+    expect(outcome(after), '撤回之后 G 的决定队列仍读得出').toBe('ready');
+    if (after.status !== 'ready') return;
+    expect(planningQuestionCards(after.value), '另一条线的两张规划问题卡照常').toHaveLength(2);
+    expect(await startIpfNextWork(w), 'G 的下一件工作的 Run 准备好、进了模型').toBe(1);
+  }, 120_000);
+
+  it('F3 守护：消息点名的目标和 Query 的目标不同，证明不成立，候选不写', async () => {
+    const w = await openWorld('f3');
+    await scriptRefinement(w);
+    const other = w.world.goals.first;
+    const sent = await sendIntervention(w, { label: 'f3', recipient: w.done, goalRef: other });
+    expect(sent.goalRef, '消息点名的是目标 1').toEqual(other);
+
+    const settled = await interveneUntilSettled(w, sent.ref);
+    const query = await readPlanningQuery(w.world, sent.ref);
+    expect(query?.job.job.status, 'Query 作答了').toBe('answered');
+    expect(query?.job.job.goalId, 'Query 的目标是按线最近的工作选的 G，不是消息点名的目标 1').toBe(w.goal.goalId);
+    expect(outcome(settled), '来源证明不成立').toMatch(/^rejected\/source_stale: /);
+    expect(await readProposal(w, sent.ref), '候选不写').toMatchObject({ status: 'not_found' });
+  }, 120_000);
+});

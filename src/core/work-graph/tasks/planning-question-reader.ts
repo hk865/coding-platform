@@ -263,6 +263,10 @@ export function createPlanningQuestionReader(
           } else if (execution.kind !== 'initial_coordination') continue;
           for (const answerRef of job.job.answerRefs) {
             const facts = await reader.call(plans, ctx, answerRef, source);
+            // 干预分支：来源证明不成立（`source_stale`）是“这份回答不是这个 Goal 的规划问题”的判断，不是读失败，
+            // 和下面 prepared_goal 分支一样跳过（slice-PL-SPEC：证明返回 null 是“不是来源”）。例如候选等人采用时，
+            // 人撤回了来源消息。读不到等别的失败照旧原样返回。
+            if (source !== undefined && facts.status === 'rejected' && facts.code === 'source_stale') continue;
             const failure = answerFailure(facts);
             if (failure !== null) return failure;
             if (facts.status !== 'ready') continue;

@@ -296,10 +296,16 @@ describe('N-interrupt (SQLite): the person interruption notifies each party of t
       expect(notices.map(notice => notice.ref.messageId)).toEqual(expectedIds.map((requestId, index) =>
         'session-message-' + sha256Hex(canonicalJson({ projectId: S6A_SCOPE.projectId,
           workspaceId: S6A_SCOPE.workspaceId, sender: notices[index]!.sender, requestId }))));
+      // 认领的干预先发这四条通知，再交给协作驱动（Host 的 consumeCandidate：先 announceInterruption，再
+      // collaborationDriver.start）；驱动的 start 对一个任务只装上看守、启动它的循环就返回（startHandle），
+      // 发信线这一轮的模型请求要等看守走完选任务、认领、开 Run 才发，比四条通知晚。先有界轮询到这一轮出现，
+      // 再查另外三方没开轮、发信线恰好多一轮。
+      await waitFor(async () => (await world.scripted.requests(wait.sender)).length,
+        count => count > turnsBefore.sender, 'the claimed intervention\'s turn on the waiting sender');
       expect((await world.scripted.requests(wait.recipient)).length).toBe(turnsBefore.recipient);
       expect((await world.scripted.requests(adviserRef)).length).toBe(turnsBefore.adviser);
       expect((await world.scripted.requests(round.secretary)).length).toBe(turnsBefore.secretary);
-      // The claimed intervention's drive (`host.ts:1824-1830`) opens the sender's one turn, not the notice.
+      // The claimed intervention's drive (`host.ts:3125-3139`) opens the sender's one turn, not the notice.
       expect((await world.scripted.requests(wait.sender)).length).toBe(turnsBefore.sender + 1);
 
       // N-02: the reply leaves the line with no open wait, so the person's message sends no notify.
