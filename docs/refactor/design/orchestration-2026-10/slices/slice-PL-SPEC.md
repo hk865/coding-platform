@@ -461,7 +461,7 @@ const systemRequest = message.sender.kind === 'host' && message.sender.actor.kin
 if (!person && !releasedRequest && !systemRequest) return { status: 'ready', value: null };
 ```
 
-其余条件不变：`sourceMessageRef` 的 scope、Goal 相等、消息未撤回未拒绝、`message.goalRef` 等于被证明的 Goal。理由：refine/planfix/planresume/planreview 的 Query 来源都是 Host 系统 R；不放这一支，`readInitialPlanAnswerFacts` 的 `source` 证明返回 null，规划/审阅答案读不出来，候选或结论写不出来。见偏差 D2。
+其余条件不变：`sourceMessageRef` 的 scope、Goal 相等、消息未撤回未拒绝、`message.goalRef` 等于被证明的 Goal（2026-11-17 补注，决定 121-145：只在消息点名了 Goal 时比较；界面“直接干预”只带收件线、`goalRef` 为 null，这时以这条消息唯一的 Query 的 Goal 为准）。理由：refine/planfix/planresume/planreview 的 Query 来源都是 Host 系统 R；不放这一支，`readInitialPlanAnswerFacts` 的 `source` 证明返回 null，规划/审阅答案读不出来，候选或结论写不出来。见偏差 D2。
 
 **（3）`handleIntervention`（`src/business/workflow/intervention.ts:58`-`:120`）**
 

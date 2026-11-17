@@ -755,7 +755,7 @@ stateDiagram-v2
 
 **记录和事件。** 干预本身不新增阶段记录：每步的正式身份是 `intervention:<message key>:<stage>`，位置从 Query、提案、采用与领取重算（书 §3.10 第 1 条）。候选的来源消息/Query 事实（`sourceMessageRef`、`requestRef`、`basedOn`、`submittedBy`）沿用这些现有字段和 Query 读取，不新增字段；平台取消让出的 Run 归 §7.8，本节不重复。`PlanProposal` 与 `proposal_recorded` 事件都带 `sourceMessageRef`（必填的 `null` 或完整 ref）；`intervention_new_goal` 命令带来源消息与旧 Goal（`plan-contracts.ts:47`；`plan-record-codecs.ts:800-804`、`:929-934`；`plan-service.ts:1380-1402`；`request-service.ts:111`）。
 
-**一份来源证明。** 提议、初始采用与后续采用共用 `proveInterventionSource`：Query 必须是 `intervention_planning`，来源消息与 Goal 同一，消息未撤回且已释放，发送者是人或已释放的 `action_request`；它读到的 QueryJob 与消息版本作为守卫存进采用（`initial-plan-answer.ts:74-118`；`plan-service.ts:1604-1614`、`:1653-1661`、`:2929-2953`）。
+**一份来源证明。** 提议、初始采用与后续采用共用 `proveInterventionSource`：Query 必须是 `intervention_planning`，来源消息与 Goal 同一（2026-11-17 补注，决定 121-145：消息带 `goalRef` 时它必须等于这个 Goal；不带时以这条消息唯一的 Query 的 Goal 为准），消息未撤回且已释放，发送者是人或已释放的 `action_request`；它读到的 QueryJob 与消息版本作为守卫存进采用（`initial-plan-answer.ts:74-118`；`plan-service.ts:1604-1614`、`:1653-1661`、`:2929-2953`）。
 
 **Host 的调用。** Host 的干预调用在 `messageRef` 之外带四个字段：`roleBinding`、`runtimeBudget`、`budget`、`consumerId`（`ports.ts:312-317`；`host.ts:1815-1819`）。
 
