@@ -23,6 +23,9 @@ const TASK_DECIDE_STOPS = new Set(['gate_needs_fix', 'auto_rework_cap_reached', 
   'unknown_outcome']);
 /** G7 W3(b): above the longest wait a scenario sets (`wait.mjs` LONG_DEADLINE_MS, 30 min) plus one Host heartbeat. */
 const STALL_MS = 32 * MINUTE;
+// lead 11-17（G6 第八次 E09）：任务停在“要决定”时，平台同一刻会给参谋发偏差轮，参谋可能解释、出卡。驱动要等这一步：
+// 目标和卡两分钟没变化、项目里也没有在途的查询和 Run，才算停下等人。原先一见就结束，参谋那一轮被暂停打断。
+const DECIDE_GRACE_MS = 2 * MINUTE;
 
 /** A wait that ran out or ended early: its check is already judged `fail`; the unit stops unless the caller takes it (`orNull`). */
 class WaitTimeout extends Abort {
@@ -354,9 +357,6 @@ export async function waitGoal(ctx, project, goalRef, { until = TERMINAL, timeou
 async function endedEarly(ctx, project, goalRef, { display, queue, open, quiet }) {
   if (display === null || queue === null) return null;
   const { phase, cause } = display.display;
-  if (phase === 'NEEDS_DECISION' && TASK_DECIDE_STOPS.has(cause?.code) && open === 0) {
-    return `the platform stopped: ${cause.code} on ${cause.taskId}`;
-  }
   const { sourceCursor: _watermark, ...goalFacts } = display;
   const seen = JSON.stringify({ display: goalFacts, cards: [...queue.waitingAnswer, ...queue.answeredPendingApplication]
     .map(card => [card.cardKey, card.state]) });
@@ -365,9 +365,14 @@ async function endedEarly(ctx, project, goalRef, { display, queue, open, quiet }
     quiet.since = Date.now();
     return null;
   }
-  if (Date.now() - quiet.since < STALL_MS) return null;
+  const quietFor = Date.now() - quiet.since;
   const busy = ctx.budget.inFlight({ scopes: [scopeKey(project.scope)] });
-  if (busy.queries > 0 || busy.runs > 0) return null;
+  const idle = busy.queries === 0 && busy.runs === 0;
+  if (phase === 'NEEDS_DECISION' && TASK_DECIDE_STOPS.has(cause?.code) && open === 0) {
+    return quietFor >= DECIDE_GRACE_MS && idle ? `the platform stopped: ${cause.code} on ${cause.taskId}` : null;
+  }
+  if (quietFor < STALL_MS) return null;
+  if (!idle) return null;
   const driver = ready(await project.host.client.read('workflow/driver-read', project.scope, { goalRef }));
   return `stalled: no change for ${Math.floor((Date.now() - quiet.since) / MINUTE)} min, nothing in flight (last seen: goal phase ${
     phase}, cause ${cause?.code ?? 'none'}; driver ${driver?.state ?? 'unread'}, wait reason ${driver?.reason ?? 'none'})`;
