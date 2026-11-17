@@ -71,6 +71,8 @@ the window.
 - **Waiting.** The wait lives where the product allows it: the member's Work Run asks the secretary line through
   `send_session_message` with `waitAfterSend` (a Query round is refused that combination). The chain is followed until
   each event came, the chain is over (its Task done, every wait settled), or the window ends.
+  11-18 补：整条链最多等 60 分钟；任务做完以后再等 10 分钟，链还没了结就结束（第十次曾一直等到窗口结束）。
+  两种结束都记成未覆盖，不算通过。
 - **Lag probe.** `lib/lag.mjs` is preloaded into each Host (`NODE_OPTIONS=--import`), samples
   `perf_hooks.monitorEventLoopDelay` and writes p50/p95/p99/max; recorded only, no threshold.
 - **Seed Goals.** A settings-opened workspace gets its trusted checks, policy and architecture only from a cold-start

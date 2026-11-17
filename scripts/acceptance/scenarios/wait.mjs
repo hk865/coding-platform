@@ -13,6 +13,11 @@ import { broken, chooseModel, coldStart, createGoal, driverStart, ensurePolicy, 
 const MINUTE = 60_000;
 const DEADLINE_MS = 2 * MINUTE;
 const LONG_DEADLINE_MS = 30 * MINUTE;
+// 11-18（G6 第十次的教训）：连锁等待和别的等待一样要有上限。第十次时目标已完成、链上还有等待没了结，
+// 这里一直等到授权窗口结束，后面的场景都没轮到。整条链最多等 60 分钟；任务做完以后再等 10 分钟，
+// 链还没了结就结束。两种结束都记成“未覆盖”，不算通过。
+const CHAIN_CAP_MS = 60 * MINUTE;
+const TASK_DONE_GRACE_MS = 10 * MINUTE;
 const SEED = {
   'package.json': '{\n  "name": "g6-wait",\n  "type": "module",\n  "scripts": { "test": "node --test" }\n}\n',
   'README.md': '# g6-wait\n\nNumber helpers.\n',
@@ -104,6 +109,8 @@ async function memberSends(project, member) {
  * settled); or the authorization window ends. A quiet moment is never taken as the end.
  */
 async function followChain(ctx, project, { member, first, goalRef, windowEnd }) {
+  const capAt = Date.now() + CHAIN_CAP_MS;
+  let taskDoneAt = null;
   for (;;) {
     await ctx.budget.tick();
     const sends = await memberSends(project, member);
@@ -121,7 +128,12 @@ async function followChain(ctx, project, { member, first, goalRef, windowEnd }) 
     const second = chain.filter(value => value?.expiredAt != null)[1] ?? null;
     const secondAccepted = second !== null && (second.acceptedInputs ?? []).some(entry => entry.consumesWait === true && entry.part === 'expiry');
     const secondSaid = second !== null && /第\s*2\s*次到期/.test((await sessionTurns(project, member)).map(turn => turn.input).join('\n'));
-    const ended = secondAccepted && secondSaid && (late !== undefined || answeredFirst) ? 'events' : over ? 'chain-over' : Date.now() > windowEnd ? 'window' : null;
+    // 任务一旦不再开着就记下时刻；之后又开着（例如返工）就清掉重计。
+    taskDoneAt = taskOpen ? null : taskDoneAt ?? Date.now();
+    const now = Date.now();
+    const ended = secondAccepted && secondSaid && (late !== undefined || answeredFirst) ? 'events' : over ? 'chain-over'
+      : taskDoneAt !== null && now - taskDoneAt > TASK_DONE_GRACE_MS ? 'task-done'
+      : now > capAt ? 'cap' : now > windowEnd ? 'window' : null;
     if (ended !== null) return { chain, chainRefs, expired, late, answeredFirst, ended, task, secondAccepted, secondSaid };
     await sleep(15_000);
   }
@@ -189,6 +201,9 @@ async function run(ctx, rec) {
   // The rest of the chain, as it really comes (second review #12).
   const chain = await followChain(ctx, project, { member, first: wait, goalRef: goal.ref, windowEnd: Date.parse(ctx.cfg.window.to) });
   const why = chain.ended === 'window' ? ['not-run', '授权窗口结束时还没来']
+    : chain.ended === 'cap' ? ['not-run', `等了 ${CHAIN_CAP_MS / MINUTE} 分钟还没来`]
+    : chain.ended === 'task-done' ? ['env-unavailable',
+      `t-wait 已做完（${chain.task?.effectivePhase ?? '-'}），又等了 ${TASK_DONE_GRACE_MS / MINUTE} 分钟，链上 ${chain.chain.filter(value => !settledWait(value)).length} 条等待还没了结`]
     : ['env-unavailable', `等待链已结束（t-wait ${chain.task?.effectivePhase ?? '-'}，链上 ${chain.chain.length} 条等待都已了结）`];
   // "第 2 次到期" is rendered into the member's actual input: judged on its turn input (#9).
   if (chain.expired >= 2 && chain.secondAccepted) {
