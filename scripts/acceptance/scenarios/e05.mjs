@@ -281,7 +281,8 @@ async function run(ctx, rec) {
     .split('\n').filter(line => line.startsWith('??')).map(line => line.slice(3));
   ctx.report.command(`git status --porcelain --untracked-files=all (in ${project.root}) -> 0`);
   const planned = ['test/users.test.js', 'test/orders.test.js', ...Object.keys(PLANTED)];
-  const extra = untracked.filter(path => !planned.includes(path));
+  // lead 11-17（G6 第八次）：`.workbench/` 下是平台自己写的知识文件（注记等，决定 121-92），不是任务留下的临时件。
+  const extra = untracked.filter(path => !planned.includes(path) && !path.startsWith('.workbench/'));
   rec.check('temporary', extra.length === 0, extra.length === 0 ? '没有计划外的未跟踪文件' : `计划外的未跟踪文件：${extra.join(', ')}`);
   rec.uncover('line-choice', 'entry-missing', '公开读口不给派工时的候选线和六键排序依据（lines/list 只给结果），驱动看不到排除和排序本身');
   ctx.shared.e05 = { project, goalRef: goal.ref, runs, module };
