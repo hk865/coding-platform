@@ -102,7 +102,9 @@ class Meter {
               // A rejection the Query's own terminal failure proves (lead ruling 11-14 on A1/B1) is a known outcome: the
               // request is counted as unbilled, 0. Unknown usage with no such terminal fact is not zero: it is counted
               // at its reservation (G6F F1).
-              if (snapshot.run?.status !== 'closed') {
+              // lead 11-17（G6 第八次）：查询的终态有 answered 和 closed 两种（`contracts/query-job.ts:177`）。原先只认
+              // closed，已作答的查询里一个重试过的请求让暂停解不开，空等 30 分钟后停了整轮。
+              if (!['answered', 'closed'].includes(snapshot.run?.status)) {
                 // Held until its Query's terminal fact (quick check 补充1): new work stops meanwhile; once the Query
                 // closes the request is counted (0 or its reservation) and only this stop is lifted (`read`).
                 const held = new BudgetStop('meter', `request ${request.requestId} of ${snapshot.ref.queryJobId} has usage ${request.usageStatus} and its Query has not ended yet; new work waits for its terminal fact`);
