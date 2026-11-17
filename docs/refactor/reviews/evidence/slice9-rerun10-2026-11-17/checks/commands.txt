@@ -1,0 +1,13 @@
+2026-11-17T12:54:35.227Z node scripts/acceptance/run.mjs scripts/acceptance/acceptance.config.json --only waiting,attached,B06,compaction (run g6-2026-11-17-0e8858de)
+2026-11-17T12:54:36.192Z w-accept#0: bash start-host.sh (pid 1797152) -> http://127.0.0.1:44401/workbench/
+2026-11-17T12:54:36.233Z git init -q -b main (in /home/han001/g6-run-1117d/w-accept/projects/wait) -> 0
+2026-11-17T12:54:36.235Z git config user.email g6@example.invalid (in /home/han001/g6-run-1117d/w-accept/projects/wait) -> 0
+2026-11-17T12:54:36.237Z git config user.name g6 (in /home/han001/g6-run-1117d/w-accept/projects/wait) -> 0
+2026-11-17T12:54:36.240Z git add -A (in /home/han001/g6-run-1117d/w-accept/projects/wait) -> 0
+2026-11-17T12:54:36.244Z git commit -q -m wait: initial files (in /home/han001/g6-run-1117d/w-accept/projects/wait) -> 0
+2026-11-17T12:54:36.246Z git rev-parse HEAD (in /home/han001/g6-run-1117d/w-accept/projects/wait) -> 0
+2026-11-17T12:54:36.248Z git status --porcelain (in /home/han001/g6-run-1117d/w-accept/projects/wait) -> 0
+2026-11-17T12:54:36.250Z git ls-files -s (in /home/han001/g6-run-1117d/w-accept/projects/wait) -> 0
+2026-11-17T12:54:38.169Z bash /mnt/d/cc-lead-notes/impl/smoke/srr/smoke-route.sh -> 0 (smoke-flash)
+2026-11-17T12:57:10.188Z w-accept#0: SIGINT, exit 0 after 106 ms
+2026-11-17T13:28:09.003Z w-accept#1: bash start-host.sh (pid 1986112) -> http://127.0.0.1:35461/workbench/
