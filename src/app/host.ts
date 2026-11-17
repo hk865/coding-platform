@@ -2573,6 +2573,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       // U8: where the workspace's project store lives (no directory); a memory store or a project not open has none.
       storeLocation: storeLocationOf(workspace.scope.projectId),
       knowledgeRepoKey: knowledgeRepoKeys.get(scopeKey(workspace.scope)) ?? null,
+      // G8B B4：库打不开的项目留着登记的范围，没有运行时。
+      projectOpen: platformFor(workspace.scope.projectId) !== null,
     })),
     setWorkspaceAccess: (scope, access) => {
       const config = byScope.get(scopeKey(scope));

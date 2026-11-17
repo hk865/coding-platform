@@ -95,6 +95,7 @@ import type {
   PromptPackListV1,
   PromptTemplateReadV1,
   PromptToolReadV1,
+  WithdrawnCheckV1,
 } from './host-settings-types.js';
 import { DEFAULT_WORK_RUN_TOKEN_BUDGET, MAX_WORK_RUN_TOKEN_BUDGET } from './host-settings-types.js';
 import { DEFAULT_COMMAND_REVIEW_LINE_MINUTES } from '../contracts/resource-caps.js';
@@ -103,7 +104,7 @@ import type { WorkspaceRemovalKindV1, WorkspaceRemovalViewV1 } from '../contract
 /** The published settings route set. `SettingsRoutes` stays the type truth. */
 export const SETTINGS_ROUTE_SUFFIXES = [
   'snapshot', 'directories', 'models/save', 'models/select', 'workspaces/open', 'workspaces/access',
-  'workspaces/withdraw', 'workspaces/remove', 'checks/approve',
+  'workspaces/withdraw', 'workspaces/remove', 'checks/approve', 'checks/withdraw',
   'automation/save',
   'resource-caps/save', 'run-budget/save', 'command-review/save', 'plan-loop-limits/save', 'prompts/packs/list', 'prompts/packs/create', 'prompts/templates/read',
   'prompts/templates/save', 'prompts/tools/read', 'prompts/tools/save', 'knowledge-local', 'structural-approval/save',
@@ -238,6 +239,8 @@ export type HostSettingsWorkspaceFacts = {
   storeLocation: SettingsStoreLocation | null;
   /** KLS-2: the repository key of the workspace's checkout; null (or absent) for a folder in no git work tree. */
   knowledgeRepoKey?: RepoKey | null;
+  /** G8B B4：这个工作区的项目本次打开了没有。库打不开的项目留着登记的范围，但没有运行时，本次进程里也不会再打开。 */
+  projectOpen: boolean;
 };
 
 /** Host-owned result of opening (or finding) one directory. */
@@ -448,9 +451,13 @@ type PersistedWorkspaceV1 = {
   /** 121-136 A3: the plan a person's adoption installed checks for (in `planChecks`) and is not known adopted yet:
    *  written in the same save as those checks, removed once settled (`settlePlanAdoption`). */
   planAdoption?: CheckApprovalV1['plan'];
+  /** G8B B2：人撤回过的计划检查的留痕，整批替换也留着；人采用的计划把同一个 checkId 装回时去掉（`closePlanAdoption`）。 */
+  withdrawnChecks?: WithdrawnCheckEntryV1[];
 };
 /** One check a plan brought, as the settings file keeps it. */
 type PlanCheckEntryV1 = Omit<CheckApprovalV1, 'checkId'> & { check: RegisteredCommandCheck };
+/** G8B B2：设置文件里的一条撤回留痕，和 `PlanCheckEntryV1` 一样，id 取自检查本身。 */
+type WithdrawnCheckEntryV1 = Omit<WithdrawnCheckV1, 'checkId'> & { check: RegisteredCommandCheck };
 /** One listed workspace as the project list holds it: the Host's start-up manifest. */
 export type PersistedWorkspaceRef = Pick<PersistedWorkspaceV1, 'scope' | 'name' | 'root' | 'writeAllowed' | 'commandsAllowed'>;
 /** The saved-state read's two real outcomes: a saved entry or none at all. */
@@ -526,6 +533,13 @@ function parseStoredPlanChecks(value: unknown): PlanCheckEntryV1[] {
     && validPlanSource(entry['plan']) && validApprovedBy(entry) && nonEmpty(entry['approvedAt']);
   if (!Array.isArray(value) || !value.every(valid)) throw new Error('the private host settings file is invalid');
   return structuredClone(value as PlanCheckEntryV1[]);
+}
+
+function parseStoredWithdrawnChecks(value: unknown): WithdrawnCheckEntryV1[] {
+  const valid = (entry: unknown): boolean => isRecord(entry) && isRegisteredCommandCheck(entry['check'])
+    && validPlanSource(entry['plan']) && nonEmpty(entry['withdrawnAt']);
+  if (!Array.isArray(value) || !value.every(valid)) throw new Error('the private host settings file is invalid');
+  return structuredClone(value as WithdrawnCheckEntryV1[]);
 }
 
 function parseStoredPlanAdoption(value: unknown): CheckApprovalV1['plan'] {
@@ -753,6 +767,8 @@ function parsePersisted(text: string): PersistedSettingsV1 {
         ? {} : { checksRevision: parseStoredChecksRevision(entry['checksRevision']) }),
       ...(entry['planChecks'] === undefined ? {} : { planChecks: parseStoredPlanChecks(entry['planChecks']) }),
       ...(entry['planAdoption'] === undefined ? {} : { planAdoption: parseStoredPlanAdoption(entry['planAdoption']) }),
+      ...(entry['withdrawnChecks'] === undefined
+        ? {} : { withdrawnChecks: parseStoredWithdrawnChecks(entry['withdrawnChecks']) }),
     };
   });
   return { schemaVersion: 1, models, selection, workspaces,
@@ -813,6 +829,7 @@ export async function createHostSettings(
   const assembly = options.assembly;
   const filePath = join(settingsDirectory, 'host-settings.json');
   const promptsRoot = options.promptsRoot ?? join(settingsDirectory, 'prompts');
+  const now = options.now ?? (() => new Date().toISOString());
 
   const persisted: PersistedSettingsV1 = await readPersistedSettings(settingsDirectory) ?? {
     schemaVersion: 1,
@@ -919,13 +936,18 @@ export async function createHostSettings(
     return run;
   };
 
-  /** Closes a settled plan adoption; a close that cannot be written stays in the file only and settles the same way. */
+  /** Closes a settled plan adoption; a close that cannot be written stays in the file only and settles the same way.
+   *  G8B B2：采用上了的计划还带着它装的检查，其中人撤回过的，留痕一起去掉（agent 批准装不回撤回过的，只能是人采用）；
+   *  没采用上的，检查已经收回，留痕不动。 */
   const closePlanAdoption = async (scope: CoreScope): Promise<void> => {
     const index = workspaces.findIndex(entry => scopeKey(entry.scope) === scopeKey(scope));
     const entry = workspaces[index];
     if (entry?.planAdoption === undefined) return;
-    const { planAdoption: _settled, ...closed } = entry;
-    workspaces[index] = closed;
+    const { planAdoption: settled, withdrawnChecks, ...closed } = entry;
+    const back = new Set((entry.planChecks ?? []).filter(planned => sameJson(planned.plan.proposalRef, settled.proposalRef))
+      .map(planned => planned.check.checkId));
+    const still = (withdrawnChecks ?? []).filter(withdrawn => !back.has(withdrawn.check.checkId));
+    workspaces[index] = still.length === 0 ? closed : { ...closed, withdrawnChecks: still };
     await persist().catch(() => undefined);
   };
 
@@ -992,6 +1014,7 @@ export async function createHostSettings(
    * the whole file and restores the previous descriptor when the write fails. It
    * never notifies; each caller maps notification failure to its own result. A whole
    * approved list replaces the checks plans brought as well (121-136).
+   * G8B B2：撤回留痕照旧留着：整批替换不等于人重新批了被撤回的那条。
    */
   const saveChecksDescriptor = async (
     scope: CoreScope,
@@ -1012,6 +1035,7 @@ export async function createHostSettings(
       checksSource: { answerRef: structuredClone(proposal.answerRef), answerDigest: proposal.answerDigest },
       checksRevision: typeof checksRevision === 'function' ? checksRevision(previous) : checksRevision,
       ...(child === undefined ? {} : { checksChild: { ...child } }),
+      ...(previous?.withdrawnChecks === undefined ? {} : { withdrawnChecks: structuredClone(previous.withdrawnChecks) }),
     };
     if (index >= 0) workspaces[index] = next; else workspaces.push(next);
     try { await persist(); return true; }
@@ -1058,6 +1082,9 @@ export async function createHostSettings(
             ...(planned.author === undefined ? {} : { author: { ...planned.author } }),
             ...(planned.baseline === undefined ? {} : { baseline: { ...planned.baseline } }),
             approvedAt: planned.approvedAt })) }),
+        ...(persistedFacts?.withdrawnChecks === undefined ? {} : { withdrawnChecks: persistedFacts.withdrawnChecks
+          .map(withdrawn => ({ checkId: withdrawn.check.checkId, plan: structuredClone(withdrawn.plan),
+            withdrawnAt: withdrawn.withdrawnAt })) }),
         ...(facts.storeLocation === null
           ? {} : { storeLocation: { place: facts.storeLocation.place, reason: facts.storeLocation.reason } }),
         knowledgeLocalOnly: facts.knowledgeRepoKey != null && knowledgeLocalOnly[facts.knowledgeRepoKey] === true,
@@ -1124,9 +1151,18 @@ export async function createHostSettings(
     await persist();
   }
   // 121-136 A3: every adoption that installed a plan's checks and was cut off settles before the first install, which
-  // then publishes the settled configuration once. One that cannot settle stops the start, as a failed restore does:
-  // every listed workspace's project is open here, so its candidate unreadable or the file unwritable is that failure.
+  // then publishes the settled configuration once. One that cannot settle stops the start, as a failed restore does.
+  // G8B B4：只有已打开项目的记录结不清才停止启动。项目本次没打开（库不可用）的记录读不到候选，跳过它：记录留着待
+  // 恢复，往标准错误写一行。它的检查本次不装（Host 只往打开的项目里装），下次启动再结清。
+  const listed = assembly.listWorkspaces();
   for (const entry of [...workspaces]) {
+    const waiting = entry.planAdoption;
+    if (waiting !== undefined
+      && listed.find(facts => scopeKey(facts.scope) === scopeKey(entry.scope))?.projectOpen === false) {
+      process.stderr.write(`[platform] 项目 ${entry.scope.projectId} 本次没有打开，工作区 ${entry.scope.workspaceId} `
+        + `里计划候选 ${waiting.proposalRef.proposalId} 装检查的采用没有结清：读不到这份候选。记录留着，下次启动再结清\n`);
+      continue;
+    }
     const pending = await settlePlanAdoption(entry.scope, false);
     if (pending !== null) throw new Error(pending.reason);
   }
@@ -1277,6 +1313,7 @@ export async function createHostSettings(
       ...(existing?.checksRevision === undefined ? {} : { checksRevision: existing.checksRevision }),
       ...(existing?.planChecks === undefined ? {} : { planChecks: structuredClone(existing.planChecks) }),
       ...(existing?.planAdoption === undefined ? {} : { planAdoption: structuredClone(existing.planAdoption) }),
+      ...(existing?.withdrawnChecks === undefined ? {} : { withdrawnChecks: structuredClone(existing.withdrawnChecks) }),
     };
     const index = workspaces.findIndex(entry => scopeKey(entry.scope) === key);
     // X2 (KLS-1b): the start opens a project from its first listed workspace (its main one, whose root places the
@@ -1428,6 +1465,49 @@ export async function createHostSettings(
     catch {
       return unavailable('the checks were saved but the Host configuration was not confirmed; retry the same approval');
     }
+    return { status: 'ready', value: snapshotOf() };
+  }
+
+  /**
+   * G8B B2：人撤回一条计划装上的检查。设置路由只有 Host 的使用者能调，agent 够不着，所以不另判身份。在设置队列里：
+   * 先结清这个工作区待恢复的采用（它决定那份计划的检查还在不在），结不清就回它的 `unavailable`；再从 `planChecks`
+   * 去掉这一条，在 `withdrawnChecks` 留痕，存盘，推给 Host。这个工作区一条设置检查都不剩时，Host 撤掉注册，回到启动时的
+   * 检查（`installIntoProject`）。计划不动；已开的检查轮照旧用冻结的配置；同一个 checkId 以后只有人采用能装回。
+   */
+  async function withdrawCheckRoute(input: unknown): Promise<SettingsResponse<HostSettingsSnapshot>> {
+    if (!isRecord(input) || !validScope(input['scope']) || !nonEmpty(input['checkId']))
+      return invalid('checks/withdraw 要完整的项目/工作区范围和 checkId');
+    const scope = { projectId: input['scope'].projectId, workspaceId: input['scope'].workspaceId };
+    const checkId = input['checkId'];
+    const earlier = await settlePlanAdoption(scope, true);
+    if (earlier !== null) return earlier;
+    const notConfirmed = (): SettingsResponse<never> => unavailable('撤回已保存，Host 还没确认；重做同一个撤回');
+    const index = workspaces.findIndex(entry => scopeKey(entry.scope) === scopeKey(scope));
+    const entry = workspaces[index];
+    const planned = entry?.planChecks?.find(candidate => candidate.check.checkId === checkId);
+    if (entry === undefined || planned === undefined) {
+      // 拒绝（协调）：已批准的检查清单绑着保存的回答和它的摘要（R6），拆单条要另定来源。
+      if (entry?.checks?.some(check => check.checkId === checkId) === true)
+        return notFound(`检查 ${checkId} 来自已批准的检查清单，不能单条撤回；要换掉整批，用 checks/approve`);
+      if (entry?.withdrawnChecks?.some(withdrawn => withdrawn.check.checkId === checkId) !== true)
+        return notFound(`这个工作区没有计划装上的检查 ${checkId}`);
+      // 重做同一个撤回：原样回快照，上一次没确认的推送这次补上。
+      try { await notify(); }
+      catch { return notConfirmed(); }
+      return { status: 'ready', value: snapshotOf() };
+    }
+    const { planChecks, ...rest } = entry;
+    const kept = (planChecks ?? []).filter(candidate => candidate !== planned);
+    workspaces[index] = { ...rest, ...(kept.length === 0 ? {} : { planChecks: kept }),
+      withdrawnChecks: [...(entry.withdrawnChecks ?? []),
+        { check: structuredClone(planned.check), plan: structuredClone(planned.plan), withdrawnAt: now() }] };
+    try { await persist(); }
+    catch {
+      workspaces[index] = entry;
+      return unavailable('撤回没能写进设置文件');
+    }
+    try { await notify(); }
+    catch { return notConfirmed(); }
     return { status: 'ready', value: snapshotOf() };
   }
 
@@ -1589,6 +1669,11 @@ export async function createHostSettings(
     if (added.length === 0) return await apply();
     // G8B B1f：agent 批准的每条新检查都要有改动前跑会失败的事实（同 id、同摘要）。
     const approval = input.approval;
+    // 拒绝（人的决定不能被 agent 推翻）：人撤回过的检查（B2 的留痕），只有人采用能再装上。
+    const withdrawn = workspaces.find(entry => scopeKey(entry.scope) === scopeKey(scope))?.withdrawnChecks ?? [];
+    const retaken = approval.kind === 'agent'
+      ? added.find(check => withdrawn.some(entry => entry.check.checkId === check.checkId)) : undefined;
+    if (retaken !== undefined) return notInstalled('forbidden', `检查 ${retaken.checkId} 被人撤回过，只有人采用能再装上`);
     const baselineOf = (check: RegisteredCommandCheck) => approval.kind === 'agent' ? approval.baselines.find(baseline =>
       baseline.checkId === check.checkId && baseline.checkDigest === checkDigestOf(check) && baseline.outcome === 'failed')
       : undefined;
@@ -1604,7 +1689,7 @@ export async function createHostSettings(
     const previous = index >= 0 ? workspaces[index] : undefined;
     const { facts, proposal } = checked.value;
     const plan = { proposalRef: structuredClone(proposalRef), checksDigest: proposal.checksDigest };
-    const approvedAt = (options.now ?? (() => new Date().toISOString()))();
+    const approvedAt = now();
     const next: PersistedWorkspaceV1 = {
       ...(previous ?? { scope: { ...scope }, name: facts.name, root: facts.root,
         writeAllowed: facts.writeAllowed, commandsAllowed: facts.commandsAllowed }),
@@ -2217,6 +2302,7 @@ export async function createHostSettings(
       case 'workspaces/withdraw': return await workspaceRemovalRoute('withdraw', input);
       case 'workspaces/remove': return await workspaceRemovalRoute('remove', input);
       case 'checks/approve': return await approveChecksRoute(input);
+      case 'checks/withdraw': return await withdrawCheckRoute(input);
       case 'automation/save': return await saveAutomationRoute(input);
       case 'resource-caps/save': return await saveResourceCapsRoute(input);
       case 'run-budget/save': return await saveRunBudgetRoute(input);

@@ -51,6 +51,8 @@ export type SettingsWorkspace = {
   checks?: RegisteredCommandCheck[];
   /** 121-136: for each check a plan brought, where it came from, who approved it and when; absent when none. */
   checkApprovals?: CheckApprovalV1[];
+  /** G8B B2：人撤回过的计划检查（`checks/withdraw`），界面显示“已撤回”；没有就不出这个字段。 */
+  withdrawnChecks?: WithdrawnCheckV1[];
   /** U8: where the workspace's project store lives; absent for a memory store or a project that is not open. */
   storeLocation?: SettingsStoreLocation;
   /** KLS-2: whether the architecture and notes of this workspace's current checkout stay local and out of git. It is
@@ -72,6 +74,8 @@ export type CheckApprovalV1 = {
   baseline?: CheckBaselineV1;
   approvedAt: string;
 };
+/** G8B B2：人撤回的一条计划装上的检查：哪条、来自哪份计划、什么时候撤的。同一个 checkId 以后只有人采用能装回。 */
+export type WithdrawnCheckV1 = { checkId: string; plan: CheckApprovalV1['plan']; withdrawnAt: string };
 /** G8B B1f：采用时装检查的批准者：人的 `plans/apply`，或批准轮结论里的 agent（带作者和改动前的事实）。 */
 export type CheckApproverV1 = { kind: 'person' }
   | { kind: 'agent'; duty: CheckReviewApproverDutyV1; session: SessionRef; answerRef: QueryJobAnswerRef;
@@ -255,6 +259,7 @@ export type SettingsRoutes = {
   'workspaces/withdraw': { input: { scope: CoreScope }; value: { settings: HostSettingsSnapshot; bootstrap: BootstrapResponse } };
   'workspaces/remove': { input: { scope: CoreScope }; value: { settings: HostSettingsSnapshot; bootstrap: BootstrapResponse } };
   'checks/approve': { input: ApproveWorkspaceChecks; value: HostSettingsSnapshot };
+  'checks/withdraw': { input: { scope: CoreScope; checkId: string }; value: HostSettingsSnapshot };
   'automation/save': { input: SaveAutomationSettings; value: HostSettingsSnapshot };
   'resource-caps/save': { input: SaveResourceCapSettings; value: HostSettingsSnapshot };
   'run-budget/save': { input: SaveWorkRunTokenBudgetSettings; value: HostSettingsSnapshot };

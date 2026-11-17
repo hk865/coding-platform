@@ -110,6 +110,8 @@ G8B-1a 的验收行（写测试方 `g8bt-1`，决定 121-136、121-138，冻结�
 
 G8B-2 的验收行（写测试方 `g8bt-2`，决定 121-141，只跑 memory；起点 v1 和降标的候选 P 在 `G8B2-plans.ts`）：`tests/work-graph/G8B2-standard-change-pure.test.ts`（F6：`standardChangeOf` 对普通细化为 null，对 P 读出被取代的 G1 和去掉的 o-sub；F4：五种放宽过头的 P 变体，人采用照样被 `validateFutureObligationCoverage` 拒；纯表）、`tests/scenarios/G8B2-standard-change.test.ts`（PL 世界：F5 平台的自动化身份经 `plans/apply` 采用 P 被拒；F1 人采用 P 到 v2；F2 参谋在 `planfix:` 轮交 P、消息路径里人给参谋发「彻底移除 sub」由参谋的干预规划交 P，自动档下这一次推进不送审、照常领取普通工作，`decisions/candidate-card` 的 `standardChange` 列出事实（消息路径带人的原话）；F2/F3 整份草稿的守护：执行者 Run 经真实的 `propose_future_plan` 写出 P，照常领取就绪的 W3；端到端照 E08：人在主对话说「彻底移除 sub」，秘书在请求轮交 P，卡上带人的原话，人采用后新任务 W2 能被领取）。施工方按 Astra 审查补的：`tests/work-graph/G8B2-consecutive-supersede.test.ts`（连续取代：G1 → G2 保留 o-sub 并加上 G2，再 G2 → G3 去掉 o-sub，人采用能过，agent 照旧冻结）。`tests/work-graph/G8B2-standard-change-unreadable.test.ts`（候选卡的降标读分三种；基准读失败时不送审、不返修、不采用，直接是人的卡 `standard_change_unreadable`）。
 
+G8B-1b 的验收行（写测试方 `g8bt-1`，决定 121-136，冻结裁定 `g8b-rulings.md` 的 B2、B4 和 B1f 那一条“被人撤回过的检查 agent 批准装不回去”）：`tests/scenarios/G8B-check-withdraw.test.ts`（只跑 memory。D5 在 `G8B-world.ts` 上：底计划 v1 带一条种子检查，照 D1 由参谋批准装上 `g8b-d1-check` 后，人经设置路由 `checks/withdraw` 撤回，快照 `checks` 不再有它、`withdrawnChecks` 记着它和 D1 的候选，计划不动；人启动目标后 `g8b-d1-work` 的检查轮里没有它，它查的要求读作缺项；秘书再交带同 id 检查的小改动，参谋批了 Host 也不装，一行原因含“被人撤回过”的 `check_to_person`。D6 在 `openG8Project` 上：撤种子检查、撤不存在的 id 回 `not_found`、快照不变，同一个撤回做两次都 `ready`、快照相同）、`tests/scenarios/G8B-start-unavailable-project.test.ts`（只跑 SQLite，用模块 mock 把 `openG8Project` 的世界换成 SQLite。D8：C7d 的停机加 KLS1B-02 的挪走库，Host 能启动，另一个项目照常，不可用项目回 `unavailable`、它的待恢复记录留着，库挪回来再重启时结清；D9：设置目录只读时可用项目的记录结不清，启动失败、错误带候选 id）。今天 D5、D6、D8 红，D9 绿（守护行）；每行红在哪、为什么转绿写在文件头。
+
 ## tests/helpers/ 的夹具
 
 ### Host 和平台

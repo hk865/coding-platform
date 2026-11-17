@@ -135,6 +135,7 @@ async function hostFacts(): Promise<HostSettingsWorkspaceFacts> {
     commandsAllowed: facts.commandsAllowed,
     accessFixed: facts.accessFixed,
     storeLocation: facts.storeLocation ?? null,
+    projectOpen: true,
   };
 }
 
