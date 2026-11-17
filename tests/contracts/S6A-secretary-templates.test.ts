@@ -27,7 +27,7 @@ const EXISTING_DIGESTS = {
     'work-input': 'f3ebad58e28d7f5a2d8bc8831b7974b03057c0590982d23fc325be933f5aed7a',
     'query-planning-input': 'ac29545b215361ea2ce479007f2c3ffcc3daa87a2bbacaf89957b49aa4022a77',
     'query-copy-input': '89ee28b2dc868787a7e41a063edadf9765e474e93b3bb477b038f93909808e20',
-    'initial-planning-answer': 'a7f20345b571f80bfa91e35f6a6366ec7069e570737143c721d8aa92d9eded8b',
+    'initial-planning-answer': 'f6b246e2a779693ef79b2878637f2525e45a4b9abef4fa0bb66db2de01005823',
     base: 'cee15946501a2db933e00e1ea9954e8332542ab130268cd32c6962c91061958c',
     'skill-platform-work': 'be9071ec8a231967ebd8c4be69ae2a841cfdfda157997e53065ef02edf654a56',
     'skill-platform-secretary': 'a956d102b3a4e85fc286229d4724a27dd9eeb9a03a5f979bfcec8394aa14e7ed',

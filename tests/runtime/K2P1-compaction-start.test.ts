@@ -605,15 +605,19 @@ describe('K2P1-15 the startup ratios decide trigger, target and tail', () => {
 /**
  * K2P1-12: role-line maintenance on an adviser line (`intervention_planning` rounds) in the S7D2 200k world (lead
  * 11-10: the spec's 1M line cannot be built on the public path): trigger 0.4×200,000 = 80,000, target 0.2×200,000
- * = 40,000, handoff line min(500,000, floor(0.8×200,000)) = 160,000. Q1/Q2 are 12×60,000-byte results; Q3 one
- * small result (kept original), Q4/Q5 answer-only small rounds, because one planning input is 15,470 record chars
- * and three result-bearing small turns (3×25,048 chars = 21,792 tokens) overflow the 20,000 tail. Reported input
- * Q1–Q4 = 40,000, Q5 = 160,000. After Q5: no compacted view, 5 rounds, last 160,000 ≥ 80,000; tail budget
- * 0.5×40,000 = 20,000; Q3–Q5 = 18,514 tokens, Q2 = 208,800 > the 1,486 left -> boundary Q2; savedChars
- * 2×712,800 = 1,425,600; estimate 160,000 − 413,424 = −253,424 ≤ 40,000 -> stubs through Q2 (the sheet's
- * result-only count, newest 3 small rounds 1,740 and Q2 > 18,260, reads the same boundary). Using the spec's
- * literal reports inside this 200k world (Q5 500,000) gives estimate 86,576 > target 40,000, so Q6 would summarize,
- * not stub; the spec's own 1M world has target 200,000 and reads stubs.
+ * = 40,000, handoff line min(500,000, floor(0.8×200,000)) = 160,000.
+ * 轮次（11-17 按规划说明第 11 版重新校准）：Q1/Q2 各 12 个 60,000 字节的结果；Q3 一个小结果（应保留原文）；书里的 Q4
+ * 不跑；Q5 只回答。报告的输入：Q1–Q3 = 40,000，Q5 = 160,000。
+ * 依据：这一格的每一轮都是参谋线的规划轮，输入里带一份规划说明（`initial-planning-answer`，渲染进问题），所以每个 Turn
+ * 的 Kernel 记录都随它变长，压缩按记录字符 ×0.29 算 Turn 的大小。规划说明第 10 版时，Q3/Q4/Q5 三个 Turn 合计 68,083
+ * 字符（19,744 token），离 20,000 的尾部预算只剩 256 token；第 11 版每个 Turn 长 494 字符，合计 69,565 字符（20,174
+ * token）超出，Q3 也被清掉。现在尾部只有 Q3（26,948 字符）和 Q5（21,309 字符）：48,257 字符、约 13,995 token，余约
+ * 6,005 token，规划说明还能再长约 10,000 字符。数字是在 Q5 之后用 `kernelRecordsOf` 按 Turn 量记录得到的；规划说明
+ * 再变长时，照这个办法复核余量。
+ * Q5 之后：没有压缩视图，4 个 Turn，最后一个 160,000 ≥ 80,000；尾部预算 0.5×40,000 = 20,000，Q5 加 Q3 放得下，
+ * Q2（222,431 token）放不下剩下的 -> 边界 Q2；节省 2×712,800 = 1,425,600 字符，估算 160,000 − 413,424 = −253,424
+ * ≤ 40,000 -> 清到 Q2。Using the spec's literal reports inside this 200k world (Q5 500,000) gives estimate 86,576 >
+ * target 40,000, so Q6 would summarize, not stub; the spec's own 1M world has target 200,000 and reads stubs.
  * Named mutation: `create-platform.ts:3840–:3841`'s `unlessCompactsNext` wrapper removed -> (a) hands off.
  */
 describe('K2P1-12 role-line maintenance defers to the compaction of the next round', () => {
@@ -649,7 +653,7 @@ describe('K2P1-12 role-line maintenance defers to the compaction of the next rou
       await round('q1', bigReply(12, 40_000, 'Q1'));
       await round('q2', bigReply(12, 40_000, 'Q2'));
       await round('q3', smallReply(40_000, 'Q3'));
-      await round('q4', [{ kind: 'text', text: 'Q4', usage: usageOf(40_000) }]);
+      // 书里的 Q4 不跑：尾部只留 Q3 和 Q5 两个带规划说明的 Turn（见上面的说明）。
       await round('q5', [{ kind: 'text', text: 'Q5', usage: usageOf(S7D2_TOO_LONG_INPUT_TOKENS) }]);
       // (a) one maintenance page: the handoff line is reached, but the next round compacts first.
       expect(compactions(await kernelRecordsOf(world.world, line.ref))).toEqual([]);

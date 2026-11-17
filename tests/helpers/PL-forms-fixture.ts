@@ -282,19 +282,35 @@ export async function openPLReviewCandidateWorld(options: {
     });
     // The adopted base keeps one old cancelled task with its own instruction:
     // the review input must list it as cancelled, never re-copy its taskbook.
-    const baseDraft = draftFrom(plan, 'pl-review-base', draft => ({
+    // 新版本里新出现的任务不能一出生就是已取消（E08 的计划校验），所以旧任务先作为 active 进一版，下一版再取消它本身。
+    const oldDraft = draftFrom(plan, 'pl-review-old', draft => ({
       ...draft,
       tasks: [...draft.tasks, {
         taskId: PL_REVIEW_OLD_TASK_ID, title: 'PL review old cancelled task',
-        requirementLevel: 'optional', taskKind: 'work', disposition: 'cancelled', phase: 'pending',
+        requirementLevel: 'optional', taskKind: 'work', disposition: 'active', phase: 'pending',
         scope: { kind: 'goal' },
       }],
       assignments: [...(draft.assignments ?? []), {
         taskId: PL_REVIEW_OLD_TASK_ID, role: S6A_WORK_ROLE.templateId, instruction: PL_REVIEW_OLD_INSTRUCTION,
       }],
     }));
+    const oldProposed = await main.post('plans/propose', graphWrite(S6A_SCOPE, {
+      goalRef: goal, basedOn: plan.ref, draft: oldDraft, reason: { text: 'PL review old task', sources: [] },
+    }, 'pl-review-old-propose')) as { status: string; value: { ref: unknown; revision: number } };
+    if (oldProposed.status !== 'committed') throw new Error('PL: the review old-task Plan did not commit');
+    const oldApplied = await main.post('plans/apply', graphWrite(S6A_SCOPE, {
+      proposalRef: oldProposed.value.ref, expectedProposalRevision: oldProposed.value.revision, decisionRefs: [],
+    }, 'pl-review-old-apply')) as { status: string };
+    if (oldApplied.status !== 'committed') throw new Error('PL: the review old-task Plan was not adopted');
+    const oldPlan = await main.activePlan(goal);
+    if (oldPlan === null) throw new Error('PL: the review old-task Plan is not readable');
+    const baseDraft = draftFrom(oldPlan, 'pl-review-base', draft => ({
+      ...draft,
+      tasks: draft.tasks.map(task => task.taskId === PL_REVIEW_OLD_TASK_ID
+        ? { ...task, disposition: 'cancelled' as const } : task),
+    }));
     const baseProposed = await main.post('plans/propose', graphWrite(S6A_SCOPE, {
-      goalRef: goal, basedOn: plan.ref, draft: baseDraft, reason: { text: 'PL review base', sources: [] },
+      goalRef: goal, basedOn: oldPlan.ref, draft: baseDraft, reason: { text: 'PL review base', sources: [] },
     }, 'pl-review-base-propose')) as { status: string; value: { ref: unknown; revision: number } };
     if (baseProposed.status !== 'committed') throw new Error('PL: the review base Plan did not commit');
     const baseApplied = await main.post('plans/apply', graphWrite(S6A_SCOPE, {

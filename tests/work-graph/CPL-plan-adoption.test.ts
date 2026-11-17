@@ -22,7 +22,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 import { ag2bChecksConfiguration, ag2bPlanDraft, graphWrite } from '../helpers/AG2b-collaboration-fixture.js';
-import { plSkeletonDraft } from '../helpers/PL-workflow-fixture.js';
+import { plPlanChangeDraft, plSkeletonDraft } from '../helpers/PL-workflow-fixture.js';
 import { s6aCardsWorkspace, type S6ACardsWorkspace } from '../helpers/S6A-cards-fixture.js';
 import { openS6AHostWorld, type S6AHostWorld } from '../helpers/S6A-host-fixture.js';
 import { S6A_SCOPE, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
@@ -166,5 +166,53 @@ describe('C11 (R2): change adoption judges an obligation promoted from optional 
     expect(applied.status, JSON.stringify(applied)).toBe('rejected');
     expect(applied.reason).toContain('cplt-c11-static');
     expect(await activePlanOf(main, goal)).toEqual(before);
+  }, 120_000);
+});
+
+describe('E08: a later revision never adds a task that starts cancelled or superseded', () => {
+  // G6 第六次 E08：改计划时模型新造了一个一出生就是已取消的副本，原任务照旧 active，计划自相矛盾。上一版没有这个
+  // 任务号、disposition 却是 cancelled 或 superseded（lead 11-17：取代同理），交表和采用共用的 validatePlanDraft 照问题
+  // 清单报出来，plans/apply 拒绝；把已有任务本身取消或取代照常采用；首版计划没有上一版，不查。期望值按这条规则手写。
+  // 变异：去掉这条检查 -> 两格的第一段断言都转红；只查 cancelled -> superseded 那一格转红。
+  type Ended = 'cancelled' | 'superseded';
+  const born = (taskId: string, disposition: Ended): PlanRevisionDraft['tasks'][number] => ({ taskId,
+    title: `CPL E08 ${disposition} copy`, requirementLevel: 'required', taskKind: 'work', disposition, phase: 'pending',
+    scope: { kind: 'goal' }, ...(disposition === 'superseded' ? { replacedByTaskId: 's7a-run-1' } : {}) });
+  const copyAssignment = (taskId: string) => ({ taskId, role: S6A_WORK_ROLE.templateId, instruction: 'CPL E08 copy' });
+  const issueOf = (taskId: string, disposition: Ended) => ({ path: `tasks[${taskId}].disposition`,
+    code: 'unsupported_execution_change', message: `new task ${taskId} starts ${disposition}: to cancel or supersede an `
+      + 'existing task, set that task\'s own disposition and keep its taskId; a task that is new in this revision never '
+      + 'starts cancelled or superseded' });
+
+  it.each(['cancelled', 'superseded'] as const)('a new task that starts %s is an issue on propose and refused on apply; '
+    + 'ending the task itself that way is adopted', async (disposition) => {
+    const { main, goal, plan } = await openPlanWorld();
+    const change = (planId: string, tasks: PlanRevisionDraft['tasks'], extra: ReturnType<typeof copyAssignment>[] = []) =>
+      plPlanChangeDraft(plan, goal, { planId, tasks, assignments: [...(plan.assignments ?? []), ...extra],
+        obligations: plan.obligations });
+    const copy = await proposeApply(main, goal, plan.ref, change(`cplt-e08-${disposition}`,
+      [...plan.tasks, born('cplt-e08-copy', disposition)], [copyAssignment('cplt-e08-copy')]), `e08-${disposition}`);
+    expect(copy.proposal.issues).toEqual([issueOf('cplt-e08-copy', disposition)]);
+    expect(copy.applied).toMatchObject({ status: 'rejected', code: 'unsupported',
+      reason: expect.stringContaining(issueOf('cplt-e08-copy', disposition).message) });
+    expect(await activePlanOf(main, goal)).toEqual(plan.ref);
+
+    const itself = await proposeApply(main, goal, plan.ref, change(`cplt-e08-${disposition}-itself`, plan.tasks.map(task =>
+      task.taskId === 's7a-run-2' ? { ...task, disposition,
+        ...(disposition === 'superseded' ? { replacedByTaskId: 's7a-run-1' } : {}) } : task)), `e08-${disposition}-itself`);
+    expect(itself.proposal.issues).toEqual([]);
+    expect(itself.applied.status, JSON.stringify(itself.applied)).toBe('committed');
+    expect((await main.activePlan(goal))?.tasks.find(task => task.taskId === 's7a-run-2')?.disposition).toBe(disposition);
+  }, 120_000);
+
+  it('a first plan has no earlier revision, so its cancelled task is not judged', async () => {
+    const { main } = await openPlanWorld();
+    const goal = (await main.createGoal('cplt-e08-first')).ref;
+    const draft = ag2bFor(goal, 'cplt-e08-first');
+    const { proposal, applied } = await proposeApply(main, goal, null,
+      { ...draft, tasks: [...draft.tasks, born('cplt-e08-first-copy', 'cancelled')],
+        assignments: [...(draft.assignments ?? []), copyAssignment('cplt-e08-first-copy')] }, 'e08-first');
+    expect(proposal.issues).toEqual([]);
+    expect(applied.status, JSON.stringify(applied)).toBe('committed');
   }, 120_000);
 });

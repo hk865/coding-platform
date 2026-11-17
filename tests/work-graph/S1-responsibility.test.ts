@@ -262,21 +262,38 @@ async function passRound(r3e: R3eEvidenceFixture, opened: RoundSnapshot): Promis
  * terminal state is raw-seeded.
  */
 async function adoptTerminalSiblings(r3e: R3eEvidenceFixture): Promise<PlanRevisionSnapshot> {
-  const goalRead = await r3e.b2.base.plans.queryGoal(r3e.ctx, r3e.goalRef);
-  if (goalRead.status !== 'ready') throw new Error(`terminal-goal read failed: ${JSON.stringify(goalRead)}`);
-  const source = r3e.plan;
-  const draft: PlanRevisionDraft = {
-    schemaVersion: 2, planId: 'r3e-terminal-plan', planRevision: source.planRevision + 1, goalId: r3e.goalRef.goalId,
-    stages: structuredClone(source.stages),
+  // 新版本里新出现的任务不能一出生就是已取消或已取代（E08 的计划校验），所以两个兄弟任务先 active 进一版，下一版再取消、
+  // 取代它们本身。
+  const added = await adoptR3eRevision(r3e, r3e.plan, 'r3e-sibling-plan', 'r3e-sibling', source => ({
     tasks: [...structuredClone(source.tasks),
       { taskId: 'r3e-cancel', title: 'Cancelled sibling', requirementLevel: 'optional', taskKind: 'work',
-        disposition: 'cancelled', phase: 'pending', scope: { kind: 'goal' } },
+        disposition: 'active', phase: 'pending', scope: { kind: 'goal' } },
       { taskId: 'r3e-super', title: 'Superseded sibling', requirementLevel: 'optional', taskKind: 'work',
-        disposition: 'superseded', replacedByTaskId: R3E_WORK_TASK_ID, phase: 'pending', scope: { kind: 'goal' } },
+        disposition: 'active', phase: 'pending', scope: { kind: 'goal' } },
     ],
     assignments: [...structuredClone(source.assignments ?? []),
       { taskId: 'r3e-cancel', role: 'builder', instruction: 'cancelled sibling' },
       { taskId: 'r3e-super', role: 'builder', instruction: 'superseded sibling' }],
+  }));
+  return await adoptR3eRevision(r3e, added, 'r3e-terminal-plan', 'r3e-terminal', source => ({
+    tasks: source.tasks.map(task => task.taskId === 'r3e-cancel'
+      ? { ...structuredClone(task), disposition: 'cancelled' as const }
+      : task.taskId === 'r3e-super'
+        ? { ...structuredClone(task), disposition: 'superseded' as const, replacedByTaskId: R3E_WORK_TASK_ID }
+        : structuredClone(task)),
+    assignments: structuredClone(source.assignments ?? []),
+  }));
+}
+
+/** One `proposePlan` + `applyPlanChange` of the next revision of `source`; `edit` gives its tasks and assignments. */
+async function adoptR3eRevision(r3e: R3eEvidenceFixture, source: PlanRevisionSnapshot, planId: string, label: string,
+  edit: (source: PlanRevisionSnapshot) => Pick<PlanRevisionDraft, 'tasks' | 'assignments'>): Promise<PlanRevisionSnapshot> {
+  const goalRead = await r3e.b2.base.plans.queryGoal(r3e.ctx, r3e.goalRef);
+  if (goalRead.status !== 'ready') throw new Error(`terminal-goal read failed: ${JSON.stringify(goalRead)}`);
+  const draft: PlanRevisionDraft = {
+    schemaVersion: 2, planId, planRevision: source.planRevision + 1, goalId: r3e.goalRef.goalId,
+    stages: structuredClone(source.stages),
+    ...edit(source),
     obligations: structuredClone(source.obligations),
     taskHierarchy: structuredClone(source.taskHierarchy),
     executionDag: structuredClone(source.executionDag),
@@ -284,14 +301,14 @@ async function adoptTerminalSiblings(r3e: R3eEvidenceFixture): Promise<PlanRevis
     inputRequirements: source.schemaVersion === 2 ? structuredClone(source.inputRequirements ?? []) : [],
   };
   const proposed = await r3e.b2.base.plans.proposePlan(r3e.ctx, {
-    meta: { requestId: 'r3e-terminal-propose', expected: [{ ref: r3e.goalRef, revision: goalRead.value.goal.revision }] },
+    meta: { requestId: `${label}-propose`, expected: [{ ref: r3e.goalRef, revision: goalRead.value.goal.revision }] },
     input: { goalRef: r3e.goalRef, basedOn: source.ref, draft, reason: { text: 'S1 terminal-task siblings', sources: [] } },
   });
   if (proposed.status !== 'committed' || proposed.value.issues.length > 0) {
     throw new Error(`terminal-sibling proposal failed: ${JSON.stringify(proposed)}`);
   }
   const applied = await r3e.b2.base.plans.applyPlanChange(r3e.ctx, {
-    meta: { requestId: 'r3e-terminal-apply', expected: [{ ref: r3e.goalRef, revision: goalRead.value.goal.revision }] },
+    meta: { requestId: `${label}-apply`, expected: [{ ref: r3e.goalRef, revision: goalRead.value.goal.revision }] },
     input: { proposalRef: proposed.value.ref, expectedProposalRevision: proposed.value.revision, decisionRefs: [] },
   });
   if (applied.status !== 'committed') throw new Error(`terminal-sibling adoption failed: ${JSON.stringify(applied)}`);

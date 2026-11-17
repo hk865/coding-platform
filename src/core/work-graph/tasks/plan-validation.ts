@@ -160,6 +160,17 @@ export function validatePlanDraft(draft: PlanDraftView, policy: CompletionPolicy
         + `obligation that maps exploration tasks alone, and give ${taskId}'s obligation a requirement of another kind`));
     }
   }
+  // E08（G6 第六次）：改计划时新造一个一出生就是已取消的任务，原任务照旧 active，计划自相矛盾。上一版没有这个任务号、
+  // disposition 却是 cancelled 或 superseded（lead 11-17：取代同理），就报出来：要取消或取代的是已有任务，就改那个任务本身。
+  // 首版计划没有上一版（source 为 null），不查。代码沿用“新任务必须从 pending 开始”那一条的 `unsupported_execution_change`。
+  if (source !== null) {
+    for (const task of tasks) {
+      if ((task.disposition !== 'cancelled' && task.disposition !== 'superseded') || sourceTasks.has(task.taskId)) continue;
+      issues.push(planValidationError(`tasks[${task.taskId}].disposition`, 'unsupported_execution_change',
+        `new task ${task.taskId} starts ${task.disposition}: to cancel or supersede an existing task, set that task's own `
+        + 'disposition and keep its taskId; a task that is new in this revision never starts cancelled or superseded'));
+    }
+  }
   if (policy !== null) {
     const minimum = policy.minimumRequiredRequirementsPerObligation;
     for (const obligation of requiredObligations) {
