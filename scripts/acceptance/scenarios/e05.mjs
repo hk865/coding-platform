@@ -5,8 +5,8 @@
 // `host-settings-types.ts:170-182`), so the seed's adoption brings architecture, policy and checks; the E05 Goal
 // itself is the explicit `goals/create` → policy → `plans/propose` → `plans/apply` → two `workflow/driver-start`.
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { newId, ready } from '../lib/http.mjs';
 import { broken, chooseModel, coldStart, createGoal, driverStart, ensurePolicy, executions, findAll, openProject, openRoleLine,
   proposeAndApply, runHistory, taskRounds, testCheck, textOf, turnsOf, waitGoal } from '../lib/flows.mjs';
@@ -158,6 +158,9 @@ async function run(ctx, rec) {
     const runs = await executions(project, goal.ref);
     const startedTasks = new Set(runs.filter(item => item.run.startedAt).map(item => item.run.task.taskId));
     if (!planted && startedTasks.has('t-users') && startedTasks.has('t-orders')) {
+      // lead 11-17（G6 第七次）：`files/save` 的新建要求所在文件夹已经存在（内核“父目录不存在”），`src/legacy/`
+      // 还没有。人会先在自己的电脑上建好文件夹，驱动照做，再经平台保存文件。
+      for (const path of Object.keys(PLANTED)) mkdirSync(join(project.root, dirname(path)), { recursive: true });
       for (const [path, content] of Object.entries(PLANTED)) {
         const saved = await host.client.command('files/save', project.scope, { path, expectedRevision: null, content }, { commandId: newId('plant') });
         if (!['ready', 'committed'].includes(saved?.status)) throw broken(ctx, `files/save of the planted ${path}: ${saved?.status} ${saved?.code ?? ''} ${saved?.reason ?? ''}`, 'duplicates');
