@@ -5,7 +5,7 @@
   "templates": {
     "initial-planning-answer": {
       "file": "templates/initial-planning-answer.txt",
-      "version": 11,
+      "version": 13,
       "mentionsTools": []
     },
     "consultation-received-input": {
@@ -88,6 +88,11 @@
       "version": 1,
       "mentionsTools": []
     },
+    "check-review-input": {
+      "file": "templates/check-review-input.txt",
+      "version": 1,
+      "mentionsTools": []
+    },
     "scribe-reminder": {
       "file": "templates/scribe-reminder.txt",
       "version": 3,
@@ -137,7 +142,7 @@
     },
     "secretary-answer": {
       "file": "templates/secretary-answer.txt",
-      "version": 7,
+      "version": 9,
       "mentionsTools": []
     },
     "handoff-write-understanding-secretary": {
@@ -181,17 +186,17 @@
     },
     "skill-platform-work": {
       "file": "templates/skill-platform-work.txt",
-      "version": 12,
+      "version": 13,
       "mentionsTools": []
     },
     "skill-platform-secretary": {
       "file": "templates/skill-platform-secretary.txt",
-      "version": 12,
+      "version": 13,
       "mentionsTools": []
     },
     "skill-platform-adviser": {
       "file": "templates/skill-platform-adviser.txt",
-      "version": 16,
+      "version": 17,
       "mentionsTools": []
     },
     "skill-platform-scribe": {
@@ -245,6 +250,7 @@
     "submit_unknown_call_advice": "tools/submit_unknown_call_advice.json",
     "submit_scribe_review": "tools/submit_scribe_review.json",
     "submit_command_rerun_advice": "tools/submit_command_rerun_advice.json",
+    "submit_check_review": "tools/submit_check_review.json",
     "find_graph": "tools/find_graph.json",
     "check_links": "tools/check_links.json",
     "web_search": "tools/web_search.json",

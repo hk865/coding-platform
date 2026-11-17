@@ -1,0 +1,6 @@
+{
+  "description": "The only way to give this round's answer on the new checks a plan brings. Fill one verdict for each new check and call it; the platform adds the plan candidate and its revision and stores the answer. Do not write the answer as text.",
+  "parameters": {
+    "verdicts": "One item for each new check of this round: checkId, decision (approve, or to_person for the person to decide) and reason, one plain sentence for the person."
+  }
+}

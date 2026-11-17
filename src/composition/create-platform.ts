@@ -269,7 +269,7 @@ import {
 } from '../core/work-graph/sessions/role-line-maintenance.js';
 import { planRoleLineSplit } from '../core/work-graph/state/role-line-split.js';
 import { createProjectNoticeSource } from '../core/work-graph/views/project-notice-notices.js';
-import { notifyProject } from '../core/work-graph/communication/project-notice-service.js';
+import { notifyProject, readProjectNotice } from '../core/work-graph/communication/project-notice-service.js';
 import { SESSION_RECORD_SCHEMAS, SESSION_LINKS_BY_PROJECT_TARGET_LOOKUP, decodeSessionRecord,
   decodeSessionWorkLink, encodeSessionRecord, plainSessionRefKey, plainSessionRefToAggregate,
   sessionAggregateRefKey, sessionWorkLinkRefKey, HANDOFF_BRIEF_RECORD_SCHEMAS } from '../core/work-graph/sessions/session-record-codecs.js';
@@ -455,9 +455,10 @@ import type { QueryRunRef } from '../contracts/query-job.js';
 import { isRequestRound, queryExecutionBindingOf } from '../contracts/query-job.js';
 import type { WriteResult } from '../contracts/core/results.js';
 import {
-  DEFAULT_TASK_AUTOMATION_POLICY, MAX_AUTO_REWORK_LIMIT, RESUME_ON_STARTUP_MODES, WORKFLOW_AUTOMATION_ACTOR,
-  type ResumeOnStartupMode, type ReworkActorClass, type TaskAutomationPolicyV1,
+  DEFAULT_TASK_AUTOMATION_POLICY, MAX_AUTO_REWORK_LIMIT, RESUME_ON_STARTUP_MODES, UNKNOWN_CALL_AUTO_ATTEST_ACTOR,
+  WORKFLOW_AUTOMATION_ACTOR, isAutomationActor, type ResumeOnStartupMode, type ReworkActorClass, type TaskAutomationPolicyV1,
 } from '../contracts/task-requeue.js';
+import { platformAttestsUnknownCalls } from '../core/work-graph/state/query-run-recovery.js';
 // Slice 2C (spec §6): the line/detail read owners, the pin write owner and the
 // Host-assembled conversation, plus the persisted line-pin event schema.
 import {
@@ -610,6 +611,8 @@ export type TargetPlatformOptions = {
    * no registered check and the fresh evidence/check entry stays unsupported;
    * existing history reads keep working. Never defaulted to full access. */
   checks?: TrustedCheckConfiguration;
+  /** G8B B1c：Host 的工作区命令授权，现读设置；改动前的事实只在有授权的工作区跑。没给就只看工作区授权。 */
+  commandsAllowed?: (workspace: WorkspaceRef) => boolean;
   /** Optional trusted Workflow advancement policy (R5c.1). It selects the exact
    * Session role/RoleBinding/TaskBudget per workspace; it grants no model, tool
    * or file capability and is snapshotted as pure data. Without it only the
@@ -1894,7 +1897,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
           ? options.checks : undefined);
     // The same scope map `readInstalledChecks` reads: `null` is "no configuration at all", while a configuration
     // with zero checks is the empty array (plan-readers' `planChecks` then appends only the built-in witness
-    // capability). The plan readers and the secretary facts read it.
+    // capability). The plan readers, the secretary facts and the check approval read it.
     const readInstalledCheckList: PlanCheckResolver = async scope => {
       const configuration = currentCheckConfiguration(scope);
       return { status: 'ready', value: configuration === undefined ? null : [...configuration.checks] };
@@ -2475,6 +2478,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     };
     const rawCheckRunner = createRegisteredCheckRunner({ evidence: rawEvidence,
       workspaceHost: options.workspace, kernel, resourceCaps, commandSlots, now,
+      ...(options.commandsAllowed === undefined ? {} : { commandsAllowed: options.commandsAllowed }),
       ...(options.commandSandbox === undefined ? {} : { toolchain: options.commandSandbox.toolchain }) });
     // A.2 step 5.6 (S8, A8): the reconcile owners share the ONE records/reader pair; the Runtime
     // classifier reads the Kernel through the same history owner the observer uses.
@@ -3028,6 +3032,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       sendMessage: (...args) => trackedCall(() => mailbox.sendMessage(...args), unavailable),
       readMessage: (...args) => trackedCall(() => mailbox.readMessage(...args), unavailable),
       readMessageBody: (...args) => trackedCall(() => mailbox.readMessageBody(...args), unavailable),
+      // G8B B1f：Host 装检查时按发送回执找这一版候选的批准轮。
+      readHostSendMessageRef: (...args) => trackedCall(() => mailbox.readHostSendMessageRef!(...args), unavailable),
       readInbox: (...args) => trackedCall(() => mailbox.readInbox(...args), unavailable),
       readOutbox: (...args) => trackedCall(() => mailbox.readOutbox(...args), unavailable),
       // The Host system sender's own outbox: the read and the internal append are
@@ -3158,6 +3164,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     };
     const checks: RegisteredCheckRunner = {
       runRegisteredCheck: (...args) => trackedCall(() => rawCheckRunner.runRegisteredCheck(...args), unavailable),
+      runCheckBaseline: (...args) => trackedCall(() => rawCheckRunner.runCheckBaseline(...args), unavailable),
     };
     // The ONE in-flight count of Runs and QueryRuns entered through `startRun`/`startQuery`, memory
     // only. Entering call counts one; a re-entrant call that only observes an already running Run
@@ -3915,6 +3922,13 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       recipients: lateRecipients,
       // 121-112: the scribe review's two platform effects for the intervention close-out: the person's notice
       // through the one project-notice writer, and the Host's "look again".
+      // G8B B1：批检查读同一份已装检查，请知悉走同一个项目通知写入。
+      checkApproval: {
+        installedChecks: readInstalledCheckList,
+        notifyProject: (input) => notifyProject({ records: backend.records, now }, input),
+        readNotice: (input) => readProjectNotice({ records: backend.records }, input),
+        lookupPlanChange: (ctx, request) => planService.lookupPlanChange(ctx, request),
+      },
       commandReview: {
         notifyProject: (input) => notifyProject({ records: backend.records, now }, input),
         scheduleNext: (subject, nextReviewInMs) => { options.commandReviewNext?.(subject, nextReviewInMs); },
@@ -4430,8 +4444,14 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
             return { queryRunRef: input.record.run.ref, row: 'Q-*', status: 'left' as const,
               reason: 'this Host has no trusted Query binding' };
           }
-          return reconcileQueryRunAtStartup({ owner: historyOwner, messages: classifierMessages, queries: queryExecution,
-            observeQuery: (callCtx, request) => observeQuery(callCtx, request) }, ctx, input);
+          const report = await reconcileQueryRunAtStartup({ owner: historyOwner, messages: classifierMessages,
+            queries: queryExecution, observeQuery: (callCtx, request) => observeQuery(callCtx, request) }, ctx, input);
+          // 用户 11-17：这次记成结果未知的（Q-05），和以前留下的（Q-06），平台都试一次只读认定。
+          if (!(report.row === 'Q-05' && report.status === 'reconciled') && report.row !== 'Q-06') return report;
+          const attested = await attestReadOnlyUnknownQuery(ctx, report.queryRunRef);
+          return attested?.status === 'committed'
+            ? { ...report, reason: `${report.reason}; the platform attested it failed: every call without a result is read-only` }
+            : report;
         }, () => ({ queryRunRef: input.record.run.ref, row: 'Q-*', status: 'failed' as const, reason: 'platform is closing' })),
       closeQueryLineTurn: (ctx: CoreCallContext, queryRunRef: QueryRunRef) =>
         trackedCall(() => closeQueryLineTurn(ctx, queryRunRef), () => 'platform is closing'),
@@ -4545,16 +4565,39 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       if (admitted !== null) return admitted;
       // The admission above proved phase `unknown`, which only a QueryRun with
       // its fixed entry reaches, so the Kernel facts and the tally are always read.
+      // 平台身份（Codex 审查，lead 11-17）：读到没出结果的调用名就先用 state 的同一条名单规则判，不成立就 `forbidden`，
+      // 在确认消息之前退出、什么都不写；人认定不判，顺序和效果照旧。
+      const platformAttestor = ctx.principal.kind === 'host' && isAutomationActor(ctx.principal.actor);
       const facts = await readAttestationFacts({ owner: historyOwner, messages: classifierMessages }, ctx, {
         session: read.value.session, executionRef: queryRunRef, kernel: state!.entry!.kernel,
-        startPosition: state!.history?.startPosition ?? null });
+        startPosition: state!.history?.startPosition ?? null,
+        ...(platformAttestor ? { admit: platformAttestsUnknownCalls } : {}) });
       if (!facts.ok) return facts.rejection;
       const resolved = await queryExecution.resolveUnknownQueryRun(ctx, { input: { queryRunRef, reason: input.reason,
-        kernelTurnOpen: facts.kernelTurnOpen, inputsConfirmed: facts.inputsConfirmed, activity: facts.activity },
+        kernelTurnOpen: facts.kernelTurnOpen, inputsConfirmed: facts.inputsConfirmed, activity: facts.activity,
+        unresolvedToolNames: facts.unresolvedToolNames },
         meta: request.meta });
       // A closure that fails here is retried by the next start's step 3; the attestation stands.
       if (resolved.status === 'committed') await closeQueryLineTurn(ctx, queryRunRef);
       return resolved;
+    }
+    /**
+     * 用户 11-17（QRR-05 第 1 条）：结果未知的 QueryRun，平台用固定身份 `UNKNOWN_CALL_AUTO_ATTEST_ACTOR` 走人认定的
+     * 同一个入口，理由固定，结果和人认定一样（关成失败、放开线、关悬空 Turn；请求的用量照旧按预留量计）。入口读 Kernel
+     * 时带出没出结果的调用名，状态机只在它们全是只读工具时放行；否则拒绝、什么也不写，照旧等人。不是 unknown 的不试。
+     */
+    async function attestReadOnlyUnknownQuery(ctx: CoreCallContext, queryRunRef: QueryRunRef,
+    ): Promise<WriteResult<QueryExecutionRecord> | null> {
+      if (queryExecution === undefined) return null;
+      const read = await queryExecution.readQueryExecution(ctx, queryRunRef);
+      if (read.status !== 'ready' || read.value.run.run.executionState?.phase !== 'unknown') return null;
+      const actor = { ...UNKNOWN_CALL_AUTO_ATTEST_ACTOR };
+      const { projectId, workspaceId } = queryRunRef;
+      const platformCtx: CoreCallContext = { projectId, workspaceId, principal: { kind: 'host', actor },
+        materialReader: { kind: 'host', projectId, workspaceId, actor: { ...actor } }, signal: ctx.signal };
+      return resolveUnknownQueryRun(platformCtx, { input: { queryRunRef, reason: '只读工具的调用结果未知，平台按没有结果认定' },
+        meta: { requestId: `qrr-platform-attest:${queryRunRef.runId}`,
+          expected: [{ ref: queryRunRef, revision: read.value.run.revision }] } });
     }
     // Slice 2C (spec §2, L1b, L13, L15): the ONE line read model, the ONE
     // node-detail read model, the pin write owner and the Host conversation

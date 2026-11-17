@@ -38,7 +38,9 @@ import type {
   QueryEntryIdentity, QueryExecutionRecord, QueryHistoryObservation,
 } from '../work-graph/queries/contracts.js';
 import { parseSecretaryAnswer } from '../work-graph/queries/secretary-answer.js';
-import { commandRerunAdviceSubjectOfText, unknownCallAdviceSubjectOfText } from '../../contracts/plan-round.js';
+import {
+  checkReviewSubjectOfText, commandRerunAdviceSubjectOfText, unknownCallAdviceSubjectOfText,
+} from '../../contracts/plan-round.js';
 
 export type QueryObservationPort = {
   observe(ctx: CoreCallContext, request: { queryRunRef: QueryRunRef }): Promise<ReadResult<QueryExecutionRecord>>;
@@ -153,7 +155,7 @@ function entryIdentity(state: NonNullable<QueryExecutionRecord['run']['run']['ex
 
 /** 121-112 (K3L-6 Astra ①): these form rounds' Answer is only an accepted submit; model text never stands in for it. */
 const SUBMIT_FORM_ANSWER_SHAPES: ReadonlySet<QueryAnswerShapeV1> = new Set<QueryAnswerShapeV1>([
-  'exec_review', 'unknown_call_advice', 'scribe_review', 'command_rerun_advice',
+  'exec_review', 'unknown_call_advice', 'scribe_review', 'command_rerun_advice', 'check_review',
 ]);
 
 /** An answered turn's final text, or why it has none within the formal 16 KiB answer bound. */
@@ -490,7 +492,8 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
     const shape = manifest.answerShape;
     if (!(shape === null || shape === 'secretary' || shape === 'initial'
       || shape === 'plan_round' || shape === 'plan_review' || shape === 'exec_review'
-      || shape === 'unknown_call_advice' || shape === 'scribe_review' || shape === 'command_rerun_advice')) {
+      || shape === 'unknown_call_advice' || shape === 'scribe_review' || shape === 'command_rerun_advice'
+      || shape === 'check_review')) {
       return rejected('unavailable', 'the persisted Query manifest has no valid answerShape');
     }
     // Only a round whose frozen list holds a submit tool can hold an accepted
@@ -519,6 +522,8 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
         ? unknownCallAdviceSubjectOfText(record.value.job.job.intent.question) : null;
       const rerunSubject = shape === 'command_rerun_advice'
         ? commandRerunAdviceSubjectOfText(record.value.job.job.intent.question) : null;
+      const checkReviewSubject = shape === 'check_review'
+        ? checkReviewSubjectOfText(record.value.job.job.intent.question) : null;
       // A round whose frozen list holds a submit tool takes the answer from the
       // first successful submit's arguments; no accepted submit keeps the final
       // text reading, and any later assistant text is ignored.
@@ -533,6 +538,7 @@ export function createQueryObservation(deps: RuntimeExecutionDependencies): Quer
           projectId: queryRunRef.projectId,
           ...(adviceSubject === null ? {} : { subject: adviceSubject }),
           ...(rerunSubject === null ? {} : { rerunSubject }),
+          ...(checkReviewSubject === null ? {} : { checkReviewSubject }),
         });
         final = Buffer.byteLength(text, 'utf8') > answerBoundBytes(answerShape)
           ? { kind: 'too_long' } : { kind: 'text', text };

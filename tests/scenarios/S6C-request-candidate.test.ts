@@ -184,7 +184,7 @@ const SEC_2_CELLS: Array<[string, PlanForm]> = [
   ['a changed old assignment', { ...SEC_2_CHANGE, assignments: [...SEC_2_CHANGE.assignments,
     { taskId: `${SEC_BASE}-work`, role: S6A_WORK_ROLE.templateId, instruction: 'sec-2-change changed' }] }],
   ['an old Task waiting on a new one', { ...SEC_2_DEP, executionDag: { dependsOn: [{ taskId: `${SEC_BASE}-work`,
-    dependsOnId: 'sec-2-dep-work-1', requires: { kind: 'output-contract', label: 'sec-2-dep output' } }] } }],
+    dependsOnId: 'sec-2-dep-work-1', requires: { kind: 'artifact', label: 'sec-2-dep output' } }] } }],
 ];
 
 /** The shared precondition: goal 1 has an adopted plan v1 and the default `after_plan_confirmation` autonomy. */

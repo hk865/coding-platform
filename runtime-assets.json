@@ -13,15 +13,15 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "5270735013a9f91733a0d15b6b24ca910256bb7165f6d546281670d27332445f"
+    "sha256": "3102c894ce663459013777ce9e03de6692305aacab73c7711dce8166079aa1cb"
   },
   {
     "path": "resources/prompts/platform/strings.json",
-    "sha256": "5211e01cc638160501cfa932a3cd334ed98b44d59f7a15cbaecc0702f04713ea"
+    "sha256": "e473385644a8df88a70c723e8422794499478e0a429220c78b56e61f0789b0f0"
   },
   {
     "path": "resources/prompts/platform/templates/initial-planning-answer.txt",
-    "sha256": "f6b246e2a779693ef79b2878637f2525e45a4b9abef4fa0bb66db2de01005823"
+    "sha256": "81fe3c85a376b2d0ade1983b98c69e0e4b114ec8e6802b2a57b44933a2e32108"
   },
   {
     "path": "resources/prompts/platform/templates/consultation-received-input.txt",
@@ -101,7 +101,7 @@
   },
   {
     "path": "resources/prompts/platform/templates/secretary-answer.txt",
-    "sha256": "87a77546af75178a71df63dbac83ecaade0cb04d4a17fcc59016e17744796baf"
+    "sha256": "06ebd7ec0fd6c9923ff44e48de154bfc9fb2e00f7568a7a1b7b36e84d179eafb"
   },
   {
     "path": "resources/prompts/platform/templates/handoff-write-understanding-secretary.txt",
@@ -133,15 +133,15 @@
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-work.txt",
-    "sha256": "be9071ec8a231967ebd8c4be69ae2a841cfdfda157997e53065ef02edf654a56"
+    "sha256": "c86d50c9f7bd54d044cb2fcfed1cf9d146062ce12dfcc0d71c9355ecd2e5f3b5"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-secretary.txt",
-    "sha256": "a956d102b3a4e85fc286229d4724a27dd9eeb9a03a5f979bfcec8394aa14e7ed"
+    "sha256": "70dde99ef1db48706385d58c1fec689ea6be77f1ba033cc8f7502dd79f999dfb"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-adviser.txt",
-    "sha256": "b4ff371d1dbd53a51e5eb3415c35c12c45d18ae3e737d053f12394a6a05b8dc9"
+    "sha256": "5c823b9ff62bb22618c605f72511a89e5ab0654311c937b05783d8e16caeb062"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-scribe.txt",
@@ -161,7 +161,7 @@
   },
   {
     "path": "resources/prompts/platform/tools/propose_future_plan.json",
-    "sha256": "6c0b037b2b863f10b63a99dfdf96f72edf68cdad12ea91195e5020604b807a46"
+    "sha256": "26f17e0e8288aea98729686d9c63a3cf22f7a28e02f13409d8a3bb4e1dd4af64"
   },
   {
     "path": "resources/prompts/platform/tools/create_member.json",
@@ -245,7 +245,7 @@
   },
   {
     "path": "resources/prompts/platform/tools/send_session_message.json",
-    "sha256": "07ca596e82a9656a7b5ecc8dd5e78911be43fa14e3c8dc33b15a8b7b30a2159a"
+    "sha256": "e36151ed63e1ef404388c2cc44597cf4ce1a3a53554828c8162a3f62a0c24ac0"
   },
   {
     "path": "resources/prompts/platform/tools/read_session_inbox.json",
@@ -309,7 +309,7 @@
   },
   {
     "path": "resources/prompts/platform/tools/submit_initial_plan.json",
-    "sha256": "4164324437a782afe79708b48fdd20d8346ef3cf1f1fd37cf81e13aac95a81ed"
+    "sha256": "f211b6a65e559651989c59e838381f04a9dbc3bba056c5764ed5e50875f2980e"
   },
   {
     "path": "resources/prompts/platform/tools/submit_initial_questions.json",
@@ -416,7 +416,15 @@
     "sha256": "63a13b0bc400df45af55df481a9941ba209f536e226af10535995117bb722785"
   },
   {
+    "path": "resources/prompts/platform/templates/check-review-input.txt",
+    "sha256": "39d8be447a720d194a041370ef5bb3c8b0a33bc517adf4b8d056274dcbfcef99"
+  },
+  {
     "path": "resources/prompts/platform/tools/submit_command_rerun_advice.json",
     "sha256": "9273b233247b818e2035f7fbcf5a93938cbe571e42bd5ccf98b8b19b6a322678"
+  },
+  {
+    "path": "resources/prompts/platform/tools/submit_check_review.json",
+    "sha256": "2cc0ee4c0561be82e14389b00db444332f22cbe11bc402c6064a5b4ad9e35f64"
   }
 ]

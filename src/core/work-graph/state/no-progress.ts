@@ -21,6 +21,7 @@
  */
 import type { ArtifactRef } from '../../../contracts/artifact.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
+import type { EvidenceOutcome } from '../../../contracts/evidence.js';
 import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { RunOutcome, RunSnapshot, TaskTriple } from '../../../contracts/dispatch.js';
 import type { ArchitectureBaselinePin, CompletionPolicyPin } from '../../../contracts/governance.js';
@@ -43,6 +44,12 @@ export type RoundFailureFactsV1 = {
   gapCodes: string[];
 };
 /**
+ * E09F（lead 11-17 裁定甲）：一轮的审查结论，即 slice 9 VR-16 记下、来源不指名检查的那条 Evidence，按读者读出来的
+ * 样子。`checkId` 是计划里 `review-packet` 那一项，`reportRef` 是审查报告，`basis` 是审查员写给人看的依据（Evidence
+ * 摘要，至多 4 KiB）。
+ */
+export type RoundReviewFactV1 = { checkId: string; outcome: EvidenceOutcome; reportRef: ArtifactRef | null; basis: string };
+/**
  * What `buildEffectiveTaskBasis(activePlan).get(taskId)` returns
  * (`tasks/plan-task-basis.ts:89-103`); the owner passes it through unchanged.
  * Anything but a PlanRevisionRef is an unresolvable basis (`incomplete`).
@@ -63,6 +70,8 @@ export type NoProgressKeyInputV1 = {
   basisPlan: TaskBasisLookupV1;
   /** Verified new inputs, including a stored human `note`; order and repeats do not matter. */
   newInputRefs: readonly NewBasisInputRefV1[];
+  /** E09F：`head` 的审查结论（读者在同一窗口读来）；缺省读作没有审查。规则见 `roundFailureFacts`。 */
+  headReview?: Pick<RoundReviewFactV1, 'checkId' | 'outcome' | 'reportRef'> | null;
 };
 /** §13.7 point 1 inputs, read by `evidence-service.ts` `reverifyRound` after its full capture. */
 export type ReverifyBasisInputV1 = {
@@ -92,8 +101,12 @@ export type ReverifyBasisResult = Transition<ReverifyBasisV1, ReverifyBasisInput
  * Every check whose outcome is not PASS (FAIL, INCONCLUSIVE, and `null` for an
  * interrupted, pending or executing check), sorted by checkId, plus the sorted
  * distinct gap codes. A legacy check without `incompleteCause` reads `cause: null`.
+ *
+ * E09F：审查项不在 `round.checks` 里，它的结论记在 Evidence 上。读者把读到的审查结论传进来时，按同一条“不是 PASS 就列”
+ * 列成一条已完成的检查，报告引用是审查报告；不传（null）就只看命令检查和缺口。
  */
-export function roundFailureFacts(round: Pick<RoundSnapshot, 'checks' | 'gaps'>): RoundFailureFactsV1 {
+export function roundFailureFacts(round: Pick<RoundSnapshot, 'checks' | 'gaps'>,
+  review: Pick<RoundReviewFactV1, 'checkId' | 'outcome' | 'reportRef'> | null = null): RoundFailureFactsV1 {
   const checks: FailingCheckFactV1[] = round.checks
     .filter((check) => check.outcome !== 'PASS')
     .map((check) => ({
@@ -103,6 +116,9 @@ export function roundFailureFacts(round: Pick<RoundSnapshot, 'checks' | 'gaps'>)
       cause: check.incompleteCause ?? null,
       reportRef: check.reportRef,
     }));
+  if (review !== null && review.outcome !== 'PASS') {
+    checks.push({ checkId: review.checkId, phase: 'finished', outcome: review.outcome, cause: null, reportRef: review.reportRef });
+  }
   checks.sort(compareCheckFacts);
   return { checks, gapCodes: sortedDistinct(round.gaps.map((gap) => gap.code)) };
 }
@@ -179,7 +195,8 @@ export function noProgressKey(input: NoProgressKeyInputV1): NoProgressKeyResult 
   if (input.head !== null && input.head.status === 'open') return openRound(input.head);
   const plan = resolvedBasis(input.basisPlan, input.taskRef.taskId);
   if (!isPlanRevisionRef(plan)) return plan;
-  const facts: RoundFailureFactsV1 = input.head === null ? { checks: [], gapCodes: [] } : roundFailureFacts(input.head);
+  const facts: RoundFailureFactsV1 = input.head === null ? { checks: [], gapCodes: [] }
+    : roundFailureFacts(input.head, input.headReview ?? null);
   const body: Omit<NoProgressKeyV1, 'digest'> = {
     taskRef: triple(input.taskRef),
     actionKind: 'requeue',

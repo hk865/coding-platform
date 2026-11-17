@@ -1332,8 +1332,10 @@ export function createTaskRequeueService(
     }
 
     // 11. The §13.1 key against every earlier TaskRequeue of the Task (ND-3), unless the class skips it.
+    // E09F（lead 11-17 18:0x）：链头的审查结论从同一窗口取，没过的审查和人的卡、接续说明一样算一条失败项。
     const key = noProgressKey({ taskRef: task, afterRun, head, source: captured.stamp,
-      basisPlan: buildEffectiveTaskBasis(window.plan).get(task.taskId), newInputRefs });
+      basisPlan: buildEffectiveTaskBasis(window.plan).get(task.taskId), newInputRefs,
+      headReview: head === null ? null : window.facts.roundReviewsByRoundId.get(head.ref.roundId) ?? null });
     if (!key.ok) return reject(key.code, key.detail);
     const basis = key.next;
     if (requeueBasisCompared(derivation.failureClass, actorClass)) {

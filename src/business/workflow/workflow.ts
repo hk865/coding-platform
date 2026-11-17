@@ -99,6 +99,8 @@ import { planSourceLineageOf, sentSystemRoundRef } from '../../core/work-graph/t
 import { sameRef } from '../../core/work-graph/state/ref-equality.js';
 import type { DeliveryEligibilityFactsV1 } from '../../core/work-graph/model/session-facts-contracts.js';
 import { createInterventionHandler } from './intervention.js';
+import { createCheckApproval } from './check-approval.js';
+import { parseCheckReviewAnswer } from '../../contracts/check-review.js';
 import { proposeFromPlanTurn } from './request-candidate.js';
 
 
@@ -411,6 +413,8 @@ const REVIEW_WAIT_KINDS = {
   adviser_round_pending: ['SessionMessage', 'Session', 'UnknownCallReview', 'Goal'],
   /** 121-110: the rerun round waits on its message and line, the request (a form added, closed) and the Goal (T02). */
   command_rerun_pending: ['SessionMessage', 'Session', 'CommandRerunRequest', 'Goal'],
+  /** G8B B1b：批准轮等它的消息和线、候选（人先采用、被替换）和目标。 */
+  check_review_pending: ['SessionMessage', 'Session', 'PlanProposal', 'Goal'],
 } as const;
 function reviewWaitBasisOf(goalRef: GoalRef, reason: keyof typeof REVIEW_WAIT_KINDS): GoalWaitBasisV1 {
   return goalWaitBasisOf({ ref: goalRef }, [reason], REVIEW_WAIT_KINDS[reason]);
@@ -418,8 +422,8 @@ function reviewWaitBasisOf(goalRef: GoalRef, reason: keyof typeof REVIEW_WAIT_KI
 /** Slice 9 §3.2: the five review states of an open round's chain head (`readReviewState`). */
 type ReviewStateV1 =
   | { kind: 'not_sent'; recipient: SessionRef }
-  | { kind: 'waiting'; reason: 'exec_review_pending' | 'no_review_line' | 'adviser_round_pending' | 'command_rerun_pending';
-      basis: GoalWaitBasisV1 }
+  | { kind: 'waiting'; reason: 'exec_review_pending' | 'no_review_line' | 'adviser_round_pending' | 'command_rerun_pending'
+      | 'check_review_pending'; basis: GoalWaitBasisV1 }
   | { kind: 'answered' }
   | { kind: 'closed' }
   | { kind: 'settlement_pending'; basis: GoalWaitBasisV1 };
@@ -1357,8 +1361,9 @@ export function createWorkflow(deps: WorkflowDependencies & {
    * `settlement_pending` while the source message has no reply and is not withdrawn. A failed read is its rejection.
    */
   async function sentRoundStateOf(owned: Owned, goalRef: GoalRef, sent: SessionMessageRef,
-    shape: 'exec_review' | 'unknown_call_advice' | 'command_rerun_advice', parses: (answerText: string) => boolean,
-    pending: 'exec_review_pending' | 'adviser_round_pending' | 'command_rerun_pending',
+    shape: 'exec_review' | 'unknown_call_advice' | 'command_rerun_advice' | 'check_review',
+    parses: (answerText: string) => boolean,
+    pending: 'exec_review_pending' | 'adviser_round_pending' | 'command_rerun_pending' | 'check_review_pending',
   ): Promise<Exclude<ReviewStateV1, { kind: 'not_sent' }> | CoreRejection> {
     const consult = deps.consultations;
     if (consult === undefined) return rejection('unsupported', 'the system round reads (mailbox and Query) are not wired');
@@ -2978,6 +2983,30 @@ export function createWorkflow(deps: WorkflowDependencies & {
             } }), null, null, candidateBasis('plan_fix_pending'));
           }
           if (decision.action === 'adopt') {
+            // G8B B1b：带新检查的先请批。PL 自己不采用这种候选（避免两个采用者）：发出批准轮、等它的收尾，收尾做完
+            // 候选还是候选就出卡。
+            const approval = await checkApproval.requestForCandidate(owned, { candidate: proposal, goal });
+            if ('status' in approval) return approval;
+            if (approval.kind === 'send') {
+              return advancing(null, makePerform(base, { kind: 'send_system_round', request: {
+                round: approval.round, recipient: approval.recipient, text: approval.text } }),
+              null, null, reviewWaitBasisOf(goal.ref, 'check_review_pending'));
+            }
+            if (approval.kind === 'approved') {
+              // lead 11-17 裁定 2：批了以后先立原来的采用前取消围栏，收尾的采用等它成立后才过 owner 的 busy 守卫。
+              const cancelled = await cancelBeforeAdoption(owned, base, goal, graph, proposal);
+              if (cancelled !== null) return cancelled;
+            }
+            if (approval.kind === 'pending' || approval.kind === 'approved') {
+              candidateWait = { reason: 'check_review_pending: the plan candidate waits for its check review',
+                basis: reviewWaitBasisOf(goal.ref, 'check_review_pending'), inFlight: true };
+              return null;
+            }
+            if (approval.kind === 'person') {
+              candidateWait = { reason: 'plan_candidate_waiting: check_review_to_person',
+                basis: candidateBasis('plan_candidate_waiting'), source: cardRead.value.card.source };
+              return null;
+            }
             // §7.3.1: a candidate that replaces a yielded Run's waiting Task
             // fences that continuation first; only then may the adoption apply.
             const cancelled = await cancelBeforeAdoption(owned, base, goal, graph, proposal);
@@ -4272,7 +4301,27 @@ export function createWorkflow(deps: WorkflowDependencies & {
     sessionArchive: archiveService, deliveryFacts,
     ...(deps.consultationFacts === undefined ? {} : { consultationFacts: deps.consultationFacts }),
   });
-  const intervention = createInterventionHandler({ workflow: deps, claimIntervention });
+  // G8B B1：批检查用 Workflow 现成的闭包：批准线（参谋 `adviserOf`、审阅者 `reviewLineOf`）和发出的系统轮的状态。
+  const checkApproval = createCheckApproval({ workflow: deps,
+    approverLineOf: async (owned, goal, duty) => {
+      if (duty === 'adviser') {
+        const adviser = await adviserOf(owned, goal, null);
+        return 'status' in adviser ? adviser : adviser.session;
+      }
+      if (suggestionDutyRecipient === null) return rejection('unsupported', 'the Session duty resolver is not wired');
+      const line = await reviewLineOf(suggestionDutyRecipient, automationContext(owned), owned.projectId);
+      return line.status === 'ready' ? line.value : readRejection(line);
+    },
+    sentRoundState: async (owned, goalRef, requestId) => {
+      const sent = await sentRoundOf(owned, requestId);
+      if (sent.status === 'not_found') return 'not_sent';
+      if (sent.status !== 'ready') return readRejection(sent);
+      const state = await sentRoundStateOf(owned, goalRef, sent.value, 'check_review',
+        (text) => parseCheckReviewAnswer(text).status === 'parsed', 'check_review_pending');
+      if ('status' in state) return state;
+      return state.kind === 'waiting' ? 'pending' : state.kind === 'settlement_pending' ? 'answered' : 'ended';
+    } });
+  const intervention = createInterventionHandler({ workflow: deps, claimIntervention, checkApproval });
   const consumeConsultation = async (ctx: CoreCallContext, input: ConsultationInput): Promise<ConsultationResult> => {
     if (consultation === null) {
       return rejection('unsupported', 'the Workflow has no consultation mailbox/Query/Project dependency');
@@ -4364,7 +4413,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
     readDeliveryEligibilityFacts,
     // S1: one ended request round becomes this request's candidate; without the
     // request-candidate dependency the entry answers "unsupported" and writes nothing.
-    proposeFromPlanTurn: (ctx, turn) => proposeFromPlanTurn(deps, ctx, turn),
+    proposeFromPlanTurn: (ctx, turn) => proposeFromPlanTurn(deps, ctx, turn, checkApproval),
     // Slice 1 §4.1/§4.2: the real archive/maintenance services are published
     // on the port; an outer `ready` never implies archived.
     archiveLine: archiveService.archiveLine,

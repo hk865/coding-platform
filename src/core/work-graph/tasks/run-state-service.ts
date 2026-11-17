@@ -61,6 +61,7 @@ import { SESSION_ANOMALY_BY_TASK_LOOKUP } from '../model/session-facts-contracts
 import { decodeSessionAnomalyAnchor } from './session-anomaly-codecs.js';
 import { decodeUnknownCallReview, unknownCallReviewRefKey } from './unknown-call-review-codecs.js';
 import { deriveSessionAnomalyView } from '../state/session-anomaly.js';
+import type { RoundReviewFactV1 } from '../state/no-progress.js';
 import {
   decodeSessionRecord,
   plainSessionRefKey,
@@ -77,6 +78,7 @@ import {
   PLAN_STATE_RECORD_SCHEMAS,
   laterCursor,
   readBatch,
+  readRoundReviewFacts,
   type ReadBatch,
   type Rejected,
 } from './plan-readers.js';
@@ -817,6 +819,17 @@ ExecutionReadPort & Required<Pick<ExecutionReadPort, 'listExecutions'>> {
       later(read.readThrough);
       round = read.value;
     }
+    // E09F（lead 11-17 裁定甲）：审查项的结论不在 `round.checks` 里，记在这一轮的 Evidence 上。接续说明要把没过的审查
+    // 和它的依据带给下一轮，所以和轮次一起读，读法和事实窗口共用（`readRoundReviewFacts`）。
+    const reviewOf = async (target: RoundSnapshot | null): Promise<RoundReviewFactV1 | null | CoreRejection> => {
+      if (target === null) return null;
+      const read = await readRoundReviewFacts(records, [target]);
+      if (read.status !== 'ready') return mapRejected(read);
+      later(read.readThrough ?? null);
+      return read.reviews.get(target.ref.roundId) ?? null;
+    };
+    const roundReview = await reviewOf(round);
+    if (roundReview !== null && 'status' in roundReview) return roundReview;
 
     // The bounded bodies of the requeue's own new inputs.
     const newInputBodies: ContinuationBasis['newInputBodies'] = [];
@@ -869,7 +882,9 @@ ExecutionReadPort & Required<Pick<ExecutionReadPort, 'listExecutions'>> {
         later(read.readThrough);
         ancestorRound = read.value;
       }
-      factsChain.push({ requeue: cursorRequeue, run: ancestor.value, round: ancestorRound });
+      const ancestorReview = await reviewOf(ancestorRound);
+      if (ancestorReview !== null && 'status' in ancestorReview) return ancestorReview;
+      factsChain.push({ requeue: cursorRequeue, run: ancestor.value, round: ancestorRound, roundReview: ancestorReview });
       cursor = ancestor.value;
     }
 
@@ -882,7 +897,7 @@ ExecutionReadPort & Required<Pick<ExecutionReadPort, 'listExecutions'>> {
     if (pending.status !== 'ready') return pending;
     later(pending.readThrough);
     return { status: 'ready', value: { run, requeue, allRequeues, previous: previous.value,
-      previousIntents: { pointer, steers }, previousWait, round, newInputBodies, replyBodies, factsChain, readThrough,
+      previousIntents: { pointer, steers }, previousWait, round, roundReview, newInputBodies, replyBodies, factsChain, readThrough,
       pendingAnomalies: pending.anchors, unknownCallReview } };
   };
   return { readExecution, listExecutions, readContinuationBasis };

@@ -33,10 +33,12 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PreparedQueryExecution } from '../../src/contracts/core/prepared-execution.js';
-import type { ReadResult } from '../../src/contracts/core/results.js';
+import type { ReadResult, WriteResult } from '../../src/contracts/core/results.js';
 import type { QueryJobRef } from '../../src/contracts/query-job.js';
 import type { RequestSubmitResultV1 } from '../../src/business/workflow/request-intake.js';
+import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import { readQuery } from '../helpers/A2-restart-fixture.js';
+import { hostReconcile } from '../helpers/KLS1B-host-store.js';
 import { claimWithSecretaryProfile } from '../helpers/request-claim-steps.js';
 import { commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import { ensureProjectPointers, openS6AHostWorld, type S6AHostWorld } from '../helpers/S6A-host-fixture.js';
@@ -94,20 +96,21 @@ function start(world: S6AHostWorld, prepared: PreparedQueryExecution, requestId:
 
 describe('R-09, a round whose result is unknown across a restart (sqlite)', () => {
   it('reads unknown, never reruns, and leaves the intake free for a new request', async () => {
-    const world = remember(await openS6AHostWorld({ backend: 'sqlite' }));
+    // QRR（lead 裁定 11-17）：只读工具的结果未知由平台认定（下一组）；这一行用不在只读名单里的只读命令，它仍等人认定。
+    const world = remember(await openS6AHostWorld({ backend: 'sqlite', secretaryTools: ['read', 'run_readonly_command'] }));
     await ensureProjectPointers(world);
     const a = await world.createSecretary('a');
     // The first model call starts a real tool and gets no result before the
     // crash; the second reply exists so a rerun would be visible as one.
     await world.scripted.script(a, [
-      { kind: 'calls', calls: [{ callId: 's6a-unknown-list', name: 'list_files', args: { prefix: '.' } }] },
+      { kind: 'calls', calls: [{ callId: 's6a-unknown-command', name: 'run_readonly_command', args: { command: 'ls' } }] },
       { kind: 'text', text: answerText('S6A rerun answer') },
     ]);
 
     // The driver is off in the old Host: the test drives claim, prepare and start.
     const submitted = queued(await world.submit({ commandId: 's6a-unknown-1', goalId: S6A_GOAL_1.goalId,
       text: 'S6A unknown request' }));
-    const tool = await world.gates.toolCall(a, 'list_files');
+    const tool = await world.gates.toolCall(a, 'run_readonly_command');
     expect(await claimWithSecretaryProfile(world, submitted.round, a, `s6a-unknown-claim-${submitted.round.queryJobId}`))
       .toMatchObject({ status: 'committed' });
     const started = start(world, await prepareStep(world, submitted.round), 's6a-unknown-start');
@@ -149,6 +152,90 @@ describe('R-09, a round whose result is unknown across a restart (sqlite)', () =
     ]);
     // The unknown attempt's occupancy keeps the line from taking a second run.
     expect(await world.scripted.requests(a)).toHaveLength(1);
+    void started;
+  }, 120_000);
+});
+
+// 用户 11-17（QRR-05 第 1 条）：没出结果的调用全是名单上的只读工具时，重启后平台用固定身份按没有结果（失败）认定，
+// 走和人认定同一个入口：这一轮关闭、线放开，不重跑、不出参谋轮、不出卡，等人的 unknown 不再出现。
+// 上面 R-09 第一行用不在名单里的 `run_readonly_command`，照旧读 unknown。
+describe('QRR-05, a read-only call whose result is unknown is attested by the platform at the restart (sqlite)', () => {
+  it('closes the round failed with the platform reason, releases the line, reruns nothing and shows no card', async () => {
+    const world = remember(await openS6AHostWorld({ backend: 'sqlite', secretaryTools: ['read', 'look_graph'] }));
+    await ensureProjectPointers(world);
+    const a = await world.createSecretary('a');
+    await world.scripted.script(a, [
+      { kind: 'calls', calls: [{ callId: 'qrr-auto-look', name: 'look_graph', args: { mode: 'path', path: 'src' } }] },
+      { kind: 'text', text: answerText('QRR rerun answer') },
+    ]);
+    const submitted = queued(await world.submit({ commandId: 'qrr-auto-1', goalId: S6A_GOAL_1.goalId,
+      text: 'QRR auto request' }));
+    const tool = await world.gates.toolCall(a, 'look_graph');
+    expect(await claimWithSecretaryProfile(world, submitted.round, a, `qrr-auto-claim-${submitted.round.queryJobId}`))
+      .toMatchObject({ status: 'committed' });
+    const started = start(world, await prepareStep(world, submitted.round), 'qrr-auto-start');
+    await tool.reached;
+    expect(await world.scripted.requests(a)).toHaveLength(1);
+
+    await world.crash({ extraHostOptions: { requestDriver: 'on' } });
+    const view = await world.waitForRequest(submitted.requestRoot,
+      current => current.rounds[0]?.status === 'ended', 'the platform closes the round');
+    expect(view.rounds).toHaveLength(1);
+    expect(view.rounds[0]).toMatchObject({ ref: submitted.round, status: 'ended', answer: null, session: a.ref,
+      closeCode: 'failed', closeMessage: '只读工具的调用结果未知，平台按没有结果认定' });
+    // 线放开了：Session 不再被这一轮占着。
+    expect((await world.readSession(a)).record.occupancy).toBeNull();
+    // 没有重跑，也没有参谋轮：新 Host 没调过模型，旧 Host 崩溃后也没调。
+    expect(await world.scripted.requests(a)).toHaveLength(1);
+    expect(world.model.requests).toHaveLength(0);
+    expect(world.scripted.abandonedCalls()).toEqual([]);
+    // 没有卡。
+    expect((await world.post('decisions/queue', body({ workspace: S6A_SCOPE, sections: ['waiting_answer'],
+      page: { limit: 100 } }))).body).toMatchObject({ status: 'ready', value: { waitingAnswer: [] } });
+    void started;
+  }, 120_000);
+});
+
+// Codex 审查（lead 11-17 19:1x）：平台认定不成立时什么都不写。秘书轮接收了一条 notify，之后停在不在只读名单里的只读
+// 命令上崩溃；重启后平台不认定，这一轮仍是 unknown，notify 的接收记录也没有被补写（留到人认定时再写）。
+describe('QRR-05, the platform refuses a call off the read-only list before it writes anything (sqlite)', () => {
+  it('leaves the round unknown and the accepted notify unrecorded', async () => {
+    const world = remember(await openS6AHostWorld({ backend: 'sqlite', secretaryTools: ['read', 'run_readonly_command'] }));
+    await ensureProjectPointers(world);
+    const a = await world.createSecretary('a');
+    // 和 L-R04 一样经系统上下文发 notify：人发的 notify 会被请求轮只收 notify 的供给滤掉。
+    const notifyText = 'QRR 通知：这一轮接收了它';
+    const sent = await world.dispatch('messages/send', world.systemContext(), { scope: S6A_SCOPE, request: {
+      input: { recipient: a.ref, text: notifyText, intent: 'notify', needsReply: false, goalRef: world.goals.first },
+      meta: { requestId: 'qrr-refuse-notify', expected: [] } } }) as WriteResult<SessionMessage>;
+    if (sent.status !== 'committed') throw new Error(`QRR: the notify was not sent: ${JSON.stringify(sent)}`);
+    const readNotify = async (): Promise<SessionMessage> => {
+      const read = (await world.post('messages/read', body(sent.value.ref))).body as ReadResult<SessionMessage>;
+      if (read.status !== 'ready') throw new Error(`QRR: the notify is not readable: ${JSON.stringify(read)}`);
+      return read.value;
+    };
+    await world.scripted.script(a, [
+      { kind: 'calls', calls: [{ callId: 'qrr-refuse-command', name: 'run_readonly_command', args: { command: 'ls' } }] },
+      { kind: 'text', text: answerText('QRR rerun answer') },
+    ]);
+    const submitted = queued(await world.submit({ commandId: 'qrr-refuse-1', goalId: S6A_GOAL_1.goalId,
+      text: 'QRR refuse request', recipient: a }));
+    const tool = await world.gates.toolCall(a, 'run_readonly_command');
+    expect(await claimWithSecretaryProfile(world, submitted.round, a, `qrr-refuse-claim-${submitted.round.queryJobId}`))
+      .toMatchObject({ status: 'committed' });
+    const started = start(world, await prepareStep(world, submitted.round), 'qrr-refuse-start');
+    await tool.reached;
+    // 这一轮带上了那条 notify，崩溃前接收记录还没写。
+    expect(JSON.stringify(await world.scripted.requests(a))).toContain(notifyText);
+    expect((await readNotify()).acceptedInputs).toBeUndefined();
+
+    await world.crash({ extraHostOptions: { requestDriver: 'on' } });
+    // 启动核对在 Host 起来时已经做完（报告在），平台的认定试过了、被拒。
+    expect(hostReconcile(world.host, S6A_SCOPE.projectId).report?.queries)
+      .toContainEqual(expect.objectContaining({ row: 'Q-05', status: 'reconciled' }));
+    const view = await world.readRequest(submitted.requestRoot);
+    expect(view.rounds[0]).toMatchObject({ ref: submitted.round, status: 'unknown', closeCode: null });
+    expect((await readNotify()).acceptedInputs).toBeUndefined();
     void started;
   }, 120_000);
 });

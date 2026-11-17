@@ -2,6 +2,10 @@
 import type { CoreScope, BootstrapResponse } from './core-http-types.js';
 import type { QueryJobAnswerRef } from '../contracts/query-job.js';
 import type { RegisteredCommandCheck } from '../contracts/verification.js';
+import type { SessionRef } from '../contracts/core/identity.js';
+import type {
+  CheckBaselineV1, CheckReviewApproverDutyV1, CheckReviewAuthorDutyV1,
+} from '../contracts/check-review.js';
 import type { ResumeOnStartupMode, TaskAutomationPolicyV1 } from '../contracts/task-requeue.js';
 import type { ResourceCapUnavailableReasonV1 } from '../contracts/resource-caps.js';
 import type { PlanLoopLimitsV1 } from '../contracts/plan-loop-limits.js';
@@ -53,13 +57,25 @@ export type SettingsWorkspace = {
    *  kept per checkout, so every project mounting the same checkout sees it; a folder in no git work tree is false. */
   knowledgeLocalOnly: boolean;
 };
-/** 121-136: who installed one check of a workspace, and from where: a plan a person approved by adopting it. */
+/**
+ * 121-136: who installed one check of a workspace, and from where: a plan a person approved by adopting it. G8B B1f：
+ * 或者平台自动采用时，由不是作者的 agent 批准（批准前平台在改动前的工作区跑过、失败了）。
+ */
 export type CheckApprovalV1 = {
   checkId: string;
   plan: { proposalRef: PlanProposalRef; checksDigest: string };
-  approvedBy: { kind: 'person' };
+  approvedBy: { kind: 'person' }
+    | { kind: 'agent'; duty: CheckReviewApproverDutyV1; session: SessionRef; answerRef: QueryJobAnswerRef };
+  /** 只在 agent 批准时有：写这份计划的职责。 */
+  author?: { duty: CheckReviewAuthorDutyV1 };
+  /** 只在 agent 批准时有：这条检查改动前跑出的事实。 */
+  baseline?: CheckBaselineV1;
   approvedAt: string;
 };
+/** G8B B1f：采用时装检查的批准者：人的 `plans/apply`，或批准轮结论里的 agent（带作者和改动前的事实）。 */
+export type CheckApproverV1 = { kind: 'person' }
+  | { kind: 'agent'; duty: CheckReviewApproverDutyV1; session: SessionRef; answerRef: QueryJobAnswerRef;
+    author: CheckReviewAuthorDutyV1; baselines: readonly CheckBaselineV1[] };
 /** A project store's place and, only for the local data directory, the one sentence saying why. */
 export type SettingsStoreLocation = { place: 'git-common' | 'workspace-local' | 'user-data'; reason: string | null };
 export type HostSettingsSnapshot = {
@@ -281,7 +297,8 @@ export interface ChecksAdoptionEntryPort
    * `apply`; checks all installed already, or a candidate whose adoption has ended, are the plain `apply`.
    */
   adoptWithPlanChecks<T>(ctx: CoreCallContext,
-    input: { scope: CoreScope; proposalRef: PlanProposalRef; checks: readonly RegisteredCommandCheck[] },
+    input: { scope: CoreScope; proposalRef: PlanProposalRef; checks: readonly RegisteredCommandCheck[];
+      approval: CheckApproverV1 },
     adopt: { replay: () => Promise<WriteResult<T> | { status: 'not_found' }>; apply: () => Promise<WriteResult<T>> }):
     Promise<WriteResult<T>>;
 }

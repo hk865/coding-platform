@@ -8,7 +8,7 @@
  * here reads a clock.
  */
 import type { CommitCursor } from '../../../contracts/command-event.js';
-import type { DecisionSubjectV1 } from '../../../contracts/goal-decisions.js';
+import type { DecisionObjectV1, DecisionSubjectV1 } from '../../../contracts/goal-decisions.js';
 import type { OperationRef } from '../../../contracts/core/operations.js';
 import type { ProjectScope } from '../../../contracts/core/identity.js';
 import { rejected } from '../../../contracts/core/rejections.js';
@@ -20,10 +20,18 @@ import {
 } from '../../../contracts/role-lines.js';
 
 /** The project notice's identity: the subject (a Goal or the project), the kind and the operation that caused it. */
+/**
+ * lead 11-17 裁定 4：批检查的两种请知悉（批了 / 交人）共用一个身份，同一份候选同一版只出一行，以先写的为准；其余种类
+ * 的身份照旧带自己的种类。
+ */
+function identityKindOf(kind: ProjectNoticeKindV1): string {
+  return kind === 'check_approved' || kind === 'check_to_person' ? 'check_approval' : kind;
+}
+
 export function projectNoticeIdentity(input: { subject: DecisionSubjectV1; kind: ProjectNoticeKindV1;
   operation: OperationRef }): { noticeId: string; commandId: string } {
   const digest = sha256Hex(canonicalJson({ subjectKey: canonicalJson(input.subject as unknown as JsonValue),
-    kind: input.kind, operation: input.operation } as unknown as JsonValue));
+    kind: identityKindOf(input.kind), operation: input.operation } as unknown as JsonValue));
   return { noticeId: digest, commandId: `project-notice:${digest}` };   // the record id IS the operation identity
 }
 
@@ -31,7 +39,9 @@ export type ProjectNoticeForCommitV1 = { input: NotifyProjectInputV1 };
 
 /** The pre-bind notice: `since` comes from the commit that writes it, never from this decision. */
 export type ProjectNoticeDraftV1 = { ref: { aggregateType: 'ProjectNotice'; projectId: string; noticeId: string };
-  subject: DecisionSubjectV1; kind: ProjectNoticeKindV1; summary: string; operation: OperationRef };
+  subject: DecisionSubjectV1; kind: ProjectNoticeKindV1; summary: string; operation: OperationRef;
+  /** G8B B1g：只在批检查的两种上有。 */
+  objects?: DecisionObjectV1[] };
 
 /** One record per operation identity: R2 replays the same command; a second record is its absence CAS's conflict. */
 export function projectNoticeNext(facts: ProjectNoticeForCommitV1):
@@ -52,7 +62,8 @@ export function projectNoticeNext(facts: ProjectNoticeForCommitV1):
   const { noticeId } = projectNoticeIdentity({ subject, kind: input.kind, operation: input.operation });
   return { decision: { ref: { aggregateType: 'ProjectNotice', projectId: input.projectRef.projectId, noticeId },
     subject, kind: input.kind, summary,
-    operation: { ...input.operation } } };
+    operation: { ...input.operation },
+    ...(input.objects === undefined ? {} : { objects: structuredClone(input.objects) }) } };
 }
 
 /** The pending record: its `since` is filled by the commit that writes it and its revision starts at 1. */

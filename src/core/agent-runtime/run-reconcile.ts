@@ -670,15 +670,26 @@ export async function reconcileQueryRunAtStartup(
  * nothing (`host_config`, `transient`, `cancelled`, a failed window read of a
  * readable Kernel) refuses the attestation `unavailable`, so it writes nothing
  * and is retried (SD-2): it never retires a Session on a guess.
+ * 用户 11-17：同一次读还给出 Turn 里没出结果的调用的工具名，平台身份的认定靠它判断是不是全是只读工具；
+ * Kernel 读不到或没有 Turn 时为空，平台就不认定。
+ * Codex 审查（lead 11-17）：给了 `admit`（平台身份）时，名字一取到就先判，不成立就返回 `forbidden`，不确认消息、
+ * 什么都不写；成立以后才确认消息。没给 `admit`（人认定）时顺序和效果照旧。
  */
 export async function readAttestationFacts(
   deps: Pick<RunReconcileClassifierDependencies, 'owner' | 'messages'>, ctx: CoreCallContext,
-  input: { session: SessionRecord; executionRef: RunRef | QueryRunRef; kernel: KernelExecutionBinding; startPosition: number | null },
-): Promise<{ ok: true; kernelTurnOpen: boolean; inputsConfirmed: boolean | null; activity: RunActivityFactsV1 }
+  input: { session: SessionRecord; executionRef: RunRef | QueryRunRef; kernel: KernelExecutionBinding; startPosition: number | null;
+    admit?: (toolNames: readonly string[]) => boolean },
+): Promise<{ ok: true; kernelTurnOpen: boolean; inputsConfirmed: boolean | null; activity: RunActivityFactsV1;
+  unresolvedToolNames: string[] }
   | { ok: false; rejection: CoreRejection }> {
+  const refused = (toolNames: readonly string[]): boolean => input.admit !== undefined && !input.admit(toolNames);
+  const notAdmitted = { ok: false as const, rejection: { status: 'rejected' as const, code: 'forbidden' as const,
+    reason: 'the platform attests an unknown QueryRun only when every call without a result is a read-only tool' } };
   const probe = await deps.owner.probe({ session: input.session, signal: ctx.signal });
   if (probe.verdict === 'missing' || probe.verdict === 'damaged') {
-    return { ok: true, kernelTurnOpen: true, inputsConfirmed: null, activity: unknownFacts('kernel_unreadable', probe.reason) };
+    if (refused([])) return notAdmitted;
+    return { ok: true, kernelTurnOpen: true, inputsConfirmed: null, activity: unknownFacts('kernel_unreadable', probe.reason),
+      unresolvedToolNames: [] };
   }
   if (probe.verdict !== 'ready') {
     return { ok: false, rejection: { status: 'rejected', code: 'unavailable',
@@ -691,18 +702,21 @@ export async function readAttestationFacts(
       reason: `the Kernel history could not be read (${read.reason}); retry the attestation` } };
   }
   const state = reduceTurnFromStart(read.decoded, input.kernel);
+  const turnStart = turnStartOf(read.decoded, input.kernel);
+  const fromPosition = turnStart?.position ?? input.startPosition ?? 0;
+  const unresolvedToolNames = state === null ? []
+    : unresolvedCallFactsOf(read.decoded, state, unresolvedToolCallIds(state), input.kernel, fromPosition).map(call => call.toolName);
+  if (refused(unresolvedToolNames)) return notAdmitted;
   const inputsConfirmed = await confirmMailboxInputs(deps.messages, ctx, input.executionRef, input.kernel, read.decoded);
   // L16: the attestation records the tally of the Turn it read; no Turn of the
   // fixed identity is an explicit `unknown`, never zero.
-  const turnStart = turnStartOf(read.decoded, input.kernel);
-  const fromPosition = turnStart?.position ?? input.startPosition ?? 0;
   const activity = turnStart === null
     ? unknownFacts('turn_not_found', 'the attested QueryRun has no Kernel Turn')
     : tallyTurnActivity(read.decoded, input.kernel, { fromPosition,
       throughPosition: read.decoded.at(-1)?.position ?? fromPosition, bound: 'reconcile_observation' });
   // No Turn at all leaves nothing open; a Turn without a Kernel terminal is open.
-  if (state === null) return { ok: true, kernelTurnOpen: false, inputsConfirmed, activity };
-  return { ok: true, kernelTurnOpen: !TERMINAL_STATUSES.includes(state.status), inputsConfirmed, activity };
+  if (state === null) return { ok: true, kernelTurnOpen: false, inputsConfirmed, activity, unresolvedToolNames };
+  return { ok: true, kernelTurnOpen: !TERMINAL_STATUSES.includes(state.status), inputsConfirmed, activity, unresolvedToolNames };
 }
 
 // -------------------------------------------------------------------------- //

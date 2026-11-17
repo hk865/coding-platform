@@ -17,7 +17,9 @@ import type { PreparedQueryExecution, PreparedQueryManifestV1 } from '../../cont
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
 import type { ModelCallAccess, RunRef } from '../../contracts/dispatch.js';
 import { queryExecutionBindingOf, type QueryModelUsageV1, type QueryRunRef } from '../../contracts/query-job.js';
-import { commandRerunAdviceSubjectOfText, unknownCallAdviceSubjectOfText } from '../../contracts/plan-round.js';
+import {
+  checkReviewSubjectOfText, commandRerunAdviceSubjectOfText, unknownCallAdviceSubjectOfText,
+} from '../../contracts/plan-round.js';
 import type { GoalRef } from '../../contracts/ledger.js';
 import type { HookPort, ToolCall } from '../../../vendor/coding-agent/dist/public-api.js';
 import { canonicalJson, canonicalKey, sameJson as sameRef, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
@@ -466,6 +468,11 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       if (shape === 'command_rerun_advice' && rerunSubject === null) {
         return rejected('invalid', 'the rerun round names no request subject');
       }
+      // G8B B1d：批检查轮的候选、版本和新检查只从平台写的第二行来。
+      const checkReviewSubject = shape === 'check_review' ? checkReviewSubjectOfText(record.job.job.intent.question) : null;
+      if (shape === 'check_review' && checkReviewSubject === null) {
+        return rejected('invalid', 'the check review round names no subject');
+      }
       let subjectRunRef: RunRef | null = null;
       if (historyNames.length > 0) {
         if (adviceSubject !== null) {
@@ -679,11 +686,14 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
               goalLess: manifest.request!.effectiveGoalId === null,
               secretaryFacts: deps.secretaryFacts,
             } : {}),
+            // E09F：没有秘书事实的规划轮（参谋线）交表时，从这里读这一轮的来源计划判依赖种类。
+            planningSource: { goalRef: manifest.goal === null ? null : manifest.goal.ref, plans: deps.plans },
             acceptedCallIds: acceptedAnswerCallIds,
             names: submitNames,
             texts: toolTexts,
             ...(adviceSubject === null ? {} : { subject: adviceSubject }),
             ...(rerunSubject === null ? {} : { rerunSubject }),
+            ...(checkReviewSubject === null ? {} : { checkReviewSubject }),
           });
         }
         const names = [

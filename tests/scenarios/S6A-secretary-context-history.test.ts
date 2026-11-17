@@ -351,16 +351,17 @@ describe('a secretary round shows the earlier rounds of other secretaries', () =
   // is abandoned with the tool call held, the new Host's reconcile reads the
   // round unknown, and the follow-up runs on B.
   it('shows a round still running after the Host crash as still running or unknown', async () => {
-    const world = await openWorld({ requestDriver: 'off', secretaryTools: ['read', 'list_files'] });
+    // QRR（lead 裁定 11-17）：只读工具的结果未知平台会自己认定，这里用不在只读名单里的只读命令，这一轮才留在 unknown。
+    const world = await openWorld({ requestDriver: 'off', secretaryTools: ['read', 'run_readonly_command'] });
     const memory = await seeded(world);
     const a = await world.createSecretary('a');
     const b = await world.createSecretary('b');
     const tag = 's6a-unknown';
     await world.scripted.script(a, [
-      { kind: 'calls', calls: [{ callId: `${tag}-list`, name: 'list_files', args: {} }] },
+      { kind: 'calls', calls: [{ callId: `${tag}-command`, name: 'run_readonly_command', args: { command: 'ls' } }] },
       { kind: 'text', text: secretaryAnswer({ body: `${tag} never sent` }) },
     ]);
-    const tool = await world.gates.toolCall(a, 'list_files');
+    const tool = await world.gates.toolCall(a, 'run_readonly_command');
     const submitted = await submitRound(world, newRequest(`${tag}-1`, a, `${tag} question on A`));
     expect(await claimWithSecretaryProfile(world, submitted.round, a, `${tag}-claim`))
       .toMatchObject({ status: 'committed' });
@@ -393,7 +394,7 @@ describe('a secretary round shows the earlier rounds of other secretaries', () =
     const view = await world.readRequest(submitted.requestRoot);
     const input = await lastInput(world, b);
     expect(input).toBe(secretaryInputText({
-      ...baseSample(memory, false, ['read', 'list_files']),
+      ...baseSample(memory, false, ['read', 'run_readonly_command']),
       round: roundOf(view, onB.round),
       earlier: [{ round: roundOf(view, submitted.round), result: { kind: 'not_ended' } }],
     }));

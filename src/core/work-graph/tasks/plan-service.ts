@@ -910,6 +910,7 @@ function workFailureInput(definition: RuntimeTask, state: CanonicalTaskState, fa
     satisfied: state.reductionRevision !== null,
     goalDesiredState: rework.goalDesiredState,
     reverifyRefusal: chain.kind === 'head' ? facts.reverifyRefusalsByRoundId.get(chain.head.ref.roundId) ?? null : null,
+    headReview: chain.kind === 'head' ? facts.roundReviewsByRoundId.get(chain.head.ref.roundId) ?? null : null,
     goalEndedRuns: facts.goalEndedRuns ?? 0,
     configurationRevision: rework.configurationRevision,
     // The Kernel `run.failed` text is AgentRuntime's; the read model reads the persisted payloads only.
@@ -952,6 +953,7 @@ function gateFailureInput(plan: PlanRevisionSnapshot, definition: RuntimeTask, s
     satisfied: state.reductionRevision !== null,
     goalDesiredState: rework.goalDesiredState,
     reverifyRefusal: head === null ? null : facts.reverifyRefusalsByRoundId.get(head.ref.roundId) ?? null,
+    headReview: head === null ? null : facts.roundReviewsByRoundId.get(head.ref.roundId) ?? null,
     goalEndedRuns: facts.goalEndedRuns ?? 0,
     configurationRevision: rework.configurationRevision,
     kernelRunFailedError: null,
@@ -1666,9 +1668,10 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
         return adopterClass === 'human'
           ? rejected('invalid', `the candidate's checks ${ids} are not installed: a person's adoption through the `
             + "Host's plans/apply installs them before it adopts the plan, where the Host keeps settings")
-          : rejected('forbidden', `the candidate brings checks that are not installed yet (${ids}): only a person `
-            + 'approves a new check, so the platform does not adopt it; it waits for the person, who installs the '
-            + 'checks by adopting it');
+          : rejected('forbidden', `the candidate brings checks that are not installed yet (${ids}): the platform `
+            + 'adopts a plan only when its new checks are installed already. A person installs them by adopting the '
+            + 'plan, or an agent that did not write the plan approves them after the platform ran them on the '
+            + 'workspace before this change and they failed');
       }
       // Slice 5 §2.8 D8: attribution/proof data only, computed from the answer
       // source captured by the trusted caller; never a new authorization.

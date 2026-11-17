@@ -621,8 +621,8 @@ describe('the entered end commits consume carriers and write round_ended (row 16
   });
   // The gates are per Session: the root round answers, then an unfinished Goal root brings the understanding round.
   /** The root round answered, then an unfinished Goal root keeps coverage short, so a real understanding round appears. */
-  async function carrierScene(label: string) {
-    const world = await openWorld('sqlite');
+  async function carrierScene(label: string, secretaryTools?: readonly string[]) {
+    const world = await openWorld('sqlite', {}, secretaryTools === undefined ? {} : { secretaryTools });
     const a = await world.createSecretary(label);
     const root = await world.submit({ commandId: `${label}-root`, goalId: S6A_GOAL_1.goalId,
       text: `S6B2 ${label} root`, recipient: a });
@@ -658,12 +658,14 @@ describe('the entered end commits consume carriers and write round_ended (row 16
 
   it.each(['reconcile', 'attest'] as const)('QRR-%s (SQLite only): the ending recovery consumes the carrier once',
     async (mode) => {
-      const scene = await carrierScene(`qrr-${mode}`);
-      const calls = [{ callId: `qrr-${mode}-list`, name: 'list_files', args: { prefix: '.' } }];
+      // QRR（lead 裁定 11-17）：人认定那一格用不在只读名单里的只读命令，结果未知才留给人。
+      const scene = await carrierScene(`qrr-${mode}`, mode === 'attest' ? ['read', 'run_readonly_command'] : undefined);
+      const calls = mode === 'reconcile' ? [{ callId: 'qrr-reconcile-list', name: 'list_files', args: { prefix: '.' } }]
+        : [{ callId: 'qrr-attest-command', name: 'run_readonly_command', args: { command: 'ls' } }];
       await scene.world.scripted.script(scene.a, mode === 'reconcile'
         ? [{ kind: 'calls', calls }, { kind: 'text', text: END_ANSWER }] : [{ kind: 'calls', calls }]);
       const gate = mode === 'reconcile'
-        ? await scene.world.gates.modelRequest(scene.a) : await scene.world.gates.toolCall(scene.a, 'list_files');
+        ? await scene.world.gates.modelRequest(scene.a) : await scene.world.gates.toolCall(scene.a, 'run_readonly_command');
       const next = mode === 'reconcile' ? await scene.world.gates.modelRequest(scene.a) : null;
       scene.world.post('queries/start', plain(S6A_SCOPE, { prepared: scene.prepared,
         consumerId: 's6b2-consumer', requestId: `qrr-${mode}-start` })).catch(() => undefined);

@@ -39,7 +39,7 @@
 
 ### 执行与 Run
 做派发、Query、Run 活动/预算、续接简报与控制意图的去这组。
-- `continuation-brief.ts` — 续接简报：`ContinuationBriefV1` 等形状、digest、来源比较与结构校验；转出下面两个文件的上限、marker 与渲染，现有的 import 路径都不变。
+- `continuation-brief.ts` — 续接简报：`ContinuationBriefV1` 等形状、digest、来源比较与结构校验；转出下面两个文件的上限、marker 与渲染，现有的 import 路径都不变。E09F：审查没过时 `checks.reviewBasis` 带审阅依据，上限 `CONTINUATION_REVIEW_BASIS_CHARS`。
 - `continuation-brief-base.ts` — 简报的上限 `CONTINUATION_BRIEF_LIMITS` 与第二行标记 `continuationBriefMarker`：不 import 任何文件的叶子，渲染和结构校验都从这里取上限。
 - `continuation-brief-render.ts` — 简报的中文渲染：`renderContinuationBriefZh`、`renderHandoffBriefZh`、`approvedMethodLinesZh`、`templateToolNames` 与 `ContinuationBriefCapacityError`；包里的固定文字、模板渲染和字节预算的私有 helper（`briefTexts`、`renderBriefTemplateZh`、`clip`、`boundedZh`、`listZh`）也在这里，别的简报渲染写进本文件复用它们。简报类型只用 `import type` 从 `continuation-brief.ts` 取，不反向 value import（那会形成加载环）。
 - `control-intent.ts` — 暂停/取消/恢复/引导：`ControlIntentRef`、`ControlIntentRequestV1`、`ControlIntentSnapshotV1`。
@@ -226,13 +226,13 @@
 | `reviewHostLayerOneAccess` | `src/contracts/review-admission.ts:96` | Host 第一层工具与只读命令访问判定。 | 准入与审查能力查询共用同一判据。 |
 | `reviewRoundAdmissionProblem` | `src/contracts/review-admission.ts:127` | 审查轮固定工具集、空写范围、角色与 Host 准入。 | 审查 Run 启动与执行前复核。 |
 | `newBasisInputProblem` | `src/contracts/no-progress.ts:56` | 判断输入能否作为新依据。 | requeue/reverify 两个所有者共用；平台生成正文与未回应消息不算。 |
-| `continuationBriefDigest` | `src/contracts/continuation-brief.ts:293` | 简报摘要 `sha256Hex(canonicalJson(brief))`。 | 固定 `inputBinding.continuationBriefDigest`。 |
+| `continuationBriefDigest` | `src/contracts/continuation-brief.ts:299` | 简报摘要 `sha256Hex(canonicalJson(brief))`。 | 固定 `inputBinding.continuationBriefDigest`。 |
 | `continuationBriefMarker` | `src/contracts/continuation-brief-base.ts:28` | 简报第二行的标记文本。 | 重渲染后逐字比对。 |
-| `compareSourceCheckpoints` | `src/contracts/continuation-brief.ts:303` | 比较两个持久化来源戳，无法判定即 `unknown`。 | 判断工作区是否变化。 |
+| `compareSourceCheckpoints` | `src/contracts/continuation-brief.ts:309` | 比较两个持久化来源戳，无法判定即 `unknown`。 | 判断工作区是否变化。 |
 | `renderContinuationBriefZh` | `src/contracts/continuation-brief-render.ts:226` | 渲染中文续接简报；强制段放不下时抛容量错误。 | 准备 requeue Run 的输入段。 |
-| `approvedMethodLinesZh` | `src/contracts/continuation-brief-render.ts:839` | 渲染已批准方法的固定行。 | 简报审查段的必选块。 |
-| `continuationBriefShapeProblem` | `src/contracts/continuation-brief.ts:438` | 校验简报结构，返回首个问题或 null。 | 读回/接受简报时。 |
-| `ContinuationBriefCapacityError` | `src/contracts/continuation-brief-render.ts:920` | 简报强制段超出字节上限的错误。 | 调用方把它映射为 `capacity` 拒绝。 |
+| `approvedMethodLinesZh` | `src/contracts/continuation-brief-render.ts:840` | 渲染已批准方法的固定行。 | 简报审查段的必选块。 |
+| `continuationBriefShapeProblem` | `src/contracts/continuation-brief.ts:444` | 校验简报结构，返回首个问题或 null。 | 读回/接受简报时。 |
+| `ContinuationBriefCapacityError` | `src/contracts/continuation-brief-render.ts:921` | 简报强制段超出字节上限的错误。 | 调用方把它映射为 `capacity` 拒绝。 |
 | `renderNoteHeader` | `src/contracts/note.ts:316` | 渲染 `<类名>(<锚点>)<!>：<结论>` 标题。 | 展示注记；结构性问题才带 `!`。 |
 | `headerExtrasOf` | `src/contracts/note.ts:362` | link/flow 注记 header 的可选扩展片段（到/从锚点），供渲染用 | 渲染 link 或 flow 注记时；不要另写一份 header 拼接 |
 | `isSemanticRelation` | `src/contracts/note.ts:117` | 值是不是六种联系关系之一 | 写注记的 link 门和注记文件的解析都用它；不要另写一份关系表 |

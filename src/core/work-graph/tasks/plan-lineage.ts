@@ -14,10 +14,10 @@
  * each parent candidate and original Query where the Goal lives.
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
-import type { WorkspaceScope } from '../../../contracts/core/identity.js';
+import type { SessionRef, WorkspaceScope } from '../../../contracts/core/identity.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
-import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
+import { isUserMessageRecipient, type SessionMessageRef } from '../../../contracts/core/session-message.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import { interventionPlanningQueryRefs, queryJobRefFor } from '../../../contracts/query-job.js';
 import { systemRoundContext, systemRoundOfText } from '../../../contracts/plan-round.js';
@@ -28,6 +28,7 @@ import {
 import type { PlanProposal, PlanTaskPort } from '../model/plan-contracts.js';
 import type { QueryJobPort } from '../queries/contracts.js';
 import { handoffContextOf } from '../sessions/session-handoff-service.js';
+import type { RequestFactsPort } from './request-facts.js';
 
 export type PlanSourceLineageV1 = {
   /** The earliest source message on the chain: the executor's M or the first system R. */
@@ -43,6 +44,47 @@ export type PlanSourceLineageDeps = {
   queries: Pick<QueryJobPort, 'readQueryJob'>;
   plans: Pick<PlanTaskPort, 'readPlanProposal'>;
 };
+
+/** 写出一份候选的那条线（G8B B1a）：`via` 说明是从哪一项读出来的。 */
+export type CandidateSourceLineV1 = {
+  session: SessionRef | null;
+  via: 'request' | 'message' | 'agent_write' | 'unknown';
+};
+
+/** 读作者用的口：消息沿用来源链的邮箱口，请求候选读请求的主人。 */
+export type CandidateSourceLineDeps = Pick<PlanSourceLineageDeps, 'messages'> & {
+  requests: Pick<RequestFactsPort, 'readRequest'>;
+};
+
+/**
+ * 写出这份候选的那条线，只在这一处读（G8B B1a；批准者选择和候选卡共用）。
+ * - 有来源消息（干预规划、细化轮、返修轮、`planresume`）：消息的收件线；
+ * - 请求候选（`requestRef` 是请求根）：请求的主人，即秘书线；
+ * - 只有 `submittedBy`（执行者 Run 的 `propose_future_plan`）：写它的 Session；
+ * - 都没有：`session: null`，`via: 'unknown'`。
+ * 读失败原样返回，不猜。职责由调用方用自己现成的解析器换。
+ */
+export async function candidateSourceLineOf(ctx: CoreCallContext, deps: CandidateSourceLineDeps,
+  proposal: PlanProposal): Promise<ReadResult<CandidateSourceLineV1>> {
+  if (proposal.sourceMessageRef !== null) {
+    const source = proposal.sourceMessageRef;
+    const message = await deps.messages.readMessage(hostContextIn(ctx, source.workspaceId), source);
+    if (message.status !== 'ready') return message;
+    const recipient = message.value.recipient;
+    // 发给人的消息不会是候选的来源（干预规划只在 agent 线上开）；照样按“读不到作者”交出去，不另判。
+    return { status: 'ready', value: { session: isUserMessageRecipient(recipient) ? null : recipient, via: 'message' } };
+  }
+  if (proposal.requestRef !== undefined && proposal.requestRef !== null) {
+    const requestRoot = proposal.requestRef;
+    const request = await deps.requests.readRequest(hostContextIn(ctx, requestRoot.workspaceId), { requestRoot });
+    if (request.status !== 'ready') return request;
+    return { status: 'ready', value: { session: request.value.owner, via: 'request' } };
+  }
+  if (proposal.submittedBy !== undefined) {
+    return { status: 'ready', value: { session: proposal.submittedBy.sessionRef, via: 'agent_write' } };
+  }
+  return { status: 'ready', value: { session: null, via: 'unknown' } };
+}
 
 /**
  * The same trusted Host call bound to another workspace of its project: a message, its body and its reply are read

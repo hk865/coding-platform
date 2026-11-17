@@ -23,7 +23,8 @@ import {
   type QueryAnswerShapeV1, type QueryJobIntentV1,
 } from '../../contracts/query-job.js';
 import {
-  commandRerunAdviceSubjectOfText, planResumeOriginalQueryOfText, systemRoundOfText, unknownCallAdviceSubjectOfText,
+  checkReviewSubjectOfText, commandRerunAdviceSubjectOfText, planResumeOriginalQueryOfText, systemRoundOfText,
+  unknownCallAdviceSubjectOfText,
 } from '../../contracts/plan-round.js';
 import { parseInitialPlanningResponseV2 } from '../../contracts/initial-planning-parse.js';
 import type { FrozenHandoffBriefV1 } from '../../contracts/handoff-brief.js';
@@ -683,6 +684,41 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         const guideProblem = appendGuide('command-rerun-advice-input', {
           request: canonicalJson(requestRead.value as unknown as JsonValue),
           review: canonicalJson(reviewRead.value as unknown as JsonValue),
+        });
+        if (guideProblem !== null) return guideProblem;
+      } else if (shape === 'check_review') {
+        // G8B B1d：候选、版本和每条新检查的改动前事实只从平台写的第二行来；候选的差异和计划审阅轮同一种读法。
+        // 请批之后候选动了（人先采用、被替换）照样准备：结论由收尾按候选的当前状态落实，这里拒绝会让 Query 卡住这条线。
+        const subject = checkReviewSubjectOfText(requestQuestion);
+        if (subject === null) return rejected('invalid', 'the check review round names no subject');
+        let proposalRead;
+        try {
+          proposalRead = await deps.plans.readPlanProposal(owned, subject.proposalRef);
+        } catch (error) {
+          return rejected('unavailable', `the check review candidate read failed: ${messageOf(error)}`);
+        }
+        if (proposalRead.status !== 'ready') return proposalRead;
+        const proposal = proposalRead.value;
+        // lead 11-17 裁定 3：差异的基准是候选自己 `basedOn` 的那一版计划，不是当前活动计划：请批之后人采用了另一份计划，
+        // 和当前计划求差会被当成“删了任务”拒掉，准备卡住、到不了收尾。候选失效由收尾判断。平台自动采用的候选都有
+        // `basedOn`（三处来路都只在已有计划上采用），没有就是这一轮的题头不对。
+        if (proposal.basedOn === null) return rejected('invalid', 'the check review candidate has no base plan');
+        const baseRead = await deps.plans.queryTaskGraph(owned, { goalRef: proposal.goalRef, planRef: proposal.basedOn });
+        if (baseRead.status !== 'ready') return baseRead;
+        const basePlan = baseRead.value.plan;
+        const delta = deriveFuturePlanDelta(basePlan, proposal.draft);
+        if (delta.status !== 'supported') {
+          return rejected('invalid', `the check review candidate delta cannot be derived: ${delta.reason}`);
+        }
+        const changedIds = new Set([
+          ...delta.delta.addedTaskIds, ...delta.delta.changedTaskIds, ...delta.delta.dispositionOnlyTaskIds,
+        ]);
+        const checks = subject.baselines.map(baseline => ({
+          check: (proposal.checks ?? []).find(check => check.checkId === baseline.checkId) ?? null, baseline,
+        }));
+        const guideProblem = appendGuide('check-review-input', {
+          candidate: reviewCandidateText(basePlan, proposal, changedIds, delta.delta),
+          checks: canonicalJson(checks as unknown as JsonValue),
         });
         if (guideProblem !== null) return guideProblem;
       } else if (!requestRound && execution.kind === 'initial_coordination') {

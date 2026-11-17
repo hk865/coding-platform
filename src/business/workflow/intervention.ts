@@ -30,11 +30,12 @@ import { asRejection } from './consultation.js';
 import { planningAnswerShapeOf } from './plan-round.js';
 import { createQueryStageDriver, queryRunEndedWithoutAnswer } from './query-stage-driver.js';
 import type { QueryJobRecord } from '../../core/work-graph/queries/contracts.js';
+import type { CheckApproval } from './check-approval.js';
 import type { HandleInterventionResultV1, InterventionInput, WorkflowDependencies } from './ports.js';
 import { automationContext, ownContext, ownedInWorkspace, type Base, type Owned } from './workflow.js';
 
 /** The propose refusals another pass could change; any other refusal is about the plan itself. */
-const PROPOSE_RETRIED_CODES: ReadonlySet<CoreRejection['code']> = new Set([
+export const PROPOSE_RETRIED_CODES: ReadonlySet<CoreRejection['code']> = new Set([
   'unavailable', 'cancelled', 'busy', 'revision_conflict', 'source_stale',
 ]);
 
@@ -47,6 +48,8 @@ export type InterventionDependencies = {
   claimIntervention(owned: Owned, base: Base, goal: GoalSnapshot, plan: PlanRevisionSnapshot,
     task: RuntimeTask, row: TaskRow, session: SessionCard, messageRef: SessionMessageRef):
     Promise<{ claim: TaskClaim } | CoreRejection>;
+  /** G8B B1：批检查（请批和收尾），createWorkflow 用自己的闭包构造后按引用传进来。 */
+  checkApproval?: CheckApproval;
 };
 export type InterventionHandler = {
   handleIntervention(ctx: CoreCallContext, input: InterventionInput): Promise<HandleInterventionResultV1>;
@@ -239,12 +242,14 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
           return null;
         }
         const shape = execution.answerShape ?? 'text';
+
         if (goalOpen && shape !== 'exec_review' && shape !== 'unknown_call_advice' && shape !== 'scribe_review'
-          && shape !== 'command_rerun_advice') {
+          && shape !== 'command_rerun_advice' && shape !== 'check_review') {
           return null;
         }
         if (!reviewQueryEnded(job) || message.response !== null) return null;
         if (shape === 'scribe_review') return settleCommandReview(owned, message, read.value);
+        if (shape === 'check_review') return settleCheckReview(owned, read.value);
         const answerRef = job.answerRefs.at(-1);
         if (answerRef === undefined) return { status: 'no_answer', branch: 'no_task' };
         const answer = await queryOwner.readQueryAnswer(owned.ctx, answerRef);
@@ -269,6 +274,19 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
         const adopted = proposal.status === 'ready' && proposal.value.status === 'accepted';
         return { status: 'answer_ready', branch: 'no_task', answerRef: { ...answerRef },
           reason: adopted ? 'adopted' : 'declined' };
+      }
+
+      /**
+       * G8B B1e：批检查轮结束后由平台落实结论（批了就采用、装检查、出请知悉；否则交人），然后来源照审阅轮关掉。
+       * 拒绝原样返回，Host 下一轮用同一身份重做。
+       */
+      async function settleCheckReview(owned: Owned, record: QueryJobRecord): Promise<HandleInterventionResultV1> {
+        if (deps.checkApproval === undefined) return rejected('unsupported', 'the check approval is not wired');
+        const settled = await deps.checkApproval.settle(owned, { record });
+        if ('status' in settled) return settled;
+        const answerRef = record.job.job.answerRefs.at(-1);
+        return !settled.answered || answerRef === undefined ? { status: 'no_answer', branch: 'no_task' }
+          : { status: 'answer_ready', branch: 'no_task', answerRef: { ...answerRef }, reason: 'answered' };
       }
 
       /**
@@ -534,6 +552,8 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
           record = current.value;
         }
         if (answerShape === 'scribe_review') return settleCommandReview(owned, message, record);
+        // G8B B1e：批检查轮在同一趟里结束时也由平台落实结论（同书记审查），不走下面的回答出口。
+        if (answerShape === 'check_review') return settleCheckReview(owned, record);
         // Stage 9: the answer through the narrow intervention source.
         const answerRef = record.job.job.answerRefs.at(-1);
         // A formally ended Query with no saved Answer is the third ending: the Host sends the one fixed notice
@@ -642,6 +662,18 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
             action: 'refine_future', actorClass: 'system', countedNext: null, cap: 0 }) === 'automatic';
           if (first || !automatic) {
             return { status: 'awaiting_decision', branch: 'no_task', proposalRef: { ...proposalRef } };
+          }
+          // G8B B1b：带新检查的先请批；发出批准轮、等批或交人都是等决定，批准轮的收尾采用它。
+          if (deps.checkApproval !== undefined) {
+            const approval = await deps.checkApproval.request(owned, { candidate: proposal, goal, authorDuty: duty });
+            if ('status' in approval) return approval;
+            if (approval.kind === 'send') {
+              const refused = await deps.checkApproval.send(owned, approval);
+              if (refused !== null) return refused;
+            }
+            if (approval.kind !== 'none') {
+              return { status: 'awaiting_decision', branch: 'no_task', proposalRef: { ...proposalRef } };
+            }
           }
           const adopted = await plans.applyPlanChange(automationContext(owned), {
             input: { proposalRef: { ...proposalRef }, expectedProposalRevision: proposal.revision,

@@ -17,7 +17,7 @@ import type { RunState } from '../../../vendor/coding-agent/dist/public-api.js';
 import type { SessionRef } from '../../contracts/core/identity.js';
 import type { SessionMessageRef } from '../../contracts/core/session-message.js';
 import {
-  CONTINUATION_BRIEF_LIMITS, compareSourceCheckpoints,
+  CONTINUATION_BRIEF_LIMITS, CONTINUATION_REVIEW_BASIS_CHARS, compareSourceCheckpoints,
   type BoundedTextV1, type ContinuationAnomalySectionV1, type ContinuationBriefV1, type ContinuationDiffOmittedReasonV1,
   type ContinuationNewInputV1, type ContinuationSourceCheckpointV1, type ContinuationToolCallV1,
   type ContinuationBlockedCommandLineV1,
@@ -804,6 +804,9 @@ export function assembleContinuationBrief(input: AssembleBriefInput): Continuati
   // listed are the facts Run's, the round its own TaskRequeue covered (§15.2 C3-not-entered-chain "来自更早的 Run").
   const factsHop = head === null ? basis.factsChain.at(-1) ?? null : null;
   const checksRound = head ?? factsHop?.round ?? null;
+  // E09F：列出的检查所在那一轮的审查结论（读者和轮次一起读来）。没过的审查同样列为一条没过的检查，并带上审阅依据。
+  const checksReview = (head !== null ? basis.roundReview : factsHop?.roundReview) ?? null;
+  const failure = checksRound === null ? null : roundFailureFacts(checksRound, checksReview);
   // LA-10: the Run the workspace section speaks of (its checks, `selfChanged`, its end): the facts Run when the afterRun
   // never entered.
   const checkedRun = factsHop === null ? previous.run : factsHop.run.run;
@@ -927,8 +930,11 @@ export function assembleContinuationBrief(input: AssembleBriefInput): Continuati
         .map((message) => ({ messageRef: { ...message.messageRef }, part: message.part, excerpt: bounded(message.text) })),
       messagesOmitted: Math.max(0, acceptedMessages.length - ACCEPTED_INPUTS_LISTED),
     },
-    checks: checksRound === null ? null : { roundRef: { ...checksRound.ref }, roundOrdinal: checksRound.chain?.ordinal ?? 1,
-      failing: roundFailureFacts(checksRound).checks, gapCodes: roundFailureFacts(checksRound).gapCodes },
+    checks: checksRound === null || failure === null ? null : { roundRef: { ...checksRound.ref },
+      roundOrdinal: checksRound.chain?.ordinal ?? 1, failing: failure.checks, gapCodes: failure.gapCodes,
+      // E09F：没有审查或审查通过时不出这个成员，旧接续说明的字节和摘要不变。
+      ...(checksReview === null || checksReview.outcome === 'PASS' ? {}
+        : { reviewBasis: boundedTo(checksReview.basis, CONTINUATION_REVIEW_BASIS_CHARS) }) },
     requeue: { reason: bounded(requeue.reason), reasonAuthor: actorClass, newInputs },
     workspace: {
       selfChanged,

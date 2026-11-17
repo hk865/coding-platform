@@ -261,20 +261,21 @@ Promise<{ requestRoot: QueryJobRef; ascii: QueryJobRef; multibyte: QueryJobRef; 
 }
 
 /**
- * SQLite: a round still running on A reads not ended — A's round calls `list_files`, whose handler is held (the
- * call started, no result), the Host crashes and the new Host's reconcile leaves the round `unknown`; then the
+ * SQLite: a round still running on A reads not ended — A's round calls `run_readonly_command`, whose handler is held
+ * (the call started, no result), the Host crashes and the new Host's reconcile leaves the round `unknown`; then the
  * request is routed to B and a round answered there. `request` is B's secretary input. The world grants the
- * secretary `list_files` (`secretaryTools: ['read', 'list_files']`): the tool gate wraps a platform tool, and the
- * held call stays unreleased (the abandoned Host never gets its result).
+ * secretary the read-only command (`secretaryTools: ['read', 'run_readonly_command']`): the tool gate wraps a platform
+ * tool, and the held call stays unreleased (the abandoned Host never gets its result). QRR（lead 裁定 11-17）：只读
+ * 名单上的工具（如 `list_files`）结果未知时平台会自己认定，所以这里用不在名单里的只读命令。
  */
 export async function buildUnknownOnA(world: S6AHostWorld, input: { a: S6ASession; b: S6ASession; tag?: string }):
 Promise<{ requestRoot: QueryJobRef; unknown: QueryJobRef; onB: S6ARound; request: ModelRequest }> {
   const tag = input.tag ?? 's6a-unknown';
   await world.scripted.script(input.a, [
-    { kind: 'calls', calls: [{ callId: `${tag}-list`, name: 'list_files', args: {} }] },
+    { kind: 'calls', calls: [{ callId: `${tag}-command`, name: 'run_readonly_command', args: { command: 'ls' } }] },
     { kind: 'text', text: secretaryAnswer({ body: `${tag} never sent` }) },
   ]);
-  const tool = await world.gates.toolCall(input.a, 'list_files');
+  const tool = await world.gates.toolCall(input.a, 'run_readonly_command');
   const first = await submitRound(world, newRequest(`${tag}-1`, input.a, `${tag} question on A`));
   await tool.reached;
   await world.crash();

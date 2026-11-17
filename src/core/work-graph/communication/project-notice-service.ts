@@ -9,12 +9,14 @@
  * decision is `state/project-notice.ts`. Nothing here reads a clock for identity and nothing projects a current
  * position: the bound `since` comes from the receipt.
  */
-import type { CoreRejection, WriteResult } from '../../../contracts/core/results.js';
+import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import { canonicalJson } from '../../../contracts/fingerprint.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import type { InferEvent } from '../../../contracts/data-format.js';
 import { ProjectNoticeCreatedFormat } from '../../../contracts/role-lines.js';
 import type { NotifyProjectInputV1, ProjectNoticeV1 } from '../../../contracts/role-lines.js';
 import type { DecisionSubjectV1 } from '../../../contracts/goal-decisions.js';
+import type { JsonValue } from '../../../contracts/fingerprint.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import { projectNoticeCreatedCodec, projectNoticeCodec } from '../sessions/role-line-record-codecs.js';
@@ -35,6 +37,25 @@ type ProjectNoticeCreatedEventV1 = InferEvent<'ProjectNoticeCreated', (typeof Pr
 /** The fixed platform principal (`hostScopeContext`/`reconcileContext`'s shape), project-scoped: no person, no
  *  Session, no secretary. */
 const PROJECT_NOTICE_PRINCIPAL = { kind: 'host', actor: { kind: 'system', id: 'workflow:project-notice' } } as const;
+
+/**
+ * lead 11-17 裁定 4：按身份读一条已写的请知悉（没有是 `null`）。批检查用它看这份候选这一版是否已经告诉过人，
+ * 沿用那次的结论，不另存一套状态。
+ */
+export async function readProjectNotice(deps: Pick<ProjectNoticeDependencies, 'records'>,
+  input: Pick<NotifyProjectInputV1, 'projectRef' | 'subject' | 'kind' | 'operation'>): Promise<ReadResult<ProjectNoticeV1 | null>> {
+  const subject: DecisionSubjectV1 = input.subject ?? { kind: 'project', projectRef: input.projectRef };
+  const { noticeId } = projectNoticeIdentity({ subject, kind: input.kind, operation: input.operation });
+  const refKey = canonicalJson({ aggregateType: 'ProjectNotice', projectId: input.projectRef.projectId,
+    noticeId } as unknown as JsonValue);
+  const read = await deps.records.readMany([refKey]);
+  if (read.status !== 'ready') return rejected('unavailable', `the project notice read failed: ${read.reason}`);
+  const record = read.value.records.find(candidate => candidate.refKey === refKey);
+  if (record === undefined) return { status: 'ready', value: null };
+  const decoded = projectNoticeCodec.decode(record);
+  return decoded.status === 'decoded' ? { status: 'ready', value: decoded.value }
+    : rejected('unavailable', `the project notice ${refKey} is not decodable`);
+}
 
 export async function notifyProject(deps: ProjectNoticeDependencies, input: NotifyProjectInputV1):
   Promise<WriteResult<ProjectNoticeV1>> {
@@ -58,7 +79,8 @@ export async function notifyProject(deps: ProjectNoticeDependencies, input: Noti
   const command: WriteCommand<ProjectNoticeForCommitV1, ProjectNoticeDraftV1, CoreRejection, ProjectNoticeCreatedEventV1,
     ProjectNoticeV1> = {
     operation: 'projectNotice.create', scope, principal: PROJECT_NOTICE_PRINCIPAL, commandId,
-    fingerprintInput: { subject, kind: input.kind, summary: input.summary, operation: input.operation },
+    fingerprintInput: { subject, kind: input.kind, summary: input.summary, operation: input.operation,
+      ...(input.objects === undefined ? {} : { objects: input.objects }) },
     read: async () => ({ status: 'ready', facts: { input } }),   // no record pre-read: R2 replays; the CAS refuses
     decide: (facts) => {
       const decided = projectNoticeNext(facts);
@@ -69,7 +91,8 @@ export async function notifyProject(deps: ProjectNoticeDependencies, input: Noti
       const event = projectNoticeCreatedCodec.encode({ eventId: eventIdOf(keys.identityKey, 'created'), schemaVersion: 1,
         occurredAt: at, eventType: 'ProjectNoticeCreated', projectId: draft.ref.projectId, workspaceId: null,
         notice: { ref: draft.ref, subject: draft.subject, kind: draft.kind, summary: draft.summary,
-          operation: draft.operation } });                                     // the PRE-BIND notice: no `since`
+          operation: draft.operation,
+          ...(draft.objects === undefined ? {} : { objects: draft.objects as unknown as JsonValue }) } });   // the PRE-BIND notice: no `since`
       const pending = projectNoticeCodec.encode(projectNoticePending(draft));
       return { records: [pending], events: [event], guards: [{ refKey: pending.refKey, expectedRevision: null }],
         claims: [], commitCursorBindings: [{ refKey: pending.refKey, field: 'since' as const }] };
@@ -78,7 +101,8 @@ export async function notifyProject(deps: ProjectNoticeDependencies, input: Noti
       decode: (event) => projectNoticeCreatedCodec.decode(event),
       validate: (event, receipt, keys) => event.projectId === scope.projectId && String(receipt.identityKey) === keys.identityKey
         ? null : 'the recorded notice disagrees with this commit',
-      project: (event, cursor) => projectNoticeBound(event.notice, cursor) },   // the cursor is the RECEIPT's, not a read
+      // `objects` 在事件里是 JSON 字段，只有这里按 DecisionObjectV1[] 写它，读回按写入时的类型。
+      project: (event, cursor) => projectNoticeBound(event.notice as ProjectNoticeDraftV1, cursor) },   // the cursor is the RECEIPT's, not a read
   };
   const written = await executeWriteCommand(deps.records, command);
   return written.status === 'refused' ? written.refusal : written;

@@ -20,13 +20,17 @@ import type {
   AdoptInitialArchitectureInput, AdoptedArchitecture, ModuleDefinition,
 } from '../../contracts/architecture-catalog.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
+import type { ReadResult } from '../../contracts/core/results.js';
 import type { CompletionPolicyContentV1 } from '../../contracts/governance.js';
+import type { GoalRef } from '../../contracts/ledger.js';
 import {
   MAX_ANSWER_BYTES,
   type GoalCardDraftV1, type GoalScreeningV1, type QueryAnswerShapeV1, type QueryJobAnswerV1, type QueryRunRef,
   type SecretaryRequestManifestV1,
 } from '../../contracts/query-job.js';
-import { PLANNED_FILES_MAX, type PlanRevisionDraft, type RuntimeTask, type TaskInputRequirementV2 } from '../../contracts/plan.js';
+import {
+  PLANNED_FILES_MAX, type PlanRevisionDraft, type PlanRevisionSnapshot, type RuntimeTask, type TaskInputRequirementV2,
+} from '../../contracts/plan.js';
 import { isLiteralSourceFilePath } from '../workspace/path-validation.js';
 import { parseInitialPlanningResponseV2 } from '../../contracts/initial-planning-parse.js';
 import {
@@ -47,6 +51,10 @@ import {
   COMMAND_RERUN_ADVICE_CHOICES, commandRerunAdviceAnswerText, parseCommandRerunAdviceAnswer,
   type CommandRerunAdviceSubjectV1, type CommandRerunAdviceV1,
 } from '../../contracts/command-rerun-advice.js';
+import {
+  checkReviewAnswerProblem, checkReviewAnswerText, parseCheckReviewAnswer, type CheckReviewFormV1,
+  type CheckReviewSubjectV1,
+} from '../../contracts/check-review.js';
 import type { InitialPlanningSetupV2 } from '../../contracts/initial-planning.js';
 import {
   checkCapabilitiesOf, checkConflictProblem, checksWithProposed, proposedCheckSplit, type RegisteredCommandCheck,
@@ -55,10 +63,12 @@ import type { ToolTextV1 } from '../../contracts/prompts/prompt-pack.js';
 import type {
   SecretaryPreparationFactsPort, SecretaryPreparationFactsV1,
 } from '../work-graph/model/secretary-contracts.js';
+import type { PlanTaskPort } from '../work-graph/model/plan-contracts.js';
 import { ideasIssues } from '../work-graph/model/request-ideas.js';
 import { goalCardDraftCheck, parseSecretaryAnswer, planDraftIndexOf } from '../work-graph/queries/secretary-answer.js';
 import {
-  planModuleIssues, planRoundAnswerIssues, uncoveredRequirementIssues, validatePlanAssignments, validatePlanDraft,
+  planModuleIssues, planRoundAnswerIssues, uncoveredRequirementIssues, unsupportedDependencyIssues, validatePlanAssignments,
+  validatePlanDraft,
 } from '../work-graph/tasks/plan-validation.js';
 import { unservedRoles } from '../work-graph/tasks/initialization-adoption-service.js';
 import { completionPolicyContentProblem } from '../work-graph/configuration/project-bootstrap-record-codecs.js';
@@ -85,6 +95,7 @@ export const ANSWER_TOOL_NAMES = [
   'submit_plan_round', 'submit_plan_review', 'submit_exec_review', 'submit_unknown_call_advice',
   'submit_scribe_review',
   'submit_command_rerun_advice',
+  'submit_check_review',
 ] as const;
 
 export type AnswerToolName = (typeof ANSWER_TOOL_NAMES)[number];
@@ -112,6 +123,7 @@ export function answerToolNamesOf(kind: AnswerToolKind | null, paired = false): 
   if (kind === 'unknown_call_advice') return ['submit_unknown_call_advice'];
   if (kind === 'scribe_review') return ['submit_scribe_review'];
   if (kind === 'command_rerun_advice') return ['submit_command_rerun_advice'];
+  if (kind === 'check_review') return ['submit_check_review'];
   return [];
 }
 
@@ -142,6 +154,8 @@ export type AnswerTextContext = {
   subject?: UnknownCallAdviceSubjectV1;
   /** The rerun round's frozen subject; only `command_rerun_advice` uses it. */
   rerunSubject?: CommandRerunAdviceSubjectV1;
+  /** G8B B1d：批检查轮的冻结 `subject`；只有 `check_review` 用它（候选和版本由它填）。 */
+  checkReviewSubject?: CheckReviewSubjectV1;
 };
 
 /** One goal-card draft as the form carries it: bare module and goal ids only. */
@@ -273,6 +287,7 @@ export function buildAnswerText(
       rationale: advice.rationale, plain: advice.plain,
     });
   }
+  if (shape === 'check_review') return checkReviewAnswerText(ctx.checkReviewSubject!, form as unknown as CheckReviewFormV1);
   if (shape === 'plan_round') {
     const round = form as PlanRoundForm;
     if (round.answerKind === 'questions') {
@@ -587,6 +602,15 @@ function commandReviewSchema(texts: ToolTextV1['parameters']): z.ZodType {
   }).strict();
 }
 
+/** G8B B1d：批检查的表：每条新检查一项，批或交人，加一句给人看的理由；候选和版本由平台从 `subject` 填。 */
+function checkReviewSchema(texts: ToolTextV1['parameters']): z.ZodType {
+  return z.object({
+    verdicts: textField(z.array(z.object({
+      checkId: z.string().min(1), decision: z.enum(['approve', 'to_person']), reason: z.string().min(1),
+    }).strict()).min(1), texts, 'verdicts'),
+  }).strict();
+}
+
 function answerSchemaFor(name: AnswerToolName, goalLess: boolean, texts: ToolTextV1['parameters']): z.ZodType {
   switch (name) {
     case 'submit_secretary_answer': return semanticSchema(goalLess, texts);
@@ -599,6 +623,7 @@ function answerSchemaFor(name: AnswerToolName, goalLess: boolean, texts: ToolTex
       ...UNKNOWN_CALL_ADVICE_CHOICES.disposition, ...UNKNOWN_CALL_ADVICE_CHOICES.approval])]);
     case 'submit_scribe_review': return commandReviewSchema(texts);
     case 'submit_command_rerun_advice': return adviceSchema(texts, COMMAND_RERUN_ADVICE_CHOICES);
+    case 'submit_check_review': return checkReviewSchema(texts);
   }
 }
 
@@ -616,6 +641,10 @@ export function answerProblems(
   form: AnswerForm,
   built: string,
   facts: SecretaryPreparationFactsV1 | null,
+  /** G8B B1d：批检查轮用它核对答了哪几条。 */
+  context?: AnswerTextContext,
+  /** E09F：规划轮这一轮的来源计划（首版为 null），只用来豁免原样沿用的依赖边。 */
+  planSource: Pick<PlanRevisionSnapshot, 'executionDag'> | null = null,
 ): AnswerProblem[] {
   // The planning round's one format gate is the v2 parser; it also enforces the
   // non-empty `needs_decision` questions and the plan body. The only extra rule
@@ -635,6 +664,11 @@ export function answerProblems(
     if (round.summary.length === 0
       || Buffer.byteLength(round.summary, 'utf8') > 16 * 1024) {
       problems.push({ section: 'summary', reason: 'the plan summary must be non-empty and at most 16 KiB of UTF-8' });
+    }
+    // E09F（lead 11-17 18:3x）：每个规划轮的计划都退回平台满足不了的依赖种类，秘书的请求轮和参谋的规划轮一样；
+    // 来源计划里原样沿用的边不判。规则只在这里调一次。
+    if (parsed.status === 'parsed' && parsed.response.kind === 'plan') {
+      for (const reason of unsupportedDependencyIssues(parsed.response.plan, planSource)) problems.push({ section: 'plan', reason });
     }
     if (facts !== null && facts.admission !== null && parsed.status === 'parsed' && parsed.response.kind === 'plan') {
       // 121-136: the plan's own checks join the installed ones for its coverage; one installed under the same id with
@@ -679,6 +713,14 @@ export function answerProblems(
     const parsed = parseCommandRerunAdviceAnswer(built);
     if (parsed.status !== 'parsed') return [{ section: 'answer', reason: parsed.reason }];
     return [];
+  }
+  if (shape === 'check_review') {
+    // 拒绝：答案要正好答 subject 里的每条新检查（结论按条落实，漏一条就没法装）。
+    const parsed = parseCheckReviewAnswer(built);
+    if (parsed.status !== 'parsed') return [{ section: 'answer', reason: parsed.reason }];
+    const problem = context?.checkReviewSubject === undefined ? 'the check review round names no subject'
+      : checkReviewAnswerProblem(context.checkReviewSubject, parsed.answer);
+    return problem === null ? [] : [{ section: 'verdicts', reason: problem }];
   }
   const requestFacts = facts as SecretaryPreparationFactsV1;
   const problems: AnswerProblem[] = [];
@@ -725,6 +767,8 @@ export function answerProblems(
     for (const reason of validatePlanAssignments(plan)) {
       problems.push({ section: 'assignments', reason });
     }
+    // E09F：首版计划同样退回平台满足不了的依赖种类（`unsupportedDependencyIssues`）。
+    for (const reason of unsupportedDependencyIssues(plan, null)) problems.push({ section: 'plan', reason });
     // The current architecture as the propose reads it (`readCurrentCatalogWindow`); a first install judges its own,
     // put in the project view as its adoption puts it (`adoptInitialArchitecture`).
     let catalog: AdoptedArchitecture | null = requestFacts.admission!.catalog;
@@ -801,6 +845,8 @@ export type AnswerToolsConfig = {
   subject?: UnknownCallAdviceSubjectV1;
   /** The rerun round's frozen subject (read from the request's second line by the start). */
   rerunSubject?: CommandRerunAdviceSubjectV1;
+  /** G8B B1d：批检查轮的冻结 `subject`（同样由开始时从请求第二行读出）。 */
+  checkReviewSubject?: CheckReviewSubjectV1;
   /** The frozen `manifest.request.executionKind`; read only by the two request shapes. */
   kind?: SecretaryRequestManifestV1['executionKind'];
   /** `manifest.goal !== null`: the observer's own answer-format gate (request shapes). */
@@ -809,6 +855,12 @@ export type AnswerToolsConfig = {
   goalLess?: boolean;
   /** `deps.secretaryFacts`: the same read preparation used, at submit time (request rounds only). */
   secretaryFacts?: SecretaryPreparationFactsPort;
+  /**
+   * E09F（lead 11-17 18:3x）：规划轮交表时判依赖种类用的来源计划。请求轮用秘书事实里采用读的那份；没有秘书事实的
+   * 规划轮（参谋线）从这里读：这一轮冻结的目标当前已采用的计划，和参谋的回答合并成候选时默认读的那份一样
+   * （`intervention.ts` 的 `planBaseOf`）；没有目标或目标还没有计划时没有来源。
+   */
+  planningSource?: { goalRef: GoalRef | null; plans: Pick<PlanTaskPort, 'queryGoal' | 'queryTaskGraph'> };
   /** CallIds this round's handler accepted; the barrier yields on one of them. */
   acceptedCallIds: Set<string>;
   /** The submit names the frozen tool list selected. */
@@ -818,6 +870,18 @@ export type AnswerToolsConfig = {
 };
 
 export type AnswerToolsHandle = ToolGroup;
+
+/** E09F：参谋规划轮的来源计划：目标当前已采用的计划（`planBaseOf` 的默认分支）；没有目标或目标还没有计划时为 null。 */
+async function activePlanOf(source: NonNullable<AnswerToolsConfig['planningSource']>, ctx: CoreCallContext):
+Promise<ReadResult<PlanRevisionSnapshot | null>> {
+  if (source.goalRef === null) return { status: 'ready', value: null };
+  const goal = await source.plans.queryGoal(ctx, source.goalRef);
+  if (goal.status !== 'ready') return goal;
+  if (goal.value.goal.activePlanRevision === null) return { status: 'ready', value: null };
+  const graph = await source.plans.queryTaskGraph(ctx, { goalRef: source.goalRef });
+  if (graph.status !== 'ready') return graph;
+  return { status: 'ready', value: graph.value.plan };
+}
 
 /**
  * G6 run 5 E08 (121-136 A6): a call to a submit tool this round does not offer is refused before the Kernel would answer
@@ -885,6 +949,7 @@ export function createAnswerTools(config: AnswerToolsConfig): AnswerToolsHandle 
       projectId: fixedProjectId,
       ...(config.subject === undefined ? {} : { subject: config.subject }),
       ...(config.rerunSubject === undefined ? {} : { rerunSubject: config.rerunSubject }),
+      ...(config.checkReviewSubject === undefined ? {} : { checkReviewSubject: config.checkReviewSubject }),
     });
     const bound = answerBoundBytes(shape, call.name);
     if (Buffer.byteLength(text, 'utf8') > bound) {
@@ -913,7 +978,26 @@ export function createAnswerTools(config: AnswerToolsConfig): AnswerToolsHandle 
       }
       factsValue = facts.value;
     }
-    const problems = answerProblems(shape, call.arguments as unknown as AnswerForm, text, factsValue);
+    // E09F：规划轮的计划按这一轮的来源计划判依赖种类：请求轮取采用读的那份，参谋的规划轮读目标当前已采用的计划。
+    let planSource: Pick<PlanRevisionSnapshot, 'executionDag'> | null = null;
+    if (shape === 'plan_round' && (call.arguments as unknown as PlanRoundForm).answerKind === 'plan') {
+      if (factsValue !== null) {
+        planSource = factsValue.admission?.base?.plan ?? null;
+      } else {
+        if (config.planningSource === undefined) {
+          return rejectedResult(callId, { status: 'rejected', code: 'unavailable',
+            reason: 'the planning source read is not bound' }, 'the plan answer cannot be checked');
+        }
+        const source = await activePlanOf(config.planningSource, { ...config.hostContext, signal });
+        if (source.status !== 'ready') {
+          return rejectedResult(callId, source, 'the planning source Plan could not be read; the answer was not checked');
+        }
+        planSource = source.value;
+      }
+    }
+    const problems = answerProblems(shape, call.arguments as unknown as AnswerForm, text, factsValue,
+      config.checkReviewSubject === undefined ? undefined : { projectId: fixedProjectId,
+        checkReviewSubject: config.checkReviewSubject }, planSource);
     if (problems.length > 0) {
       return rejectedResult(callId, { status: 'rejected', code: 'invalid', problems },
         'the answer has problems; fix every one and call the tool again in this round');

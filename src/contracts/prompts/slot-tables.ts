@@ -103,6 +103,11 @@ export const TEMPLATE_SLOTS: Readonly<Record<string, TemplateSlotTableV1>> = {
         request: { required: true },
         review: { required: true },
     },
+    // G8B B1d：批检查轮的说明带候选的差异和每条新检查（连改动前的事实）。
+    'check-review-input': {
+        candidate: { required: true },
+        checks: { required: true },
+    },
     'initial-planning-answer': {},
     'continuation-brief': {
         marker: { required: true },

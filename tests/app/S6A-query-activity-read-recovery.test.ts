@@ -176,13 +176,15 @@ describe('the Query activity of the recovery write paths', () => {
 
   it('QRR-06 (SQLite only): the attestation records the tally of the Turn it read, unresolved call included',
     async () => {
-      const world = remember(await openS6AHostWorld({ backend: 'sqlite', extraHostOptions: { requestDriver: 'on' } }));
+      // QRR（lead 裁定 11-17）：不在只读名单里的只读命令，重启后才留给人认定。
+      const world = remember(await openS6AHostWorld({ backend: 'sqlite', extraHostOptions: { requestDriver: 'on' },
+        secretaryTools: ['read', 'run_readonly_command'] }));
       await ensureProjectPointers(world);
       const a = await world.createSecretary('a');
       await world.scripted.script(a, [
-        { kind: 'calls', calls: [{ callId: 'qrr06-list-1', name: 'list_files', args: { prefix: '.' } }] },
+        { kind: 'calls', calls: [{ callId: 'qrr06-command-1', name: 'run_readonly_command', args: { command: 'ls' } }] },
       ]);
-      const tool = await world.gates.toolCall(a, 'list_files');
+      const tool = await world.gates.toolCall(a, 'run_readonly_command');
       const submitted = queued(await world.submit({ commandId: 'qrr06-submit', goalId: S6A_GOAL_1.goalId,
         text: 'QRR-06 request', recipient: a }));
       await tool.reached;

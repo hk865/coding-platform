@@ -87,10 +87,10 @@ export const MAX_ANSWER_BYTES = 16 * 1024;
  * blocked command's rerun request; `scribe_review` is the scribe's long-command review, 121-112).
  */
 export type QueryAnswerShapeV1 = 'secretary' | 'initial' | 'plan_round' | 'plan_review' | 'exec_review'
-  | 'unknown_call_advice' | 'scribe_review' | 'command_rerun_advice';
-/** The planning-line subset written to `execution.answerShape`; `text` is the default. */
+  | 'unknown_call_advice' | 'scribe_review' | 'command_rerun_advice' | 'check_review';
+/** The planning-line subset written to `execution.answerShape`; `text` is the default. G8B: `check_review` 批检查。 */
 export type PlanningAnswerShapeV1 = 'plan_round' | 'plan_review' | 'exec_review' | 'unknown_call_advice'
-  | 'scribe_review' | 'command_rerun_advice' | 'text';
+  | 'scribe_review' | 'command_rerun_advice' | 'check_review' | 'text';
 
 /** The one shape mapping used by preparation and start-up (§5.2.7). */
 export function queryAnswerShapeOf(
@@ -110,6 +110,7 @@ export function queryAnswerShapeOf(
         if (execution.answerShape === 'unknown_call_advice') return 'unknown_call_advice';
         if (execution.answerShape === 'scribe_review') return 'scribe_review';
         if (execution.answerShape === 'command_rerun_advice') return 'command_rerun_advice';
+        if (execution.answerShape === 'check_review') return 'check_review';
         return null;
     }
     return null;
@@ -447,7 +448,7 @@ export function validQueryExecution(value: QueryJobIntentV1['execution']): boole
     if (value.answerShape !== undefined
         && (value.kind !== 'intervention_planning'
             || !['plan_round', 'plan_review', 'exec_review', 'unknown_call_advice', 'scribe_review',
-              'command_rerun_advice', 'text'].includes(value.answerShape)))
+              'command_rerun_advice', 'check_review', 'text'].includes(value.answerShape)))
         return false;
     if (value.consultation !== undefined && (value.kind !== 'semantic_query' || !validConsultationBinding(value.consultation)))
         return false;

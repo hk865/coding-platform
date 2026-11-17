@@ -97,3 +97,27 @@ describe('G7P P3: a witness requirement sits only on an obligation whose work Ta
     expect(booked.plan.obligations.map(entry => entry.obligationId)).toEqual(['g7-acceptance', 'g7-explore-read']);
   }, 120_000);
 });
+
+// E09F 第 3 件（lead 11-17）：平台满足不了 `decision`、`output-contract` 依赖（context-input-service.ts:621-627、
+// :693-697），首版计划交表时就退回，写明“要等别的任务做完，用执行先后表达；要定的事交给参谋或人”（lead 11-17 18:0x
+// 定的说法，不建议改用 artifact）。第二次交表把那条边换成这次不退回的种类（artifact），照常收下。
+describe('E09F: a first plan with a dependency kind the platform cannot satisfy is refused at the form', () => {
+  it('an output-contract edge is refused, naming the edge, its kind and the way out; an edge of another kind is booked', async () => {
+    const tasks = [task('t-decide'), task('t-build'), GATE];
+    const obligations = [obligation('g7-acceptance', ['t-decide', 't-build', 'g7-gate'], 'static')];
+    const checks = [check('g7-static', 'all')];
+    const withEdge = (kind: string) => { const base = form(tasks, obligations, checks);
+      return { ...base, plan: { ...base.plan, executionDag: { dependsOn: [{ taskId: 't-build', dependsOnId: 't-decide',
+        requires: { kind, label: 'the parseDate return shape' } }] } } }; };
+    const { refused, booked } = await submitInitialPlans('e09f3', withEdge('output-contract'), withEdge('artifact'));
+    expect(refused?.status, 'the first submit was accepted').toBe('rejected');
+    expect(refused!.problems).toHaveLength(1);
+    expect(refused!.problems[0]!.reason).toContain('t-build');
+    expect(refused!.problems[0]!.reason).toContain('"output-contract"');
+    expect(refused!.problems[0]!.reason).toContain('execution order (executionDag.dependsOn)');
+    expect(refused!.problems[0]!.reason).toContain('to the adviser or the person');
+    expect(refused!.problems[0]!.reason).not.toContain('"artifact"');
+    expect((booked.plan as unknown as { executionDag: { dependsOn: { requires: { kind: string } }[] } })
+      .executionDag.dependsOn.map(edge => edge.requires.kind)).toEqual(['artifact']);
+  }, 120_000);
+});

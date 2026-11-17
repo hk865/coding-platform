@@ -6,8 +6,10 @@
  * (`startBusyQuery`), `sessions/archive-line` (`requestArchive`), `makeReadonlyCopy`, `goals/control`
  * (`pauseS7AGoal`), Workflow `claim_task` (`workflow/advance`, stopped before `prepare`), and the real
  * `world.crash`; no store read, hand-built record/`CoreCallContext`, impersonated Host/Runtime or wall-clock.
- * `unknown` is a real crashed plain Query (SQLite only): its model starts `list_files`, the Host crashes with
- * the call unresolved, and the reconcile marks the QueryRun `unknown` (QRR-05), Session health still available.
+ * `unknown` is a real crashed plain Query (SQLite only): its model starts `run_readonly_command` (not on the QRR
+ * read-only list, whose unknown calls the platform attests itself, lead 11-17; the SQLite world's Work binding gets
+ * the tool), the Host crashes with the call unresolved, and the reconcile marks the QueryRun `unknown` (QRR-05),
+ * Session health still available.
  * `health` is the SQLite-only unavailable Session of `makeUnavailableSecretary`; `recoverable` has no public
  * writer (`session-availability.ts:472`) and unavailable needs that restart, which memory refuses, so memory
  * has no `health` case. Both are `null` on memory.
@@ -69,7 +71,8 @@ async function sendMessage(world: S6AHostWorld, to: S6ASession, requestId: strin
 }
 
 export async function openS7B2DirectoryWorld(options: S6AWorldOptions): Promise<S7B2DirectoryWorld> {
-  const world = await openS6AHostWorld({ ...options });
+  const world = await openS6AHostWorld({ ...options, ...(options.backend === 'sqlite'
+    ? { extraBindings: [...(options.extraBindings ?? []), { ...S7A_REPLY_TOOLS, mergeTools: ['run_readonly_command'] }] } : {}) });
   await world.setResumeOnStartup(false);
   const main = s6aCardsWorkspace(world, S6A_SCOPE);
   await governS6B(world, main, world.goals);
@@ -92,14 +95,15 @@ export async function openS7B2DirectoryWorld(options: S6AWorldOptions): Promise<
   await sendMessage(world, idleInquiry, 's7b2-inquiry', { intent: 'inquiry', needsReply: true });
   await sendMessage(world, notifyOnly, 's7b2-notify', { intent: 'notify' });
 
-  // SQLite only: a plain Query crashed while its real `list_files` call has no result (QRR-05).
+  // SQLite only: a plain Query crashed while its real `run_readonly_command` call has no result (QRR-05; a tool on the
+  // read-only list would be attested by the platform at the restart, lead 11-17).
   let unknown: S6ASession | null = null;
   if (world.backend === 'sqlite') {
     unknown = await world.createWorkSession('s7b2-unknown');
     await world.scripted.script(unknown, [{ kind: 'calls', calls: [
-      { callId: 's7b2-unknown-list', name: 'list_files', args: { prefix: '.' } }] }]);
+      { callId: 's7b2-unknown-command', name: 'run_readonly_command', args: { command: 'ls' } }] }]);
     const refs = await world.occupy(unknown);
-    const tool = await world.gates.toolCall(unknown, 'list_files');
+    const tool = await world.gates.toolCall(unknown, 'run_readonly_command');
     void startBusyQuery(world.ag2b, refs, refs.suffix).catch(() => undefined);
     await tool.reached;
     await world.crash();

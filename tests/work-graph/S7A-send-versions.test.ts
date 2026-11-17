@@ -186,6 +186,24 @@ describe.each(KINDS)('X-send-versions: the Goal window and the commit race (%s)'
     expect(inbox).toMatchObject({ status: 'ready', value: { items: [expect.anything()] } });
   });
 
+  // E09F 第 2 件（lead 11-17）：缺 expected 的 action_request 像版本冲突那样带回当前三个版本，照着重发就能发出。
+  // C1 目标的当前版本按上面两条竞争行手算：Plan 第 1 版、没有指针、还没派过工。
+  it('E09F: refuses a missing expected with the current three versions, and the send with them commits', async () => {
+    const h = await openC1World(kind);
+    const records = h.backend.records;
+    const real = createDispatchBasisReader({ records, pointer: createGoalPointerFacts({ records }) });
+    const mailbox = h.makeMailbox(records, h.materials, undefined, undefined, real);
+    const input = { recipient: h.idleSession, text: 'may I proceed?', intent: 'action_request' as const, needsReply: true };
+    const refused = await mailbox.sendMessage(h.ctxWork, { input, meta: { requestId: 'x-sv-no-expected', expected: [] } });
+    expect(refused).toMatchObject({ status: 'rejected', code: 'invalid',
+      dispatchCurrent: { planRevision: 1, pointerRevision: 'none', dispatchSequence: 0 } });
+    if (refused.status !== 'rejected' || refused.dispatchCurrent === undefined) return;
+    expect(refused.reason).toContain('dispatchCurrent');
+    const { planRevision, pointerRevision, dispatchSequence } = refused.dispatchCurrent;
+    expect(await mailbox.sendMessage(h.ctxWork, { input: { ...input, expected: { planRevision, pointerRevision, dispatchSequence } },
+      meta: { requestId: 'x-sv-no-expected-again', expected: [] } })).toMatchObject({ status: 'committed' });
+  });
+
   it('does not project dispatchCurrent for an activity-only conflict', async () => {
     const h = await openC1World(kind);
     const records = h.backend.records;

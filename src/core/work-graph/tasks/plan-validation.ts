@@ -308,8 +308,35 @@ export function uncoveredRequirementIssues(draft: Pick<PlanDraftView, 'obligatio
     return planValidationError(path, 'uncovered_verification_requirement', `${needs}, but neither an installed check `
       + `nor one this plan proposes does. The checks that apply, installed or proposed, by task: ${applying.join('; ')}. `
       + `Propose in this plan's checks a check of kind ${entry.kind} whose taskIds include ${tasks}: it is installed when `
-      + 'the person adopts the plan (a plan that brings a new check waits for the person, who approves it on adoption, '
-      + 'instead of being adopted automatically). Or use a requirement kind the checks that apply cover');
+      + 'the plan is adopted (when the platform adopts the plan by itself, an agent that did not write the plan approves '
+      + 'each new check, and only one that fails on the workspace as it is before this change). Or use a requirement '
+      + 'kind the checks that apply cover');
+  });
+}
+
+/**
+ * E09F（lead 11-17）：平台现在满足不了的依赖种类。`decision` 边要读上游 Run 发出、已回复并已应用的一条消息，而决定的
+ * 应用没有接上，一律 `unsupported`（`context-input-service.ts:621-627`）；`output-contract` 边没有正式的带标签产出，
+ * 一律缺（同文件 :693-697）。依赖又不挡领取（决定 11），照这种边写的计划，下游会马上开工然后卡住（G6 E09）。
+ */
+const UNSUPPORTED_DEPENDENCY_KINDS: readonly string[] = ['decision', 'output-contract'];
+
+/**
+ * E09F：交表时（首版计划的表；每个规划轮的表，秘书的请求轮和参谋的规划轮一样，都由 `answer-tools.ts` 的
+ * `answerProblems` 调）退回用了上面两种依赖的边，每条一句，写明改法（lead 11-17 18:0x 定的说法：
+ * 要等别的任务做完，用执行先后表达；要定的事交给参谋或人。不建议改用 `artifact`，它同样满足不了）。`source` 是这次计划
+ * 所依据的已采用计划（首版为 null）：原样沿用的边不再判，因为规划轮只交一段，改不到别段已有的边。
+ */
+export function unsupportedDependencyIssues(draft: Pick<PlanDraftView, 'executionDag'>,
+  source: Pick<PlanRevisionSnapshot, 'executionDag'> | null): string[] {
+  const carried = new Set((source?.executionDag.dependsOn ?? []).map((edge) => canonicalJson(edge as unknown as JsonValue)));
+  return draft.executionDag.dependsOn.flatMap((edge, index) => {
+    const kind = edge.requires.kind;
+    if (!UNSUPPORTED_DEPENDENCY_KINDS.includes(kind) || carried.has(canonicalJson(edge as unknown as JsonValue))) return [];
+    return [`executionDag.dependsOn[${index}]: ${edge.taskId} depends on ${edge.dependsOnId} with requires.kind "${kind}", `
+      + `which the platform does not support yet (such an edge is never satisfied and does not hold ${edge.taskId} back). `
+      + 'To wait until another task is done, express that as execution order (executionDag.dependsOn); hand a decision '
+      + 'someone still has to make to the adviser or the person'];
   });
 }
 

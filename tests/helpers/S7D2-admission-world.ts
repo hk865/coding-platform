@@ -8,8 +8,9 @@
  * - `openS7D2RunningWorld`: adviser running cap 4 through `projects/role-limits/set`, three occupied adviser
  *   QueryRuns, two prepared adviser starters (a Work Run left `starting`/`authorized` through `workflow/advance`, a
  *   Query `prepared` through `queries/prepare`) and a prepared secretary starter (RL-10). An entered occupant holds
- *   its real `list_files` call at the world's tool gate, so its line stays occupied and a later crash leaves the call
- *   with no result; the Work starter's script opens with the same call. On SQLite the builder is the restart builder
+ *   its real `run_readonly_command` call at the world's tool gate (QRR, lead 11-17: a tool on the read-only list would
+ *   be attested by the platform at the restart), so its line stays occupied and a later crash leaves the call
+ *   with no result; the Work starter's script opens with a `list_files` call. On SQLite the builder is the restart builder
  *   (DR/A1b-07): the Host crashes while the first occupant's call is held, so the same-store start-up reconcile
  *   records it `unknown` (QRR-05), and every other step runs on the new Host. On memory it is the race builder:
  *   three entered occupants and no crash.
@@ -45,7 +46,12 @@ import {
   archiveS7D1Session, openS7D1AllocationWorld, setS7D1Limits, type S7D1AllocationWorld,
 } from './S7D1-allocation-world.js';
 
-const ADVISER_BINDING = bindingOf('s7d2-adviser-binding', PL_ADVISER_ROLE, 'S7D2 adviser guidance', ['read']);
+// QRR（lead 裁定 11-17）：占线的参谋 Query 停在不在只读名单里的只读命令上，崩溃后才留在 unknown；
+// 这个工具要 L18 的整工作区授权才挂得上。
+const ADVISER_BASE_BINDING = bindingOf('s7d2-adviser-binding', PL_ADVISER_ROLE, 'S7D2 adviser guidance',
+  ['read', 'run_readonly_command']);
+const ADVISER_BINDING = { ...ADVISER_BASE_BINDING,
+  grant: { ...ADVISER_BASE_BINDING.grant, readonlyCommandAccess: 'all_except_denied' as const } };
 
 /** The Host inputs the running world needs: the adviser Runtime binding, Workflow binding and Query profile. */
 const ADVISER_EXTENSION = {
@@ -175,16 +181,23 @@ const toolCallScript = (label: string) => [
   { kind: 'text' as const, text: `S7D2 ${label} rerun` },
 ];
 
+/** A real `run_readonly_command` call (not on the QRR read-only list), then a reply that only a re-run would take. */
+const commandCallScript = (label: string) => [
+  { kind: 'calls' as const, calls: [{ callId: `s7d2-${label}-command`, name: 'run_readonly_command', args: { command: 'ls' } }] },
+  { kind: 'text' as const, text: `S7D2 ${label} rerun` },
+];
+
 /**
- * One occupied Query on `line`, started through the real `queries/start`. `tool` holds its real `list_files` call
- * (a crash leaves the call with no result: QRR-05 `unknown`); `model` holds its first model request (a crash leaves
+ * One occupied Query on `line`, started through the real `queries/start`. `tool` holds its real
+ * `run_readonly_command` call (a crash leaves the call with no result: QRR-05 `unknown`; a call on the read-only
+ * list would be attested by the platform instead, lead 11-17); `model` holds its first model request (a crash leaves
  * an interrupted clean Turn: QRR-04 settles it and frees the seat).
  */
 async function occupy(world: S6AHostWorld, line: S6ASession, label: string,
   roleBinding: RoleBindingRefV1, hold: 'tool' | 'model'): Promise<S7D2Starter & { release(): void }> {
   const query = await submitQuery(world, line, label, roleBinding);
-  const gate = hold === 'tool' ? await world.gates.toolCall(line, 'list_files') : await world.gates.modelRequest(line);
-  await world.scripted.script(line, hold === 'tool' ? toolCallScript(label) : [{ kind: 'text', text: `S7D2 ${label}` }]);
+  const gate = hold === 'tool' ? await world.gates.toolCall(line, 'run_readonly_command') : await world.gates.modelRequest(line);
+  await world.scripted.script(line, hold === 'tool' ? commandCallScript(label) : [{ kind: 'text', text: `S7D2 ${label}` }]);
   world.post('queries/start', plain(S6A_SCOPE, query.startBody)).catch(() => undefined);
   await gate.reached;
   return { ...query, release: () => gate.release() };

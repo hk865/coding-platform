@@ -125,8 +125,8 @@ describe('PL-25 plan reads', () => {
     const witness = { checkId: 'platform:witness', kind: 'witness', coversKinds: ['witness'], replayable: false,
       taskIds: 'all' };
 
-    // The Host registered no configuration for this workspace: `null`, not `[]`.
-    expect(await readers.planChecks(S6A_SCOPE)).toEqual({ status: 'ready', value: null });
+    // G8B（lead 11-17 补充裁定 1）：没有配置时已装的就是空清单，表里只有内置的见证能力（原来读作 `null`）。
+    expect(await readers.planChecks(S6A_SCOPE)).toEqual({ status: 'ready', value: [witness] });
 
     // A real configuration with one check maps to the evidence-service shape.
     world.platform.registerCheckConfiguration({

@@ -338,6 +338,9 @@ export function isRegisteredCommandCheck(value: unknown): value is RegisteredCom
         && (value["taskIds"] === "all" || (Array.isArray(value["taskIds"]) && value["taskIds"].every(nonEmpty)));
 }
 
+/** 检查轮和改动前的事实共用的屏蔽前缀：Host 的检查配置写的就是它（G8B B1c）。 */
+export const CHECK_DENIED_PREFIXES: readonly string[] = [".git"];
+
 /**
  * 121-136: the checks a plan proposes, against the workspace's installed ones. Check ids are unique in a workspace:
  * a proposed check installed with the same content is already installed, one whose id is installed with other content

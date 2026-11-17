@@ -90,7 +90,10 @@ import {
 } from './startup-reconcile.js';
 import { parseInitialPlanningResponseV2 } from '../core/work-graph/tasks/initial-plan.js';
 import { DEFAULT_TASK_AUTOMATION_POLICY, type TaskRequeueRef } from '../contracts/task-requeue.js';
-import { isRegisteredCommandCheck, type VerificationRoundRef } from '../contracts/verification.js';
+import {
+  CHECK_DENIED_PREFIXES, isRegisteredCommandCheck, proposedCheckSplit, type VerificationRoundRef,
+} from '../contracts/verification.js';
+import { checkReviewApproved, checkReviewConclusionOf } from '../business/workflow/check-approval.js';
 import {
   decisionSourceKey, decisionSubjectGoalRef, type DecisionSourceV1, type NoticePositionV1,
 } from '../contracts/goal-decisions.js';
@@ -129,7 +132,7 @@ import { plainSessionRefKey } from '../core/work-graph/sessions/session-record-c
 import { sessionMessageRefKey } from '../core/work-graph/sessions/message-record-codecs.js';
 import { EXPIRY_PAGE, type DueWaitPageInputV1 } from '../core/work-graph/communication/message-expiry.js';
 import type { ReadonlyCommandAccessInput, RuntimeHostBindings, ResolvedRuntimeConfiguration } from '../core/agent-runtime/execution-contracts.js';
-import type { CoreError, CoreRejection, ReadResult } from '../contracts/core/results.js';
+import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../contracts/core/results.js';
 import { messageOf } from '../contracts/error-message.js';
 import type { BootstrapExecution, BootstrapResponse, BootstrapReviewMaterial, CoreScope, WorkbenchActor } from './core-http-types.js';
 import {
@@ -865,6 +868,13 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   let armMessageRelease: ((scope: WorkspaceScope) => void) | undefined;
   /** 121-136 A3: the settings queue every adoption takes once settings exist (`runExclusive`); see `wrapPlanChange`. */
   let adoptionGate: (<T>(operation: () => Promise<T>) => Promise<T>) | undefined;
+  /**
+   * G8B B1f：平台自己的采用遇到带检查的候选，Host 自己查这一版候选的批准轮结论（不从调用方传批准）：批了就在设置
+   * 队列里装检查再采用；没批是 `null`，照旧过闸，owner 的拒绝照旧挡住。设置建好后才有。
+   */
+  let agentCheckAdoption: ((ctx: CoreCallContext, request: Parameters<ProjectPlatform['plans']['applyPlanChange']>[1],
+    apply: () => ReturnType<ProjectPlatform['plans']['applyPlanChange']>)
+    => Promise<Awaited<ReturnType<ProjectPlatform['plans']['applyPlanChange']>> | null>) | undefined;
   /** Every open project's drivers, by project id. */
   const projects = new Map<string, HostProject>();
   /** Set once the settings exist: from then on a project's stage two is built with its stage one. */
@@ -987,6 +997,12 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       resourceCaps,
       commandSlots,
       ...(commandSandbox === undefined ? {} : { commandSandbox }),
+      // G8B B1c：改动前的事实只在有命令授权的工作区跑，现读这个 Host 的工作区配置（授权规则同 localWorkbenchGrant）。
+      commandsAllowed: workspace => {
+        const config = workspaces.find(candidate => candidate.scope.projectId === workspace.projectId
+          && candidate.scope.workspaceId === workspace.workspaceId);
+        return config !== undefined && config.allowCommands === true && (config.writePrefixes?.length ?? 0) > 0;
+      },
       operatorActor: actor,
       ...(promptsRoot === undefined ? {} : { promptPacks: createDiskPromptPackSource(promptsRoot) }),
       // PL §5.2.5/§6.7.1: the Host's own system-round wrapper over the ONE mailbox
@@ -1006,8 +1022,12 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       // already wraps it, so wrapping both would export one adoption twice).
       // 121-136 A3: the platform's own adoption runs in the settings queue, the one a person's adoption of a plan's
       // checks and their take-back hold, so it never commits between a take-back's read and its write.
-      wrapPlanChange: raw => adoptAndExport((...args: Parameters<typeof raw>) => adoptionGate === undefined
-        ? raw(...args) : adoptionGate(() => raw(...args)), (result, [ctx]) => result.status === 'committed'
+      wrapPlanChange: raw => adoptAndExport(async (...args: Parameters<typeof raw>) => {
+        // `apply` 用不经闸的 raw：`adoptWithPlanChecks` 自己在设置队列里，那个队列不可重入。
+        const approved = agentCheckAdoption === undefined ? null : await agentCheckAdoption(args[0], args[1], () => raw(...args));
+        if (approved !== null) return approved;
+        return adoptionGate === undefined ? raw(...args) : adoptionGate(() => raw(...args));
+      }, (result, [ctx]) => result.status === 'committed'
         ? { plan: result.value, scope: { projectId: result.value.goalRef.projectId,
           workspaceId: ctx.workspaceId ?? '', goalId: result.value.goalRef.goalId } }
         : null),
@@ -2119,7 +2139,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       permissionRevision: permissionRevision(actor, workspace),
       sourceAccess: 'verification_workspace',
       processAccess: 'all_except_denied',
-      deniedPrefixes: ['.git'],
+      deniedPrefixes: [...CHECK_DENIED_PREFIXES],
       checks: structuredClone([...input.checks]),
     };
   };
@@ -2730,7 +2750,29 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         confirmInstalledChecks: (ctx, input) => projectPlatform(ctx.projectId).confirmInstalledChecks(ctx, input) },
     })
     : undefined;
-  if (hostSettings !== undefined) adoptionGate = operation => hostSettings.runExclusive(operation);
+  if (hostSettings !== undefined) {
+    adoptionGate = operation => hostSettings.runExclusive(operation);
+    agentCheckAdoption = async (ctx, request, apply) => {
+      const platform = platformFor(ctx.projectId);
+      if (platform === null) return null;
+      const proposal = await platform.plans.readPlanProposal(ctx, request.input.proposalRef);
+      if (proposal.status !== 'ready' || proposal.value.checks === undefined) return null;
+      const { ref, checks, revision } = proposal.value;
+      const scope = { projectId: ref.projectId, workspaceId: ref.workspaceId };
+      // 只有真带来新检查的才查批准轮；都已装好（或读不到已装的）就照旧过闸，由 owner 判。
+      const installed = await platform.confirmInstalledChecks(ctx, { scope });
+      if (installed.status !== 'ready' || proposedCheckSplit(installed.value.checks, checks).added.length === 0) return null;
+      const read = await checkReviewConclusionOf(ctx, { messages: platform.messages, queries: platform.queries },
+        { scope, proposalId: ref.proposalId, revision });
+      // 读不到是一时的：原样返回，调用方下一轮重做；读到了没批，照旧过闸。
+      if (read.status === 'rejected') return read;
+      if (read.status !== 'ready' || !checkReviewApproved(read.value)) return null;
+      const { subject, recipient, answerRef } = read.value;
+      return hostSettings.adoptWithPlanChecks(ctx, { scope, proposalRef: ref, checks, approval: { kind: 'agent',
+        duty: subject.approverDuty, session: recipient, answerRef, author: subject.authorDuty, baselines: subject.baselines } },
+      { replay: () => platform.plans.lookupPlanChange(ctx, request), apply });
+    };
+  }
   // Every open project's stage two (its route bindings) now that the settings exist; a project opened later builds
   // both stages at once.
   settingsReady = true;
@@ -4179,7 +4221,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     }
     const { ref, checks } = proposal.value;
     return hostSettings.adoptWithPlanChecks(ctx, { scope: { projectId: ref.projectId, workspaceId: ref.workspaceId },
-      proposalRef: ref, checks }, { replay: () => platform.plans.lookupPlanChange(ctx, request),
+      proposalRef: ref, checks, approval: { kind: 'person' } }, { replay: () => platform.plans.lookupPlanChange(ctx, request),
       apply: () => routeBindings.applyPlanChange(ctx, request) });
   };
   // PL §6.4.3 adoption point 2: the `plans/apply` binding is the same wrapper; the

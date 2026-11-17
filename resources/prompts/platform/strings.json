@@ -257,6 +257,7 @@
   "brief.checks.causeLead": "，原因 ",
   "brief.checks.noReport": "，没有报告",
   "brief.checks.reportLead": "，报告 sha256:",
+  "brief.checks.reviewBasisLead": "- 审阅依据：",
   "brief.checks.gapsLead": "- 缺口：",
   "brief.section.requeue": "重新入队",
   "brief.requeue.reasonLead": "- 原因（",

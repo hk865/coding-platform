@@ -28,6 +28,9 @@ import { isGoalRef, mapReadResult, ownContext, ownWrite, normalizeText, guardRej
 import { readWorkRunIdentity, deriveWorkRunSender, authorizeNewWorkRunAction, resolveSecretaryRound } from './mailbox-identity.js';
 import { replayMessage, recheckAfterMiss, refuse, writeMessage } from './mailbox-write.js';
 
+/** An agent's goal-bearing `action_request` sent without the dispatch basis it read (decision 49). */
+const MISSING_EXPECTED_BASIS = 'a goal-bearing action_request requires the expected basis';
+
 // ---- slice-5 user-send helpers ------------------------------------------
 
 async function loadGoal(mailbox: MailboxContext, owned: Owned, ref: GoalRef): Promise<ReadResult<GoalSnapshot>> {
@@ -502,15 +505,22 @@ export async function sendMessage(mailbox: MailboxContext, ctx: CoreCallContext,
   let basis: DispatchBasisFactsV1 | null = null;
   if (send.intent === 'action_request' && sender.kind !== 'host') {
     if (trustedGoal === null) return refuseSend(mailbox, reject('invalid', 'an agent action_request requires the Goal it belongs to'), identityKey, fingerprint);
-    if (send.expected === null) return refuseSend(mailbox, reject('invalid', 'a goal-bearing action_request requires the expected basis'), identityKey, fingerprint);
     if (mailbox.deps.dispatchBasis === undefined) {
-      return refuseSend(mailbox, reject('unsupported', 'the dispatch basis read is not configured for a new action_request'), identityKey, fingerprint);
+      return refuseSend(mailbox, send.expected === null ? reject('invalid', MISSING_EXPECTED_BASIS)
+        : reject('unsupported', 'the dispatch basis read is not configured for a new action_request'), identityKey, fingerprint);
     }
     if (owned.signal.aborted) return reject('cancelled', 'the send was cancelled before the dispatch facts read');
     const facts = await mailbox.deps.dispatchBasis.readDispatchFacts(internalHostContext(mailbox, owned), { goalRef: trustedGoal });
     if (facts.status !== 'ready') return facts.status === 'rejected' ? facts : mapReadResult(facts) as CoreRejection;
     if (facts.value.plan === null) return refuseSend(mailbox, reject('invalid', 'an action_request requires the Goal\'s active Plan'), identityKey, fingerprint);
     basis = facts.value;
+    // E09F（lead 11-17）：缺 expected 时，像下面的版本冲突那样带回这次读到的当前三个版本，并写明下次怎么填；
+    // 执行者照着重发即可，保护强度和冲突分支一样（G6 E09：执行者向参谋上报被这里拒收，只能降成 notify）。
+    if (send.expected === null) {
+      return refuseSend(mailbox, { ...reject('invalid', `${MISSING_EXPECTED_BASIS}: send it again with expected set to the `
+        + 'planRevision, pointerRevision and dispatchSequence of dispatchCurrent (the Goal card\'s dispatchBasis in look_graph)'),
+      dispatchCurrent: dispatchCurrentOf(basis) }, identityKey, fingerprint);
+    }
     // A three-version mismatch is the stage's own read: its values and cursor,
     // and the current versions the caller has to re-read.
     if (!sameBasis(basis.values, send.expected)) {

@@ -26,6 +26,7 @@ import {
 } from '../../core/work-graph/tasks/initial-plan.js';
 import { deriveFuturePlanDelta, planInCallerView } from '../../core/work-graph/tasks/plan-validation.js';
 import { mergeStageRefinement } from '../../core/work-graph/tasks/stage-segment.js';
+import type { CheckApproval } from './check-approval.js';
 import { automationContext, ownContext } from './workflow.js';
 import type {
   PlanRoundEndResultV1, PlanTurnFactsV1, WorkflowDependencies,
@@ -71,7 +72,7 @@ function smallArrangement(source: PlanRevisionSnapshot, target: PlanRevisionDraf
 
 /** A small candidate the secretary arranged is adopted at once under the platform identity; anything else waits. */
 async function adoptSmall(deps: PlanTurnDependencies, ctx: CoreCallContext,
-  candidate: PlanProposal): Promise<PlanRoundEndResultV1> {
+  candidate: PlanProposal, checkApproval: CheckApproval | undefined): Promise<PlanRoundEndResultV1> {
   if (candidate.status !== 'candidate' || candidate.basedOn === null) return { status: 'done' };
   const goalRead = await deps.plans.queryGoal(ctx, candidate.goalRef);
   if (goalRead.status !== 'ready') return failureOfRead(goalRead);
@@ -83,6 +84,17 @@ async function adoptSmall(deps: PlanTurnDependencies, ctx: CoreCallContext,
   if (!smallArrangement(source.value.plan, candidate.draft)) return { status: 'done' };
   const owned = ownContext(ctx);
   if ('rejection' in owned) return failureOf(owned.rejection);
+  // G8B B1b：带新检查的先请批，作者是秘书。发出批准轮、等批或交人都结束这一步（候选留着，人能看到请求候选卡），
+  // 批准轮的收尾采用它。
+  if (checkApproval !== undefined) {
+    const approval = await checkApproval.request(owned, { candidate, goal, authorDuty: 'secretary' });
+    if ('status' in approval) return failureOf(approval);
+    if (approval.kind === 'send') {
+      const refused = await checkApproval.send(owned, approval);
+      if (refused !== null) return failureOf(refused);
+    }
+    if (approval.kind !== 'none') return { status: 'done' };
+  }
   const adopted = await deps.plans.applyPlanChange(automationContext(owned), {
     input: { proposalRef: candidate.ref, expectedProposalRevision: candidate.revision, decisionRefs: [] },
     meta: { requestId: `${candidate.ref.proposalId}:adopt`, expected: [
@@ -103,6 +115,7 @@ export async function proposeFromPlanTurn(
   deps: PlanTurnDependencies,
   ctx: CoreCallContext,
   turn: PlanTurnFactsV1,
+  checkApproval?: CheckApproval,
 ): Promise<PlanRoundEndResultV1> {
   if (deps.requestCandidates === undefined) return skipped('unsupported');
   if (deps.requests === undefined) return skipped('unsupported');
@@ -146,7 +159,7 @@ export async function proposeFromPlanTurn(
   // The deterministic identity makes a round-end replay read its own candidate before writing. A replay also
   // retries a transient adoption failure; a candidate the person already decided reads `done`.
   const existing = await deps.plans.readPlanProposal(ctx, proposalRef);
-  if (existing.status === 'ready') return direct ? await adoptSmall(deps, ctx, existing.value) : { status: 'done' };
+  if (existing.status === 'ready') return direct ? await adoptSmall(deps, ctx, existing.value, checkApproval) : { status: 'done' };
   if (existing.status !== 'not_found') return failureOfRead(existing);
 
   let goalRead: ReadResult<GoalDetail>;
@@ -213,5 +226,5 @@ export async function proposeFromPlanTurn(
     meta: { requestId, expected: [{ ref: goal.ref, revision: goal.revision }] },
   });
   if (proposed.status !== 'committed') return failureOf(proposed);
-  return direct ? await adoptSmall(deps, ctx, proposed.value) : { status: 'done' };
+  return direct ? await adoptSmall(deps, ctx, proposed.value, checkApproval) : { status: 'done' };
 }

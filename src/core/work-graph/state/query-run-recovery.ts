@@ -116,6 +116,11 @@ export type QueryRecoveryGuardContext = {
    */
   kernelTurnOpen?: boolean;
   /**
+   * QRR-06 由平台认定（用户 11-17）：被认定的 Turn 里没出结果的调用的 Kernel 工具名，由 Host 入口和其它 Kernel 事实
+   * 一起读；Kernel 或 Turn 读不到时为空。只有平台的认定看它，人的认定不看。
+   */
+  unresolvedToolNames?: readonly string[] | null;
+  /**
    * A request round (`isRequestRound`); null or absent for every other Query.
    * `coveredByDrop` is read from the request's facts for QRR-01/02 only and is
    * null for every other row.
@@ -335,10 +340,37 @@ function reconcileUnknown(
 }
 
 /**
+ * QRR-06 由平台认定（用户 11-17，lead 裁定 11-17 放宽）：结果未知时平台自己按“没有结果”认定的工具。这是唯一的名单：
+ * 只读、只读平台或工作区内部的事实、没有外部影响的工具，用代码里的实际工具名。
+ * - Kernel 的读文件 `read`，以及有 `read` 就一起挂上的探索工具（`python_index` 会起分析子进程、加载 Jedi，并在临时
+ *   目录里建源码副本，不改工作区；只读的分析子进程不算外部影响，lead 裁定 11-17）；
+ * - 平台的读：消息和用户决定、任务图、相关线、请求、执行历史、看图、查图、查链接。
+ * 不在名单里的照旧等人：`run_readonly_command`（命令能连公网）、`web_search`、`web_fetch`、跑登记检查的 `check`、
+ * 所有写入和提交工具、不认识的名字。
+ */
+export const PLATFORM_ATTESTED_READ_TOOLS: ReadonlySet<string> = new Set([
+  'read',
+  'list_files', 'search', 'symbols', 'code_index', 'project_source', 'python_index', 'cpp_index', 'source_excerpt',
+  'read_source', 'read_material',
+  'read_session_inbox', 'read_session_message', 'read_session_message_body', 'read_user_decision',
+  'query_task_graph', 'query_ready_tasks', 'find_related_sessions', 'read_session_card', 'read_requests',
+  'read_execution_history', 'look_graph', 'find_graph', 'check_links',
+]);
+/**
+ * 名字非空、全都在名单里；一个不在就整次不认定（用户 11-17：不拆开处理）。QRR-06 的守卫用它；Host 入口对平台身份
+ * 在确认消息之前也用这同一条先判，不成立就什么都不写（Codex 审查，lead 11-17）。
+ */
+export function platformAttestsUnknownCalls(toolNames: readonly string[] | null | undefined): boolean {
+  return toolNames !== null && toolNames !== undefined && toolNames.length > 0
+    && toolNames.every(name => PLATFORM_ATTESTED_READ_TOOLS.has(name));
+}
+
+/**
  * QRR-06 (D-4(b) by analogy, L-1): an operator attests an unknown QueryRun
  * through the Host holding the instance lease: closed `failed` with the reason;
  * the Session is released keeping its cursor and, when the Turn has no Kernel
  * terminal or the Kernel is unreadable, made `kernel_turn_open` (SES-10).
+ * 用户 11-17：平台用固定身份走同一个认定，只在没出结果的调用全是只读工具时合法，结果和人认定一样。
  */
 function unknownAttested(state: QueryRecoveryState, ctx: QueryRecoveryGuardContext): QueryRecoveryTransition {
   if (state.phase !== 'unknown') {
@@ -346,7 +378,10 @@ function unknownAttested(state: QueryRecoveryState, ctx: QueryRecoveryGuardConte
     return reject('guard_failed', 'busy', `query_unknown_attested from ${state.phase}: only an unknown QueryRun is attested`);
   }
   if (ctx.caller !== 'host_entry') return reject('illegal', 'forbidden', 'an unknown QueryRun is attested only through the Host entry');
-  if (ctx.actor !== 'human') return reject('guard_failed', 'forbidden', 'only an operator attests an unknown QueryRun');
+  if (ctx.actor !== 'human' && !platformAttestsUnknownCalls(ctx.unresolvedToolNames)) {
+    return reject('guard_failed', 'forbidden',
+      'only an operator attests an unknown QueryRun; the platform attests one only when every call without a result is a read-only tool');
+  }
   const reason = ctx.reason;
   if (reason === null || reason.trim().length === 0) return reject('illegal', 'invalid', 'an attestation requires a reason');
   if (ctx.hostLease !== 'owned') return reject('guard_failed', 'busy', 'this Host does not hold the Host instance lease (L-1)');

@@ -648,6 +648,7 @@ function briefBodyZh(B: BriefTexts, brief: ContinuationBriefV1, cap: number): st
         + `${failing.cause === null ? '' : `${B.S('brief.checks.causeLead')}${failing.cause}`}`
         + `${failing.reportRef === null ? B.S('brief.checks.noReport') : `${B.S('brief.checks.reportLead')}${failing.reportRef.digest}`}`);
     }
+    if (checks.reviewBasis !== undefined) lines.push(`${B.S('brief.checks.reviewBasisLead')}${t(checks.reviewBasis)}`);
     if (checks.gapCodes.length > 0) lines.push(`${B.S('brief.checks.gapsLead')}${listZh(B, checks.gapCodes, cap)}`);
   }
 

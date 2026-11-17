@@ -189,9 +189,9 @@
 | `MessageExpiredEventV1`、`SessionMessageEventType` 的 `SessionMessageExpired`、`MessageMachineState` 的 `expiredAt`、`onExpired` | `src/core/work-graph/state/message-machine.ts:117`、`:332`、`:141`、`:1426` | 到期的事件体与事件类型、机器状态的到期时刻，以及 `message_expired` 迁移：`onExpired` 只产出 `expired` 变更与事件，记录构造写 `expiredAt`；已到期再迁移是 `illegal/invalid`，答复过的等待不能到期 | 到期事件编码与迁移；只在 `transitionMessage` 的 `message_expired` 臂里用 `onExpired`，不要另造事件名或字段 |
 | `deliveryEligibility` | `src/core/work-graph/state/message-machine.ts:1019` | 投递资格的唯一规则：先调 `messageConsumptionProblem`，再看 Goal、任务阻塞、对方结果未知、本部分事实 | 邮件箱投递、回复与到期投递之前 |
 | `forwardMessageProblem`、`disposeWaitProblem`、`destinationProblem`、`FORWARD_DESTINATION_GONE` | `src/core/work-graph/state/message-machine.ts:1101`、`:1142`、`:1076`、`:1074` | 转发与等待处置的纯拒绝表（固定顺序的 code/reason）；`destinationProblem` 是同工作区、资格、职责共用的目的地规则；`FORWARD_DESTINATION_GONE` 是服务端归档/退休/归档申请预检的拒绝 detail | 转发/等待处置 owner 提交前判；P 用该 detail 判“待指定收件线”，不要另写表或目的地规则 |
-| `noProgressKey` | `src/core/work-graph/state/no-progress.ts:175` | requeue 的无进展键，存进 TaskRequeue.basis | 重排队守卫与比较 |
-| `reverifyBasis` | `src/core/work-graph/state/no-progress.ts:206` | successor 轮的重验证键 | VR-14 比较链上 basisDigests |
-| `roundFailureFacts` | `src/core/work-graph/state/no-progress.ts:96` | 一轮的非 PASS 检查与 gap codes | 两套键、失败事实读模型 |
+| `noProgressKey` | `src/core/work-graph/state/no-progress.ts:191` | requeue 的无进展键，存进 TaskRequeue.basis | 重排队守卫与比较 |
+| `reverifyBasis` | `src/core/work-graph/state/no-progress.ts:223` | successor 轮的重验证键 | VR-14 比较链上 basisDigests |
+| `roundFailureFacts` | `src/core/work-graph/state/no-progress.ts:108` | 一轮的非 PASS 检查与 gap codes；E09F：读者传进审查结论（`RoundReviewFactV1`，`:51`）时，不是 PASS 的审查也按一条已完成的检查列入 | 两套键、失败事实读模型、接续说明；接续说明、人的卡（失败事实）和返工依据（requeue 的无进展键）都传审查结论，successor 轮的重验证键不传 |
 | `admitNoteWrite` | `src/core/work-graph/state/note-machine.ts:65` | 新注记的准入状态 | 写注记前 |
 | `transitionNote` | `src/core/work-graph/state/note-machine.ts:446` | 注记处置迁移 | 注记状态写入 |
 | `newNoteHeadRecord` | `src/core/work-graph/state/note-machine.ts:304` | 建 pending 注记头 | 新建注记 |
@@ -277,11 +277,11 @@
 | `deriveReworkClass` | `src/core/work-graph/state/task-failure.ts:200` | 失败分类（FC-1..FC-17） | 重排队前 |
 | `reworkFenceOf` | `src/core/work-graph/state/task-failure.ts:147` | 人工停止围栏 | 判定谁能重做 |
 | `reworkPermission` | `src/core/work-graph/state/task-failure.ts:414` | Goal 活动 + 操作者/失败类别矩阵 | 允许重排队前 |
-| `automationVerdict` | `src/core/work-graph/state/task-failure.ts:805` | 按策略给自动化裁决 | 失败后自动处理 |
-| `buildTaskFailureFacts` | `src/core/work-graph/state/task-failure.ts:1047` | 组装失败事实读模型 | 展示失败与重做 |
+| `automationVerdict` | `src/core/work-graph/state/task-failure.ts:807` | 按策略给自动化裁决 | 失败后自动处理 |
+| `buildTaskFailureFacts` | `src/core/work-graph/state/task-failure.ts:1049` | 组装失败事实读模型 | 展示失败与重做 |
 | `runErrorOf` | `src/core/work-graph/state/task-failure.ts:700` | 从终态负载与对账取错误与来源 | 统一错误展示 |
-| `attemptOrdinalOf` | `src/core/work-graph/state/task-failure.ts:1337` | Run 在它的链上是第几次尝试（从 1）：链上每个带 `requeueRef` 的 Run 开一次新尝试，接续（`previousRun`）留在同一次；复用 `chainRunIds` 防环 | 轨道横条 `attempt.ordinal` 与 `TaskRow.attemptOrdinal`；不要另写走链 |
-| `taskReworkRefusalEffects` | `src/core/work-graph/state/task-failure.ts:1498` | 拒绝重做的 effects | 拒绝记录同一提交 |
+| `attemptOrdinalOf` | `src/core/work-graph/state/task-failure.ts:1339` | Run 在它的链上是第几次尝试（从 1）：链上每个带 `requeueRef` 的 Run 开一次新尝试，接续（`previousRun`）留在同一次；复用 `chainRunIds` 防环 | 轨道横条 `attempt.ordinal` 与 `TaskRow.attemptOrdinal`；不要另写走链 |
+| `taskReworkRefusalEffects` | `src/core/work-graph/state/task-failure.ts:1500` | 拒绝重做的 effects | 拒绝记录同一提交 |
 | `controlIntentRecordOf` | `src/core/work-graph/state/control-intent-machine.ts:380` | 由请求与 next 生成意图记录 | 控制提交 |
 | `projectTaskPhase` | `src/core/work-graph/state/task-machine.ts:241` | 相位 + 原因的精简投影 | 展示/守卫 |
 | `taskMachineStateOf` | `src/core/work-graph/state/task-machine.ts:255` | Task 定义的机器状态 | Task 迁移前 |

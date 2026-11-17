@@ -17,10 +17,13 @@ import type { PlanDiagnosisFindingV1, PlanReviewReadV1 } from '../../contracts/p
 import type {
   PlanFixReadV1, PlanningQuestionGroupV1, TaskbookExportReadPort, TaskbookExportReadV1,
 } from '../../contracts/plan-round.js';
-import type { CheckCapabilityV1 } from '../../contracts/verification.js';
+import type { CheckCapabilityV1, RegisteredCommandCheck } from '../../contracts/verification.js';
+import type { NotifyProjectInputV1, ProjectNoticeV1 } from '../../contracts/role-lines.js';
 import type { GoalTaskPort } from '../../core/work-graph/model/task-contracts.js';
 import type { TaskRow } from '../../core/work-graph/model/plan-contracts.js';
-import type { PlanProposal, PlanProposalRef, PlanTaskPort } from '../../core/work-graph/model/plan-contracts.js';
+import type {
+  PlanProposal, PlanProposalRef, PlanServicePort, PlanTaskPort,
+} from '../../core/work-graph/model/plan-contracts.js';
 import type { GraphWrite } from '../../core/work-graph/model/task-contracts.js';
 import type { RequestFactsPort } from '../../core/work-graph/tasks/request-facts.js';
 import type { TaskInputUpstreamPort } from '../../core/work-graph/model/context-input-contracts.js';
@@ -207,6 +210,19 @@ export type WorkflowDependencies = {
    * "look again". Absent, a scribe review round's answer is not applied (`unsupported`).
    */
   commandReview?: CommandReviewDeps;
+  /**
+   * G8B B1：平台自动采用带新检查的计划时批检查要读写的两样：工作区已装的检查（组合根的 `readInstalledCheckList`）、
+   * 主对话里的请知悉（项目通知的唯一写入）。没接上就照 G8A 交人。
+   */
+  checkApproval?: {
+    installedChecks(scope: WorkspaceScope): Promise<ReadResult<readonly RegisteredCommandCheck[] | null>>;
+    notifyProject(input: NotifyProjectInputV1): Promise<WriteResult<ProjectNoticeV1>>;
+    /** lead 11-17 裁定 4：按身份读已写的请知悉（没有是 `null`）。 */
+    readNotice(input: Pick<NotifyProjectInputV1, 'projectRef' | 'subject' | 'kind' | 'operation'>):
+      Promise<ReadResult<ProjectNoticeV1 | null>>;
+    /** lead 11-17 裁定 1：收尾按固定请求号查本轮自己的采用回执（Plan owner 的重放规则，只读）。 */
+    lookupPlanChange: PlanServicePort['lookupPlanChange'];
+  };
   /**
    * Slice 1 (L-g, S:597): every new time the Workflow archive/maintenance
    * supplies comes from this injected clock. Without injection the old

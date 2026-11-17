@@ -15,6 +15,7 @@ import { canonicalJson, sha256Hex, type JsonValue } from './fingerprint.js';
 import {
   commandRerunAdviceSubjectProblem, parseCommandRerunAdviceAnswer, type CommandRerunAdviceSubjectV1,
 } from './command-rerun-advice.js';
+import { checkReviewSubjectProblem, parseCheckReviewAnswer, type CheckReviewSubjectV1 } from './check-review.js';
 import { parseInitialPlanningResponseV2 } from './initial-planning-parse.js';
 import { parseExecReviewAnswer } from './exec-review.js';
 import type { GoalRef } from './ledger.js';
@@ -52,7 +53,9 @@ export type SystemRoundV1 =
   /** 121-112: the scribe's review of one long command of a Work Run of this Goal. */
   | { kind: 'command_review'; goalRef: GoalRef; subject: CommandReviewSubjectV1 }
   /** 121-110: the adviser's round on one `awaiting_advice` command rerun request. */
-  | { kind: 'command_rerun'; goalRef: GoalRef; subject: CommandRerunAdviceSubjectV1 };
+  | { kind: 'command_rerun'; goalRef: GoalRef; subject: CommandRerunAdviceSubjectV1 }
+  /** G8B B1d：不是作者的 agent 批一份候选带来的新检查。 */
+  | { kind: 'check_review'; goalRef: GoalRef; subject: CheckReviewSubjectV1 };
 
 /** The read-side head of a round: only the first line's segments, never a guess. */
 export type SystemRoundHeadV1 =
@@ -67,7 +70,9 @@ export type SystemRoundHeadV1 =
     goalBasisDigest: string }
   /** The command key is the sha256 of `subject.commandKey`, which itself holds `:`. */
   | { kind: 'command_review'; projectId: string; reviewSeq: number; commandKeyDigest: string }
-  | { kind: 'command_rerun'; taskId: string; requestId: string; revision: number; goalBasisDigest: string };
+  | { kind: 'command_rerun'; taskId: string; requestId: string; revision: number; goalBasisDigest: string }
+  /** 同 `planreview` 的先例：目标来自 `subject.goalRef`。 */
+  | { kind: 'check_review'; proposalId: string; proposalRevision: number };
 
 /** The one system-round sender; a fixed id is what makes one request id one message. */
 export const SYSTEM_ROUND_ACTOR = Object.freeze({ kind: 'system' as const, id: 'host:plan-round' });
@@ -156,8 +161,19 @@ export function systemRoundRequestId(
     return { status: 'ready',
       value: `crr:${requestRef.taskId}:${requestRef.requestId}:${String(revision)}:${goalBasisDigest}` };
   }
+  if (round.kind === 'check_review') {
+    const { proposalRef, proposalRevision } = round.subject;
+    if (proposalRef.proposalId.length === 0) return rejected('invalid', 'proposalId is empty');
+    if (!isPos(proposalRevision)) return rejected('invalid', 'proposalRevision must be a positive safe integer');
+    return { status: 'ready', value: checkReviewRequestIdOf(proposalRef.proposalId, proposalRevision) };
+  }
   if (round.queryJobId.length === 0) return rejected('invalid', 'queryJobId is empty');
   return { status: 'ready', value: `planresume:${round.goalRef.goalId}:${round.queryJobId}` };
+}
+
+/** G8B B1d：批准轮的请求号，一份候选的一版只请批一次（重发同一轮是同一条消息）；读结论的地方按它找发出的那一轮。 */
+export function checkReviewRequestIdOf(proposalId: string, proposalRevision: number): string {
+  return `checkreview:${proposalId}:${String(proposalRevision)}`;
 }
 
 /**
@@ -250,6 +266,13 @@ export function systemRoundOfText(text: string): SystemRoundHeadV1 | null {
     if (!nonEmpty(taskId) || !nonEmpty(requestId) || revision === null || !nonEmpty(digest)) return null;
     return { kind: 'command_rerun', taskId, requestId, revision, goalBasisDigest: digest };
   }
+  if (prefix === 'checkreview') {
+    if (segments.length !== 3) return null;
+    const [, proposalId, revision] = segments;
+    const proposalRevision = positivePlanRevisionOf(revision);
+    if (!nonEmpty(proposalId) || proposalRevision === null) return null;
+    return { kind: 'check_review', proposalId, proposalRevision };
+  }
   return null;
 }
 
@@ -322,6 +345,20 @@ export function commandRerunAdviceSubjectOfText(text: string): CommandRerunAdvic
 }
 
 /**
+ * G8B B1d：`checkreview:` 的第二行 `subject: <canonicalJson>`，批准轮事实的唯一来源；没有、坏了或和第一行的请求号
+ * 对不上 -> `null`（同 `crr:`）。
+ */
+export function checkReviewSubjectOfText(text: string): CheckReviewSubjectV1 | null {
+  const [first, second] = text.split('\n');
+  if (second === undefined || !second.startsWith('subject: ')) return null;
+  const parsed = parseObject(second.slice('subject: '.length));
+  if (parsed === null || checkReviewSubjectProblem(parsed) !== null) return null;
+  const subject = parsed as unknown as CheckReviewSubjectV1;
+  const head = systemRoundRequestId({ kind: 'check_review', goalRef: subject.goalRef, subject });
+  return head.status === 'ready' && head.value === first ? subject : null;
+}
+
+/**
  * The short reply derived from the frozen answer shape (§5.3.5): a plan
  * summary, a review verdict, or the original text. Only a `plan_review`,
  * `exec_review`, `unknown_call_advice`, `command_rerun_advice` or `scribe_review`
@@ -358,6 +395,12 @@ export function planningReplyTextOf(input: {
   if (input.shape === 'command_rerun_advice') {
     const parsed = parseCommandRerunAdviceAnswer(input.answerText);
     return parsed.status === 'parsed' ? `参谋已答复：${parsed.advice.plain}` : null;
+  }
+  if (input.shape === 'check_review') {
+    const parsed = parseCheckReviewAnswer(input.answerText);
+    if (parsed.status !== 'parsed') return null;
+    const toPerson = parsed.answer.verdicts.filter(verdict => verdict.decision === 'to_person').length;
+    return toPerson === 0 ? `批了 ${String(parsed.answer.verdicts.length)} 条检查` : `${String(toPerson)} 条检查交给人`;
   }
   const parsed = parseInitialPlanningResponseV2(input.answerText);
   if (parsed.status === 'parsed') return parsed.response.summary;

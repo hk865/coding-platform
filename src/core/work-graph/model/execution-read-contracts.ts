@@ -16,6 +16,7 @@ import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { RawArtifactStorePort } from '../../record-store/body-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { SessionMessage } from './communication-contracts.js';
+import type { RoundReviewFactV1 } from '../state/no-progress.js';
 
 /** The execution read window is declared once in `contracts/execution-read.ts`; WorkGraph callers keep this import site. */
 export type { TaskExecutionRecord };
@@ -61,6 +62,11 @@ export type ContinuationBasis = {
   previousWait: SessionMessage | null;
   /** `requeue.afterRoundRef` (the chain head). */
   round: RoundSnapshot | null;
+  /**
+   * E09F：`round` 的审查结论（它的 Evidence 里来源不指名检查的那条）；没有审查项、还没定稿或没记审查时是 null。
+   * 旧的、窄的 basis 读作没有。
+   */
+  roundReview?: RoundReviewFactV1 | null;
   /** Bounded Artifact bodies listed in `requeue.newInputRefs`; `truncated` when the reader cut the body. */
   newInputBodies: { ref: ArtifactRef; body: string | null; truncated: boolean; reason: string | null }[];
   /**
@@ -69,7 +75,9 @@ export type ContinuationBasis = {
    */
   replyBodies: { messageRef: SessionMessageRef; body: string | null; truncated: boolean; reason: string | null }[];
   /** Nearest entered ancestor when the afterRun never entered (at most 4 hops); `[]` otherwise. */
-  factsChain: { requeue: TaskRequeueSnapshotV1; run: TaskExecutionRecord; round: RoundSnapshot | null }[];
+  factsChain: { requeue: TaskRequeueSnapshotV1; run: TaskExecutionRecord; round: RoundSnapshot | null;
+    /** E09F：这一跳 `round` 的审查结论，读法同 `roundReview`。 */
+    roundReview?: RoundReviewFactV1 | null }[];
   /** Slice 1 §2.7: this Task's not-yet-picked-up anchors; the real production reader always returns it. */
   pendingAnomalies?: SessionAnomalyAnchorV1[];
   /**

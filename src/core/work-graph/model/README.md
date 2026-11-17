@@ -118,7 +118,7 @@
 | `SavedChecksReadPort` | `src/core/work-graph/model/initialization-adoption-contracts.ts:56` | 读设置文件自身的保存状态，不读已安装配置 | J 的采用阶段 |
 | `SettingsSerialGatePort` | `src/core/work-graph/model/initialization-adoption-contracts.ts:61` | J 的设置串行队列，交给 L 使用 | 采用内不得再次调用排队的设置路由 |
 | `ExecutionEntryPort` | `src/core/work-graph/model/execution-entry-contracts.ts:109` | 执行授权、开始、进入、结果与恢复的写入口 | Runtime 执行进入 |
-| `ExecutionReadPort` | `src/core/work-graph/model/execution-read-contracts.ts:84` | 精确 Task execution 与按 Goal/Task 的分页读取 | 读执行事实，不再另写读取器 |
+| `ExecutionReadPort` | `src/core/work-graph/model/execution-read-contracts.ts:92` | 精确 Task execution 与按 Goal/Task 的分页读取 | 读执行事实，不再另写读取器 |
 | `EvidencePort` | `src/core/work-graph/model/evidence-contracts.ts:154` | 验证轮与检查生命周期的唯一受信写入口；`ReverifyRoundInput` 有可选 `acknowledgement`，写结果带可选 `proofReceipt`；第 9 片加可选 `recordReviewEvidence`（每轮一条审阅 Evidence，重复回放回执，缺了调用方答 unsupported） | 证据/验证 owner |
 | `RecordReviewEvidenceInputV1`、`ReviewQueryReads`、`ReviewSessionDuty`、`NO_ACCEPTED_ANSWER` | `src/core/work-graph/model/evidence-contracts.ts:37`、`:43`、`:53`、`:62` | 第 9 片 VR-16：入参只带 `roundRef`；审阅 Query 读与审阅 Session 的 duty 读是 `Pick<QueryJobPort,…>`、`DutyRecipientDependencies.dutyOfRole` 的合约孪生（`evidence/` 不能 import `queries/`、`sessions/`）；`NO_ACCEPTED_ANSWER` 是 Query 已结束却没有能解析的回答时的 `invalid` 原因 | 证据 owner 与组合根接线；不要另写读形状 |
 | `reviewQueryEnded` | `src/core/work-graph/model/evidence-contracts.ts:65` | 第 9 片：审阅 Query 的 job 不再 `pending`/`running` 就是结束（QueryRun 和 QueryJob 同一次提交结算），答没答都算 | 入账 owner、Workflow 的 `readReviewState` 和干预入口的早结算判断“结束了没有”；不要另写口径 |

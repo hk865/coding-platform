@@ -2843,7 +2843,8 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       event: { kind: 'query_unknown_attested' },
       guard: { caller: 'host_entry', hostLease: host === undefined ? null : host.lease, probe: null, kernel: null,
         inputsConfirmed: input.inputsConfirmed === null ? 'kernel_unreadable' : input.inputsConfirmed,
-        actor: actor === null || isAutomationActor(actor) ? 'system' : 'human', reason: input.reason, kernelTurnOpen: input.kernelTurnOpen },
+        actor: actor === null || isAutomationActor(actor) ? 'system' : 'human', reason: input.reason, kernelTurnOpen: input.kernelTurnOpen,
+        unresolvedToolNames: input.unresolvedToolNames ?? null },
       cause: 'query_unknown_attested', turnSeen: true,
     }));
   }

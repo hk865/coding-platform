@@ -220,7 +220,9 @@ function runtimeConfigurationOf(configuration: S6AConfiguration, order: S6AProfi
       const tools = [...existing.grant.tools, ...(entry.mergeTools ?? [])];
       const writeScope = [...existing.grant.writeScope, ...(entry.mergeWriteScope ?? [])];
       built.bindings[index] = { ...existing, grant: { ...existing.grant, tools: [...new Set(tools)],
-        writeScope: [...new Set(writeScope)] } };
+        writeScope: [...new Set(writeScope)],
+        ...(entry.mergeTools?.includes('run_readonly_command') === true
+          ? { readonlyCommandAccess: 'all_except_denied' as const } : {}) } };
       continue;
     }
     if (entry.mergeTools !== undefined || entry.mergeWriteScope !== undefined) {
@@ -342,7 +344,10 @@ async function startCapturingPlatform(options: LocalWorkbenchHostOptions): Promi
  */
 export type S6AExtraBinding = {
   binding: WorkbenchRuntimeBinding;
-  /** Added to the existing `binding.id`'s `grant.tools`; refused (`invalid`) when `binding.id` is new. */
+  /**
+   * Added to the existing `binding.id`'s `grant.tools`; refused (`invalid`) when `binding.id` is new. 合并
+   * `run_readonly_command` 时同时给 L18 的整工作区授权（`readonlyCommandAccess`），这个工具才挂得上。
+   */
   mergeTools?: readonly string[];
   /** Added to the existing `binding.id`'s `grant.writeScope`; only with `mergeTools` on an existing binding. */
   mergeWriteScope?: readonly string[];
@@ -378,7 +383,8 @@ export type S6AWorldOptions = {
   /** Cold start: omit the startup `workflow` option, so only a binding registered through a route later exists. */
   omitStartupWorkflow?: true;
   /** Grants beyond `readPrefixes: ['.']` on the one workspace (E3U Main B's WW saves files); absent keeps the read-only grant. */
-  workspaceGrants?: { writePrefixes?: string[] };
+  /** G8B1a：`allowCommands` 给主工作区命令授权（批检查的改动前事实只在有授权的工作区跑）。 */
+  workspaceGrants?: { writePrefixes?: string[]; allowCommands?: boolean };
 };
 
 export type S6AReopenOptions = {
@@ -600,7 +606,8 @@ export async function openS6ARequestWorld(options: S6AWorldOptions): Promise<S6A
       storage: backend === 'sqlite' ? { kind: 'sqlite', directory: database } : { kind: 'memory' },
       actor: { ...actor },
       workspaces: [{ scope: S6A_SCOPE, name: 'S6A request world', root, workspaceRevision: 1, readPrefixes: ['.'],
-        ...(options.workspaceGrants?.writePrefixes === undefined ? {} : { writePrefixes: [...options.workspaceGrants.writePrefixes] }) }],
+        ...(options.workspaceGrants?.writePrefixes === undefined ? {} : { writePrefixes: [...options.workspaceGrants.writePrefixes] }),
+        ...(options.workspaceGrants?.allowCommands === true ? { allowCommands: true } : {}) }],
       architectureSource: { provider: 'typescript', configPath: 'tsconfig.json' },
       kernelStores: { entries: [{ adapterId: 's6a-kernel', storeKey: 's6a-kernel-store', workspace: S6A_SCOPE,
         databasePath: join(database, 'kernel.sqlite') }] },

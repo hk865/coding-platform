@@ -19,7 +19,10 @@ import type {
   QueryRunRef,
   QueryRunSnapshot,
 } from '../../src/contracts/query-job.js';
+import { EXECUTION_HISTORY_TOOL_NAMES } from '../../src/core/agent-runtime/graph-tools.js';
+import { RUNTIME_TOOL_NAMES } from '../../src/core/agent-runtime/tool-group-assembly.js';
 import {
+  PLATFORM_ATTESTED_READ_TOOLS,
   advanceQueryExecutionRecord,
   markQueryRunUnknownRecord,
   newPendingQueryRecords,
@@ -271,6 +274,42 @@ describe('transitionQueryRunRecovery: every (phase, event) pair', () => {
       .toEqual({ ok: true, next: SETTLED('failed'), effects: [
         { kind: 'settle_query', settlement: { outcome: 'failed', closeMessage: 'checked by hand', answerCheck: null }, history: { kind: 'unchanged' } },
         KEEP_CURSOR(true)] });
+  });
+
+  // 用户 11-17（QRR-05 第 1 条）、lead 裁定 11-17：没出结果的调用全是名单上的只读工具时，平台用固定身份走同一个认定，
+  // 按没有结果（失败）关闭；只要有一个不是（命令、联网、跑检查、平台写入、改文件、不认识的名字），或者名字读不到，
+  // 平台就不能认定，照旧等人。
+  it('QRR-06 by the platform: the read-only list holds real tool names only, none of the three excluded ones', () => {
+    for (const name of PLATFORM_ATTESTED_READ_TOOLS) {
+      expect(RUNTIME_TOOL_NAMES.has(name) || (EXECUTION_HISTORY_TOOL_NAMES as readonly string[]).includes(name), name).toBe(true);
+    }
+    for (const name of ['run_readonly_command', 'web_search', 'web_fetch']) expect(PLATFORM_ATTESTED_READ_TOOLS.has(name)).toBe(false);
+  });
+
+  it('QRR-06 by the platform: only when every call without a result is a read-only tool on the list', () => {
+    const attest = eventOf('query_unknown_attested');
+    const platform: QueryRecoveryGuardContext = { ...ctxFor('query_unknown_attested'), actor: 'system',
+      reason: 'platform: read-only calls', kernelTurnOpen: true };
+    // lead 裁定 11-17：名单放宽到所有只读平台或工作区内部事实、没有外部影响的工具。
+    for (const names of [['read'], ['look_graph'], ['find_graph'], ['check_links'], ['read', 'look_graph', 'find_graph', 'check_links'],
+      ['read', 'list_files'], ['search', 'symbols', 'python_index'], ['query_task_graph', 'query_ready_tasks'], ['read_requests'],
+      ['read_execution_history'], ['read_session_inbox', 'read_user_decision', 'find_related_sessions'], [...PLATFORM_ATTESTED_READ_TOOLS]]) {
+      expect(transitionQueryRunRecovery(stateAt('unknown'), attest, { ...platform, unresolvedToolNames: names }))
+        .toEqual({ ok: true, next: SETTLED('failed'), effects: [
+          { kind: 'settle_query', settlement: { outcome: 'failed', closeMessage: 'platform: read-only calls', answerCheck: null },
+            history: { kind: 'unchanged' } },
+          KEEP_CURSOR(true)] });
+    }
+    for (const names of [[], ['read', 'run_readonly_command'], ['check'], ['web_fetch'], ['list_files', 'web_search'],
+      ['read', 'send_session_message'], ['create_member'], ['record_note'], ['propose_future_plan'], ['edit'], ['write'],
+      ['shell'], ['submit_plan_round'], ['a_new_tool']]) {
+      expectRejected(transitionQueryRunRecovery(stateAt('unknown'), attest, { ...platform, unresolvedToolNames: names }),
+        'guard_failed', 'forbidden');
+    }
+    expectRejected(transitionQueryRunRecovery(stateAt('unknown'), attest, platform), 'guard_failed', 'forbidden');
+    // 人的认定不看名字。
+    expect(transitionQueryRunRecovery(stateAt('unknown'), attest, { ...ctxFor('query_unknown_attested'), unresolvedToolNames: ['shell'] }))
+      .toMatchObject({ ok: true, next: SETTLED('failed') });
   });
 });
 

@@ -10,6 +10,7 @@
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
+import type { DecisionObjectV1 } from '../../../contracts/goal-decisions.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import { PROJECT_NOTICES_BY_PROJECT_LOOKUP } from '../../../contracts/role-lines.js';
 import type { EncodedRecord, GoalRecordTransactionPort } from '../../record-store/ports.js';
@@ -79,10 +80,13 @@ async function readProjectNoticePage(
     if (input.goalRef !== undefined && (notice.subject.kind !== 'goal'
       || notice.subject.goalRef.goalId !== input.goalRef.goalId)) continue;
     const itemKey = `project_notice:${notice.ref.noticeId}`;
+    // G8B B1g：批检查的两种也带上自己的种类（界面凭它显示“撤回”）和链到候选的 `objects`。
     const noticeKind = notice.kind === 'knowledge_write_unconfirmed' || notice.kind === 'knowledge_reverted'
-      || notice.kind === 'knowledge_conflict' ? notice.kind : null;
+      || notice.kind === 'knowledge_conflict' || notice.kind === 'check_approved' || notice.kind === 'check_to_person'
+      ? notice.kind : null;
+    const objects = notice.objects === undefined ? [] : structuredClone(notice.objects) as unknown as DecisionObjectV1[];
     items.push({ itemKey, category: 'project_notice', subject: notice.subject, summary: notice.summary,
-      position: { kind: 'commit', cursor: since, itemKey }, objects: [], rework: null,
+      position: { kind: 'commit', cursor: since, itemKey }, objects, rework: null,
       ...(noticeKind === null ? {} : { noticeKind }) });
   }
   items.sort((left, right) => {

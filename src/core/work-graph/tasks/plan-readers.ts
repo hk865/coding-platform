@@ -13,7 +13,7 @@ import type {
   TaskLeaseSnapshot,
   TaskTriple,
 } from '../../../contracts/dispatch.js';
-import { canonicalJson, sameJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { canonicalJson, canonicalOf, sameJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import { isNonNeg as isSafeRevision, isRecord, nonEmpty, parseObject as parseJsonObject } from '../../../contracts/validation/common.js';
 import { completionPolicyContentDigest } from '../../../contracts/governance.js';
 import type {
@@ -41,7 +41,7 @@ import {
   type PlanFixReadV1, type PlanningQuestionGroupV1,
 } from '../../../contracts/plan-round.js';
 import {
-  checkCapabilitiesOf, checksWithProposed, type CheckCapabilityV1, type RegisteredCommandCheck,
+  checkCapabilitiesOf, checksWithProposed, reviewPacketItemOf, type CheckCapabilityV1, type RegisteredCommandCheck,
 } from '../../../contracts/verification.js';
 import type {
   TaskRequeueRef, TaskRequeueSnapshotV1, TaskReworkRefusalRef, TaskReworkRefusalSnapshotV1,
@@ -77,8 +77,9 @@ import {
 } from '../state/verification-machine.js';
 import {
   VERIFICATION_ROUND_BY_TASK_LOOKUP, VERIFICATION_ROUND_CHAIN_LOOKUP_LIMIT, VERIFICATION_ROUND_ORIGINAL_LOOKUP,
-  decodeVerificationRoundSnapshot,
+  decodeEvidenceSnapshot, decodeVerificationRoundSnapshot,
 } from '../persistence/evidence-record-codecs.js';
+import type { RoundReviewFactV1 } from '../state/no-progress.js';
 import type { VerifiedGovernance } from './plan-commit-compiler.js';
 import type { PlanProposal, PlanProposalRef, PlanTaskPort, TaskUnknownCallReview } from '../model/plan-contracts.js';
 import type { SessionMailboxPort } from '../model/communication-contracts.js';
@@ -1201,6 +1202,12 @@ export type CanonicalTaskFacts = {
    */
   reverifyRefusalsByRoundId: ReadonlyMap<string, TaskReworkRefusalSnapshotV1>;
   /**
+   * E09F（lead 11-17 18:0x）：同一批链头（`chainsByTaskId` 里定稿、非 PASS 的）记下的审查结论，按 roundId，在 THIS
+   * window 读（`readRoundReviewFacts`）。人的卡（failure facts）和返工依据（requeue 的无进展键）都从这里取，交给
+   * `roundFailureFacts` 的同一条规则；没记审查的链头不在里面。
+   */
+  roundReviewsByRoundId: ReadonlyMap<string, RoundReviewFactV1>;
+  /**
    * The exact versions of those rework records (TaskRequeue@1, refusal@k) and
    * the absence (`null`) of every key read but missing. Kept apart from
    * `guards`: only the writes that depend on them (claim, completion, requeue)
@@ -1707,6 +1714,41 @@ async function readReverifyRefusals(records: RecordReadPort, heads: readonly Rou
   return { status: 'ready', refusals, readThrough: read.value.readThrough };
 }
 
+/**
+ * E09F（lead 11-17）：每个给定轮次的审查结论，按 roundId。审查结论是 slice 9 VR-16 记下、来源不指名检查的那条
+ * Evidence；只看已定稿、计划里有审查项（`reviewPacketItemOf`）的轮次，没记审查的轮次不在结果里。接续说明的依据
+ * （`readContinuationBasis`）和事实窗口（人的卡、返工依据）共用这一个读法。一次 `readMany`；Evidence 一经写下不再改
+ * （revision 1），所以不另核对水位；轮次列着的 Evidence 缺了或读坏，就是 `unavailable`。
+ */
+export async function readRoundReviewFacts(records: RecordReadPort, rounds: readonly RoundSnapshot[]): Promise<{
+  status: 'ready'; reviews: ReadonlyMap<string, RoundReviewFactV1>; readThrough: CommitCursor | null | undefined;
+} | Rejected> {
+  const reviews = new Map<string, RoundReviewFactV1>();
+  const reviewed = rounds.flatMap((round) => {
+    const item = round.status === 'finalized' ? reviewPacketItemOf(round.verificationPlan) : undefined;
+    return item === undefined ? []
+      : [{ round, checkId: item.checkId, keys: round.evidenceRefs.map((ref) => canonicalOf(ref) as string) }];
+  });
+  const keys = uniqueKeys(reviewed.flatMap((entry) => entry.keys));
+  if (keys.length === 0) return { status: 'ready', reviews, readThrough: undefined };
+  const read = await readBatch(records, keys);
+  if (read.status !== 'ready') return read;
+  for (const { round, checkId, keys: roundKeys } of reviewed) {
+    for (const key of roundKeys) {
+      const record = read.batch.present.get(key);
+      const decoded = record === undefined ? null : decodeEvidenceSnapshot(record);
+      if (decoded === null || decoded.status !== 'decoded') {
+        return unavailable(`an Evidence of round ${round.ref.roundId} is missing or damaged`);
+      }
+      const { outcome, source, summary } = decoded.value.evidence;
+      if (source.checkId !== null) continue;
+      reviews.set(round.ref.roundId, { checkId, outcome, reportRef: summary.artifactRef, basis: summary.text });
+      break;
+    }
+  }
+  return { status: 'ready', reviews, readThrough: read.batch.readThrough };
+}
+
 /** Bounded to one Goal's accepted Plan; candidate indexes locate Run records,
  * then this reader rechecks their full refs, Plan pins and latest revisions.
  * The candidate set and the canonical read must share one ledger watermark or
@@ -1998,6 +2040,10 @@ export async function readCanonicalTaskFacts(
       chain.kind === 'head' && isFinalizedNonPass(chain.head) ? [chain.head] : []));
     if (reverify.status !== 'ready') return reverify;
     if (reverify.readThrough !== undefined && !sameCursor(read.value.readThrough, reverify.readThrough)) continue;
+    // E09F（lead 11-17 18:0x）：同一批链头的审查结论；Evidence 不再改，不另核对水位。
+    const reviewed = await readRoundReviewFacts(records, [...chainsByTaskId.values()].flatMap((chain) =>
+      chain.kind === 'head' && isFinalizedNonPass(chain.head) ? [chain.head] : []));
+    if (reviewed.status !== 'ready') return reviewed;
     const watermark = read.value.readThrough;
     if (watermark === null) return incomplete('the ledger has no readable watermark for task state');
     const runsByTaskId = new Map<string, readonly RunSnapshot[]>();
@@ -2006,6 +2052,7 @@ export async function readCanonicalTaskFacts(
       reductionsByTaskId: reductionByTask, leasesByTaskId: leaseByTask, reviewsByTaskId,
       roundsByTaskId, chainsByTaskId,
       requeuesByTaskId, requeueRefusalsByRunId, reverifyRefusalsByRoundId: reverify.refusals,
+      roundReviewsByRoundId: reviewed.reviews,
       reworkGuards: rework.guards, readThrough: watermark, guards,
       ...(directed ? { taskHasRun } : { goalEndedRuns: countEndedGoalRuns(goalRuns) }) } };
   }
@@ -2942,9 +2989,10 @@ export function createPlanReaders(deps: PlanReadersDependencies): PlanReaders {
     async planChecks(scope, proposed = []) {
       if (deps.checks === undefined) return unsupportedRead('the installed-check configuration read');
       const read = await deps.checks(scope);
+      // lead 11-17 补充裁定 1（G8A A2）：覆盖 = 已装的检查 + 这份计划自带的检查；一条配置都没有的工作区，已装的就是空
+      // 清单，候选的诊断照样按计划自带的检查算，不读成“不知道”（否则参谋第一次带检查的计划停在诊断卡上，到不了批准）。
       if (read.status === 'ready') {
-        if (read.value === null) return { status: 'ready', value: null };
-        return { status: 'ready', value: checkCapabilitiesOf(checksWithProposed(read.value, proposed)) };
+        return { status: 'ready', value: checkCapabilitiesOf(checksWithProposed(read.value ?? [], proposed)) };
       }
       if (read.status === 'rejected') return read;
       if (read.status === 'not_ready') return read;

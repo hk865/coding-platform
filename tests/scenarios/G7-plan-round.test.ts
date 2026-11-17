@@ -125,6 +125,36 @@ describe('G7P P2: a plan_round answer is judged with the adoption rules at the f
   }, 180_000);
 });
 
+// E09F 第 3 件（lead 11-17）：规划轮交来的计划段里有 `decision` 依赖，交表时退回（平台不送达这种决定，
+// context-input-service.ts:621-627），写明“要等别的任务做完，用执行先后表达；要定的事交给参谋或人”（lead 11-17 18:0x）。
+// 第二次交表把那条边换成这次不退回的种类（artifact），这一轮结束。
+describe('E09F: a plan round segment with a decision dependency is refused at the form', () => {
+  it('a decision edge between two new Tasks is refused, naming the edge and the way out; an edge of another kind ends the round', async () => {
+    const world = await openWorld();
+    await adoptPLPlanDraft(s6aCardsWorkspace(world, S6A_SCOPE), S6A_GOAL_1, BASE_PLAN, 'e09f-p3');
+    const a = await world.createSecretary('a');
+    const segment = (kind: string) => plToolPlanOf({ ...BASE_PLAN,
+      tasks: [workTask('e09f-decide', 'E09F decide the shape'), workTask('e09f-build', 'E09F build on it')],
+      assignments: [{ taskId: 'e09f-decide', role: S6A_WORK_ROLE.templateId, instruction: 'E09F decide' },
+        { taskId: 'e09f-build', role: S6A_WORK_ROLE.templateId, instruction: 'E09F build' }],
+      obligations: [obligation('e09f-obligation', ['e09f-decide', 'e09f-build'], 'e09f-check', 'E09F check')],
+      executionDag: { dependsOn: [{ taskId: 'e09f-build', dependsOnId: 'e09f-decide',
+        requires: { kind: kind as 'decision', label: 'the parseDate return shape' } }] } });
+    await world.scripted.script(a, [planCall('e09f-p3-first', segment('decision')), planCall('e09f-p3-fixed', segment('artifact'))]);
+    const request = await submitRound(world, newRequest('e09f-p3-request', a, '先定 parseDate 的返回形状再做 monthOf'));
+    await waitForRound(world, request.requestRoot, request.round, 'ended');
+    const refused = await outputOf(world, a, 'e09f-p3-first');
+    expect(refused?.status, 'the first submit was accepted').toBe('rejected');
+    expect(refused!.problems).toHaveLength(1);
+    expect(refused!.problems[0]!.reason).toContain('e09f-build');
+    expect(refused!.problems[0]!.reason).toContain('"decision"');
+    expect(refused!.problems[0]!.reason).toContain('execution order (executionDag.dependsOn)');
+    expect(refused!.problems[0]!.reason).toContain('to the adviser or the person');
+    expect(refused!.problems[0]!.reason).not.toContain('"artifact"');
+    expect(await outputOf(world, a, 'e09f-p3-fixed')).toBeUndefined();
+  }, 180_000);
+});
+
 /** The system prompt and the round's own input (the last user message) of `request`. */
 const inputText = (request: ModelRequest): string => {
   const shown = request as unknown as { systemPrompt?: string; messages: { role: string; content?: unknown }[] };

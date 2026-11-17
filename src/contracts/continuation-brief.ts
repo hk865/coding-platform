@@ -40,6 +40,8 @@ import { ROUND_CHECK_INCOMPLETE_CAUSES, type VerificationRoundRef } from './veri
 // ------------------------------------------------------------------------ //
 /** Text cut to `CONTINUATION_BRIEF_LIMITS.textChars`; `truncated` says whether anything was cut. */
 export type BoundedTextV1 = { text: string; truncated: boolean };
+/** E09F：接续说明里审阅依据的上限（字符）。依据本身至多 4 KiB，全文在审查报告里（`failing[].reportRef`）。 */
+export const CONTINUATION_REVIEW_BASIS_CHARS = 2000;
 /** Whether the workspace source changed between two persisted checkpoints. */
 export type SourceChangeVerdictV1 = 'changed' | 'unchanged' | 'unknown';
 export type ContinuationToolCallV1 = {
@@ -234,8 +236,12 @@ export type ContinuationBriefV1 = {
     messages: Array<{ messageRef: SessionMessageRef; part: 'message' | 'response'; excerpt: BoundedTextV1 }>;
     messagesOmitted: number;
   };
-  /** The previous Run's chain head. */
-  checks: { roundRef: VerificationRoundRef; roundOrdinal: number; failing: FailingCheckFactV1[]; gapCodes: string[] } | null;
+  /**
+   * The previous Run's chain head. E09F：审查没过时 `failing` 里有审查项，`reviewBasis` 是审查员写的依据
+   * （截到 `CONTINUATION_REVIEW_BASIS_CHARS`）；没有审查或审查通过时没有这个成员。
+   */
+  checks: { roundRef: VerificationRoundRef; roundOrdinal: number; failing: FailingCheckFactV1[]; gapCodes: string[];
+    reviewBasis?: BoundedTextV1 } | null;
   requeue: { reason: BoundedTextV1; reasonAuthor: ReworkActorClass; newInputs: ContinuationNewInputV1[] };
   /** Best effort; never claims "no change" for a window it could not observe. */
   workspace: {
@@ -621,13 +627,15 @@ function acceptedInputsProblem(value: unknown): Problem {
 function checksProblem(value: unknown): Problem {
   if (value === null) return null;
   const path = 'continuationBrief.checks';
-  const checks = exact(value, path, ['roundRef', 'roundOrdinal', 'failing', 'gapCodes']);
+  const checks = exact(value, path, ['roundRef', 'roundOrdinal', 'failing', 'gapCodes'], ['reviewBasis']);
   if (typeof checks === 'string') return checks;
   return roundRef(checks['roundRef'], `${path}.roundRef`)
     ?? (Number.isSafeInteger(checks['roundOrdinal']) && (checks['roundOrdinal'] as number) >= 1
       ? null : `${path}.roundOrdinal must be a positive safe integer`)
     ?? list(checks['failing'], `${path}.failing`, null, failingCheckProblem)
-    ?? list(checks['gapCodes'], `${path}.gapCodes`, null, (entry, at) => (nonEmpty(entry) ? null : `${at} must be a non-empty string`));
+    ?? list(checks['gapCodes'], `${path}.gapCodes`, null, (entry, at) => (nonEmpty(entry) ? null : `${at} must be a non-empty string`))
+    ?? (checks['reviewBasis'] === undefined ? null
+      : boundedTextWithin(checks['reviewBasis'], `${path}.reviewBasis`, CONTINUATION_REVIEW_BASIS_CHARS));
 }
 function failingCheckProblem(value: unknown, path: string): Problem {
   const check = exact(value, path, ['checkId', 'phase', 'outcome', 'cause', 'reportRef']);

@@ -55,7 +55,7 @@ import {
 } from '../../../contracts/task-requeue.js';
 import type { UnknownCallReviewV1 } from '../../../contracts/unknown-call-review.js';
 import type { RoundSnapshot, VerificationRoundRef } from '../../../contracts/verification.js';
-import { roundFailureFacts, runFailureOrigin } from './no-progress.js';
+import { roundFailureFacts, runFailureOrigin, type RoundReviewFactV1 } from './no-progress.js';
 import { isPausedInterrupted, runUnresolvedBlocker } from './run-machine.js';
 import { reject, unreachable, type Rejected } from './transition.js';
 import {
@@ -738,6 +738,8 @@ type FailureInputCommonV1 = {
   goalDesiredState: GoalDesiredState;
   /** The latest reverify refusal under the head's key (`subjectId` = head roundId); null when absent. */
   reverifyRefusal: TaskReworkRefusalSnapshotV1 | null;
+  /** E09F：链头的审查结论（读者在同一窗口读来）；缺省读作没有审查。失败项按 `roundFailureFacts` 的同一条规则列。 */
+  headReview?: RoundReviewFactV1 | null;
   /** `countEndedGoalRuns` over the Goal's raw candidates; never a guard. */
   goalEndedRuns: number;
   /** `configurationFor(scope)` now (LA-4); null when unknown. */
@@ -1014,7 +1016,7 @@ function gateVerdict(view: GateView, limit: number): { row: GateVerdictRow; verd
   if (stop !== null) return { row: GATE_REVERIFY_STOP_ROW[stop.at], verdict: stop.verdict };
   if (refusal !== null && !refusal.stale && refusal.record.code === 'source_unchanged' && head.outcome === 'FAIL') {
     return { row: 'GV-8', verdict: stopped('gate_needs_fix',
-      { operation: 'reverify', failingChecks: roundFailureFacts(head).checks }) };
+      { operation: 'reverify', failingChecks: roundFailureFacts(head, input.headReview ?? null).checks }) };
   }
   if (head.outcome === 'FAIL') {
     return { row: 'GV-9', verdict: { kind: 'reverify', roundRef: { ...head.ref }, needsFinalize: false, onlyIfSourceChanged: true,
@@ -1090,7 +1092,7 @@ function workFailureFacts(view: WorkView, policy: TaskAutomationPolicyV1, verdic
     run: runFacts(run, input.kernelRunFailedError),
     interruption: interruptionFacts(run, input.pointerIntent),
     stop: stopFacts(input.pointerIntent),
-    round: head === null ? null : roundFacts(head),
+    round: head === null ? null : roundFacts(head, input.headReview ?? null),
     source: sourceFacts(head, [view.requeueRefusal, view.reverifyRefusal]),
     requeueActors: workRequeueActors(view),
     reverifyActors: workReverifyActors(view),
@@ -1160,7 +1162,7 @@ function gateFailureFacts(view: GateView, policy: TaskAutomationPolicyV1, verdic
     run: anchor === null ? null : runFacts(anchor, input.kernelRunFailedError),
     interruption: null,
     stop: null,
-    round: head === null ? null : roundFacts(head),
+    round: head === null ? null : roundFacts(head, input.headReview ?? null),
     source: sourceFacts(head, [view.reverifyRefusal]),
     requeueActors: [],
     reverifyActors: gateReverifyActors(view),
@@ -1214,8 +1216,8 @@ function stopFacts(pointerIntent: StopIntentV1 | null): TaskFailureFactsV1['stop
     requester: stopRequesterOf(pointerIntent) };
 }
 
-function roundFacts(head: RoundSnapshot): NonNullable<TaskFailureFactsV1['round']> {
-  const facts = roundFailureFacts(head);
+function roundFacts(head: RoundSnapshot, review: RoundReviewFactV1 | null): NonNullable<TaskFailureFactsV1['round']> {
+  const facts = roundFailureFacts(head, review);
   return { roundRef: { ...head.ref }, revision: head.revision, status: head.status, outcome: head.outcome, failingChecks: facts.checks,
     gapCodes: facts.gapCodes, sourceDigest: head.identity.sourceDigest, workspaceRevision: head.identity.workspaceRevision,
     ordinal: roundOrdinalOf(head), autoCount: head.chain.autoCount };

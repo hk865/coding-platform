@@ -216,6 +216,11 @@ export type ResolveUnknownQueryRunInput = {
   inputsConfirmed: boolean | null;
   /** The tally recorded in the same closing commit; absent, the writer records an explicit `unknown`. */
   activity?: RunActivityFactsV1;
+  /**
+   * 用户 11-17：Host 入口读到的、Turn 里没出结果的调用的工具名（Kernel 读不到时为空）。平台身份的认定只在它们
+   * 全是只读工具时合法；人的认定不看。和 `kernelTurnOpen` 一样是事实，不进请求指纹。
+   */
+  unresolvedToolNames?: string[];
 };
 
 /**

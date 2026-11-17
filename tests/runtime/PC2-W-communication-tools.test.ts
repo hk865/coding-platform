@@ -22,7 +22,7 @@ const specification = (tools: ToolDefinition[]) => tools.map(tool => ({ name: to
 const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
   {
     "name": "send_session_message",
-    "description": "Session mailbox: send_session_message",
+    "description": "Session mailbox: send_session_message. An action_request about a Goal needs expected: copy the Goal card's dispatchBasis from look_graph unchanged; a refusal names the current values in dispatchCurrent.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",

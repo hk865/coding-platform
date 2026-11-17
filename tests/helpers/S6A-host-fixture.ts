@@ -356,7 +356,10 @@ export type S6ASecretaryBudget = {
 
 export type S6AHostWorldOptions = S6AWorldOptions & {
   secretaryBudget?: S6ASecretaryBudget;
-  /** The secretary binding's Host tool grant; default the base world's (`['read']`). */
+  /**
+   * The secretary binding's Host tool grant; default the base world's (`['read']`). 列了 `run_readonly_command` 时
+   * 同时给 L18 的整工作区授权（`readonlyCommandAccess`），这个工具才挂得上。
+   */
   secretaryTools?: readonly string[];
   /**
    * The Host's Workflow also binds the secretary role for Work and the secretary binding's grant adds
@@ -504,7 +507,10 @@ export async function openS6AHostWorld(options: S6AHostWorldOptions): Promise<S6
     const binding = next.bindings.find(entry => entry.id === profile.runtimeBindingId);
     if (binding !== undefined) {
       binding.grant = { ...binding.grant, budget: { ...binding.grant.budget, contextWindowTokens: window, timeoutMs: null },
-        ...(secretaryTools === undefined ? {} : { tools: [...secretaryTools] }) };
+        ...(secretaryTools === undefined ? {} : { tools: [...secretaryTools] }),
+        // 只读命令只在 L18 的整工作区授权下才挂上（QRR：用它造“不在只读名单里”的结果未知）。
+        ...(secretaryTools?.includes('run_readonly_command') === true
+          ? { readonlyCommandAccess: 'all_except_denied' as const } : {}) };
     }
     return next;
   };

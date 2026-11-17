@@ -26,7 +26,11 @@
 import { messageOf } from '../../contracts/error-message.js';
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../contracts/core/results.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
-import type { CheckProcessObservation, RoundSnapshot, VerificationRoundRef } from '../../contracts/verification.js';
+import {
+    CHECK_DENIED_PREFIXES, type CheckProcessObservation, type RegisteredCommandCheck, type RoundSnapshot,
+    type VerificationRoundRef,
+} from '../../contracts/verification.js';
+import { checkBaselineNotStarted, checkBaselineOf, type CheckBaselineV1 } from '../../contracts/check-review.js';
 import type { ResourceCapSource } from '../../../vendor/coding-agent/dist/public-api.js';
 import { KNOWLEDGE_DIRECTORY } from '../../contracts/knowledge.js';
 import { ensureKnowledgeDirectory } from '../workspace/knowledge-exclude.js';
@@ -51,6 +55,13 @@ export interface RegisteredCheckRunner {
         ctx: CoreCallContext,
         request: GraphWrite<{ roundRef: VerificationRoundRef; checkId: string }>,
     ): Promise<ReadResult<RoundSnapshot>>;
+    /**
+     * G8B B1c：一条新检查在工作区主线根目录当前内容上跑一次（改动前的事实），沙盒、`.git` 屏蔽、命令槽、不联网都和
+     * 检查轮一样。没跑成也是一个事实（`not_started`），只有调用方取消回 `cancelled`。测试替身可以不带它，调用方按
+     * “没跑成”处理。
+     */
+    runCheckBaseline?(ctx: CoreCallContext, input: { workspace: WorkspaceRef; check: RegisteredCommandCheck }):
+        Promise<ReadResult<CheckBaselineV1>>;
 }
 
 export type RegisteredCheckRunnerDependencies = {
@@ -65,7 +76,17 @@ export type RegisteredCheckRunnerDependencies = {
      *  (coordination: its verdict depends on this workspace version only, and its definition was approved as one
      *  that does not reach the network). */
     toolchain?: CommandToolchain;
+    /** G8B B1c：这个工作区有没有命令授权（Host 的设置）；没有就不跑改动前的事实。没给就只看 `authorize`。 */
+    commandsAllowed?: (workspace: WorkspaceRef) => boolean;
     now(): string;
+};
+
+type SandboxKernel = RegisteredCheckKernel;
+/** 检查轮和改动前的事实共用的一份沙盒准备。 */
+type PreparedSandbox = {
+    workspace: Awaited<ReturnType<SandboxKernel['WorkspaceSandbox']['create']>>;
+    profile: Awaited<ReturnType<SandboxKernel['ProcessSandbox']['probe']>>;
+    sandboxOptions: ReturnType<typeof withCommandSandbox>;
 };
 
 /** stdout/stderr each retain at most 32 KiB; real totalBytes/truncated survive. */
@@ -86,7 +107,7 @@ function mapWorkspaceCode(code: string): CoreError {
     return 'unavailable';
 }
 
-export function createRegisteredCheckRunner(deps: RegisteredCheckRunnerDependencies): RegisteredCheckRunner {
+export function createRegisteredCheckRunner(deps: RegisteredCheckRunnerDependencies): Required<RegisteredCheckRunner> {
     /** A finishing signal under the same Host identity/scope (B2 cleanup pattern): a proven fact survives a late cancel. */
     const finishing = (ctx: CoreCallContext): CoreCallContext => ({ ...ctx, signal: new AbortController().signal });
 
@@ -156,6 +177,91 @@ export function createRegisteredCheckRunner(deps: RegisteredCheckRunnerDependenc
         return last as CoreRejection;
     }
 
+    /**
+     * G8B B1c：检查轮和改动前的事实共用的准备段：知识目录、沙盒选项、工作区沙盒、探测。失败回拒绝，没有进程起过。
+     */
+    async function prepareSandbox(root: string, deniedPrefixes: readonly string[]):
+        Promise<{ ok: true; value: PreparedSandbox } | { ok: false; rejection: CoreRejection }> {
+        // The knowledge directory is mounted read-only below, so it must exist
+        // before the probe; the platform is the only writer of knowledge files.
+        try {
+            ensureKnowledgeDirectory(root);
+        } catch (error) {
+            return { ok: false, rejection: reject('unavailable', `making the knowledge directory failed: ${messageOf(error)}`) };
+        }
+        // The check runs in the workspace but may not write the platform's
+        // knowledge files (KLS-2: one writer). The probe and the real command
+        // share this one options object.
+        const sandboxOptions = withCommandSandbox({ readOnlyPaths: [KNOWLEDGE_DIRECTORY] },
+            deps.toolchain === undefined ? undefined : { toolchain: deps.toolchain });
+        let workspace;
+        try {
+            workspace = await deps.kernel.WorkspaceSandbox.create(root, { deniedPrefixes: [...deniedPrefixes] });
+        } catch (error) {
+            return { ok: false, rejection: reject('unsupported', `the verification workspace is unavailable: ${messageOf(error)}`) };
+        }
+        let profile;
+        try {
+            profile = await deps.kernel.ProcessSandbox.probe(root, workspace, sandboxOptions);
+        } catch (error) {
+            return { ok: false, rejection: reject('unsupported', `the process sandbox probe failed: ${messageOf(error)}`) };
+        }
+        if (!profile.available) {
+            return { ok: false, rejection: reject('unsupported',
+                profile.reason ?? 'the process sandbox is unavailable; no registered command was run') };
+        }
+        return { ok: true, value: { workspace, profile, sandboxOptions } };
+    }
+
+    /**
+     * G8B B1c：检查轮和改动前的事实共用的执行段：先占一个 Host 命令槽，再在准备好的沙盒里跑。等槽时或起进程前被
+     * 取消回 `'cancelled'`；只有证明没起来的（`sandbox_unavailable`/`launch_failed`）记成 `not_started`；其余异常
+     * 回拒绝（执行窗口未知）。
+     */
+    async function executeInSandbox(ctx: CoreCallContext, prepared: PreparedSandbox, root: string,
+        definition: { command: string; cwd: string; timeoutMs: number }): Promise<CheckProcessObservation | 'cancelled' | CoreRejection> {
+        // 121-112 ruling 3: a registered check is a platform command and takes
+        // one Host slot before launch. Waiting is not a failure; a cancel while
+        // waiting is the same caller cancellation as a cancel before the start.
+        const release = deps.commandSlots === undefined
+            ? () => {}
+            : await deps.commandSlots.acquire(ctx.signal);
+        if (release === null) return 'cancelled';
+        const startedAt = deps.now();
+        try {
+            // Never start a new process once the original caller signal was
+            // already cancelled before execute.
+            if (ctx.signal.aborted) return 'cancelled';
+            const sandbox = new deps.kernel.ProcessSandbox(prepared.profile, root, prepared.workspace, {
+                ...prepared.sandboxOptions,
+                ...(deps.resourceCaps === undefined ? {} : { resourceCaps: deps.resourceCaps }),
+            });
+            const result = await sandbox.execute({
+                command: definition.command, cwd: definition.cwd,
+                timeoutMs: definition.timeoutMs, outputLimitBytes: OUTPUT_LIMIT_BYTES,
+                signal: ctx.signal,
+            });
+            // L10: the Kernel report is copied verbatim; every Kernel process result carries one.
+            return {
+                kind: 'executed', startedAt, finishedAt: deps.now(),
+                exitCode: result.exitCode, signal: result.signal, timedOut: result.timedOut, cancelled: result.cancelled,
+                stdout: { text: result.stdout.text, totalBytes: result.stdout.totalBytes, truncated: result.stdout.truncated },
+                stderr: { text: result.stderr.text, totalBytes: result.stderr.totalBytes, truncated: result.stderr.truncated },
+                effects: { workspaceRevision: result.effects.workspaceRevision, changedPaths: [...result.effects.changedPaths] },
+                sandboxProfileVersion: result.sandboxProfileVersion,
+                resourceCaps: result.resourceCaps,
+            };
+        } catch (error) {
+            if (error instanceof deps.kernel.ProcessSandboxError
+                && (error.code === 'sandbox_unavailable' || error.code === 'launch_failed')) {
+                return { kind: 'not_started', reason: error.code, startedAt, finishedAt: deps.now() };
+            }
+            return reject('unavailable', `the registered check execution window is unknown: ${messageOf(error)}`);
+        } finally {
+            release();
+        }
+    }
+
     return {
         async runRegisteredCheck(
             ctx: CoreCallContext,
@@ -184,33 +290,8 @@ export function createRegisteredCheckRunner(deps: RegisteredCheckRunnerDependenc
                     'the current Host permission revision is not the trusted configuration binding'));
             }
             const root = resolved.value.root;
-            // The knowledge directory is mounted read-only below, so it must exist
-            // before the probe; the platform is the only writer of knowledge files.
-            try {
-                ensureKnowledgeDirectory(root);
-            } catch (error) {
-                return reject('unavailable', `making the knowledge directory failed: ${messageOf(error)}`);
-            }
-            // The check runs in the workspace but may not write the platform's
-            // knowledge files (KLS-2: one writer). The probe and the real command
-            // share this one options object.
-            const sandboxOptions = withCommandSandbox({ readOnlyPaths: [KNOWLEDGE_DIRECTORY] },
-                deps.toolchain === undefined ? undefined : { toolchain: deps.toolchain });
-            let workspace;
-            try {
-                workspace = await deps.kernel.WorkspaceSandbox.create(root, { deniedPrefixes: [...configuration.deniedPrefixes] });
-            } catch (error) {
-                return reject('unsupported', `the verification workspace is unavailable: ${messageOf(error)}`);
-            }
-            let profile;
-            try {
-                profile = await deps.kernel.ProcessSandbox.probe(root, workspace, sandboxOptions);
-            } catch (error) {
-                return reject('unsupported', `the process sandbox probe failed: ${messageOf(error)}`);
-            }
-            if (!profile.available) {
-                return reject('unsupported', profile.reason ?? 'the process sandbox is unavailable; no registered command was run');
-            }
+            const prepared = await prepareSandbox(root, configuration.deniedPrefixes);
+            if (!prepared.ok) return prepared.rejection;
 
             const begin = await deps.evidence.beginCheck(ctx, request);
             if (begin.status !== 'committed') return begin;
@@ -263,60 +344,42 @@ export function createRegisteredCheckRunner(deps: RegisteredCheckRunnerDependenc
                     ? afterBegin : reject('unavailable', 'the begun round could not be read again; no process was started'));
             }
 
-            // 121-112 ruling 3: a registered check is a platform command and takes
-            // one Host slot before launch. Waiting is not a failure; a cancel while
-            // waiting is the same caller cancellation as a cancel before the start.
-            const release = deps.commandSlots === undefined
-                ? () => {}
-                : await deps.commandSlots.acquire(ctx.signal);
-            if (release === null) {
+            const observation = await executeInSandbox(ctx, prepared.value, root, ticket.definition);
+            if (observation === 'cancelled') {
                 return await abandon(ctx, round.ref, check.checkId, invocationId, 'caller_cancelled',
                     reject('cancelled', 'the registered check was cancelled before the process started'));
             }
-            const startedAt = deps.now();
-            let observation: CheckProcessObservation;
-            try {
-                // Never start a new process once the original caller signal was
-                // already cancelled before execute.
-                if (ctx.signal.aborted) {
-                    return await abandon(ctx, round.ref, check.checkId, invocationId, 'caller_cancelled',
-                        reject('cancelled', 'the registered check was cancelled before the process started'));
-                }
-                const sandbox = new deps.kernel.ProcessSandbox(profile, root, workspace, {
-                    ...sandboxOptions,
-                    ...(deps.resourceCaps === undefined ? {} : { resourceCaps: deps.resourceCaps }),
-                });
-                const result = await sandbox.execute({
-                    command: ticket.definition.command, cwd: ticket.definition.cwd,
-                    timeoutMs: ticket.definition.timeoutMs, outputLimitBytes: OUTPUT_LIMIT_BYTES,
-                    signal: ctx.signal,
-                });
-                // L10: the Kernel report is copied verbatim; every Kernel process result carries one.
-                observation = {
-                    kind: 'executed', startedAt, finishedAt: deps.now(),
-                    exitCode: result.exitCode, signal: result.signal, timedOut: result.timedOut, cancelled: result.cancelled,
-                    stdout: { text: result.stdout.text, totalBytes: result.stdout.totalBytes, truncated: result.stdout.truncated },
-                    stderr: { text: result.stderr.text, totalBytes: result.stderr.totalBytes, truncated: result.stderr.truncated },
-                    effects: { workspaceRevision: result.effects.workspaceRevision, changedPaths: [...result.effects.changedPaths] },
-                    sandboxProfileVersion: result.sandboxProfileVersion,
-                    resourceCaps: result.resourceCaps,
-                };
-            } catch (error) {
-                if (error instanceof deps.kernel.ProcessSandboxError
-                    && (error.code === 'sandbox_unavailable' || error.code === 'launch_failed')) {
-                    observation = { kind: 'not_started', reason: error.code, startedAt, finishedAt: deps.now() };
-                } else {
-                    return reject('unavailable', `the registered check execution window is unknown: ${messageOf(error)}`);
-                }
-            } finally {
-                release();
-            }
+            if ('status' in observation) return observation;
             // The process result is an occurred fact. The same Host identity/scope
             // and the original ticket/invocation/observation are committed under a
             // trusted finishing signal (B2 cleanup pattern) so a late cancel cannot
             // lose or reclassify the real result. The process itself still used the
             // original `ctx.signal` above.
             return await recordResult(finishing(ctx), round.ref, check.checkId, invocationId, observation, afterBegin.value);
+        },
+
+        async runCheckBaseline(ctx, input) {
+            const ranAt = deps.now();
+            const notStarted = (reason: string): ReadResult<CheckBaselineV1> =>
+                ({ status: 'ready', value: checkBaselineNotStarted(input.check, ranAt, reason) });
+            // 拒绝：没有命令授权的工作区不跑 agent 提的命令（人的授权）。
+            if (deps.commandsAllowed !== undefined && !deps.commandsAllowed(input.workspace)) {
+                return notStarted('this workspace has no command grant');
+            }
+            // “改动前”就是这一刻工作区主线根目录的内容（Q1）：这份计划还没采用，它的任务一个都没跑。
+            const main = await deps.workspaceHost.resolveRoot(input.workspace);
+            if (main.status !== 'ready') return notStarted(`the workspace root could not be resolved: ${main.reason}`);
+            const authorized = await deps.workspaceHost.authorize(ctx, input.workspace);
+            if (authorized.status !== 'ready') return notStarted(`the workspace is not authorized: ${authorized.reason}`);
+            const root = main.value.root;
+            const prepared = await prepareSandbox(root, CHECK_DENIED_PREFIXES);
+            if (!prepared.ok) return notStarted(prepared.rejection.reason);
+            const observation = await executeInSandbox(ctx, prepared.value, root, input.check);
+            const cancelled = reject('cancelled', 'the check baseline was cancelled; the next pass runs it again');
+            if (observation === 'cancelled') return cancelled;
+            if ('status' in observation) return notStarted(observation.reason);
+            if (observation.kind === 'executed' && observation.cancelled) return cancelled;
+            return { status: 'ready', value: checkBaselineOf(input.check, ranAt, observation) };
         },
     };
 }

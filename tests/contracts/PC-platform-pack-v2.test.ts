@@ -21,9 +21,9 @@ const PACK: ResolvedPromptPackV1 = PLATFORM_PROMPT_PACK_V1;
 // 9's, set at the merge from the builder's text (lead rulings: pins are unified at the merge).
 const V2_TEMPLATES = {
     'base': 'cee15946501a2db933e00e1ea9954e8332542ab130268cd32c6962c91061958c',
-    'skill-platform-work': 'be9071ec8a231967ebd8c4be69ae2a841cfdfda157997e53065ef02edf654a56',
-    'skill-platform-secretary': 'a956d102b3a4e85fc286229d4724a27dd9eeb9a03a5f979bfcec8394aa14e7ed',
-    'skill-platform-adviser': 'b4ff371d1dbd53a51e5eb3415c35c12c45d18ae3e737d053f12394a6a05b8dc9',
+    'skill-platform-work': 'c86d50c9f7bd54d044cb2fcfed1cf9d146062ce12dfcc0d71c9355ecd2e5f3b5',
+    'skill-platform-secretary': '70dde99ef1db48706385d58c1fec689ea6be77f1ba033cc8f7502dd79f999dfb',
+    'skill-platform-adviser': '5c823b9ff62bb22618c605f72511a89e5ab0654311c937b05783d8e16caeb062',
     'skill-platform-scribe': '06eaa54bb819486d3b7e3e69bd4bdcfe0a5cfb7e5a73a893296500710ec7b65d',
     'skill-platform-reviewer': '730e2ee4693fbd17776a2adfb5c6b8edaeab2c5ba7ed102aec0ba49aec9307a6',
 } as const;
@@ -31,9 +31,9 @@ const V2_TEMPLATES = {
 /** The v1 Skill texts PC-1 pinned plus the decision 89, 8E L3 row 4 and 121-128 (goal gate) paragraphs, hand-written. */
 const V1_SKILL_DIGESTS = {
     // 第 12 版只多一句：要参谋或人定的事发 action_request（lead 11-17，E09）；去掉这一句即旧值 65d0bd9f…
-    'skill-platform-work': '1e952f907357a6c3374978c49a7172f14f93d319ccc47e207b270a3a918d22b7',
-    'skill-platform-secretary': '6abe9c1f1b6cdbb3e3cfbf03eff104ff0e641d3d0f4adba5fe73376a946084be',
-    'skill-platform-adviser': 'a4d9816458695fe467d8b83585e2e52d900fc182794b8bd7d9a45e11b50e600c',
+    'skill-platform-work': '75389f1c42c2dbc44756d15fb1d28e28e4dfa12384956e228c0827767dc8b693',
+    'skill-platform-secretary': 'd9b25d2165ff471080eb74bcb24066c426db4f423256982eb3fcf68b9432b12a',
+    'skill-platform-adviser': '65f95c529e0d35fccbf2532258733a73cb30133813062e32a8a425c352af9a14',
     'skill-platform-scribe': '5c4d9ebc3a3abb6b7d56bcb957728247789186588f4290d451d3c1efe2f46fd1',
     'skill-platform-reviewer': '36fcce8c4354c4ac131f4bc64759a76695b4781c0937ab47c3c44704f7b9ed20',
 } as const;
@@ -53,8 +53,8 @@ describe('platform prompt pack v2 (rulings 17–18)', () => {
         for (const [id, expectedDigest] of Object.entries(V2_TEMPLATES)) {
             expect(manifest.templates[id], `manifest entry ${id}`).toEqual({
                 file: `templates/${id}.txt`,
-                version: id === 'base' ? 3 : id === 'skill-platform-adviser' ? 16 : id === 'skill-platform-work' ? 12
-                    : id === 'skill-platform-reviewer' ? 5 : id === 'skill-platform-secretary' ? 12 : 9, // scribe 9 (SCRV, +1 in its tree)
+                version: id === 'base' ? 3 : id === 'skill-platform-adviser' ? 17 : id === 'skill-platform-work' ? 13
+                    : id === 'skill-platform-reviewer' ? 5 : id === 'skill-platform-secretary' ? 13 : 9, // scribe 9 (SCRV, +1 in its tree)
                 mentionsTools: [],
             });
             const text = templates[id];
@@ -102,7 +102,7 @@ describe('platform prompt pack v2 (rulings 17–18)', () => {
         // Every platform template id with its pack, version and mentions, hand-written:
         // no key or version is read from the manifest or the generated origins.
         expect(PACK.origins).toEqual({
-            'initial-planning-answer': { packId: 'platform', version: 11, mentionsTools: [] },
+            'initial-planning-answer': { packId: 'platform', version: 13, mentionsTools: [] },
             'consultation-received-input': { packId: 'platform', version: 1, mentionsTools: [] },
             'user-decision-response': { packId: 'platform', version: 1, mentionsTools: [] },
             'action-request-delivery': { packId: 'platform', version: 1, mentionsTools: [] },
@@ -119,6 +119,7 @@ describe('platform prompt pack v2 (rulings 17–18)', () => {
             'exec-review-input': { packId: 'platform', version: 1, mentionsTools: [] },
             'unknown-call-advice-input': { packId: 'platform', version: 1, mentionsTools: [] },
             'command-rerun-advice-input': { packId: 'platform', version: 1, mentionsTools: [] },
+            'check-review-input': { packId: 'platform', version: 1, mentionsTools: [] },
             'scribe-reminder': { packId: 'platform', version: 3, mentionsTools: [] },
             'continuation-brief': { packId: 'platform', version: 2, mentionsTools: [] },
             'stale-files-reminder': { packId: 'platform', version: 1, mentionsTools: [] },
@@ -130,7 +131,7 @@ describe('platform prompt pack v2 (rulings 17–18)', () => {
             'query-planning-input': { packId: 'platform', version: 2, mentionsTools: [] },
             'query-copy-input': { packId: 'platform', version: 2, mentionsTools: [] },
             'secretary-round': { packId: 'platform', version: 2, mentionsTools: [] },
-            'secretary-answer': { packId: 'platform', version: 7, mentionsTools: [] },
+            'secretary-answer': { packId: 'platform', version: 9, mentionsTools: [] },
             'handoff-write-understanding-secretary': { packId: 'platform', version: 1, mentionsTools: [] },
             'handoff-brief-secretary': { packId: 'platform', version: 1, mentionsTools: [] },
             'handoff-write-understanding-executor': { packId: 'platform', version: 1, mentionsTools: [] },
@@ -138,9 +139,9 @@ describe('platform prompt pack v2 (rulings 17–18)', () => {
             'handoff-brief-executor': { packId: 'platform', version: 1, mentionsTools: ['read'] },
             'handoff-brief-adviser': { packId: 'platform', version: 2, mentionsTools: ['read'] },
             base: { packId: 'platform', version: 3, mentionsTools: [] },
-            'skill-platform-work': { packId: 'platform', version: 12, mentionsTools: [] },
-            'skill-platform-secretary': { packId: 'platform', version: 12, mentionsTools: [] },
-            'skill-platform-adviser': { packId: 'platform', version: 16, mentionsTools: [] },
+            'skill-platform-work': { packId: 'platform', version: 13, mentionsTools: [] },
+            'skill-platform-secretary': { packId: 'platform', version: 13, mentionsTools: [] },
+            'skill-platform-adviser': { packId: 'platform', version: 17, mentionsTools: [] },
             'skill-platform-scribe': { packId: 'platform', version: 9, mentionsTools: [] },
             'skill-platform-reviewer': { packId: 'platform', version: 5, mentionsTools: [] },
         });

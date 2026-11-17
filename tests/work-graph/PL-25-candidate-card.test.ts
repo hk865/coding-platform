@@ -150,16 +150,17 @@ describe('PL-25 candidate card facts', () => {
     expect((await workflow.main.activePlan(workflow.goal))?.planRevision).toBe(skeleton.plan.planRevision + 1);
   });
 
-  it('unknown coverage and no settings directory are each their own fact, never an empty result', async () => {
+  it('no installed configuration reads as an empty check list, and no settings directory is its own fact', async () => {
     const world = await openS6AHostWorld({ backend: 'memory', extraHostOptions: { settings: {} } });
     worlds.push(world);
     const goal = world.goals.first;
     const proposalRef = (await seedCandidate(world, goal)).ref;
-    // No check configuration is installed: coverage is unknown, not "no finding".
+    // G8B（lead 11-17 补充裁定 1）：没装检查时，覆盖按“空的已装清单 + 计划自带的检查”算（原来读作覆盖未知 `null`）：
+    // 种子候选的必需要求只有内置见证能力，读出一条 no_registered_check。
     const facts = ready<{ diagnosis: unknown; exactReview: unknown; exportRead: unknown }>(
       await world.post('decisions/candidate-card', { scope: { ...S6A_SCOPE }, input: { goalRef: goal, proposalRef } }),
       'decisions/candidate-card');
-    expect(facts.diagnosis).toBeNull();
+    expect((facts.diagnosis as { code: string }[]).map(finding => finding.code)).toEqual(['no_registered_check']);
     expect(facts.exportRead).toEqual({ status: 'not_configured' });
     expect(facts.exactReview).toEqual({ status: 'ready', value: { status: 'not_sent' } });
   });

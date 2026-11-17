@@ -16,6 +16,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { QueryJobAnswerRef } from '../contracts/query-job.js';
+import { checkBaselineProblem, checkDigestOf } from '../contracts/check-review.js';
 import {
   checkConflictProblem, isRegisteredCommandCheck, proposedCheckSplit,
   type RegisteredCommandCheck, type TrustedCheckConfiguration,
@@ -507,10 +508,22 @@ function validPlanSource(value: unknown): value is CheckApprovalV1['plan'] {
     && nonEmpty(value['proposalRef']['proposalId']) && nonEmpty(value['checksDigest']);
 }
 
+/** G8B B1f：批准者是人，或带职责、批准线和回答的 agent；agent 批的条目另带作者和改动前的事实。 */
+function validApprovedBy(entry: Record<string, unknown>): boolean {
+  const by = entry['approvedBy'];
+  if (!isRecord(by)) return false;
+  if (by['kind'] === 'person') return entry['author'] === undefined && entry['baseline'] === undefined;
+  const session = by['session'];
+  const author = entry['author'];
+  return by['kind'] === 'agent' && (by['duty'] === 'adviser' || by['duty'] === 'reviewer')
+    && isRecord(session) && nonEmpty(session['projectId']) && nonEmpty(session['sessionId']) && isRecord(by['answerRef'])
+    && isRecord(author) && (author['duty'] === 'secretary' || author['duty'] === 'adviser')
+    && checkBaselineProblem(entry['baseline']) === null;
+}
+
 function parseStoredPlanChecks(value: unknown): PlanCheckEntryV1[] {
   const valid = (entry: unknown): boolean => isRecord(entry) && isRegisteredCommandCheck(entry['check'])
-    && validPlanSource(entry['plan'])
-    && isRecord(entry['approvedBy']) && entry['approvedBy']['kind'] === 'person' && nonEmpty(entry['approvedAt']);
+    && validPlanSource(entry['plan']) && validApprovedBy(entry) && nonEmpty(entry['approvedAt']);
   if (!Array.isArray(value) || !value.every(valid)) throw new Error('the private host settings file is invalid');
   return structuredClone(value as PlanCheckEntryV1[]);
 }
@@ -1040,7 +1053,10 @@ export async function createHostSettings(
         ...(persistedFacts?.checks === undefined && persistedFacts?.planChecks === undefined
           ? {} : { checks: [...structuredClone(persistedFacts.checks ?? []), ...savedPlanChecks(persistedFacts)] }),
         ...(persistedFacts?.planChecks === undefined ? {} : { checkApprovals: persistedFacts.planChecks.map(planned =>
-          ({ checkId: planned.check.checkId, plan: structuredClone(planned.plan), approvedBy: { ...planned.approvedBy },
+          ({ checkId: planned.check.checkId, plan: structuredClone(planned.plan),
+            approvedBy: structuredClone(planned.approvedBy),
+            ...(planned.author === undefined ? {} : { author: { ...planned.author } }),
+            ...(planned.baseline === undefined ? {} : { baseline: { ...planned.baseline } }),
             approvedAt: planned.approvedAt })) }),
         ...(facts.storeLocation === null
           ? {} : { storeLocation: { place: facts.storeLocation.place, reason: facts.storeLocation.reason } }),
@@ -1571,6 +1587,15 @@ export async function createHostSettings(
     if (conflicts.length > 0) return notInstalled('invalid', checkConflictProblem(conflicts));
     // 121-136 A1: a check identical to an installed one is installed already; only a real addition needs the grant.
     if (added.length === 0) return await apply();
+    // G8B B1f：agent 批准的每条新检查都要有改动前跑会失败的事实（同 id、同摘要）。
+    const approval = input.approval;
+    const baselineOf = (check: RegisteredCommandCheck) => approval.kind === 'agent' ? approval.baselines.find(baseline =>
+      baseline.checkId === check.checkId && baseline.checkDigest === checkDigestOf(check) && baseline.outcome === 'failed')
+      : undefined;
+    // 拒绝（产品规则：平台自动采用的新检查要在改动前失败）。会发生：请批之后、采用之前有人整批替换了检查清单
+    // （checks/approve），原来已装的检查又成了新增。
+    const unproved = approval.kind === 'agent' ? added.find(check => baselineOf(check) === undefined) : undefined;
+    if (unproved !== undefined) return notInstalled('forbidden', `检查 ${unproved.checkId} 没有改动前跑会失败的事实`);
     const ready = read;
     const checked = await trustedCheckProposal(scope, { owner: proposalRef, what: 'plan', read: async () => ready }, null);
     if (checked.status === 'rejected') return notInstalled(checked.response.code, checked.response.reason);
@@ -1583,8 +1608,14 @@ export async function createHostSettings(
     const next: PersistedWorkspaceV1 = {
       ...(previous ?? { scope: { ...scope }, name: facts.name, root: facts.root,
         writeAllowed: facts.writeAllowed, commandsAllowed: facts.commandsAllowed }),
-      planChecks: [...(previous?.planChecks ?? []), ...added.map(check => ({ check: structuredClone(check),
-        plan: structuredClone(plan), approvedBy: { kind: 'person' as const }, approvedAt }))],
+      planChecks: [...(previous?.planChecks ?? []), ...added.map((check): PlanCheckEntryV1 => ({
+        check: structuredClone(check), plan: structuredClone(plan),
+        // 人批的条目字节不变；agent 批的另记批准线、作者和这条检查的改动前事实。
+        ...(approval.kind === 'person' ? { approvedBy: { kind: 'person' as const } } : {
+          approvedBy: { kind: 'agent' as const, duty: approval.duty, session: { ...approval.session },
+            answerRef: structuredClone(approval.answerRef) },
+          author: { duty: approval.author }, baseline: { ...baselineOf(check)! } }),
+        approvedAt }))],
       planAdoption: plan,
     };
     if (previous !== undefined) workspaces[index] = next; else workspaces.push(next);

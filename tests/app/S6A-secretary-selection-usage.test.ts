@@ -572,7 +572,8 @@ describe('R-01b secretary selection after a restart (sqlite)', () => {
     async () => {
       // Driver off in the old Host: its two lines are taken by rounds the test advances
       // itself through the public Query steps, and the restart's driver takes over.
-      const world = remember(await openS6AHostWorld({ backend: 'sqlite' }));
+      // QRR（lead 裁定 11-17）：S0 用不在只读名单里的只读命令，重启后才留在 unknown、继续占着线。
+      const world = remember(await openS6AHostWorld({ backend: 'sqlite', secretaryTools: ['read', 'run_readonly_command'] }));
       const capLimits = (await world.post('projects/role-limits', plain(S6A_SCOPE,
         { projectRef: { projectId: S6A_SCOPE.projectId } }))).body as { status: string; value: { revision: number } };
       expect(capLimits.status).toBe('ready');
@@ -585,11 +586,11 @@ describe('R-01b secretary selection after a restart (sqlite)', () => {
       // S0's own round runs into a real tool call that gets no result: the line is busy
       // because a model run holds it, not because its last input would be too long.
       const s0 = await world.createSecretary('s0');
-      await world.scripted.script(s0, [{ kind: 'calls', calls: [{ callId: 's6a-s0-list', name: 'list_files',
-        args: { prefix: '.' } }] }]);
+      await world.scripted.script(s0, [{ kind: 'calls', calls: [{ callId: 's6a-s0-command', name: 'run_readonly_command',
+        args: { command: 'ls' } }] }]);
       const s0Round = await submitOrThrow(world, { goalId: S6A_GOAL_1.goalId, text: 'S6A S0 goal-1 round' });
       expect(s0Round).toMatchObject({ assignment: 'assigned', secretary: s0.ref, created: false });
-      const tool = await world.gates.toolCall(s0, 'list_files');
+      const tool = await world.gates.toolCall(s0, 'run_readonly_command');
       await claimStep(world, s0Round.round, s0);
       const preparedS0 = await prepareStep(world, s0Round.round);
       const startingS0 = startStep(world, s0, preparedS0);

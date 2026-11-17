@@ -23,7 +23,7 @@ import {
   SessionRefShape,
 } from './data-format-refs.js';
 import { canonicalJson, canonicalKey } from './fingerprint.js';
-import { DecisionSubjectShape, RULE_ACTIONS, type DecisionSubjectV1 } from './goal-decisions.js';
+import { DecisionSubjectShape, RULE_ACTIONS, type DecisionObjectV1, type DecisionSubjectV1 } from './goal-decisions.js';
 import type { PlatformDutyV1 } from './platform-duty.js';
 import { GoalScreeningShape } from './query-job.js';
 import { hasOnlyKeys, isRecord, nonEmpty } from './validation/common.js';
@@ -319,11 +319,12 @@ export const ProjectRoleLimitsChangedFormat = defineEvent({ name: 'ProjectRoleLi
     proof: f.optional(f.json()) } });
 export const PROJECT_NOTICE_KINDS = ['module_maintainer_assigned', 'automatic_adjustment',
   'knowledge_write_unconfirmed', 'knowledge_reverted', 'knowledge_conflict', 'command_over_line',
-  'command_review', 'workspace_removed'] as const;   // :268, `7D2 appends`
+  'command_review', 'workspace_removed', 'check_approved', 'check_to_person'] as const;   // :268, `7D2 appends`; G8B B1g 加两种
 export type ProjectNoticeKindV1 = (typeof PROJECT_NOTICE_KINDS)[number];
 // :270, the one widened writer input; `DecisionSubjectV1` is the existing goal/project union, not a new type.
+// G8B B1g：`objects` 只在批检查的两种上写，链到那份候选；旧记录没有它。
 export type NotifyProjectInputV1 = { projectRef: ProjectScope; subject?: DecisionSubjectV1;
-  kind: ProjectNoticeKindV1; summary: string; operation: OperationRef };
+  kind: ProjectNoticeKindV1; summary: string; operation: OperationRef; objects?: DecisionObjectV1[] };
 // b02: the `planned` body of a `role_line_split` operation; O1b writes/reads it, O2 only plans.
 export type RoleLineSplitSavedV1 = { source: SessionRef; move: readonly RoleScopeV1[];
   keep: readonly RoleScopeV1[]; reason: 'too_long' | 'too_slow' | 'agent_proposal' };
@@ -333,13 +334,16 @@ export const ProjectNoticeRefShape = defineShape({ name: 'ProjectNoticeRef', fie
 export const ProjectNoticeFormat = defineRecord({ name: 'ProjectNotice', schemaId: 'ProjectNotice@1', aggregateType: 'ProjectNotice',
   fields: { ref: f.ref(ProjectNoticeRefShape), subject: DecisionSubjectShape.fields['subject']!, kind: f.enumOf(PROJECT_NOTICE_KINDS),
     summary: f.string({ min: 1, max: 512, unit: 'utf8Bytes' }), operation: f.ref(OperationRefShape),
+    /** `DecisionObjectV1[] | undefined`（G8B B1g）。 */
+    objects: f.optional(f.json()),
     since: f.boundCursor('since'), revision: f.literal(1) }, lookups: [{ name: PROJECT_NOTICES_BY_PROJECT_LOOKUP, equal: ['ref.projectId'],
     orderBy: { path: 'since', valueType: 'text' } }] });
 export type ProjectNoticeV1 = InferRecord<(typeof ProjectNoticeFormat)['fields']>;
 export const ProjectNoticeCreatedFormat = defineEvent({ name: 'ProjectNoticeCreated', eventType: 'ProjectNoticeCreated',
   schemaVersion: 1, fields: { projectId: id, workspaceId: f.nullable(id), notice: f.object({ ref: f.ref(ProjectNoticeRefShape),
     subject: DecisionSubjectShape.fields['subject']!, kind: f.enumOf(PROJECT_NOTICE_KINDS),
-    summary: f.string({ min: 1, max: 512, unit: 'utf8Bytes' }), operation: f.ref(OperationRefShape) }) } });
+    summary: f.string({ min: 1, max: 512, unit: 'utf8Bytes' }), operation: f.ref(OperationRefShape),
+    objects: f.optional(f.json()) }) } });
 
 // ------------------------------------------------------------------------ //
 // 7D2 R1 records: queue, autonomy rules, capacity episodes and their events  //

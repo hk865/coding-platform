@@ -84,6 +84,7 @@ export function systemRoundSendInput(input: {
       PLAN_RESUME_REQUEST_SENTENCE,
     ].join('\n')
     : input.round.kind === 'unknown_call' || input.round.kind === 'command_review' || input.round.kind === 'command_rerun'
+      || input.round.kind === 'check_review'
       ? [requestId.value, `subject: ${canonicalJson(input.round.subject as unknown as JsonValue)}`].join('\n')
       : input.text;
   return {
@@ -133,6 +134,8 @@ export function planningAnswerShapeOf(
   const sender = message.sender;
   if (sender.kind === 'host' && sender.actor.kind === 'system') {
     if (sender.actor.id !== SYSTEM_ROUND_ACTOR.id) return 'text';
+    // G8B B1d：批检查轮只发给参谋或审阅者。
+    if ((duty === 'adviser' || duty === 'reviewer') && roundKind === 'check_review') return 'check_review';
     if (duty === 'reviewer') return roundKind === 'exec_review' ? 'exec_review' : 'plan_review';
     if (duty === 'adviser' && roundKind === 'unknown_call') return 'unknown_call_advice';
     if (duty === 'scribe' && roundKind === 'command_review') return 'scribe_review';

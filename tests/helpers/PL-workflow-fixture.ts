@@ -216,9 +216,12 @@ const PL_ROLE_CONSUMERS = ['pl-workflow-adviser-binding', 'pl-workflow-reviewer-
 export async function openPLWorkflowWorld(options: {
   backend?: 'memory' | 'sqlite'; label?: string; extraHostOptions?: Record<string, unknown>;
   extraBindings?: readonly S6AExtraBinding[];
+  /** G8B1a：主工作区的写和命令授权，原样交给基础世界。 */
+  workspaceGrants?: { writePrefixes?: string[]; allowCommands?: boolean };
 } = {}): Promise<PLWorkflowWorld> {
   const label = options.label ?? 'pl';
   const world = await openS6AHostWorld({ backend: options.backend ?? 'memory',
+    ...(options.workspaceGrants === undefined ? {} : { workspaceGrants: options.workspaceGrants }),
     extraBindings: [...PL_ROLE_BINDINGS, ...(options.extraBindings ?? [])],
     extraHostOptions: { inputConsumers: PL_ROLE_CONSUMERS, ...(options.extraHostOptions ?? {}) } });
   try {

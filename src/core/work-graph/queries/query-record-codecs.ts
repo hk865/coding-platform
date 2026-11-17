@@ -761,7 +761,7 @@ export function queryManifestProblem(value: unknown): string | null {
   if (!(answerShape === null || answerShape === 'secretary' || answerShape === 'initial'
     || answerShape === 'plan_round' || answerShape === 'plan_review' || answerShape === 'exec_review'
     || answerShape === 'unknown_call_advice' || answerShape === 'scribe_review'
-    || answerShape === 'command_rerun_advice')) {
+    || answerShape === 'command_rerun_advice' || answerShape === 'check_review')) {
     return 'the Query manifest answerShape is not a valid answer shape';
   }
   const assembly = value['contextAssembly'];
