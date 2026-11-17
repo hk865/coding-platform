@@ -202,6 +202,7 @@ import { decisionSourceKey, decisionSubjectGoalRef, decisionSubjectKey } from '.
 import { PLATFORM_PROMPT_PACK_V1 } from '../contracts/prompts/platform-pack.generated.js';
 import { createPlanService, createRequestCandidateService } from '../core/work-graph/tasks/plan-service.js';
 import type { PlanServiceDependencies } from '../core/work-graph/tasks/plan-service.js';
+import type { CandidateSourceLineDeps } from '../core/work-graph/tasks/plan-lineage.js';
 import { createPlanAdoptionStop } from './plan-adoption-stop.js';
 import { PLAN_RECORD_SCHEMAS } from '../core/work-graph/persistence/plan-record-codecs.js';
 import { DECISION_RECORD_SCHEMAS } from '../core/work-graph/persistence/decision-record-codecs.js';
@@ -1609,6 +1610,9 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       secretaryRounds: secretaryQueryRun, requestOwners: rawRequestFacts, recipientExecutions, dispatchBasis,
       ...(authorizeConfiguration === undefined ? {} : { runtimeAdmission: { bodies, authorizeConfiguration } }) };
     const mailbox = createSessionMailbox(mailboxDependencies);
+    // G8B B5：候选卡读“谁提的、人的原话”用的口，PL 读的和路由读的是同一个。
+    const candidateSourceLine: CandidateSourceLineDeps = { messages: mailbox,
+      requests: { readRequest: (...args) => rawRequestFacts.readRequest(...args) } };
     // §5.2.8(2): the note owner's ONE QueryRun source. The dispatcher sends a
     // plan_round/plan_review round (or a Host system `action_request` with no
     // shape) to the planning resolver and every other round to the unchanged
@@ -4209,6 +4213,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
         planReaders: planReadersOwner,
         decisions: rawDecisionReads,
         exportBooks: exportBooksPort,
+        sourceLine: candidateSourceLine,
       }, lifecycleReadContext({ projectId: proposalRef.projectId, workspaceId: proposalRef.workspaceId }),
       { goalRef, proposalRef }),
     };
@@ -5220,6 +5225,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
           planReaders: planReadersOwner,
           decisions: rawDecisionReads,
           exportBooks: exportBooksPort,
+          sourceLine: candidateSourceLine,
         }, ctx, input), unavailable),
       reconcile,
       /** RUN-22 (U): the operator's attestation through the Host entry; drained like every write. */

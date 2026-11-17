@@ -48,7 +48,7 @@ import type { RoleBindingRefV1, RunRef, RunSnapshot, TaskLeaseSnapshot } from '.
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { GoalDesiredState, GoalRef } from '../../../contracts/ledger.js';
 import type {
-  AcceptanceObligation, Disposition, PlanRevisionDraft, PlanRevisionRef, PlanValidationError, RuntimeTask,
+  AcceptanceObligation, Disposition, PlanRevisionDraft, PlanRevisionRef, PlanValidationError, RuntimeTask, TaskKind,
 } from '../../../contracts/plan.js';
 import type { QueryJobRef } from '../../../contracts/query-job.js';
 import type { TaskReductionSnapshot } from '../../../contracts/reduction.js';
@@ -652,6 +652,8 @@ export function tracedDispositionChangeProblem(input: {
   adopterClass: ReworkActorClass;
   /** Every disposition change of this candidate (`delta.dispositionChanges`; one Task's change on TASK-18). */
   changes: readonly FutureDispositionChangeV1[];
+  /** G8B B5：这些任务在源计划里的类型；守卫 5 的人取代例外只给工作任务。 */
+  taskKinds: ReadonlyMap<string, TaskKind>;
 }): PlanGuardProblem | null {
   // Guard 8 (the same D-9 check as PLAN-05, checked once).
   if (input.goalDesiredState === 'cancelled') {
@@ -661,7 +663,7 @@ export function tracedDispositionChangeProblem(input: {
   const traced = input.tasks.filter(isTracedTask)
     .sort((left, right) => (left.taskId < right.taskId ? -1 : left.taskId > right.taskId ? 1 : 0));
   for (const task of traced) {
-    const problem = tracedTaskProblem(task, affected, input.adopterClass, input.changes);
+    const problem = tracedTaskProblem(task, affected, input.adopterClass, input.changes, input.taskKinds);
     if (problem !== null) return problem;
   }
   return null;
@@ -677,6 +679,7 @@ function tracedTaskProblem(
   affected: ReadonlySet<string>,
   adopterClass: ReworkActorClass,
   changes: readonly FutureDispositionChangeV1[],
+  taskKinds: ReadonlyMap<string, TaskKind>,
 ): PlanGuardProblem | null {
   const id = task.taskId;
   // Guard 1: every Run of the Task (every Plan) has ended.
@@ -712,10 +715,12 @@ function tracedTaskProblem(
   }
   // Guard 5: a satisfied Task's disposition is final (the Reduction is only ever `satisfied`) unless a person
   // explicitly supersedes it with a named replacement. The Task keeps its frozen execution definition and
-  // obligations; only the disposition and the replacement move.
+  // obligations; only the disposition and the replacement move. G8B B5: the exception is a work Task's only; a
+  // satisfied gate stays final even when a person's plan supersedes it (`g8b-rulings.md` B5, TASK-19 guard 5).
   if (task.reduction !== null) {
     const change = changes.find((entry) => entry.taskId === id);
-    const personReplaces = adopterClass === 'human' && change?.to === 'superseded' && change.replacedByTaskId !== null;
+    const personReplaces = adopterClass === 'human' && change?.to === 'superseded' && change.replacedByTaskId !== null
+      && taskKinds.get(id) === 'work';
     if (!personReplaces) {
       return { code: 'invalid', detail: `task ${id} is satisfied; the disposition of a satisfied task is final`, reason: 'illegal' };
     }
@@ -1422,8 +1427,10 @@ function futureAdoptionStep(
   if (!Array.isArray(dispositionJudged)) return dispositionJudged;
   // The scope step refused a cancelled Goal (D-9) before any of this; guard 8 is the same check.
   if (facts.goal === undefined) return UNREAD;
+  // 仅改处置的任务执行定义两边一样，类型也一样，所以从草稿里取就是源计划里的类型。
   const traced = tracedDispositionChangeProblem({ goalDesiredState: facts.goal.desiredState, tasks: dispositionJudged,
-    affectedTaskIds: proposal.reason.affectedTaskIds, adopterClass, changes: delta.dispositionChanges });
+    affectedTaskIds: proposal.reason.affectedTaskIds, adopterClass, changes: delta.dispositionChanges,
+    taskKinds: new Map(draft.tasks.map((task) => [task.taskId, task.taskKind])) });
   if (traced !== null) return reject(traced.reason ?? 'guard_failed', traced.code, traced.detail);
   // Guard 9 (LA-3): only a `system` (automation) adopter reads and judges the existing carriers.
   let carrierTaskIds: readonly string[] = [];

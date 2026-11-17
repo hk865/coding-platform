@@ -196,6 +196,7 @@ import {
   uncoveredRequirementIssues,
   unknownModuleRejection,
   validateFutureObligationCoverage,
+  replacedGateIdsOf,
   validatePlanAssignments,
   validatePlanDraft,
 } from './plan-validation.js';
@@ -2864,6 +2865,8 @@ type AdoptionDispositionFacts = {
   goalDesiredState: GoalDesiredState;
   affectedTaskIds: readonly string[] | undefined;
   adopterClass: ReworkActorClass;
+  /** G8B B5：这次人采用合规取代的源关口（`replacedGateIdsOf`），任务状态机按它放过这些关口的处置变化。 */
+  replacedGateIds: ReadonlySet<string>;
   tasks: ReadonlyMap<string, { definition: RuntimeTask; phase: TaskPhaseFacts; facts: TracedTaskFactsV1 }>;
   taskGuards: ReadonlyMap<string, readonly RecordGuard[]>;
   carrierGuards: ReadonlyMap<string, readonly RecordGuard[]>;
@@ -2971,7 +2974,7 @@ function taskDispositionChange(change: PlannedDispositionChangeV1, sources: Plan
     { kind: 'disposition_changed', to: change.to, replacedByTaskId: change.replacedByTaskId, actorClass: read.adopterClass },
     { taskId: change.taskId, claim: null, completion: null, disposition: { facts: task.facts,
       goalDesiredState: read.goalDesiredState, affectedTaskIds: read.affectedTaskIds,
-      replacedByTaskId: task.definition.replacedByTaskId ?? null } });
+      replacedByTaskId: task.definition.replacedByTaskId ?? null, gateReplaced: read.replacedGateIds.has(change.taskId) } });
   if (!changed.ok) return refusalOf(changed);
   return changed.effects.some((effect) => effect.kind === 'record_disposition_change');
 }
@@ -3395,7 +3398,9 @@ async function applyFutureRevision(input: {
     pinnedPolicy: pinnedPolicyGuards,
     ...(catalogGuards === undefined ? {} : { catalog: catalogGuards }),
     disposition: adoptionDispositionFacts({ source, delta: supported!, read: dispositionRead.tasks, carriers: carrierRead,
-      goalDesiredState: goalScope.goal.desiredState, affectedTaskIds: proposal.reason.affectedTaskIds, adopterClass }) });
+      goalDesiredState: goalScope.goal.desiredState, affectedTaskIds: proposal.reason.affectedTaskIds, adopterClass,
+      replacedGateIds: replacedGateIdsOf({ source, target: proposal.draft, delta: supported!,
+        personAdopts: adopterClass === 'human' }) }) });
   if (commit.status !== 'ready') return commit;
   if (commit.requestSlot !== null) requestSlot = { requestRef, claim: requestSlotClaim(commit.requestSlot) };
   // Extras first: mergeGuards keeps first occurrences (same-version duplicates drop) and the target Plan ∅ guard stays last.
@@ -3449,6 +3454,7 @@ function adoptionDispositionFacts(input: {
   goalDesiredState: GoalDesiredState;
   affectedTaskIds: readonly string[] | undefined;
   adopterClass: ReworkActorClass;
+  replacedGateIds: ReadonlySet<string>;
 }): AdoptionDispositionFacts {
   const sourceTaskById = new Map(input.source.tasks.map((task) => [task.taskId, task]));
   const readById = new Map(input.read.map((entry) => [entry.facts.taskId, entry]));
@@ -3465,6 +3471,7 @@ function adoptionDispositionFacts(input: {
     });
   }
   return { goalDesiredState: input.goalDesiredState, affectedTaskIds: input.affectedTaskIds, adopterClass: input.adopterClass,
+    replacedGateIds: input.replacedGateIds,
     tasks, taskGuards: new Map(input.read.map((entry) => [entry.facts.taskId, entry.guards])),
     carrierGuards: new Map(input.carriers.map((entry) => [entry.facts.taskId, entry.guards])) };
 }

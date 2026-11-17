@@ -26,6 +26,24 @@ function mergeByKey<T>(base: readonly T[], segment: readonly T[], keyOf: (entry:
 }
 
 /**
+ * G8B B5 R2（lead 11-17 补充裁定 2）：一条源义务被这次改动放开了：它列的任务在目标里都不再活动，其中至少一个是这次
+ * 从活动变成不再活动的源关口。合并不带它（段只能替换和追加，这是段“不带只由旧关口列着的义务”的唯一写法），人采用时
+ * 可以不带它（`validateFutureObligationCoverage`），两处都只问这里。要求有关口跟着变：只由早就不活动的任务（延后、
+ * 取消）列着的可选义务不会在每次细化时被合并丢掉，否则普通细化会变成降标，agent 就采用不了。能不能取代那个关口
+ * 由采用时的 R1 判。
+ */
+export function obligationReleasedByGateChange(obligation: Pick<AcceptanceObligation, 'taskIds'>,
+  sourceTaskById: ReadonlyMap<string, Pick<RuntimeTask, 'taskKind' | 'disposition'>>,
+  targetTaskById: ReadonlyMap<string, Pick<RuntimeTask, 'disposition'>>): boolean {
+  const inactive = (taskId: string): boolean => targetTaskById.get(taskId)?.disposition !== 'active';
+  const releasedGate = (taskId: string): boolean => {
+    const before = sourceTaskById.get(taskId);
+    return before !== undefined && before.taskKind === 'gate' && before.disposition === 'active' && inactive(taskId);
+  };
+  return obligation.taskIds.every(inactive) && obligation.taskIds.some(releasedGate);
+}
+
+/**
  * Merges one segment's draft into the base it refines (§5.1.2).
  *
  * - An empty segment (no stage and no task) is rejected; every other invalid
@@ -40,6 +58,7 @@ function mergeByKey<T>(base: readonly T[], segment: readonly T[], keyOf: (entry:
  *   task is deleted: a closed task expresses its removal through disposition.
  * - Edges owned by a segment task are dropped from the base and the segment's
  *   edges append; other base edges stay. Instructions are copied verbatim.
+ * - G8B B5：段没重写、又被这次改动放开的基准义务（`obligationReleasedByGateChange`）不带进结果。
  *
  * Only `segment.stages` carry stage definitions. A segment task that names a
  * stage without its own definition is left to the existing dangling-stage
@@ -58,9 +77,13 @@ export function mergeStageRefinement(base: PlanRevisionSnapshot | PlanRevisionDr
   const assignments = base.assignments === undefined && segment.assignments === undefined
     ? undefined
     : mergeByKey(base.assignments ?? [], segment.assignments ?? [], (entry) => entry.taskId);
+  const baseTaskById = new Map(base.tasks.map((entry) => [entry.taskId, entry]));
+  const mergedTaskById = new Map(tasks.map((entry) => [entry.taskId, entry]));
+  const restated = new Set(segment.obligations.map((entry) => entry.obligationId));
   const obligations: AcceptanceObligation[] = mergeByKey(
     base.obligations, segment.obligations, (entry) => entry.obligationId,
-  );
+  ).filter((entry) => restated.has(entry.obligationId)
+    || !obligationReleasedByGateChange(entry, baseTaskById, mergedTaskById));
 
   const parentOf = [
     ...base.taskHierarchy.parentOf.filter((edge) => !segmentTaskIds.has(edge.childTaskId)),

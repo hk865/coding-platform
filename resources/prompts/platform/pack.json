@@ -5,7 +5,7 @@
   "templates": {
     "initial-planning-answer": {
       "file": "templates/initial-planning-answer.txt",
-      "version": 13,
+      "version": 14,
       "mentionsTools": []
     },
     "consultation-received-input": {
@@ -142,7 +142,7 @@
     },
     "secretary-answer": {
       "file": "templates/secretary-answer.txt",
-      "version": 9,
+      "version": 10,
       "mentionsTools": []
     },
     "handoff-write-understanding-secretary": {

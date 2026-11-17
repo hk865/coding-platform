@@ -338,6 +338,11 @@ export type TaskDispositionFacts = {
   goalDesiredState: GoalDesiredState;
   affectedTaskIds: readonly string[] | undefined;
   replacedByTaskId: string | null;
+  /**
+   * G8B B5（lead 11-17 补充裁定 1）：这次人采用的计划合规取代了这个关口。由计划校验的 R1（`replacedGateIdsOf`）在
+   * 采用时算好传进来，状态机不另判；不是关口、或不是人采用时为 false。
+   */
+  gateReplaced: boolean;
 };
 
 export type TaskGuardContext = {
@@ -1371,7 +1376,8 @@ function onTaskReworkRefused(
 /**
  * TASK-18 (an untraced Task) and TASK-19 (C7: a traced Task whose disposition
  * alone changes) in W16 order: the gate definition check of the future
- * coverage first (`plan-validation.ts`; a gate's disposition is frozen), then
+ * coverage first (`plan-validation.ts`; a gate's disposition is frozen, except
+ * G8B B5: a gate a person's plan supersedes under R1, `gateReplaced`), then
  * the §3 TASK-19 guards over this Task's facts (`tracedDispositionChangeProblem`:
  * the Goal is not cancelled, then, for a traced Task, every Run ended and none
  * unknown or unreconciled, no unconsumed yielded wait, the Lease released, not
@@ -1393,12 +1399,14 @@ function onDispositionChanged(
   if (event.to === state.disposition && event.replacedByTaskId === disposition.replacedByTaskId) {
     return reject('illegal', 'invalid', `the disposition is already ${event.to}`);
   }
-  if (state.taskKind === 'gate') {
+  // G8B B5：关口的处置照旧冻结，只有计划校验 R1 认可的人采用的取代例外（采用时算好传进来）。
+  if (state.taskKind === 'gate' && !disposition.gateReplaced) {
     return reject('guard_failed', 'invalid', `source gate task ${ctx.taskId} changed its definition or acceptance relationships`);
   }
   const problem = tracedDispositionChangeProblem({ goalDesiredState: disposition.goalDesiredState, tasks: [disposition.facts],
     affectedTaskIds: disposition.affectedTaskIds, adopterClass: event.actorClass,
-    changes: [{ taskId: ctx.taskId, from: state.disposition, to: event.to, replacedByTaskId: event.replacedByTaskId }] });
+    changes: [{ taskId: ctx.taskId, from: state.disposition, to: event.to, replacedByTaskId: event.replacedByTaskId }],
+    taskKinds: new Map([[ctx.taskId, state.taskKind]]) });
   if (problem !== null) return reject(problem.reason ?? 'guard_failed', problem.code, problem.detail);
   return accept({ ...state, disposition: event.to },
     [{ kind: 'write_plan_revision' }, { kind: 'record_disposition_change' }, { kind: 'move_goal_pointer' }]);

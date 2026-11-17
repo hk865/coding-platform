@@ -404,7 +404,7 @@ function dispositionFactsFor(label: StateLabel): TracedTaskFactsV1 {
   return { taskId: isGate(label) ? GATE : T, runs, selectedRun, lease, reduction, pointerIntent: null };
 }
 const dispositionCtx = (facts: TracedTaskFactsV1, patch: Partial<TaskDispositionFacts> = {}): TaskDispositionFacts =>
-  ({ facts, goalDesiredState: 'active', affectedTaskIds: [T, GATE], replacedByTaskId: null, ...patch });
+  ({ facts, goalDesiredState: 'active', affectedTaskIds: [T, GATE], replacedByTaskId: null, gateReplaced: false, ...patch });
 
 /**
  * The facts a real read would give for each state (a gate with rounds has no Run, Lease or Reduction). A

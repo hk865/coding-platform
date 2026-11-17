@@ -22,7 +22,7 @@ import {
   type FrozenObligation, type FrozenTaskDefinition,
 } from './plan-task-basis.js';
 import { buildTaskAdjacency, hasCycleInEdges, hasDirectedCycle } from '../model/task-index.js';
-import { mergeStageRefinement } from './stage-segment.js';
+import { mergeStageRefinement, obligationReleasedByGateChange } from './stage-segment.js';
 import type { PlanAdmissionFactsV1 } from '../model/secretary-contracts.js';
 import {
   draftHasModuleTask, futureChangeTraceProblem, tracedDispositionChangeProblem, type TracedTaskFactsV1,
@@ -648,6 +648,73 @@ function replacementIssues(source: PlanRevisionSnapshot, target: PlanRevisionDra
   return issues;
 }
 
+/**
+ * G8B B5（11-17 用户）：一份候选降低或改变了关口的标准：源计划里活动的关口在目标里不再是 active（带上它写的取代者），
+ * 或者源义务没带进目标。人采用时的放宽（`validateFutureObligationCoverage` 的 R1）、候选卡的事实和 PL 的决定表三处
+ * 都从这里取，不另判。
+ */
+export type StandardChangeV1 = {
+  supersededGates: { taskId: string; replacedByTaskId: string | null }[];
+  droppedObligationIds: string[];
+};
+
+/** G8B B5：只比源和目标两份计划；没有这种改动是 null。两个列表都按 id 排序。 */
+export function standardChangeOf(source: Pick<PlanRevisionSnapshot, 'tasks' | 'obligations'>,
+  target: Pick<PlanRevisionDraft, 'tasks' | 'obligations'>): StandardChangeV1 | null {
+  const targetTaskById = new Map(target.tasks.map((task) => [task.taskId, task]));
+  const supersededGates: StandardChangeV1['supersededGates'] = [];
+  for (const task of source.tasks) {
+    const next = targetTaskById.get(task.taskId);
+    // 目标里没有这个关口是物理删除，`deriveFuturePlanDelta` 报它，不算降标。
+    if (task.taskKind !== 'gate' || task.disposition !== 'active' || next === undefined || next.disposition === 'active') continue;
+    supersededGates.push({ taskId: task.taskId, replacedByTaskId: next.replacedByTaskId ?? null });
+  }
+  supersededGates.sort((left, right) => (left.taskId < right.taskId ? -1 : left.taskId > right.taskId ? 1 : 0));
+  const carried = new Set(target.obligations.map((obligation) => obligation.obligationId));
+  const droppedObligationIds = source.obligations.map((obligation) => obligation.obligationId)
+    .filter((obligationId) => !carried.has(obligationId)).sort();
+  return supersededGates.length === 0 && droppedObligationIds.length === 0 ? null
+    : { supersededGates, droppedObligationIds };
+}
+
+/**
+ * G8B B5 R1：人采用时可以取代的源关口。`standardChangeOf` 读出的不再活动的源关口里，只算这样的：目标里是 superseded，
+ * replacedByTaskId 指向本次新增的任务，它自己的任务字段除处置和取代者外不变（`executionDefinitionsAgree` 的去字段比较，
+ * 且不比它所在的义务：取代时它带的义务本来就跟着变）。取代者是不是同类任务由 `replacementIssues` 一处判。其余的照旧
+ * 由关口冻结报 `gate_definition_changed`：取消或延后关口、原地改关口、指向已有的任务。
+ */
+function replaceableGateIds(change: StandardChangeV1 | null, targetTaskById: ReadonlyMap<string, RuntimeTask>,
+  addedTaskIds: readonly string[], sourceDefinitions: ReadonlyMap<string, FrozenTaskDefinition>,
+  targetDefinitions: ReadonlyMap<string, FrozenTaskDefinition>): ReadonlySet<string> {
+  const added = new Set(addedTaskIds);
+  const withoutObligations = (definition: FrozenTaskDefinition): FrozenTaskDefinition =>
+    ({ ...definition, carriedObligations: [] });
+  const replaceable = new Set<string>();
+  for (const gate of change?.supersededGates ?? []) {
+    // 取代清单里的关口两份计划里都有，两份定义索引由同一份任务表建出，所以三处都取得到。
+    if (targetTaskById.get(gate.taskId)!.disposition !== 'superseded' || gate.replacedByTaskId === null
+      || !added.has(gate.replacedByTaskId)) continue;
+    const agree = executionDefinitionsAgree({ left: withoutObligations(sourceDefinitions.get(gate.taskId)!),
+      right: withoutObligations(targetDefinitions.get(gate.taskId)!) });
+    // 定义取不出规范文本时不算可取代：下面的关口冻结比同一份定义，会把它报成 unsupported。
+    if (agree === true) replaceable.add(gate.taskId);
+  }
+  return replaceable;
+}
+
+/**
+ * G8B B5 R1（lead 11-17 补充裁定 1）：这次采用合规取代的源关口；只有人采用时才有，否则是空集。计划校验的关口冻结
+ * （下面的 `validateFutureObligationCoverage`）和任务状态机的关口处置冻结都按它放宽：采用时由计划服务算好，经处置
+ * 事实传给状态机（`TaskDispositionFacts.gateReplaced`），条件只在 `replaceableGateIds` 一处。
+ */
+export function replacedGateIdsOf(input: { source: PlanRevisionSnapshot; target: PlanRevisionDraft; delta: FuturePlanDelta;
+  personAdopts: boolean }): ReadonlySet<string> {
+  if (!input.personAdopts) return new Set();
+  return replaceableGateIds(standardChangeOf(input.source, input.target),
+    new Map(input.target.tasks.map((task) => [task.taskId, task])), input.delta.addedTaskIds,
+    definitionIndex(input.source), draftDefinitionIndex(input.target));
+}
+
 export type FutureObligationCoverageResult =
   | { status: 'supported' }
   | { status: 'rejected'; issues: PlanValidationError[] }
@@ -666,7 +733,10 @@ export function validateFutureObligationCoverage(input: {
   source: PlanRevisionSnapshot;
   target: PlanRevisionDraft;
   delta: FuturePlanDelta;
-  /** A person's explicit adoption may change acceptance semantics under `changedRequirementKeepsOldId`. */
+  /**
+   * A person's explicit adoption may change acceptance semantics under `changedRequirementKeepsOldId`.
+   * G8B B5：人采用时还可以取代关口（R1），并不带被这次改动放开的义务（R2，`obligationReleasedByGateChange`）。
+   */
   personAdopts: boolean;
 }): FutureObligationCoverageResult {
   const { source, target, delta } = input;
@@ -677,6 +747,18 @@ export function validateFutureObligationCoverage(input: {
   const targetDefinitions = draftDefinitionIndex(target);
   const sourceAssignments = revisionAssignments(source);
   const targetAssignments = revisionAssignments(target);
+  // G8B B5（11-17 用户）：降低或改变关口的标准只由人采用的计划来做。人采用时，R1 合规取代的源关口不报冻结；R2 被这次
+  // 改动放开的源义务可以不带进目标（和合并同一个判断）。agent 或平台采用照旧冻结。
+  const replacedGates = input.personAdopts
+    ? replaceableGateIds(standardChangeOf(source, target), targetTaskById, delta.addedTaskIds, sourceDefinitions,
+      targetDefinitions)
+    : new Set<string>();
+  const sourceTaskById = new Map(source.tasks.map((task) => [task.taskId, task]));
+  // R2：人采用时，这次真的没带进目标、又被这次改动放开的源义务。
+  const released = new Set(input.personAdopts ? source.obligations
+    .filter((obligation) => !targetObligations.has(obligation.obligationId)
+      && obligationReleasedByGateChange(obligation, sourceTaskById, targetTaskById))
+    .map((obligation) => obligation.obligationId) : []);
 
   // The review-admission protocol is part of the original acceptance contract.
   // W1 cannot add, remove or switch it; the compiler preserves the source value.
@@ -694,6 +776,7 @@ export function validateFutureObligationCoverage(input: {
   for (const obligation of source.obligations) {
     const candidate = targetObligations.get(obligation.obligationId);
     if (candidate === undefined) {
+      if (released.has(obligation.obligationId)) continue;
       issues.push(planValidationError(`obligations[${obligation.obligationId}]`, 'obligation_semantics_changed',
         `source obligation ${obligation.obligationId} is missing from the candidate`));
       continue;
@@ -734,13 +817,19 @@ export function validateFutureObligationCoverage(input: {
     if (left === undefined || right === undefined) {
       return { status: 'unsupported', reason: `gate ${task.taskId} execution definition cannot be extracted` };
     }
-    const agree = frozenTaskDefinitionsAgree({ left, right });
+    // R2 放开的义务不再算进源关口的冻结定义：连续取代时，早先被取代的关口也列着它（Astra 审查 G8B-2 第 2 条）。
+    // 只从源定义里去掉这些义务，任务字段和其余义务照旧完整比较。
+    const kept = released.size === 0 ? left : { ...left,
+      carriedObligations: left.carriedObligations.filter((obligation) => !released.has(obligation.obligationId)) };
+    const agree = frozenTaskDefinitionsAgree({ left: kept, right });
     if (isBasisUnsupported(agree)) return { status: 'unsupported', reason: agree.reason };
-    if (!agree) {
+    if (!agree && !replacedGates.has(task.taskId)) {
       issues.push(planValidationError(`tasks[${task.taskId}]`, 'gate_definition_changed',
         `source gate task ${task.taskId} changed its definition or acceptance relationships: an adopted gate keeps `
         + 'its definition and exactly the obligations that list it, with their content. Leave the gate and those '
-        + 'obligations as adopted; a new obligation lists the new work tasks and, when it needs a gate, a new gate task'));
+        + 'obligations as adopted; a new obligation lists the new work tasks and, when it needs a gate, a new gate task. '
+        + 'Only a plan the person adopts may supersede a gate: mark it superseded with replacedByTaskId naming a new '
+        + 'gate task that carries a new obligation'));
     }
   }
 
@@ -954,7 +1043,8 @@ export function planRoundAnswerIssues(input: {
     if (trace !== null) reasons.push(trace.detail);
     const traced = tracedDispositionChangeProblem({ goalDesiredState: base.goalDesiredState,
       tasks: executionFactsOf(delta.delta.dispositionOnlyTaskIds), affectedTaskIds: input.affectedTaskIds,
-      adopterClass: 'human', changes: delta.delta.dispositionChanges });
+      adopterClass: 'human', changes: delta.delta.dispositionChanges,
+      taskKinds: new Map(base.plan.tasks.map((task) => [task.taskId, task.taskKind])) });
     if (traced !== null) reasons.push(traced.detail);
   }
   for (const issue of [...validatePlanDraft(draft, policy, base?.plan ?? null), ...uncoveredRequirementIssues(

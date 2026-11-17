@@ -25,5 +25,7 @@ export function openCandidateCardFacts(world: S6AHostWorld): CandidateCardFactsD
     records: world.platform.disconnect.records,
     planReaders: world.platform.planReaders,
     decisions: world.platform.decisions,
+    // G8B B5：降标的事实读“谁提的、人的原话”，用 Host 发布的邮箱和请求读口。
+    sourceLine: { messages: world.platform.messages, requests: world.platform.requestFacts },
   };
 }

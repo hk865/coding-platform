@@ -28,6 +28,7 @@ import {
 import type { PlanProposal, PlanTaskPort } from '../model/plan-contracts.js';
 import type { QueryJobPort } from '../queries/contracts.js';
 import { handoffContextOf } from '../sessions/session-handoff-service.js';
+import { planProposalIdFor } from './plan-service.js';
 import type { RequestFactsPort } from './request-facts.js';
 
 export type PlanSourceLineageV1 = {
@@ -49,7 +50,15 @@ export type PlanSourceLineageDeps = {
 export type CandidateSourceLineV1 = {
   session: SessionRef | null;
   via: 'request' | 'message' | 'agent_write' | 'unknown';
+  /**
+   * G8B B5：改动来自人的话时，人的原话（前 `PERSON_WORDS_MAX` 字）：来源消息由人发出时是这条消息的正文，请求候选是
+   * 写出它的那一轮请求的原文；其余为 null。
+   */
+  personWords: string | null;
 };
+
+/** G8B B5：卡上引用人的原话最多这么多字。 */
+const PERSON_WORDS_MAX = 1_000;
 
 /** 读作者用的口：消息沿用来源链的邮箱口，请求候选读请求的主人。 */
 export type CandidateSourceLineDeps = Pick<PlanSourceLineageDeps, 'messages'> & {
@@ -62,28 +71,41 @@ export type CandidateSourceLineDeps = Pick<PlanSourceLineageDeps, 'messages'> & 
  * - 请求候选（`requestRef` 是请求根）：请求的主人，即秘书线；
  * - 只有 `submittedBy`（执行者 Run 的 `propose_future_plan`）：写它的 Session；
  * - 都没有：`session: null`，`via: 'unknown'`。
- * 读失败原样返回，不猜。职责由调用方用自己现成的解析器换。
+ * 人的原话（G8B B5）在同一次读里取。读失败原样返回，不猜。职责由调用方用自己现成的解析器换。
  */
 export async function candidateSourceLineOf(ctx: CoreCallContext, deps: CandidateSourceLineDeps,
   proposal: PlanProposal): Promise<ReadResult<CandidateSourceLineV1>> {
   if (proposal.sourceMessageRef !== null) {
     const source = proposal.sourceMessageRef;
-    const message = await deps.messages.readMessage(hostContextIn(ctx, source.workspaceId), source);
+    const sourceCtx = hostContextIn(ctx, source.workspaceId);
+    const message = await deps.messages.readMessage(sourceCtx, source);
     if (message.status !== 'ready') return message;
     const recipient = message.value.recipient;
     // 发给人的消息不会是候选的来源（干预规划只在 agent 线上开）；照样按“读不到作者”交出去，不另判。
-    return { status: 'ready', value: { session: isUserMessageRecipient(recipient) ? null : recipient, via: 'message' } };
+    const session = isUserMessageRecipient(recipient) ? null : recipient;
+    const sender = message.value.sender;
+    if (sender.kind !== 'host' || sender.actor.kind !== 'human') {
+      return { status: 'ready', value: { session, via: 'message', personWords: null } };
+    }
+    const body = await deps.messages.readMessageBody(sourceCtx, { messageRef: source, part: 'message' });
+    if (body.status !== 'ready') return body;
+    return { status: 'ready', value: { session, via: 'message', personWords: body.value.text.slice(0, PERSON_WORDS_MAX) } };
   }
   if (proposal.requestRef !== undefined && proposal.requestRef !== null) {
     const requestRoot = proposal.requestRef;
     const request = await deps.requests.readRequest(hostContextIn(ctx, requestRoot.workspaceId), { requestRoot });
     if (request.status !== 'ready') return request;
-    return { status: 'ready', value: { session: request.value.owner, via: 'request' } };
+    // 写出它的那一轮：候选号由那一轮推出，找法同 `business/workflow/request-candidate.ts` 的 `proposeFromPlanTurn`。
+    const round = request.value.rounds.find((entry) => planProposalIdFor({ projectId: proposal.ref.projectId,
+      workspaceId: proposal.ref.workspaceId, goalId: proposal.goalRef.goalId,
+      requestId: `request-candidate:${entry.ref.queryJobId}` }) === proposal.ref.proposalId);
+    return { status: 'ready', value: { session: request.value.owner, via: 'request',
+      personWords: round === undefined ? null : round.input.slice(0, PERSON_WORDS_MAX) } };
   }
   if (proposal.submittedBy !== undefined) {
-    return { status: 'ready', value: { session: proposal.submittedBy.sessionRef, via: 'agent_write' } };
+    return { status: 'ready', value: { session: proposal.submittedBy.sessionRef, via: 'agent_write', personWords: null } };
   }
-  return { status: 'ready', value: { session: null, via: 'unknown' } };
+  return { status: 'ready', value: { session: null, via: 'unknown', personWords: null } };
 }
 
 /**

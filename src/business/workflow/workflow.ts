@@ -79,7 +79,9 @@ import type { PickBasisV1 } from '../../contracts/pick-basis.js';
 import type { ModuleOverlapTaskFactsV1, OverlapBasisV1 } from '../../core/work-graph/tasks/overlap-gates.js';
 import { moduleOverlapOf, overlapBasisDigest, splitNonOverlapping } from '../../core/work-graph/tasks/overlap-gates.js';
 import { createDutyRecipient, reviewLineOf } from '../../core/work-graph/sessions/duty-recipient.js';
-import { decidePlanCandidate, type PlanCandidateFactsV1, type PlanCandidateSourceV1 } from '../../core/work-graph/state/plan-candidate.js';
+import {
+  decidePlanCandidate, standardChangeStateOf, type PlanCandidateFactsV1, type PlanCandidateSourceV1,
+} from '../../core/work-graph/state/plan-candidate.js';
 import { decisionActionPolicy, gateCoveredTaskIds } from '../../core/work-graph/state/decision-policy.js';
 import { systemRoundContext, systemRoundOfText, systemRoundRequestId, type SystemRoundV1 } from '../../contracts/plan-round.js';
 import { deviationRequestId, deviationText, deviationsOfGoal, taskRemindersOfGoal } from '../../contracts/plan-deviation.js';
@@ -2953,6 +2955,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
             }),
             hasReviewLine: reviewer !== null,
             diagnosis,
+            standardChange: standardChangeStateOf(cardRead.value.standardChange),
           } satisfies PlanCandidateFactsV1);
           if (decision.action === 'request_review') {
             const round: SystemRoundV1 = {

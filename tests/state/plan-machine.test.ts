@@ -947,7 +947,7 @@ describe('futureChangeTraceProblem (untraced rule, plan-readers.ts:1238-1301)', 
 describe('tracedDispositionChangeProblem (TASK-19 guards 8, 1, 2, 2b, 3–7; C7)', () => {
   const check = (tasks: TracedTaskFactsV1[], overrides: Partial<Parameters<typeof tracedDispositionChangeProblem>[0]> = {}) =>
     tracedDispositionChangeProblem({ goalDesiredState: 'active', tasks, affectedTaskIds: tasks.map((task) => task.taskId),
-      adopterClass: 'agent', changes: [], ...overrides });
+      adopterClass: 'agent', changes: [], taskKinds: new Map(tasks.map((task) => [task.taskId, 'work' as const])), ...overrides });
   const codeOf = (problem: ReturnType<typeof tracedDispositionChangeProblem>) => problem?.code ?? null;
   const yielded = (desiredState?: 'running' | 'paused' | 'cancelled'): TracedTaskFactsV1 => {
     const ref = runRef('run-y');
@@ -985,6 +985,17 @@ describe('tracedDispositionChangeProblem (TASK-19 guards 8, 1, 2, 2b, 3–7; C7)
     ['a Reduction (guard 5: satisfied is final)', tracedFacts('t-a', { reduction: reductionOf('t-a') }), 'invalid'],
   ])('%s', (_name, facts, code) => {
     expect(codeOf(check([facts]))).toBe(code);
+  });
+
+  it('G8B B5 guard 5: a person may supersede a satisfied work Task, but a satisfied stage gate stays final', () => {
+    // Codex 审查 G8B-2 第 1 条：人采用、有取代者的例外只给工作任务；已满足的关口（这里是阶段关口）照旧不能改处置。
+    const satisfied = (taskId: string) => tracedFacts(taskId, { reduction: reductionOf(taskId) });
+    const supersede = (taskId: string) => ({ adopterClass: 'human' as const,
+      changes: [{ taskId, from: 'active' as const, to: 'superseded' as const, replacedByTaskId: `${taskId}-next` }] });
+    expect(check([satisfied('t-a')], { ...supersede('t-a'), taskKinds: new Map([['t-a', 'work' as const]]) })).toBeNull();
+    expect(check([satisfied('t-stage-gate')], { ...supersede('t-stage-gate'),
+      taskKinds: new Map([['t-stage-gate', 'gate' as const]]) })).toEqual({ code: 'invalid', reason: 'illegal',
+      detail: 'task t-stage-gate is satisfied; the disposition of a satisfied task is final' });
   });
 
   it('a cancelled yielded wait (P17) passes guard 3', () => {

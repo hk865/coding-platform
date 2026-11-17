@@ -13,7 +13,7 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "3102c894ce663459013777ce9e03de6692305aacab73c7711dce8166079aa1cb"
+    "sha256": "76e102805672e92255f18b74f29646d810646d10ed3205da4b28b0bb974a875e"
   },
   {
     "path": "resources/prompts/platform/strings.json",
@@ -21,7 +21,7 @@
   },
   {
     "path": "resources/prompts/platform/templates/initial-planning-answer.txt",
-    "sha256": "81fe3c85a376b2d0ade1983b98c69e0e4b114ec8e6802b2a57b44933a2e32108"
+    "sha256": "03d3f122f874931e7e3561916495d6d1dccb4745eb6d8231eb0082c9cb6f0132"
   },
   {
     "path": "resources/prompts/platform/templates/consultation-received-input.txt",
@@ -101,7 +101,7 @@
   },
   {
     "path": "resources/prompts/platform/templates/secretary-answer.txt",
-    "sha256": "06ebd7ec0fd6c9923ff44e48de154bfc9fb2e00f7568a7a1b7b36e84d179eafb"
+    "sha256": "0c54b55736e8a734833647610ca17a7265bc70b2a4fd53c60318130fa2ed7d94"
   },
   {
     "path": "resources/prompts/platform/templates/handoff-write-understanding-secretary.txt",

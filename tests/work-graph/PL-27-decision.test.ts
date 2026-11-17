@@ -42,6 +42,7 @@ const baseFacts: PlanCandidateFactsV1 = {
   adoptionPolicy: 'automatic',
   hasReviewLine: true,
   diagnosis: [],
+  standardChange: 'unchanged',
 };
 
 /** `fix` verdict facts with the review verdict already decided. */

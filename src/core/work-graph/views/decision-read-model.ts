@@ -11,7 +11,8 @@
  */
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import { principalIdentity, type CoreCallContext } from '../../../contracts/core/call-context.js';
-import type { VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
+import type { SessionRef, VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
+import type { AcceptanceObligation, PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type { UserMessageResponseV1 } from '../../../contracts/core/session-message.js';
 import { isUserMessageRecipient } from '../../../contracts/core/session-message.js';
@@ -111,7 +112,8 @@ import { enumerateClosedGoalCandidates, enumerateGoalCandidates, readGoal as rea
   readGoalPlanWindow, readPinnedCompletionPolicy, readPlan, readProposal,
   readTaskClosure, successorParentsOf, terminalProposalOf, type PlanReaders, type PlanReadersRecords,
   type TaskClosureV1 } from '../tasks/plan-readers.js';
-import type { PlanSourceLineageDeps } from '../tasks/plan-lineage.js';
+import { candidateSourceLineOf, type CandidateSourceLineDeps, type PlanSourceLineageDeps } from '../tasks/plan-lineage.js';
+import { standardChangeOf } from '../tasks/plan-validation.js';
 import { findAnswerMessage } from '../tasks/decision-answer-lookup.js';
 import { UNKNOWN_CALL_REVIEW_FILE_OBJECTS_MAX, unknownCallReviewCardFacts, unknownCallReviewTargetPaths,
   type UnknownCallReviewCardFactsV1 } from '../tasks/unknown-call-review-card.js';
@@ -2144,13 +2146,44 @@ function candidateCard(proposal: PlanProposal, goal: GoalSnapshot): DecisionCard
   };
 }
 
+/** G8B B5：一条验证要求在卡上显示的样子。 */
+export type StandardChangeRequirementV1 = { requirementId: string; description: string };
+
+/**
+ * G8B B5：候选降低或改变关口标准时，卡上给人看的事实（`standardChangeOf` 加上标题、要求、理由和来源）。
+ * - `supersededGates`：被取代的关口，标题取基准计划里的；
+ * - `droppedObligations`：没带进候选的义务，即去掉的要求；
+ * - `newObligations`：换成什么，即新关口带的新义务；
+ * - `reason`：候选的 `reason.text`；
+ * - `proposedBy.session`：写这份候选的那条线（`candidateSourceLineOf`）；职责由界面按它查成员卡；
+ * - `personWords`：改动来自人的话时人的原话。
+ * 来源读不到时 `proposedBy.session` 和 `personWords` 为 null，同卡上其他成员读不到的写法。
+ */
+export type StandardChangeFactsV1 = {
+  supersededGates: { taskId: string; title: string; replacedByTaskId: string | null }[];
+  droppedObligations: { obligationId: string; title: string; requirements: StandardChangeRequirementV1[] }[];
+  newObligations: { obligationId: string; title: string; taskIds: string[]; requirements: StandardChangeRequirementV1[] }[];
+  reason: string;
+  proposedBy: { session: SessionRef | null };
+  personWords: string | null;
+};
+
 /** §6.4.1/§6.7.1: the four facts the candidate-card read returns; each may fail on its own. */
 export type CandidateCardFactsV1 = {
   card: DecisionCardV1;
   diagnosis: readonly PlanDiagnosisFindingV1[] | null;
   exactReview: ReadResult<PlanReviewReadV1>;
   exportRead: TaskbookExportReadV1;
+  /**
+   * G8B B5：候选降低或改变关口标准的读，分三种：读到了、有变化是 `ready` 加事实；读到了、没变化（含首版计划）是
+   * `ready` 加 null；基准计划读失败是 `rejected`，理由以“降标的事实暂不可读”开头，卡上照写。PL 的决定表经
+   * `standardChangeStateOf` 一处分这三种。
+   */
+  standardChange: ReadResult<StandardChangeFactsV1 | null>;
 };
+
+/** G8B B5：基准计划读失败时，卡上降标那一项的说法。 */
+const STANDARD_CHANGE_UNREADABLE = '降标的事实暂不可读';
 
 export type CandidateCardFactsDependencies = {
   records: PlanReadersRecords;
@@ -2160,6 +2193,8 @@ export type CandidateCardFactsDependencies = {
   decisions: Pick<DecisionReadPort, 'readDecisionCard'>;
   /** P6's taskbook probe. Absent is `unavailable`, never an empty export list. */
   exportBooks?: TaskbookExportReadPort['read'];
+  /** G8B B5：读写这份候选的那条线和人的原话（`candidateSourceLineOf`）。 */
+  sourceLine: CandidateSourceLineDeps;
 };
 
 /**
@@ -2198,9 +2233,11 @@ export async function candidateCardFacts(
   const scope: WorkspaceScope = {
     projectId: goal.workspaceRef.projectId, workspaceId: goal.workspaceRef.workspaceId,
   };
+  // 诊断和降标的事实读同一份基准计划。
+  const base = await candidateBase(deps, proposal);
   return { status: 'ready', value: {
     card: card.value,
-    diagnosis: await candidateDiagnosis(deps, proposal, scope),
+    diagnosis: await candidateDiagnosis(deps, proposal, scope, base.status === 'ready' ? base.plan : null),
     exactReview: await deps.planReaders.readPlanReview(ctx, {
       goalRef: goal.ref,
       proposalRef: proposal.ref,
@@ -2209,7 +2246,57 @@ export async function candidateCardFacts(
       revision: proposal.status === 'accepted' ? proposal.revision - 1 : proposal.revision,
     }),
     exportRead: await candidateExportRead(deps, proposal, scope, goal.ref.goalId),
+    standardChange: base.status !== 'ready'
+      ? { status: 'rejected', code: 'unavailable', reason: `${STANDARD_CHANGE_UNREADABLE}：${base.detail}` }
+      : { status: 'ready', value: base.plan === null ? null : await standardChangeFacts(deps, ctx, proposal, base.plan) },
   } };
+}
+
+/**
+ * 候选的基准计划（`basedOn`），诊断和降标的事实共用这一次读。首版计划没有基准，是 `ready` 加 null；读失败或读时抛错
+ * 是 `unreadable`：诊断照旧当覆盖未知（null），降标那一项写明暂不可读。
+ */
+async function candidateBase(deps: CandidateCardFactsDependencies, proposal: PlanProposal):
+Promise<{ status: 'ready'; plan: PlanRevisionSnapshot | null } | { status: 'unreadable'; detail: string }> {
+  if (proposal.basedOn === null) return { status: 'ready', plan: null };
+  try {
+    const planRead = await readPlan(deps.records, proposal.basedOn);
+    return planRead.status === 'ready' ? { status: 'ready', plan: planRead.plan }
+      : { status: 'unreadable', detail: planRead.reason };
+  } catch (error) {
+    return { status: 'unreadable', detail: messageOf(error) };
+  }
+}
+
+/** G8B B5：降标的事实。没有这种改动是 null，不读来源。 */
+async function standardChangeFacts(deps: CandidateCardFactsDependencies, ctx: CoreCallContext, proposal: PlanProposal,
+  base: PlanRevisionSnapshot): Promise<StandardChangeFactsV1 | null> {
+  const change = standardChangeOf(base, proposal.draft);
+  if (change === null) return null;
+  const requirementsOf = (obligation: AcceptanceObligation): StandardChangeRequirementV1[] => obligation
+    .verificationRequirements.map((requirement) => ({ requirementId: requirement.requirementId,
+      description: requirement.description }));
+  const baseObligationIds = new Set(base.obligations.map((obligation) => obligation.obligationId));
+  const replacements = new Set(change.supersededGates.flatMap((gate) =>
+    (gate.replacedByTaskId === null ? [] : [gate.replacedByTaskId])));
+  const line = await candidateSourceLineOf(ctx, deps.sourceLine, proposal);
+  return {
+    // 两个 id 列表都取自 `base`，所以下面按 id 查一定查得到。
+    supersededGates: change.supersededGates.map((gate) => ({ taskId: gate.taskId,
+      title: base.tasks.find((task) => task.taskId === gate.taskId)!.title, replacedByTaskId: gate.replacedByTaskId })),
+    droppedObligations: change.droppedObligationIds.map((obligationId) => {
+      const obligation = base.obligations.find((entry) => entry.obligationId === obligationId)!;
+      return { obligationId, title: obligation.title, requirements: requirementsOf(obligation) };
+    }),
+    newObligations: proposal.draft.obligations
+      .filter((obligation) => !baseObligationIds.has(obligation.obligationId)
+        && obligation.taskIds.some((taskId) => replacements.has(taskId)))
+      .map((obligation) => ({ obligationId: obligation.obligationId, title: obligation.title,
+        taskIds: [...obligation.taskIds], requirements: requirementsOf(obligation) })),
+    reason: proposal.reason.text,
+    proposedBy: { session: line.status === 'ready' ? line.value.session : null },
+    personWords: line.status === 'ready' ? line.value.personWords : null,
+  };
 }
 
 /** The diagnosis member: any unreadable input is `null`, never an empty finding list. */
@@ -2217,14 +2304,13 @@ async function candidateDiagnosis(
   deps: CandidateCardFactsDependencies,
   proposal: PlanProposal,
   scope: WorkspaceScope,
+  base: PlanRevisionSnapshot | null,
 ): Promise<readonly PlanDiagnosisFindingV1[] | null> {
   try {
     // A first plan has no dependency plan to take a policy pin from; without the
     // pin the coverage is unknown, so the diagnosis is `null`.
-    if (proposal.basedOn === null) return null;
-    const planRead = await readPlan(deps.records, proposal.basedOn);
-    if (planRead.status !== 'ready') return null;
-    const policyRead = await readPinnedCompletionPolicy(deps.records, planRead.plan.effectiveCompletionPolicy);
+    if (base === null) return null;
+    const policyRead = await readPinnedCompletionPolicy(deps.records, base.effectiveCompletionPolicy);
     if (policyRead.status !== 'resolved') return null;
     // 121-136: the candidate's own checks join the installed ones, as at form time.
     const checksRead = await deps.planReaders.planChecks(scope, proposal.checks ?? []);

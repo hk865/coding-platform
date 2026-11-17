@@ -16,6 +16,7 @@
  * becomes a finding. The candidate's catalog pin is review-input fact only;
  * module existence is not checked here.
  */
+import type { ReadResult } from '../../../contracts/core/results.js';
 import type { KnowledgePinV1 } from '../../../contracts/knowledge.js';
 import type { AcceptanceObligation, PlanRevisionRef, RuntimeTask } from '../../../contracts/plan.js';
 import type { PlanDiagnosisFindingV1, PlanReviewReadV1 } from '../../../contracts/plan-review.js';
@@ -57,7 +58,18 @@ export type PlanCandidateFactsV1 = {
   hasReviewLine: boolean;
   /** §6.2 output; `[]` = no finding, `null` = coverage unknown, never adopts (§6.2 end). */
   diagnosis: readonly PlanDiagnosisFindingV1[] | null;
+  /** G8B B5：候选卡的降标读分成的三种（`standardChangeStateOf`）。 */
+  standardChange: 'changed' | 'unchanged' | 'unreadable';
 };
+
+/**
+ * G8B B5：候选卡的降标读（`CandidateCardFactsV1.standardChange`）在决定表里的三种，只在这里分：读失败是 unreadable，
+ * 读到了有事实是 changed，读到了是 null 是 unchanged。
+ */
+export function standardChangeStateOf(read: ReadResult<object | null>): PlanCandidateFactsV1['standardChange'] {
+  if (read.status !== 'ready') return 'unreadable';
+  return read.value === null ? 'unchanged' : 'changed';
+}
 
 /** The table's one output; adoption exits (`busy`/rejected) are not this function's (§6.1.4). */
 export type PlanCandidateDecisionV1 =
@@ -65,7 +77,8 @@ export type PlanCandidateDecisionV1 =
   | { action: 'request_fix'; requestId: string; rounds: number }
   | { action: 'adopt' }
   | { action: 'card';
-      reason: 'no_review_line' | 'fix_cap' | 'fix_invalid' | 'not_automatic' | 'diagnosis' | 'adoption_rejected' | 'review_invalid' }
+      reason: 'no_review_line' | 'fix_cap' | 'fix_invalid' | 'not_automatic' | 'diagnosis' | 'adoption_rejected' | 'review_invalid'
+        | 'standard_change' | 'standard_change_unreadable' }
   | { action: 'wait'; reason: 'busy' | 'review' | 'fix' };
 
 /**
@@ -88,6 +101,10 @@ function roundRequestId(
 
 /** The decision table, first match wins (§6.1.3). */
 export function decidePlanCandidate(facts: PlanCandidateFactsV1): PlanCandidateDecisionV1 {
+  // G8B B5（11-17 用户）：降低或改变关口的标准只由人采用。任何一档都不送审、不返修、不尝试采用，直接是人的卡。
+  if (facts.standardChange === 'changed') return { action: 'card', reason: 'standard_change' };
+  // 读不到就不知道是不是降标：同样不送审、不返修、不尝试采用，卡上写明事实暂不可读；普通工作照常，下一趟再读。
+  if (facts.standardChange === 'unreadable') return { action: 'card', reason: 'standard_change_unreadable' };
   const { review } = facts;
 
   if (review.status === 'not_sent') {

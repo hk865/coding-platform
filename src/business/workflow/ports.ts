@@ -26,6 +26,7 @@ import type {
 } from '../../core/work-graph/model/plan-contracts.js';
 import type { GraphWrite } from '../../core/work-graph/model/task-contracts.js';
 import type { RequestFactsPort } from '../../core/work-graph/tasks/request-facts.js';
+import type { StandardChangeFactsV1 } from '../../core/work-graph/views/decision-read-model.js';
 import type { TaskInputUpstreamPort } from '../../core/work-graph/model/context-input-contracts.js';
 import type { SessionDirectoryPort } from '../../core/work-graph/model/session-contracts.js';
 import type {
@@ -376,6 +377,8 @@ export type WorkflowDependencies = {
     diagnosis: readonly PlanDiagnosisFindingV1[] | null;
     exactReview: ReadResult<PlanReviewReadV1>;
     exportRead: TaskbookExportReadV1;
+    /** G8B B5：候选降低或改变关口标准的读（三种，见 `CandidateCardFactsV1.standardChange`）。 */
+    standardChange: ReadResult<StandardChangeFactsV1 | null>;
   }>>;
 };
 
