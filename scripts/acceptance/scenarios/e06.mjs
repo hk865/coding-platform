@@ -2,8 +2,8 @@
 // only; restarts while a Run works and while the Goal is paused; the predecessor archived, history still readable
 // (draft §1.2; MVP-BEHAVIOR.md:358; slice-9-SPEC.md:661, :687). The person never restates the task after the handoff.
 import { newId, ready } from '../lib/http.mjs';
-import { answerCard, approve, broken, chooseModel, coldStart, driverStart, executions, lines, orNull, runHistory, sessionHistory,
-  sessionTurns, sleep, textOf, turnsOf, waitFor, waitGoal, waitingCards } from '../lib/flows.mjs';
+import { answerCard, approve, broken, chooseModel, driverStart, executions, lines, newGoalInProject, orNull, runHistory,
+  sessionHistory, sessionTurns, sleep, submitRequest, textOf, turnsOf, waitFor, waitGoal, waitingCards } from '../lib/flows.mjs';
 import { Abort } from '../lib/report.mjs';
 
 const MINUTE = 60_000;
@@ -67,8 +67,15 @@ async function run(ctx, rec) {
   rec.projects.push(project);
   rec.facts.model = await chooseModel(ctx, project.host, project);
   rec.facts.userCommand = [REQUEST, HANDOFF];
-  const started = await coldStart(ctx, project, REQUEST, rec);
+  // E05 已经把项目初始化了：新目标走产品的请求路（G6F F3，和 int.mjs 一样），不走冷启动的 initialization/adopt
+  // （已初始化项目的请求轮是 semantic_query，回答是秘书正文，采用会拒）。plans/apply 不启动 Goal 驱动，由人 driver-start。
+  const submitted = await submitRequest(project, REQUEST);
+  if (submitted?.status !== 'queued') throw broken(ctx, `requests/submit: ${submitted?.code} ${submitted?.reason}`);
+  rec.link('session', submitted.secretary);
+  const started = await newGoalInProject(ctx, project, submitted.requestRoot, rec);
   const goalRef = started.goalRef;
+  const kickoff = await driverStart(ctx, project, goalRef, { flowId: newId('e06-start') });
+  rec.note(`driver-start ${goalRef.goalId}: ${kickoff?.status} ${kickoff?.value?.state ?? kickoff?.code ?? ''}`);
 
   // 1. A Run works: normal close and restart (C-149). Under the default `ask` the Goal waits for the person.
   const first = await runningRun(ctx, project, goalRef, 30);
