@@ -99,6 +99,8 @@ the window.
   (above the waiting scenario's 30-minute wait plus a heartbeat) and the meter's last complete reading has nothing in
   flight in the project (`stalled: …`, with the last phase, cause and driver wait reason). "Public" is the Goal's
   display without its `sourceCursor` (the ledger-wide watermark that any commit in the project moves) and its cards.
+- **返工确认卡（lead 11-17，E08）。** “每步确认”下自动返工要人确认的卡（`automation_confirmation_required`）没有选项，`waitGoal` 照界面点一次“重新入队”（`tasks/requeue`，`requeueCard`）；每张卡只点一次，被拒记一行 note。
+- **等在途的查询（lead 11-17，G6 第六次之后）。** 查询还在跑、它的某个请求用量暂时未知时，计量只是暂停：场景的等待和收尾原地每 20 秒读一次，等查询结束、暂停解除；30 分钟还没结束，才成为整轮的停止（`budget.mjs` 的 `#waitHeld`）。
 - **Verdicts.** Three words only: a failed check → `fail`; none failed but one not run → `uncovered` with one of the
   seven reason codes; all ran and passed → `pass`. An existing capability that ran and did the wrong thing, or did not
   happen in time (a refused route, no Goal card draft, a failed adoption, a wait that runs out), judges its check

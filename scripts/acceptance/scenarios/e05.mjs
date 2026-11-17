@@ -143,6 +143,10 @@ async function run(ctx, rec) {
     const started = await driverStart(ctx, project, goal.ref, { flowId: `e05-${taskId}`, taskId });
     rec.note(`driver-start ${taskId}: ${started?.status} ${started?.value?.state ?? started?.code ?? ''}`);
   }
+  // lead 11-17（G6 第六次之后）：只按任务启动时，两个任务做完后没人推进关口任务和目标完成（按任务的推进不跟进
+  // 目标范围的选择）。像人那样再启动一次整个目标，由目标的决定循环接着推进；放在两次按任务启动之后，不影响两条并行。
+  const goalStarted = await driverStart(ctx, project, goal.ref, { flowId: 'e05-goal' });
+  rec.note(`driver-start goal: ${goalStarted?.status} ${goalStarted?.value?.state ?? goalStarted?.code ?? ''}`);
 
   let planted = false;
   let gateSeen = null;

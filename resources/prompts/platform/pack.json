@@ -181,7 +181,7 @@
     },
     "skill-platform-work": {
       "file": "templates/skill-platform-work.txt",
-      "version": 11,
+      "version": 12,
       "mentionsTools": []
     },
     "skill-platform-secretary": {

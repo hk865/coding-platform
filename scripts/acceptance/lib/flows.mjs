@@ -248,6 +248,29 @@ export const approve = card => {
   return option === undefined ? null : { kind: 'option', optionId: option.id };
 };
 
+/**
+ * “每步确认”下自动返工要人确认的卡（`goal_cause`，code `automation_confirmation_required`）没有选项，`approve` 答不了。
+ * 界面上它的主按钮是“重新入队”（`src/ui/boot.ts` 的 `requeueCard`）。驱动在场景里扮演人，人在界面上能做的它照做
+ * （lead 11-17，E08）。同一件事的 `auto_rework_pending` 卡只是告知，不另调。
+ */
+export const confirmsRework = card => card.source.kind === 'goal_cause' && (card.taskRef ?? null) !== null
+  && (card.runRef ?? null) !== null && JSON.parse(card.source.key).code === 'automation_confirmation_required';
+
+/**
+ * 照界面的“重新入队”调一次 `tasks/requeue`：任务和失败的 Run 取自卡，pins 取卡上的 Goal 和 Run。
+ * 入队成功返回回执；被拒（拒绝、`refused`、`needs_decision`）记一行 note 并返回 false，不抛错。
+ */
+export async function requeueCard(project, card, rec = null) {
+  const pins = card.source.pins.filter(pin => pin.ref.aggregateType === 'Goal' || pin.ref.aggregateType === 'Run');
+  const reply = await project.host.client.write('tasks/requeue', project.scope, { taskRef: card.taskRef,
+    afterRunRef: card.runRef, reason: `G6: the person confirms the automatic rework of ${card.taskRef.taskId}` }, pins);
+  rec?.link('card', card.source, null);
+  const value = committed(reply);
+  const refused = value?.kind === 'refused' ? ` refused ${JSON.stringify(value.refusal ?? null)}` : '';
+  rec?.note(`requeue card ${card.taskRef.taskId} (after Run ${card.runRef.runId}): ${said(reply)}${refused}`);
+  return value?.kind === 'requeued' ? value : false;
+}
+
 /** `decisions/answer` with exactly the card's pins (plus the message pin for a message card). */
 export async function answerCard(ctx, project, card, selection, text = '', rec = null) {
   let pins = card.source.pins;
@@ -275,9 +298,12 @@ export async function waitingCards(project, goalRef = null) {
  * Wait for the Goal to reach one of `until` (default: the terminal phases), answering waiting cards the way
  * `answer(card)` says (default: approve). `onPoll(display)` lets a scenario read what it watches meanwhile. The wait
  * ends early (G7 W3, `endedEarly`) when the platform shows it cannot go on by itself.
+ * `answer` 答不了的返工确认卡（`confirmsRework`），照界面点一次“重新入队”（`requeueCard`）。
  */
 export async function waitGoal(ctx, project, goalRef, { until = TERMINAL, timeoutMs, answer = approve, onPoll, rec = null, check, committedAnswers = [] }) {
   const answered = new Set();
+  // 已调过“重新入队”的返工确认卡：每张只调一次，被拒也不再调。
+  const requeued = new Set();
   const quiet = { seen: null, since: Date.now() };
   let ended = null;
   return waitFor(ctx, `${goalRef.goalId} to reach ${until.join('/')}`, async () => {
@@ -289,7 +315,16 @@ export async function waitGoal(ctx, project, goalRef, { until = TERMINAL, timeou
     for (const card of queue?.waitingAnswer ?? []) {
       if (answered.has(card.cardKey)) { open += 1; continue; }
       const selection = answer(card);
-      if (selection === null) continue;
+      if (selection === null) {
+        // 没有选项的返工确认卡：人点“重新入队”；入队成功才算人已处理这张卡。
+        if (!confirmsRework(card) || requeued.has(card.cardKey)) continue;
+        requeued.add(card.cardKey);
+        if (await requeueCard(project, card, rec)) {
+          open += 1;
+          answered.add(card.cardKey);
+        }
+        continue;
+      }
       open += 1;
       // Only a committed answer counts as the person's decision (`committedAnswers` collects them with the time).
       const receipt = await answerCard(ctx, project, card, selection, '', rec);

@@ -15,6 +15,9 @@
  * no gate; once `e38-r`'s Run has ended, its risks show that file as `planned` (§3.5 item 3).
  * Cell 2: `e38-r` ['src/e38-a.ts'] and `e38-r2` ['src/e38-c.ts'] both run; `e38-w2` ['src/e38-a.ts'] opens the gate
  * and the gate's basis names only `e38-r` (the rule's conflict set, not every running Task of the module).
+ * E05 一格（G6 第六次）：两个任务都列 `src/rules.js`、共用一条线，只按任务各调一次 `workflow/driver-start`。两条看守同时
+ * 选中这条空闲线，后认领的被拒（`busy`："the target Session is already occupied"，Workflow 回不带叫醒依据的等待）。
+ * 输掉认领的看守要交回目标、被下一次提交叫醒、重选，这时另一个任务在跑，它就开重叠门。
  */
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -33,6 +36,7 @@ import { createS6BLine } from '../helpers/S6B1-fixture.js';
 import { valueOf } from '../helpers/S6B3-fixture.js';
 import { sessionOf } from '../helpers/S7A-fixture.js';
 import { openS7C1World, S7C1_CREATE_ROLE, type S7C1World } from '../helpers/S7C-member-fixture.js';
+import { startTaskDriver } from '../helpers/DRV-fixture.js';
 import { waitFor } from '../scenarios/harness.js';
 
 const STAGE = 'e38-r9-stage';
@@ -56,8 +60,9 @@ function gatePlanDraft(goal: GoalRef, files: PlannedFiles): PlanRevisionDraft {
 
 const taskOf = (goal: GoalRef, taskId: string) => ({ projectId: goal.projectId, goalId: goal.goalId, taskId });
 
-/** A new Goal with its adopted Plan and one line per work Task (each line responsible for its Task). */
-async function openGoal(target: S7C1World, label: string, files: PlannedFiles) {
+/** A new Goal with its adopted Plan and one line per work Task (each line responsible for its Task); `shared` 时只开
+ *  一条线，链到每个工作任务（E05 一格）。 */
+async function openGoal(target: S7C1World, label: string, files: PlannedFiles, shared = false) {
   const goal = (await target.main.createGoal(`${label}-goal`, `E38-R9 ${label}`)).ref;
   const proposed = valueOf<{ ref: unknown; revision: number }>(await target.main.post('plans/propose', graphWrite(S6A_SCOPE, {
     goalRef: goal, basedOn: null, draft: gatePlanDraft(goal, files), reason: { text: `E38-R9 ${label}`, sources: [] },
@@ -68,8 +73,10 @@ async function openGoal(target: S7C1World, label: string, files: PlannedFiles) {
   const plan: PlanRevisionSnapshot | null = await target.main.activePlan(goal);
   if (plan === null) throw new Error(`E38-R9: ${label} has no adopted Plan`);
   const lines = new Map<string, S6ASession>();
+  const one = shared ? await sessionOf(target.world, await createS6BLine(target.main, { label: `${label}-shared`,
+    role: S7C1_CREATE_ROLE, tasks: Object.keys(files).map(taskId => taskOf(goal, taskId)) })) : null;
   for (const taskId of Object.keys(files)) {
-    lines.set(taskId, await sessionOf(target.world, await createS6BLine(target.main, {
+    lines.set(taskId, one ?? await sessionOf(target.world, await createS6BLine(target.main, {
       label: `${label}-${taskId}`, role: S7C1_CREATE_ROLE, tasks: [taskOf(goal, taskId)] })));
   }
   const line = (taskId: string): S6ASession => {
@@ -250,6 +257,35 @@ describe('E38-R9: the module-overlap gate narrows on plannedFiles', () => {
         .toEqual([{ moduleId: 's6a-core', running: ['e38-r'] }]);
     } finally {
       await closeAll(target, held);
+    }
+  });
+
+  it('E05: two Task starts on one shared line — the watch that lost the claim comes back and opens the gate', async () => {
+    /* Named mutation: 看守把不带依据的等待停在 `waiting`、不登记叫醒（改前的 runLane）——输掉认领的看守再也不选，
+       门一直不出现：门的 `waitFor` 超时。两条看守并发选择，后一条的选择读在先一条认领提交之后时，它直接走到门，
+       不经过被拒的认领：改前的 runLane 在本地 5 次里红 4 次。Workflow 的认领口在组合里是展开的副本，测试挂不上，
+       没法把这个先后钉死。改后哪种先后都开门。 */
+    const target = await openS7C1World({ adviser: false });
+    const { goal, line } = await openGoal(target, 'e38-e05', {
+      'e05-users': ['src/rules.js', 'src/users.js'], 'e05-orders': ['src/rules.js', 'src/orders.js'] }, true);
+    const shared = line('e05-users');
+    await target.world.scripted.script(shared, [{ kind: 'text', text: 'E38 E05 first answer' }]);
+    // 先认领到线的那个任务的 Run 停在第一次模型请求上，所以另一个任务重选时它还在跑。
+    const first = await target.world.gates.modelRequest(shared);
+    try {
+      await startTaskDriver(target.world, goal, 'e05-users', 'e38-e05-users');
+      await startTaskDriver(target.world, goal, 'e05-orders', 'e38-e05-orders');
+      await first.reached;
+      const gates = await waitFor(() => gatesOf(target, goal), rows => rows.length > 0, 'the E05 overlap gate');
+      // 手算：两个任务都在 s6a-core、都列了 src/rules.js；在跑的是认领到线的那一个，门等的是另一个。
+      expect(gates).toHaveLength(1);
+      const running = gates[0]!.running.map(entry => entry.task.taskId);
+      expect([gates[0]!.moduleId, [gates[0]!.waiting.taskId, ...running].sort()])
+        .toEqual(['s6a-core', ['e05-orders', 'e05-users']]);
+    } finally {
+      first.release();
+      await target.world.post('workflow/driver-stop', plain(S6A_SCOPE, { goalRef: goal }));
+      await target.close();
     }
   });
 });

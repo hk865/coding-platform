@@ -1031,14 +1031,16 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
   }
 
   /** The one admission hold's basis: the same wait for a Goal and for a Task watch. */
-  function runningCapBasisOf(handle: Handle): GoalWaitBasisV1 {
+  // E05：看守不带依据的等待也用这条依据交回目标（任一目标提交都叫醒），`reason` 只是标签。
+  function runningCapBasisOf(handle: Handle, reason = 'running_cap'): GoalWaitBasisV1 {
     return { projectId: handle.projectId, goalId: handle.goalRef.goalId,
-      recordKinds: [...GOAL_WAIT_WAKE_AGGREGATE_TYPES, 'QueryRun'], reasons: ['running_cap'] };
+      recordKinds: [...GOAL_WAIT_WAKE_AGGREGATE_TYPES, 'QueryRun'], reasons: [reason] };
   }
   /** Register the running-cap wait; a watch's drain runs after its loop returned (`drainHandedBack`). */
-  function registerRunningCapWait(handle: Handle, cursorAtRead: CommitCursor): void {
+  function registerRunningCapWait(handle: Handle, cursorAtRead: CommitCursor,
+    basis: GoalWaitBasisV1 = runningCapBasisOf(handle)): void {
     dependencies.goalWaits?.({ projectId: handle.projectId, workspaceId: handle.workspaceId })
-      ?.register(runningCapBasisOf(handle), cursorAtRead);
+      ?.register(basis, cursorAtRead);
   }
   /** Register the running-cap wait, then run the Host's one admission drain; the drain is awaited. */
   async function holdRunningCapWait(handle: Handle, cursorAtRead: CommitCursor | null): Promise<void> {
@@ -1286,13 +1288,19 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
           const woken = await awaitYielded(lane, value.reason);
           if (woken !== null) { lane.current = woken; input = woken; continue; }
           if (lane.stopRequested) return;
-          if (value.reason === 'running_cap') {
+          // E05：只按任务启动的目标，Workflow 回的等待不带叫醒依据时（比如同一目标的另一条看守先认领了共用的线，
+          // 这条的认领被拒："the target Session is already occupied"），和在途上限一样交回目标：按任一目标提交都会
+          // 叫醒的依据登记，叫醒后重开这条看守。改前这里停在 `waiting`、不登记，没有东西再去选这个任务。接受过
+          // 目标级启动的不交回：决定循环自己会再选这个任务（它已离开 `activeTaskIds`），交回反而让看守停在
+          // `waiting_for_reply`，那边的叫醒只踢决定循环、不重开看守。
+          if (value.reason === 'running_cap' || (value.waitBasis === undefined && !driver.accepted)) {
             lane.state = 'waiting'; lane.reason = value.reason;
             if (cursorAtRead !== null) {
-              lane.handedBack = runningCapBasisOf(lane);      // handed back; the drain runs once this loop returned
+              const basis = runningCapBasisOf(lane, value.reason === 'running_cap' ? 'running_cap' : 'no_wait_basis');
+              lane.handedBack = basis;                         // handed back; the drain runs once this loop returned
               lane.driver.registered = true;
               lane.state = 'waiting_for_reply';                // the existing wake re-opens this watch
-              registerRunningCapWait(lane, cursorAtRead);
+              registerRunningCapWait(lane, cursorAtRead, basis);
             }
             return;                                            // no yielded pump, no terminal
           }

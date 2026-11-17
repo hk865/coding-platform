@@ -94,6 +94,7 @@
    - 约定里没有、同伴看起来也会要：请协调的人（这个目标的参谋，没有参谋就是秘书）定归属。
 {{#tool:send_session_message}}
      知道该找谁时（例如派你这项工作的就是他），用 `send_session_message` 发行动请求（`action_request`），`needsReply` 为真、`waitAfterSend` 为假，接着做不依赖它的部分。只读问询（`inquiry`）只能问已经定了的归属：回答你的是对方的只读副本，它不能替对方定分工。
+     要参谋或人定的事（冲突、要改计划、要人裁决）也给参谋发 `action_request`，`needsReply` 为真；只读问询只用来问事实，对方不会为它动手，也不会出卡。
 {{#tool:find_related_sessions}}
      不知道该找谁时，可以用 `find_related_sessions` 按这个模块或任务找相关的线，从它们的卡片里认出参谋或秘书；找不到就走下面的退路。
 {{/tool:find_related_sessions}}

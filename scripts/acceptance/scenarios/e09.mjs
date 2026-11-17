@@ -65,6 +65,9 @@ async function run(ctx, rec) {
   // G6F R1: complete records that show a link was not met → `fail`; the link before it did not happen → `uncovered
   // (not-run)`; a read that did not answer or a record that lacks the fact → `uncovered (env-unavailable)` with the
   // read's own words. None of these links lacks a public entry, so none is `entry-missing`.
+  // 上报是只读询问（inquiry）时，回答它的是参谋线派生的只读副本，不进参谋线自己的轮（DESIGN §1.6:318、§4.7）。
+  // 副本算在被问的那条线上（§1.6:321），按消息上记下的副本认那一轮。副本不出卡，所以“人决定”“新版本”两环
+  // 记为 not-run，不判失败（lead 11-17 裁定，E09 第六次）。
   const gaps = [];
   const rows = await lines(project, gaps);
   const dutyOf = new Map(rows.map(row => [row.key.sessionId, row.duty]));
@@ -77,6 +80,30 @@ async function run(ctx, rec) {
   const said = body => `${body?.status ?? 'no answer'} ${body?.code ?? ''} ${body?.reason ?? ''}`.trim();
   const notRun = (ids, text) => { for (const id of ids) rec.uncover(id, 'not-run', text); };
   const unreadable = (ids, text) => { for (const id of ids) rec.uncover(id, 'env-unavailable', text); };
+  // 一条询问的只读副本和它的回答。副本按消息上记下的派生认（`consultationDerivation.childSessionRef`）。
+  // 先读副本自己的历史：副本答完就归档，但 `sessions/history` 照样能读（11-17 在测试世界里核过）。取输入里带这条
+  // 询问正文、又有最终答复的那一轮。读不到或没有这样的轮，退一步读原消息上的回复正文（`messages/body` 的
+  // response）；副本的答复原样挂在原消息上。`from` 写明用的是哪一种；`text` 为 null 时，`why` 写明哪一步没读到。
+  const copyAnswerOf = async messageRef => {
+    const messageBody = await host.client.read('messages/read', project.scope, messageRef);
+    const message = ready(messageBody);
+    if (message === null) return { child: null, pending: false, text: null, from: null, why: `messages/read：${said(messageBody)}` };
+    const child = message.consultationDerivation?.childSessionRef ?? null;
+    if (child === null || message.status !== 'responded') return { child: child?.sessionId ?? null, pending: true, text: null, from: null, why: null };
+    const question = ready(await host.client.read('messages/body', project.scope, { messageRef, part: 'message' }))?.text ?? null;
+    const copyGaps = [];
+    const turn = question === null ? undefined
+      : (await sessionTurns(project, child, copyGaps)).find(entry => entry.final !== null && entry.input.includes(question));
+    if (turn !== undefined) {
+      return { child: child.sessionId, pending: false, text: turn.final, from: `副本历史 sessions/history 的轮 ${turn.turnId}`, why: null };
+    }
+    const missed = copyGaps.join('；') || (question === null ? '询问正文 messages/body 没有答复' : '副本历史里没有输入带询问正文、有最终答复的轮');
+    const responseBody = await host.client.read('messages/body', project.scope, { messageRef, part: 'response' });
+    const response = ready(responseBody)?.text ?? null;
+    return response === null
+      ? { child: child.sessionId, pending: false, text: null, from: null, why: `${missed}；回复正文 messages/body：${said(responseBody)}` }
+      : { child: child.sessionId, pending: false, text: response, from: `${missed}，改用原消息的回复正文 messages/body`, why: null };
+  };
   // A sent message's ref is `{ aggregateType: 'SessionMessage', projectId, workspaceId, messageId }`: the tool result
   // carries the saved record (`communication-tools.ts:482-486`, `contracts/mailbox.ts:131-132`); it has no sessionId
   // (G6F F5: the old test asked for one, so no report ever linked).
@@ -98,11 +125,20 @@ async function run(ctx, rec) {
     rec.pass('executor-reports', `执行者上报 ${reportRef.messageId}：${JSON.stringify(reportResult.args)}`);
     const recipient = reportResult.args?.recipient?.sessionId ?? null;
     const recipientDuty = dutyOf.get(recipient) ?? null;
+    const namesBoth = text => /api\.js/.test(text) && /report\.js/.test(text);
     // The adviser turns that received this message (their input names its message id) and what they sent.
     const received = turnsByDuty.adviser.filter(turn => turn.input.includes(reportRef.messageId));
-    const explained = received.find(turn => turn.final !== null && /api\.js/.test(turn.final) && /report\.js/.test(turn.final));
+    const explained = received.find(turn => turn.final !== null && namesBoth(turn.final));
+    // 发给参谋的只读询问：参谋线自己的轮收不到它，回答它的是参谋的只读副本。
+    const copy = reportResult.args?.intent === 'inquiry' && recipientDuty === 'adviser' ? await copyAnswerOf(reportRef) : null;
     if (received.length > 0) {
       rec.check('adviser-explains', explained !== undefined, `收到上报 ${reportRef.messageId} 的参谋轮 ${received.length} 个；最终答复同时点到 api.js 和 report.js 的：${explained?.turnId ?? '无'}`);
+    } else if (copy !== null && copy.text !== null) {
+      rec.check('adviser-explains', namesBoth(copy.text), `上报 ${reportRef.messageId} 是只读询问，由参谋线 ${recipient} 的只读副本 ${copy.child} 回答（判据来自${copy.from}）；回答同时点到 api.js 和 report.js：${namesBoth(copy.text) ? '是' : '否'}`);
+    } else if (copy !== null && copy.pending) {
+      rec.uncover('adviser-explains', 'not-run', `上报 ${reportRef.messageId} 是只读询问，参谋线的只读副本${copy.child === null ? '还没建' : ` ${copy.child} 还没答复`}：参谋解释这一环还没发生`);
+    } else if (copy !== null) {
+      unreadable(['adviser-explains'], `上报 ${reportRef.messageId} 是只读询问，由参谋线的只读副本 ${copy.child ?? '（未知）'} 回答，但读不到它的回答：${copy.why}`);
     } else if (unread !== null) {
       unreadable(['adviser-explains'], `${unread}；读到的参谋轮输入里没有上报 ${reportRef.messageId}`);
     } else if (recipientDuty !== 'adviser') {
@@ -115,7 +151,9 @@ async function run(ctx, rec) {
     const decision = committedAnswers.find(entry => entry.card.source.kind === 'message'
       && sources.some(ref => JSON.parse(entry.card.source.key).messageRef?.messageId === ref.messageId));
     if (decision === undefined) {
-      if (rec.results.get('adviser-explains')?.status === 'pass') {
+      if (copy !== null) {
+        notRun(['person-decides', 'new-version'], `上报 ${reportRef.messageId} 走的是只读询问（inquiry），由参谋的只读副本回答；只读副本不出卡，要人定的事应发 action_request。人决定和新版本这两环没有发生`);
+      } else if (rec.results.get('adviser-explains')?.status === 'pass') {
         rec.fail('person-decides', `参谋解释了上报 ${reportRef.messageId}，但人提交成功的 ${committedAnswers.length} 张卡里没有一张的来源是这条上报或参谋为它发出的消息：冲突没有交给人决定`);
         notRun(['new-version'], '没有人对这次冲突的决定，新版本这一环没有发生');
       } else {

@@ -21,7 +21,7 @@ const PACK: ResolvedPromptPackV1 = PLATFORM_PROMPT_PACK_V1;
 // 9's, set at the merge from the builder's text (lead rulings: pins are unified at the merge).
 const V2_TEMPLATES = {
     'base': 'cee15946501a2db933e00e1ea9954e8332542ab130268cd32c6962c91061958c',
-    'skill-platform-work': 'fee248cc70c5ed0a07bc8e679bd8357fa6e678976818b121e6f837cdf29ec7b3',
+    'skill-platform-work': 'be9071ec8a231967ebd8c4be69ae2a841cfdfda157997e53065ef02edf654a56',
     'skill-platform-secretary': 'a956d102b3a4e85fc286229d4724a27dd9eeb9a03a5f979bfcec8394aa14e7ed',
     'skill-platform-adviser': 'b4ff371d1dbd53a51e5eb3415c35c12c45d18ae3e737d053f12394a6a05b8dc9',
     'skill-platform-scribe': '06eaa54bb819486d3b7e3e69bd4bdcfe0a5cfb7e5a73a893296500710ec7b65d',
@@ -30,7 +30,8 @@ const V2_TEMPLATES = {
 
 /** The v1 Skill texts PC-1 pinned plus the decision 89, 8E L3 row 4 and 121-128 (goal gate) paragraphs, hand-written. */
 const V1_SKILL_DIGESTS = {
-    'skill-platform-work': '65d0bd9fca305c43d84ab2ebee1d8de00a76567aa69721243de78a181d00953c',
+    // 第 12 版只多一句：要参谋或人定的事发 action_request（lead 11-17，E09）；去掉这一句即旧值 65d0bd9f…
+    'skill-platform-work': '1e952f907357a6c3374978c49a7172f14f93d319ccc47e207b270a3a918d22b7',
     'skill-platform-secretary': '6abe9c1f1b6cdbb3e3cfbf03eff104ff0e641d3d0f4adba5fe73376a946084be',
     'skill-platform-adviser': 'a4d9816458695fe467d8b83585e2e52d900fc182794b8bd7d9a45e11b50e600c',
     'skill-platform-scribe': '5c4d9ebc3a3abb6b7d56bcb957728247789186588f4290d451d3c1efe2f46fd1',
@@ -52,7 +53,7 @@ describe('platform prompt pack v2 (rulings 17–18)', () => {
         for (const [id, expectedDigest] of Object.entries(V2_TEMPLATES)) {
             expect(manifest.templates[id], `manifest entry ${id}`).toEqual({
                 file: `templates/${id}.txt`,
-                version: id === 'base' ? 3 : id === 'skill-platform-adviser' ? 16 : id === 'skill-platform-work' ? 11
+                version: id === 'base' ? 3 : id === 'skill-platform-adviser' ? 16 : id === 'skill-platform-work' ? 12
                     : id === 'skill-platform-reviewer' ? 5 : id === 'skill-platform-secretary' ? 12 : 9, // scribe 9 (SCRV, +1 in its tree)
                 mentionsTools: [],
             });
@@ -137,7 +138,7 @@ describe('platform prompt pack v2 (rulings 17–18)', () => {
             'handoff-brief-executor': { packId: 'platform', version: 1, mentionsTools: ['read'] },
             'handoff-brief-adviser': { packId: 'platform', version: 2, mentionsTools: ['read'] },
             base: { packId: 'platform', version: 3, mentionsTools: [] },
-            'skill-platform-work': { packId: 'platform', version: 11, mentionsTools: [] },
+            'skill-platform-work': { packId: 'platform', version: 12, mentionsTools: [] },
             'skill-platform-secretary': { packId: 'platform', version: 12, mentionsTools: [] },
             'skill-platform-adviser': { packId: 'platform', version: 16, mentionsTools: [] },
             'skill-platform-scribe': { packId: 'platform', version: 9, mentionsTools: [] },
