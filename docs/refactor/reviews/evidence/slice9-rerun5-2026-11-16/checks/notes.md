@@ -222,7 +222,7 @@
 | 2026-11-16T07:00:25.317Z | E12 | tool submit_initial_plan (call call_36be69c23d194c76b5dd7a49) | invalid: the answer has problems; fix every one and call the tool again in this round | 无理由 | - | 待定 |
 | 2026-11-16T07:01:35.171Z | E12 | tool find_related_sessions (call call_00_v0ywai65dxxvllrz0bagvd6x) | unknown_tool: 工具不可用 | 无理由 | - | 待定 |
 | 2026-11-16T07:01:48.002Z | E12 | tool edit (call call_01_9cqgypku99z6t59kqvu1msut) | execution_failed: test/greet.test.js 不存在 | 无理由 | - | 待定 |
-| 2026-11-16T07:02:04.988Z | E12 | tool send_session_message (call call_00_qw0xojzcc3i6jenwa45qq4dw) | forbidden: the recipient Session belongs to another project | 无理由 | - | 待定 |
+| 2026-11-16T07:02:04.988Z | E12 | tool send_session_message (call call_00_qw0xojzcc3i6jenwa45qq4dw) | forbidden: the recipient Session belongs to another project | 无理由 | - | R45（决定 121-149：拒绝原文写出调用方的项目号，Work 输入的目标段带 `projectId`） |
 | 2026-11-16T07:02:08.251Z | E12 | tool look_graph (call call_00_8d1ih37vldh3cli0ycky5pqz) | forbidden: the Task node is outside the requested goal | 无理由 | - | 待定 |
 | 2026-11-16T07:02:35.585Z | E12 | tool look_graph (call chatcmpl-tool-896aa62fa8c550da) | invalid_arguments: 工具参数不符合 schema：(根): Invalid input | 无理由 | - | 待定 |
 | 2026-11-16T07:02:43.735Z | E12 | tool look_graph (call chatcmpl-tool-bae9159d08b698ba) | invalid_arguments: 工具参数不符合 schema：(根): Invalid input | 无理由 | - | 待定 |

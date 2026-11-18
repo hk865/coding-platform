@@ -138,6 +138,18 @@ lead，2026-11-01。设计唯一依据：`plan-loop-design.md`（v4 定稿，685
 | 阶段 gate | **每段一条** `taskKind: 'gate'`、`scope: { kind: 'stage', stageId }` 的任务；它的验收义务就是这一段的验收。骨架的每个阶段都有它（设计 `:121`）；平台沿用现有校验、不新增入图 gate，缺了由审阅者指出，见 5.1.3 | 模型 |
 | 目标 gate | 有未声明 explicit intent 的必需 work 时，现有校验要求至少一条必需、活动、`scope: { kind: 'goal' }` 的 gate（`missing_active_required_goal_gate`，`src/core/work-graph/tasks/plan-validation.ts:101`-`:104`）；本设计的计划通常显式声明 intent，所以目标 gate 由参谋写、不是平台强制 | 模型 |
 
+> 2026-11-18 补注（决定 121-149，CPL-3 的“恰好一道目标 gate”进了校验）：上文“目标采用时”那一段的括号和上表“目标 gate”一行说“目标 gate 由参谋写、不是平台强制”，现在平台多校验一条，原文保留。
+> - 规则：一份计划恰好一道还没了结的活动必需目标 gate。只在有可执行的必需工作（活动、必需、不是 `plan_only` 的 work）时查，和“缺目标 gate”同一个范围。多过一道报 `multiple_active_goal_gates`，采用时归 `incomplete`（`src/core/work-graph/tasks/plan-validation.ts:270` 的 `goalGateCountIssue`）。
+> - 不算的：源计划原样带过来、已了结（满足）的目标 gate。已满足的 gate 处置是终态，已完成的目标接着做时只能保留它、再加一道新的；这个形状照旧能交、能提议、能采用。
+> - 只报这一版比上一版多出来的多道：上一版已经是多道的旧账本不重判。
+> - 在哪判：秘书请求轮交表（判合并后的整份）、首版交表、`plans/propose`、agent 的未来提议、首次采用、未来采用，六处都接这一个函数。提议时有 `basedOn` 却读不到源计划，这一处不判，留给采用时判。
+> - 为什么会出两道：改计划的段只写了新任务和新 gate，段里没写的旧任务照旧 active（5.1.2 的合并只替换同号、追加新号），旧 gate 和新 gate 就成了两道（G6 第十一次 E08）。规划说明第 16 版和秘书回答模板第 11 版都补了“段里不写的任务照旧 active；要拿掉就写上它自己的 taskId 和 `cancelled`（或 `superseded` 加 `replacedByTaskId`）”。
+> - 报错原文（模型照它改）。没有还没了结的已采用目标 gate 时（首版，或源计划的目标 gate 都已了结），只写第一句：
+>   `the plan has <n> active required goal gates (<ids>); a plan has exactly one open goal gate`
+>   有的话，整句是：
+>   `the plan has <n> active required goal gates (<ids>); a plan has exactly one open goal gate. Keep one: leave out the new gate and let the new obligation list only the new work tasks (an adopted gate keeps exactly the obligations that list it), or, if the person changed what the goal must meet, list the adopted gate (<adopted>) with its own taskId and disposition "superseded" and replacedByTaskId naming the new gate; a task you leave out of a segment stays as it is and stays active`
+>   `<ids>` 是这一版还没了结的目标 gate，`<adopted>` 是其中上一版就有的那几道，都按草稿里的任务顺序。不叫模型把新验收挂到已采用的 gate 上：gate 定义冻结只许已采用的 gate 带着原来那几条义务（`STATE-MACHINES-SPEC.md` 的 source gate 定义冻结，同日补注）。
+
 **段占位的规则是“规格新定”的（N5）。** 依据：设计 `:121` 的“骨架 + 第一段”、`:1921`-`:1922` 的“required plan_only future node”、第 2 节第 1 行的“未细化的必需任务”。没有段占位，`required` 集合里就没有“未细化”的事实，`:1932` 的 gap 不会出现，后续段永远不会被触发。占位任务不新造任务种类、状态或记录：它就是现有 `RuntimeTask` + `executionIntent: 'plan_only'`（`src/contracts/plan.ts:46`-`:56`）。后续段也可以有目标级（不带 `stageId`）的 `plan_only` 占位；那时 `refine:` 的请求号用占位任务的 `taskId`（见 5.1.4、5.2.2）。
 
 **占位任务带档位。** 每个段占位带 `sizeClass: 'small' | 'medium' | 'large' | 'explore'`（v3 §4.3），表示这一段的预估大小；它是 `RuntimeTask` 的可选字段，随任务定义冻结（5.1.1 末段），不是新记录。没有档位的占位只累计、不提醒。
@@ -332,6 +344,12 @@ export function planOnlyTargetOf(basis: GoalWaitBasisV1 | undefined): Refinement
 | `planresume:` | 目标循环（C；本节给请求号和 Query 形状） | 原规划线：原消息 M 的收件线（参谋或秘书；正文的 `originalQueryRef` 是原规划 Query 的源消息，见 5.2.2/5.2.3） | 人答完问题卡后接着规划（设计 `:143`-`:145`）；正文只带请求头和原 Query 引用，原问题与逐卡答复在准备输入时装配；开新 Query | `planresume:<goalId>:<queryJobId>`（Query 号是原规划轮的 `QueryJob` 号，不是本轮新 Query；见 N10） | `plan_round` / `submit_plan_round`；plan 正文 256 KiB；Host 系统轮消息和 Query `question` 64 KiB（回复 16 KiB） | 同一轮 Query 一条；这一轮的卡都答完才发（设计 `:612`） | 候选已写入时只关联 R；最终回答、提案被拒或采用成功后才关联 M（M 只有一个回复槽，见 N9/C-25） |
 | `overlap-note:`（既有，不是系统轮） | N 门（`src/core/work-graph/tasks/overlap-gates.ts:241`） | 目标参谋；没有参谋时秘书（`:222`-`:233`） | 写模块接口约定；它走同一条消费路径（设计 `:137`） | `overlap-note:<canonical gateRef>:<basisDigest>`（既有） | `text`（不挂提交工具）；注记写完后交最后的文本 | 现有 N 门的 gate + basis | 规划 Query 结束即结束 |
 
+> 2026-11-18 补注（决定 121-149，lead 补充裁定）：人发给执行者线的直接干预现在也开规划轮（5.2.4 (3) 的补注），执行者线也会反问出问题卡。上表 `planresume:` 一行“收件线是原规划线（参谋或秘书）”照字面执行：
+> - 执行者线反问出的卡，人答完只保存答案，不续开模型轮；要继续，人再发消息（MVP-BEHAVIOR B20 原文“人答卡只保存答案，不续开模型轮，要继续需再发消息”）。
+> - 目标循环发 `planresume:` 之前，先读原消息收件线的职责，再用 `planningAnswerShapeOf`（Host 系统身份、`action_request`）判：是 `plan_round`（参谋、秘书）才发；不是就跳过这一组，不发、不等、不写，同一趟接着往下选（`src/business/workflow/workflow.ts:2881-2891`）。职责读不出或是 `unknown`，当没有职责。形状规则仍只在 `planningAnswerShapeOf` 一处，`plan-round.ts` 不为这一条改。
+> - 不这样做的话，续轮发到执行者线，冻成 `text` 形状，没有规划说明和提交工具，只会落到“回答不合法”。
+> - 已知代价：Host 重启重建等待时，这样的问题组会让这个目标多一次空唤醒，走一趟只跳过这一组（`src/app/goal-wait-wakes.ts:256`，记在以后）。
+
 **关于 N 的约定请求。** 它不是本节新造的系统轮；前缀 `overlap-note` 是 `overlap-gates.ts:148` 的既有常量。它由 Host 自动上下文发出（`automationContext`，发送身份不是 `SYSTEM_ROUND_ACTOR`）、收件是参谋或秘书，和系统轮共用 `handleIntervention` 的规划分支（5.2.4）。它没有 `plan_only` 触发，也不改请求号格式；它不挂提交工具（答案形状 `text`），但按 5.2.8 的“可信规划来源 + duty”进 planning 注记准入，见 5.2.7 的发送身份判据和 5.2.8 的注记准入。
 
 **目标参谋缺失时（`refine:`/`deviation:`/`planfix:`/`planresume:`）。** 不发系统轮，也不转给秘书；目标循环用现有 `goal_cause` 卡源（code `no_adviser`，affected = [Goal pin]）给人，专用 `adviser_creation` 卡归 7D2（M-4，103-1）。`overlap-note:` 行里的“没有参谋时秘书”是 N 门既有路径，不属于这套系统轮，本段不改。没有收件人不是错误，目标保持等待；绑定晚于启动时下一趟按新线重试。
@@ -497,6 +515,7 @@ export function planningAnswerShapeOf(
 ): PlanningAnswerShapeV1;
 ```
 - 只有 `sender.kind === 'host'`、`sender.actor.kind === 'system'`、`sender.actor.id === SYSTEM_ROUND_ACTOR.id`、`intent === 'action_request'` 且 duty 是 `adviser`/`secretary`/`reviewer` 时才不是 `text`；`overlap-note:` 走 `automationContext`，发送身份是 `WORKFLOW_AUTOMATION_ACTOR`（`src/contracts/task-requeue.ts:44`），不是 `host:plan-round`，所以是 `text`；没有正文前缀判断；`planresume:` 的收件线若原来是秘书，发送身份仍是 `host:plan-round`，所以仍是 `plan_round`，不会误挂 `submit_secretary_answer`。**这个函数只定答案工具形状**；N 的注记准入另按 5.2.8 的“可信规划来源 + duty”判，不因为这里是 `text` 就丢注记工具。
+- 2026-11-18 补注（决定 121-149，lead 11-18 甲路，依据 MVP-BEHAVIOR B20）：人（`sender.kind === 'host'`、`sender.actor.kind === 'human'`）发给执行者线的 `action_request` 也是 `plan_round`（`src/business/workflow/plan-round.ts:148`）。没有任务的活跃目标，人对空闲执行者线的直接干预在这条线上开规划轮：有规划说明和 `submit_plan_round`，答案照旧走 `planOnIdleLine` 交 `plans/propose`，按档位采用后这条线领第一个可做的任务。只改人发的这一支：Host 系统轮、`work_run`、`secretary_round` 发给执行者照旧 `text`。执行者的这一轮不挂注记工具，见 5.2.8 的补注。原文保留。
 
 `planOnIdleLine` 建 Query 时把 `answerShape` 写进冻结的 `execution`：
 ```ts
@@ -625,6 +644,7 @@ export function queryAnswerShapeOf(
 - **在哪算。** 只在 Query 创建处算一次：`handleIntervention` 读到收件线 duty 后调用 `planningAnswerShapeOf(message, duty)`。判据是**发送身份 + 收件线职责**：
   - `host` 系统身份且 `actor.id === SYSTEM_ROUND_ACTOR.id` 的 `action_request`：收件 duty `reviewer` → `plan_review`；收件 duty `adviser`/`secretary` → `plan_round`；其他 duty → `text`。
   - `host` 系统身份但 `actor.id !== SYSTEM_ROUND_ACTOR.id`（例如 `overlap-note:` 的 `workflow:auto-rework`）→ `text`。
+  - （2026-11-18 补注，决定 121-149：人发给 `executor` 的 `action_request` 也是 `plan_round`，见上面 `planningAnswerShapeOf` 规则的补注；`work_run`、`secretary_round` 和 Host 系统轮发给执行者照旧 `text`。下一条原文保留。）
   - 人、`work_run`、`secretary_round` 发给 `adviser`/`secretary` 的 `action_request` → `plan_round`（它也是规划轮，走 `planOnIdleLine`，不是秘书请求轮）；发给 `reviewer` 的 → `text`（审阅只由系统轮开）。
   
   **注记准入与这个形状分开。** `overlap-note:` 的 N 轮（`automationContext` 的 `workflow:auto-rework`，Host 系统 `action_request`、收件参谋/秘书）形状是 `text`、不挂 `submit_plan_round`，但它按 5.2.8 的“可信规划来源 + duty”进 planning 注记准入；不因为形状是 `text` 就丢掉注记工具，也不因为要注记就改成 `plan_round`。
@@ -668,6 +688,7 @@ export function queryAnswerShapeOf(
 5. **工具表不一致。** 准备和启动用同一个 `queryAnswerShapeOf`/manifest 值；若 Host/Role/read-only 上限在两步之间变化，`finalToolNamesOf` 的结果不同，启动返回 `forbidden`，不进入 Query，也不悄悄退回文字。`manifest.answerShape` 本身被改（只可能改库）也走这条比较，不另写防御。
 
 #### 5.2.8 规划 Query 的注记准入和 owner 来源（C-1 的另一半；PLS-02、PLT-03/04）
+> 2026-11-18 补注（决定 121-149）：人发给执行者线的干预规划轮也是 `plan_round`（5.2.4 (3) `planningAnswerShapeOf` 规则的补注），准入照下面仍是 planning 类，但规划轮注记的作者只认参谋、秘书（`src/core/work-graph/tasks/planning-query-run.ts:245`），执行者写注记一定被拒。所以执行者的这一轮在投影里不挂注记工具：`src/core/agent-runtime/query-preparation.ts:138` 的 `executorPlanRound`（`intervention_planning` + `plan_round` + 执行者），在 `projectQueryConfiguration`（`:269`）里把 `NOTE_TOOL_NAMES` 并进禁用集合；准备、启动、WorkGraph 授权三处都用这一份投影。作者规则不变；`planningNoteAdmission` 不知道 duty，不改。
 **两条准入分开。** `answerShape` 管提交工具（5.2.7），注记准入管 `record_note`；只放宽前者，规划轮写注记仍会被 owner 拒：规划 Query 是普通 Query，`requestRoot === null`，`secretaryNoteAdmission` 直接返回 `{class:'none'}`（`secretary-note.ts:31`-`:44`），`note-service.ts:145` 的 `query_run` 分支走 `resolveSecretaryQueryRun`，后者要求 `requestProfile`/`prepared` 是秘书请求轮（`secretary-query-run.ts:84`）且 `requestRoot !== null`（`:115`），规划轮两条都不满足。
 
 **（1）工具侧：第三个准入类。** `secretaryNoteAdmission` 旁边加纯函数 `planningNoteAdmission`：
@@ -1619,6 +1640,13 @@ deviation:<goalId>:<taskId>:<kind>:<planRevision>
 3. 任务书在哪：计划版本 + `taskId` + 5.3 的导出 Markdown 路径；导出失败写“计划版本 + taskId”（设计 `:193`“导出失败不挡采用，只提示”）。
 4. 停因（只有 `budget`/`stop`）：`budget_exhausted` 的 `minTokenBudgetExclusive`（`task-failure.ts:957`）或停因码；`growth`/`lines` 没有停因。
 
+> 2026-11-18 补注（决定 121-149）：`stop` 偏差（`no_new_basis`、`auto_rework_cap_reached`）多一个第五项“没过的登记检查”，上面“不新造第五项”按这里读，原文保留。
+> - 内容：这个任务链头那一轮里没过、跑完、有报告的命令检查（FAIL 和 INCONCLUSIVE 都算），按 checkId 排。每条一行概要：id、kind、taskIds、出处、退出码（或超时、被终止、没跑成、报告读不到和原因）；下面是命令原文和 stderr 末尾，stderr 空时给 stdout 末尾。命令和输出照原样放进代码块，不做 JSON 转义。
+> - 出处四种：已批准清单（哪次回答）、计划（哪份候选、谁批的）、Host 启动配置、不明（Host 现在装的检查里没有内容相同的）。出处按内容摘要在 Host 现在装的检查里找。
+> - 上限：标题行 `failing checks (command and output verbatim, not JSON):`、各条和最后那句省略说明 `<n> more failing checks not listed (see the round card)` 合计至多 8 KiB，放不下的整条不列。命令最多 2,000 字（UTF-16），每路输出取末尾 2,000 字节。
+> - 只在要发这一轮时读一次链头轮；读轮次失败，这一趟不发，下一趟再读。其余三种偏差、或者没有这样的检查时，正文和四项一字不差。不进无进展键，`no_new_basis` 的判法不变。
+> - 代码：正文 `src/contracts/plan-deviation.ts:205`（`failingChecksText`）、`:230`（`deviationText`）；读 `src/core/work-graph/tasks/check-outputs.ts:32`（`failingCheckOutputsOf`，返工输入的接续说明也用它）；发送 `src/business/workflow/workflow.ts:2609`。
+
 **同一版只发一次**靠 Host 发信的确定性身份：`src/core/work-graph/communication/mailbox-service.ts:2693`-`:2699`（`identityKeyOf('send', …, requestId)` 先查回执，重放返回原消息）。不新增去重记录。`growth` 和 `lines` 各有请求号，各自最多一次；同一任务同一版已有 `stop`/`budget` 硬停因时，`growth`/`lines` 不再发轮，只写进“请知悉”。
 #### 7.1.2 收件人和执行者的上报
 - **平台侧的系统轮和告诉人**：先 `resolveDutyRecipient` 找 `duty:'adviser'`（`src/core/work-graph/sessions/duty-recipient.ts:22`-`:29`；用法同 `workflow.ts:1470`）。没有参谋时**不发给秘书**，出 `goal_cause` 卡（code `no_adviser`；103-1；设计 `:123`、`:503`；专用 `adviser_creation` 卡归 7D2）。这张卡由 5.5.3 的 `readGoalDecisionCauses` 派生：有细化需求（必需活动 `plan_only` work）或偏差需求（共用 `readDeviationFacts` + `deviationsOfGoal` 返回非空，覆盖 `growth`/`lines`/`budget`/`stop`；不另写只含停因的近似条件）、且参谋收件人读回 `null`；队列读和答卡来源重核共用同一条判据，不新增持久 cause（PLS-17/C-28/PLT-15）。7D2 的 L35 之后换同一处调用的收件人，调用形状不变（设计 `:292`、`:475`）；**执行者自己的上报**：用现有 `send_session_message` 发给它认到的参谋线（技能里用 `find_related_sessions` 认人），带 `waitAfterSend: true`（`communication-tools.ts:479`-`:490`）。执行者不是 Host，不能调 `resolveDutyRecipient`；设计 `:292` 的“收件人按 L35”只应读成“平台侧发信按 L35”，见偏差 D-V2；**让出只挡它自己**（设计 `:296`）：Run 已 `yielded`，等待是消息上的一条 open wait（`src/core/work-graph/state/message-machine.ts:1145`-`:1152`），别的任务照常推进。
@@ -1652,7 +1680,7 @@ deviation:<goalId>:<taskId>:<kind>:<planRevision>
 | 依赖它的任务 | 现有规则 | 见 D-V1：本树只有 L46 的传递闭包会挡正式依赖；普通停因、软超线不挡下游 | 等它恢复/换计划；没有新机制 |
 | 别的任务 | — | 不受影响 | 照常推进 |
 - **两条软超线都不停任务。** 增长量过 2 倍和行数过 2 倍都是“开参谋轮”；轮后参谋不改计划时由 `plan_notice` 告诉人。`growth` 和 `lines` 各自一条偏差，各自最多一次；同一任务同一版已有 `stop`/`budget` 时不再发软线轮。
-- **告诉人时带什么（D6）**：7.1.1 的四项（用了多少、改了哪些文件多少行、任务书在哪、停因）；偏差轮结束后参谋明确“不改计划”时，这四项以 `plan_notice` 投影出现（6.4.2），不是给参谋的 `notify`。人看得到改动靠现有 `RunActivity.changedFiles`/`changedLines` 和 `graph/detail`（`src/app/core-routes.ts:614`），不新开视图。
+- **告诉人时带什么（D6）**：7.1.1 的四项（用了多少、改了哪些文件多少行、任务书在哪、停因）；偏差轮结束后参谋明确“不改计划”时，这四项以 `plan_notice` 投影出现（6.4.2），不是给参谋的 `notify`。人看得到改动靠现有 `RunActivity.changedFiles`/`changedLines` 和 `graph/detail`（`src/app/core-routes.ts:614`），不新开视图。（2026-11-18 补注，决定 121-149：`stop` 偏差多了第五项“没过的登记检查”（7.1.1 的补注），它只给参谋；人的请知悉照旧只有四项，投影在第五项的标题行之前截住，`src/core/work-graph/views/plan-notices.ts:509` 的 `storedFactsOf`。）
 - **D-V1：依赖不是领取条件。** 本树 `executionDag.dependsOn` 只是软排序，不设“上游完成”门；唯一挡下游的是 L46 的卡/等待传递闭包（`task-gate.ts:109`-`:172`）。软超线和普通停因都不在 `blocks` 里，下游照常被选，缺输入时在消费处失败。本规格不加新闭包；这是对设计第 7 节的偏差，由 lead 改设计。
 
 **三种状态下怎么暂停（设计 `:303`）：**
@@ -1806,14 +1834,14 @@ export function deviationText(d: DeviationV1, taskBookPath: string | null): stri
    - `estimatedLines` 存在且行数完整：`added + deleted > 2 × estimatedLines` → `lines` 偏差；等于 2 倍不触发（严格大于）。
    - 读数未知/不全：不判超线，正文写“未知/不全”，不写 0。
 4. **发系统轮。** `deviationsOfGoal` 返回未发的 `growth`/`lines`；`selectNext` 返回 `perform(sendSystemRound)`，Host 以系统身份发 `deviation:<goalId>:<taskId>:<kind>:<planRevision>` 给参谋。没有参谋时出 `goal_cause` 卡（code `no_adviser`），不发秘书（M-4）；判据是 5.5.3 的“细化或偏差需求 + 权威无收件人”，`growth`/`lines` 也走同一判据。同一版同一任务同一 `kind` 只发一次；`growth` 和 `lines` 是两条独立偏差，各有请求号。
-5. **告诉人。** 偏差轮结束后，参谋明确“不改计划”（答案既不是 plan 也不是 questions）时，`plan_notice` 投影出一条 `deviation-notice:<goalId>:<requestId>`（7.1.1 的四项 + “不改计划”）；不开模型轮。同一任务同一版已有 `stop`/`budget` 时，软线不发轮，只写进“请知悉”。
+5. **告诉人。** 偏差轮结束后，参谋明确“不改计划”（答案既不是 plan 也不是 questions）时，`plan_notice` 投影出一条 `deviation-notice:<goalId>:<requestId>`（7.1.1 的四项 + “不改计划”）；不开模型轮。（2026-11-18 补注，决定 121-149：`stop` 偏差正文里的第五项不进这条请知悉，见 7.1.1 的补注。）同一任务同一版已有 `stop`/`budget` 时，软线不发轮，只写进“请知悉”。
 6. **参谋轮。** 改计划 → 候选进第 6 节；不改 → 这一轮结束，判断写进“请知悉”；问人 → 出卡。任务在第 4–6 步期间照常推进，别的任务也继续（设计 `:298`、`:543`；v4 §10）。不做硬刹车。
 7. **阶段线不在这条路里。** 阶段预估行数合计过 2,000 行或累计过 0.6B token 只提醒，写进“请知悉”/卡，不挡采用、不发偏差轮（v4 §10）。
 #### 7.7.2 已有停因（`budget` / `stop`）
 1. **停因出现。** Run 结束（`budget_exhausted`）或 Task 的失败事实给出 `stopped`（`task-failure.ts:948`、`:951`、`:956`）；Run 结束的结算写 `RunActivity`，Task 的失败事实从 `queryTaskGraph` 的 `row.failure` 读出（工作流已读的计划图，不另开 Store 读）。
 2. **目标循环读。** 读 `row.failure.automation.verdict`；任务已经停了。
 3. **按失败事实取硬停因。** 同一任务同一版的 `row.failure.automation.verdict` 只给一个硬停因：`stopped` 的停因码决定 `stop`，`budget_exhausted` 决定 `budget`；**不是跨 kind 的 `stop > budget` 优先级**，同一个 `kind` 才去重。软线不再发，`growth`/`lines` 的信息写进同一条正文或“请知悉”。
-4. **发 `deviation:`。** 正文四项，第三项是任务书在哪；偏差轮结束后参谋明确“不改计划”时由 `plan_notice` 投影出一条（6.4.1/6.4.2）。没有参谋时出 `goal_cause` 卡，code `no_adviser`，不发秘书；判据是 5.5.3 的“细化或偏差需求 + 权威无收件人”，`budget`/`stop` 与软线共用同一份偏差事实。
+4. **发 `deviation:`。** 正文四项，第三项是任务书在哪（2026-11-18 补注，决定 121-149：`stop` 再加第五项“没过的登记检查”，见 7.1.1 的补注）；偏差轮结束后参谋明确“不改计划”时由 `plan_notice` 投影出一条（6.4.1/6.4.2）。没有参谋时出 `goal_cause` 卡，code `no_adviser`，不发秘书；判据是 5.5.3 的“细化或偏差需求 + 权威无收件人”，`budget`/`stop` 与软线共用同一份偏差事实。
 5. **参谋轮。** 改计划 → 候选（替代任务）→ 6.1 的诊断/审阅/采用；采用前按 7.3.1 先取消让出的 Run（只有执行者在等时才需要）；回答 → 不适用，判断写进“请知悉”，任务仍停；问人 → 出卡。
 6. **人用现有入口。** `tasks/requeue`（加预算/人工重排）、`request_recheck`、`goals/control`（7.2）；平台不自动解除停因，也不另造停止。
 7. **依赖只按 D-V1。** 依赖不是领取条件；本树只有 L46 的传递闭包会挡下游。普通停因不挡依赖它的任务，下游缺输入时在消费处失败。本规格不加新闭包；这是对设计第 7 节的偏差，由 lead 改设计。

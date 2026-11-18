@@ -229,7 +229,7 @@
 | 2026-11-15T13:38:05.026Z | waiting | tool submit_initial_plan (call call_63248d45fbc142af8e995f68) | invalid_arguments: 工具参数不符合 schema：setup: Unrecognized key: "checksNote" | 安全 | - | 待定 |
 | 2026-11-15T13:38:16.087Z | waiting | tool submit_initial_plan (call call_86b34a488f904a54abb9999a) | invalid: the answer has problems; fix every one and call the tool again in this round | 无理由 | - | 待定 |
 | 2026-11-15T13:40:48.318Z | waiting | tool read (call call_3b5b990a21b747189b59850b) | permission_denied: 请求路径不在允许范围 | 无理由 | - | 待定 |
-| 2026-11-15T13:41:29.648Z | waiting | tool send_session_message (call call_5f6217d8c38e4202b2c4938f) | forbidden: the recipient Session belongs to another project | 无理由 | - | 待定 |
+| 2026-11-15T13:41:29.648Z | waiting | tool send_session_message (call call_5f6217d8c38e4202b2c4938f) | forbidden: the recipient Session belongs to another project | 无理由 | - | R45（决定 121-149：拒绝原文写出调用方的项目号，Work 输入的目标段带 `projectId`） |
 
 每次拒绝一行：HTTP 拒绝（预期的也记，标 expected）和公开原历史里的每次工具拒绝（按调用身份去重），原文不截断。类别只认依据：busy/revision_conflict/idempotency_conflict/source_stale/capacity 记协调；理由点到不可逆、外部或秘密的记安全；理由点到规则的记产品规则；其余记“无理由”。
 

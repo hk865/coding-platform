@@ -549,7 +549,15 @@ type LookArgs =
      afterCursor?:string|null; maxBytes?:number };
 ```
 
+2026-11-18 补注（决定 121-149）：node 写法的 `mode` 可以省，有 `target` 就只可能是 node。node、path 两种写法收顶层 `limit`（1..100），当 `page.limit` 用；`limit` 和 `page.limit` 都给时回 `invalid_arguments`：`limit is an alias of page.limit; send only page.limit`，不替模型挑。原因：Kernel 发给模型的 schema 是拍平的，根必须是对象，必填只留各写法都要的字段，模型看不出 `mode` 必填，还在顶层看得到 history 写法的 `limit`（G6 第十一次 `look_graph` 被拒 61 次里，缺 `mode` 22 次、`limit` 放顶层 17 次）。其余照旧：path、history、input 仍要 `mode`；history 仍不收 `page`；多一个不认识的键仍拒；记忆写法和图写法不能混。代码 `src/core/agent-runtime/graph-tools.ts:257`-`:285`（schema）、`:467`（两处都给）。参数不合时的报错另见取舍 015。原文保留。
+
 node/path默认 card,page20；history limit默认50、范围1..200，调用原 `readTaskExecutionHistory(ctx,{runRef,afterCursor,limit})`；不绕 busy/archived，也不 ack消息、不读整 Session 转录。每页同scope校验，保留原 scannedCount/basis。`GraphToolsConfig.history` 是 driver 内部的窄代理，**不是**把 tool 的 work_run/query_run 原 context 直接交给 Host-only 的 RT8/RT7。每次代理先用 `graph.lookGraph` 对原 tool context 和该 Run 的 card 校验；canonical scope/身份拒绝立即返回。然后以 driver 已持有的同scope可信 Host context 调用现有 RT8；Work 用原 startRun 的 Host context，Query 的 actor 用 `queryExecution.readPreparationFacts` 返回的原 initiator，principal/materialReader 两处必须相同；原 signal换成本次工具 signal。代理不对外暴露 Host context，不接受模型传 Host/Kernel identity；不能把 RT8 的 source_stale/cursor 检查转换成成功。【lead 改：C2】沿用已有的必填字段 `RuntimeExecutionDependencies.graphHistory`（`execution-contracts.ts:182`，RT8），不新增字段；不新建 Kernel Store 或改 RT8 文件。查询 canonical facts 在新工具 factory 选择前读取并核验，不能从 question/manifest文字猜 initiator。
+
+2026-11-18 补注（决定 121-149），history 写法和 `read_execution_history` 两个历史读（上文“沿旧白板读工具的 definition”那一段 48 KiB 整页拒的规则对它们改了一处）：
+- **短句柄。** 读口发出的 `nextCursor` 约 2,700 字符，模型常抄错（G6 第十一次 65 次里错 30 次）。现在交给模型的是 `hc_` 加完整游标 sha256 的前 12 位十六进制；完整游标存在这个工具组的闭包里（一个 Run 一张表，不落库、不设条数上限），模型带回句柄时换回完整游标再读，读口照旧逐页核 Run、Session、起点和上界。查不到的句柄（抄错、别的 Run 的、Host 重启后的、旧的长游标）回 `rejected invalid`：`afterCursor is not a nextCursor this Run was given (it may have expired with a Host restart); read again with afterCursor null`。同一个完整游标永远得到同一个句柄，Host 重启后旧句柄最多对不上，不会对到别的页。
+- **减半重读。** 整个工具结果（带句柄）放不进 48 KiB，就把条数减半再从同一个 `afterCursor` 读，直到放得下；少给几条不算截断，`nextCursor` 接着这一页。读到 1 条还放不下，照旧 `rejected/capacity`。读口回的不是 `ready` 时立刻原样回。node、path、input 页和记忆读照旧整页拒。
+- 代码 `src/core/agent-runtime/graph-tools.ts:419`（`readHistory`；前缀和原文 `:130`-`:131`、句柄表 `:398`）。`executions/history` 路由和 `readTaskExecutionHistory` 不变，照旧给 UI、驱动和见证读长游标。
+- 还挡着：单条历史超过 48 KiB 时，减半到 1 条仍是 `capacity`，没有 `nextCursor`，这个 Run 在这一条之后的历史两个历史读都读不到（记在以后）。原文保留。
 
 input maxBytes默认2048、范围1..4096，转 `inputs.readTaskInputPage(ctx,request)`；返回 `TaskInputPageV1`。cursor绑定 scope/consumer/plan/declaration/candidate/digest/UTF8字节offset；跨声明 cursor 为 `invalid`，该声明不再容许原 source 为 `revision_conflict`；后续正文仍读 cursor 固定版本，不换成新选择；不截断UTF8字符。maxBytes 小于下一字符长度时 `capacity`，不返回无进度空页。结果中 source/usage每页都有，不给“当前有效”的标签。
 

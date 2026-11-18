@@ -50,7 +50,7 @@ lead，2026-11-01。代码、测试行号按基线 `7570e87`，文档行号按�
 
 **读法。** 文档已定的写成事实；文档没定又必须施工定的，放 §10.1 并标 `【lead 定，待审】`；产品取舍放 §0.1/§10.2；代码与文档对不上的放 §10.3。正文提到未合入片时，只写“依赖/接缝”，不写它的做法；每处都带“落地后重指”的句子。
 
-**“不加没有依据的字段、状态、记录”。** 本规格只动已有对象：`PlanRevision.verificationRequirements[].kind`、`FinalizeChecksInput.reviewerEvidence`、`EvidenceV1`、`RoundSnapshot.evidenceRefs`、`RunActivity/QueryActivity` 的用量、`rerun-checklist.md` 的 C 行。新增的只有 PL-1 系统轮正本上的 `exec_review` 种类/`execreview:` 前缀/冻结包头、两个 Workflow step（`send_system_round`/`record_review`）、一条状态机 guard（§3.4）、一个 `recordReviewEvidence` 入账口、两个工具（`submit_exec_review`、`read_execution_history`）及提示词，以及验收报告目录（§5.6，文档产物，不是账本记录）。
+**“不加没有依据的字段、状态、记录”。** 本规格只动已有对象：`PlanRevision.verificationRequirements[].kind`、`FinalizeChecksInput.reviewerEvidence`、`EvidenceV1`、`RoundSnapshot.evidenceRefs`、`RunActivity/QueryActivity` 的用量、`rerun-checklist.md` 的 C 行。新增的只有 PL-1 系统轮正本上的 `exec_review` 种类/`execreview:` 前缀/冻结包头、两个 Workflow step（`send_system_round`/`record_review`）、一条状态机 guard（§3.4）、一个 `recordReviewEvidence` 入账口、两个工具（`submit_exec_review`、`read_execution_history`）及提示词，以及验收报告目录（§5.6，文档产物，不是账本记录）。（2026-11-18 补注，决定 121-149：审阅包的正文多了“人的直接干预”一段，仍不新增消息字段和记录，见 §3.2 ③ 冻结包那一段的补注。）
 
 ## 1. 现状、基线和依赖
 
@@ -201,6 +201,13 @@ coverage: <canonicalJson([...])>
 
 首行严格等于 `systemRoundRequestId`（`systemRoundSendInput` 校验，PL §5.2.3）；头之后空一行再写请求正文；模型看见头但不填进工具。`execReviewPacketText`/`execReviewPacketOfText` 是唯一读写这对头行的纯函数；`execReviewPacketOfText` 缺行/多行/JSON 坏 → `invalid`。
 
+2026-11-18 补注（决定 121-149）：包头七行和“不新增消息字段”都不变。固定正文之后，有人的直接干预时再空一行，接一段 `Direct interventions from the person in this Goal (the person's own words, verbatim):`，让审阅者知道哪些改动是人在执行中途要的，不把它们判成越界。
+- 列哪些：人发的、`action_request`、已被这个 Goal 的某个 Work Run 收下的消息。排队中的、被干预规划 Query 收下的不列，因为还没有工作照它做。
+- 每条一行：`- message <消息号哈希段前 8 位>…, accepted by Run <Run 号前 8 位>… (task <taskId>) at <收下时间>:`，下面照原样缩进写人的原话，前 1,000 字，截了加一行 `(cut to the first 1000 characters)`。转发副本的消息号 `session-message-forward-<哈希>` 同样跳过 `forward-`、取哈希段。
+- 按收下时间取最后 10 条，旧的在前；更早的只写一行 `(<n> earlier interventions not listed)`。
+- 读法只有 `src/core/work-graph/tasks/person-interventions.ts:46`（`readGoalPersonInterventions`）一处：翻这个 Goal 的公开执行列表拿到线和 Task，再翻每条线的公开收件箱，读失败原样返回。Workflow 在 `not_sent` 那一步读（`src/business/workflow/workflow.ts:1416`-`:1424`），读失败这一趟不发审阅轮，审阅者不会在看不到人的原话时下判断。正文拼法在 `src/core/work-graph/tasks/exec-review-packet.ts:92`。
+- 工作任务的执行审阅包也带。`exec-review-input` 模板升到第 2 版，输入多一条“上面消息里列出的‘人的直接干预’……按人的插话做的改动不算越界，只核对照做没有、和别的要求冲不冲突”。原文保留。
+
 **④ 解析审阅线并发送（只在 `not_sent`）。**
 调用者：同一个 `send_system_round`；`sendSystemRound(systemRoundContext(scope, signal), deps.messages, {round, recipient, text})`（PL §5.2.5）。
 读：`resolveDutyRecipient({workspace, duty:'reviewer'})`（`duty-recipient.ts:22`；PL §6.3.1 #1；PL 给入参加 `'reviewer'`，`PlatformDutyV1` 已有该值）；`systemRoundRequestId({kind:'exec_review', goalRef, roundRef})` = `execreview:<roundId>`；`lookupHostSendCommit` 按 requestId/scope/arguments 读回执（PL §5.2.2 #4、§5.2.5）；`systemRoundSendInput`（PL §5.2.3）。
@@ -269,6 +276,8 @@ coverage: <canonicalJson([...])>
 | 模型填 | 只填 `verdict`、`basis`、`report`；`read_execution_history` 只填 `afterCursor`/`limit`；**不填** `roundRef`/`planRevisionRef`/`taskRef`/`subjectRunRef`/`checkRefs`/`sourceDigest`/`coverage`/`anchor`/`evidenceRef` |
 | 结论形状 | 恰好一个 JSON：`{"schemaVersion":1,"kind":"exec_review","verdict":"pass"\|"fix","basis":"…","report":"…"}`；整条答案文本 ≤16 KiB（PL §5.3.5 的 `MAX_ANSWER_BYTES`，不是 report 单独 16 KiB），`basis` 非空且 ≤4096 字节，`report` 非空、占用剩余额度；`fix` 的 `report` 写具体问题；strict，无未知成员 |
 | 出口 | `pass`/`fix` → `record_review`；不建候选、不采用、不改计划 |
+
+2026-11-18 补注（决定 121-149）：上表“`read_execution_history` 只填 `afterCursor`/`limit`”不变，但 `afterCursor` 现在是工具自己回的短句柄：`nextCursor` 交给模型时换成 `hc_` 加完整游标 sha256 的前 12 位十六进制，模型下一页原样带回，工具在这个 Run 的工具组里换回完整游标再读；查不到的（抄错、别的 Run 的、Host 重启后的、旧的长游标）回 `rejected invalid`，原因写明从 `afterCursor: null` 重读。整个工具结果放不进 48 KiB 时，这一页的条数减半重读，直到放得下（`src/core/agent-runtime/graph-tools.ts:419` 的 `readHistory`）。`executions/history` 路由和读口不变，照旧给长游标。原文保留。
 
 **形状值域由本片一起扩（S92-07）。** PL-1 先落地，这些类型和校验那时已在树上；第 9 片是它们的下一个改动者，PL-1 不为本片改任何东西。产生/准备/启动 `exec_review` 不只是加一条工具映射：本片在同一组改动里，`PlanningAnswerShapeV1`、`QueryAnswerShapeV1` 各加 `'exec_review'`，`validQueryExecution`（`src/contracts/query-job.ts:354`）扩该 planning 枚举，`PreparedQueryManifestV1.answerShape` 的校验同步认它（PL §5.2.7；`slice-PL-SPEC.md:566`、`:592`）。`validQueryExecution` 今天只接受 `'plan_round' | 'plan_review' | 'text'` 三种 planning shape；本片扩成 `'plan_round' | 'plan_review' | 'exec_review' | 'text'`（`answerShape` 仍只许出现在 `intervention_planning`，别的 kind 带它 → `false`）。不改这层，Query 提交会在 `query-job-service.ts:299` 被拒、读回会在 `query-record-codecs.ts:271` 被拒。准备、启动、观察器共用这一份值域，不新增第二份 parser，也不做旧清单/未知形状的兼容推断。
 
@@ -479,7 +488,7 @@ answer = readQueryAnswer(answerRef).answer.answer
 
 **R2 的世界（S9-19）。** 这个世界不是“只补一条审阅 Evidence”：命令 required 已执行并 PASS，required reviewer 已被一条 `pass` 覆盖，Task 的 required 项全部满足，`goals/display` 才允许完成。R3e 的旧负例另有未执行的 required future、且没有审阅 Evidence，所以它仍必须拒绝完成；两者不能互相替代。R2 的完成断言只在这个世界成立，不能拿“有 reviewer Evidence”单独推出完成。
 
-**R2 的两变体（S9-20）。** 忙碌变体用公开入口让同一 Session 上有在跑 Query/Run（`sessions/queries` 可见 `running`），再读被审 Run 的历史；归档变体先 `sessions/archive`，再读同一 Run。两条入口都跑：`read_execution_history` 工具（模型只填 `afterCursor`/`limit`，`subjectRunRef` 由工厂从包冻结，模型传不了 Run）与 `executions/history` 路由（`core-routes.ts:531` 的同一 `readTaskExecutionHistory`）。断言两处 `ready`、`items` 不空、`nextCursor` 行为一致；不因 Session 忙/归档返回 `busy`/`not_found`，也不缩页。
+**R2 的两变体（S9-20）。** 忙碌变体用公开入口让同一 Session 上有在跑 Query/Run（`sessions/queries` 可见 `running`），再读被审 Run 的历史；归档变体先 `sessions/archive`，再读同一 Run。两条入口都跑：`read_execution_history` 工具（模型只填 `afterCursor`/`limit`，`subjectRunRef` 由工厂从包冻结，模型传不了 Run）与 `executions/history` 路由（`core-routes.ts:531` 的同一 `readTaskExecutionHistory`）。断言两处 `ready`、`items` 不空、`nextCursor` 行为一致；不因 Session 忙/归档返回 `busy`/`not_found`，也不缩页。（2026-11-18 补注，决定 121-149：工具回给模型的 `nextCursor` 换成了只在这个 Run 里认的短句柄，路由照旧给长游标，所以“两条入口 `nextCursor` 行为一致”读作“`items` 相同，`nextCursor` 同为空或同不为空”，见 §3.3 表后的补注。“不缩页”指不因 Session 忙或归档缩页；工具一侧整个结果超过 48 KiB 时把条数减半重读，是同一批有意加的，只在工具一侧，路由不减半，这时两边的 `items` 条数可以不同。）
 
 **R4 的返工链（S9-20）。** 第一次 `fix` 后先断言旧 round 卡 `outcome='FAIL'`、`evidenceRefs` 仍含那条 FAIL，`goals/display` 未完成；返工产生同 Task 的新 Attempt（不是新 Task），新 Run 正常结束开新轮 `execreview:<newRoundId>`，再审 `pass` 后新轮 `outcome='PASS'`。完成时读 `round.evidenceRefs` 与 `complete_task` 用的同一有效证据集：旧 FAIL 还在记录里，但已被新轮的 PASS 按 `completion.ts:389` 的 supersede/chain 超越，不能拿旧 FAIL 永久挡完成，也不能把旧 FAIL 删掉。
 

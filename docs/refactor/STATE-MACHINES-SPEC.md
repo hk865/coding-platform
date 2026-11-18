@@ -616,12 +616,16 @@ D-9 波及的其它位置（A.2 需要同步改造）：
 - 守卫 7：`reworkFenceOf(选中 Run, 指针 ControlIntent) ≠ 'none'` 且采用者 actor 类别 ≠ `human` → `forbidden`「只有人工能改人工暂停或取消的任务的处置」（硬限制 3）。`reworkFenceOf` 在 `state/task-failure.ts`，规则见 §1、§4；Goal 扇出暂停后 Host 重启造成的 `human_or_goal_resume` 同样只放行 `human`。操作者用 `plans/apply` 采用 Agent 提交的候选不受影响。
 - 守卫 9（不是 TASK-19 的一部分，作用于整次采用）：只在采用者 actor 类别为 `agent`/`system` 时检查。对 source 的每个义务 O：「现有载体」= O 在 source 中 `taskIds` 里、disposition 为 `active` 的 work 任务；「新载体」= O 在目标中 `taskIds` 里、disposition 为 `active` 的 work 任务，但在 source 中不是 O 的 active 载体（新增任务、新列入 `O.taskIds`、或由非 active 恢复为 active）。当 O 有新载体、现有载体非空、且每个现有载体的 `reworkFenceOf ≠ 'none'` 时 → `forbidden`「a human stopped this work」。gate 不计入：gate 没有指针，永远不被围栏，也不执行工作。只有获得新载体的义务才读取其现有载体的事实，读到的选中 Run、Lease（含 ∅）与指针 ControlIntent 都进入同一提交的守卫，所以并发的人工暂停/取消或首次领取会让采用 `revision_conflict`，重读后重新判定。C5 的 gate 修复任务同样受这条约束。
 
+**2026-11-18 补注（决定 121-149，lead 裁定 E08 C）：交表时推迟“执行还没停稳”的四处 busy。** 秘书请求轮交表时，平台照采用的判断查一遍（决定 97-3），这时守卫 1、2、2b 和守卫 4 的后半（还占着租约）不判，留给采用；守卫 8、3、4 的前半（有 Run 没租约记录 → `unavailable`）、5、6、7 照判，顺序不变。理由：这四处判的是执行还没停稳，它会自己停稳，或由人采用时 PS 先停（`slice-PS-SPEC.md`），模型在这一轮里改不了；以前它们还遮住了后面本轮能改的问题（例如守卫 6 的 `reason.affectedTaskIds`）。守卫 3（挂着没收的让出等待）不会自己了结，PS 也不停它，推迟以后人在界面上只看到“写入失败。”，所以交表时照判。采用照旧全判。只有交表这一处传 `deferBusy: true`（`src/core/work-graph/tasks/plan-validation.ts:1081`-`:1083`；规则和理由只写在 `src/core/work-graph/state/plan-machine.ts:662` 入参的说明里），采用（`plan-machine.ts:1442`）和单任务改处置（`task-machine.ts:1406`）不传。参谋和干预规划轮交表时本来不判 TASK-19，不受影响。原文保留。
+
 由此得出：**W16 不能取消或替代 source gate**。gate 的处置一变，就会触发 `gate_definition_changed`；C7 也保持 gate 定义冻结。§9 VD-11 和附录所说的「失败 gate 只能经 G5 由 W16 改为 superseded/cancelled」这个出口不采用。U-10 已决定 (b)（C5）：非 PASS 的 gate 经 §9 VR-14 的后继轮次重新验收；需要修复时，Agent 或人经现有的计划演进路径（W16）新增一个 required work 修复任务，它满足后 gate 再重新验收（§9 VR-14、§4 GV 行）。gate 失败在 Goal 上可见（§2 GOAL-30，原因 `gate_needs_fix`）。修复任务的采用正是 C6 让其不再影响无关工作的那类「无关采用」。原选项 (a)（放宽 W16 的 gate 规则）不再需要，§16 GAP-09/10 关闭。
 
 **2026-11-17 补（决定 121-141、121-143，G8B-2）。** 上面讲的是“gate 没过”的出口，这条不变。另一种情况是人中途改了目标的要求，比如 G6 E08 里人说“彻底移除 sub”，旧 gate 还要求 sub。这时：
 - 只有人采用的计划能把未满足的 source gate 取代掉：旧 gate 标成 `superseded`，`replacedByTaskId` 指向新增的 gate，新 gate 带新义务。
 - agent 和平台自动采用照旧不能改 gate。“方案确认后自动”档下，平台遇到这类改动直接出人的卡，不送审、不尝试采用。
 - 已满足的 gate、取消或延后 gate、原地改 gate 带的义务，照旧拒绝。
+
+**2026-11-18 补注（决定 121-149）。** 规则不变，改的是 source gate 定义冻结的拒绝原文（`gate_definition_changed`，`src/core/work-graph/tasks/plan-validation.ts:862`-`:868`）里教模型怎么加新验收的那一句，现在是：“a new obligation lists the new work tasks and, when it needs a gate, a new gate task (a new stage's own gate, or a new goal gate only when no goal gate is still open: a plan keeps exactly one open goal gate).”。原因：同一批平台开始校验“一份计划恰好一道还没了结的目标 gate”（`slice-PL-SPEC.md` 5.1.1 的补注，`multiple_active_goal_gates`）。这句要和那条报错一起读：目标层面的新验收由新义务只列新的工作任务承载，已采用的目标 gate 带着原来那几条义务不动；只有新阶段自带 gate，或者没有还开着的目标 gate 时才新加目标 gate。两条原文互相不再矛盾。
 
 **无痕规则与 D-3 重新领取的交互**：
 
@@ -1843,6 +1847,11 @@ PreparedTaskManifestV1.sessionBasis?: { sourceKernelSessionId: string; throughPo
 //   acceptedInputs: { steers; steersOmitted; messages: Array<{ messageRef; part: 'message'|'response'; excerpt }>; messagesOmitted };
 //                                                            // continuity='same_session_history' 时为空（历史里已有）
 //   checks: { roundRef: VerificationRoundRef; roundOrdinal: number; failing: FailingCheckFactV1[]; gapCodes: string[] } | null;
+//     // 2026-11-18 补注（决定 121-149）：checks 另带可选的 outputs?: FailingCheckOutputV1[]（src/contracts/check-output.ts:28）：
+//     //   这一轮没过、跑完、有报告的命令检查的命令原文、出处（已批准清单、计划、Host 启动配置，找不到同内容的写“不明”）、
+//     //   退出码和 stderr 末尾（空时给 stdout 末尾，每路 2,000 字节），照原样渲染进代码块，不做 JSON 转义；一条都没有时不带这个成员。
+//     //   读法只有 src/core/work-graph/tasks/check-outputs.ts:32 一处（参谋的 stop 偏差第五项也用它）。不进无进展键，no_new_basis 的判法不变。
+//     //   读到了输出时，检查一节末尾加一句提示：输出和读到的文件对不上时可能是检查本身写错了，给参谋（没有参谋就是秘书）发 action_request。
 //   requeue: { reason: BoundedTextV1; reasonAuthor: ReworkActorClass; newInputs: ContinuationNewInputV1[] }; // 新输入只有 session_message 与 artifact，没有 instruction
 //     // ContinuationNewInputV1：session_message 带 replyBody（发给新 Run 所在 Session 之外时内联正文，否则 null）；artifact 带有界正文
 //   workspace: { selfChanged: { status: 'known'|'partial'|'not_entered'|'unavailable'; confirmed: string[]; possible: string[]; omitted };

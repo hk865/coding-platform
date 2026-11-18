@@ -12,6 +12,8 @@
 
 **今天。** 采用只改处置的有痕任务时，只要该任务还有一个 Run 没结束，TASK-19 守卫 1 就返回 `busy`，零写入；平台不会去停那个 Run，要你先手动暂停或取消，再采用（`DRV:413`；守卫实现 `src/core/work-graph/state/plan-machine.ts:660-665`；读事实 `src/core/work-graph/tasks/plan-readers.ts:2147`）。
 
+2026-11-18 补注（决定 121-149，lead 裁定 E08 C）：秘书请求轮交表时，平台不再拿“执行还没停稳”的 busy（TASK-19 守卫 1、2、2b、4 的后半）拒绝取消在跑任务的候选，推迟到采用时判（`SM` TASK-19 守卫列表后的同日补注）。所以请求轮现在也能交出取消在跑任务的候选；人采用它时照本规格先停后采用。守卫 3（挂着没收的让出等待）交表时照判。秘书请求候选带取消时不自动采用（`src/business/workflow/request-candidate.ts:64`-`:65` 要求 `dispositionOnlyTaskIds` 为空），所以不会和 U1 的“自动采用不停工作”打转。人采用这类计划时要不要连带停掉被取消任务在跑的 Run，是产品问题，留给用户定。原文保留。
+
 **改法。** 在 `plans` 端口外面包一层“采用前停”：人采用（操作者 actor）先照常调一次真 `applyPlanChange`；只有它被 TASK-19 的 `busy` 拒时，才读这次候选改到的所有只改处置任务和它们的 Run（§3.2），对每个 `starting`/`running` 的 Run 提交 `cancel`（请求号 `plan-change:<proposalId>:<taskId>:<runId>`，`SM:778`）并投递；有停的返回 `busy`（reason `stopping_affected_work`），没停的原样返回刚才的拒绝。下一次调用的真 apply 停稳了就采用。在 TASK-19 返回 busy 之前就失败的计划不会先停工作；守卫 5/6/7 排在这些 busy 守卫之后，见 L10。不新增记录、持久字段、状态、事件或索引；守卫本体和采用提交顺序保留。
 
 **可见变化。** 一次采用变成两次调用，中间界面显示“采用中，等 X 停下”（`DRV:420`）；停下来的任务在人工停止围栏下，自动返工被拒；`tasks/requeue` 不是所有停下任务的通用下一步：只有 disposition 仍为 `active` 才可 requeue，草稿设成 `deferred` 的要先由后续计划把 disposition 改回 `active`，再由人 requeue（见 §3.11）；也可以由新计划的替代任务继续。自动采用本稿不先停（仍是今天的 `busy` 等待），见 §6 U1。
