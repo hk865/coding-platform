@@ -344,6 +344,8 @@ request 暂用真实 QueryJob goal/initiator，明确第一轮才支持；片 6 
 
 来源 4/7 和未来通知通过 views 的只读 SourcePage adapter 注入；默认 `{availability:"not_available",items:[],nextCursor:null,sourceCursor:null}`，capabilities 明写缺来源，不写“全部 0 件”。不建空注记/等待/待放行记录。
 
+2026-11-18 补注（决定 121-148）：capabilities 多一个值 `read_failed`，意思是来源接通了、这次读失败了；`not_available` 仍只表示没接通。决定 121-146 起，某一种卡来源读失败时，队列只把这一种标 `read_failed`（带第一次失败的原因），其余照常显示，`countsComplete` 为 false。照旧整体处理的：读窗移动（整窗重读）、被取消的读、在途的知识写（121-105）、通知来源读失败、各来源共用的读（Goal 列表、消息、已读位置、水位）、来源抛出的程序错。
+
 ### 2.7 state 写入保护
 
 新增保护 GoalSnapshot.settings、WorkspaceSnapshot.decisionSettings、SessionMessage.decision/response/application、CandidatePlanProposal.requestRef/status/notAdopted。只由 state 构造；allowlist 仅具名 decoder，不放行服务或整文件。since 是 RecordStore 创建 wire 的 origin，后续保持。
@@ -745,6 +747,8 @@ type DecisionQueueReadV1 = {
   displayToken: string | null;
   capabilities: { source: DecisionSourceV1['kind'] | NoticeCategoryV1;
     availability: 'available' | 'not_available' }[];
+  // 2026-11-18 补注（决定 121-148）：availability 加 'read_failed'（接通了、这次读失败了），另带可选 reason?: string，
+  // 只在 read_failed 上，是这一种第一次读失败的原因（原样）。来源页 DecisionSourcePageV1.availability 不加值。见 §2.6 的补注。
 };
 type GoalConflictReadV1 = {
   cards: DecisionCardV1[];
@@ -830,6 +834,8 @@ function readInitialPlanAnswerFacts(ctx: CoreCallContext,
 ```
 
 source ports声明在model/decision-contracts，views只调用reader；queryGoal/display/taskGraph/架构目录/已保存Answer都复用原owner。所有adapters收到同atLeastCursor；不对某个unavailable源返回available空数组。每源读结果只合并正式items，不在stub创建对象。planning reader拿原InitialPlanAnswerFacts（现有tasks/initial-plan.ts导出类型），原parser语义不改；原closure中的reader通过具名PlanTaskPort方法导出，不能复制Job/manifest/body校验。
+
+2026-11-18 补注（决定 121-148）：“不对某个 unavailable 源返回 available 空数组”仍成立。改的是装配：某一种卡来源回 `rejected` 时，先看是不是窗口移动、取消或在途写，这三种照旧（窗口移动整窗重读，取消和在途写整张拒）；其余只把这一种标 `read_failed`、跳过它，接着读别的来源，不再整张拒。准备阶段失败的来源在窗里不读。来源抛出的不是正式的读失败结果（程序错），照旧整张失败。通知来源照旧整张拒。来源页读失败仍回 `rejected`，由装配那一处转成 `read_failed`。
 
 ### 4.3 足迹冲突与风险标签
 

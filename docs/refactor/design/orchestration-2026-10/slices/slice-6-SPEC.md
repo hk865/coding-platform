@@ -340,6 +340,8 @@ export type RequestViewV1 = { requestRoot: QueryJobRef; goalId: string | null; e
             selectedIdea: { round: QueryJobRef; index: number } | null;
             assignedSession: SessionRef | null; session: SessionRef | null; absorbedInto: QueryJobRef | null; // routing 轮和领取前为 null（第二轮审查第 4 条）
             since: CommitCursor }[];
+            // 2026-11-18 补注（决定 121-148）：每一轮另带 runRef: QueryRunRef | null，是这一轮的 Job 记着的那一次 QueryRun（路由轮为 null）；
+            // 拿它读这一轮的步骤（executions/steps）。main/read、requests/read 和计划页都用这个轮次视图（RequestRoundViewV1）。
   candidate: { proposalRef: PlanProposalRef; state: string; stale: boolean } | null;
   cards: { itemId: string; sourceRef: VersionedRef }[] };   // 与队列按 itemId 去重
 export interface RequestFactsPort {     // 替换 request-facts-reader 的过渡读取

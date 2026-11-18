@@ -16,7 +16,7 @@
 
 - **决定 10 改了。** 原文“先做编排后端，再做新界面”。用户 11-02：现在就做；后续后端还会影响的暂不做，E3 独有、不受影响的先做。页面已有，主要工作是接上，不写长规格。
 - **接线方案（Codex 设计说明，lead 采用，尚未落地）。** `src/ui/boards/` 放十块画板的工作副本，冻结原件只作对照；只加 `props.data`、`props.actions`、`props.readState`、`props.dataVersion` 四个接点；`src/ui/host-client.ts` 一个文件碰 `fetch`；`src/ui/adapters/` 是纯函数。估计 TaskMap 600–900 行、Main 1,400–2,200 行，约二十多组；施工顺序按设计说明第 7 节。（2026-11-03：任务图这一块已按它落地，见下一段。）
-- **新发现的后端缺口。** 页面没有令牌入口（E3-2 在做，尚未落地；计划由服务器给每个画板 HTML 注入 meta，响应 `no-store`。2026-11-03：E3-2 已落地，见下一段）；命令运行中 stdout/stderr 是空的，结束才一次填（E3 后续拟补：6b 的有界输出更新，均未落地）；没有 Git 的 HEAD、分支、历史路由（E3 后续拟补：6a 的 `git/read`，固定命令，未落地）；没有 `goals/list`（E3-2 暂用 `goals/conflicts`，主画面左栏需要时再加）。
+- **新发现的后端缺口。** 页面没有令牌入口（E3-2 在做，尚未落地；计划由服务器给每个画板 HTML 注入 meta，响应 `no-store`。2026-11-03：E3-2 已落地，见下一段）；命令运行中 stdout/stderr 是空的，结束才一次填（E3 后续拟补：6b 的有界输出更新，均未落地）；没有 Git 的 HEAD、分支、历史路由（E3 后续拟补：6a 的 `git/read`，固定命令，未落地）；没有 `goals/list`（E3-2 暂用 `goals/conflicts`，主画面左栏需要时再加）。（2026-11-18 补注（决定 121-148）：Main 的命令页已接（P4）：列表读 `verification/installed-checks`，运行、再运行、取消走 `commands/start|read|stop`。运行中的 stdout/stderr 仍是空的，结束时一次给，页面写“运行中 · 输出在结束后显示”；流式输出要改 Kernel，推到 MVP 之后（P4 裁定 Q5）。HEAD 提交号现在由 `files/uncommitted` 的 git 回答给出（`head`，P3），Diff 页按它读 HEAD 一侧；分支、历史路由仍没有。）
 - **E3 上的例外依赖。** Monaco Editor（查看、编辑、行差异）、xterm.js（命令输出）、Git 只读命令。这是 E3 上的例外，不改别处“不要再装别的”的话；除此之外不引入别的依赖。
 - **文字归属（2026-11-02）。** MVP 只做中文，不建字符串表。Host 只返回码，给人看的文字由 `src/ui` 按码翻译；提示词是模板，页面文字在画板里，后端卡片和通知写在代码里。
 
@@ -429,7 +429,7 @@
 | --- | --- | --- | --- |
 | D107-1 | Run 上限设置：显示已存、实际和最大值（默认 4 亿，最大 6 亿）；输入 1 到 6 亿的整数，或清空回默认；保存成功后下一次领取生效，已在跑的 Run 不变。 | `run-budget/save` 和 Host 快照的 `workRunTokenBudget: { saved, effective, max }`（`src/app/host-settings.ts:776`、`:1267`；类型 `src/app/host-settings-types.ts:61`）。还没有设置页。 | 决定 107；RC 提交说明 |
 | D107-2 | 干预收尾的通知：模型反问只出问题卡、不发通知；回答不合法、Query 没答就结束、人放弃或替代方案各显示一条固定通知（后两种同时显示回复或“消息已撤回”）；通知先于回复或撤回，文字固定。 | `INTERVENTION_CLOSING_NOTICE_TEXTS`（`src/app/host-notices.ts:28`–`:31`）；通知请求号 `intervention:<消息>:notice:<原因>`（`:42`）；四种结果由 `src/business/workflow/intervention.ts:263`、`:276`、`:284`、`:315` 给出。 | 决定 107；事实单 §2（用户裁定 D10） |
-| D107-3 | 候选计划卡：候选卡带诊断、审阅结论和请知悉，字段在计划闭环规格里定；现在只显示候选和卡的基本事实，D8 未定稿前不改 PRODUCT。 | 待设计：候选读 `src/core/work-graph/tasks/plan-readers.ts:555` 的 `findPendingProposal` 和卡来源；没有专门的后端读字段。 | 决定 107；事实单 §3 |
+| D107-3 | 候选计划卡：候选卡带诊断、审阅结论和请知悉，字段在计划闭环规格里定；现在只显示候选和卡的基本事实，D8 未定稿前不改 PRODUCT。（2026-11-18 补注（决定 121-148）：画采用按钮时，`candidateStatus: 'stale'` 的候选卡按钮灰掉，写 `staleReason`。来源消息已撤回的活候选，卡读成 `stale`、`staleReason` 是“来源已撤回”，`actions` 没有 `adopt`（`abandon` 仍在）；数据在 `decisions/queue`、`decisions/card`。今天 Decide 页对候选卡不画动作。） | 待设计：候选读 `src/core/work-graph/tasks/plan-readers.ts:555` 的 `findPendingProposal` 和卡来源；没有专门的后端读字段。 | 决定 107；事实单 §3 |
 
 ## 决定 108 加的（2026-11-01）
 
@@ -450,7 +450,7 @@
 
 | 编号 | 界面项 | 数据从哪来 | 决定出处 |
 | --- | --- | --- | --- |
-| DPS-1 | 候选卡的“采用中，等 X 停下”：`plans/apply` 返回 `busy`、原因是 `stopping_affected_work` 时显示；Run 结束后界面自动再调一次同一 `plans/apply`，人只点一次。服务端不存这个状态，重启后人再点一次，候选还在。 | 后端在 PS；Run 的状态读 `executions/read`、`tasks/query`（规格 §3.10、§3.13） | 决定 102-4；规格 §6 U3 |
+| DPS-1 | 候选卡的“采用中，等 X 停下”：`plans/apply` 返回 `busy`、原因是 `stopping_affected_work` 时显示；Run 结束后界面自动再调一次同一 `plans/apply`，人只点一次。服务端不存这个状态，重启后人再点一次，候选还在。（2026-11-18 补注（决定 121-148）：`candidateStatus: 'stale'` 时采用按钮灰掉，写 `staleReason`（例如“来源已撤回”），不调 `plans/apply`；这时队列项的 `actions` 里没有 `adopt`。） | 后端在 PS；Run 的状态读 `executions/read`、`tasks/query`（规格 §3.10、§3.13） | 决定 102-4；规格 §6 U3 |
 
 ## 任务图交互测试留下的（2026-11-03 晚，决定 115-6）
 
@@ -475,3 +475,15 @@ E3-5 的 lead 裁定二、裁定三记下、这一组不做的两项。E3-5 已�
 | --- | --- | --- | --- |
 | D121-110-1 | **答过的卡在主对话历史里收成一行**：例如“你答了：照建议 · 已落实”（状态词照 `decide.ts` 的“已答复，等落实 / 已落实 / 已关闭”）；点开看整张卡（选项、你写的话、批注、落实后改了什么）。还没答的卡照旧整张显示。“需要你决定”里的已答复一栏不变。 | 只改页面：卡状态和答复已在决定队列读里（`src/ui/adapters/decide.ts` 的状态词表、`main.ts` 的 `decisions`） | 用户 11-12 晚：“可以的”（lead 提议：历史拉长以后不满屏旧卡） |
 | D121-110-2 | **参谋、书记发给人的卡和请知悉进主对话**：卡是“需要你决定”里的同一项，挂在所属目标下（不挂目标的进项目级视图）；请知悉显示一行；都写来源“来自 参谋 · <范围>”。主对话页已读决定队列，后端开授权（AGT）以后核一次显示。 | 决定队列读；AGT 开 `send_user_message` 授权之后 | 用户 11-12 晚：“行，之后需要可以发在主对话窗口” |
+
+## 决定 121-148 加的（2026-11-18）
+
+第二十一批（P1 Run 步骤读、P3 Diff 逐行、P4 命令页、Q 决定队列按来源降级）记下的界面待办。下面 `src/` 的行号按第二十一批的叠树 `6bf1bec0`。Diff 页“只核对前 100 个文件”的小包和 agent 长命令的界面包 LCMD-UI 记在 [STATUS](../../STATUS.md)。
+
+| 编号 | 界面项 | 数据从哪来 | 决定出处 |
+| --- | --- | --- | --- |
+| D121-148-1 | **Run 块按步骤展开（P2）**：主对话、计划页、成员页的 Run 块。头行：用时（`lastAt − startedAt`）、读了几个文件（`reads`）、改了几个文件（`changedFiles.definite`；`possible > 0` 或 `possiblyIncomplete` 时可加“可能还有”）、跑过命令（`commands > 0`），用词由 P2 定。展开逐步：动词按 `kind`（think、read、edit、command、message、tool）；对象是路径、命令、收件方、目标或思考的首行；附注是状态、退出码、用时、编辑的 `+a −d`；完全展开时是思考全文、`$ 命令` 和 stdout/stderr。思考截了写“思考较长，只显示前 16 KB”；`truncated` 为真时给“看原始记录”的入口（Work Run 读 `executions/history`，Query 轮读 `sessions/history`）。不画“读到你的直接干预”这种步。正在跑的块（`summary.live` 为真）隔一会儿从 `runningFrom − 1` 再读；“已暂停”另从 Run 状态读。决定 121-97 记的缺口“运行块的结构化步骤读”，后端已有（P1）。 | `executions/steps`，body `{ ref: RunRef \| QueryRunRef, after: number \| null, limit: 1..50 }`，回 `RunStepsReadV1`（`src/contracts/run-steps.ts:65`）：`not_started`、`not_entered`、`unknown`（带 `reason`）或 `steps`（`summary`、`steps[]`、`next`、`runningFrom`）；步的形状 `RunStepV1`（`:43`）。Query 轮的 ref 取 `main/read` 轮次的 `runRef`。项目级线在别的工作区跑的 Run，用 Run 自己的工作区作 scope（Work Run 取快照的 `workspaceSnapshot.workspaceId`）。 | 决定 121-147（切包 P1、P2）；P1 冻结稿 A、D、E 节，lead 裁定 Q1、Q5 |
+| D121-148-2 | **Diff 改动文件的“哪条线改的”**：原型样例每个改动文件带 `by`（`docs/ui-reference/workbench-2026-10/Main.dc.html:4528-4532`）。P3 没做，画板照旧 `by: ''`，页头不带“· 某任务”。 | 现在没有能配的数据：公开的 `activity/runs` 只给改动文件的个数，没有“路径 → 哪个 Run、哪条线”的读；未提交的改动可能是几个 Run 叠起来的，也可能是人改的。等决定 121-112 的“结束时的改动对比”（CAP）落地、再加一个按路径读的公开口时再接。 | P3 冻结稿 R7、R8 |
+| D121-148-3 | **冲突“比较”打开大文件会卡**：Main 右栏冲突的“比较”（磁盘 ↔ 草稿，`src/ui/boards/Main.dc.html:5774`）还用画板的 `axLineDiff`（`:5505`）。它建满 n×m 的表，1 MiB 的文件约 3 万行，是 9 亿格。以后经 `props.actions` 给画板一个调适配器的口，不在 P3。 | 可复用 `lineEditScript`（`src/contracts/line-delta.ts:92`）和 `auxDiffHunksOf`（`src/ui/adapters/aux-panel.ts:253`） | P3 冻结稿 R6；lead 裁定 Q6 |
+| D121-148-4 | **Diff 页只看页面所在的那一个工作区**：一个项目有几个工作区时，别的工作区的改动看不到。现状如此。 | `readAuxPanel` 按 `scope.workspaceId` 读 `files/uncommitted`（`src/ui/boot.ts:2276` 的 `readUncommittedPage`） | P3 冻结稿第九节反向第 2 条 |
+| D121-148-5 | **Host 数得出加减行，Diff 页却不画逐行**：`files/uncommitted` 不超过 25 万格时用 LCS 算加减行，没有上限（`src/contracts/line-delta.ts:35`）；Diff 页的 `lineEditScript` 总用 1000 的上限。例：300 行的文件整篇改写成 800 行，Host 给 `+800 −300`（编辑距离 1,100），逐行区写“改动超过 1000 行”（这句仍是真的）。便宜的改法：不超过 25 万格时界面也用 LCS 回走、不设上限，这样“有加减行”就等于“能画逐行”。 | 两侧正文已由 `files/read` 读到（`src/ui/boot.ts:2253` 的 `readDiffSide`）；要改的是行脚本（`src/contracts/line-delta.ts:92`） | P3 冻结稿第九节反向第 3 条 |

@@ -26,6 +26,8 @@ lead，2026-11-01。设计唯一依据：`plan-loop-design.md`（v4 定稿，685
 > | §13.2.3 | “不全（超出保留上限）”写成“不全” | 阶段读数没有 `omitted`，不加字段 |
 > | A-06 | 16 KiB 量的是协议文本，正文最多 16,324 字节 | 按现在的钉住 |
 > | §5.4、§6.3.2 | 提示词文本加阶段 gate，审阅第 7 问限“这一版写到的每一段” | 模板第 5 行冻结“已采用的段不要重审” |
+>
+> 2026-11-18 补注（决定 121-148）：上表 PL-22 那一行由决定 121-146 取代。规划问题是决定队列的一种卡来源；审阅的 QueryJob 本身读失败时，`main/read` 不再整页 `rejected unavailable`，只把规划问题这一种标 `read_failed`，其余照常。PL-14 的通知不变，通知来源读失败照旧整张拒。核过没有测试钉这条整页拒绝（`tests/business/PL-22-auto-adopt-second-stage.test.ts:112-131` 把故障放在答案记录上）。原行保留。
 
 - **偏差（`kept-for: P8`，L-12）：** 允许清单里有 `kept-for: P8` 一行。书说 PL-1 没有豁免；记偏差。
 - **偏差（模块环）：** `sessions → tasks` 是环。冻结裁定让 `sessions` 导入 `tasks/plan-readers` 会成环；改成 `sessions/session-targets.ts` 的 `readGoalRecord`，直接读 Goal 记录再用 `decodeGoalSnapshot` 解码（`src/core/work-graph/sessions/session-targets.ts:71-100`），`session-responsibility-service.ts:67` 引用它，`sessions` 里没有文件导入 `tasks`。记偏差。
