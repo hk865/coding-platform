@@ -553,7 +553,7 @@ describe('SEC (121-112): the secretary arranges a small request directly', () =>
 
   it('SEC-4: a plan round after a selected idea writes a candidate that still waits for the person', async () => {
     const { world, a } = await adoptedWorld();
-    // 决定 121-1xx：一份计划恰好一道还没了结的目标关口。跟进的规划轮只交一个新工作任务，目标关口照旧是 v1 已采用的
+    // 决定 121-149：一份计划恰好一道还没了结的目标关口。跟进的规划轮只交一个新工作任务，目标关口照旧是 v1 已采用的
     // sec-base-gate，不另加一道（另加一道的段交表时就被拒，写不出候选）。
     const { first, followup } = await requestedWithSelection(world, a, 'sec-4', segmentForm('sec-4', 1));
     const head = await waitForCandidate(world, first.requestRoot);

@@ -262,7 +262,7 @@ export function validatePlanDraft(draft: PlanDraftView, policy: CompletionPolicy
   return issues;
 }
 
-/** 决定 121-1xx（CPL-3 的“恰好一道目标关口”进校验）：一份计划恰好一道还没了结的活动必需目标关口。改计划的段里没写的
+/** 决定 121-149（CPL-3 的“恰好一道目标关口”进校验）：一份计划恰好一道还没了结的活动必需目标关口。改计划的段里没写的
  *  旧关口照旧 active（合并只替换同号、追加新号，stage-segment.ts:56-58），再加一道新关口就成了两道。源计划原样带过来、
  *  已了结（满足）的关口不算：已满足的关口处置是终态（TASK-19 守卫 5，G8B B5），已完成的目标接着做时只能保留它、再加
  *  一道新的。只报这一版比上一版多出来的多道：上一版已经是多道的旧账本不重判。只在有可执行的必需工作时查，和“缺目标
@@ -1027,7 +1027,7 @@ function untracedFacts(taskId: string): TracedTaskFactsV1 {
  * its unchanged-terminal exemption) against the current catalog the propose reads and, for a first plan, against the
  * catalog governance selected, which the first adoption reads. Acceptance is judged as a person adopts (the request's
  * candidate is the person's), so the guard a system adopter alone meets (guard 9) is the adoption's. The adoption
- * judges everything again. 决定 121-1xx（lead 裁定 E08 C）：交表时守卫 1、2、2b 和 4 的后半（执行还没停稳）留给采用时判，
+ * judges everything again. 决定 121-149（lead 裁定 E08 C）：交表时守卫 1、2、2b 和 4 的后半（执行还没停稳）留给采用时判，
  * 守卫 3（挂着没收的让出等待）交表时照判。
  */
 export function planRoundAnswerIssues(input: {

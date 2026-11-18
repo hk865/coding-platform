@@ -181,7 +181,7 @@ async function adoptSixRequirementGate(fixture: R3eEvidenceFixture): Promise<Pla
   const draft: PlanRevisionDraft = {
     schemaVersion: 2, planId: 'r3e-six-plan', planRevision: fixture.plan.planRevision + 1, goalId: fixture.goalRef.goalId,
     stages: structuredClone(fixture.plan.stages),
-    // 决定 121-1xx：一份计划恰好一道还没了结的必需目标关口。六条要求的关口取代原来的目标关口 r3e-gate，由人采用
+    // 决定 121-149：一份计划恰好一道还没了结的必需目标关口。六条要求的关口取代原来的目标关口 r3e-gate，由人采用
     // （G8B B5 R1）；r3e-gate 的义务 r3e-obligation 原样留着。
     tasks: [...structuredClone(fixture.plan.tasks).map(task => task.taskId === R3E_GATE_TASK_ID
       ? { ...task, disposition: 'superseded' as const, replacedByTaskId: SIX_GATE_TASK } : task),

@@ -1,5 +1,5 @@
 /**
- * 本包（决定 121-1xx，冻结稿七 T5、T6、T7）：别的项目的号被拒时，原文写出调用方自己的项目号；改需求的规划轮在任务段开头
+ * 本包（决定 121-149，冻结稿七 T5、T6、T7）：别的项目的号被拒时，原文写出调用方自己的项目号；改需求的规划轮在任务段开头
  * 列出目标现行的计划。只走公开路由和真实 Host，memory（RULES S3）。
  *
  * 今天三行都红：T5 的 reason 少了“; this project is ag2b-collab-project”，T6 的 reason 仍是“the Goal node is outside the

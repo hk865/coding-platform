@@ -170,7 +170,7 @@ describe('C11 (R2): change adoption judges an obligation promoted from optional 
 });
 
 describe('a change that adds a second open required goal gate is refused', () => {
-  // 决定 121-1xx（冻结稿二·R1）：改计划的段没写的旧关口照旧 active；再加一道活动必需目标关口就成了两道，提议记问题、
+  // 决定 121-149（冻结稿二·R1）：改计划的段没写的旧关口照旧 active；再加一道活动必需目标关口就成了两道，提议记问题、
   // 采用回 incomplete，活动计划不变。变异：去掉这条检查 -> issues 为空、采用成功。
   it('propose reports multiple_active_goal_gates; plans/apply is rejected and the active plan stays', async () => {
     const { main, goal, plan } = await openPlanWorld();

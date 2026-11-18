@@ -71,7 +71,7 @@ describe('rejects: F4 人采用也只放过“标成 superseded、指向本次�
 });
 
 describe('goalGateCountIssue: only newly added open goal gates are refused', () => {
-  // 决定 121-1xx（冻结稿二·R1）：只报这一版比上一版多出来的多道；源计划原样带着的已了结关口不算。今天整组红在
+  // 决定 121-149（冻结稿二·R1）：只报这一版比上一版多出来的多道；源计划原样带着的已了结关口不算。今天整组红在
   // `goalGateCountIssue` 还没有这个导出。(g)(h) 守冻结稿开头的更正 1、6：只在有可执行的必需工作时查（和“缺目标
   // 关口”同一范围）；没有还没了结的已采用目标关口（首版）时原文只写第一句。
   const withG0 = adopted({ ...v1Draft, tasks: [...v1Draft.tasks, g8b2Gate('G0', 'G0 another gate')],

@@ -642,7 +642,7 @@ export function futureChangeTraceProblem(
  * order runs guards 1..7; the first hit is returned (zero writes). Untraced
  * Tasks keep today's Lease ∅ / Reduction ∅ commit guards and are skipped here.
  * A Goal that is `paused` is not a reason: its unfinished Runs fail guard 1.
- * 决定 121-1xx：交表时传 `deferBusy`，守卫 1、2、2b 和守卫 4 的后半不判、留给采用，其余照判；规则和理由只写在下面
+ * 决定 121-149：交表时传 `deferBusy`，守卫 1、2、2b 和守卫 4 的后半不判、留给采用，其余照判；规则和理由只写在下面
  * `deferBusy` 的说明里。
  */
 export function tracedDispositionChangeProblem(input: {
@@ -656,7 +656,7 @@ export function tracedDispositionChangeProblem(input: {
   changes: readonly FutureDispositionChangeV1[];
   /** G8B B5：这些任务在源计划里的类型；守卫 5 的人取代例外只给工作任务。 */
   taskKinds: ReadonlyMap<string, TaskKind>;
-  /** 决定 121-1xx（lead 裁定 E08 C）：交表时为 true。守卫 1、2、2b 和 4 的“还占着租约”判的是执行还没停稳，它会自己停稳，
+  /** 决定 121-149（lead 裁定 E08 C）：交表时为 true。守卫 1、2、2b 和 4 的“还占着租约”判的是执行还没停稳，它会自己停稳，
    *  或由人采用时 PS 先停（composition/plan-adoption-stop.ts）；模型在这一轮里改不了，留给采用时判。守卫 3（挂着没收的
    *  让出等待）不会自己了结，照判，让秘书在回答里转告。其余守卫照判、顺序不变。采用时不传。 */
   deferBusy?: boolean;

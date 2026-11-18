@@ -2878,7 +2878,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
             ownedInWorkspace(owned, group.originalMessageRef.workspaceId).ctx, group.originalMessageRef);
           if (original.status !== 'ready') return readRejection(original);
           const recipient = original.value.recipient as SessionRef;
-          // R7 补充裁定（lead 11-18；MVP-BEHAVIOR B20“人答卡只保存答案，不续开模型轮”，PL 规格 :332 续轮发给原规划线）：
+          // 决定 121-149（MVP-BEHAVIOR B20“人答卡只保存答案，不续开模型轮”，PL 规格 :332 续轮发给原规划线）：
           // 只有这条线收到 Host 系统轮会是 `plan_round` 时（参谋、秘书，形状规则只在 `planningAnswerShapeOf`）才发续轮。
           // 执行者线收到的是 text 形状，没有规划说明和提交工具，只会落到 invalid_plan；它反问出的卡，人答完只保存答案，
           // 要继续就再发消息。职责的读法同干预入口（读不出或 unknown 当没有职责）。这一组不发、不等、不写，同一趟接着往下选。

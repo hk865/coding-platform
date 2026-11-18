@@ -1500,11 +1500,11 @@ export async function createHostSettings(
   }
 
   /**
-   * G8B B2；R2（lead 11-18 改判，121-141、121-111）：人撤回一条装上的检查——计划装上的，或已批准清单里的。设置路由只有 Host 的使用者
+   * G8B B2；决定 121-149（lead 改判 G8B-1b，依据 121-141、121-111）：人撤回一条装上的检查——计划装上的，或已批准清单里的。设置路由只有 Host 的使用者
    * 能调，agent 够不着，所以不另判身份。在设置队列里先结清这个工作区待恢复的采用（结不清回它的 `unavailable`），再：
    * - 计划装上的：从 `planChecks` 去掉，留痕写 `plan`；
-   * - 已批准清单里的：从 `checks` 去掉，留痕写 `answer`（这份清单的保存回答）。清单仍绑原回答：现在的内容 = 那份回答的检查减去
-   *   来源是它的留痕。`checksRevision` 加一、`checksChild` 去掉，和 `checks/approve` 一样，冻结的旧 pin 看得出它变了。
+   * - 已批准清单里的：从 `checks` 去掉，留痕写 `answer`（这份清单的保存回答）。清单仍绑原回答；留痕只说明谁
+   *   撤过、从哪撤的，不用来推算清单内容（整批批准装回以后留痕还在，人采用的计划装回同一个 id 时留痕去掉）。`checksRevision` 加一、`checksChild` 去掉，和 `checks/approve` 一样，冻结的旧 pin 看得出它变了。
    * 存盘，推给 Host；Host 按新内容算配置版本。计划不动；已开的检查轮照旧用冻结的配置；同一个 checkId 以后只有人能装回。
    */
   async function withdrawCheckRoute(input: unknown): Promise<SettingsResponse<HostSettingsSnapshot>> {

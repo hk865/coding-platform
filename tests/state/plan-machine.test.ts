@@ -1073,7 +1073,7 @@ describe('tracedDispositionChangeProblem (TASK-19 guards 8, 1, 2, 2b, 3–7; C7)
   });
 
   it('a submitted plan round defers only the four unfinished-execution busy guards', () => {
-    // 决定 121-1xx（冻结稿三·R4、R5）：交表时跳过守卫 1、2、2b、4 的后半，接着判 5–7；守卫 3 照判。第一格落到守卫 5；
+    // 决定 121-149（冻结稿三·R4、R5）：交表时跳过守卫 1、2、2b、4 的后半，接着判 5–7；守卫 3 照判。第一格落到守卫 5；
     // 第二格选中的 Run 是 yielded 等待，守卫 3 照判。今天两格都红在守卫 1 的 busy 原文。
     const quarantined = runOf('r-q', 't-a', { reconciliation: { status: 'quarantined', observation: { kind: 'unresolved', reason: 'x',
       observedThroughPosition: null, unresolvedToolCallIds: [] }, basis: { kind: 'live_clean' }, recordedAt: T1 } });
@@ -1087,7 +1087,7 @@ describe('tracedDispositionChangeProblem (TASK-19 guards 8, 1, 2, 2b, 3–7; C7)
   });
 
   it('planRoundAnswerIssues skips unfinished execution but still lists the traced Task', () => {
-    // 决定 121-1xx（冻结稿三·R4）：交表处传 deferBusy: true；W1 在跑、占着租约，段只把 W1 的处置改成 cancelled。
+    // 决定 121-149（冻结稿三·R4）：交表处传 deferBusy: true；W1 在跑、占着租约，段只把 W1 的处置改成 cancelled。
     // 今天红在守卫 1 的 busy 原文；包落地后是守卫 6。
     const draft = g8b2V1('g8b2-goal', 'g8b2-builder');
     const base: PlanRevisionSnapshot = { ...draft, revision: 1,

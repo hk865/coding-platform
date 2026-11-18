@@ -3345,7 +3345,7 @@ async function applyFutureRevision(input: {
   }
   refused = ask({ modules });
   if (refused !== null) return refusalOf(refused);
-  // 决定 121-1xx：模块判定的那次读取已带出源计划的终态集合，这里不重读；没有模块任务时才读一次。
+  // 决定 121-149：模块判定的那次读取已带出源计划的终态集合，这里不重读；没有模块任务时才读一次。
   if (terminalTaskIds === null) {
     const terminal = await terminalTaskIdsOf(records, source);
     if (terminal.status !== 'ready') return terminal;
