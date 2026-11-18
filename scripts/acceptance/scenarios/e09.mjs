@@ -54,8 +54,10 @@ async function run(ctx, rec) {
   // The person approves every card (on the conflict: the option that applies the adviser's proposal); only the
   // committed answers count as the person's decision (lead ruling 11-14 #10), each kept with its own receipt.
   const committedAnswers = [];
-  const done = await waitGoal(ctx, project, goalRef, { timeoutMs: 150 * MINUTE, rec, committedAnswers });
+  const done = await waitGoal(ctx, project, goalRef, { timeoutMs: 150 * MINUTE, rec, committedAnswers, returnOnDecide: true });
   rec.note(`E09 Goal ended ${done.display.phase}`);
+  rec.facts.stoppedFor = done.stoppedFor;
+  if (done.stoppedFor !== null) rec.note(`E09 目标停下等人：${done.stoppedFor}`);
 
   // Quick check #8: the chain by identity only, link by link. The executor's report message (its own successful
   // `send_session_message` naming parseDate, with the message ref from the tool result) → the decision whose source is
@@ -108,15 +110,30 @@ async function run(ctx, rec) {
   // carries the saved record (`communication-tools.ts:482-486`, `contracts/mailbox.ts:131-132`); it has no sessionId
   // (G6F F5: the old test asked for one, so no report ever linked).
   const refOf = result => findAll(result.values, node => node.aggregateType === 'SessionMessage' && typeof node.messageId === 'string')[0] ?? null;
+  // lead 11-18：只认真正的上报：action_request、inquiry。notify 不给参谋开轮，不算。
+  const REPORT_INTENTS = ['action_request', 'inquiry'];
   const reportResult = turnsByDuty.executor.flatMap(turn => turn.results)
-    .find(result => result.name === 'send_session_message' && /parseDate/.test(JSON.stringify(result.args ?? {})));
+    .find(result => result.name === 'send_session_message' && REPORT_INTENTS.includes(result.args?.intent)
+      && /parseDate/.test(JSON.stringify(result.args ?? {})));
   const reportRef = reportResult === undefined ? null : refOf(reportResult);
   const later = ['adviser-explains', 'person-decides', 'new-version'];
   if (reportResult === undefined) {
-    if (unread !== null) unreadable(['executor-reports', ...later], `${unread}；读到的历史里没有执行者提到 parseDate 的 send_session_message`);
+    if (unread !== null) unreadable(['executor-reports', ...later], `${unread}；读到的历史里没有执行者提到 parseDate 的上报`);
     else {
-      rec.fail('executor-reports', '执行者没有成功发出提到 parseDate 的 send_session_message');
-      notRun(later, '没有执行者的上报，后面这几环没有发生');
+      // 计划开工前就消掉了冲突（任务书没有把冲突留给执行者上报）：这一格没有发生的机会，记 not-run，不判失败。
+      const firstBody = await host.client.read('tasks/query', project.scope, { goalRef, planRef: started.plan });
+      const first = ready(firstBody);
+      const keeps = (first?.plan?.assignments ?? []).filter(entry => /parseDate/.test(entry.instruction)
+        && /冲突|conflict/i.test(entry.instruction) && /上报|参谋|adviser|由人决定|人来决定|交给人/.test(entry.instruction));
+      if (first === null) unreadable(['executor-reports', ...later], `tasks/query 首版 ${started.plan?.planId ?? '-'}：${said(firstBody)}`);
+      else if (keeps.length === 0) {
+        const quote = (first.plan.assignments ?? []).filter(entry => /parseDate/.test(entry.instruction))
+          .map(entry => `${entry.taskId}「${entry.instruction.slice(0, 200)}」`).join('；');
+        notRun(['executor-reports', ...later], `首版计划 ${started.plan.planId} 的任务书没有把 parseDate 冲突留给执行者上报（开工前已消掉）：${quote || '没有提到 parseDate 的任务书'}`);
+      } else {
+        rec.fail('executor-reports', `首版计划把冲突留给执行者上报（${keeps.map(entry => entry.taskId).join(', ')}），执行者没有发 action_request 或 inquiry`);
+        notRun(later, '没有执行者的上报，后面这几环没有发生');
+      }
     }
   } else if (reportRef === null) {
     rec.pass('executor-reports', `执行者上报：${JSON.stringify(reportResult.args)}`);
@@ -212,8 +229,6 @@ async function run(ctx, rec) {
   const findings = compared?.findings ?? [];
   rec.check('drift', findings.some(finding => typeof finding.path === 'string' && finding.path.length > 0),
     `compare-formal ${findings.length} 条 finding；带路径的：${findings.filter(finding => typeof finding.path === 'string').map(finding => finding.path).slice(0, 5).join(', ') || '无'}`);
-  rec.check('observation-after-pass', JSON.stringify(now?.current?.captureRef) !== JSON.stringify(afterAdopt?.current?.captureRef),
-    `观测：采用后 ${JSON.stringify(afterAdopt?.current?.captureRef ?? null)} → 现在 ${JSON.stringify(now?.current?.captureRef ?? null)}`);
 
   // Each work Task's rounds, read by each of its Runs (second review #1); the newest round of a satisfied Task must be
   // PASS with no gap, and no INCONCLUSIVE round may leave its Task satisfied.
@@ -227,7 +242,12 @@ async function run(ctx, rec) {
   const newest = new Map(rounds.map(entry => [entry.task.ref.taskId, entry]));
   const satisfied = [...newest.values()].filter(entry => entry.task.effectivePhase === 'satisfied');
   rec.check('rounds', satisfied.length > 0 && satisfied.every(entry => entry.round.outcome === 'PASS' && (entry.round.gaps?.length ?? 0) === 0),
-    `satisfied 任务的最新轮：${satisfied.map(entry => `${entry.task.ref.taskId} ${entry.round.outcome}/gaps ${entry.round.gaps?.length ?? 0}`).join(', ') || '无'}`);
+    `satisfied 任务的最新轮：${satisfied.map(entry => `${entry.task.ref.taskId} ${entry.round.outcome}/gaps ${entry.round.gaps?.length ?? 0}`).join(', ') || '无'}${done.stoppedFor === null ? '' : `；目标停下等人：${done.stoppedFor}`}`);
+  // S6（lead 11-18）：观测这一格要读完检查轮才判；目标停下等人、没有 PASS 定稿时，自动观测没有触发点。
+  const anyPass = rounds.some(entry => entry.round.outcome === 'PASS');
+  if (done.stoppedFor !== null && !anyPass) rec.uncover('observation-after-pass', 'not-run', `目标停下等人（${done.stoppedFor}），没有 PASS 定稿，自动观测没有触发点`);
+  else rec.check('observation-after-pass', JSON.stringify(now?.current?.captureRef) !== JSON.stringify(afterAdopt?.current?.captureRef),
+    `观测：采用后 ${JSON.stringify(afterAdopt?.current?.captureRef ?? null)} → 现在 ${JSON.stringify(now?.current?.captureRef ?? null)}`);
   // C-99: an INCONCLUSIVE round must not leave its Task satisfied by an empty set.
   const inconclusive = rounds.filter(entry => entry.round.outcome === 'INCONCLUSIVE');
   if (inconclusive.length === 0) rec.uncover('uncovered-round', 'not-run', '这次没有出现缺覆盖（INCONCLUSIVE）的检查轮');

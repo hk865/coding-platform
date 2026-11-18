@@ -5,14 +5,16 @@
  * WorkGraph owner measures with this same function.
  *
  * It value-imports only the leaf `continuation-brief-base.ts`, `prompts/`,
- * `utf8.ts` and `validation/common.ts`, and takes the brief's types from
+ * `utf8.ts`, `verbatim.ts` and `validation/common.ts`, and takes the brief's types from
  * `continuation-brief.ts` with `import type` only: that module re-exports this one, so a value import back
  * would form a load cycle, and a value of it read here at load time (as
  * `RENDER_TEXT_CAPS` reads the bounds) could still be uninitialized.
  */
 import type { SessionAnomalyAnchorV1 } from './session-anomaly.js';
+import type { FailingCheckOutputV1, InstalledCheckOriginV1 } from './check-output.js';
 import type { ReworkActorClass, ReworkFailureClass, StopRequester } from './task-requeue.js';
 import { truncateUtf8 } from './utf8.js';
+import { verbatimLines } from './verbatim.js';
 import { utf8Bytes } from './validation/common.js';
 import { canonicalJson } from './fingerprint.js';
 import type { HandoffBriefMaterialV1, HandoffBriefNoteIndexV1, HandoffBriefTaskV1 } from './handoff-brief.js';
@@ -539,6 +541,46 @@ function moreZh(B: BriefTexts, omitted: number): string {
   return omitted > 0 ? `${B.S('brief.list.morePrefix')}${String(omitted)}${B.S('brief.list.moreSuffix')}` : '';
 }
 
+/** 检查出处的一句话。 */
+function checkOriginZh(B: BriefTexts, origin: InstalledCheckOriginV1 | null): string {
+  if (origin === null) return B.S('brief.checks.originUnknown');
+  if (origin.kind === 'startup') return B.S('brief.checks.originStartup');
+  if (origin.kind === 'approved_list') return `${B.S('brief.checks.originListLead')}${origin.answerRef.queryJobId}）`;
+  const approver = origin.approvedBy === 'person' ? B.S('brief.checks.approverPerson')
+    : origin.approvedBy === 'adviser' ? B.S('brief.checks.approverAdviser') : B.S('brief.checks.approverReviewer');
+  return `${B.S('brief.checks.originPlanLead')}${origin.proposalRef.proposalId}${B.S('brief.checks.originPlanApproved')}${approver}`;
+}
+/**
+ * 一条没过的检查的输出块：出处、退出、命令原文和一路输出的末尾。行首四个空格；命令和输出放进代码块，文字行照原样、
+ * 不缩进，“已截断”写在收尾围栏的下一行，不混进代码块。stderr 空的话给 stdout。
+ */
+function checkOutputLinesZh(B: BriefTexts, output: FailingCheckOutputV1): string[] {
+  const indent = '    ';
+  const observed = output.observed;
+  const taskIds = output.taskIds === 'all' ? B.S('brief.checks.outputAllTasks') : output.taskIds.join(', ');
+  const ending = observed === null ? `${B.S('brief.checks.outputUnreadableLead')}${output.unreadable ?? ''}`
+    : observed.outcome === 'timed_out' ? B.S('brief.checks.outputTimedOut')
+      : observed.outcome === 'killed' ? `${B.S('brief.checks.outputKilled')}${observed.exitCode === null ? ''
+        : `${B.S('brief.checks.outputKilledExitOpen')}${String(observed.exitCode)}）`}`
+        : observed.outcome === 'not_started' ? `${B.S('brief.checks.outputNotStartedLead')}${observed.stderrTail}`
+          : `${B.S('brief.checks.outputExitLead')}${String(observed.exitCode)}`;
+  const lines = [
+    `${indent}${B.S('brief.checks.outputOriginLead')}${checkOriginZh(B, output.origin)}${B.S('brief.checks.outputTaskIdsLead')}${taskIds}`,
+    `${indent}${ending}${B.S('brief.checks.outputCommandLead')}`,
+    ...verbatimLines(output.command.text, indent),
+  ];
+  if (output.command.truncated) lines.push(`${indent}${B.S('brief.clip.truncatedSuffix')}`);
+  if (observed === null || observed.outcome === 'not_started') return lines;
+  if (observed.stderrTail !== '') {
+    lines.push(`${indent}${B.S('brief.checks.outputStderrLead')}`, ...verbatimLines(observed.stderrTail, indent));
+  } else if (observed.stdoutTail !== '') {
+    lines.push(`${indent}${B.S('brief.checks.outputStdoutLead')}`, ...verbatimLines(observed.stdoutTail, indent));
+  } else {
+    lines.push(`${indent}${B.S('brief.checks.outputEmpty')}`);
+  }
+  return lines;
+}
+
 function briefBodyZh(B: BriefTexts, brief: ContinuationBriefV1, cap: number): string[] {
   const t = (value: BoundedTextV1): string => boundedZh(B, value, cap);
   const lines: string[] = [];
@@ -642,14 +684,21 @@ function briefBodyZh(B: BriefTexts, brief: ContinuationBriefV1, cap: number): st
     lines.push(`${B.S('brief.checks.roundLead')}${checks.roundRef.roundId}${B.S('brief.checks.ordinalOpen')}`
       + `${String(checks.roundOrdinal)}${B.S('brief.checks.failingMiddle')}`
       + `${checks.failing.length === 0 ? B.S('brief.list.none') : ''}`);
+    const outputs = checks.outputs ?? [];
     for (const failing of checks.failing) {
-      lines.push(`  - ${failing.checkId}${B.S('brief.checks.itemPhase')}${failing.phase}${B.S('brief.checks.itemOutcome')}`
+      const line = `  - ${failing.checkId}${B.S('brief.checks.itemPhase')}${failing.phase}${B.S('brief.checks.itemOutcome')}`
         + `${failing.outcome ?? B.S('brief.list.none')}`
         + `${failing.cause === null ? '' : `${B.S('brief.checks.causeLead')}${failing.cause}`}`
-        + `${failing.reportRef === null ? B.S('brief.checks.noReport') : `${B.S('brief.checks.reportLead')}${failing.reportRef.digest}`}`);
+        + `${failing.reportRef === null ? B.S('brief.checks.noReport') : `${B.S('brief.checks.reportLead')}${failing.reportRef.digest}`}`;
+      // 没过的登记检查的输出接在它那一行后面，和那一行合成 body 的一个元素，超预算时整块省略。命令和输出不调 `clip`：
+      // 它留开头、截掉末尾，还把换行改成缩进；两样在装配时已经有上限。
+      const output = outputs.find((entry) => entry.checkId === failing.checkId);
+      lines.push(output === undefined ? line : [line, ...checkOutputLinesZh(B, output)].join('\n'));
     }
     if (checks.reviewBasis !== undefined) lines.push(`${B.S('brief.checks.reviewBasisLead')}${t(checks.reviewBasis)}`);
     if (checks.gapCodes.length > 0) lines.push(`${B.S('brief.checks.gapsLead')}${listZh(B, checks.gapCodes, cap)}`);
+    // 读到了输出才提示：检查和文件对不上时可能是检查本身写错了，交给参谋，不要自己复跑一份当它通过。
+    if (outputs.some((output) => output.observed !== null)) lines.push(B.S('brief.checks.outputHint'));
   }
 
   section(B.S('brief.section.requeue'));

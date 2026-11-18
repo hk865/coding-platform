@@ -17,6 +17,7 @@
 import { randomUUID } from 'node:crypto';
 import type { QueryJobAnswerRef } from '../contracts/query-job.js';
 import { checkBaselineProblem, checkDigestOf } from '../contracts/check-review.js';
+import type { InstalledCheckOriginEntryV1 } from '../contracts/check-output.js';
 import {
   checkConflictProblem, isRegisteredCommandCheck, proposedCheckSplit,
   type RegisteredCommandCheck, type TrustedCheckConfiguration,
@@ -95,7 +96,6 @@ import type {
   PromptPackListV1,
   PromptTemplateReadV1,
   PromptToolReadV1,
-  WithdrawnCheckV1,
 } from './host-settings-types.js';
 import { DEFAULT_WORK_RUN_TOKEN_BUDGET, MAX_WORK_RUN_TOKEN_BUDGET } from './host-settings-types.js';
 import { DEFAULT_COMMAND_REVIEW_LINE_MINUTES } from '../contracts/resource-caps.js';
@@ -192,8 +192,12 @@ export type HostSettingsPrivateSnapshot = {
     child: { commandId: string; identityKey: string; fingerprint: string } | null;
     checksRevision: number }[];
   /** 121-136: the checks plans brought for a workspace with no approved answer list (its `checks` entry above already
-   *  ends with them when it has one); the Host installs them after its own start-up checks of that workspace. */
+   *  ends with them when it has one); the Host installs them after its own start-up checks of that workspace. R2：人撤过检查
+   *  的工作区撤到一条不剩时也在这里出一份空配置，不退回“没有检查配置”。 */
   planOnlyChecks: { scope: CoreScope; checks: RegisteredCommandCheck[] }[];
+  /** 每个工作区设置里的检查各从哪来（已批准清单、计划），按内容摘要；没有已批准清单的工作区，Host 再接上它启动配置的
+   *  检查，交给平台写进没过的检查的输出（`checkOrigins`）。 */
+  checkOrigins: { scope: CoreScope; origins: InstalledCheckOriginEntryV1[] }[];
   /** C8 automatic-rework policy as stored, or the defaults (3 / true) when the
    * file has none. The Host installs it from A.2 step 5.6 on; `automation/save`
    * (5.8) changes it at runtime. */
@@ -451,13 +455,16 @@ type PersistedWorkspaceV1 = {
   /** 121-136 A3: the plan a person's adoption installed checks for (in `planChecks`) and is not known adopted yet:
    *  written in the same save as those checks, removed once settled (`settlePlanAdoption`). */
   planAdoption?: CheckApprovalV1['plan'];
-  /** G8B B2：人撤回过的计划检查的留痕，整批替换也留着；人采用的计划把同一个 checkId 装回时去掉（`closePlanAdoption`）。 */
+  /** G8B B2、R2：人撤回过的检查的留痕（来自计划写 `plan`，来自已批准清单写 `answer`），整批替换也留着；人采用的计划把同一个
+   *  checkId 装回时去掉（`closePlanAdoption`）。 */
   withdrawnChecks?: WithdrawnCheckEntryV1[];
 };
 /** One check a plan brought, as the settings file keeps it. */
 type PlanCheckEntryV1 = Omit<CheckApprovalV1, 'checkId'> & { check: RegisteredCommandCheck };
-/** G8B B2：设置文件里的一条撤回留痕，和 `PlanCheckEntryV1` 一样，id 取自检查本身。 */
-type WithdrawnCheckEntryV1 = Omit<WithdrawnCheckV1, 'checkId'> & { check: RegisteredCommandCheck };
+/** G8B B2：设置文件里的一条撤回留痕，id 取自检查本身。R2：来源二选一——计划（`plan`），或已批准清单的保存回答（`answer`）。 */
+type WithdrawnCheckEntryV1 = { check: RegisteredCommandCheck; withdrawnAt: string }
+  & ({ plan: CheckApprovalV1['plan']; answer?: undefined }
+    | { answer: { answerRef: QueryJobAnswerRef; answerDigest: string }; plan?: undefined });
 /** One listed workspace as the project list holds it: the Host's start-up manifest. */
 export type PersistedWorkspaceRef = Pick<PersistedWorkspaceV1, 'scope' | 'name' | 'root' | 'writeAllowed' | 'commandsAllowed'>;
 /** The saved-state read's two real outcomes: a saved entry or none at all. */
@@ -537,7 +544,10 @@ function parseStoredPlanChecks(value: unknown): PlanCheckEntryV1[] {
 
 function parseStoredWithdrawnChecks(value: unknown): WithdrawnCheckEntryV1[] {
   const valid = (entry: unknown): boolean => isRecord(entry) && isRegisteredCommandCheck(entry['check'])
-    && validPlanSource(entry['plan']) && nonEmpty(entry['withdrawnAt']);
+    && nonEmpty(entry['withdrawnAt'])
+    && (entry['plan'] !== undefined
+      ? entry['answer'] === undefined && validPlanSource(entry['plan'])
+      : validChecksSource(entry['answer']));
   if (!Array.isArray(value) || !value.every(valid)) throw new Error('the private host settings file is invalid');
   return structuredClone(value as WithdrawnCheckEntryV1[]);
 }
@@ -551,15 +561,29 @@ function parseStoredPlanAdoption(value: unknown): CheckApprovalV1['plan'] {
 const savedPlanChecks = (entry: PersistedWorkspaceV1 | undefined): RegisteredCommandCheck[] =>
   (entry?.planChecks ?? []).map(planned => structuredClone(planned.check));
 
-function parseStoredChecksSource(value: unknown): { answerRef: QueryJobAnswerRef; answerDigest: string } {
-  if (!isRecord(value) || !isRecord(value['answerRef']) || !nonEmpty(value['answerDigest'])) {
-    throw new Error('the private host settings file is invalid');
-  }
+/** 一个工作区设置里的检查各从哪来：先是已批准清单本身（不含后接的计划检查，绑着那次保存的回答），再是计划带来的每一条。 */
+function savedCheckOrigins(entry: PersistedWorkspaceV1): InstalledCheckOriginEntryV1[] {
+  const source = entry.checksSource;
+  const listed = entry.checks === undefined || source === undefined ? [] : entry.checks.map(
+    (check): InstalledCheckOriginEntryV1 => ({ checkDigest: checkDigestOf(check),
+      origin: { kind: 'approved_list', answerRef: structuredClone(source.answerRef) } }));
+  const planned = (entry.planChecks ?? []).map((planCheck): InstalledCheckOriginEntryV1 => ({
+    checkDigest: checkDigestOf(planCheck.check), origin: { kind: 'plan', proposalRef: { ...planCheck.plan.proposalRef },
+      approvedBy: planCheck.approvedBy.kind === 'person' ? 'person' : planCheck.approvedBy.duty } }));
+  return [...listed, ...planned];
+}
+
+/** R2：一份保存回答的来源（引用和摘要）形状对不对；设置文件的 `checksSource` 和 R2 的撤回留痕共用。 */
+function validChecksSource(value: unknown): value is { answerRef: QueryJobAnswerRef; answerDigest: string } {
+  if (!isRecord(value) || !isRecord(value['answerRef']) || !nonEmpty(value['answerDigest'])) return false;
   const ref = value['answerRef'];
-  if (ref['aggregateType'] !== 'QueryJobAnswer' || !nonEmpty(ref['projectId']) || !nonEmpty(ref['workspaceId'])
-    || !nonEmpty(ref['queryJobId']) || !nonEmpty(ref['answerId'])) {
-    throw new Error('the private host settings file is invalid');
-  }
+  return ref['aggregateType'] === 'QueryJobAnswer' && nonEmpty(ref['projectId']) && nonEmpty(ref['workspaceId'])
+    && nonEmpty(ref['queryJobId']) && nonEmpty(ref['answerId']);
+}
+
+function parseStoredChecksSource(value: unknown): { answerRef: QueryJobAnswerRef; answerDigest: string } {
+  if (!validChecksSource(value)) throw new Error('the private host settings file is invalid');
+  const ref = value['answerRef'];
   return {
     answerRef: { aggregateType: 'QueryJobAnswer', projectId: ref['projectId'], workspaceId: ref['workspaceId'],
       queryJobId: ref['queryJobId'], answerId: ref['answerId'] },
@@ -893,9 +917,13 @@ export async function createHostSettings(
         answerRef: structuredClone(workspace.checksSource.answerRef), answerDigest: workspace.checksSource.answerDigest,
         child: workspace.checksChild === undefined ? null : { ...workspace.checksChild },
         checksRevision: workspace.checksRevision ?? 0 })),
+    // R2（121-144 的待办）：人撤过检查的工作区不退回“没有检查配置”。撤到一条不剩时 Host 装一份空配置（已批准的空清单同一个做法，
+    // `host.ts:2178-2179`），检查轮照开，没检查覆盖的必需要求读作缺项，人看得见。
     planOnlyChecks: workspaces
-      .filter(workspace => workspace.checksSource === undefined && savedPlanChecks(workspace).length > 0)
+      .filter(workspace => workspace.checksSource === undefined
+        && (savedPlanChecks(workspace).length > 0 || workspace.withdrawnChecks !== undefined))
       .map(workspace => ({ scope: { ...workspace.scope }, checks: savedPlanChecks(workspace) })),
+    checkOrigins: workspaces.map(workspace => ({ scope: { ...workspace.scope }, origins: savedCheckOrigins(workspace) })),
     automation: { ...(automation ?? DEFAULT_TASK_AUTOMATION_POLICY) },
     resourceCaps: {
       memoryMaxBytes: effectiveResourceCaps().memoryMaxMiB * MIB,
@@ -956,7 +984,8 @@ export async function createHostSettings(
    * takes (the Host runs the platform's own adoptions in it too). The candidate's own record, read here, answers
    * whether it was adopted (`accepted` is written in the adoption's commit, whoever adopted it). Adopted keeps the
    * checks. Not adopted first takes this plan's checks back out of the saved configuration and, with `install`, out of
-   * the Host's (a workspace left with no saved checks goes back to its start-up checks, or none); the start passes
+   * the Host's (a workspace left with no saved checks goes back to its start-up checks, or none; R2：人撤过检查的工作区装空配置,
+   * `planOnlyChecks`); the start passes
    * `false` and installs once, after every record settled. Either way the record then closes. A candidate that cannot
    * be read, or a take-back that cannot be saved or installed, stays pending and answers why; `null`: nothing pending.
    */
@@ -1083,8 +1112,10 @@ export async function createHostSettings(
             ...(planned.baseline === undefined ? {} : { baseline: { ...planned.baseline } }),
             approvedAt: planned.approvedAt })) }),
         ...(persistedFacts?.withdrawnChecks === undefined ? {} : { withdrawnChecks: persistedFacts.withdrawnChecks
-          .map(withdrawn => ({ checkId: withdrawn.check.checkId, plan: structuredClone(withdrawn.plan),
-            withdrawnAt: withdrawn.withdrawnAt })) }),
+          .map(withdrawn => ({ checkId: withdrawn.check.checkId, withdrawnAt: withdrawn.withdrawnAt,
+            ...(withdrawn.answer === undefined
+              ? { plan: structuredClone(withdrawn.plan) }
+              : { answerRef: structuredClone(withdrawn.answer.answerRef) }) })) }),
         ...(facts.storeLocation === null
           ? {} : { storeLocation: { place: facts.storeLocation.place, reason: facts.storeLocation.reason } }),
         knowledgeLocalOnly: facts.knowledgeRepoKey != null && knowledgeLocalOnly[facts.knowledgeRepoKey] === true,
@@ -1469,10 +1500,12 @@ export async function createHostSettings(
   }
 
   /**
-   * G8B B2：人撤回一条计划装上的检查。设置路由只有 Host 的使用者能调，agent 够不着，所以不另判身份。在设置队列里：
-   * 先结清这个工作区待恢复的采用（它决定那份计划的检查还在不在），结不清就回它的 `unavailable`；再从 `planChecks`
-   * 去掉这一条，在 `withdrawnChecks` 留痕，存盘，推给 Host。这个工作区一条设置检查都不剩时，Host 撤掉注册，回到启动时的
-   * 检查（`installIntoProject`）。计划不动；已开的检查轮照旧用冻结的配置；同一个 checkId 以后只有人采用能装回。
+   * G8B B2；R2（lead 11-18 改判，121-141、121-111）：人撤回一条装上的检查——计划装上的，或已批准清单里的。设置路由只有 Host 的使用者
+   * 能调，agent 够不着，所以不另判身份。在设置队列里先结清这个工作区待恢复的采用（结不清回它的 `unavailable`），再：
+   * - 计划装上的：从 `planChecks` 去掉，留痕写 `plan`；
+   * - 已批准清单里的：从 `checks` 去掉，留痕写 `answer`（这份清单的保存回答）。清单仍绑原回答：现在的内容 = 那份回答的检查减去
+   *   来源是它的留痕。`checksRevision` 加一、`checksChild` 去掉，和 `checks/approve` 一样，冻结的旧 pin 看得出它变了。
+   * 存盘，推给 Host；Host 按新内容算配置版本。计划不动；已开的检查轮照旧用冻结的配置；同一个 checkId 以后只有人能装回。
    */
   async function withdrawCheckRoute(input: unknown): Promise<SettingsResponse<HostSettingsSnapshot>> {
     if (!isRecord(input) || !validScope(input['scope']) || !nonEmpty(input['checkId']))
@@ -1485,22 +1518,31 @@ export async function createHostSettings(
     const index = workspaces.findIndex(entry => scopeKey(entry.scope) === scopeKey(scope));
     const entry = workspaces[index];
     const planned = entry?.planChecks?.find(candidate => candidate.check.checkId === checkId);
-    if (entry === undefined || planned === undefined) {
-      // 拒绝（协调）：已批准的检查清单绑着保存的回答和它的摘要（R6），拆单条要另定来源。
-      if (entry?.checks?.some(check => check.checkId === checkId) === true)
-        return notFound(`检查 ${checkId} 来自已批准的检查清单，不能单条撤回；要换掉整批，用 checks/approve`);
+    // 已批准清单要连着它的来源一起在（`savedChecksOf` 同一个条件）。
+    const listed = planned === undefined && entry?.checksSource !== undefined
+      ? entry.checks?.find(check => check.checkId === checkId) : undefined;
+    if (entry === undefined || (planned === undefined && listed === undefined)) {
       if (entry?.withdrawnChecks?.some(withdrawn => withdrawn.check.checkId === checkId) !== true)
-        return notFound(`这个工作区没有计划装上的检查 ${checkId}`);
+        return notFound(`这个工作区的设置里没有检查 ${checkId}（Host 启动配置里的检查在启动配置里改）`);
       // 重做同一个撤回：原样回快照，上一次没确认的推送这次补上。
       try { await notify(); }
       catch { return notConfirmed(); }
       return { status: 'ready', value: snapshotOf() };
     }
-    const { planChecks, ...rest } = entry;
-    const kept = (planChecks ?? []).filter(candidate => candidate !== planned);
-    workspaces[index] = { ...rest, ...(kept.length === 0 ? {} : { planChecks: kept }),
-      withdrawnChecks: [...(entry.withdrawnChecks ?? []),
-        { check: structuredClone(planned.check), plan: structuredClone(planned.plan), withdrawnAt: now() }] };
+    const withdrawnAt = now();
+    if (planned !== undefined) {
+      const { planChecks, ...rest } = entry;
+      const kept = (planChecks ?? []).filter(candidate => candidate !== planned);
+      workspaces[index] = { ...rest, ...(kept.length === 0 ? {} : { planChecks: kept }),
+        withdrawnChecks: [...(entry.withdrawnChecks ?? []),
+          { check: structuredClone(planned.check), plan: structuredClone(planned.plan), withdrawnAt }] };
+    } else {
+      const { checksChild: _replaced, ...rest } = entry;
+      workspaces[index] = { ...rest, checks: entry.checks!.filter(check => check !== listed),
+        checksRevision: (entry.checksRevision ?? 0) + 1,
+        withdrawnChecks: [...(entry.withdrawnChecks ?? []),
+          { check: structuredClone(listed!), answer: structuredClone(entry.checksSource!), withdrawnAt }] };
+    }
     try { await persist(); }
     catch {
       workspaces[index] = entry;

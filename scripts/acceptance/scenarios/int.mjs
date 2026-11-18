@@ -4,7 +4,7 @@
 // a message to a COMPLETED Goal's line is confirmed as a new Goal first; pause only queues.
 import { newId, ready } from '../lib/http.mjs';
 import { broken, chooseModel, coldStart, confirmNewGoal, driverStart, executions, lines, newGoalInProject, openProject, orNull,
-  sessionQueries, sleep, submitRequest, TERMINAL, textOf, waitFor, waitGoal } from '../lib/flows.mjs';
+  sessionQueries, sleep, submitRequest, TERMINAL, textOf, unreadableSources, waitFor, waitGoal } from '../lib/flows.mjs';
 
 const MINUTE = 60_000;
 const SEED = {
@@ -167,9 +167,19 @@ async function run(ctx, rec) {
   // intervention; only the Query that started from exactly that message can judge C-199/C-200. A refused send is the
   // platform's answer: `fail` with its code and reason.
   let idle = null;
-  const busyEnd = await waitGoal(ctx, project, busy.goalRef, { timeoutMs: 150 * MINUTE, rec, onPoll: async display => {
+  const busyEnd = await waitGoal(ctx, project, busy.goalRef, { timeoutMs: 150 * MINUTE, rec, returnOnDecide: true, onPoll: async display => {
     const phase = display?.display?.phase;
-    if (idle !== null || phase === undefined || TERMINAL.includes(phase) || phase === 'PAUSED') return;
+    if (idle !== null) {
+      // 核对 11-18（d-check 3.1）：“规划收尾前长目标已结束”要看这条消息收尾的那一刻。长目标正常完成时，waitGoal
+      // 返回以后读到的阶段必然是终态，拿它判会把目标还活着时就出现的非法收尾也盖成 not-run。所以目标还没到终态时
+      // 这条消息已经回复或撤回，就在这里记下；下面终态那一支只在没记过时才记 not-run。
+      if (idle.messageRef !== null && idle.endedWhileOpen !== true && phase !== undefined && !TERMINAL.includes(phase)) {
+        const message = ready(await host.client.read('messages/read', project.scope, idle.messageRef));
+        if (message?.status === 'responded' || (message?.withdrawnAt ?? null) !== null) idle.endedWhileOpen = true;
+      }
+      return;
+    }
+    if (phase === undefined || TERMINAL.includes(phase) || phase === 'PAUSED') return;
     const workers = new Set((await executions(project, busy.goalRef)).map(item => item.outbox?.claim?.sessionRef?.sessionId).filter(Boolean));
     for (const row of (await lines(project)).filter(entry => workers.has(entry.key.sessionId))) {
       const now = await currentWork(project, row.key);
@@ -182,15 +192,49 @@ async function run(ctx, rec) {
       return;
     }
   } });
+  if (busyEnd.stoppedFor !== null) rec.note(`长目标停下等人：${busyEnd.stoppedFor}`);
   if (idle === null) rec.uncover('planning-when-idle', 'not-run', '长目标活跃期间没有出现“干过活的线上没有未完成任务”的时刻，没走到这个分支');
   else if (idle.refused !== null) rec.fail('planning-when-idle', `${idle.at} 发给闲线 ${idle.line} 的消息被拒：${idle.refused}`);
   else {
-    const job = await orNull(waitFor(ctx, 'the planning Query of the idle-line message', () => planningOf(project, idle.messageRef),
-      value => value !== null && ['answered', 'closed'].includes(value.run?.run?.status), { timeoutMs: 20 * MINUTE, check: 'planning-when-idle' }));
-    rec.check('planning-when-idle', job !== null && job.run.run.status === 'answered' && (job.job?.job?.answerRefs?.length ?? 0) > 0,
-      `${idle.at} 发给 ${idle.line}（目标 ${idle.phase}，线上当前任务 ${idle.work}，不是未完成）；它的 intervention_planning：${
-        job === null ? '没有' : `${job.run.run.status}，answerRefs ${job.job?.job?.answerRefs?.length ?? 0}，closeReason ${job.job?.job?.closeReason?.code ?? '-'}`}`);
-    idle.ending = job?.job?.job?.closeReason?.code ?? job?.run?.run?.status ?? null;
+    // lead 11-18：C-200 要的是“答案交 plans/propose”。Query 答完以后，候选、问题卡、回复由 Host 下一趟消费写出
+    // （intervention.ts:558-643），判法等这条消息有了收尾：候选卡、问题卡、消息被回复或被撤回，四样出现一样就算。
+    // 候选按 requestRef 认（干预候选的 requestRef 就是这个 Query，intervention.ts:635；叠树 decision-read-model.ts:2264-2285）；
+    // “方案确认后自动”下候选可能已被采用，所以连已关的一起读。
+    const endingOf = async () => {
+      const job = await planningOf(project, idle.messageRef);
+      if (job === null || !['answered', 'closed'].includes(job.run?.run?.status)) return null;
+      const qid = job.job.job.queryJobId;
+      const queue = ready(await host.client.read('decisions/queue', project.scope, { workspace: project.scope,
+        goalRef: busy.goalRef, sections: ['waiting_answer', 'history'], page: { limit: 100 } }));
+      const cards = [...(queue?.waitingAnswer ?? []), ...(queue?.history ?? [])];
+      const candidate = cards.find(card => card.source.kind === 'candidate' && card.requestRef?.queryJobId === qid);
+      const asked = cards.some(card => card.source.kind === 'planning_question' && String(card.source.key).includes(qid));
+      const message = ready(await host.client.read('messages/read', project.scope, idle.messageRef));   // 写法同 e09.mjs:88
+      const replied = message?.status === 'responded' || (message?.withdrawnAt ?? null) !== null;
+      return { job, queue, candidate, asked, settled: job.run.run.status !== 'answered' || candidate !== undefined || asked || replied };
+    };
+    const seen = await orNull(waitFor(ctx, 'the ending of the idle-line message', endingOf,
+      value => value?.settled === true, { timeoutMs: 20 * MINUTE, check: 'planning-when-idle' }));
+    const phaseNow = (ready(await host.client.read('goals/display', project.scope, { goalRef: busy.goalRef })))?.display?.phase;
+
+    const job = seen?.job ?? null;
+    const queryJobId = job?.job?.job?.queryJobId ?? null;
+    const facts = `${idle.at} 发给 ${idle.line}（目标 ${idle.phase}，线上当前任务 ${idle.work}）；Query ${queryJobId ?? '-'} ${job?.run?.run?.status ?? '-'}`;
+    // 121-146：队列里候选或规划问题来源暂时读不到时，队列不是全貌，不算证据（同叠树 flows.mjs:388）。
+    const blind = seen?.queue == null ? [] : unreadableSources(seen.queue)
+      .filter(entry => entry.source === 'candidate' || entry.source === 'planning_question');
+    // seen 为 null：waitFor 已记 fail（20 分钟里没有收尾）；这一句只把事实补进 notes（Record.set：fail 不会被改掉）。
+    if (seen === null) rec.fail('planning-when-idle', `${facts}；20 分钟里这条消息没有收尾`);
+    else if (job.run.run.status !== 'answered') rec.fail('planning-when-idle', `${facts}，没有答完`);
+    else if (seen.queue === null) rec.uncover('planning-when-idle', 'env-unavailable', `${facts}；decisions/queue 读不到，认不出有没有候选`);
+    else if (blind.length > 0) rec.uncover('planning-when-idle', 'env-unavailable',
+      `${facts}；决定队列暂时读不到 ${blind.map(entry => `${entry.source}（${entry.reason ?? ''}）`).join('、')}，认不出有没有候选`);
+    else if (seen.candidate !== undefined) rec.pass('planning-when-idle', `${facts}；候选 ${seen.candidate.cardKey}（${seen.candidate.state}）`);
+    else if (seen.asked) rec.uncover('planning-when-idle', 'not-run', `${facts}；模型反问（规划问题卡），没走到交 plans/propose`);
+    // 目标还活着时这条消息已经收尾（上面 onPoll 记的 endedWhileOpen）：没有候选就是非法收尾，不因为现在目标已结束改记 not-run。
+    else if (TERMINAL.includes(phaseNow) && idle.endedWhileOpen !== true) rec.uncover('planning-when-idle', 'not-run', `${facts}；规划收尾前长目标已结束（${phaseNow}），平台不写候选`);
+    else rec.fail('planning-when-idle', `${facts}；非法收尾，没有候选`);
+    idle.ending = seen?.candidate !== undefined ? 'candidate' : seen?.asked ? 'questions' : job?.run?.run?.status ?? null;
   }
   // "Asks back" and "illegal answer" cannot be caused through a public entry, so the row stays uncovered; the ending
   // that was seen is listed.

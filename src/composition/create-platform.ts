@@ -48,6 +48,7 @@ import { readGoalSettings as readEffectiveGoalSettings, decodeGoalSnapshot } fro
 import { createGoalExecutedFilesReader } from '../core/work-graph/tasks/goal-executed-files-reader.js';
 import { createDeviationFactsReader } from '../core/work-graph/tasks/goal-deviation-facts.js';
 import { DEFAULT_PLAN_LOOP_LIMITS, type PlanLoopLimitsV1 } from '../contracts/plan-loop-limits.js';
+import type { InstalledCheckOriginEntryV1 } from '../contracts/check-output.js';
 import type { StructuralApprovalV1 } from '../contracts/architecture-proposal.js';
 import {
   createActivityReadModel, type ActivityReadPort,
@@ -185,6 +186,7 @@ import { createGraphExecutionHistoryReader } from '../core/agent-runtime/graph-e
 import { readWitnessFacts } from '../core/agent-runtime/witness-facts.js';
 import type { WitnessFactsPort } from '../core/work-graph/model/witness-facts-contracts.js';
 import { createRunStateReader } from '../core/work-graph/tasks/run-state-service.js';
+import { failingCheckOutputsOf, type CheckOutputDeps } from '../core/work-graph/tasks/check-outputs.js';
 import type { ExecutionReadPort } from '../core/work-graph/model/execution-read-contracts.js';
 import { createExecutionHistoryReader } from '../core/agent-runtime/observation-recovery.js';
 import { createTaskClaimService } from '../core/work-graph/tasks/claim-service.js';
@@ -595,6 +597,11 @@ export type TargetPlatformOptions = {
    * builds the platform directly).
    */
   planLoopLimits?: () => PlanLoopLimitsV1;
+  /**
+   * Host 现在装的每条检查从哪来（现值，每次读）：没过的检查的输出写明出处，接续说明和参谋的偏差轮都用。没给就都写
+   * “不明”。
+   */
+  checkOrigins?: (scope: WorkspaceScope) => readonly InstalledCheckOriginEntryV1[];
   /**
    * PL §5.3.4/§6.4.3: the Host's read-only taskbook probe, already rooted in its
    * settings directory. Absent is an explicit `unavailable` for the adoption
@@ -1336,7 +1343,10 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     // and the C1 mailbox admission share exactly this instance and this callback.
     // The control service reads a not-entered stop and a yielded-wait Lease
     // through the same reader (§6 RUN-09, RD-8).
-    const executionReader = createRunStateReader({ records: backend.records, bodies });
+    // 没过的登记检查的输出（`failingCheckOutputsOf`）读报告正文和 Host 给的出处：接续说明的读者和 Workflow 的偏差轮共用。
+    const checkOutputDeps: CheckOutputDeps = { bodies,
+      ...(options.checkOrigins === undefined ? {} : { checkOrigins: options.checkOrigins }) };
+    const executionReader = createRunStateReader({ records: backend.records, ...checkOutputDeps });
     // R4.1: the raw control service shares the ONE records/authority pair; the
     // public port is wrapped below so close drains an in-flight control call.
     const rawControls = createRunControlService({ records: backend.records, authority: reads.authority,
@@ -1893,12 +1903,13 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     const registeredCheckConfigurations = new Map<string, TrustedCheckConfiguration>();
     const checkScopeKey = (scope: { projectId: string; workspaceId: string }): string =>
       `${scope.projectId}\u0000${scope.workspaceId}`;
+    const startupCheckConfiguration = (scope: { projectId: string; workspaceId: string }): TrustedCheckConfiguration | undefined =>
+      options.checks !== undefined
+        && options.checks.workspace.projectId === scope.projectId
+        && options.checks.workspace.workspaceId === scope.workspaceId
+        ? options.checks : undefined;
     const currentCheckConfiguration = (scope: { projectId: string; workspaceId: string }): TrustedCheckConfiguration | undefined =>
-      registeredCheckConfigurations.get(checkScopeKey(scope))
-        ?? (options.checks !== undefined
-          && options.checks.workspace.projectId === scope.projectId
-          && options.checks.workspace.workspaceId === scope.workspaceId
-          ? options.checks : undefined);
+      registeredCheckConfigurations.get(checkScopeKey(scope)) ?? startupCheckConfiguration(scope);
     // The same scope map `readInstalledChecks` reads: `null` is "no configuration at all", while a configuration
     // with zero checks is the empty array (plan-readers' `planChecks` then appends only the built-in witness
     // capability). The plan readers, the secretary facts and the check approval read it.
@@ -1971,6 +1982,11 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       recipients: { resolveDutyRecipient },
       responsibleAdviser: lateRecipients,
       readDeviationFacts,
+      // R2：停止卡点名可撤的检查；`planReadersOwner` 在下面才构造，闭包按调用时取值。
+      withdrawable: {
+        startupCheckIds: scope => startupCheckConfiguration(scope)?.checks.map(check => check.checkId) ?? [],
+        acceptedCandidatesOf: goalRef => planReadersOwner.acceptedCandidatesOf(goalRef),
+      },
     });
     // The one automatic-rework projector: the C3 adviser facts, its card source and the Host's tracked read all share
     // this instance. Built before the C3 dependencies that read it (no use-before-declare).
@@ -4209,6 +4225,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       ...(options.systemRoundSend === undefined ? {} : { send: options.systemRoundSend(mailbox) }),
       // PL §7.1.4: the selection reads the SAME facts instance the card source does.
       readDeviationFacts,
+      // PL §7.1.1 `stop` 偏差的第五项：和接续说明同一处读。
+      readFailingCheckOutputs: round => failingCheckOutputsOf(round, checkOutputDeps),
       latestAgentCandidate: (goalRef) => planReadersOwner.latestAgentCandidate(goalRef),
       completedFixes: (goalRef, basedOn) => planReadersOwner.completedFixes(goalRef, basedOn),
       planFixRead: (goalRef, proposalRef, revision) =>

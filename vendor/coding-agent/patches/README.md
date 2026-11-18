@@ -138,3 +138,9 @@ node scripts/build-kernel-patch.mjs --write
   - 四份产物：`9c20296512634285db233a19dfe57458eba440989e72a07f7bce414a754507cb`（js）、`506e2b33b3192f830b5c8588f0ff903267a3a993e7cfa0bbe461e967e4500db8`（js.map）、`753c0e2307260b568528854430fc552f45a29e1fbafc58bb996ed8e5123be228`（d.ts）、`c981c2e155c43e0cb4f5140dcb7aad2a0b5b0bad9f3afa2fd442ec46c31d5bd8`（d.ts.map）
 
 命令不变：`node scripts/build-kernel-patch.mjs --check`（0，二十个源、80 份产物）与 `--write`；`--write` 只改上面这 8 份产物，其余产物不变。
+
+## 2026-11-18 R6 联合参数错误展开到最接近的写法
+
+受管 `tools/dispatcher/tool-dispatcher.ts` 的 `!parsedArguments.success` 分支不再只打 `invalid_union` 的 “Invalid input”：任何一层的 `invalid_union` 都展开问题数最少的那种写法，逐条列出，路径接上它所在的位置，选中的写法里再有联合照样往下展开；几种写法并列最少时都列出，用“或”隔开（只取第一种会把模型引到错的写法）；判别值对不上（`errors` 为空）照旧打 zod 自带的消息。错误码、消息框架、其余分支和 `retryable` 不变，`ArgumentIssue` 类型从已导入的 `ToolDefinition` 推出，不新增导出。改前源 SHA-256 `c030c3e0d4d36bcfa6e35f47606c20ded79fe0d684dd463a56bab8115ee8bb4f`（KP 之后），改后 `61c31151a2dfc7e9b5f248f0fb75e8747886bf19c78ead827106fffba921c443`；四份产物为 `5aa2ae7daa9adcda3cd02e911560b9872b3687963b3825b63f8878accb8d644a`（js）、`400565f0ae8990ecbb702417a79bc716439c05f1e8237f0e2982e1e581cb3b02`（js.map）、`96d4252def7a23e6a4baee5f24589354ea10b7254d5b95a8ffa70e46215ee69b`（d.ts，未变）、`c358a17bbc052431eeefb850c9c3f4ce5020d553df88c87bac52595aa9c041de`（d.ts.map）。
+
+命令不变：`node scripts/build-kernel-patch.mjs --check`（退出 0，二十个源、80 份产物全部 `matches: true`）与 `--write`（退出 0）；`--write` 只改 `dist/tools/dispatcher/tool-dispatcher.js`、`.js.map`、`.d.ts.map` 三份，`.d.ts` 不变，其余产物不变。

@@ -155,6 +155,8 @@ import {
   DEFAULT_WORK_RUN_TOKEN_BUDGET,
 } from './host-settings-types.js';
 import { DEFAULT_PLAN_LOOP_LIMITS, type PlanLoopLimitsV1 } from '../contracts/plan-loop-limits.js';
+import { checkDigestOf } from '../contracts/check-review.js';
+import type { InstalledCheckOriginEntryV1 } from '../contracts/check-output.js';
 import { DEFAULT_STRUCTURAL_APPROVAL } from '../contracts/architecture-proposal.js';
 import { createInitializationAdoptionHost, type InitializationAdoptionDependencies } from './initialization-adoption.js';
 import {
@@ -785,6 +787,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     : (seedConfiguration === undefined
       ? undefined : createWorkbenchRuntimeHostBindings(seedConfiguration,
         versionProvider(versionSecretSource(seedConfiguration, { models: [], selection: {}, checks: [], planOnlyChecks: [],
+          checkOrigins: [],
           automation: { ...DEFAULT_TASK_AUTOMATION_POLICY }, resourceCaps: resourceCaps.current(),
           workRunTokenBudget, planLoopLimits: structuredClone(planLoopLimits),
           commandReviewLineMinutes, knowledgeLocalOnly: {},
@@ -1017,6 +1020,14 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       // PL §10.3/§7.5: the one live effective-limits getter the shared deviation
       // reader reads. The settings restore/reload below replaces the holder.
       planLoopLimits: () => planLoopLimits,
+      // 没过的检查的输出写明检查从哪来：先是设置里的已批准清单和计划（最近一次推送的私有快照），再是这个 Host 的启动配置；
+      // 同一内容取第一个；用的是现值，找不到同内容的写“不明”。工作区有已批准清单（哪怕是空的）时它整体替换了启动配置（installIntoProject），启动检查已经不装了，不再给出处。
+      checkOrigins: scope => [
+        ...(lastSnapshot?.checkOrigins.find(entry => scopeKey(entry.scope) === scopeKey(scope))?.origins ?? []),
+        ...(checks === undefined || scopeKey(checks.workspace) !== scopeKey(scope)
+          || lastSnapshot?.checks.some(entry => scopeKey(entry.scope) === scopeKey(scope)) === true ? [] : checks.checks.map(
+            (check): InstalledCheckOriginEntryV1 => ({ checkDigest: checkDigestOf(check), origin: { kind: 'startup' } }))),
+      ],
       // L-02 §6.4.3: an automatic adoption runs through the SAME wrapper at the
       // commit itself; the published `platform.plans` stays raw (the route binding
       // already wraps it, so wrapping both would export one adoption twice).

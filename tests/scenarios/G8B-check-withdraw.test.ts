@@ -1,47 +1,34 @@
 /**
  * G8B-1b 写测试方（`g8b-rulings.md` 的 B2 撤回、B1f“被人撤回过的检查 agent 批准装不回去”；行 D5、D6；只跑内存）。
- * D5（`G8B-world.ts`）：底计划 v1 带一条只查底计划任务的种子检查（撤回后还有检查配置，`g8b-d1-work` 才开检查轮；一条都没有
- * 时不开轮，探针看过）。照 D1 装上 `g8b-d1-check` 后人撤回：快照 `checks` 只剩种子、`withdrawnChecks` 记着它，计划仍 v2。
+ * D5（`G8B-world.ts`）：底计划 v1 带一条只查底计划任务的种子检查（撤回后还有检查配置，`g8b-d1-work` 才开检查轮；
+ * 人撤到一条不剩时 Host 装空配置、轮照开，见 G6R2 T3）。照 D1 装上 `g8b-d1-check` 后人撤回：快照 `checks` 只剩种子、
+ * `withdrawnChecks` 记着它，计划仍 v2。
  * 人启动目标：`g8b-d1-work` 跑完，它的检查轮里没有这条检查，`g8b-d1-static` 是缺项。秘书再交一个带同 id、同命令检查的
  * 小改动（`taskIds` 加上新任务：规划轮的覆盖要每个工作任务都有检查，撤回后 `g8b-d1-work` 只剩它能查），参谋批，Host 不装
  * （B1f 按 `checkId` 拒），计划仍 v2，一行原因含“被人撤回过”的 `check_to_person`。
- * D6（G8A 的 `openG8Project`）：撤种子检查、撤不存在的 id → `not_found`，快照不变，文字分别指向 `checks/approve` 和这个 id
- * （裁定“这个工作区没有计划装上的检查 X”）；同一个撤回做两次都是 `ready`，快照相同。
- * 今天（3dfdd5e2）没有这个路由（404 `unpublished settings route checks/withdraw`）：D5 红在撤回（前面的 D1 已绿），D6a、D6b
- * 红在文字，D6c 红在不是 `ready`。B2 的路由、留痕、通知 Host 和 B1f 的拒绝落地后转绿。
- * 改坏演示：在 `host-settings.ts` 上临时写一个撤回替身，四行全绿；替身上再改坏一处：撤回不通知 Host → D5 红在检查轮里还有它；
- * agent 批准不拒被撤回过的 → D5 红在计划到 v3；能单条撤已批准清单 → D6a 红；重做报错 → D6c 红。都还原，`src` 无改动。
+ * D6（G8A 的 `openG8Project`）：撤不存在的 id → `not_found`，快照不变，文字含这个 id；同一个撤回做两次都是 `ready`，
+ * 快照相同。已批准清单里的单条检查不能撤的老口径（D6a）由 R2 改判删掉：人能撤，由 G6R2 T1 守。
+ * 改坏演示：在 `host-settings.ts` 上临时写一个撤回替身，三行全绿；替身上再改坏一处：撤回不通知 Host → D5 红在检查轮里还有它；
+ * agent 批准不拒被撤回过的 → D5 红在计划到 v3；重做报错 → D6c 红。都还原，`src` 无改动。
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import type { HostSettingsSnapshot, SettingsResponse } from '../../src/app/host-settings-types.js';
 import type { WorkspaceScope } from '../../src/contracts/core/identity.js';
-import type { GoalRef } from '../../src/contracts/ledger.js';
-import { graphWrite } from '../helpers/AG2b-collaboration-fixture.js';
-import { g8Check, g8PlanCall, g8PlanDraft, g8PlanForm, g8SplitChecks, openG8Project } from '../helpers/G8-world.js';
-import { G8B_ROLE, G8B_TEMPLATE, g8bCheckReview, openG8BWorld } from '../helpers/G8B-world.js';
-import { heartbeatUntil } from '../helpers/IV-host-fixture.js';
+import { g8Check, g8PlanCall, g8PlanForm, openG8Project } from '../helpers/G8-world.js';
+import { G8B_ROLE, G8B_TEMPLATE, adoptWithChecks, g8bCheckReview, openG8BWorld } from '../helpers/G8B-world.js';
 import { s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
 import type { S6AHostWorld } from '../helpers/S6A-host-fixture.js';
-import { committed } from '../helpers/S7A-fixture.js';
 
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { await Promise.allSettled(cleanup.splice(0).reverse().map(close => close())); });
 
 const OBJECTIVE = 'G8B 撤回以后';
 type Snapshot = SettingsResponse<HostSettingsSnapshot>;
-/** 设置路由 `checks/withdraw`（B2）；今天 `SettingsRoutes` 里还没有它，按字符串调。 */
+/** 设置路由 `checks/withdraw`（B2），回设置快照。 */
 const withdraw = (world: S6AHostWorld, scope: WorkspaceScope, checkId: string): Promise<Snapshot> =>
   (world.settings as unknown as (route: string, input: unknown) => Promise<Snapshot>)('checks/withdraw', { scope, checkId });
 const entryOf = (answer: Snapshot, scope: WorkspaceScope) => answer.status === 'ready'
   ? answer.value.workspaces.find(item => item.scope.workspaceId === scope.workspaceId) : undefined;
-/** 人 `plans/propose` + `plans/apply` 一份带 `checks` 的计划（G8A：人采用时装上）。 */
-async function adoptWithChecks(world: S6AHostWorld, scope: WorkspaceScope, goal: GoalRef, tag: string, checks: object[]) {
-  const { draft } = g8SplitChecks(g8PlanDraft(goal, tag, G8B_ROLE));
-  const proposed = committed<{ ref: unknown; revision: number }>(await world.post('plans/propose', graphWrite(scope, {
-    goalRef: goal, basedOn: null, draft, checks, reason: { text: tag, sources: [] } }, `${tag}-propose`)), `${tag}: propose`);
-  committed(await world.post('plans/apply', graphWrite(scope, { proposalRef: proposed.ref,
-    expectedProposalRevision: proposed.revision, decisionRefs: [] }, `${tag}-apply`)), `${tag}: the person adopts`);
-}
 
 it('D5: withdrawn: off the snapshot and the Host, the plan stays; an agent approval cannot install it again', async () => {
   const w = await openG8BWorld('g8b-d5');
@@ -81,17 +68,7 @@ it('D5: withdrawn: off the snapshot and the Host, the plan stays; an agent appro
   expect(await w.planRevision(goal), 'the withdrawal changed the plan').toBe(2);
 
   // 人启动目标：`g8b-d1-work` 跑完（不写 `g8b-d1.txt`），它的检查轮里没有这条检查，它查的必需要求是缺项。
-  await w.world.scripted.script(executor, [{ kind: 'text', text: 'G8B D5 做完了' }], w.scope);
-  await w.steps.read('workflow/driver-start', { advance: { schemaVersion: 1, goalRef: goal, flowId: 'g8b-d5-driver',
-    sessionHint: null, kind: 'select_work', taskId: 'g8b-d1-work' }, queryProfileIds: [] });
-  const planRef = (await w.steps.read<{ goal: { activePlanRevision: unknown } }>('goals/read', goal)).goal.activePlanRevision;
-  const node = { kind: 'task', ref: { projectId: goal.projectId, goalId: goal.goalId, taskId: 'g8b-d1-work' }, planRef };
-  const look = () => w.steps.read<{ items: { round: { ref: unknown } }[] }>('graph/look', { goalRef: goal,
-    target: { kind: 'node', node }, relation: 'checks', page: { afterCursor: null, limit: 10 } });
-  const [opened] = (await heartbeatUntil(w.world, look, found => found.items.length > 0, 40)).items;
-  expect(opened, 'no check round of g8b-d1-work').toBeDefined();
-  const round = await w.steps.read<{ outcome: string; checks: { checkId: string }[];
-    gaps: { coverage?: { requirementId: string } }[] }>('verification/round', { roundRef: opened!.round.ref });
+  const round = await w.firstCheckRound(goal, executor, 'g8b-d1-work', 'G8B D5 做完了');
   expect(round.checks.map(item => item.checkId), 'the Host still runs the withdrawn check').not.toContain('g8b-d1-check');
   expect(round.gaps.map(gap => gap.coverage?.requirementId)).toContain('g8b-d1-static');
   expect(round.outcome).not.toBe('PASS');
@@ -116,9 +93,8 @@ async function planCheckInstalled(tag: string) {
   return project;
 }
 
-describe('rejects: a withdrawal of a check no plan installed (D6)', () => {
+describe('rejects: a withdrawal of an id the workspace settings do not have (D6)', () => {
   it.each([
-    { row: 'D6a', what: 'a check of the approved list', checkId: 'g8-seed-check', says: 'checks/approve' },
     { row: 'D6b', what: 'an id the workspace does not have', checkId: 'g8b-d6b-none', says: 'g8b-d6b-none' },
   ])('$row: $what → not_found, nothing changes', async ({ row, checkId, says }) => {
     const project = await planCheckInstalled(`g8b-${row.toLowerCase()}`);

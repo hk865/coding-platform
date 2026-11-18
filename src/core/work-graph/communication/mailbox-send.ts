@@ -315,7 +315,8 @@ export async function sendMessage(mailbox: MailboxContext, ctx: CoreCallContext,
     : SESSION_MESSAGE_MAX_TEXT_BYTES;
   const text = normalizeText(send.text, maxTextBytes);
   if (!text.ok) return text.rejection;
-  const projectRejection = guardRejection(messageRecipientProjectProblem(send.recipient.projectId === owned.projectId));
+  const projectRejection = guardRejection(messageRecipientProjectProblem(
+    send.recipient.projectId === owned.projectId, owned.projectId));
   if (projectRejection !== null) return projectRejection;
   const sendFlags: NonNullable<MessageGuardContext['sendFlags']> = {
     needsReply: send.needsReply, waitAfterSend: send.waitAfterSend, pinCount: write.expected.length,

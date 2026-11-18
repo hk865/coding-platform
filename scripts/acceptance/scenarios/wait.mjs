@@ -8,7 +8,7 @@
 // event came, the chain is over (its Task done and every wait of it settled), or the window ends.
 import { newId, ready } from '../lib/http.mjs';
 import { broken, chooseModel, coldStart, createGoal, driverStart, ensurePolicy, executions, findAll, lines, openProject, orNull,
-  proposeAndApply, sessionTurns, sleep, testCheck, textOf, waitFor, waitGoal } from '../lib/flows.mjs';
+  proposeAndApply, runHistory, sessionTurns, sleep, testCheck, textOf, turnsOf, waitFor, waitGoal } from '../lib/flows.mjs';
 
 const MINUTE = 60_000;
 const DEADLINE_MS = 2 * MINUTE;
@@ -163,9 +163,27 @@ async function run(ctx, rec) {
     .find(item => item.run.task.taskId === 't-wait' && item.outbox?.claim?.sessionRef !== undefined) ?? null, value => value !== null,
   { timeoutMs: 40 * MINUTE, check: 'wait-open' });
   const member = { projectId: work.outbox.claim.sessionRef.projectId, sessionId: work.outbox.claim.sessionRef.sessionId };
-  const wait = await waitFor(ctx, 'the member\'s open wait', async () =>
-    (await waitsOf(project, member)).find(entry => entry.state?.state === 'open') ?? null, value => value !== null,
-  { timeoutMs: 30 * MINUTE, check: 'wait-open' });
+  // lead 11-18（G6 第十一次）：成员的 Run 已结束、结局不是 yielded、又没开等待，再等也不会有等待了：收，
+  // 写出它 send_session_message 的拒绝原文（wait-open 判 fail，用平台自己的话）。指令里不补项目号：补了会盖住平台缺口。
+  // 检查 FAIL 以后，返工 Run 要等检查轮定稿、自动返工才建：这个任务没有别的没结束的 Run、第一个 Run 结束满 2 分钟才收。
+  let noWait = null;
+  const wait = await waitFor(ctx, 'the member\'s open wait', async () => {
+    const open = (await waitsOf(project, member)).find(entry => entry.state?.state === 'open') ?? null;
+    if (open !== null) return open;
+    const runs = (await executions(project, goal.ref)).filter(item => item.run.task.taskId === 't-wait');
+    const first = runs.find(item => JSON.stringify(item.run.ref) === JSON.stringify(work.run.ref));
+    const live = runs.some(item => item.run.status !== 'ended');
+    const since = first?.run?.endedAt == null ? 0 : Date.now() - Date.parse(first.run.endedAt);
+    if (first?.run.status === 'ended' && first.run.outcome !== 'yielded' && !live && since >= 2 * MINUTE) {
+      // 只读这个 Run 的轮：成员线可能是被复用的种子目标执行者线，整条线的历史会混进种子 Run 的拒绝。
+      const refused = turnsOf(await runHistory(project, work.run.ref)).flatMap(turn => turn.refusals)
+        .filter(entry => entry.tool === 'send_session_message');
+      noWait = `成员的 Work Run ${work.run.ref.runId} 已结束（${first.run.outcome ?? '-'}），没开等待；send_session_message ${
+        refused.length === 0 ? '没被拒（没调，或没带 waitAfterSend）'
+          : `被拒 ${refused.length} 次：${refused.map(entry => `${entry.code}: ${entry.reason}`).join('；')}`}`;
+    }
+    return null;
+  }, value => value !== null, { timeoutMs: 30 * MINUTE, check: 'wait-open', ended: () => noWait });
   rec.link('message', wait.messageRef);
   const sentRecord = await message(project, wait.messageRef);
   const toolCall = (await sessionTurns(project, member)).flatMap(turn => [...turn.calls.values()])

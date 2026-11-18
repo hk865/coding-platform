@@ -34,9 +34,7 @@ export class ToolDispatcher {
             return this.#error(common.data.callId, "unknown_tool", "工具不可用", NONE);
         const parsedArguments = definition.inputSchema.safeParse(common.data.arguments);
         if (!parsedArguments.success) {
-            const where = parsedArguments.error.issues
-                .map((issue) => `${issue.path.map(String).join(".") || "(根)"}: ${issue.message}`)
-                .join("; ");
+            const where = issueLines(parsedArguments.error.issues, []).join("; ");
             return this.#error(common.data.callId, "invalid_arguments", `工具参数不符合 schema：${where}`, NONE);
         }
         const call = {
@@ -191,5 +189,21 @@ export class ToolDispatcher {
             effects,
         };
     }
+}
+/**
+ * 联合的各写法都不中时 zod 只给一条 invalid_union（“Invalid input”），每种写法差在哪在 errors 里。
+ * 展开问题最少的那种写法，路径接上外层，选中的写法里再有联合照样往下展开。判别值对不上时 errors 为空，zod 自带的消息已列出可选值，原样打。
+ * 几种写法并列最少时都列出、用“或”隔开：只取第一种会把模型引到错的写法（如 taskIds 写成字符串时引到 "all"）。
+ */
+function issueLines(issues, base) {
+    return issues.flatMap((issue) => {
+        const path = [...base, ...issue.path];
+        if (issue.code === "invalid_union" && issue.errors.length > 0) {
+            const fewest = Math.min(...issue.errors.map((branch) => branch.length));
+            const tied = issue.errors.filter((branch) => branch.length === fewest).map((branch) => issueLines(branch, path));
+            return tied.length === 1 ? tied.flat() : [tied.map((lines) => lines.join("; ")).join(" 或 ")];
+        }
+        return [`${path.map(String).join(".") || "(根)"}: ${issue.message}`];
+    });
 }
 //# sourceMappingURL=tool-dispatcher.js.map

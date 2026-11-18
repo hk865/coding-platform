@@ -36,6 +36,7 @@ import type { ResourceCapsReportV1 } from "./resource-caps.js";
 import { canonicalJson, type JsonValue } from "./canonical-json.js";
 import { isRecord, nonEmpty } from "./validation/common.js";
 import type { ReworkActorClass, ReworkFailureClass } from "./task-requeue.js";
+import type { FailingCheckFactV1 } from "./task-failure.js";
 
 /** Trusted Host actor for a check: a real human/system application host. */
 export type CheckHostActor = Extract<ActorRef, { kind: "human" | "system" }>;
@@ -357,6 +358,23 @@ export function proposedCheckSplit(installed: readonly RegisteredCommandCheck[],
         else if (canonicalJson(same as unknown as JsonValue) !== canonicalJson(check as unknown as JsonValue)) conflicts.push(check);
     }
     return { added, conflicts };
+}
+
+/**
+ * R2（lead 11-18）：停止卡上给不给“撤回检查并重新核验”。这一轮没有缺口、没过的全是 FAIL，每一条都是这个工作区设置里装的
+ * 命令检查（在这一轮冻结的配置里、不在 Host 启动配置里），而且没有一条是这个目标采用过的计划带来的：回这些检查的 id。
+ * 否则 null：撤检查治不了，或者该由这个目标自己的计划改。
+ */
+export function withdrawableFailingChecks(input: {
+    failing: readonly Pick<FailingCheckFactV1, 'checkId' | 'outcome'>[];
+    gapCodes: readonly string[];
+    settingsCheckIds: ReadonlySet<string>;
+    goalPlanCheckIds: ReadonlySet<string>;
+}): string[] | null {
+    if (input.failing.length === 0 || input.gapCodes.length > 0) return null;
+    const ok = input.failing.every(check => check.outcome === 'FAIL'
+        && input.settingsCheckIds.has(check.checkId) && !input.goalPlanCheckIds.has(check.checkId));
+    return ok ? input.failing.map(check => check.checkId) : null;
 }
 
 /** The check list a plan's coverage is judged against: the installed checks, then the ones the plan adds. */

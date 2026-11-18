@@ -1,8 +1,10 @@
 /** R4c.2a: exact persisted facts, never a Kernel entry permit. */
 import type { ArtifactRef } from '../../../contracts/artifact.js';
+import type { FailingCheckOutputV1, InstalledCheckOriginEntryV1 } from '../../../contracts/check-output.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { ControlIntentSnapshotV1 } from '../../../contracts/control-intent.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+import type { WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { SessionAnomalyAnchorV1 } from '../../../contracts/session-anomaly.js';
@@ -67,6 +69,11 @@ export type ContinuationBasis = {
    * 旧的、窄的 basis 读作没有。
    */
   roundReview?: RoundReviewFactV1 | null;
+  /**
+   * `round` 里没过的登记检查的命令原文、出处和输出（`failingCheckOutputsOf`），接续说明照原样带给返工的执行者。
+   * 旧的、窄的 basis 读作没有。
+   */
+  roundCheckOutputs?: FailingCheckOutputV1[];
   /** Bounded Artifact bodies listed in `requeue.newInputRefs`; `truncated` when the reader cut the body. */
   newInputBodies: { ref: ArtifactRef; body: string | null; truncated: boolean; reason: string | null }[];
   /**
@@ -77,7 +84,9 @@ export type ContinuationBasis = {
   /** Nearest entered ancestor when the afterRun never entered (at most 4 hops); `[]` otherwise. */
   factsChain: { requeue: TaskRequeueSnapshotV1; run: TaskExecutionRecord; round: RoundSnapshot | null;
     /** E09F：这一跳 `round` 的审查结论，读法同 `roundReview`。 */
-    roundReview?: RoundReviewFactV1 | null }[];
+    roundReview?: RoundReviewFactV1 | null;
+    /** 这一跳 `round` 里没过的登记检查的输出，读法同 `roundCheckOutputs`。 */
+    roundCheckOutputs?: FailingCheckOutputV1[] }[];
   /** Slice 1 §2.7: this Task's not-yet-picked-up anchors; the real production reader always returns it. */
   pendingAnomalies?: SessionAnomalyAnchorV1[];
   /**
@@ -116,4 +125,9 @@ export type ExecutionReadDependencies = {
    * (null with a reason); every other read is unchanged.
    */
   bodies?: Pick<RawArtifactStorePort, 'read'>;
+  /**
+   * Host 现在装的每条检查从哪来（现值，每次读），`readContinuationBasis` 写进没过的检查的输出。没给，出处都写“不明”；
+   * 别的读不变。
+   */
+  checkOrigins?: (scope: WorkspaceScope) => readonly InstalledCheckOriginEntryV1[];
 };

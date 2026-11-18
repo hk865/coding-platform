@@ -73,6 +73,10 @@ the window.
   each event came, the chain is over (its Task done, every wait settled), or the window ends.
   11-18 补：整条链最多等 60 分钟；任务做完以后再等 10 分钟，链还没了结就结束（第十次曾一直等到窗口结束）。
   两种结束都记成未覆盖，不算通过。
+- **11-18 驱动修正（G6 第十一次）。** 平台停下等人时，场景记下停因，其余不依赖目标完成的判据照常判（`waitGoal` 的
+  `returnOnDecide`，只有 E05、E09、int 传）。B06 等轮时替人批 `member_creation` 建线卡；轮定下后暂停，并像人一样取消
+  在途的 Run。waiting 成员的 Run 已结束、结局不是 yielded、又没开等待，这个任务没有别的在途 Run、第一个 Run 结束满
+  2 分钟就收，写出它 `send_session_message` 的拒绝原文。
 - **Lag probe.** `lib/lag.mjs` is preloaded into each Host (`NODE_OPTIONS=--import`), samples
   `perf_hooks.monitorEventLoopDelay` and writes p50/p95/p99/max; recorded only, no threshold.
 - **Seed Goals.** A settings-opened workspace gets its trusted checks, policy and architecture only from a cold-start
@@ -101,6 +105,7 @@ the window.
   (above the waiting scenario's 30-minute wait plus a heartbeat) and the meter's last complete reading has nothing in
   flight in the project (`stalled: …`, with the last phase, cause and driver wait reason). "Public" is the Goal's
   display without its `sourceCursor` (the ledger-wide watermark that any commit in the project moves) and its cards.
+  例外（11-18）：E05、E09、int 传 `returnOnDecide`，(a) 时平台停下等人照常返回、记下停因，各判据照常判，不记成超时。
 - **返工确认卡（lead 11-17，E08）。** “每步确认”下自动返工要人确认的卡（`automation_confirmation_required`）没有选项，`waitGoal` 照界面点一次“重新入队”（`tasks/requeue`，`requeueCard`）；每张卡只点一次，被拒记一行 note。
 - **等在途的查询（lead 11-17，G6 第六次之后）。** 查询还在跑、它的某个请求用量暂时未知时，计量只是暂停：场景的等待和收尾原地每 20 秒读一次，等查询结束、暂停解除；30 分钟还没结束，才成为整轮的停止（`budget.mjs` 的 `#waitHeld`）。
 - **Verdicts.** Three words only: a failed check → `fail`; none failed but one not run → `uncovered` with one of the

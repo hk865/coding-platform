@@ -180,6 +180,7 @@ export function goalPayload(goal: GoalSnapshot, workspaceRevision: number, exten
     ? extensions.goalSettings.autonomy : S('context.notImplemented');
   return [
     `${S('context.goal.goal')}${goal.ref.goalId}`,
+    `${S('context.goal.project')}${goal.ref.projectId}`,
     `${S('context.goal.objective')}${goal.objective}`,
     `${S('context.goal.workspace')}${goal.workspaceRef.workspaceId}@${String(workspaceRevision)}`,
     `${S('context.goal.autonomy')}${autonomy}`,

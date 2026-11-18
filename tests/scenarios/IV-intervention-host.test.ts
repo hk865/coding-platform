@@ -14,7 +14,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { interventionPlanningQueryRefs } from '../../src/contracts/query-job.js';
 import { AG2B_PROJECT_REF, AG2B_QUERY_BUDGET, AG2B_RUNTIME_BUDGET, AG2B_WORKSPACE_REF,
   graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
-import { readExecution } from '../helpers/A2-restart-fixture.js';
+import { driveWorkflow, readExecution } from '../helpers/A2-restart-fixture.js';
 import { s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
 import type { S6AHostWorld } from '../helpers/S6A-host-fixture.js';
 import { S6A_SCOPE, S6A_WORK_ROLE, S6A_WORK_ROLE_BINDING } from '../helpers/S6A-request-fixture.js';
@@ -22,7 +22,7 @@ import { adoptS6BPlan } from '../helpers/S6B1-fixture.js';
 import { committed, pauseS7AGoal, ready, resumeS7AGoal, setS7AAutonomy } from '../helpers/S7A-fixture.js';
 import { approveS7A2Message, driveS7A2Release, sendS7A2PersonMessage, sendS7A2Request } from '../helpers/S7A2-fixture.js';
 import { firstPlan, refinementPlan } from '../helpers/S7B-V-fixture.js';
-import { readS7BMessage } from '../helpers/S7B-fixture.js';
+import { listed, readS7BMessage } from '../helpers/S7B-fixture.js';
 import { claimQuery } from '../helpers/request-claim-steps.js';
 import {
   abandonCandidate, answerCard, awaitCandidate, awaitClaimedPlanning, awaitPlanningAnswer, awaitProposal,
@@ -246,7 +246,7 @@ function replacementDraft(world: S6AHostWorld, label: string): Record<string, un
   return { ...plan, goalId: world.goals.second.goalId, planId: `iv-${label}`, planRevision: 1 };
 }
 
-describe('IV-END-1 questions: the answer replies verbatim and the question card opens no planning round', () => {
+describe('IV-END-1 questions: the answer\'s summary replies and the question card opens no planning round', () => {
   it('IV-END-1: the formal query_run reply, the Goal card, and a card answer without a new model round', async () => {
     const world = await openConsumeWorld({ label: 'iv-end-1' });
     worlds.push(world);
@@ -260,7 +260,7 @@ describe('IV-END-1 questions: the answer replies verbatim and the question card 
     expect(replied.response?.sender.kind, 'the reply comes from the formal query_run').toBe('query_run');
     expect(replied.response?.sender, 'the reply names the formal QueryRun')
       .toMatchObject({ queryRunRef: queries[0]!.ref });
-    expect(await readBody(world, messageRef, 'response'), 'the reply body is the original answer').toBe(answer);
+    expect(await readBody(world, messageRef, 'response'), 'the reply body is the answer\'s summary').toBe('IV questions');
     expect(await notices(world, line, INVALID_PLAN_NOTICE), 'a questions answer sends no invalid_plan notice').toEqual([]);
     expect(await notices(world, line, NO_ANSWER_NOTICE), 'a questions answer sends no no_answer notice').toEqual([]);
 
@@ -296,6 +296,27 @@ describe('IV-END-1 questions: the answer replies verbatim and the question card 
     const all = await sessionQueries(world, line);
     expect(all, 'the second message has its own Query').toHaveLength(2);
     expect(new Set(all.map(query => query.run.queryJobRef.queryJobId)).size, 'the two Queries differ').toBe(2);
+  }, 120_000);
+
+  // R7 补充裁定（B20）：执行者线反问出的卡全答完，目标循环不给这条线发 `planresume:`，答案只保存。目标要有计划，目标循环才走到这一支。
+  it('IV-END-1b: every card answered on an executor line: no planresume: to the line, the answers stay saved', async () => {
+    const world = await openConsumeWorld({ label: 'iv-end-1b' });
+    worlds.push(world);
+    await settleHost(world);
+    const { line } = await openLine(world, 'iv-end-1b-line');
+    const ws = s6aCardsWorkspace(world, S6A_SCOPE);
+    await adoptS6BPlan(ws, world.goals.second, { label: 'iv-end-1b', taskIds: ['iv-end-1b-task'], role: S6A_WORK_ROLE.templateId });
+    await world.scripted.script(line, [{ kind: 'text', text: questionsAnswer('IV b', ['First?', 'Second?']) }]);
+    await sendS7A2PersonMessage(world, { label: 'iv-end-1b', recipient: line.ref, goal: world.goals.second });
+    const cards = await heartbeatUntil(world, () => questionCards(world, world.goals.second), items => items.length === 2);
+    for (const [index, card] of cards.entries()) await answerCard(world, card, `iv-end-1b-${index}`, `answer ${index}`);
+    await driveWorkflow(world.ag2b, { schemaVersion: 1, goalRef: world.goals.second, flowId: 'iv-end-1b', sessionHint: null,
+      kind: 'select_work' }, { stopBefore: op => op.kind === 'claim_task' || op.kind === 'create_session' });
+    const bodies = await Promise.all((await listed(world, 'inbox', line)).map(message => readBody(world, message.ref, 'message')));
+    expect(bodies.filter(body => body.startsWith('planresume:')), 'no planresume: to the executor line').toEqual([]);
+    const saved = (await ws.readCards(world.goals.second)).filter(card => card.source.kind === 'planning_question');
+    expect(await Promise.all(saved.map(card => readBody(world, card.answerMessageRef!, 'response'))), 'the answers stay saved')
+      .toEqual(['answer 0', 'answer 1']);
   }, 120_000);
 });
 
@@ -416,11 +437,11 @@ describe('IV-END-3 guard: the system Host withdraw exception does not cover othe
   }, 120_000);
 });
 
-describe('IV-END-4 not_adopted: the candidate waits, then the ending answers the original reply', () => {
+describe('IV-END-4 not_adopted: the candidate waits, then the ending replies the answer\'s summary', () => {
   it.each([
     { ending: 'abandoned', label: 'iv-end-4' },
     { ending: 'replaced', label: 'iv-end-4r' },
-  ])('IV-END-4 $ending: the candidate keeps the message, then not_adopted replies the original answer',
+  ])('IV-END-4 $ending: the candidate keeps the message, then not_adopted replies the answer\'s summary',
     async ({ ending, label }) => {
       const world = await openConsumeWorld({ label });
       worlds.push(world);
@@ -456,7 +477,7 @@ describe('IV-END-4 not_adopted: the candidate waits, then the ending answers the
       const replied = await waitForResponse(world, messageRef);
       expect(replied.response?.sender.kind, 'the formal answer becomes the reply').toBe('query_run');
       expect(await readBody(world, messageRef, 'response'),
-        'the reply is the ORIGINAL answer; replacedBy is not followed').toBe(answer);
+        'the reply is the answer\'s summary; replacedBy is not followed').toBe(`S7B3 V s7b3-v-${label}-a`);
       expect(await notices(world, line, DECLINED_NOTICE), 'exactly one fixed declined notice').toHaveLength(1);
 
       if (ending === 'abandoned') {

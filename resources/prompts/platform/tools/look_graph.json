@@ -1,4 +1,4 @@
 {
-  "description": "Read one graph node/path card or page (relation card/children/neighbours/executions/checks), the original execution history of one Run, or the exact declared task input body by page. Or read notes: `{ memory: { v: 1, op: lookup|neighbors|history|conflicts, ... } }`. The Goal, scope and identity are bound by the platform; do not send them.",
+  "description": "Read the graph by `mode`, sending only that mode's fields: `node` {target, relation?, page?{afterCursor, limit}} (`mode` may be left out when `target` is given); `path` {path (a workspace path, not a node id), relation?, page?}; `history` {runRef, afterCursor?, limit?}, one Run's original execution history; `input` {consumer, planRef, declarationId, candidateKey?, afterCursor?, maxBytes?}, a declared task input body by page. `relation` is card/children/neighbours/executions/checks. Or read notes with `{ memory: { v: 1, op: lookup|neighbors|history|conflicts, ... } }` alone. The Goal, scope and identity are bound by the platform; do not send them.",
   "parameters": {}
 }

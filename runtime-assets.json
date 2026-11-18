@@ -13,15 +13,15 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "76e102805672e92255f18b74f29646d810646d10ed3205da4b28b0bb974a875e"
+    "sha256": "270b9be0c959cf5d47874ec80bec388f72c04da1f8d7e6312105e15592417fc1"
   },
   {
     "path": "resources/prompts/platform/strings.json",
-    "sha256": "952b35092c1bd698009ca85e97850d5c18c566088f5f8bce07deb8f34ac0ce23"
+    "sha256": "7d52fe870328ad7b9ea10b4c5499551ff05f612f16870b149b197e2ad563069a"
   },
   {
     "path": "resources/prompts/platform/templates/initial-planning-answer.txt",
-    "sha256": "03d3f122f874931e7e3561916495d6d1dccb4745eb6d8231eb0082c9cb6f0132"
+    "sha256": "3f554344a39bcf3d8f91db2b2cbefcfdea84c8bff1c1b0d5f589be61b683d6e9"
   },
   {
     "path": "resources/prompts/platform/templates/consultation-received-input.txt",
@@ -101,7 +101,7 @@
   },
   {
     "path": "resources/prompts/platform/templates/secretary-answer.txt",
-    "sha256": "0c54b55736e8a734833647610ca17a7265bc70b2a4fd53c60318130fa2ed7d94"
+    "sha256": "da3a075859cab005796c2b033f6cf6ad64a238a22dd337f5c5d0bb69f2318288"
   },
   {
     "path": "resources/prompts/platform/templates/handoff-write-understanding-secretary.txt",
@@ -133,7 +133,7 @@
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-work.txt",
-    "sha256": "c86d50c9f7bd54d044cb2fcfed1cf9d146062ce12dfcc0d71c9355ecd2e5f3b5"
+    "sha256": "7900ad9ec942898d22a666e20a6a82d8e0e647291d226108325bfa1d84bdaa08"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-secretary.txt",
@@ -189,7 +189,7 @@
   },
   {
     "path": "resources/prompts/platform/tools/record_note.json",
-    "sha256": "515337ce85a2a255d245279549770d80fc1258d6193b2d6e36cce8f2f63434ab"
+    "sha256": "2bdeb41ddc5b9c8ccfd55378316435e71b8e1c4c1c631500ec2d1bb0593b6111"
   },
   {
     "path": "resources/prompts/platform/tools/propose_architecture_revision.json",
@@ -281,11 +281,11 @@
   },
   {
     "path": "resources/prompts/platform/tools/look_graph.json",
-    "sha256": "d7c9636d5e23cef970bbc6cec7741eb724f9a78b3276148f4977dc79dcb5a5ef"
+    "sha256": "4d001b5e755beabbeb4a149c149d6551e03e2e34ecf4b7cdc946837055e4d866"
   },
   {
     "path": "resources/prompts/platform/tools/find_graph.json",
-    "sha256": "81a211f379e2cc25fa872a800b7712b8d980267a03e693f1f1a407b4d34806be"
+    "sha256": "97d136cd690b18392bb25fde171170373e7d2ecd4657c2448dd8f8c748e6bcba"
   },
   {
     "path": "resources/prompts/platform/tools/find_related_sessions.json",
@@ -397,7 +397,7 @@
   },
   {
     "path": "resources/prompts/platform/templates/exec-review-input.txt",
-    "sha256": "0d0dd8a8654627bd832822adb103f8511e5d72baf06f66e6cc524ecb221aeaed"
+    "sha256": "1f2cc3e6decd57d3096ba13bc2543331228777346bfcbbeac84661a35a72ac8a"
   },
   {
     "path": "resources/prompts/platform/templates/unknown-call-advice-input.txt",

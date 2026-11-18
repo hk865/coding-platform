@@ -20,7 +20,9 @@ import type {
 import type { InitialPlanOrigin } from '../../src/contracts/initial-planning.js';
 import type { KnowledgePinV1 } from '../../src/contracts/knowledge.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
-import type { PlanRevisionDraft, PlanRevisionRef, PlanValidationError, RuntimeTask } from '../../src/contracts/plan.js';
+import type {
+  PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot, PlanValidationError, RuntimeTask,
+} from '../../src/contracts/plan.js';
 import type { TaskReductionSnapshot } from '../../src/contracts/reduction.js';
 import { GOAL_FAN_OUT_ACTOR, WORKFLOW_AUTOMATION_ACTOR } from '../../src/contracts/task-requeue.js';
 import {
@@ -56,6 +58,8 @@ import {
 } from '../../src/core/work-graph/state/plan-machine.js';
 import type { TransitionRejectReason } from '../../src/core/work-graph/state/transition.js';
 import type { PlanProposal } from '../../src/core/work-graph/model/plan-contracts.js';
+import { planRoundAnswerIssues } from '../../src/core/work-graph/tasks/plan-validation.js';
+import { g8b2V1 } from '../helpers/G8B2-plans.js';
 
 // --------------------------------------------------------------------------
 // Fixtures
@@ -1066,6 +1070,40 @@ describe('tracedDispositionChangeProblem (TASK-19 guards 8, 1, 2, 2b, 3–7; C7)
     expect(check([satisfied], { affectedTaskIds: [] })?.detail).toBe('task t-a is satisfied; the disposition of a satisfied task is final');
     expect(check([{ ...fenced }], { affectedTaskIds: [] })?.detail).toBe('reason.affectedTaskIds must list traced task t-a');
     expect(codeOf(check([{ ...fenced }]))).toBe('forbidden');
+  });
+
+  it('a submitted plan round defers only the four unfinished-execution busy guards', () => {
+    // 决定 121-1xx（冻结稿三·R4、R5）：交表时跳过守卫 1、2、2b、4 的后半，接着判 5–7；守卫 3 照判。第一格落到守卫 5；
+    // 第二格选中的 Run 是 yielded 等待，守卫 3 照判。今天两格都红在守卫 1 的 busy 原文。
+    const quarantined = runOf('r-q', 't-a', { reconciliation: { status: 'quarantined', observation: { kind: 'unresolved', reason: 'x',
+      observedThroughPosition: null, unresolvedToolCallIds: [] }, basis: { kind: 'live_clean' }, recordedAt: T1 } });
+    const unknown = runOf('r-u', 't-a', { outcome: 'outcome_unknown' });
+    const running = runOf('r9', 't-a', { status: 'running', outcome: null, endedAt: null });
+    const all = { ...yielded(), taskId: 't-a', lease: leaseOf('t-a', false), reduction: reductionOf('t-a') };
+    expect(check([{ ...all, runs: [running, quarantined, unknown], selectedRun: running }], { affectedTaskIds: [], deferBusy: true }))
+      .toEqual({ code: 'invalid', detail: 'task t-a is satisfied; the disposition of a satisfied task is final', reason: 'illegal' });
+    expect(check([{ ...all, runs: [quarantined, unknown, running, ...all.runs] }], { affectedTaskIds: [], deferBusy: true }))
+      .toEqual({ code: 'busy', detail: 'task t-a: cancel or resume the yielded wait of run run-y first' });
+  });
+
+  it('planRoundAnswerIssues skips unfinished execution but still lists the traced Task', () => {
+    // 决定 121-1xx（冻结稿三·R4）：交表处传 deferBusy: true；W1 在跑、占着租约，段只把 W1 的处置改成 cancelled。
+    // 今天红在守卫 1 的 busy 原文；包落地后是守卫 6。
+    const draft = g8b2V1('g8b2-goal', 'g8b2-builder');
+    const base: PlanRevisionSnapshot = { ...draft, revision: 1,
+      ref: { aggregateType: 'PlanRevision', projectId: 'g8b2', planId: draft.planId },
+      goalRef: { aggregateType: 'Goal', projectId: 'g8b2', goalId: draft.goalId }, acceptedAt: T1 } as unknown as PlanRevisionSnapshot;
+    const running = runOf('run-W1', 'W1', { status: 'running', outcome: null, endedAt: null });
+    const reasons = planRoundAnswerIssues({
+      plan: { schemaVersion: 2, stages: [], tasks: [{ ...base.tasks[0]!, disposition: 'cancelled' }], obligations: [],
+        taskHierarchy: { parentOf: [] }, executionDag: { dependsOn: [] }, taskRelations: [], inputRequirements: [] },
+      admission: { catalog: null, firstAdoptionCatalog: null, mainWorkspaceId: 'g8b2-workspace', base: { plan: base,
+        goalDesiredState: 'active', pinnedPolicy: { status: 'resolved', content: { schemaVersion: 1, requirementKinds: ['static'],
+          minimumRequiredRequirementsPerObligation: 1 } }, tasks: [{ taskId: 'W1', runs: [running], selectedRun: running,
+          lease: leaseOf('W1', false), reduction: null, pointerIntent: null }], terminalTaskIds: [] } },
+      activePolicy: null, checks: null, workspaceId: 'g8b2-workspace', affectedTaskIds: [], proposedChecks: [],
+    });
+    expect(reasons).toEqual(['reason.affectedTaskIds must list traced task W1']);
   });
 });
 

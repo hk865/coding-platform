@@ -11,7 +11,7 @@ import { release, type } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Budget, BudgetStop } from './lib/budget.mjs';
-import { broken, finalState, goalPhase, pauseGoal, projectSessions, Record, sessionHistory, sha256, sleep, TERMINAL,
+import { broken, cancelItem, finalState, goalPhase, pauseGoal, projectSessions, Record, sessionHistory, sha256, sleep, TERMINAL,
   turnsOf } from './lib/flows.mjs';
 import { startHost, workbenchConfig } from './lib/host.mjs';
 import { Abort, Report } from './lib/report.mjs';
@@ -152,25 +152,6 @@ async function settle(ctx, live, where, ms) {
     }
     await sleep(15_000);
   }
-}
-
-/**
- * Cancel one in-flight item the way the person would: a Query with `queries/cancel`, a Work Run with a `cancel`
- * control (`controls/submit`, pinned to the Run, then `controls/deliver`). A refusal is also a wall row (http.mjs).
- */
-async function cancelItem(ctx, item, why) {
-  // Recorded before it is sent: the request this cancel cuts is a known outcome for the meter (ruling after the real run).
-  ctx.budget.markCancelled(item.kind === 'query' ? item.ref : item.run.ref);
-  const client = item.host.client;
-  if (item.kind === 'query') {
-    const answer = await client.read('queries/cancel', item.scope, { queryRunRef: item.ref });
-    return { ok: answer?.status === 'ready', text: `queries/cancel ${item.ref.queryJobId}: ${answer?.status} ${answer?.value?.stop ?? answer?.code ?? ''} ${answer?.reason ?? ''}` };
-  }
-  const submitted = await client.write('controls/submit', item.scope, { runRef: item.run.ref, kind: 'cancel', reason: `G6: ${why}` },
-    [{ ref: item.run.ref, revision: item.run.revision }]);
-  if (submitted?.status !== 'committed') return { ok: false, text: `controls/submit cancel ${item.run.ref.runId}: ${submitted?.status} ${submitted?.code ?? ''} ${submitted?.reason ?? ''}` };
-  const delivered = await client.read('controls/deliver', item.scope, { intentRef: submitted.value.intent.ref });
-  return { ok: delivered?.status !== 'rejected', text: `cancel ${item.run.ref.runId}: submit committed, deliver ${delivered?.status} ${delivered?.code ?? ''} ${delivered?.reason ?? ''}` };
 }
 
 /**

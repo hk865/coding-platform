@@ -9,9 +9,9 @@
  *   (a)(c)(d) 变红；去掉“源义务不能少”那一条，(e) 变红；去掉 `replacementIssues`，(b) 变红。
  */
 import { describe, expect, it } from 'vitest';
-import type { PlanRevisionDraft, PlanRevisionSnapshot, RuntimeTask } from '../../src/contracts/plan.js';
+import type { PlanRevisionDraft, PlanRevisionSnapshot, PlanValidationError, RuntimeTask } from '../../src/contracts/plan.js';
 import * as planValidation from '../../src/core/work-graph/tasks/plan-validation.js';
-import { deriveFuturePlanDelta, validateFutureObligationCoverage } from '../../src/core/work-graph/tasks/plan-validation.js';
+import { deriveFuturePlanDelta, goalGateCountIssue, validateFutureObligationCoverage } from '../../src/core/work-graph/tasks/plan-validation.js';
 import { g8b2Gate, g8b2Obligation, g8b2P, g8b2V1, g8b2Work } from '../helpers/G8B2-plans.js';
 
 type StandardChangeV1 = { supersededGates: { taskId: string; replacedByTaskId: string }[]; droppedObligationIds: string[] };
@@ -67,5 +67,60 @@ describe('rejects: F4 人采用也只放过“标成 superseded、指向本次�
     expect(validateFutureObligationCoverage({ source, target, delta: delta.delta, personAdopts: true })).toMatchObject({
       status: 'rejected', issues: expect.arrayContaining([expect.objectContaining({ code,
         message: expect.stringMatching(mentions) })]) });
+  });
+});
+
+describe('goalGateCountIssue: only newly added open goal gates are refused', () => {
+  // 决定 121-1xx（冻结稿二·R1）：只报这一版比上一版多出来的多道；源计划原样带着的已了结关口不算。今天整组红在
+  // `goalGateCountIssue` 还没有这个导出。(g)(h) 守冻结稿开头的更正 1、6：只在有可执行的必需工作时查（和“缺目标
+  // 关口”同一范围）；没有还没了结的已采用目标关口（首版）时原文只写第一句。
+  const withG0 = adopted({ ...v1Draft, tasks: [...v1Draft.tasks, g8b2Gate('G0', 'G0 another gate')],
+    obligations: [...v1Draft.obligations, g8b2Obligation('o-zero', ['G0'], 'r-zero', 'G0 check')] });
+  const targetOf = (source: PlanRevisionSnapshot, added: RuntimeTask[] = []): PlanRevisionDraft =>
+    ({ ...source, planRevision: source.planRevision + 1, goalId: source.goalRef.goalId, tasks: [...source.tasks, ...added] });
+  const message = 'the plan has 3 active required goal gates (G1, G0, G2); a plan has exactly one open goal gate. '
+    + 'Keep one: leave out the new gate and let the new obligation list only the new work tasks (an adopted gate keeps '
+    + 'exactly the obligations that list it), or, if the person changed what the '
+    + 'goal must meet, list the adopted gate (G1, G0) with its own taskId and disposition "superseded" and '
+    + 'replacedByTaskId naming the new gate; a task you leave out of a segment stays as it is and stays active';
+  it.each<[string, PlanRevisionSnapshot | null, PlanRevisionDraft, ReadonlySet<string>, PlanValidationError | null]>([
+    ['(d) the same two-gate plan carried forward is not re-judged', withG0, targetOf(withG0), new Set(), null],
+    ['(e) a third open gate is reported', withG0, targetOf(withG0, [g8b2Gate('G2', 'G2 third gate')]), new Set(),
+      { path: 'tasks', code: 'multiple_active_goal_gates', message }],
+    ['(f) a satisfied source gate is not counted', v1, { ...targetOf(v1, [g8b2Gate('G2', 'G2 successor')]),
+      obligations: [...v1.obligations, g8b2Obligation('o-r45', ['G2'], 'r-r45', 'G2 check')] }, new Set(['G1']), null],
+    // before 和 <adopted> 都去掉已了结的关口：G1 已满足、原样带着，G0 开着，再加 G2，算两道，只列 G0。
+    ['(i) a satisfied source gate leaves both the count and the adopted list', withG0, { ...targetOf(withG0,
+      [g8b2Gate('G2', 'G2 third gate')]), obligations: [...withG0.obligations, g8b2Obligation('o-r45i', ['G2'], 'r-r45i',
+      'G2 check')] }, new Set(['G1']), { path: 'tasks', code: 'multiple_active_goal_gates',
+      message: 'the plan has 2 active required goal gates (G0, G2); a plan has exactly one open goal gate. Keep one: '
+        + 'leave out the new gate and let the new obligation list only the new work tasks (an adopted gate keeps exactly '
+        + 'the obligations that list it), or, if the person changed what the goal must meet, list the adopted gate (G0) '
+        + 'with its own taskId and disposition "superseded" and replacedByTaskId naming the new gate; a task you leave '
+        + 'out of a segment stays as it is and stays active' }],
+    ['(g) without executable required work two gates are not judged', null, { ...targetOf(withG0),
+      tasks: withG0.tasks.map(task => task.taskKind === 'work' ? { ...task, executionIntent: 'plan_only' as const } : task) },
+      new Set(), null],
+    ['(h) a first plan with two gates gets only the first sentence', null, targetOf(withG0), new Set(),
+      { path: 'tasks', code: 'multiple_active_goal_gates',
+        message: 'the plan has 2 active required goal gates (G1, G0); a plan has exactly one open goal gate' }],
+  ])('%s', (_name, source, target, terminalTaskIds, expected) => {
+    expect(goalGateCountIssue(target, source, terminalTaskIds)).toEqual(expected);
+  });
+  // 和上面的原文配套：新义务挂到已采用的目标关口 G1 上，关口冻结拒；原文叫它要关口就加新阶段自己的关口，目标关口只在
+  // 没有还开着的目标关口时才新加。
+  it(`the gate freeze names a new stage's own gate, or a new goal gate only when no goal gate is still open`, () => {
+    const target: PlanRevisionDraft = { ...targetOf(v1, [g8b2Work('W4', 'W4 补一件')]),
+      obligations: [...v1.obligations, g8b2Obligation('o-w4', ['W4', 'G1'], 'r-w4', 'W4 查的')] };
+    const delta = deriveFuturePlanDelta(v1, target);
+    if (delta.status !== 'supported') throw new Error(delta.reason);
+    expect(validateFutureObligationCoverage({ source: v1, target, delta: delta.delta, personAdopts: true })).toMatchObject({
+      status: 'rejected', issues: expect.arrayContaining([{ path: 'tasks[G1]', code: 'gate_definition_changed',
+        message: 'source gate task G1 changed its definition or acceptance relationships: an adopted gate keeps its '
+          + 'definition and exactly the obligations that list it, with their content. Leave the gate and those obligations '
+          + 'as adopted; a new obligation lists the new work tasks and, when it needs a gate, a new gate task (a new '
+          + `stage's own gate, or a new goal gate only when no goal gate is still open: a plan keeps exactly one open goal `
+          + 'gate). Only a plan the person adopts may supersede a gate: mark it superseded with '
+          + 'replacedByTaskId naming a new gate task that carries a new obligation' }]) });
   });
 });

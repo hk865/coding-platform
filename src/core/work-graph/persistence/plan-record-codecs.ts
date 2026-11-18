@@ -317,7 +317,7 @@ const PLAN_VALIDATION_CODES: ReadonlySet<string> = new Set([
   'dag_cycle', 'hierarchy_cycle', 'duplicate_requirement_id',
   'obligation_semantics_changed', 'gate_definition_changed', 'role_not_authorized',
   'task_removed', 'duplicate_task_id', 'unsupported_execution_change', 'missing_task_assignment',
-  'uncovered_verification_requirement',
+  'uncovered_verification_requirement', 'multiple_active_goal_gates',
 ]);
 
 function isEnum(value: unknown, allowed: readonly string[]): boolean {

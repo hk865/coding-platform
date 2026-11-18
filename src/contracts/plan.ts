@@ -241,7 +241,7 @@ export type PlanRevisionDraft = PlanRevisionDraftBase & { schemaVersion: 2;
 // ------------------------------------------------------------------------ //
 // PlanValidationError                                                        //
 // ------------------------------------------------------------------------ //
-type PlanValidationCode = "missing_required_executable_task" | "missing_active_required_goal_gate" | "missing_required_obligation" | "task_obligation_mapping" | "obligation_task_mapping" | "empty_verification_requirements" | "unknown_requirement_kind" | "dangling_task_ref" | "dangling_stage_ref" | "self_dependency" | "dag_cycle" | "hierarchy_cycle" | "duplicate_requirement_id" | "obligation_semantics_changed" | "gate_definition_changed" | "role_not_authorized" | "task_removed" | "duplicate_task_id" | "unsupported_execution_change" | "missing_task_assignment" | "uncovered_verification_requirement";
+type PlanValidationCode = "missing_required_executable_task" | "missing_active_required_goal_gate" | "missing_required_obligation" | "task_obligation_mapping" | "obligation_task_mapping" | "empty_verification_requirements" | "unknown_requirement_kind" | "dangling_task_ref" | "dangling_stage_ref" | "self_dependency" | "dag_cycle" | "hierarchy_cycle" | "duplicate_requirement_id" | "obligation_semantics_changed" | "gate_definition_changed" | "role_not_authorized" | "task_removed" | "duplicate_task_id" | "unsupported_execution_change" | "missing_task_assignment" | "uncovered_verification_requirement" | "multiple_active_goal_gates";
 export type PlanValidationError = {
     path: string;
     code: PlanValidationCode;

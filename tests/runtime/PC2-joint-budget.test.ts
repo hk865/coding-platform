@@ -72,6 +72,7 @@ const ROLE_TEXT = '## Runtime context\n'
 /** The whole goal interval, hand-written. */
 const GOAL_TEXT = '## Goal\n'
   + 'goal: r4c-claim-goal\n'
+  + 'projectId: r4c-claim-project\n'
   + 'objective: Exercise the atomic claim skeleton\n'
   + 'workspace: r4c-claim-workspace@1\n'
   + 'autonomy: after_plan_confirmation\n'

@@ -53,3 +53,7 @@ R4c.2b 在本目录保存 `SqliteStores.read` 的[补丁源码](patches/storage/
 新增[权限策略补丁源码](patches/policy/permissions/permission-policy.ts)：secret 名比较不分大小写，`.ENV`、`Credentials` 等大小写变体照 `.env` 拒（`sensitive_path`），默认 secret 名和 `policyVersion` 不变；在区分大小写的文件系统上真名 `.ENV` 也被拒，是有意的能力损失，理由是安全（凭据）。受管的[工作区沙箱补丁源码](patches/sandbox/workspace/workspace-sandbox.ts)的 `listFiles` 把被拒前缀的 `dev:ino` 收成集合，按身份跳过别名条目，不按名字大小写；ext4 上真名 `.WORKBENCH/local` 是另一个 inode，不受影响。源现二十个、80 份产物；来源与产物哈希、命令见[补丁维护说明](patches/README.md)。
 
 另：受管的[进程沙箱补丁源码](patches/sandbox/process/process-sandbox.ts)在不区分大小写的盘上，读写和只读两条挂载路径都给 `.git` 的 7 个 ASCII 大小写变体加只读挂载（只在 `.git` 与 `.GIT` 同 `dev:ino` 时；`.workbench` 变体不挂），ext4 上计划和挂载都不变；源仍二十个、80 份产物。
+
+## 2026-11-18 R6 联合参数错误展开到最接近的写法
+
+[派发器补丁源码](patches/tools/dispatcher/tool-dispatcher.ts)在参数 schema 未命中时，任何一层的 `invalid_union` 都展开问题数最少的那种写法的各条问题（路径接上它所在的位置，选中的写法里再有联合照样往下展开），几种写法并列最少时都列出、用“或”隔开；判别值对不上时照旧打 zod 自带的消息。错误码仍为 `invalid_arguments`，消息框架和其余分支不变；来源与四份产物哈希、命令见[补丁维护说明](patches/README.md)。

@@ -15,8 +15,10 @@
  * exceed the adapter ceiling, the call returns a small explicit
  * `rejected/capacity` domain result so the Kernel can never truncate a ready
  * JSON and have it read as complete facts.
+ * 历史读放不下时先减半重读；少给几条不算截断，`nextCursor` 接着这一页。
  */
 import { Buffer } from 'node:buffer';
+import { sha256Hex } from '../../contracts/fingerprint.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { ReadResult } from '../../contracts/core/results.js';
 import type { RunRef, TaskTriple } from '../../contracts/dispatch.js';
@@ -93,10 +95,10 @@ export type GraphToolsConfig = {
 type HistoryArgs = { afterCursor?: string | null; limit?: number };
 
 type LookArgs =
-  | { mode: 'node'; target: GraphNodeRefV1; relation?: GraphLookRequestV1['relation'];
-      page?: { afterCursor?: string | null; limit?: number } }
+  | { mode?: 'node'; target: GraphNodeRefV1; relation?: GraphLookRequestV1['relation'];
+      page?: { afterCursor?: string | null; limit?: number }; limit?: number }
   | { mode: 'path'; path: string; relation?: GraphLookRequestV1['relation'];
-      page?: { afterCursor?: string | null; limit?: number } }
+      page?: { afterCursor?: string | null; limit?: number }; limit?: number }
   | { mode: 'history'; runRef: RunRef; afterCursor?: string | null; limit?: number }
   | { mode: 'input'; consumer: TaskTriple; planRef: PlanRevisionRef;
       declarationId: string; candidateKey?: string;
@@ -123,6 +125,10 @@ const DEFAULT_HISTORY_LIMIT = 50;
 const MAX_HISTORY_LIMIT = 200;
 const DEFAULT_MAX_BYTES = 2048;
 const MAX_INPUT_MAX_BYTES = 4096;
+
+/** 模型看到的历史游标：完整游标约 2.7 KB，模型常抄错（G6 第十一次 65 次错 30 次）。 */
+const HISTORY_HANDLE_PREFIX = 'hc_';
+const HISTORY_HANDLE_UNKNOWN = 'afterCursor is not a nextCursor this Run was given (it may have expired with a Host restart); read again with afterCursor null';
 
 function noneEffects(): ToolResult['effects'] {
   return { sideEffect: 'none', changedPaths: [], workspaceRevision: null, artifactRefs: [] };
@@ -249,9 +255,10 @@ const nodeRefSchema: z.ZodType = z.discriminatedUnion('kind', [
 ]);
 
 const relationSchema = z.enum(['card', 'children', 'neighbours', 'executions', 'checks']);
+const pageLimitSchema = z.number().int().min(1).max(100);
 const pageSchema = z.object({
   afterCursor: z.string().min(1).nullable().optional(),
-  limit: z.number().int().min(1).max(100).optional(),
+  limit: pageLimitSchema.optional(),
 }).strict();
 
 const findGraphSchema = z.object({
@@ -261,16 +268,20 @@ const findGraphSchema = z.object({
 
 const lookModeSchemas = [
   z.object({
-    mode: z.literal('node'),
+    // 有 target 就只可能是 node。Kernel 拍平各写法时 mode 不是必填（tool-registry.js:59-60），省掉时按 node 读。
+    mode: z.literal('node').optional(),
     target: nodeRefSchema,
     relation: relationSchema.optional(),
     page: pageSchema.optional(),
+    // page.limit 的别名：拍平后模型在顶层看得到 history 写法的 limit。
+    limit: pageLimitSchema.optional(),
   }).strict(),
   z.object({
     mode: z.literal('path'),
     path: z.string().min(1),
     relation: relationSchema.optional(),
     page: pageSchema.optional(),
+    limit: pageLimitSchema.optional(),
   }).strict(),
   z.object({
     mode: z.literal('history'),
@@ -383,6 +394,8 @@ export function createGraphTools(config: GraphToolsConfig): {
   };
   const fixedSubjectRunRef: RunRef | null = config.subjectRunRef === undefined
     ? null : structuredClone(config.subjectRunRef);
+  // 句柄 -> 完整游标。只在这个工具组（这个 Run）里认；Host 重启或重建工具组后从第一页重读。
+  const historyHandles = new Map<string, string>();
   const fixedLookSchema = config.lookHistory === false ? lookSchemaWithoutHistory : lookSchema;
   const toolNames: readonly ((typeof GRAPH_TOOL_NAMES)[number] | ExecutionHistoryToolName)[] =
     fixedSubjectRunRef === null ? GRAPH_TOOL_NAMES : [...GRAPH_TOOL_NAMES, ...EXECUTION_HISTORY_TOOL_NAMES];
@@ -404,12 +417,29 @@ export function createGraphTools(config: GraphToolsConfig): {
    * and with no trusted Goal it refuses instead of serving another Goal's history.
    */
   async function readHistory(callId: string, runRef: RunRef, args: HistoryArgs, context: CoreCallContext): Promise<ToolResult> {
-    const result = await config.history.readTaskExecutionHistory(context, {
-      runRef,
-      afterCursor: args.afterCursor ?? null,
-      limit: args.limit ?? DEFAULT_HISTORY_LIMIT,
-    });
-    return mapRead(callId, result, 'the original execution history could not be read');
+    const message = 'the original execution history could not be read';
+    let afterCursor: string | null = null;
+    if (args.afterCursor !== undefined && args.afterCursor !== null) {
+      const full = historyHandles.get(args.afterCursor);
+      if (full === undefined) {
+        return rejectedResult(callId, { status: 'rejected', code: 'invalid', reason: HISTORY_HANDLE_UNKNOWN }, message);
+      }
+      afterCursor = full;
+    }
+    // 整页放不进 48 KiB 就减半重读，直到放得下；少给几条不算截断，nextCursor 接着这一页。
+    for (let limit = args.limit ?? DEFAULT_HISTORY_LIMIT; ; limit = Math.floor(limit / 2)) {
+      const result = await config.history.readTaskExecutionHistory(context, { runRef, afterCursor, limit });
+      if (result.status !== 'ready') return mapRead(callId, result, message);
+      const next = result.value.nextCursor;
+      const handle = next === null ? null : HISTORY_HANDLE_PREFIX + sha256Hex(next).slice(0, 12);
+      const shown = mapRead(callId, { ...result, value: { ...result.value, nextCursor: handle } }, message);
+      const sized = finalize(callId, shown);
+      if (sized === shown) {
+        if (handle !== null) historyHandles.set(handle, next!);
+        return shown;
+      }
+      if (limit === 1) return sized;
+    }
   }
 
   async function dispatchLook(callId: string, args: LookArgs, context: CoreCallContext): Promise<ToolResult> {
@@ -433,14 +463,17 @@ export function createGraphTools(config: GraphToolsConfig): {
       const result = await config.inputs.readTaskInputPage(context, request);
       return mapRead(callId, result, 'the exact task input page could not be read');
     }
-    const target: GraphLookRequestV1['target'] = args.mode === 'node'
-      ? { kind: 'node', node: args.target }
-      : { kind: 'path', path: args.path };
+    if (args.limit !== undefined && args.page?.limit !== undefined) {
+      return failure(callId, 'invalid_arguments', 'limit is an alias of page.limit; send only page.limit');
+    }
+    const target: GraphLookRequestV1['target'] = args.mode === 'path'
+      ? { kind: 'path', path: args.path }
+      : { kind: 'node', node: args.target };           // mode 省掉的也是 node
     const result = await config.graph.lookGraph(context, {
       goalRef: fixedGoalRef,
       target,
       relation: args.relation ?? 'card',
-      page: { afterCursor: args.page?.afterCursor ?? null, limit: args.page?.limit ?? DEFAULT_PAGE_LIMIT },
+      page: { afterCursor: args.page?.afterCursor ?? null, limit: args.page?.limit ?? args.limit ?? DEFAULT_PAGE_LIMIT },
     });
     return mapRead(callId, result, 'the graph look could not be read');
   }

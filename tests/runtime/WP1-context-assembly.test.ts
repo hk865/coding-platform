@@ -6,7 +6,7 @@
  * All three rows run through the frozen `assemblerWithFacts` fixture (real
  * assembler, typed graph-fact doubles, `p`/`g`/`w` ids). GC03 is the new
  * behaviour (the Work binding's Goal `record` source carries
- * `goalContextDigestV1(facts.goal)`, the Goal section bytes do not change);
+ * `goalContextDigestV1(facts.goal)`, and the Goal section names the project id);
  * GC04 and AN08 are the unchanged Query binding and anomaly reminder row.
  */
 import { describe, expect, it } from 'vitest';
@@ -74,6 +74,7 @@ describe('wiring 1 context assembly binding', () => {
     expect(goalBytes).toBe([
       '## Goal',
       'goal: g',
+      'projectId: p',
       `objective: ${f.objective}`,
       `workspace: w@${String(f.workspaceRevision)}`,
       'autonomy: (not_implemented)',

@@ -305,7 +305,7 @@ async function readWaiting(project, goalRef, rec) {
 }
 
 /** 121-146：队列里暂时读不到的卡来源；驱动据此不把“这一种读不到”当成全貌。 */
-function unreadableSources(queue) {
+export function unreadableSources(queue) {
   return (Array.isArray(queue?.capabilities) ? queue.capabilities : [])
     .filter(entry => entry?.availability === 'read_failed');
 }
@@ -330,14 +330,18 @@ function noteUnreadable(rec, queue) {
  * `answer(card)` says (default: approve). `onPoll(display)` lets a scenario read what it watches meanwhile. The wait
  * ends early (G7 W3, `endedEarly`) when the platform shows it cannot go on by itself.
  * `answer` 答不了的返工确认卡（`confirmsRework`），照界面点一次“重新入队”（`requeueCard`）。
+ * `returnOnDecide`（lead 11-18，G6 第十一次）：平台停下等人是事实，不是“下一条判据没做到”。为 true 时 (a) 支
+ * 正常返回，display 多一个 `stoppedFor`；不传的调用方行为不变。
  */
-export async function waitGoal(ctx, project, goalRef, { until = TERMINAL, timeoutMs, answer = approve, onPoll, rec = null, check, committedAnswers = [] }) {
+export async function waitGoal(ctx, project, goalRef, { until = TERMINAL, timeoutMs, answer = approve, onPoll, rec = null, check,
+  committedAnswers = [], returnOnDecide = false }) {
   const answered = new Set();
   // 已调过“重新入队”的返工确认卡：每张只调一次，被拒也不再调。
   const requeued = new Set();
   const quiet = { seen: null, since: Date.now() };
   let ended = null;
-  return waitFor(ctx, `${goalRef.goalId} to reach ${until.join('/')}`, async () => {
+  let stoppedFor = null;
+  const display = await waitFor(ctx, `${goalRef.goalId} to reach ${until.join('/')}`, async () => {
     const display = ready(await project.host.client.read('goals/display', project.scope, { goalRef }));
     const queue = ready(await project.host.client.read('decisions/queue', project.scope, { workspace: project.scope, goalRef,
       sections: ['waiting_answer', 'answered_pending_application'], page: { limit: 50 } }));
@@ -367,9 +371,14 @@ export async function waitGoal(ctx, project, goalRef, { until = TERMINAL, timeou
     }
     if (rec?.autonomy === 'every_step') await reviewNodes(project, goalRef, rec);
     if (onPoll !== undefined) await onPoll(display);
-    ended = await endedEarly(ctx, project, goalRef, { display, queue, open, quiet });
+    const early = await endedEarly(ctx, project, goalRef, { display, queue, open, quiet });
+    // lead 11-18（G6 第十一次）：停因跟着返回值走，场景不用再读一次。
+    if (early?.decide && returnOnDecide) stoppedFor = early.text;
+    ended = early !== null && stoppedFor === null ? early.text : null;
     return display;
-  }, display => display !== null && until.includes(display.display.phase), { timeoutMs, check, ended: () => ended });
+  }, display => stoppedFor !== null || (display !== null && until.includes(display.display.phase)),
+  { timeoutMs, check, ended: () => ended });
+  return returnOnDecide ? { ...display, stoppedFor } : display;
 }
 
 /**
@@ -378,7 +387,8 @@ export async function waitGoal(ctx, project, goalRef, { until = TERMINAL, timeou
  * display or queue did not answer is no evidence either way.
  * (a) The Goal's own headline says a person decides on a Task stop of the UI's 要决定 set (the GOAL-23/GOAL-30 row:
  *     phase NEEDS_DECISION, a required Task, no live Run, no automatic rework pending, `goal-machine.ts:1176-1194`),
- *     and the queue holds no card the person still has in hand.
+ *     and the queue holds no card the person still has in hand. For a `returnOnDecide` caller this is a normal return
+ *     (the platform stopping for a person is a fact, not the next check's failure); the caller records the reason.
  * (b) Nothing public changed (display, cards) for STALL_MS and the meter's last complete reading has no Query and no
  *     Work Run in flight in the project. The display's `sourceCursor` is the ledger-wide watermark (any commit in the
  *     project moves it), so it is not compared. The reason names the last phase, cause and driver wait reason seen.
@@ -399,13 +409,13 @@ async function endedEarly(ctx, project, goalRef, { display, queue, open, quiet }
   const busy = ctx.budget.inFlight({ scopes: [scopeKey(project.scope)] });
   const idle = busy.queries === 0 && busy.runs === 0;
   if (phase === 'NEEDS_DECISION' && TASK_DECIDE_STOPS.has(cause?.code) && open === 0) {
-    return quietFor >= DECIDE_GRACE_MS && idle ? `the platform stopped: ${cause.code} on ${cause.taskId}` : null;
+    return quietFor >= DECIDE_GRACE_MS && idle ? { decide: true, text: `the platform stopped: ${cause.code} on ${cause.taskId}` } : null;
   }
   if (quietFor < STALL_MS) return null;
   if (!idle) return null;
   const driver = ready(await project.host.client.read('workflow/driver-read', project.scope, { goalRef }));
-  return `stalled: no change for ${Math.floor((Date.now() - quiet.since) / MINUTE)} min, nothing in flight (last seen: goal phase ${
-    phase}, cause ${cause?.code ?? 'none'}; driver ${driver?.state ?? 'unread'}, wait reason ${driver?.reason ?? 'none'})`;
+  return { decide: false, text: `stalled: no change for ${Math.floor((Date.now() - quiet.since) / MINUTE)} min, nothing in flight (last seen: goal phase ${
+    phase}, cause ${cause?.code ?? 'none'}; driver ${driver?.state ?? 'unread'}, wait reason ${driver?.reason ?? 'none'})` };
 }
 
 /**
@@ -917,6 +927,26 @@ export async function sessionTurns(project, sessionRef, gaps = null) {
 /** The Goal's display phase, or null when the read did not answer. */
 export async function goalPhase(project, goalRef) {
   return ready(await project.host.client.read('goals/display', project.scope, { goalRef }))?.display?.phase ?? null;
+}
+
+/**
+ * Cancel one in-flight item the way the person would: a Query with `queries/cancel`, a Work Run with a `cancel`
+ * control (`controls/submit`, pinned to the Run, then `controls/deliver`). A refusal is also a wall row (http.mjs).
+ * Shared by the unit-end drain and B06 (lead 11-18, G6 第十一次): one implementation, moved here from `run.mjs`.
+ */
+export async function cancelItem(ctx, item, why) {
+  // Recorded before it is sent: the request this cancel cuts is a known outcome for the meter (ruling after the real run).
+  ctx.budget.markCancelled(item.kind === 'query' ? item.ref : item.run.ref);
+  const client = item.host.client;
+  if (item.kind === 'query') {
+    const answer = await client.read('queries/cancel', item.scope, { queryRunRef: item.ref });
+    return { ok: answer?.status === 'ready', text: `queries/cancel ${item.ref.queryJobId}: ${answer?.status} ${answer?.value?.stop ?? answer?.code ?? ''} ${answer?.reason ?? ''}` };
+  }
+  const submitted = await client.write('controls/submit', item.scope, { runRef: item.run.ref, kind: 'cancel', reason: `G6: ${why}` },
+    [{ ref: item.run.ref, revision: item.run.revision }]);
+  if (submitted?.status !== 'committed') return { ok: false, text: `controls/submit cancel ${item.run.ref.runId}: ${submitted?.status} ${submitted?.code ?? ''} ${submitted?.reason ?? ''}` };
+  const delivered = await client.read('controls/deliver', item.scope, { intentRef: submitted.value.intent.ref });
+  return { ok: delivered?.status !== 'rejected', text: `cancel ${item.run.ref.runId}: submit committed, deliver ${delivered?.status} ${delivered?.code ?? ''} ${delivered?.reason ?? ''}` };
 }
 
 /**

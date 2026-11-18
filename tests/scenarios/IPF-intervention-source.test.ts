@@ -5,13 +5,12 @@
  * - F1（R1）：人照界面的形状给做完的线发“直接干预”，不带 `goalRef`、`taskRef`。Host 按这条线最近的工作选了 G，
  *   开 intervention_planning Query，假模型回一份合法的细化计划。期望：决定队列读得出；回答被读成 G 的候选，
  *   等人采用；人采用时采用复核再证明一次来源，候选变成已采用；G 的下一件工作的 Run 能准备。
- *   今天红在第一步：队列 `rejected/source_stale`（来源证明要求消息带 `goalRef`）；候选也写不出，入口返回
- *   `rejected/source_stale`。R1 落地后转绿；只做 R2 不做 R1 时，队列读得出，红在第二步（候选写不出）。
- * - F2（R2）：用带 `goalRef` 的消息造出同样的候选（今天就写得出），另一条线的干预回答两个问题、出两张规划问题卡。
+ *   守：IPF R1 改坏 → 第二步入口 `source_stale`；R7 没做（text 形状，没有 `submit_plan_round`）→ 第二步入口 `no_answer`。
+ * - F2（R2）：用带 `goalRef` 的消息造出同样的候选，另一条线 `asker` 用文字回答两个问题（守 `plan_round` 下文字照旧可读）、出两张规划问题卡。
  *   候选等人采用时，人经 `messages/withdraw` 撤回来源消息。期望：决定队列仍读得出，那两张规划问题卡照常，
- *   G 的下一件工作的 Run 能准备。今天红在撤回之后读队列：`rejected/source_stale`。R2 落地后转绿；只做 R1 时照样红。
+ *   G 的下一件工作的 Run 能准备。守：IPF R2 改坏 → 撤回之后读队列 `source_stale`；R7 没做 → 候选那一步 `no_answer`。
  * - F3（守护）：消息点名了另一个目标（`goalRef` = 目标 1），没有 `taskRef`；Host 照旧按线最近的工作选 G 开 Query。
- *   期望：证明不成立，入口返回 `rejected/source_stale`，候选不写。今天绿；R1 若改成“不再比较消息的 Goal”就红。
+ *   期望：证明不成立，入口返回 `rejected/source_stale`，候选不写。守：IPF R1 不比较消息的 Goal → 候选写出；R7 没做 → Query `closed`。
  *
  * 改坏演示（写测试方 11-17，在副本里临时给生产代码写替身，演示后还原，`git diff -- src` 为 0）：
  * R1+R2 三行全绿；只做 R1 → F2 红在撤回之后读队列；只做 R2 → F1 队列读得出，红在第二步（入口 `source_stale`、
@@ -41,10 +40,14 @@ async function openWorld(label: string): Promise<IpfWorld> {
   return w;
 }
 
-/** 做完的线的模型这一轮回一份合法的细化计划：在 G 的 v1 上加一件新的工作。 */
+/** 做完的线的模型这一轮调 `submit_plan_round`（R7 T1）交一份合法的细化计划：在 G 的 v1 上加一件新的工作。
+ * 内容同 `refinementPlan`；表单 strict，去掉 `filledPlan` 和交表后的归一化会补的字段。 */
 async function scriptRefinement(w: IpfWorld): Promise<void> {
-  await w.world.scripted.script(w.done, [{ kind: 'text', text: await refinementPlan(w.world, w.goal,
-    { label: `ipf-${w.label}`, taskId: `ipf-${w.label}-new`, role: S6A_WORK_ROLE.templateId }) }]);
+  const text = await refinementPlan(w.world, w.goal,
+    { label: `ipf-${w.label}`, taskId: `ipf-${w.label}-new`, role: S6A_WORK_ROLE.templateId });
+  const { summary, plan: { schemaVersion: _v, planId: _id, planRevision: _rev, goalId: _goal, tasks, ...plan } } = JSON.parse(text);
+  const args = { answerKind: 'plan', summary, plan: { ...plan, tasks: tasks.map(({ phase: _p, ...task }: { phase: unknown }) => task) } };
+  await w.world.scripted.script(w.done, [{ kind: 'calls', calls: [{ callId: 'ipf-submit-plan', name: 'submit_plan_round', args }] }]);
 }
 
 /** 一句话的结果：拒绝时带码和理由，红的地方直接看到 `source_stale`。 */
@@ -67,7 +70,7 @@ describe('IPF: 干预来源证明和规划问题来源', () => {
 
     const settled = await interveneUntilSettled(w, sent.ref);
     const queue = await readIpfQueue(w);
-    // 前两步用 soft：今天两步都红，一次运行就都看得到。
+    // 前两步用 soft：改坏时一次运行就看得到哪一步红。
     expect.soft(outcome(queue), '第一步：G 的决定队列读得出').toBe('ready');
     expect.soft(outcome(settled), '第二步：回答写成候选，停在人的卡上').toBe('awaiting_decision');
     expect(await readProposal(w, sent.ref), '候选的来源是这条消息')

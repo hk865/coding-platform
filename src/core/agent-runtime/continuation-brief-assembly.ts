@@ -17,7 +17,7 @@ import type { RunState } from '../../../vendor/coding-agent/dist/public-api.js';
 import type { SessionRef } from '../../contracts/core/identity.js';
 import type { SessionMessageRef } from '../../contracts/core/session-message.js';
 import {
-  CONTINUATION_BRIEF_LIMITS, CONTINUATION_REVIEW_BASIS_CHARS, compareSourceCheckpoints,
+  CONTINUATION_BRIEF_LIMITS, CONTINUATION_REVIEW_BASIS_CHARS, boundedTo, compareSourceCheckpoints,
   type BoundedTextV1, type ContinuationAnomalySectionV1, type ContinuationBriefV1, type ContinuationDiffOmittedReasonV1,
   type ContinuationNewInputV1, type ContinuationSourceCheckpointV1, type ContinuationToolCallV1,
   type ContinuationBlockedCommandLineV1,
@@ -153,10 +153,6 @@ const REVIEW_UTF8 = new TextEncoder();
 const REVIEW_OLD_TEXT_KEYS: readonly string[] = ['oldText', 'old_string'];
 const REVIEW_NEW_TEXT_KEYS: readonly string[] = ['newText', 'new_string', 'content', 'text'];
 
-/** A bounded text with a field-specific cap (the contract's own `BoundedTextV1` shape). */
-function boundedTo(text: string, cap: number): BoundedTextV1 {
-  return text.length > cap ? { text: text.slice(0, cap), truncated: true } : { text, truncated: false };
-}
 function reviewArgText(args: Record<string, unknown> | undefined, keys: readonly string[]): string | null {
   if (args === undefined) return null;
   for (const key of keys) {
@@ -803,6 +799,8 @@ export function assembleContinuationBrief(input: AssembleBriefInput): Continuati
   const checksRound = head ?? factsHop?.round ?? null;
   // E09F：列出的检查所在那一轮的审查结论（读者和轮次一起读来）。没过的审查同样列为一条没过的检查，并带上审阅依据。
   const checksReview = (head !== null ? basis.roundReview : factsHop?.roundReview) ?? null;
+  // 同一轮里没过的登记检查的命令和输出（读者和轮次一起读来），照原样给返工的执行者。
+  const checksOutputs = (head !== null ? basis.roundCheckOutputs : factsHop?.roundCheckOutputs) ?? [];
   const failure = checksRound === null ? null : roundFailureFacts(checksRound, checksReview);
   // LA-10: the Run the workspace section speaks of (its checks, `selfChanged`, its end): the facts Run when the afterRun
   // never entered.
@@ -931,7 +929,9 @@ export function assembleContinuationBrief(input: AssembleBriefInput): Continuati
       roundOrdinal: checksRound.chain?.ordinal ?? 1, failing: failure.checks, gapCodes: failure.gapCodes,
       // E09F：没有审查或审查通过时不出这个成员，旧接续说明的字节和摘要不变。
       ...(checksReview === null || checksReview.outcome === 'PASS' ? {}
-        : { reviewBasis: boundedTo(checksReview.basis, CONTINUATION_REVIEW_BASIS_CHARS) }) },
+        : { reviewBasis: boundedTo(checksReview.basis, CONTINUATION_REVIEW_BASIS_CHARS) }),
+      // 没有输出时不出这个成员，旧接续说明的字节和摘要不变。
+      ...(checksOutputs.length === 0 ? {} : { outputs: checksOutputs }) },
     requeue: { reason: bounded(requeue.reason), reasonAuthor: actorClass, newInputs },
     workspace: {
       selfChanged,

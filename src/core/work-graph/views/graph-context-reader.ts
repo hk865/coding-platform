@@ -291,6 +291,9 @@ function nodeShapeProblem(node: unknown): string | null {
 /** `null` means in scope; a non-null reason is a `forbidden` refusal.
  * A null goal is the project branch: only project-owned nodes are in scope. */
 function nodeScopeProblem(node: GraphNodeRefV1, projectId: string, workspaceId: string | undefined, goal: GoalRef | null): string | null {
+  // 决定 121-1xx（照 96-2）：节点不在调用方的项目里，原文写出调用方自己的项目号（只有这一个合法值）。
+  const nodeProjectId = node.kind === 'stage' ? node.planRef.projectId : node.ref.projectId;
+  if (nodeProjectId !== projectId) return `the ${node.kind} node belongs to another project; this project is ${projectId}`;
   switch (node.kind) {
     case 'goal':
       return node.ref.projectId === projectId && (goal === null || node.ref.goalId === goal.goalId)

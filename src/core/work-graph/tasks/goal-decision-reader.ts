@@ -31,9 +31,11 @@ import type { DutyRecipientPort } from '../sessions/duty-recipient.js';
 import { atLeastCursorResult } from '../persistence/read-result-failures.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { decodeRun } from '../persistence/run-record-codecs.js';
+import { decodeVerificationRoundSnapshot } from '../persistence/evidence-record-codecs.js';
 import type { GoalDecisionCauseReadV1 } from '../model/decision-contracts.js';
-import type { PlanTaskPort, TaskRow } from '../model/plan-contracts.js';
+import type { PlanProposal, PlanTaskPort, TaskRow } from '../model/plan-contracts.js';
 import { deviationsOfGoal, type DeviationInputV1 } from '../../../contracts/plan-deviation.js';
+import { withdrawableFailingChecks } from '../../../contracts/verification.js';
 import { automationConfirmationCause, gateFixInProgress, pausedAutomationAction } from '../state/decision-policy.js';
 import type { GoalDisplayCauseV1 } from '../state/goal-machine.js';
 import { modelServiceOf } from '../state/task-failure.js';
@@ -84,6 +86,14 @@ export type GoalDecisionCauseReaderDependencies = {
     goalRef: GoalRef,
     rows: readonly TaskRow[],
   ) => Promise<ReadResult<DeviationInputV1>>;
+  /**
+   * R2：停止卡点名可撤的检查。没注入就不跑这一臂（不读链头轮、不读计划、卡上没有这个字段）。只有组合根注入。
+   *  `startupCheckIds`：Host 启动配置里这个工作区的检查 id（旧的静态配置）。它们不在设置里，`checks/withdraw` 撤不了，不点名。
+   */
+  withdrawable?: {
+    startupCheckIds(workspace: { projectId: string; workspaceId: string }): readonly string[];
+    acceptedCandidatesOf(goalRef: GoalRef): Promise<ReadResult<readonly PlanProposal[]>>;
+  };
 };
 
 /** §4.2: the concrete persisted decision causes of one Goal, read-only. */
@@ -105,6 +115,9 @@ const DECISION_CAUSE_CODES: ReadonlySet<string> = new Set([
   'budget_exhausted', 'not_reworkable', 'unknown_outcome',
   'interrupted_pending_resume',
 ]);
+
+/** R2：停止卡点名可撤检查的两种原因（一个常量）。 */
+const WITHDRAWABLE_STOP_CODES: ReadonlySet<string> = new Set(['no_new_basis', 'auto_rework_cap_reached']);
 
 type Rej = { status: 'rejected'; code: CoreError; reason: string };
 function notFound(reason: string): Rej {
@@ -195,6 +208,7 @@ export function createGoalDecisionCauseReader(
     affected: VersionPin[]; taskRef: GoalDecisionCauseReadV1['taskRef']; runRef: GoalDecisionCauseReadV1['runRef'];
     openedAt?: string | null;
     objects?: DecisionObjectV1[]; options?: DecisionOptionV1[];
+    withdrawableChecks?: readonly string[];
   }): GoalDecisionCauseReadV1 {
     const byKey = new Map<string, VersionPin>();
     for (const pin of input.affected) byKey.set(canonicalJson(pin.ref as JsonValue), pin);
@@ -214,6 +228,7 @@ export function createGoalDecisionCauseReader(
       action: input.action,
       objects: input.objects ?? [],
       options: input.options ?? [],
+      ...(input.withdrawableChecks === undefined ? {} : { withdrawableChecks: input.withdrawableChecks }),
     };
   }
 
@@ -291,6 +306,40 @@ export function createGoalDecisionCauseReader(
     return { ok: true, pin: read.pin, runRef: failure.runRef, endedAt: failure.run?.endedAt ?? null };
   }
 
+  /** R2：停止卡可撤的检查。先只用 Task 行预判；预判过了才读链头轮的冻结配置和这个目标采用过的计划。读失败原样返回。 */
+  async function withdrawableChecksOf(
+    goal: GoalSnapshot, round: NonNullable<NonNullable<TaskRow['failure']>['round']>,
+  ): Promise<{ ok: true; ids: string[] | null } | { ok: false; rejection: Rej }> {
+    const withdrawable = deps.withdrawable!;
+    const startup = new Set(withdrawable.startupCheckIds(goal.workspaceRef));
+    const prejudge = withdrawableFailingChecks({
+      failing: round.failingChecks, gapCodes: round.gapCodes,
+      settingsCheckIds: new Set(round.failingChecks.map(check => check.checkId).filter(id => !startup.has(id))),
+      goalPlanCheckIds: new Set(),
+    });
+    if (prejudge === null) return { ok: true, ids: null };
+    const read = await readRecordOf(round.roundRef);
+    if (!read.ok) return read;
+    const decoded = decodeVerificationRoundSnapshot(read.record);
+    if (decoded.status !== 'decoded') {
+      return { ok: false, rejection: unavailable(`round ${read.record.refKey} is damaged: ${decoded.reason}`) };
+    }
+    // 正式读失败按来源降级（Q，121-146）：rejected 原样回，not_ready 转 unavailable；程序异常不接，让整次读取失败。
+    const candidates = await withdrawable.acceptedCandidatesOf(goal.ref);
+    if (candidates.status !== 'ready') {
+      return { ok: false, rejection: candidates.status === 'rejected' ? candidates
+        : unavailable(`the accepted plan candidates are not readable (${candidates.status})`) };
+    }
+    const goalPlanCheckIds = new Set(candidates.value.flatMap(proposal =>
+      (proposal.checks ?? []).map(check => check.checkId)));
+    return { ok: true, ids: withdrawableFailingChecks({
+      failing: round.failingChecks, gapCodes: round.gapCodes,
+      settingsCheckIds: new Set(decoded.value.configuration.checks.map(check => check.checkId)
+        .filter(id => !startup.has(id))),
+      goalPlanCheckIds,
+    }) };
+  }
+
   async function displayCauses(
     ctx: CoreCallContext, goal: GoalSnapshot, rows: Map<string, TaskRow>,
   ): Promise<CauseReadResult> {
@@ -346,9 +395,18 @@ export function createGoalDecisionCauseReader(
           if (failureRun !== null && !failureRun.ok) return { ok: false, rejection: failureRun.rejection };
           const affected = [taskPin(goal, displayCause.taskId)];
           if (failureRun !== null) affected.push(failureRun.pin);
+          const round = rows.get(displayCause.taskId)?.failure?.round;
+          let withdrawableChecks: readonly string[] | undefined;
+          if (deps.withdrawable !== undefined && WITHDRAWABLE_STOP_CODES.has(displayCause.code) && round != null) {
+            const named = await withdrawableChecksOf(goal, round);
+            if (!named.ok) return { ok: false, rejection: named.rejection };
+            // named.ids 为 null 时 cause() 不带这个字段（条件展开，不写 undefined）。
+            withdrawableChecks = named.ids ?? undefined;
+          }
           causes.push(cause({ goal, code: displayCause.code, action: null, affected,
             taskRef: taskTriple(goal, displayCause.taskId), runRef: failureRun?.runRef ?? null,
-            openedAt: failureRun?.endedAt ?? null }));
+            openedAt: failureRun?.endedAt ?? null,
+            ...(withdrawableChecks === undefined ? {} : { withdrawableChecks }) }));
           break;
         }
       }

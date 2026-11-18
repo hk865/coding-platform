@@ -137,9 +137,11 @@ export function g8Steps(world: S6AHostWorld, scope: WorkspaceScope, label: strin
   };
 }
 
-/** The new granted project, its first plan adopted with `seedChecks` installed by `initialization/adopt`. */
-export async function openG8Project(label: string, seedChecks: G8Check[]) {
-  const world = await openS6AHostWorld({ backend: 'memory', defaultGoals: false, extraHostOptions: { requestDriver: 'on' } });
+/** The new granted project, its first plan adopted with `seedChecks` installed by `initialization/adopt`.
+ *  `scribeReminderPeriodMs`：Host 的提醒周期，默认不传（Host 用 60 秒）。传 25 时 `heartbeat` 一趟就是一轮消费（同 G8B 的世界）。 */
+export async function openG8Project(label: string, seedChecks: G8Check[], scribeReminderPeriodMs?: number) {
+  const world = await openS6AHostWorld({ backend: 'memory', defaultGoals: false, extraHostOptions: { requestDriver: 'on',
+    ...(scribeReminderPeriodMs === undefined ? {} : { scribeReminderPeriodMs }) } });
   const root = await mkdtemp(join(tmpdir(), `${label}-project-`));
   const close = async () => { await world.close(); await rm(root, { recursive: true, force: true }); };
   try {

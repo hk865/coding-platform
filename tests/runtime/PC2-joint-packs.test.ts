@@ -116,6 +116,7 @@ contextResidentBytes: 4096
 
 ## Goal
 goal: r4c-claim-goal
+projectId: r4c-claim-project
 objective: Exercise the atomic claim skeleton
 workspace: r4c-claim-workspace@1
 autonomy: after_plan_confirmation

@@ -169,6 +169,30 @@ describe('C11 (R2): change adoption judges an obligation promoted from optional 
   }, 120_000);
 });
 
+describe('a change that adds a second open required goal gate is refused', () => {
+  // 决定 121-1xx（冻结稿二·R1）：改计划的段没写的旧关口照旧 active；再加一道活动必需目标关口就成了两道，提议记问题、
+  // 采用回 incomplete，活动计划不变。变异：去掉这条检查 -> issues 为空、采用成功。
+  it('propose reports multiple_active_goal_gates; plans/apply is rejected and the active plan stays', async () => {
+    const { main, goal, plan } = await openPlanWorld();
+    const gate: PlanRevisionDraft['tasks'][number] = { taskId: 'cpl-r45-gate', title: 'CPL R45 gate',
+      requirementLevel: 'required', taskKind: 'gate', disposition: 'active', phase: 'pending', scope: { kind: 'goal' } };
+    const obligation: PlanRevisionDraft['obligations'][number] = { obligationId: 'cpl-r45-o', title: 'CPL R45 acceptance',
+      requirementLevel: 'required', taskIds: ['cpl-r45-gate'], verificationRequirements: [{ requirementId: 'cpl-r45-req',
+        requirementLevel: 'required', kind: 'static', description: 'CPL R45 static check' }] };
+    const message = 'the plan has 2 active required goal gates (ag2b-gate, cpl-r45-gate); a plan has exactly one open '
+      + 'goal gate. Keep one: leave out the new gate and let the new obligation list only the new work tasks (an adopted '
+      + 'gate keeps exactly the obligations that list it), or, if the person '
+      + 'changed what the goal must meet, list the adopted gate (ag2b-gate) with its own taskId and disposition '
+      + '"superseded" and replacedByTaskId naming the new gate; a task you leave out of a segment stays as it is and stays active';
+    const draft = plPlanChangeDraft(plan, goal, { planId: 'cpl-r45-change', tasks: [...plan.tasks, gate],
+      assignments: plan.assignments ?? [], obligations: [...plan.obligations, obligation] });
+    const { proposal, applied } = await proposeApply(main, goal, plan.ref, draft, 'r45');
+    expect(proposal.issues).toEqual([{ path: 'tasks', code: 'multiple_active_goal_gates', message }]);
+    expect(applied).toMatchObject({ status: 'rejected', code: 'incomplete', reason: expect.stringContaining(message) });
+    expect(await activePlanOf(main, goal)).toEqual(plan.ref);
+  });
+});
+
 describe('E08: a later revision never adds a task that starts cancelled or superseded', () => {
   // G6 第六次 E08：改计划时模型新造了一个一出生就是已取消的副本，原任务照旧 active，计划自相矛盾。上一版没有这个
   // 任务号、disposition 却是 cancelled 或 superseded（lead 11-17：取代同理），交表和采用共用的 validatePlanDraft 照问题

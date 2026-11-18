@@ -24,7 +24,8 @@ export class Abort extends Error {
  * defaults to 产品规则 or 安全; the reason text is always there verbatim for the lead to re-file.
  */
 const COORDINATION = new Set(['busy', 'revision_conflict', 'idempotency_conflict', 'source_stale', 'capacity']);
-const SAFETY_BASIS = /secret|credential|token|key|sandbox|irreversib|external|不可逆|外部|秘密|密钥|凭据|沙箱/i;
+// lead 11-18（G6 第十一次）：裸 key 会把 “Unrecognized key” 记成安全；只认 API key 这一种说法。
+const SAFETY_BASIS = /secret|credential|token|api[ _-]?keys?|sandbox|irreversib|external|不可逆|外部|秘密|密钥|凭据|沙箱/i;
 const RULE_BASIS = /\brules?\b|requires?|must|not allowed|may not|cannot|规则|必须|只能|不允许|不能|需要/i;
 export function categoryOf(code, reason) {
   if (COORDINATION.has(code)) return '协调';

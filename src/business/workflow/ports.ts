@@ -17,7 +17,8 @@ import type { PlanDiagnosisFindingV1, PlanReviewReadV1 } from '../../contracts/p
 import type {
   PlanFixReadV1, PlanningQuestionGroupV1, TaskbookExportReadPort, TaskbookExportReadV1,
 } from '../../contracts/plan-round.js';
-import type { CheckCapabilityV1, RegisteredCommandCheck } from '../../contracts/verification.js';
+import type { CheckCapabilityV1, RegisteredCommandCheck, RoundSnapshot } from '../../contracts/verification.js';
+import type { FailingCheckOutputV1 } from '../../contracts/check-output.js';
 import type { NotifyProjectInputV1, ProjectNoticeV1 } from '../../contracts/role-lines.js';
 import type { GoalTaskPort } from '../../core/work-graph/model/task-contracts.js';
 import type { TaskRow } from '../../core/work-graph/model/plan-contracts.js';
@@ -192,6 +193,11 @@ export type WorkflowDependencies = {
    */
   readDeviationFacts?: (ctx: CoreCallContext, goalRef: GoalRef, rows?: readonly TaskRow[]) =>
     Promise<ReadResult<DeviationInputV1>>;
+  /**
+   * PL §7.1.1 `stop` 偏差的第五项：一轮里没过的登记检查的命令原文、出处和输出。组合根绑接续说明用的同一处读
+   * （WorkGraph 的 `failingCheckOutputsOf`）。没接（旧的窄替身）就不加这一项，不是空结果。
+   */
+  readFailingCheckOutputs?: (round: RoundSnapshot) => Promise<FailingCheckOutputV1[]>;
   /** Binds the existing Host `resolveUnknownRun`; never a browser input (§3.3). */
   attestUnknownRun?: (
     ctx: CoreCallContext, request: GraphWrite<{ runRef: RunRef; reason: string }>,

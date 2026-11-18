@@ -142,6 +142,8 @@ export type GoalDecisionCauseReadV1 = {
   openedAt: string | null;
   action: DecisionActionV1 | null;
   objects: DecisionObjectV1[]; options: DecisionOptionV1[];
+  /** R2：只在 no_new_basis / auto_rework_cap_reached 原因上，且这一轮没过的都是别的目标或初始化装的项目检查：这些检查的 id。 */
+  withdrawableChecks?: readonly string[];
 };
 
 // ------------------------------------------------------------------------ //
@@ -433,6 +435,11 @@ export type DecisionCardV1 = {
   /** 121-136 A4: present only on a `candidate` card whose plan brings checks — the candidate's stored checks (id,
    *  kind, command, the Tasks they apply to); the person's adoption installs the ones not installed yet. */
   proposedChecks?: readonly RegisteredCommandCheck[];
+  /** R2（lead 11-18）：只在 `goal_cause` 卡上——原因是 no_new_basis 或 auto_rework_cap_reached，这一轮没过的都是这个工作区设置里装的、
+   *  不是这个目标的计划带来的命令检查：这些检查的 id。动作“撤回检查并重新核验”：逐条设置路由 `checks/withdraw`
+   *  （`{ scope, checkId }`，scope 是目标的工作区），再对这个 Task 的链头轮 `verification/reverify`（链头和它的 pin 是 Task 行
+   *  `failure.round` 的 `roundRef`、`revision`）。撤回后配置变了，重新核验不会再判 no_new_basis；只点“重新入队”不行，返工的键里没有配置。 */
+  withdrawableChecks?: readonly string[];
 };
 
 export type NoticeItemV1 = {

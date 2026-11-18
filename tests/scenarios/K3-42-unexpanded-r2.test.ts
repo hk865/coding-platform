@@ -76,8 +76,10 @@ const MODEL_CRASH_UNLIKELY = '模型写：没看到崩溃痕迹';
  * syntax-error package (decision 121-54) adds `python-syntax-input` to the
  * frozen delivery set and one sentence to `record_note`, which used up that
  * margin, so the fill is 700 bytes lower again.
+ * G6 修正包（决定 121-149）让清单多了 32 字节：单跑时审阅下限 262,133，只剩 11 字节，全量环境的路径更长就越过上限，
+ * 所以再低 700（单跑实测：起点工作 258,756、审阅下限 262,101；修正包后 258,788、262,133）。
  */
-const INSTRUCTION_REPEAT = 242_300;
+const INSTRUCTION_REPEAT = 241_600;
 const LONG_INSTRUCTION = 'K3-42 (二) sized instruction: ' + 'x'.repeat(INSTRUCTION_REPEAT);
 
 afterEach(async () => {

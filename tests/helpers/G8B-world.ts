@@ -19,7 +19,7 @@
 import { vi } from 'vitest';
 import type { PlanRoundEndResultV1, PlanTurnFactsV1 } from '../../src/business/workflow/ports.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
-import type { RoleConfigurationRef } from '../../src/contracts/core/identity.js';
+import type { RoleConfigurationRef, WorkspaceScope } from '../../src/contracts/core/identity.js';
 import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { QueryJobRef } from '../../src/contracts/query-job.js';
@@ -28,7 +28,7 @@ import type { DecisionCardV1, NoticeItemV1 } from '../../src/core/work-graph/mod
 import { sessionMessageRefKey } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { waitFor } from '../scenarios/harness.js';
 import { graphWrite } from './AG2b-collaboration-fixture.js';
-import { g8ModelId, g8PlanDraft, g8Steps } from './G8-world.js';
+import { g8ModelId, g8PlanDraft, g8SplitChecks, g8Steps } from './G8-world.js';
 import { heartbeatUntil } from './IV-host-fixture.js';
 import { adoptPLPlanDraft } from './PL-workflow-fixture.js';
 import { initializeProject } from './S6A-history-fixture.js';
@@ -164,6 +164,21 @@ export async function openG8BWorld(label: string) {
       async planRevision(goal: GoalRef): Promise<number | null> {
         return (await ws.activePlan(goal))?.planRevision ?? null;
       },
+      /** 人启动目标：`executor` 回一段文字，`workflow/driver-start` 选 `taskId`；有界地等这个任务的检查轮（40 趟）并读回它，
+       *  等不到就报错（D5、G6R2 T3 共用）。 */
+      async firstCheckRound(goal: GoalRef, executor: S6ASession, taskId: string, text: string) {
+        await world.scripted.script(executor, [{ kind: 'text', text }], steps.scope);
+        await steps.read('workflow/driver-start', { advance: { schemaVersion: 1, goalRef: goal, flowId: `${taskId}-driver`,
+          sessionHint: null, kind: 'select_work', taskId }, queryProfileIds: [] });
+        const planRef = (await steps.read<{ goal: { activePlanRevision: unknown } }>('goals/read', goal)).goal.activePlanRevision;
+        const node = { kind: 'task', ref: { projectId: goal.projectId, goalId: goal.goalId, taskId }, planRef };
+        const look = () => steps.read<{ items: { round: { ref: unknown } }[] }>('graph/look', { goalRef: goal,
+          target: { kind: 'node', node }, relation: 'checks', page: { afterCursor: null, limit: 10 } });
+        const [opened] = (await heartbeatUntil(world, look, found => found.items.length > 0, 40)).items;
+        if (opened === undefined) throw new Error(`G8B: no check round of ${taskId}`);
+        return await steps.read<{ outcome: string; checks: { checkId: string; definition: { command?: string } }[];
+          gaps: { coverage?: { requirementId: string } }[] }>('verification/round', { roundRef: opened.round.ref });
+      },
     };
   } catch (error) {
     await close();
@@ -180,4 +195,14 @@ export function g8bSubjectOf(text: string): Record<string, unknown> {
 export function g8bCheckReview(callId: string, verdicts: { checkId: string; decision: 'approve' | 'to_person';
   reason: string }[]) {
   return { kind: 'calls' as const, calls: [{ callId, name: 'submit_check_review', args: { verdicts } }] };
+}
+
+/** 人 `plans/propose` + `plans/apply` 一份带 `checks` 的计划（G8A：人采用时装上；D5、G6R2 T3 共用）。 */
+export async function adoptWithChecks(world: S6AHostWorld, scope: WorkspaceScope, goal: GoalRef, tag: string,
+  checks: object[]) {
+  const { draft } = g8SplitChecks(g8PlanDraft(goal, tag, G8B_ROLE));
+  const proposed = committed<{ ref: unknown; revision: number }>(await world.post('plans/propose', graphWrite(scope, {
+    goalRef: goal, basedOn: null, draft, checks, reason: { text: tag, sources: [] } }, `${tag}-propose`)), `${tag}: propose`);
+  committed(await world.post('plans/apply', graphWrite(scope, { proposalRef: proposed.ref,
+    expectedProposalRevision: proposed.revision, decisionRefs: [] }, `${tag}-apply`)), `${tag}: the person adopts`);
 }

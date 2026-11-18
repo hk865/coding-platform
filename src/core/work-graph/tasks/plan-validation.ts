@@ -262,6 +262,40 @@ export function validatePlanDraft(draft: PlanDraftView, policy: CompletionPolicy
   return issues;
 }
 
+/** 决定 121-1xx（CPL-3 的“恰好一道目标关口”进校验）：一份计划恰好一道还没了结的活动必需目标关口。改计划的段里没写的
+ *  旧关口照旧 active（合并只替换同号、追加新号，stage-segment.ts:56-58），再加一道新关口就成了两道。源计划原样带过来、
+ *  已了结（满足）的关口不算：已满足的关口处置是终态（TASK-19 守卫 5，G8B B5），已完成的目标接着做时只能保留它、再加
+ *  一道新的。只报这一版比上一版多出来的多道：上一版已经是多道的旧账本不重判。只在有可执行的必需工作时查，和“缺目标
+ *  关口”同一范围；首版交表的 `PlanForm` 没有 `planId`，source 为 null 时不交给增量判定。 */
+export function goalGateCountIssue(draft: PlanRevisionDraft | PlanDraftView, source: PlanRevisionSnapshot | null,
+  terminalTaskIds: ReadonlySet<string>): PlanValidationError | null {
+  const tasks: readonly PlanTaskView[] = draft.tasks;
+  const executableRequiredWork = tasks.some((task) => task.requirementLevel === 'required'
+    && task.taskKind === 'work' && task.disposition === 'active' && task.executionIntent !== 'plan_only');
+  if (!executableRequiredWork) return null;
+  const closed = source === null || !('planId' in draft) ? new Set<string>()
+    : unchangedTerminalTaskIds(source, draft, terminalTaskIds);
+  const activeGoalGates = (members: readonly PlanTaskView[]): PlanTaskView[] => members.filter((task) =>
+    task.requirementLevel === 'required' && task.taskKind === 'gate' && task.disposition === 'active'
+    && task.scope.kind === 'goal' && !closed.has(task.taskId));
+  const now = activeGoalGates(tasks);
+  const before = activeGoalGates(source?.tasks ?? []);
+  if (now.length <= 1 || now.length <= before.length) return null;
+  const rule = `the plan has ${now.length} active required goal gates (${now.map((task) => task.taskId).join(', ')}); `
+    + 'a plan has exactly one open goal gate';
+  // 没有还没了结的已采用目标关口（首版，或源计划的目标关口都已了结）：没有可放验收、可取代的旧关口，只写这一句。
+  if (before.length === 0) return planValidationError('tasks', 'multiple_active_goal_gates', rule);
+  const adoptedIds = new Set(before.map((task) => task.taskId));
+  const adopted = tasks.filter((task) => adoptedIds.has(task.taskId)).map((task) => task.taskId).join(', ');
+  // 带条件：人没有明确改目标要满足的东西时保留关口，只有人改了才把旧关口标成 superseded（P2 原文）。新义务不挂到已采用的
+  // 关口上：关口冻结（validateFutureObligationCoverage）只许已采用关口带着原来那几条义务。
+  return planValidationError('tasks', 'multiple_active_goal_gates', `${rule}. Keep one: leave out the new gate and let `
+    + 'the new obligation list only the new work tasks (an adopted gate keeps exactly the obligations that list it), '
+    + 'or, if the person changed what the goal must meet, list the adopted gate '
+    + `(${adopted}) with its own taskId and disposition "superseded" and replacedByTaskId naming the new gate; `
+    + 'a task you leave out of a segment stays as it is and stays active');
+}
+
 /**
  * Every required verification requirement needs, on each active Task its obligation maps, a check of its kind that
  * applies to that Task's round, or that round could never pass it and the plan could never complete. The coverage is
@@ -827,7 +861,9 @@ export function validateFutureObligationCoverage(input: {
       issues.push(planValidationError(`tasks[${task.taskId}]`, 'gate_definition_changed',
         `source gate task ${task.taskId} changed its definition or acceptance relationships: an adopted gate keeps `
         + 'its definition and exactly the obligations that list it, with their content. Leave the gate and those '
-        + 'obligations as adopted; a new obligation lists the new work tasks and, when it needs a gate, a new gate task. '
+        + 'obligations as adopted; a new obligation lists the new work tasks and, when it needs a gate, a new gate task '
+        + `(a new stage's own gate, or a new goal gate only when no goal gate is still open: a plan keeps exactly one `
+        + 'open goal gate). '
         + 'Only a plan the person adopts may supersede a gate: mark it superseded with replacedByTaskId naming a new '
         + 'gate task that carries a new obligation'));
     }
@@ -991,7 +1027,8 @@ function untracedFacts(taskId: string): TracedTaskFactsV1 {
  * its unchanged-terminal exemption) against the current catalog the propose reads and, for a first plan, against the
  * catalog governance selected, which the first adoption reads. Acceptance is judged as a person adopts (the request's
  * candidate is the person's), so the guard a system adopter alone meets (guard 9) is the adoption's. The adoption
- * judges everything again.
+ * judges everything again. 决定 121-1xx（lead 裁定 E08 C）：交表时守卫 1、2、2b 和 4 的后半（执行还没停稳）留给采用时判，
+ * 守卫 3（挂着没收的让出等待）交表时照判。
  */
 export function planRoundAnswerIssues(input: {
   plan: InitialPlanningResponsePlanV2;
@@ -1043,13 +1080,15 @@ export function planRoundAnswerIssues(input: {
     if (trace !== null) reasons.push(trace.detail);
     const traced = tracedDispositionChangeProblem({ goalDesiredState: base.goalDesiredState,
       tasks: executionFactsOf(delta.delta.dispositionOnlyTaskIds), affectedTaskIds: input.affectedTaskIds,
-      adopterClass: 'human', changes: delta.delta.dispositionChanges,
+      adopterClass: 'human', changes: delta.delta.dispositionChanges, deferBusy: true,
       taskKinds: new Map(base.plan.tasks.map((task) => [task.taskId, task.taskKind])) });
     if (traced !== null) reasons.push(traced.detail);
   }
+  const gateCount = goalGateCountIssue(draft, base?.plan ?? null, new Set(base?.terminalTaskIds ?? []));
   for (const issue of [...validatePlanDraft(draft, policy, base?.plan ?? null), ...uncoveredRequirementIssues(
     { tasks: draft.tasks, obligations: judged },
-    { checks, checksAt: 'installed', policyKinds: policy?.requirementKinds ?? null })]) {
+    { checks, checksAt: 'installed', policyKinds: policy?.requirementKinds ?? null }),
+  ...(gateCount === null ? [] : [gateCount])]) {
     reasons.push(rendered(issue));
   }
   reasons.push(...validatePlanAssignments(draft));

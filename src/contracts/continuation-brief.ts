@@ -19,11 +19,16 @@ import type { SessionRef } from './core/identity.js';
 import type { SessionMessageRef } from './core/session-message.js';
 import type { SessionAnomalyAnchorV1 } from './session-anomaly.js';
 import type { ControlIntentRef } from './control-intent.js';
+import { CHECK_OUTPUT_COMMAND_CHARS, type FailingCheckOutputV1 } from './check-output.js';
+import { checkBaselineProblem } from './check-review.js';
+import { defineShape, f } from './data-format.js';
+import { PlanProposalRefShape, QueryJobAnswerRefShape } from './data-format-refs.js';
 import type { RunOutcome, RunRef, TaskAttemptRef, TaskTriple } from './dispatch.js';
 import { EVIDENCE_OUTCOMES } from './evidence.js';
 import { canonicalJson, sha256Hex, type JsonValue } from './fingerprint.js';
 import { CONTINUATION_BRIEF_LIMITS } from './continuation-brief-base.js';
 import { nonEmpty } from './validation/common.js';
+import { checkShape } from './validation/data-format.js';
 import type { RunFailureOrigin } from './no-progress.js';
 import type { FailingCheckFactV1 } from './task-failure.js';
 import type {
@@ -40,6 +45,10 @@ import { ROUND_CHECK_INCOMPLETE_CAUSES, type VerificationRoundRef } from './veri
 // ------------------------------------------------------------------------ //
 /** 截过的文字（上限由用的地方定：续接简报按 `CONTINUATION_BRIEF_LIMITS.textChars`，Run 步骤按字节）；`truncated` 说有没有截。 */
 export type BoundedTextV1 = { text: string; truncated: boolean };
+/** 这个契约的截法：前 `cap` 个 UTF-16 单位，截了就标 `truncated`。接续说明的装配和没过的检查的输出共用。 */
+export function boundedTo(text: string, cap: number): BoundedTextV1 {
+  return text.length > cap ? { text: text.slice(0, cap), truncated: true } : { text, truncated: false };
+}
 /** E09F：接续说明里审阅依据的上限（字符）。依据本身至多 4 KiB，全文在审查报告里（`failing[].reportRef`）。 */
 export const CONTINUATION_REVIEW_BASIS_CHARS = 2000;
 /** Whether the workspace source changed between two persisted checkpoints. */
@@ -239,9 +248,11 @@ export type ContinuationBriefV1 = {
   /**
    * The previous Run's chain head. E09F：审查没过时 `failing` 里有审查项，`reviewBasis` 是审查员写的依据
    * （截到 `CONTINUATION_REVIEW_BASIS_CHARS`）；没有审查或审查通过时没有这个成员。
+   * `outputs` 是这一轮没过的登记检查的命令原文、出处和输出（照原样，按 checkId 排）；一条都没有时没有这个成员，
+   * 旧接续说明的字节和摘要不变。
    */
   checks: { roundRef: VerificationRoundRef; roundOrdinal: number; failing: FailingCheckFactV1[]; gapCodes: string[];
-    reviewBasis?: BoundedTextV1 } | null;
+    reviewBasis?: BoundedTextV1; outputs?: FailingCheckOutputV1[] } | null;
   requeue: { reason: BoundedTextV1; reasonAuthor: ReworkActorClass; newInputs: ContinuationNewInputV1[] };
   /** Best effort; never claims "no change" for a window it could not observe. */
   workspace: {
@@ -627,7 +638,7 @@ function acceptedInputsProblem(value: unknown): Problem {
 function checksProblem(value: unknown): Problem {
   if (value === null) return null;
   const path = 'continuationBrief.checks';
-  const checks = exact(value, path, ['roundRef', 'roundOrdinal', 'failing', 'gapCodes'], ['reviewBasis']);
+  const checks = exact(value, path, ['roundRef', 'roundOrdinal', 'failing', 'gapCodes'], ['reviewBasis', 'outputs']);
   if (typeof checks === 'string') return checks;
   return roundRef(checks['roundRef'], `${path}.roundRef`)
     ?? (Number.isSafeInteger(checks['roundOrdinal']) && (checks['roundOrdinal'] as number) >= 1
@@ -635,7 +646,36 @@ function checksProblem(value: unknown): Problem {
     ?? list(checks['failing'], `${path}.failing`, null, failingCheckProblem)
     ?? list(checks['gapCodes'], `${path}.gapCodes`, null, (entry, at) => (nonEmpty(entry) ? null : `${at} must be a non-empty string`))
     ?? (checks['reviewBasis'] === undefined ? null
-      : boundedTextWithin(checks['reviewBasis'], `${path}.reviewBasis`, CONTINUATION_REVIEW_BASIS_CHARS));
+      : boundedTextWithin(checks['reviewBasis'], `${path}.reviewBasis`, CONTINUATION_REVIEW_BASIS_CHARS))
+    ?? (checks['outputs'] === undefined ? null : list(checks['outputs'], `${path}.outputs`, null, failingCheckOutputProblem));
+}
+/** 检查出处（`InstalledCheckOriginV1`）的字段表，写法同 `InitializationSourceShape`。 */
+const InstalledCheckOriginShape = defineShape({ name: 'InstalledCheckOriginV1', fields: {
+  origin: f.nullable(f.union('kind', {
+    approved_list: { kind: f.literal('approved_list'), answerRef: f.ref(QueryJobAnswerRefShape) },
+    plan: { kind: f.literal('plan'), proposalRef: f.ref(PlanProposalRefShape),
+      approvedBy: f.enumOf(['person', 'adviser', 'reviewer']) },
+    startup: { kind: f.literal('startup') },
+  })),
+} });
+const CHECK_OUTPUT_KEYS = ['checkId', 'kind', 'command', 'taskIds', 'origin', 'observed', 'unreadable'] as const;
+/** 一条没过的检查的输出（`FailingCheckOutputV1`）的结构检查：读到观察时 `unreadable` 是 null，读不到时写原因。 */
+export function failingCheckOutputProblem(value: unknown, path: string): string | null {
+  const output = exact(value, path, CHECK_OUTPUT_KEYS);
+  if (typeof output === 'string') return output;
+  const taskIds = output['taskIds'];
+  const shape = (nonEmpty(output['checkId']) ? null : `${path}.checkId must be a non-empty string`)
+    ?? inList(output['kind'], ['static', 'dynamic'], `${path}.kind`)
+    ?? boundedTextWithin(output['command'], `${path}.command`, CHECK_OUTPUT_COMMAND_CHARS)
+    ?? (taskIds === 'all' ? null
+      : list(taskIds, `${path}.taskIds`, null, (entry, at) => (nonEmpty(entry) ? null : `${at} must be a non-empty string`)))
+    ?? checkShape(InstalledCheckOriginShape, { origin: output['origin'] }, 'stored');
+  if (shape !== null) return shape;
+  if (output['observed'] === null) {
+    return nonEmpty(output['unreadable']) ? null : `${path}.unreadable must say why the report was not read`;
+  }
+  return checkBaselineProblem(output['observed'])
+    ?? (output['unreadable'] === null ? null : `${path}.unreadable must be null when the report was read`);
 }
 function failingCheckProblem(value: unknown, path: string): Problem {
   const check = exact(value, path, ['checkId', 'phase', 'outcome', 'cause', 'reportRef']);

@@ -418,7 +418,7 @@ it('a newly added obligation and gate use the source policy pin and preserve old
 
     const draft = futureDraftFrom(f.plan, 'w2-obligation-plan', (base) => ({
       ...base,
-      tasks: [...base.tasks, gateNode('gate-extra', 'New acceptance gate')],
+      tasks: [...base.tasks, { ...gateNode('gate-extra', 'New acceptance gate'), requirementLevel: 'optional' }],
       obligations: [...base.obligations,
         { obligationId: 'o-extra', title: 'Extra acceptance', requirementLevel: 'required',
           taskIds: ['implement-b', 'gate-extra'],
@@ -445,7 +445,7 @@ it('a newly added obligation and gate use the source policy pin and preserve old
     if (applied.status !== 'committed') throw new Error('new obligation/gate adoption did not commit');
     expect(applied.value.effectiveCompletionPolicy).toEqual(f.plan.effectiveCompletionPolicy);
     expect(applied.value.obligations.filter((obligation) => obligation.obligationId !== 'o-extra')).toEqual(f.plan.obligations);
-    expect(applied.value.tasks.find((task) => task.taskId === 'gate-extra')).toEqual(gateNode('gate-extra', 'New acceptance gate'));
+    expect(applied.value.tasks.find((task) => task.taskId === 'gate-extra')).toEqual({ ...gateNode('gate-extra', 'New acceptance gate'), requirementLevel: 'optional' });
     const sourcePolicyKey = canonicalJson(f.plan.effectiveCompletionPolicy.ref as unknown as JsonValue);
     const activePointerKey = canonicalJson({ aggregateType: 'ProjectCompletionPolicyActive',
       projectId: f.scope.projectId } as unknown as JsonValue);

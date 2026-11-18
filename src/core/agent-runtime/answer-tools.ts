@@ -67,8 +67,8 @@ import type { PlanTaskPort } from '../work-graph/model/plan-contracts.js';
 import { ideasIssues } from '../work-graph/model/request-ideas.js';
 import { goalCardDraftCheck, parseSecretaryAnswer, planDraftIndexOf } from '../work-graph/queries/secretary-answer.js';
 import {
-  planModuleIssues, planRoundAnswerIssues, uncoveredRequirementIssues, unsupportedDependencyIssues, validatePlanAssignments,
-  validatePlanDraft,
+  goalGateCountIssue, planModuleIssues, planRoundAnswerIssues, uncoveredRequirementIssues, unsupportedDependencyIssues,
+  validatePlanAssignments, validatePlanDraft,
 } from '../work-graph/tasks/plan-validation.js';
 import { unservedRoles } from '../work-graph/tasks/initialization-adoption-service.js';
 import { completionPolicyContentProblem } from '../work-graph/configuration/project-bootstrap-record-codecs.js';
@@ -759,9 +759,11 @@ export function answerProblems(
     }
     // Adoption installs this answer's setup.checks as the workspace's checks (`initialization-adoption.ts` checks
     // stage), so they are the list each required requirement must find its kind in.
+    const gateCount = goalGateCountIssue(plan, null, new Set());
     for (const issue of [...validatePlanDraft(plan, policy, null),
       ...uncoveredRequirementIssues(plan, { checks: checkCapabilitiesOf(setup.checks), checksAt: 'setup.checks',
-        policyKinds: policy?.requirementKinds ?? null })]) {
+        policyKinds: policy?.requirementKinds ?? null }),
+      ...(gateCount === null ? [] : [gateCount])]) {
       problems.push({ section: 'plan', reason: issue.message });
     }
     for (const reason of validatePlanAssignments(plan)) {

@@ -200,12 +200,13 @@ async function adoptedWorld(): Promise<{ world: S6AHostWorld; a: S6ASession }> {
   return { world, a };
 }
 
-/** One request with three ideas and the selection of idea 1 that queues its follow-up. */
-async function requestedWithSelection(world: S6AHostWorld, session: S6ASession, tag: string) {
+/** One request with three ideas and the selection of idea 1 that queues its follow-up (answered with `form`). */
+async function requestedWithSelection(world: S6AHostWorld, session: S6ASession, tag: string,
+  form: PlanForm = planForm(tag, `${tag} instruction`)) {
   const ideas = threeIdeas(tag);
   await world.scripted.script(session, [
     { kind: 'text', text: secretaryAnswer({ body: `${tag} ideas`, ideas }) },
-    planCall(`${tag}-plan`, `${tag} summary`, planForm(tag, `${tag} instruction`)),
+    planCall(`${tag}-plan`, `${tag} summary`, form),
   ]);
   const first = await submitRound(world, newRequest(`${tag}-request`, session, `${tag} question`));
   await waitForRound(world, first.requestRoot, first.round, 'ended');
@@ -552,7 +553,9 @@ describe('SEC (121-112): the secretary arranges a small request directly', () =>
 
   it('SEC-4: a plan round after a selected idea writes a candidate that still waits for the person', async () => {
     const { world, a } = await adoptedWorld();
-    const { first, followup } = await requestedWithSelection(world, a, 'sec-4');
+    // 决定 121-1xx：一份计划恰好一道还没了结的目标关口。跟进的规划轮只交一个新工作任务，目标关口照旧是 v1 已采用的
+    // sec-base-gate，不另加一道（另加一道的段交表时就被拒，写不出候选）。
+    const { first, followup } = await requestedWithSelection(world, a, 'sec-4', segmentForm('sec-4', 1));
     const head = await waitForCandidate(world, first.requestRoot);
     expect(await planTurnEntry(world)!.call(world.platform.workflow, world.humanContext(),
       turnOf(await jobOf(world, followup), first.requestRoot))).toEqual({ status: 'done' });

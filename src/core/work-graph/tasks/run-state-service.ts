@@ -91,6 +91,7 @@ import type {
   TaskExecutionPage,
 } from '../model/execution-read-contracts.js';
 import { trustedContextOf } from './trusted-context.js';
+import { failingCheckOutputsOf } from './check-outputs.js';
 
 const TASK_LEASE_SCHEMA_ID = 'TaskLeaseSnapshot@1';
 /** Bounded final-window retries before a read is reported `busy`. */
@@ -830,6 +831,8 @@ ExecutionReadPort & Required<Pick<ExecutionReadPort, 'listExecutions'>> {
     };
     const roundReview = await reviewOf(round);
     if (roundReview !== null && 'status' in roundReview) return roundReview;
+    // 这一轮没过的登记检查的命令和输出，照原样带给返工的执行者；和审查结论一样，每一跳的轮次也读。
+    const roundCheckOutputs = round === null ? [] : await failingCheckOutputsOf(round, deps);
 
     // The bounded bodies of the requeue's own new inputs.
     const newInputBodies: ContinuationBasis['newInputBodies'] = [];
@@ -884,7 +887,9 @@ ExecutionReadPort & Required<Pick<ExecutionReadPort, 'listExecutions'>> {
       }
       const ancestorReview = await reviewOf(ancestorRound);
       if (ancestorReview !== null && 'status' in ancestorReview) return ancestorReview;
-      factsChain.push({ requeue: cursorRequeue, run: ancestor.value, round: ancestorRound, roundReview: ancestorReview });
+      const ancestorCheckOutputs = ancestorRound === null ? [] : await failingCheckOutputsOf(ancestorRound, deps);
+      factsChain.push({ requeue: cursorRequeue, run: ancestor.value, round: ancestorRound, roundReview: ancestorReview,
+        roundCheckOutputs: ancestorCheckOutputs });
       cursor = ancestor.value;
     }
 
@@ -897,7 +902,8 @@ ExecutionReadPort & Required<Pick<ExecutionReadPort, 'listExecutions'>> {
     if (pending.status !== 'ready') return pending;
     later(pending.readThrough);
     return { status: 'ready', value: { run, requeue, allRequeues, previous: previous.value,
-      previousIntents: { pointer, steers }, previousWait, round, roundReview, newInputBodies, replyBodies, factsChain, readThrough,
+      previousIntents: { pointer, steers }, previousWait, round, roundReview, roundCheckOutputs, newInputBodies, replyBodies,
+      factsChain, readThrough,
       pendingAnomalies: pending.anchors, unknownCallReview } };
   };
   return { readExecution, listExecutions, readContinuationBasis };

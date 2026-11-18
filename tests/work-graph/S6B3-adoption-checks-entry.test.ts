@@ -23,6 +23,7 @@ import type {
 import { canonicalJson, sha256Hex, type JsonValue } from '../../src/contracts/fingerprint.js';
 import { parseInitialPlanningResponseV2 } from '../../src/contracts/initial-planning-parse.js';
 import { readBootstrap, plain } from '../helpers/AG2b-collaboration-fixture.js';
+import { s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
 import {
   callS6B3LateRoute, callS6B3PublishedOwner, configureS6B3SecondWorkspace, disposeS6B3SettingsWrapper,
   holdS6B3PreparedGoalAnswer, installS6B3SettingsSpy, openS6B3World, settingsWithChecks,
@@ -478,6 +479,25 @@ describe('the narrow checks entry (row 36a, own copy)', () => {
     }]);
     expect(await savedChecks(reopened))
       .toMatchObject({ status: 'ready', value: { checks: [], checksRevision: 1, child: null } });
+  });
+
+  /** R2 T4。这一行守什么改坏：已批准清单的单条照旧回 `not_found`（撤回红）；留痕解析不认 `answer`（重开报
+   *  “the private host settings file is invalid”）。两条检查的清单要一份新回答，所以另起一个目标。 */
+  it('keeps one withdrawn check of the approved list out through a real reopen', async () => {
+    const goal = (await s6aCardsWorkspace(world.host, scope).createGoal('s6b3-goal-t4', 'S6B3 T4 goal')).ref;
+    const listed = await saveAnswer(world, scope, goal, [CHECK, { ...CHECK, checkId: 's6b3-check-unit-2' }], 't4');
+    const harness = await createHarness();
+    const approved = await harness.settings.call('checks/approve', { scope, answerRef: listed.ref, checks: [...listed.checks] });
+    expect(approved.status).toBe('ready');
+    const withdrawn = await harness.settings.call('checks/withdraw', { scope, checkId: CHECK.checkId });
+    expect(withdrawn.status, JSON.stringify(withdrawn)).toBe('ready');
+    const snapshot = await (await createHarness({ directory: harness.directory })).settings.call('snapshot', {});
+    expect(snapshot.status, 'the real reopen').toBe('ready');
+    const entry = snapshot.status === 'ready'
+      ? snapshot.value.workspaces.find(item => item.scope.workspaceId === scope.workspaceId) : undefined;
+    expect(entry?.checks?.map(item => item.checkId), 'the remaining approved check').toEqual(['s6b3-check-unit-2']);
+    expect(entry?.withdrawnChecks, 'the trace survives the reopen: the answer only (no plan, no digest)')
+      .toEqual([{ checkId: CHECK.checkId, withdrawnAt: expect.any(String), answerRef: listed.ref }]);
   });
 });
 

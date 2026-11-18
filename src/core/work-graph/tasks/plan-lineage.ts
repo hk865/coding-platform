@@ -58,7 +58,7 @@ export type CandidateSourceLineV1 = {
 };
 
 /** G8B B5：卡上引用人的原话最多这么多字。 */
-const PERSON_WORDS_MAX = 1_000;
+export const PERSON_WORDS_MAX = 1_000;
 
 /** 读作者用的口：消息沿用来源链的邮箱口，请求候选读请求的主人。 */
 export type CandidateSourceLineDeps = Pick<PlanSourceLineageDeps, 'messages'> & {

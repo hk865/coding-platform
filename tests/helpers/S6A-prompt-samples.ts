@@ -64,7 +64,7 @@ export const SECRETARY_ROUND_TEMPLATE_V1 =
   '{{prelude}}\n\n{{role}}{{goal}}{{notes}}{{task_round}}{{task_batched}}{{task_earlier}}';
 
 /** The platform pack's versions of the two secretary templates (the answer mentions no tool at pack level). */
-export const SECRETARY_TEMPLATE_VERSIONS = { 'secretary-round': 2, 'secretary-answer': 10 } as const;
+export const SECRETARY_TEMPLATE_VERSIONS = { 'secretary-round': 2, 'secretary-answer': 11 } as const;
 
 /** `secretary-answer.txt` rendered for a `semantic_query` round: its one submit block. */
 export const SECRETARY_ANSWER_FORMAT_V1 =
@@ -462,7 +462,7 @@ export type SampleGoalPayload = {
  * `goalPayload` (context-fact-text.ts:180): goal, objective, workspace, autonomy and the current understanding: the
  * project row (whole body), the goal row, the norms, the omitted line (`notesGoalText`, :164).
  */
-export function goalPayloadText(workspace: { workspaceId: string; revision: number }, goal: SampleGoalPayload): string {
+export function goalPayloadText(workspace: { projectId: string; workspaceId: string; revision: number }, goal: SampleGoalPayload): string {
   const understanding = [
     ...(goal.projectUnderstanding === null ? [] : [projectUnderstandingLine(goal.projectUnderstanding)]),
     goalUnderstandingLine(goal.goalId, goal.goalUnderstanding),
@@ -471,6 +471,7 @@ export function goalPayloadText(workspace: { workspaceId: string; revision: numb
   ];
   return [
     `goal: ${goal.goalId}`,
+    `projectId: ${workspace.projectId}`,
     `objective: ${goal.objective}`,
     `workspace: ${workspace.workspaceId}@${String(workspace.revision)}`,
     `autonomy: ${goal.autonomy}`,

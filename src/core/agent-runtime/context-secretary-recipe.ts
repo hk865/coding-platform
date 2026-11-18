@@ -39,7 +39,7 @@ import type {
 } from '../work-graph/model/secretary-contracts.js';
 import {
   annotations, effectiveDuty, goalPayload, notImplementedExtensions, noteSourcesOf,
-  optionalRowsFromExtensions, rolePayload, topLevelModuleCards, understandingLine, withNoteVersion,
+  optionalRowsFromExtensions, queryPlanSummary, rolePayload, topLevelModuleCards, understandingLine, withNoteVersion,
   type RolePayloadPermissionsV1 } from './context-fact-text.js';
 import { takesSessionHistoryOf } from './context-history-facts.js';
 import {
@@ -368,7 +368,12 @@ export async function assembleSecretaryContext(
   const source = effectiveGoalId === null ? secretary.request.interventionSource : null;
   const sourceLine = source === null ? '' : `${packString(texts, 'secretary.interventionSource')} ${goalLabel(source.goalRef.goalId,
     secretary.goals.find((entry) => entry.goalId === source.goalRef.goalId)?.ordinal ?? null)}\n`;
-  const taskRoundSection = `${handoffSection === null ? '' : `${handoffSection}\n\n`}`
+  // 决定 121-1xx：改需求的规划轮在任务段开头列出现行计划，和 Query 规划轮的任务段同一份 queryPlanSummary
+  // （context-query-recipe.ts:183-184）。段里不写的任务照旧 active，模型要先知道现行计划有哪些任务，才写得出取消或取代；
+  // 读图被拒时它就只能凭记忆。
+  const planSection = input.planRound === true && input.facts.focusPlan !== null
+    ? `${queryPlanSummary(input.facts.focusPlan, texts)}\n\n` : '';
+  const taskRoundSection = `${planSection}${handoffSection === null ? '' : `${handoffSection}\n\n`}`
     + `${packString(texts, 'secretary.roundHeading')}\n${sourceLine}`
     + `${roundMaterial(secretary.request.round, texts, input.toolNames)}\n\n${answerFormat}`;
   const taskBatchedSection = secretary.request.batch.length === 0

@@ -161,8 +161,16 @@ async function run(ctx, rec) {
       else rec.pass('old-evidence', text);
     }
   }
-  rec.check('required-cancel', div !== undefined && div.effectivePhase === 'satisfied' && !completedWhileDivOpen && done.display.phase === 'COMPLETED',
-    `最后 ${done.display.phase}；div ${div?.effectivePhase ?? '不存在'}；div 缺失或没满足时出现过 COMPLETED：${completedWhileDivOpen}`);
+  // lead 11-18：采用的改目标版本里没有被拿掉的必需任务时，这条判据没有对象，记 not-run，不空过。
+  const adoptedBody = await host.client.read('tasks/query', project.scope, { goalRef, planRef: adoptedPlan });
+  const adoptedGraph = ready(adoptedBody);
+  const removed = (adoptedGraph?.tasks ?? []).filter(task => task.definition?.taskKind === 'work'
+    && task.definition?.requirementLevel === 'required' && ['cancelled', 'superseded'].includes(task.disposition));
+  if (adoptedGraph === null) rec.uncover('required-cancel', 'env-unavailable', `tasks/query ${adoptedPlan.planId}：${adoptedBody?.status ?? 'no answer'} ${adoptedBody?.code ?? ''}`);
+  else if (removed.length === 0) {
+    rec.uncover('required-cancel', 'not-run', `采用的版本 ${adoptedPlan.planId} 里没有被取消或接替的必需任务（sub ${sub === undefined ? '不在' : sub.disposition}），这条判据没有对象`);
+  } else rec.check('required-cancel', div !== undefined && div.effectivePhase === 'satisfied' && !completedWhileDivOpen && done.display.phase === 'COMPLETED',
+    `被拿掉的必需任务 ${removed.map(task => task.ref.taskId).join(', ')}；最后 ${done.display.phase}；div ${div?.effectivePhase ?? '不存在'}；div 缺失或没满足时出现过 COMPLETED：${completedWhileDivOpen}`);
 }
 
 export default { ...def, run };

@@ -5,9 +5,11 @@
  * Red today (fa5bc8e0): `query-preparation.ts` exports no `adviserMemberRound` (typecheck red, the SBX-09 precedent);
  * green when ADVQ lands. Mutations: no duty condition reds the secretary and executor cells; a reversed shape list
  * (`!== 'exec_review'`) reds `plan_review`; no execution-kind condition reds `role_exploration` and `semantic_query`.
+ *
+ * R7（B20）：执行者 `plan_round` 一格守“`create_member` 也给了执行者”；`executorPlanRound` 表：不看 duty 红参谋格，不看形状红 null 格，不看执行种类红 `role_exploration` 格。
  */
 import { describe, expect, it } from 'vitest';
-import { adviserMemberRound } from '../../src/core/agent-runtime/query-preparation.js';
+import { adviserMemberRound, executorPlanRound } from '../../src/core/agent-runtime/query-preparation.js';
 
 describe('ADVQ-P: which Query round keeps create_member for the adviser', () => {
   it.each([
@@ -16,6 +18,7 @@ describe('ADVQ-P: which Query round keeps create_member for the adviser', () => 
     ['intervention_planning', null, 'secretary', false],
     ['intervention_planning', 'plan_round', 'secretary', false],
     ['intervention_planning', null, 'executor', false],
+    ['intervention_planning', 'plan_round', 'executor', false],
     ['intervention_planning', 'exec_review', 'adviser', false],
     ['intervention_planning', 'plan_review', 'adviser', false],
     ['intervention_planning', 'unknown_call_advice', 'adviser', false],
@@ -23,5 +26,16 @@ describe('ADVQ-P: which Query round keeps create_member for the adviser', () => 
     ['semantic_query', null, 'adviser', false],
   ] as const)('%s, shape %s, duty %s -> %s', (executionKind, shape, duty, expected) => {
     expect(adviserMemberRound({ executionKind, shape, duty })).toBe(expected);
+  });
+});
+
+describe('R7-P: the executor intervention planning round has no note tool', () => {
+  it.each([
+    ['intervention_planning', 'plan_round', 'executor', true],
+    ['intervention_planning', 'plan_round', 'adviser', false],
+    ['intervention_planning', null, 'executor', false],
+    ['role_exploration', 'plan_round', 'executor', false],
+  ] as const)('%s, shape %s, duty %s -> %s', (executionKind, shape, duty, expected) => {
+    expect(executorPlanRound({ executionKind, shape, duty })).toBe(expected);
   });
 });

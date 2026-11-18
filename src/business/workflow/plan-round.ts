@@ -116,7 +116,8 @@ export function systemRoundSendInput(input: {
  * round gets `exec_review`; every other reviewer round stays `plan_review`.
  * The adviser's `ucr:` round (a Host system round only) gets
  * `unknown_call_advice`, and its `crr:` round `command_rerun_advice`; a human's
- * same text stays `plan_round`. 121-112: the scribe's `scr:` round (a Host
+ * same text stays `plan_round`, and a human's `action_request` to an executor
+ * line is also `plan_round` (B20). 121-112: the scribe's `scr:` round (a Host
  * system round only) gets `scribe_review`.
  */
 export function planningAnswerShapeOf(
@@ -143,7 +144,8 @@ export function planningAnswerShapeOf(
     return duty === 'adviser' || duty === 'secretary' ? 'plan_round' : 'text';
   }
   if (sender.kind === 'host' && sender.actor.kind === 'human') {
-    return duty === 'adviser' || duty === 'secretary' ? 'plan_round' : 'text';
+    // B20：没有任务的活跃目标，人发给执行者线的直接干预在这条线上开规划轮，回答带完整计划草稿。
+    return duty === 'adviser' || duty === 'secretary' || duty === 'executor' ? 'plan_round' : 'text';
   }
   if (sender.kind === 'work_run' || sender.kind === 'secretary_round') {
     return duty === 'adviser' || duty === 'secretary' ? 'plan_round' : 'text';

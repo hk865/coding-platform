@@ -6,6 +6,8 @@
  *
  * K3L-2 §3 R5 (decisions 121-109/121-110): the `ucr:` round's request id, its platform-written `subject:` line and
  * its `taskRef`; all three are red today (`unknown_call` is not a round yet) and green when K3L-2 §2.2/§2.3 lands.
+ *
+ * R7（B20）：`person to an executor` 守人发给执行者线的干预是 `plan_round`；`work run to an executor` 守只改人这一支。
  */
 import { describe, expect, it } from 'vitest';
 import {
@@ -220,6 +222,8 @@ describe('planningAnswerShapeOf: sender identity plus recipient duty (§5.2.7 (2
     { name: 'system round to an executor', sender: systemRound, intent: 'action_request', duty: 'executor', expected: 'text' },
     { name: 'overlap-note host system sender with another id', sender: otherSystem, intent: 'action_request', duty: 'adviser', expected: 'text' },
     { name: 'person to the adviser', sender: person, intent: 'action_request', duty: 'adviser', expected: 'plan_round' },
+    { name: 'person to an executor', sender: person, intent: 'action_request', duty: 'executor', expected: 'plan_round' },
+    { name: 'work run to an executor', sender: { kind: 'work_run' }, intent: 'action_request', duty: 'executor', expected: 'text' },
     { name: 'person to the reviewer', sender: person, intent: 'action_request', duty: 'reviewer', expected: 'text' },
     { name: 'work run to the secretary', sender: { kind: 'work_run' }, intent: 'action_request', duty: 'secretary', expected: 'plan_round' },
     { name: 'secretary round to the adviser', sender: { kind: 'secretary_round' }, intent: 'action_request', duty: 'adviser', expected: 'plan_round' },

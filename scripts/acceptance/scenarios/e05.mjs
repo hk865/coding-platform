@@ -152,7 +152,7 @@ async function run(ctx, rec) {
   let gateSeen = null;
   let released = null;
   const firstSeen = new Map();
-  const display = await waitGoal(ctx, project, goal.ref, { timeoutMs: 150 * MINUTE, rec, onPoll: async () => {
+  const display = await waitGoal(ctx, project, goal.ref, { timeoutMs: 150 * MINUTE, rec, returnOnDecide: true, onPoll: async () => {
     // Second review #6: plant only after both Tasks have really started (each has a Run with a start time), and count
     // it planted only when every save was taken.
     const runs = await executions(project, goal.ref);
@@ -183,6 +183,8 @@ async function run(ctx, rec) {
     }
   } });
   rec.note(`E05 Goal ended ${display.display.phase}`);
+  rec.facts.stoppedFor = display.stoppedFor;
+  if (display.stoppedFor !== null) rec.note(`E05 目标停下等人：${display.stoppedFor}`);
 
   const runs = await executions(project, goal.ref);
   for (const item of runs) { rec.link('run', item.run.ref, null); rec.link('session', item.outbox?.claim?.sessionRef ?? null); }
@@ -217,7 +219,7 @@ async function run(ctx, rec) {
   const source = path => { try { return readFileSync(join(project.root, path), 'utf8'); } catch { return ''; } };
   rec.check('kept', phase('t-users') === 'satisfied' && phase('t-orders') === 'satisfied'
     && /isEmail|rules/.test(source('src/users.js')) && /isEmail|rules/.test(source('src/orders.js')),
-  `t-users ${phase('t-users')}，t-orders ${phase('t-orders')}`);
+  `t-users ${phase('t-users')}，t-orders ${phase('t-orders')}${display.stoppedFor === null ? '' : `；目标停下等人：${display.stoppedFor}`}`);
   const sessions = new Map();
   let doubled = null;
   for (const item of runs) {
@@ -270,7 +272,12 @@ async function run(ctx, rec) {
   }
   if (answer === null) {
     const missing = reviewRound === undefined ? 't-users 的检查轮里没有一轮带 reviewer 要求' : `轮 ${JSON.stringify(reviewRound.roundRef)} 没有可读的正式审阅 Evidence`;
-    for (const id of ['reviewer', 'name-different', 'name-same']) rec.uncover(id, 'entry-missing', `接不上：${missing}（审阅要求状态 ${reviewState}）`);
+    if (display.stoppedFor !== null) {
+      for (const id of ['reviewer', 'name-different', 'name-same'])
+        rec.uncover(id, 'not-run', `目标停下等人（${display.stoppedFor}），没走到这一步：${missing}（审阅要求状态 ${reviewState}）`);
+    } else {
+      for (const id of ['reviewer', 'name-different', 'name-same']) rec.uncover(id, 'entry-missing', `接不上：${missing}（审阅要求状态 ${reviewState}）`);
+    }
   } else {
     rec.check('reviewer', ['PASS', 'FAIL'].includes(review.outcome),
       `轮 ${JSON.stringify(reviewRound.roundRef)} 的正式审阅 Evidence ${review.evidenceId}：${review.outcome}；审阅要求状态 ${reviewState}`);
@@ -283,9 +290,10 @@ async function run(ctx, rec) {
   const planned = ['test/users.test.js', 'test/orders.test.js', ...Object.keys(PLANTED)];
   // lead 11-17（G6 第八次）：`.workbench/` 下是平台自己写的知识文件（注记等，决定 121-92），不是任务留下的临时件。
   const extra = untracked.filter(path => !planned.includes(path) && !path.startsWith('.workbench/'));
-  rec.check('temporary', extra.length === 0, extra.length === 0 ? '没有计划外的未跟踪文件' : `计划外的未跟踪文件：${extra.join(', ')}`);
+  if (display.stoppedFor !== null) rec.uncover('temporary', 'not-run', `目标停下等人（${display.stoppedFor}），没走到这一步`);
+  else rec.check('temporary', extra.length === 0, extra.length === 0 ? '没有计划外的未跟踪文件' : `计划外的未跟踪文件：${extra.join(', ')}`);
   rec.uncover('line-choice', 'entry-missing', '公开读口不给派工时的候选线和六键排序依据（lines/list 只给结果），驱动看不到排除和排序本身');
-  ctx.shared.e05 = { project, goalRef: goal.ref, runs, module };
+  if (display.stoppedFor === null) ctx.shared.e05 = { project, goalRef: goal.ref, runs, module };
 }
 
 export default { ...def, run };

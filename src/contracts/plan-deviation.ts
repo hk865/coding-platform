@@ -12,6 +12,7 @@
  * suppresses the soft lines. Every judgment is separate per kind and per
  * `(taskId, kind, planRevision)`.
  */
+import type { FailingCheckOutputV1, InstalledCheckOriginV1 } from './check-output.js';
 import type { RunRef, TaskTriple } from './dispatch.js';
 import type { GoalRef } from './ledger.js';
 import type { Disposition } from './plan.js';
@@ -20,6 +21,7 @@ import type {
   LineReadingV1, RunChangedFilesV1, RunUsageReadingV1,
 } from './run-activity.js';
 import type { TaskFailureFactsV1 } from './task-failure.js';
+import { verbatimLines } from './verbatim.js';
 
 /** §7.5: the four platform discoveries. A reminder is not a fifth kind. */
 export type DeviationKindV1 = 'growth' | 'lines' | 'budget' | 'stop';
@@ -159,11 +161,74 @@ function changedFilesText(files: DeviationChangedFilesV1): string {
     + `${files.possiblyIncomplete ? ' (possibly incomplete)' : ''}`;
 }
 
+/** §7.1.1 第五项的标题行。人的请知悉在这一行之前截住（`plan-notices.ts` 的 `storedFactsOf`），只给参谋看。 */
+export const DEVIATION_FAILING_CHECKS_TITLE = 'failing checks (command and output verbatim, not JSON):';
 /**
- * §7.1.1's four items: usage, changed files/lines, taskbook and stop cause.
+ * 第五项（标题行、各条和最后那句省略说明）合计至多这么多 UTF-8 字节。加上路径清单的 48 KiB、请求号和其余几行，
+ * 仍在 64 KiB 的系统轮上限之内。
+ */
+const DEVIATION_TEXT_CHECKS_MAX_BYTES = 8 * 1024;
+
+function checkOriginText(origin: InstalledCheckOriginV1 | null): string {
+  if (origin === null) return 'unknown (no installed check has this content now)';
+  if (origin.kind === 'approved_list') return `approved check list, answer of Query ${origin.answerRef.queryJobId}`;
+  if (origin.kind === 'plan') return `plan candidate ${origin.proposalRef.proposalId}, approved by ${origin.approvedBy}`;
+  return 'Host start-up configuration';
+}
+
+/** 一条没过的检查：一行概要，命令原文和一路输出的末尾放进代码块（照原样，不是 JSON）；stderr 空的话给 stdout。 */
+function failingCheckBlock(output: FailingCheckOutputV1): string {
+  const observed = output.observed;
+  const ending = observed === null ? `report not readable: ${output.unreadable ?? ''}`
+    : observed.outcome === 'timed_out' ? 'timed out'
+      : observed.outcome === 'killed' ? `killed${observed.exitCode === null ? '' : ` (exit ${observed.exitCode})`}`
+        : observed.outcome === 'not_started' ? `not started: ${observed.stderrTail}`
+          : `exit ${observed.exitCode}`;
+  const taskIds = output.taskIds === 'all' ? 'all' : output.taskIds.join(', ');
+  const lines = [
+    `- ${output.checkId} (${output.kind}; taskIds: ${taskIds}; installed by: ${checkOriginText(output.origin)}): ${ending}`,
+    '  command:', ...verbatimLines(output.command.text, '  '),
+  ];
+  if (output.command.truncated) lines.push('  (command truncated)');
+  if (observed !== null && observed.outcome !== 'not_started') {
+    if (observed.stderrTail !== '') lines.push('  stderr tail:', ...verbatimLines(observed.stderrTail, '  '));
+    else if (observed.stdoutTail !== '') lines.push('  stderr is empty; stdout tail:', ...verbatimLines(observed.stdoutTail, '  '));
+    else lines.push('  stderr and stdout are empty');
+  }
+  return lines.join('\n');
+}
+
+/**
+ * 第五项：按顺序放，放不下的那一条和其后的都不列，最后写一句还有几条（写法同 `changedFilesList` 的预算）。省略说明也
+ * 算在 8 KiB 里：加上它超了，就再去掉最后一整条，直到放得下。
+ */
+function failingChecksText(outputs: readonly FailingCheckOutputV1[]): string {
+  let remaining = DEVIATION_TEXT_CHECKS_MAX_BYTES - Buffer.byteLength(DEVIATION_FAILING_CHECKS_TITLE, 'utf8');
+  const listed: string[] = [];
+  for (const output of outputs) {
+    const block = failingCheckBlock(output);
+    const cost = 1 + Buffer.byteLength(block, 'utf8');
+    if (cost > remaining) break;
+    remaining -= cost;
+    listed.push(block);
+  }
+  const omission = (omitted: number): string => `${omitted} more failing checks not listed (see the round card)`;
+  // 标题加省略说明一百来字节，去到一条不剩一定放得下，所以 pop 不会落空。
+  while (listed.length < outputs.length
+    && 1 + Buffer.byteLength(omission(outputs.length - listed.length), 'utf8') > remaining) {
+    remaining += 1 + Buffer.byteLength(listed.pop()!, 'utf8');
+  }
+  const omitted = outputs.length - listed.length;
+  return [DEVIATION_FAILING_CHECKS_TITLE, ...listed, ...(omitted === 0 ? [] : [omission(omitted)])].join('\n');
+}
+
+/**
+ * §7.1.1 的四项：用量、改动文件和行数、任务书、停因；`stop` 再加第五项：没过的登记检查（命令原文、出处、退出码、
+ * 输出末尾）。没给输出时正文和只有四项时一字不差。
  * A missing reading says unknown with its reason; it is never written as 0.
  */
-export function deviationText(d: DeviationV1, taskBookPath: string | null): string {
+export function deviationText(d: DeviationV1, taskBookPath: string | null,
+  failingChecks: readonly FailingCheckOutputV1[] = []): string {
   const files = d.changedFiles === null ? 'changed files: unknown' : changedFilesText(d.changedFiles);
   const taskBook = taskBookPath ?? `plan revision ${d.planRevision}, task ${d.taskRef.taskId}`;
   const stop = d.kind === 'budget'
@@ -177,6 +242,7 @@ export function deviationText(d: DeviationV1, taskBookPath: string | null): stri
     `${files}; ${linesText(d.lines)}`,
     `taskbook: ${taskBook}`,
     stop,
+    ...(failingChecks.length === 0 ? [] : [failingChecksText(failingChecks)]),
   ].join('\n');
 }
 

@@ -420,9 +420,13 @@ export function messagePrincipalProblem(
   }
 }
 
-/** MSG-01/02's first check (pre-step-3 `:1051`): the recipient is in the caller's project. The service asks it with the request. */
-export function messageRecipientProjectProblem(sameProject: boolean): Rejected | null {
-  return sameProject ? null : reject('guard_failed', 'forbidden', 'the recipient Session belongs to another project');
+/** MSG-01/02 的第一项检查：收信 Session 在调用方的项目里。决定 121-1xx（照 96-2）：给了调用方的项目号，就写进拒绝原文；
+ *  这个字段只有这一个合法值，模型猜错一次就能改对。状态机行（onMessageSent :520）没有项目号，不传。 */
+export function messageRecipientProjectProblem(sameProject: boolean, callerProjectId?: string): Rejected | null {
+  if (sameProject) return null;
+  return reject('guard_failed', 'forbidden', callerProjectId === undefined
+    ? 'the recipient Session belongs to another project'
+    : `the recipient Session belongs to another project; this project is ${callerProjectId}`);
 }
 
 /**

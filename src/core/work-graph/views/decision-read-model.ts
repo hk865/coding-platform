@@ -1050,6 +1050,7 @@ function goalCauseCard(cause: GoalDecisionCauseReadV1): DecisionCardV1 | null {
     answerMessageRef: null, answer: null, application: null, candidateStatus: null, staleReason: null,
     closedReason: null, openedAt: cause.openedAt, readOnly: false, actions: goalCauseActions(cause),
     taskRef: cause.taskRef, runRef: cause.runRef,
+    ...(cause.withdrawableChecks === undefined ? {} : { withdrawableChecks: [...cause.withdrawableChecks] }),
   };
 }
 
@@ -2631,6 +2632,9 @@ function mergeCards(existing: DecisionCardV1, incoming: DecisionCardV1): Decisio
     // 121-136 A4: the candidate's stored checks, from whichever side read the candidate.
     ...(existing.proposedChecks === undefined && incoming.proposedChecks === undefined
       ? {} : { proposedChecks: incoming.proposedChecks ?? existing.proposedChecks }),
+    // R2：停止卡可撤的检查，来源卡赢（同 `proposedChecks`）。
+    ...(existing.withdrawableChecks === undefined && incoming.withdrawableChecks === undefined
+      ? {} : { withdrawableChecks: incoming.withdrawableChecks ?? existing.withdrawableChecks }),
   };
 }
 

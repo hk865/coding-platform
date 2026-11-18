@@ -34,7 +34,11 @@ function l46Draft(input: { goalId: string; planId: string; planRevision: number;
   // A Goal that already has a Plan keeps every earlier Task and obligation in the revision; W1 never physically
   // removes a Task, and a source obligation must keep its active carriers.
   const here = new Set<string>([...work, ids.C]);
-  const carried = (input.current?.tasks ?? []).filter(task => !here.has(task.taskId));
+  // 决定 121-1xx：一份计划恰好一道还没了结的必需目标关口。C 是这一版的目标关口；原计划还开着的必需目标关口由这一版
+  // 取代（superseded、replacedByTaskId 指向 C，人采用，G8B B5 R1），它的义务原样带着。
+  const carried = (input.current?.tasks ?? []).filter(task => !here.has(task.taskId))
+    .map(task => task.taskKind === 'gate' && task.scope.kind === 'goal' && task.requirementLevel === 'required'
+      && task.disposition === 'active' ? { ...task, disposition: 'superseded' as const, replacedByTaskId: ids.C } : task);
   const carriedIds = new Set(carried.map(task => task.taskId));
   const carriedObligations = (input.current?.obligations ?? []).filter(obligation => obligation.obligationId !== 's7b3-obligation');
   const currentTask = (taskId: string) => (input.current?.tasks ?? []).find(task => task.taskId === taskId);

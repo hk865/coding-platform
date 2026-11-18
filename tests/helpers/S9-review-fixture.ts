@@ -193,10 +193,12 @@ Promise<{ second: S7D2SecondWorkspace; line: S6ASession }> {
 const reviewStep = (op: { kind: string }): boolean => op.kind === 'send_system_round' || op.kind === 'finalize_checks';
 
 /** The opened round also carries its opening commit: the `open_checks` receipt's cursor (the Store's `since`). */
-export async function openS9ReviewRound(input: { review: S9ReviewWorld; stopBefore?: string }):
-Promise<S9ReviewRound & { readonly openCursor: CommitCursor }> {
+export async function openS9ReviewRound(input: { review: S9ReviewWorld; stopBefore?: string;
+  /** 换掉被审 Work Run 的脚本回复（R6 C4 用）；缺省是一句带 `S9_HISTORY_MARKER` 的文字。 */
+  workReplies?: readonly S6AReply[] }): Promise<S9ReviewRound & { readonly openCursor: CommitCursor }> {
   const { world, goal, task, workLine } = input.review;
-  await world.scripted.script(workLine, [{ kind: 'text', text: `S9 subject work done ${S9_HISTORY_MARKER}` }]);
+  await world.scripted.script(workLine, input.workReplies
+    ?? [{ kind: 'text', text: `S9 subject work done ${S9_HISTORY_MARKER}` }]);
   const claim = await advanceUntil(world.ag2b, { schemaVersion: 1, goalRef: goal, flowId: 's9-review-subject',
     sessionHint: workLine.ref, kind: 'select_work', taskId: task.taskId }, 'claim_task');
   const receipts: WorkflowStepReceipt[] = [];

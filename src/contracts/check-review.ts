@@ -211,9 +211,12 @@ export function checkBaselineNotStarted(check: RegisteredCommandCheck, ranAt: st
     stdoutTail: '', stderrTail: utf8Tail(reason, CHECK_BASELINE_TAIL_BYTES) };
 }
 
-/** 把检查沙盒的观察换成改动前的事实；被调用方取消的进程不在这里（调用方回 `cancelled`，下一轮重跑）。 */
+/**
+ * 把检查沙盒的观察换成事实：批准轮的改动前事实，和没过的登记检查的输出（`failingCheckOutputsOf`）都用它。被调用方
+ * 取消的进程不在这里（调用方回 `cancelled`，下一轮重跑）。`tailBytes` 是每路输出取末尾多少字节，批准轮用默认值。
+ */
 export function checkBaselineOf(check: RegisteredCommandCheck, ranAt: string,
-  observation: CheckProcessObservation): CheckBaselineV1 {
+  observation: CheckProcessObservation, tailBytes = CHECK_BASELINE_TAIL_BYTES): CheckBaselineV1 {
   if (observation.kind === 'not_started') return checkBaselineNotStarted(check, ranAt, observation.reason);
   const { exitCode } = observation;
   const outcome: CheckBaselineV1['outcome'] = observation.timedOut ? 'timed_out'
@@ -221,6 +224,6 @@ export function checkBaselineOf(check: RegisteredCommandCheck, ranAt: string,
       : exitCode !== null && Number.isInteger(exitCode) && !observation.cancelled ? 'failed'
         : 'killed';
   return { checkId: check.checkId, checkDigest: checkDigestOf(check), ranAt, outcome, exitCode,
-    stdoutTail: streamTail(observation.stdout, CHECK_BASELINE_TAIL_BYTES),
-    stderrTail: streamTail(observation.stderr, CHECK_BASELINE_TAIL_BYTES) };
+    stdoutTail: streamTail(observation.stdout, tailBytes),
+    stderrTail: streamTail(observation.stderr, tailBytes) };
 }

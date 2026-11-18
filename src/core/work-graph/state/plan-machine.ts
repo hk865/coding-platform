@@ -642,6 +642,8 @@ export function futureChangeTraceProblem(
  * order runs guards 1..7; the first hit is returned (zero writes). Untraced
  * Tasks keep today's Lease ∅ / Reduction ∅ commit guards and are skipped here.
  * A Goal that is `paused` is not a reason: its unfinished Runs fail guard 1.
+ * 决定 121-1xx：交表时传 `deferBusy`，守卫 1、2、2b 和守卫 4 的后半不判、留给采用，其余照判；规则和理由只写在下面
+ * `deferBusy` 的说明里。
  */
 export function tracedDispositionChangeProblem(input: {
   goalDesiredState: GoalDesiredState;
@@ -654,6 +656,10 @@ export function tracedDispositionChangeProblem(input: {
   changes: readonly FutureDispositionChangeV1[];
   /** G8B B5：这些任务在源计划里的类型；守卫 5 的人取代例外只给工作任务。 */
   taskKinds: ReadonlyMap<string, TaskKind>;
+  /** 决定 121-1xx（lead 裁定 E08 C）：交表时为 true。守卫 1、2、2b 和 4 的“还占着租约”判的是执行还没停稳，它会自己停稳，
+   *  或由人采用时 PS 先停（composition/plan-adoption-stop.ts）；模型在这一轮里改不了，留给采用时判。守卫 3（挂着没收的
+   *  让出等待）不会自己了结，照判，让秘书在回答里转告。其余守卫照判、顺序不变。采用时不传。 */
+  deferBusy?: boolean;
 }): PlanGuardProblem | null {
   // Guard 8 (the same D-9 check as PLAN-05, checked once).
   if (input.goalDesiredState === 'cancelled') {
@@ -663,7 +669,8 @@ export function tracedDispositionChangeProblem(input: {
   const traced = input.tasks.filter(isTracedTask)
     .sort((left, right) => (left.taskId < right.taskId ? -1 : left.taskId > right.taskId ? 1 : 0));
   for (const task of traced) {
-    const problem = tracedTaskProblem(task, affected, input.adopterClass, input.changes, input.taskKinds);
+    const problem = tracedTaskProblem(task, affected, input.adopterClass, input.changes, input.taskKinds,
+      input.deferBusy === true);
     if (problem !== null) return problem;
   }
   return null;
@@ -680,24 +687,28 @@ function tracedTaskProblem(
   adopterClass: ReworkActorClass,
   changes: readonly FutureDispositionChangeV1[],
   taskKinds: ReadonlyMap<string, TaskKind>,
+  deferBusy: boolean,
 ): PlanGuardProblem | null {
   const id = task.taskId;
-  // Guard 1: every Run of the Task (every Plan) has ended.
-  for (const run of task.runs) {
-    if (run.status !== 'ended') {
-      return { code: 'busy', detail: `task ${id} still has an unfinished execution: run ${run.ref.runId} is ${run.status}` };
+  // 守卫 1、2、2b：交表时（deferBusy）不判，见 tracedDispositionChangeProblem 入参 deferBusy 的说明。
+  if (!deferBusy) {
+    // Guard 1: every Run of the Task (every Plan) has ended.
+    for (const run of task.runs) {
+      if (run.status !== 'ended') {
+        return { code: 'busy', detail: `task ${id} still has an unfinished execution: run ${run.ref.runId} is ${run.status}` };
+      }
     }
-  }
-  // Guard 2: no unknown outcome (hard limit 1).
-  for (const run of task.runs) {
-    if (run.outcome === 'outcome_unknown') {
-      return { code: 'busy', detail: `task ${id}: resolve the unknown outcome of run ${run.ref.runId} first` };
+    // Guard 2: no unknown outcome (hard limit 1).
+    for (const run of task.runs) {
+      if (run.outcome === 'outcome_unknown') {
+        return { code: 'busy', detail: `task ${id}: resolve the unknown outcome of run ${run.ref.runId} first` };
+      }
     }
-  }
-  // Guard 2b: no other unreconciled Run.
-  for (const run of task.runs) {
-    const blocker = runUnresolvedBlocker(run);
-    if (blocker !== null) return { code: 'busy', detail: `task ${id}: reconcile run ${run.ref.runId} first: ${blocker}` };
+    // Guard 2b: no other unreconciled Run.
+    for (const run of task.runs) {
+      const blocker = runUnresolvedBlocker(run);
+      if (blocker !== null) return { code: 'busy', detail: `task ${id}: reconcile run ${run.ref.runId} first: ${blocker}` };
+    }
   }
   // Guard 3: no unconsumed yielded wait; a cancelled wait (P17) passes.
   const selected = task.selectedRun;
@@ -705,12 +716,12 @@ function tracedTaskProblem(
     && selected.controlState?.desiredState !== 'cancelled') {
     return { code: 'busy', detail: `task ${id}: cancel or resume the yielded wait of run ${selected.ref.runId} first` };
   }
-  // Guard 4: the Lease record exists and is released.
+  // Guard 4: the Lease record exists and is released. 后半（还占着租约）交表时（deferBusy）不判，见 deferBusy 的说明。
   if (task.lease === null) {
     if (task.runs.length > 0) {
       return { code: 'unavailable', detail: `task ${id} has Runs but no TaskLease record; its execution facts are inconsistent (legacy data)` };
     }
-  } else if (task.lease.release === undefined) {
+  } else if (task.lease.release === undefined && !deferBusy) {
     return { code: 'busy', detail: `task ${id} still holds its TaskLease` };
   }
   // Guard 5: a satisfied Task's disposition is final (the Reduction is only ever `satisfied`) unless a person

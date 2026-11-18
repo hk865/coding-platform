@@ -51,6 +51,7 @@ import { planningNoteAdmission, secretaryNoteAdmission } from '../work-graph/sta
 import { decisionActionPolicy } from '../work-graph/state/decision-policy.js';
 import { SECRETARY_QUERY_MAILBOX_TOOL_NAMES, SESSION_MAILBOX_TOOL_NAMES } from './communication-tools.js';
 import { CREATE_MEMBER_TOOL_NAME } from './member-tools.js';
+import { NOTE_TOOL_NAMES } from './note-tool.js';
 import { READ_REQUESTS_TOOL_NAME } from './request-read-tools.js';
 import type { ContextAssembler } from './context-assembler.js';
 import { createContextAssembler } from './context-assembler.js';
@@ -128,6 +129,18 @@ export function adviserMemberRound(round: {
 }): boolean {
   return round.executionKind === 'intervention_planning' && round.duty === 'adviser'
     && (round.shape === 'plan_round' || round.shape === null);
+}
+
+/**
+ * R7（B20）：人发给执行者线的干预规划轮（`plan_round`）不挂注记工具。规划轮注记的作者只认参谋、秘书
+ * （`planning-query-run.ts` 的规划轮解析），给了也必被拒；准备、启动、WorkGraph 授权三处投影用这一条规则。
+ */
+export function executorPlanRound(round: {
+  executionKind: QueryJobIntentV1['execution']['kind'];
+  shape: QueryAnswerShapeV1 | null;
+  duty: PlatformDutyV1 | null;
+}): boolean {
+  return round.executionKind === 'intervention_planning' && round.duty === 'executor' && round.shape === 'plan_round';
 }
 
 function ownContext(ctx: CoreCallContext): CoreCallContext | null {
@@ -249,9 +262,12 @@ export function projectQueryConfiguration(input: {
   // A non-request round's frozen shape is `queryAnswerShapeOf(execution, null)` (the preparation's own call). A duty
   // the Host and the Role disagree on is not the adviser's; the context recipe refuses that round anyway.
   const duty = effectiveDuty(input.roleResolution, input.host, input.sessionRole);
-  const memberRound = adviserMemberRound({ executionKind: input.execution.kind,
-    shape: queryAnswerShapeOf(input.execution, null), duty: 'duty' in duty ? duty.duty : null });
-  const forbidden = forbiddenQueryToolNames(input.secretaryRound, input.explorationRound === true, memberRound);
+  const dutyValue = 'duty' in duty ? duty.duty : null;
+  const shape = queryAnswerShapeOf(input.execution, null);
+  const memberRound = adviserMemberRound({ executionKind: input.execution.kind, shape, duty: dutyValue });
+  const base = forbiddenQueryToolNames(input.secretaryRound, input.explorationRound === true, memberRound);
+  const forbidden = executorPlanRound({ executionKind: input.execution.kind, shape, duty: dutyValue })
+    ? new Set([...base, ...NOTE_TOOL_NAMES]) : base;
   const ceiling = input.roleResolution.status === 'resolved'
     ? new Set(input.roleResolution.spec.permissions.tools)
     : null;
@@ -644,7 +660,7 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         if (guideProblem !== null) return guideProblem;
       } else if (shape === 'exec_review') {
         // The packet header is the request body itself; the guide adds only the
-        // three inputs, the read-only rule and the three form members (slice 9).
+        // inputs, the read-only rule and the three form members (slice 9).
         const guideProblem = appendGuide('exec-review-input', {});
         if (guideProblem !== null) return guideProblem;
       } else if (shape === 'unknown_call_advice') {

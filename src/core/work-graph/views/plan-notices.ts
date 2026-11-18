@@ -37,6 +37,7 @@ import {
 import { interventionPlanningQueryRefs } from '../../../contracts/query-job.js';
 import { parseInitialPlanningResponseV2 } from '../../../contracts/initial-planning-parse.js';
 import { systemRoundRequestId } from '../../../contracts/plan-round.js';
+import { DEVIATION_FAILING_CHECKS_TITLE } from '../../../contracts/plan-deviation.js';
 import { roundCommitIdentityOf } from '../evidence/evidence-service.js';
 import { reviewLineOf, type DutyRecipientPort } from '../sessions/duty-recipient.js';
 import type { RecordCommitIdentityPort } from '../../record-store/ports.js';
@@ -501,10 +502,15 @@ async function noLinePositionOf(
   return newest;
 }
 
-/** §6.4.2: R's first line is the request id; the rest are its four stored facts. */
+/**
+ * §6.4.2: R's first line is the request id; the rest are its four stored facts. `stop` 偏差的第五项（没过的检查的
+ * 命令和输出）只给参谋，人的请知悉截在它的标题行之前。
+ */
 function storedFactsOf(body: string): string {
   const newline = body.indexOf('\n');
-  return newline === -1 ? body : body.slice(newline + 1);
+  const facts = newline === -1 ? body : body.slice(newline + 1);
+  const checks = facts.indexOf(`\n${DEVIATION_FAILING_CHECKS_TITLE}`);
+  return checks === -1 ? facts : facts.slice(0, checks);
 }
 
 /**

@@ -1238,12 +1238,6 @@
       "note": "slice 6 of the orchestration design (decision 83, prompts and context): the RunRef guard of ModelRequestReadPort.listRunModelRequests, reached through readPromptRecord; E3 adds the route."
     },
     {
-      "file": "src/contracts/data-format-refs.ts",
-      "name": "PlanProposalRefShape",
-      "reason": "kept-for",
-      "note": "slice 6 of the orchestration design (6B)"
-    },
-    {
       "file": "src/core/work-graph/model/plan-contracts.ts",
       "name": "ProposeInitialPlanFromAnswer",
       "reason": "kept-for",

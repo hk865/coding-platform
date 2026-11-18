@@ -1,10 +1,7 @@
 /**
- * Slice 9: the exec review packet header.
- * `ExecReviewPacketV1` is the only header of the review request body and it is
- * not a record: the build reads only the frozen round, the text writes the
- * request id, seven canonical-JSON lines, one blank line and the fixed prose,
- * and the parse reads exactly that shape back. The model sees the header, but
- * the `submit_exec_review` schema has none of these members.
+ * 第 9 片执行审阅包的包头。`ExecReviewPacketV1` 是审阅请求正文里唯一的包头，不是记录：包头只读冻结的轮次，正文
+ * 写请求号、七行规范 JSON、一个空行和固定正文，读回时只认这个形状。固定正文之后，发送方可以附上这个 Goal 里人的
+ * 原话（由发送方读好传进来）；模型看得到包头和正文，`submit_exec_review` 的表里没有这些成员。
  */
 import type { ArtifactRef } from '../../../contracts/artifact.js';
 import { rejected } from '../../../contracts/core/rejections.js';
@@ -13,12 +10,15 @@ import type { RunRef, TaskTriple } from '../../../contracts/dispatch.js';
 import { requirementKeyOf, type EvidenceCoverageV1 } from '../../../contracts/evidence.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
+import { verbatimLines } from '../../../contracts/verbatim.js';
 import { hasOnlyKeys, isRecord, nonEmpty, parseObject } from '../../../contracts/validation/common.js';
 import type { RoundSnapshot, VerificationRoundRef } from '../../../contracts/verification.js';
 import {
   planRevisionRefProblem, runRefProblem, taskTripleProblem, verificationRoundRefProblem,
 } from '../persistence/rework-codecs.js';
 import { checkArtifactRef } from '../sessions/session-record-codecs.js';
+import { PERSON_WORDS_MAX } from './plan-lineage.js';
+import type { GoalPersonInterventionsV1 } from './person-interventions.js';
 
 export type ExecReviewPacketV1 = {
   roundRef: VerificationRoundRef;
@@ -31,7 +31,7 @@ export type ExecReviewPacketV1 = {
 };
 export type ParsedExecReviewPacketV1 = { packet: ExecReviewPacketV1; body: string };
 
-/** The fixed prose after the header; no slot and no user data, declared once here. */
+/** 包头之后的固定正文；人的原话由发送方另外附上，从不作为这里的槽位。 */
 const EXEC_REVIEW_BODY =
   'Read the workspace, the graph’s Task/Run/round cards, and the original execution history. ' +
   'Return exactly one verdict (pass or fix) with basis and report. For a check with no reportRef, ' +
@@ -86,9 +86,12 @@ function jsonLine(value: unknown): string {
   return canonicalJson(value as JsonValue);
 }
 
-/** The request body: request id, the seven header lines, a blank line, the fixed prose. */
-export function execReviewPacketText(packet: ExecReviewPacketV1): string {
-  return [
+/**
+ * 请求正文：请求号、七行包头、一个空行、固定正文，有人的直接干预时再接一段。不传干预时，包头和正文逐字节不变。
+ */
+export function execReviewPacketText(packet: ExecReviewPacketV1,
+  interventions: GoalPersonInterventionsV1 = { items: [], omitted: 0 }): string {
+  const lines = [
     `execreview:${packet.roundRef.roundId}`,
     `roundRef: ${jsonLine(packet.roundRef)}`,
     `planRevisionRef: ${jsonLine(packet.planRevisionRef)}`,
@@ -99,7 +102,18 @@ export function execReviewPacketText(packet: ExecReviewPacketV1): string {
     `coverage: ${jsonLine(packet.coverage)}`,
     '',
     EXEC_REVIEW_BODY,
-  ].join('\n');
+  ];
+  if (interventions.items.length > 0) {
+    lines.push('', 'Direct interventions from the person in this Goal (the person\'s own words, verbatim):');
+    for (const item of interventions.items) {
+      lines.push(`- message ${item.messageRef.messageId.replace(/^session-message-(forward-)?/, '').slice(0, 8)}…, accepted by Run `
+        + `${item.runRef.runId.slice(0, 8)}… (task ${item.taskId}) at ${item.acceptedAt}:`);
+      lines.push(...verbatimLines(item.text.text, '  '));
+      if (item.text.truncated) lines.push(`(cut to the first ${String(PERSON_WORDS_MAX)} characters)`);
+    }
+    if (interventions.omitted > 0) lines.push(`(${String(interventions.omitted)} earlier interventions not listed)`);
+  }
+  return lines.join('\n');
 }
 
 function parseArray(json: string): unknown[] | null {

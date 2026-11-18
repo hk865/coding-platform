@@ -14,6 +14,7 @@ import { reviewPacketItemOf, type RoundSnapshot } from '../../contracts/verifica
 import type { EvidenceRef } from '../../contracts/evidence.js';
 import { parseExecReviewAnswer } from '../../contracts/exec-review.js';
 import { execReviewPacketOfRound, execReviewPacketText } from '../../core/work-graph/tasks/exec-review-packet.js';
+import { readGoalPersonInterventions, type GoalPersonInterventionsV1 } from '../../core/work-graph/tasks/person-interventions.js';
 import { NO_ACCEPTED_ANSWER, reviewQueryEnded } from '../../core/work-graph/model/evidence-contracts.js';
 import type { PreparedTaskExecution } from '../../contracts/core/prepared-execution.js';
 import type { ConsumedWaitV1 } from '../../contracts/dispatch.js';
@@ -66,7 +67,7 @@ import { createSecretaryHandoffWorkflow } from './session-handoff.js';
 import { createConsultationConsumer, asRejection } from './consultation.js';
 import { createLineAsk } from './line-ask.js';
 import { createTaskGate, goalWaitBasisOf, type ReviewGate } from './task-gate.js';
-import { planOnlyTargetOf, refinementRoundOf, systemRoundSendInput } from './plan-round.js';
+import { planOnlyTargetOf, planningAnswerShapeOf, refinementRoundOf, systemRoundSendInput } from './plan-round.js';
 import { orderTasksByDependency } from './task-order.js';
 import { createSessionArchiveService } from './session-archive.js';
 import type { RequestSessionArchiveInput } from '../../contracts/core/session-archive.js';
@@ -83,8 +84,11 @@ import {
   decidePlanCandidate, standardChangeStateOf, type PlanCandidateFactsV1, type PlanCandidateSourceV1,
 } from '../../core/work-graph/state/plan-candidate.js';
 import { decisionActionPolicy, gateCoveredTaskIds } from '../../core/work-graph/state/decision-policy.js';
-import { systemRoundContext, systemRoundOfText, systemRoundRequestId, type SystemRoundV1 } from '../../contracts/plan-round.js';
+import {
+  SYSTEM_ROUND_ACTOR, systemRoundContext, systemRoundOfText, systemRoundRequestId, type SystemRoundV1,
+} from '../../contracts/plan-round.js';
 import { deviationRequestId, deviationText, deviationsOfGoal, taskRemindersOfGoal } from '../../contracts/plan-deviation.js';
+import type { FailingCheckOutputV1 } from '../../contracts/check-output.js';
 import { controlIntentRefFor } from '../../core/work-graph/tasks/control-service.js';
 import { reworkFenceOf } from '../../core/work-graph/state/task-failure.js';
 import { nodeInFlight } from '../../core/work-graph/state/task-node-commit.js';
@@ -1407,9 +1411,19 @@ export function createWorkflow(deps: WorkflowDependencies & {
       case 'not_sent': {
         const packet = execReviewPacketOfRound(round);
         if (packet.status !== 'ready') return packet;
+        // 人的原话跟着这一次发送走；只有这个请求号还没发过时才会到这里，所以不会发两次。读失败这一趟不发，
+        // 审阅者就不会在看不到人的原话时下判断。
+        let interventions: GoalPersonInterventionsV1 = { items: [], omitted: 0 };
+        const listExecutions = deps.executions.listExecutions;
+        if (deps.messages !== undefined && listExecutions !== undefined) {
+          const read = await readGoalPersonInterventions(owned.ctx, { runs: { listExecutions:
+            listExecutions.bind(deps.executions) }, messages: deps.messages }, roundGoalRef(round));
+          if (read.status !== 'ready') return readRejection(read);
+          interventions = read.value;
+        }
         return advancing(receipt, makePerform(base, { kind: 'send_system_round', request: {
           round: { kind: 'exec_review', goalRef: roundGoalRef(round), roundRef: round.ref },
-          recipient: state.recipient, text: execReviewPacketText(packet.value),
+          recipient: state.recipient, text: execReviewPacketText(packet.value, interventions),
         } }), null, null, reviewWaitBasisOf(roundGoalRef(round), 'exec_review_pending'));
       }
       case 'waiting':
@@ -2589,6 +2603,17 @@ export function createWorkflow(deps: WorkflowDependencies & {
       const sent = await sentRoundOf(owned, requestId);
       if (sent.status === 'ready') continue;
       if (sent.status !== 'not_found') return readRejection(sent);
+      // §7.1.1 第五项：`stop` 偏差带上任务链头那一轮没过的登记检查的命令和输出，照原样给参谋。只在要发的这一趟读；
+      // 读轮次失败，这一趟不发，下一趟再读。
+      let failingChecks: readonly FailingCheckOutputV1[] = [];
+      if (deviation.kind === 'stop' && deps.readFailingCheckOutputs !== undefined) {
+        const head = graph.tasks.find(row => row.ref.taskId === deviation.taskRef.taskId)?.failure?.round ?? null;
+        if (head !== null) {
+          const round = await deps.evidence.readVerification(owned.ctx, head.roundRef);
+          if (round.status !== 'ready') return readRejection(round);
+          failingChecks = await deps.readFailingCheckOutputs(round.value);
+        }
+      }
       if (adviser.copy !== null && deps.messages !== undefined) {
         // v4 :5459–:5466 (book :588–:591): one `notify` to the creator, deduped by (source operation, final
         // recipient); a reply still goes to the sender. It goes out before the round, so a sent round has its copy.
@@ -2602,7 +2627,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
       const round: SystemRoundV1 = { kind: 'deviation', goalRef: goal.ref,
         taskId: deviation.taskRef.taskId, cause: deviation.kind, planRevision: deviation.planRevision };
       return advancing(null, makePerform(base, { kind: 'send_system_round', request: {
-        round, recipient: adviser.session, text: `${requestId}\n${deviationText(deviation, null)}`,
+        round, recipient: adviser.session, text: `${requestId}\n${deviationText(deviation, null, failingChecks)}`,
         taskRef: deviation.taskRef,
       } }));
     }
@@ -2853,6 +2878,17 @@ export function createWorkflow(deps: WorkflowDependencies & {
             ownedInWorkspace(owned, group.originalMessageRef.workspaceId).ctx, group.originalMessageRef);
           if (original.status !== 'ready') return readRejection(original);
           const recipient = original.value.recipient as SessionRef;
+          // R7 补充裁定（lead 11-18；MVP-BEHAVIOR B20“人答卡只保存答案，不续开模型轮”，PL 规格 :332 续轮发给原规划线）：
+          // 只有这条线收到 Host 系统轮会是 `plan_round` 时（参谋、秘书，形状规则只在 `planningAnswerShapeOf`）才发续轮。
+          // 执行者线收到的是 text 形状，没有规划说明和提交工具，只会落到 invalid_plan；它反问出的卡，人答完只保存答案，
+          // 要继续就再发消息。职责的读法同干预入口（读不出或 unknown 当没有职责）。这一组不发、不等、不写，同一趟接着往下选。
+          const line = await deps.sessions.readSession(owned.ctx, recipient, 'project');
+          if (line.status !== 'ready') return readRejection(line);
+          const dutyRead = deps.sessionDuty === undefined ? null : await deps.sessionDuty(line.value.record.role, owned.ctx);
+          if (dutyRead !== null && dutyRead.status !== 'ready') return readRejection(dutyRead);
+          const duty = dutyRead === null || dutyRead.value === 'unknown' ? null : dutyRead.value;
+          if (planningAnswerShapeOf({ sender: { kind: 'host', actor: SYSTEM_ROUND_ACTOR }, intent: 'action_request' },
+            duty, round.kind) !== 'plan_round') continue;
           return advancing(null, makePerform(base, { kind: 'send_system_round', request: {
             round, recipient, text: requestId.value, followupOf: group.originalMessageRef,
           } }), null, null, planWaitBasisOf(goal, ['plan_resume_pending']));

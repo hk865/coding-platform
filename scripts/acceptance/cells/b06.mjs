@@ -4,7 +4,7 @@
 // are cited from B06 G2's green tests, not rerun. The report never writes the slice-9 review pass as B06 passing.
 import { newId, ready } from '../lib/http.mjs';
 import { chooseModel, coldStart, createGoal, driverStart, ensurePolicy, openProject, openRoleLine,
-  proposeAndApply, taskRounds, waitFor, waitGoal } from '../lib/flows.mjs';
+  answerCard, approve, cancelItem, executions, proposeAndApply, taskRounds, waitFor, waitGoal, waitingCards } from '../lib/flows.mjs';
 
 const MINUTE = 60_000;
 const READ_PATHS = ['src/module.js', 'package.json', 'README.md'];
@@ -95,10 +95,17 @@ async function witnessGoal(ctx, project, rec, label, instruction, options) {
   await proposeAndApply(ctx, project, goal.ref, draft(goalId, instruction, options), `B06 ${label}`, rec,
     [moduleCheck(goalId)]);
   await driverStart(ctx, project, goal.ref, { flowId: newId(`b06-${label}`), taskId: 'read' });
-  // Wait until the read Task's first round is finalized (or the Goal completes), then pause so a FAIL cell does not
-  // keep reworking on the budget.
-  const chain = await waitFor(ctx, `the ${label} round`, () => readChain(project, goal.ref),
-    value => value.round?.status === 'finalized', { timeoutMs: 40 * MINUTE });
+  // lead 11-18（G6 第十一次 W3）：没有空闲执行者时平台出 member_creation 卡等人批；人照界面批（同 waitGoal 的 approve）。
+  // 只答这一种卡：别的卡（候选、返工确认）答了会改变这几格要看的结果。
+  const answered = new Set();
+  const chain = await waitFor(ctx, `the ${label} round`, async () => {
+    for (const card of await waitingCards(project, goal.ref, rec)) {
+      if (card.source.kind !== 'member_creation' || answered.has(card.cardKey)) continue;
+      const selection = approve(card);
+      if (selection !== null && await answerCard(ctx, project, card, selection, '', rec)) answered.add(card.cardKey);
+    }
+    return readChain(project, goal.ref);
+  }, value => value.round?.status === 'finalized', { timeoutMs: 40 * MINUTE });
   const display = ready(await project.host.client.read('goals/display', project.scope, { goalRef: goal.ref }));
   if (display?.display?.phase !== 'COMPLETED') {
     const read = ready(await project.host.client.read('goals/read', project.scope, goal.ref));
@@ -106,6 +113,13 @@ async function witnessGoal(ctx, project, rec, label, instruction, options) {
       await project.host.client.write('goals/control', project.scope, { goalRef: goal.ref, control: 'pause', reason: 'G6 B06 cell read' },
         [{ ref: goal.ref, revision: read.goal.revision }, { ref: { aggregateType: 'GoalPhase', projectId: goal.ref.projectId, goalId }, revision: 0 }],
         { expect: ['busy', 'invalid'] });
+    }
+    // lead 11-18：FAIL 之后自动返工的 Run 已经进来了。暂停后像人一样取消它，不留给单元收尾去等 30 分钟，
+    // 它占着的线也不再挡下一格选人。取消被拒只记 note、不抛：单元结束的 drain 还会再取消一次，结论由它定。
+    for (const item of (await executions(project, goal.ref)).filter(entry => entry.run.status !== 'ended')) {
+      const cancelled = await cancelItem(ctx, { kind: 'run', scope: project.scope, host: project.host, run: item.run },
+        `B06 ${label} cell read`);
+      rec.note(cancelled.text);
     }
   }
   return { goal, chain, display };
