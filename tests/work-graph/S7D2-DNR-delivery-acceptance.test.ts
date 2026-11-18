@@ -2,7 +2,7 @@
  * acc (the automatic-mode delivery page): rows ACC-T01..T11 of `acc-tests.frozen.md`, with
  * `acc-build.frozen.md` §3.1–§3.5 and the erratum `acc-repoint.md` §2.1 E6 (a second completion uses its own
  * flowId and requestId; P1/P2 never replay one requestId) and §2.2 A10 (a trusted non-operator CoreCallContext,
- * tests/app/S5-decision-routes.test.ts:207–208, not the pure state guard).
+ * tests/app/S5-decision-routes.test.ts:210–211, not the pure state guard).
  *
  * Every state is a public step: `openS7BPlanningWorld` (`tests/helpers/S7B3-planning-world.ts:27`),
  * ACC-T08's consuming start (`openS6AHostWorld` with the input consumer at start) and `completeS7BGoal`

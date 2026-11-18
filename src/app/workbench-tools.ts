@@ -21,7 +21,9 @@
  * command keeps its own Host handle and never depends on the HTTP request signal
  * after it is accepted; the stop is observed as `settled`/`cancelled`.
  */
-import { ProcessSandbox, ProcessSandboxError, WorkspaceSandbox, WorkspaceSandboxError } from '../../vendor/coding-agent/dist/public-api.js';
+import {
+  normalizeWorkspacePath, ProcessSandbox, ProcessSandboxError, WorkspaceSandbox, WorkspaceSandboxError,
+} from '../../vendor/coding-agent/dist/public-api.js';
 import type { ResourceCapSource, ResourceCapsReport } from '../../vendor/coding-agent/dist/public-api.js';
 import type { ResourceCapsReportV1 } from '../contracts/resource-caps.js';
 import { canonicalJson, type JsonValue } from '../contracts/fingerprint.js';
@@ -33,6 +35,7 @@ import type { CommandNetworkProxy, CommandNetworkRoute } from './command-sandbox
 import { ensureKnowledgeDirectory } from '../core/workspace/knowledge-exclude.js';
 import { KNOWLEDGE_DIRECTORY } from '../contracts/knowledge.js';
 import { messageOf } from '../contracts/error-message.js';
+import { isPos } from '../contracts/validation/common.js';
 import type { WorkspaceError, WorkspaceResult } from '../core/workspace/ports.js';
 
 /** One trusted workspace this helper may write/execute in. `root` and
@@ -108,6 +111,8 @@ export type StartWorkbenchCommandRequest = {
   requestId: string;
   command: string;
   cwd: string;
+  /** 调用方自己给的正整数时长；不给就用 Host 的默认值。 */
+  timeoutMs?: number;
 };
 
 export type WorkbenchCommandRef = { commandId: string };
@@ -132,6 +137,9 @@ export type WorkbenchCommandSnapshot = {
   signal: string | null;
   timedOut: boolean;
   cancelled: boolean;
+  /** Kernel 报出的真实执行用时，有了结果才有；还没有结果、
+   * 或存下的是启动失败时都是 null。 */
+  executionMs: number | null;
   /** L10: the Kernel report once the command produced one (including
    * `not_started`), `null` before a result and on a saved launch error. */
   resourceCaps: ResourceCapsReportV1 | null;
@@ -201,10 +209,15 @@ function normalizeRelativePath(value: unknown): string | null {
   return value;
 }
 
-/** The command cwd is the workspace root (`'.'`) or the same canonical path. */
+/** 命令的 cwd 照 Kernel 自己的工作区路径规则规整，所以检查轮收下的检查，
+ * 在这里也起得来。 */
 function normalizeCommandCwd(value: unknown): string | null {
-  if (value === '.') return '.';
-  return normalizeRelativePath(value);
+  if (typeof value !== 'string') return null;
+  try {
+    return normalizeWorkspacePath(value, true);
+  } catch {
+    return null;
+  }
 }
 
 function snapshotWorkspaces(source: readonly WorkbenchToolsWorkspace[]): WorkbenchToolsWorkspace[] {
@@ -503,8 +516,12 @@ export function createWorkbenchTools(options: WorkbenchToolsOptions): WorkbenchT
         || typeof request.command !== 'string' || request.command.length === 0) {
         return rejected('invalid', 'a non-empty requestId and command are required');
       }
+      // 拒：Kernel 直接拿 timeoutMs 定时（process-sandbox.js:1425），0 或负数会立刻超时；只收正整数，和检查配置同一条。
+      if (request.timeoutMs !== undefined && !isPos(request.timeoutMs)) {
+        return rejected('invalid', 'timeoutMs must be a positive integer when present');
+      }
       const cwd = normalizeCommandCwd(request.cwd);
-      if (cwd === null) return rejected('invalid', 'cwd must be "." or a normalized workspace-relative path');
+      if (cwd === null) return rejected('invalid', 'cwd must stay inside the workspace (the Kernel workspace-path rule)');
       if (ctx.signal.aborted) return rejected('cancelled', 'the command start was cancelled before it was accepted');
       const requestKey = `${scopeKey(bound.config.scope)}\u0000${request.requestId}`;
       const existing = handlesByRequest.get(requestKey);
@@ -544,7 +561,7 @@ export function createWorkbenchTools(options: WorkbenchToolsOptions): WorkbenchT
         snapshot: {
           error: null, commandId: '', state: 'running', stdout: '', stderr: '',
           outputTruncated: false, exitCode: null, signal: null, timedOut: false, cancelled: false,
-          resourceCaps: null,
+          executionMs: null, resourceCaps: null,
         },
         execution: Promise.resolve(),
       };
@@ -558,7 +575,7 @@ export function createWorkbenchTools(options: WorkbenchToolsOptions): WorkbenchT
           const result = await process.execute({
             command: handle.command,
             cwd: handle.cwd,
-            timeoutMs: options.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS,
+            timeoutMs: request.timeoutMs ?? options.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS,
             outputLimitBytes: options.commandOutputLimitBytes ?? DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES,
             signal: handle.controller.signal,
             captureWorkspaceEffects: false,
@@ -573,12 +590,16 @@ export function createWorkbenchTools(options: WorkbenchToolsOptions): WorkbenchT
             signal: result.signal,
             timedOut: result.timedOut,
             cancelled: result.cancelled,
+            executionMs: result.timings.executionMs,
             resourceCaps: (result as { resourceCaps?: ResourceCapsReport }).resourceCaps ?? null,
             error: null,
           };
         } catch (error) {
           // A post-acceptance failure is a structured saved error, never fake stderr.
-          handle.snapshot = { ...handle.snapshot, state: 'settled', resourceCaps: null, error: commandErrorOf(error) };
+          handle.snapshot = {
+            ...handle.snapshot, state: 'settled', executionMs: null, resourceCaps: null,
+            error: commandErrorOf(error),
+          };
         } finally {
           announce(handle);
         }

@@ -21,7 +21,7 @@ import {
   CHECK_RESULT_WORD, FAILURE_CLASS_WORD, PHASE_WORD, RUN_RESULT_WORD, requirementWordOf,
   taskStateOfRow, taskWhyOf,
 } from './task-map.js';
-import { dutyWordOf, lineHref, lineStatusView, type LineKey, type NavData, type NavLine } from './nav.js';
+import { decideTextOf, dutyWordOf, lineHref, lineStatusView, type LineKey, type NavData, type NavLine } from './nav.js';
 import { requeueVisible } from './line-shared.js';
 import { briefRowsOf } from './member.js';
 
@@ -71,13 +71,15 @@ export type ChainSource = {
   rounds: Record<string, RoundRead[]>;
   tasks: unknown | null;
   goalWaiting: number | null;
+  /** 121-146/U4：这个目标的数是不是“至少”（有卡的来源暂时读不到）。 */
+  goalWaitingPartial: boolean;
   controls: Record<string, ControlIntentSnapshotV1>;
 };
 
 export type ChainData = {
   goal: { id: string; objective: string; ordinal: number | null } | null;
   goals: ChainGoal[];
-  inbox: { decideN: number; noticeN: number };
+  inbox: { decideText: string; noticeText: string };
   goalWaiting: number | null;
   /** The page's own line (URL lineKey or the first default) and its rail name;
    * L1 goes back to it, L2 links the shown line to Member. */
@@ -485,7 +487,8 @@ export function adaptChain(source: ChainSource, ui: ChainUi): ChainData {
   const goals = nav.goals.map((goal, index) => ({
     id: goal.goalId, ordinal: goal.ordinal, objective: goal.objective, order: goal.order,
     name: goal.name, sub: goal.sub, hasSub: goal.hasSub,
-    n: index === selectedIndex && source.goalWaiting !== null ? String(source.goalWaiting) : '',
+    n: index === selectedIndex && source.goalWaiting !== null
+      ? decideTextOf(source.goalWaiting, source.goalWaitingPartial) : '',
     hasN: index === selectedIndex && source.goalWaiting !== null,
     st: goal.st, word: goal.word, future: goal.future,
     on: goal.goalId === nav.selectedGoalId,
@@ -496,7 +499,7 @@ export function adaptChain(source: ChainSource, ui: ChainUi): ChainData {
     goal: selectedGoal === null ? null
       : { id: selectedGoal.goalId, objective: selectedGoal.objective, ordinal: selectedGoal.ordinal },
     goals,
-    inbox: { decideN: nav.inbox.decideN, noticeN: nav.inbox.noticeN },
+    inbox: { decideText: nav.inbox.decideText, noticeText: nav.inbox.noticeText },
     goalWaiting: source.goalWaiting,
     ownKey,
     ownName: ownLine === null ? '' : ownLine.name,

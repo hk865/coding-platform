@@ -6,7 +6,8 @@
  * layout and local tab state, and Plan B/Done-b reuse this module instead of a
  * second copy of these rules (ruling 2).
  */
-import type { UncommittedFilesV1 } from '../../contracts/workspace-files.js';
+import { gitLines, lineEditScript, LINE_DIFF_MAX_DISTANCE } from '../../contracts/line-delta.js';
+import type { UncommittedFileListV1, UncommittedFilesV1 } from '../../contracts/workspace-files.js';
 import { catalogArchTree, goalTaskTree, type GoalsArchNode, type GoalsTaskNode } from './goals.js';
 import { localShortAt, type TaskMapNodeDetailData } from './task-map.js';
 
@@ -97,8 +98,33 @@ export type AuxFileList = { paths: string[]; tree: AuxFileNode[]; dirs: string[]
 /** One changed file of Main's 文件/Diff and Member's 改动; `added`/`deleted` are null when git gave no count. */
 export type AuxChangedRow = { path: string; added: number | null; deleted: number | null; state: 'uncommitted' | 'unknown' };
 
+/** 一段改动，形状同原型样例的 H(head, oldAt, newAt, rows)：head 是 git 的 @@ 行，oldAt/newAt 是这一段第一行的旧/新行号。 */
+export type AuxDiffHunk = { head: string; oldAt: number; newAt: number; rows: Array<[' ' | '-' | '+', string]> };
+/** Diff 页逐行区：选中的那一行文件；hunks 为 null 时 note 写原因。 */
+export type AuxDiffView = { path: string; hunks: AuxDiffHunk[] | null; note: string };
+
 /** A `files/read` value as the file page draws it (ruling 2, SPEC-15). */
 export type AuxFilePage = AuxWorkspaceFile & { lines: string[]; eol: boolean; readAtText: string };
+
+/** 命令页画的一条已装检查；`line` 是原型里那一行命令，目录不是工作区根时
+ * 在后面接上目录。 */
+export type AuxCommandRow = {
+  checkId: string; line: string; command: string; cwd: string; timeoutMs: number;
+};
+
+/** 命令页一行的显示状态。页面只映射 `word`、`dot`、`out`。 */
+export type AuxCommandView = {
+  phase: 'idle' | 'running' | 'stopping' | 'ended';
+  word: string; dot: string; out: string; outLines: number;
+};
+
+/** 页面要读的句柄字段；路由回答里其余的字段不进这一层。 */
+export type AuxCommandHandle = {
+  state: 'running' | 'stopping' | 'settled';
+  stdout: string; stderr: string; outputTruncated: boolean;
+  exitCode: number | null; signal: string | null; timedOut: boolean; cancelled: boolean;
+  error: { code: string; reason: string } | null; executionMs: number | null;
+};
 
 export type AuxPanelData = {
   tab: AuxTab;
@@ -107,9 +133,78 @@ export type AuxPanelData = {
   files: AuxFileList | null;
   file: AuxFilePage | null;
   /** `files` is null when the listing was empty and nothing was checked (READS-7). */
-  diff: { files: UncommittedFilesV1 | null; checkedFirst: number | null; rows: AuxChangedRow[] } | null;
+  diff: { files: UncommittedFilesV1 | null; checkedFirst: number | null; rows: AuxChangedRow[]; view: AuxDiffView | null } | null;
+  /** 只有命令页签填它：已装的检查、它们的运行状态，和还没运行时画的那个视图。 */
+  commands: {
+    rows: AuxCommandRow[]; allowed: boolean; idle: AuxCommandView;
+    runs: Record<string, AuxCommandView>;
+  } | null;
   error: { code: string; text: string } | null;
 };
+
+/** E3-UI-ITEMS:21：页面按码翻译；原始 reason 到不了页面。 */
+const COMMAND_ERROR_TEXT: Record<string, string> = {
+  sandbox_unavailable: '命令沙箱不可用',
+  launch_failed: '没能启动',
+  invalid_arguments: '目录或参数不对',
+  command_failed: '命令执行失败',
+};
+
+/** 原型里唯一的用时写法：不到一分钟写秒，否则写几分几秒。 */
+function commandDurationText(ms: number | null): string {
+  if (ms === null) return '';
+  const s = Math.round(ms / 1000);
+  return ' · 用时 ' + (s < 60 ? `${s} 秒` : `${Math.floor(s / 60)} 分 ${s % 60} 秒`);
+}
+
+/** R3：一个命令句柄这一行怎么画。按表从上往下第一条成立的为准，
+ * 所以取消或超时的结束句柄不会读成成功。 */
+export function auxCommandViewOf(handle: AuxCommandHandle | 'gone' | null): AuxCommandView {
+  if (handle === null) return { phase: 'idle', word: '未运行', dot: 'dot s-idle', out: '', outLines: 0 };
+  if (handle === 'gone') {
+    return {
+      phase: 'idle', word: 'Host 重启过，这次运行的记录没有了', dot: 'dot s-idle', out: '', outLines: 0,
+    };
+  }
+  const outParts = [handle.stdout.replace(/\n$/, ''), handle.stderr.replace(/\n$/, '')]
+    .filter((text) => text !== '');
+  if (handle.outputTruncated) outParts.push('（输出超过上限，只保留了一部分）');
+  const out = outParts.join('\n');
+  const outLines = out === '' ? 0 : out.split('\n').length;
+  if (handle.state === 'running') {
+    return {
+      phase: 'running', word: '运行中 · 输出在结束后显示', dot: 'dot s-running', out, outLines,
+    };
+  }
+  if (handle.state === 'stopping') {
+    return { phase: 'stopping', word: '正在停止', dot: 'dot s-running', out, outLines };
+  }
+  if (handle.error !== null) {
+    return {
+      phase: 'ended',
+      word: '没跑起来：' + (COMMAND_ERROR_TEXT[handle.error.code] ?? COMMAND_ERROR_TEXT.command_failed),
+      dot: 'dot s-failed', out, outLines,
+    };
+  }
+  if (handle.cancelled) {
+    return { phase: 'ended', word: '已取消，输出保留', dot: 'dot s-cancelled', out, outLines };
+  }
+  const took = commandDurationText(handle.executionMs);
+  if (handle.timedOut) {
+    return { phase: 'ended', word: '超时停下' + took, dot: 'dot s-failed', out, outLines };
+  }
+  if (handle.exitCode === 0) {
+    return { phase: 'ended', word: '已结束 · 退出码 0' + took, dot: 'dot s-satisfied', out, outLines };
+  }
+  if (handle.exitCode !== null) {
+    return {
+      phase: 'ended', word: '已结束 · 退出码 ' + handle.exitCode + took, dot: 'dot s-failed', out, outLines,
+    };
+  }
+  return {
+    phase: 'ended', word: '已结束 · 被信号 ' + handle.signal + ' 停下' + took, dot: 'dot s-failed', out, outLines,
+  };
+}
 
 /** Ruling 2: the 文件 tree of one listing, folders before files and each level by name. */
 export function auxFileListOf(paths: string[]): AuxFileList {
@@ -140,7 +235,7 @@ export function auxFileListOf(paths: string[]): AuxFileList {
  * file with `lines`, else null and no number is drawn. Main's 文件/Diff and
  * Member's 改动 share this one rule.
  */
-export function auxChangedRowsOf(files: UncommittedFilesV1 | null): AuxChangedRow[] {
+export function auxChangedRowsOf(files: UncommittedFileListV1 | null): AuxChangedRow[] {
   if (files === null || files.repository === 'not_git') return [];
   return files.files.flatMap((file) => (file.state === 'clean' ? [] : [{
     path: file.path,
@@ -148,6 +243,89 @@ export function auxChangedRowsOf(files: UncommittedFilesV1 | null): AuxChangedRo
     deleted: file.state === 'uncommitted' && file.lines !== null ? file.lines.deleted : null,
     state: file.state,
   }]));
+}
+
+/**
+ * R3：Diff 页唯一的逐行 diff，按原型的 H 形状给 hunk。切行用 `files/uncommitted` 的
+ * 同一种切法（`gitLines`）；脚本用 `lineEditScript`，超过 Myers 上限回 `null`（N2）。
+ * 上下文 3 行；两处改动之间保留不超过 6 行就并成一段。
+ */
+export function auxDiffHunksOf(before: string | null, after: string | null): AuxDiffHunk[] | null {
+  const a = gitLines(before ?? '');
+  const b = gitLines(after ?? '');
+  const script = lineEditScript(a, b, LINE_DIFF_MAX_DISTANCE);
+  if (script === null) return null;
+  const changed: number[] = [];
+  for (let index = 0; index < script.length; index += 1) if (script[index] !== ' ') changed.push(index);
+  if (changed.length === 0) return [];
+  const runs: Array<[number, number]> = [];
+  let start = changed[0]!;
+  let end = start;
+  for (const index of changed.slice(1)) {
+    if (index === end + 1) { end = index; continue; }
+    runs.push([start, end]);
+    start = index;
+    end = index;
+  }
+  runs.push([start, end]);
+  const merged: Array<[number, number]> = [];
+  for (const run of runs) {
+    const last = merged[merged.length - 1];
+    if (last !== undefined && run[0] - last[1] - 1 <= 6) { last[1] = run[1]; continue; }
+    merged.push([run[0], run[1]]);
+  }
+  const rangeText = (at: number, n: number): string => (n === 0 ? `${at - 1},0` : n === 1 ? `${at}` : `${at},${n}`);
+  const hunks: AuxDiffHunk[] = [];
+  let oldLine = 0;
+  let newLine = 0;
+  let index = 0;
+  for (const [changeStart, changeEnd] of merged) {
+    const from = Math.max(0, changeStart - 3);
+    const to = Math.min(script.length - 1, changeEnd + 3);
+    while (index < from) {
+      const token = script[index]!;
+      if (token !== '+') oldLine += 1;
+      if (token !== '-') newLine += 1;
+      index += 1;
+    }
+    const oldAt = oldLine + 1;
+    const newAt = newLine + 1;
+    let oldCount = 0;
+    let newCount = 0;
+    const rows: Array<[' ' | '-' | '+', string]> = [];
+    for (; index <= to; index += 1) {
+      const token = script[index]!;
+      const line = token === '+' ? b[newLine]! : a[oldLine]!;
+      rows.push([token, line.endsWith('\n') ? line.slice(0, -1) : line + '（文件末尾没有换行）']);
+      if (token !== '+') { oldLine += 1; oldCount += 1; }
+      if (token !== '-') { newLine += 1; newCount += 1; }
+    }
+    hunks.push({ head: `@@ -${rangeText(oldAt, oldCount)} +${rangeText(newAt, newCount)} @@`, oldAt, newAt, rows });
+  }
+  return hunks;
+}
+
+/**
+ * R3：选中那一行的逐行区。`unknown` 是 N1；没读或不是文本的一侧是 N2；脚本超限是 N2、
+ * 空脚本是 N3（两者都让 `hunks` 为 null，画板走 `hunks === null` 那一支画原因）；
+ * 其余给 hunks、note 为空。
+ */
+export function auxDiffViewOf(
+  row: AuxChangedRow,
+  read: { before: string | null; after: string | null } | 'not_text' | null,
+): AuxDiffView {
+  const path = row.path;
+  if (row.state === 'unknown') {
+    return { path, hunks: null, note: '这个文件比较不了：读不到、不是普通文件或超过 1 MiB' };
+  }
+  const noLineDiff = '这个文件没有逐行内容：二进制或不是 UTF-8 文本、超过 1 MiB，或改动超过 1000 行';
+  if (read === null || read === 'not_text') return { path, hunks: null, note: noLineDiff };
+  const hunks = auxDiffHunksOf(read.before, read.after);
+  if (hunks === null) return { path, hunks: null, note: noLineDiff };
+  if (hunks.length === 0) {
+    return { path, hunks: null, note: '逐行看没有差别（可能只差文件开头的 BOM，或文件刚又改回去了）' };
+  }
+  return { path, hunks, note: '' };
 }
 
 /** SPEC-15: the page's lines, whether the text ends in a newline (a save keeps it) and the read time. */

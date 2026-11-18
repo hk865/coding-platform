@@ -109,6 +109,8 @@ function rowOf(ctx, def, rec, usage, final) {
     sourceVersions: rec.facts.sourceVersions ?? null,
     goalDisplay: final?.goalDisplay ?? null, taskPhase: final?.taskPhase ?? null, runOutcome: final?.runOutcome ?? null,
     lineState: final?.lineState ?? null, queueCounts: final?.queueCounts ?? null,
+    // 121-146：收尾那次读里暂时读不到的卡来源和原因；没有它，报告里的 queueCounts 会被当成全的。
+    queueUnreadable: final?.queueUnreadable ?? null,
     failureClass: failure.failureClass ?? null, source: failure.source ?? null, kernelCode: failure.kernelCode ?? null,
     occurredAt: failure.occurredAt ?? null, autoRetry: failure.autoRetry ?? null, recoveryPath: failure.recoveryPath ?? null,
     uncovered: rec.uncovered(), verdict: rec.verdict(),

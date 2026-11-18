@@ -38,7 +38,7 @@ import { ROUND_CHECK_INCOMPLETE_CAUSES, type VerificationRoundRef } from './veri
 // ------------------------------------------------------------------------ //
 // Shapes                                                                    //
 // ------------------------------------------------------------------------ //
-/** Text cut to `CONTINUATION_BRIEF_LIMITS.textChars`; `truncated` says whether anything was cut. */
+/** 截过的文字（上限由用的地方定：续接简报按 `CONTINUATION_BRIEF_LIMITS.textChars`，Run 步骤按字节）；`truncated` 说有没有截。 */
 export type BoundedTextV1 = { text: string; truncated: boolean };
 /** E09F：接续说明里审阅依据的上限（字符）。依据本身至多 4 KiB，全文在审查报告里（`failing[].reportRef`）。 */
 export const CONTINUATION_REVIEW_BASIS_CHARS = 2000;

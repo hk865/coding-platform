@@ -12,21 +12,24 @@ import { until } from '../helpers/change-stream-reader.js';
 
 const NOTICES = ['member_notice', 'second_expiry', 'handoff', 'note_review', 'undelivered_reply', 'automatic_rework',
   'continuation', 'disconnect', 'member_created', 'project_notice', 'plan_adoption', 'plan_notice'];
-const queueOf = (waitingAnswer: number, off: string[], extra: string[] = []): TaskMapQueueRead => ({
+const e35aQueueOf = (waitingAnswer: number, off: string[], extra: string[] = [], failed: string[] = []): TaskMapQueueRead => ({
   counts: { waitingAnswer },
   capabilities: ['goal_cause', 'member_creation', ...NOTICES, ...extra]
-    .map((source) => ({ source, availability: off.includes(source) ? 'not_available' : 'available' })),
+    .map((source) => ({ source, availability: failed.includes(source) ? 'read_failed'
+      : off.includes(source) ? 'not_available' : 'available' })),
 });
 
 describe('E35-A the decision-card count', () => {
   it.each([
-    ['only second_expiry is unavailable (the real Host)', { ...queueOf(2, ['second_expiry']), countsComplete: false }, { n: 2, atLeast: false }],
-    ['a card source is unavailable', queueOf(1, ['goal_cause']), { n: 1, atLeast: true }],
-    ['an unknown source is unavailable', queueOf(1, ['e35a_new_source'], ['e35a_new_source']), { n: 1, atLeast: true }],
-    ['no waiting card', queueOf(0, []), null],
+    ['only second_expiry is unavailable (the real Host)', { ...e35aQueueOf(2, ['second_expiry']), countsComplete: false }, { n: 2, atLeast: false }],
+    ['a card source is unavailable', e35aQueueOf(1, ['goal_cause']), { n: 1, atLeast: true }],
+    ['an unknown source is unavailable', e35aQueueOf(1, ['e35a_new_source'], ['e35a_new_source']), { n: 1, atLeast: true }],
+    ['a card source is unreadable', e35aQueueOf(1, [], ['planning_question'], ['planning_question']), { n: 1, atLeast: true }],
+    ['note_review is unreadable, so the card count is partial', e35aQueueOf(1, [], [], ['note_review']), { n: 1, atLeast: true }],
+    ['no waiting card', e35aQueueOf(0, []), null],
     ['no counts', { capabilities: [] }, null],
   ])('E35-A adapts %s', (_name, read, expected) => {
-    /* Named mutation: per row, 至少 follows countsComplete, or a 0 or missing count becomes an item. */
+    /* Named mutation: per row, 至少 follows only `not_available` (or `note_review` stays excluded), or a 0/missing count becomes an item. */
     expect(adaptTaskMapDecisionCards(read as TaskMapQueueRead)).toEqual(expected);
   });
 });
@@ -40,7 +43,7 @@ function cards(queue: { reply: unknown }) {
 describe('E35-A the page reads the Goal’s waiting cards', () => {
   it('E35-A one waiting card is an attention item that opens 需要你决定, read with the Goal and its sections', async () => {
     /* Named mutation: the item links to Main, not Decide.dc.html. */
-    const queue = { reply: { status: 'ready', value: queueOf(1, ['second_expiry']) } };
+    const queue = { reply: { status: 'ready', value: e35aQueueOf(1, ['second_expiry']) } };
     const read = cards(queue);
     await withE35Page(read.answer, async (page, notify) => {
       await until(() => page.root.textContent.includes('1 张卡'), 20_000);
@@ -50,7 +53,7 @@ describe('E35-A the page reads the Goal’s waiting cards', () => {
       findButton(page.root, '1 张卡')!.dispatch('click');
       expect(page.assigned()).toEqual(['Decide.dc.html']);
       /* Another place answers the card: the next notification rereads 0 and the item goes. */
-      queue.reply = { status: 'ready', value: queueOf(0, ['second_expiry']) };
+      queue.reply = { status: 'ready', value: e35aQueueOf(0, ['second_expiry']) };
       notify();
       await until(() => !page.root.textContent.includes('张卡'), 20_000);
       expect(page.root.textContent).toContain('现在没有需要你决定');

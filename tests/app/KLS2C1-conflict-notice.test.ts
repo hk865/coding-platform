@@ -219,7 +219,7 @@ it('V2 a duplicate module id opens the repair round too: one notice, one follow-
     const queue = await decideQueue(world);
     expect([queue.waitingAnswer.filter(card => card.source.kind === 'structural_proposal'),
       queue.notices.filter(item => item.summary.includes('知识文件有')).length,
-      queue.capabilities.find(entry => entry.source === 'goal_conflict')?.availability]).toEqual([[], 1, 'not_available']);
+      queue.capabilities.find(entry => entry.source === 'goal_conflict')?.availability]).toEqual([[], 1, 'read_failed']);
     // KC-3（121-106 ②）：重号也开修复轮，交给 core 所在区域的参谋。具名改坏：恢复“只有双认领才开”的条件 → 0 个续轮 / 0 条请求。
     expect([(await followUps(world)).length, (await everyActionRequest(world)).length,
       (await actionRequests(world, adviser)).length]).toEqual([1, 1, 1]);

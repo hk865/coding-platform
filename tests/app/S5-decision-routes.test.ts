@@ -74,7 +74,10 @@ function owner(name: string): (...args: unknown[]) => unknown {
 const group = (name: string): unknown => new Proxy({}, { get: (_t, key) => owner(`${name}.${String(key)}`) });
 // `resolveUnknownRun`/`resolveUnknownQueryRun`/`readProposalBatchFiles` are the only three
 // top-level method accesses (`.bind(platform)`), so they must be functions, not group proxies.
-const TOP_LEVEL = new Set(['resolveUnknownRun', 'resolveUnknownQueryRun', 'readProposalBatchFiles']);
+// 121-147（P4 R6）：`verification/installed-checks` 的绑定 `platform.confirmInstalledChecks.bind(platform)`
+// 是第四个顶层方法，同样要是函数。
+const TOP_LEVEL = new Set(['resolveUnknownRun', 'resolveUnknownQueryRun', 'readProposalBatchFiles',
+  'confirmInstalledChecks']);
 let realPlatform: Platform;
 let bindings: ReturnType<typeof createPlatformCoreRouteBindings>;
 beforeEach(async () => {

@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ResolveDecisionReadV1, WorkflowAdvanceResult } from '../../src/business/workflow/contracts.js';
 import type { OperationRef } from '../../src/contracts/core/operations.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
-import type { DecisionCardV1 } from '../../src/core/work-graph/model/decision-contracts.js';
+import type { DecisionCardV1, DecisionQueueReadV1 } from '../../src/core/work-graph/model/decision-contracts.js';
 import type { ToolCommitLookup, ToolCommitLookupInput } from '../../src/contracts/unknown-call-review.js';
 import * as lookupModule from '../../src/composition/tool-commit-lookup.js';
 import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
@@ -23,6 +23,7 @@ import { byIdentityPrefix, commitBarrier, type CommitHold } from '../helpers/S6A
 import { canonicalRefKey } from '../../src/core/work-graph/persistence/record-codecs.js';
 import type { S6AHostWorld } from '../helpers/S6A-host-fixture.js';
 import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
+import { s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
 import { committed, ready } from '../helpers/S7A-fixture.js';
 import { holdS6BRequestRound } from '../helpers/S6B1-fixture.js';
 import { openLink } from '../helpers/S7D1-role-line-world.js';
@@ -105,17 +106,25 @@ describe('L2-attention', () => {
       if (adviser) expect(await attentionNotices(opened.world, opened.adviser!.ref)).toHaveLength(0);
     });
 
-  // L2-13: the adviser-creation projection returns the failed duty read as a ReadResult, so the queue answers
-  // `unavailable` (a plain read keeps its rejected body) instead of the route's 500.
-  it('a failed duty read makes decisions/queue answer unavailable, not 500', async () => {
+  // D1 (Q frozen row; 121-146): a failed adviser-creation source read is that source's `read_failed`, never the
+  // whole queue's `unavailable`. Today this row is red at `status`: the queue still answers `rejected/unavailable`
+  // because the one degraded source fails it whole. The known waiting card is a real candidate through the public
+  // `plans/propose`, so the degraded source is not the only card in the read.
+  it('a failed adviser-creation source read degrades that source and keeps the other card', async () => {
     const opened = await openS7CSystemWorld();
     worlds.push(opened.world);
+    // The known waiting card: a real candidate through the public proposal entry, so the queue has one card
+    // besides the source that this row makes unreadable.
+    const known = await s6aCardsWorkspace(opened.world, S6A_SCOPE).proposeCandidate({
+      label: 's7c-l2-degrade-known-card', goal: opened.goal, request: null });
+    const knownProposalId = known.proposal.ref.proposalId;
+
     const unprofiled = await opened.world.createUnprofiledSecretary('s7c-l2-unprofiled');
     if (unprofiled.role.kind !== 'role_spec') {
       throw new Error('L2-attention: the unprofiled secretary does not carry a RoleSpec role');
     }
     // The queue's adviser-creation read follows the Goal's responsible links; the unprofiled secretary is linked so
-    // resolving its duty reaches the failed read (the new premise of L2-13).
+    // resolving its duty reaches the failed read.
     const linked = await openLink(opened.world, { line: unprofiled, target: { kind: 'goal', ref: opened.goal },
       requestId: 's7c-l2-unprofiled-goal-link' });
     committed(linked.result, 'the unprofiled secretary Goal link');
@@ -124,7 +133,14 @@ describe('L2-attention', () => {
       const queue = await opened.world.post('decisions/queue', plain(S6A_SCOPE, {
         workspace: S6A_SCOPE, goalRef: opened.goal, sections: ['waiting_answer'], page: { limit: 100 } }));
       expect(queue.httpStatus).toBe(200);
-      expect(queue.body).toMatchObject({ status: 'rejected', code: 'unavailable' });
+      expect(queue.body).toMatchObject({ status: 'ready' });
+      const value = ready<DecisionQueueReadV1>(queue.body, 'the degraded queue');
+      expect(value.capabilities).toEqual(expect.arrayContaining([
+        expect.objectContaining({ source: 'adviser_creation', availability: 'read_failed',
+          reason: expect.stringMatching(/.+/) })]));
+      expect(value.waitingAnswer.some(card => card.source.kind === 'candidate'
+        && JSON.stringify(card).includes(knownProposalId))).toBe(true);
+      expect(value.countsComplete).toBe(false);
     } finally { fault.release(); }
   });
 });

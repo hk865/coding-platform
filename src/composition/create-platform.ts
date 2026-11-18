@@ -3259,6 +3259,15 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
         }
         return sessionCall(() => read(...args));
       },
+      // P1 `executions/steps`: drained like every other Runtime read.
+      readRunSteps(...args: Parameters<NonNullable<typeof runtime.port.readRunSteps>>) {
+        const read = runtime.port.readRunSteps;
+        if (read === undefined) {
+          return Promise.resolve<CoreRejection>({ status: 'rejected', code: 'unsupported',
+            reason: 'the Run steps read needs the trusted Runtime binding' });
+        }
+        return sessionCall(() => read(...args));
+      },
       // R4.3a: local control delivery runs on the SAME trackedCall/close path as
       // execution; no public close API or background recovery is added.
       deliverControl(...args: Parameters<NonNullable<typeof runtime.port.deliverControl>>) {

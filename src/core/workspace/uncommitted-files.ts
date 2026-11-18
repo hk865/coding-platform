@@ -7,14 +7,11 @@
  * commit, is `not_git`.
  */
 import { messageOf } from '../../contracts/error-message.js';
-import { gitLines, lineEditCounts } from '../../contracts/line-delta.js';
+import { gitLines, lineEditCounts, LINE_DIFF_MAX_DISTANCE } from '../../contracts/line-delta.js';
 import { readContinuationBaselineBlob, readContinuationCurrentFile } from './continuation-diff-reads.js';
 import { isSafeSourceRelativePath } from './path-validation.js';
 import type { UncommittedFileV1, UncommittedFilesV1, WorkspaceResult } from './ports.js';
 import { gitBlobId, gitTopLevel, pickObjectFormat, readHead, readTree } from './workspace-change-capture.js';
-
-/** Past this many line edits the Myers search stops and the file gets no count. */
-const UNCOMMITTED_MAX_DISTANCE = 1000;
 
 /** Lines compared as bytes: latin1 maps each byte to one character, so no encoding is assumed. */
 function linesOf(bytes: Uint8Array): string[] {
@@ -24,7 +21,7 @@ function linesOf(bytes: Uint8Array): string[] {
 /** A NUL on either side is binary (the continuation diff's rule), and a count past the bound is not given. */
 function countsOf(before: Uint8Array | null, after: Uint8Array | null): { added: number; deleted: number } | null {
   if (before?.includes(0) === true || after?.includes(0) === true) return null;
-  return lineEditCounts(before === null ? [] : linesOf(before), after === null ? [] : linesOf(after), UNCOMMITTED_MAX_DISTANCE);
+  return lineEditCounts(before === null ? [] : linesOf(before), after === null ? [] : linesOf(after), LINE_DIFF_MAX_DISTANCE);
 }
 
 /**
@@ -63,7 +60,7 @@ export async function uncommittedFilesOf(input: {
       : { path, state: 'unknown' });
   }
   signal.throwIfAborted();
-  return { status: 'ready', value: { repository: 'git', files } };
+  return { status: 'ready', value: { repository: 'git', head, files } };
 }
 
 async function fileOf(

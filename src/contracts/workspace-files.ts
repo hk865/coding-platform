@@ -17,5 +17,10 @@ export type UncommittedFileV1 =
 
 /** `not_git`: the root is not a git work-tree top level, or the repository has no HEAD commit. */
 export type UncommittedFilesV1 =
+  | { repository: 'git'; head: string; files: UncommittedFileV1[] }
+  | { repository: 'not_git' };
+
+/** 一个或几个工作区的 files/uncommitted 合在一起：Done 和任务图按工作区分批读再合并，没有单一的 HEAD。 */
+export type UncommittedFileListV1 =
   | { repository: 'git'; files: UncommittedFileV1[] }
   | { repository: 'not_git' };

@@ -328,9 +328,9 @@ const REPAIR_GATE_REFUSED = 'repair.approvalGateRefused';
 
 /**
  * 2c-2 merge (lead ruling 3, as 121-105 isolates the conflict and note cards): when a staged repair's footprint meets
- * a catalog the read-back gate refused, the queue attempt shows no repair card and says `repair_approval` is
- * `not_available`; the other cards and the notices are read. A write in flight still fails the whole queue, and the
- * single-card read keeps the refusal.
+ * a catalog the read-back gate refused, this source answers `rejected`/`unavailable`; the queue degrades it to
+ * `read_failed` (121-146) and reads the other cards and the notices. A write in flight still fails the whole queue,
+ * and the single-card read keeps the refusal.
  */
 export function createRepairApprovalSource(
   deps: RepairApprovalSourceDependencies,
@@ -423,7 +423,7 @@ export function createRepairApprovalSource(
     async readPage(ctx, input) {
       const result = await base.readPage(ctx, input);
       if (result.status !== 'ready' || input.page.attempt?.cache.get(REPAIR_GATE_REFUSED) !== true) return result;
-      return { status: 'ready', value: { ...result.value, availability: 'not_available', items: [], nextCursor: null } };
+      return rejected('unavailable', 'the repair footprint catalog was refused by the read-back gate');
     },
   };
 }

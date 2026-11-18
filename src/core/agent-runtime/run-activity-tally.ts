@@ -22,28 +22,17 @@ import type {
   RunActivityFactsV1,
   RunModelUsageRequestV1,
 } from '../../contracts/run-activity.js';
-import { lineDelta } from '../../contracts/line-delta.js';
-import type { AgentEvent } from '../../../vendor/coding-agent/dist/public-api.js';
 import type { KernelExecutionBinding } from '../work-graph/model/execution-entry-contracts.js';
-import { reduceTurnFromStart } from './kernel-turn-facts.js';
-import type { DecodedKernelRecord } from './kernel-turn-facts.js';
+import { editLinesOf, reduceTurnFromStart, turnCallsOf, turnEventsOf } from './kernel-turn-facts.js';
+import type { DecodedKernelRecord, TurnCall } from './kernel-turn-facts.js';
 
 /** The Kernel statuses L6/L4 treat as a terminal Turn (K part A adds `interrupted`). */
 const TERMINAL_STATUSES: ReadonlySet<string> = new Set(['completed', 'cancelled', 'limit_exceeded', 'failed', 'yielded', 'interrupted']);
-
-/** One started call, taken from its `tool.started` (F3: the call is committed before effects). */
-type StartedCall = { callId: string; name: string; arguments: Record<string, unknown>; at: string };
 
 /** L2: a call is placed in the 15-minute UTC quarter of its `tool.started`. */
 function quarterStart(at: string): string {
   const millis = Date.parse(at);
   return new Date(millis - (millis % (15 * 60 * 1000))).toISOString();
-}
-
-function isTurnStart(record: DecodedKernelRecord, kernel: KernelExecutionBinding): boolean {
-  if (record.record.recordType !== 'turn.started') return false;
-  const run = (record.record.payload as unknown as { run?: { runId?: string; turn?: { turnId?: string } } }).run;
-  return run?.runId === kernel.runId && run.turn?.turnId === kernel.turnId;
 }
 
 /** L1 row 4: the completed edit's own output proves the two workspace revisions are equal. */
@@ -61,7 +50,7 @@ function outputRevisionsEqual(output: readonly unknown[]): boolean {
 }
 
 /** L1 row 1: the `tool.started` arguments prove a replace writes the same text back. */
-function argumentsProveSameText(call: StartedCall): boolean {
+function argumentsProveSameText(call: TurnCall): boolean {
   if (call.name !== 'edit') return false;
   const args = call.arguments;
   return args['mode'] === 'replace' && typeof args['oldText'] === 'string' && typeof args['newText'] === 'string'
@@ -81,10 +70,9 @@ function byBytes(left: string, right: string): number {
  * before the command started (F8); no command ran. A shell whose result is
  * `tool.outcome_unknown` or never arrived still counts as having run.
  */
-function refusedBeforeExecution(result: AgentEvent | undefined): boolean {
-  if (result === undefined) return false;
-  const payload = result.payload as { result?: { effects?: { sideEffect?: string } } };
-  return payload.result?.effects?.sideEffect === 'none';
+function refusedBeforeExecution(settled: TurnCall['settled']): boolean {
+  if (settled === null) return false;
+  return settled.result.effects.sideEffect === 'none';
 }
 
 /** L2: the quarters beyond the cap are kept only as totals and their first/last time. */
@@ -107,39 +95,17 @@ function omittedOverflow(omitted: readonly ActivityQuarterV1[]): ActivityTotalsV
  * above. Only a successfully confirmed `create`/`replace` adds lines; a
  * `shell`, an unknown or missing result, a rejected/failed/cancelled call and
  * any other mode mark the reading incomplete without inventing a zero.
+ * 单次 `edit` 的行数规则在 `editLinesOf`（kernel-turn-facts.ts），Run 步骤也用它。
  */
-function changedLinesOf(
-  started: ReadonlyMap<string, StartedCall>,
-  settled: ReadonlyMap<string, AgentEvent>,
-  unknownResult: ReadonlySet<string>,
-): { added: number; deleted: number; complete: boolean } {
+function changedLinesOf(calls: readonly TurnCall[]): { added: number; deleted: number; complete: boolean } {
   const lines = { added: 0, deleted: 0, complete: true };
-  for (const [callId, call] of started) {
+  for (const call of calls) {
     if (call.name === 'shell') { lines.complete = false; continue; }
     if (call.name !== 'edit') continue;
-    const result = settled.get(callId);
-    if (unknownResult.has(callId) || result === undefined) { lines.complete = false; continue; }
-    const payload = result.payload as { result: { status: string; effects: { sideEffect: string } } };
-    if (result.type !== 'tool.completed' || payload.result.status !== 'success'
-      || payload.result.effects.sideEffect !== 'confirmed') {
-      lines.complete = false;
-      continue;
-    }
-    const mode = call.arguments['mode'];
-    if (mode === 'create') {
-      const newText = call.arguments['newText'] as string;
-      const delta = lineDelta(null, newText);
-      lines.added += delta.added;
-      lines.deleted += delta.deleted;
-    } else if (mode === 'replace') {
-      const oldText = call.arguments['oldText'] as string;
-      const newText = call.arguments['newText'] as string;
-      const delta = lineDelta(oldText, newText);
-      lines.added += delta.added;
-      lines.deleted += delta.deleted;
-    } else {
-      lines.complete = false;
-    }
+    const delta = editLinesOf(call);
+    if (delta === null) { lines.complete = false; continue; }
+    lines.added += delta.added;
+    lines.deleted += delta.deleted;
   }
   return lines;
 }
@@ -147,30 +113,21 @@ function changedLinesOf(
 export function tallyTurnActivity(records: readonly DecodedKernelRecord[], kernel: KernelExecutionBinding,
   window: { fromPosition: number; throughPosition: number; bound: RunActivityBound },
   reducedTurn?: ReturnType<typeof reduceTurnFromStart>): RunActivityFactsV1 {
-  const inWindow = records.filter((record) => record.position <= window.throughPosition);
-  const start = inWindow.find((record) => isTurnStart(record, kernel));
-  if (start === undefined) {
+  const turn = turnEventsOf(records, kernel, window.throughPosition);
+  if (turn === null) {
     return { status: 'unknown', ruleVersion: RUN_ACTIVITY_RULE_VERSION, reason: 'turn_not_found',
       detail: `no turn.started for run ${kernel.runId} turn ${kernel.turnId} in positions <= ${window.throughPosition}` };
   }
-  const turnStartedAt = start.record.recordedAt;
-  let lastRecordAt = turnStartedAt;
-  const events: { position: number; event: AgentEvent }[] = [];
-  for (const record of inWindow) {
-    if (record.record.recordType !== 'agent.event' || record.position <= start.position) continue;
-    const event = record.record.payload.event;
-    if (event.meta.runId !== kernel.runId || event.meta.turnId !== kernel.turnId) continue;
-    events.push({ position: record.position, event });
-    lastRecordAt = record.record.recordedAt;
-  }
+  const turnStartedAt = turn.start.record.recordedAt;
+  const { events, lastRecordAt } = turn;
 
   // A caller that already reduced the Turn over these records hands it over.
-  const reduced = reducedTurn === undefined ? reduceTurnFromStart(inWindow, kernel) : reducedTurn;
+  const reduced = reducedTurn === undefined
+    ? reduceTurnFromStart(records.filter((record) => record.position <= window.throughPosition), kernel) : reducedTurn;
   const turnTerminal = reduced !== null && TERMINAL_STATUSES.has(reduced.status);
 
-  const started = new Map<string, StartedCall>();
-  const settled = new Map<string, AgentEvent>();
-  const unknownResult = new Set<string>();
+  // 调用的开始、结果和结果未知由共用的 turnCallsOf 配好（Run 步骤也用它）。
+  const calls = turnCallsOf(events);
   const requestStarts: { requestId: string; at: string }[] = [];
   // MR (lead ruling 2026-11-02): a failed attempt without usage is retried as the
   // same request flow and is not counted; a failed attempt that already reported
@@ -179,15 +136,7 @@ export function tallyTurnActivity(records: readonly DecodedKernelRecord[], kerne
   const usageByRequest = new Map<string, { inputTokens: number; outputTokens: number; cachedInputTokens: number; costUsdMicros: number | null }[]>();
   for (const item of events) {
     const event = item.event;
-    if (event.type === 'tool.started') {
-      const call = (event.payload as { call: { callId: string; name: string; arguments: Record<string, unknown> } }).call;
-      started.set(call.callId, { ...call, at: event.meta.occurredAt });
-    } else if (event.type === 'tool.completed' || event.type === 'tool.failed' || event.type === 'tool.cancelled') {
-      const callId = (event.payload as { callId: string }).callId;
-      settled.set(callId, event);
-    } else if (event.type === 'tool.outcome_unknown') {
-      unknownResult.add((event.payload as { callId: string }).callId);
-    } else if (event.type === 'model.request_started') {
+    if (event.type === 'model.request_started') {
       requestStarts.push({ requestId: (event.payload as { requestId: string }).requestId, at: event.meta.occurredAt });
     } else if (event.type === 'model.request_failed') {
       failedRequests.add((event.payload as { requestId: string }).requestId);
@@ -215,29 +164,27 @@ export function tallyTurnActivity(records: readonly DecodedKernelRecord[], kerne
     current.editsUnknown += callEditsUnknown;
     quarterTotals.set(quarter, current);
   };
-  for (const [callId, call] of started) {
+  for (const call of calls) {
     steps += 1;
     // L3: only a shell that reached execution marks `command_ran`; a started
     // shell the dispatcher refused before execution (effects `none`, F6) did not
     // run. Resolve the settled result once so the edit rule below can reuse it.
-    const settledResult = settled.get(callId);
+    const settledResult = call.settled;
     if (call.name === 'shell' && !refusedBeforeExecution(settledResult)) commandRan = true;
     let callEdits = 0;
     let callEditsUnknown = 0;
     if ((FILE_EDIT_TOOL_NAMES as readonly string[]).includes(call.name)
       && !argumentsProveSameText(call)) {
       const result = settledResult;
-      if (unknownResult.has(callId) || result === undefined) {
+      if (call.outcomeUnknown || result === null) {
         callEditsUnknown = 1;
         const path = call.name === 'edit' && typeof call.arguments['path'] === 'string' ? call.arguments['path'] : null;
         if (path !== null) possible.add(path);
       } else {
-        const payload = result.payload as { result: { output: readonly unknown[]; effects: {
-          sideEffect: string; changedPaths: readonly string[]; workspaceRevision: string | null } } };
         const outputProvesSame = call.name === 'edit' && result.type === 'tool.completed'
-          && outputRevisionsEqual(payload.result.output);
+          && outputRevisionsEqual(result.result.output);
         if (!outputProvesSame) {
-          const effects = payload.result.effects;
+          const effects = result.result.effects;
           const nonDot = effects.changedPaths.filter((path) => path !== '.');
           if (effects.sideEffect === 'confirmed') {
             if (nonDot.length > 0) {
@@ -257,7 +204,7 @@ export function tallyTurnActivity(records: readonly DecodedKernelRecord[], kerne
     }
     edits += callEdits;
     editsUnknown += callEditsUnknown;
-    addToQuarter(call.at, callEdits, callEditsUnknown);
+    addToQuarter(call.startedAt, callEdits, callEditsUnknown);
   }
 
   const sortedQuarters = [...quarterTotals.values()].sort((left, right) => (left.at < right.at ? -1 : left.at > right.at ? 1 : 0));
@@ -320,7 +267,7 @@ export function tallyTurnActivity(records: readonly DecodedKernelRecord[], kerne
     ruleVersion: RUN_ACTIVITY_RULE_VERSION,
     window: { kernelRunId: kernel.runId, kernelTurnId: kernel.turnId, fromPosition: window.fromPosition,
       throughPosition: window.throughPosition, bound: window.bound, turnTerminal,
-      unresolvedCalls: [...started.keys()].filter((callId) => !settled.has(callId)).length,
+      unresolvedCalls: calls.filter((call) => call.settled === null).length,
       turnStartedAt, lastRecordAt },
     quarters,
     overflow,
@@ -328,7 +275,7 @@ export function tallyTurnActivity(records: readonly DecodedKernelRecord[], kerne
     changedFiles: { definite: definiteKept, possible: possibleKept,
       definiteOmitted, possibleOmitted,
       possiblyIncomplete: incompleteBecause.length > 0, incompleteBecause },
-    changedLines: changedLinesOf(started, settled, unknownResult),
+    changedLines: changedLinesOf(calls),
     usage: { requests: keptRequests, omitted: omittedUsage, totals: usageTotals, complete: usageComplete },
   };
 }

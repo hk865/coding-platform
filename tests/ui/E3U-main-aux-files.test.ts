@@ -155,7 +155,7 @@ describe('E3U Main right panel: 文件 and Diff', () => {
     });
   }, 120_000);
 
-  it('T-B14 Diff shows the git counts of the one listed workspace and draws no line diff', async () => {
+  it('T-B14 Diff shows the git counts of the one listed workspace and the first changed file line by line', async () => {
     await onMain(await wg(), async (page, log) => {
       const from = log.calls.length;
       click(auxTab(page.root, 'Diff')!);
@@ -164,7 +164,7 @@ describe('E3U Main right panel: 文件 and Diff', () => {
       expect(callsOf(log, 'files/uncommitted', from)).toHaveLength(1);
       expect(callsOf(log, 'files/list', from)).toHaveLength(1);
       /* Three listed files: nothing is cut at 100, so the note says no count. */
-      expect(noteOf(page.root, 'Diff')).toBe('还没接通');
+      expect(noteOf(page.root, 'Diff')).toBe('');
       /* 具名改坏: `src/ui/boot.ts` 的 `readAuxPanel` 调 `files/compare` 画样例 hunk；这一句红。 */
       expect(countRoute(log, 'files/compare')).toBe(0);
     });
@@ -183,13 +183,13 @@ describe('E3U Main right panel: 文件 and Diff', () => {
     {
       name: 'a partial listing', shape: { lockedDir: true } as const, memberPartial: true,
       /* 具名改坏: `src/ui/boot.ts` 的 `readUncommittedPage` 在 `partial` 时给 `null`；diff 这一句红。 */
-      diff: '还没接通 · 只核对了前 3 个文件', files: '工作区 · 改动 2 个文件 · 只核对了前 3 个文件',
+      diff: '只核对了前 3 个文件', files: '工作区 · 改动 2 个文件 · 只核对了前 3 个文件',
     },
     {
       name: 'over 100 listed files', shape: { manyFiles: 101 } as const, memberPartial: false,
       /* 具名改坏: `Main.dc.html` 的 `auxFileNote` 不接 `auxCheckedNote()`；files 这一句红。
          具名改坏: `src/ui/boot.ts` 的 `readMember` 把 `filesPartial` 写成 `checkedFirst !== null`；Member 这一句红。 */
-      diff: '还没接通 · 只核对了前 100 个文件', files: '工作区 · 改动 99 个文件 · 只核对了前 100 个文件',
+      diff: '只核对了前 100 个文件', files: '工作区 · 改动 99 个文件 · 只核对了前 100 个文件',
     },
   ])('T-B14b $name: Diff and 文件 say the checked count, Member only the listing’s partial', async ({ shape, memberPartial, diff, files }) => {
     const opened = await own(() => openWGit(shape), 'lockedDir' in shape);
@@ -336,8 +336,7 @@ describe('E3U Main right panel: 文件 and Diff', () => {
       click(auxTab(page.root, tab)!);
       await waitFor(() => callsOf(log, route, before).some((call) => call.reply !== undefined));
       await quietPage(log);
-      /* 具名改坏: `Main.dc.html` 的 Diff `dnote` 不看 `aux.error`、照写“还没接通”，Diff 行这一句红；
-         `auxFileNote` 没读到清单时也写“改动 n 个文件”，文件 行这一句红。 */
+      /* 具名改坏: `Main.dc.html` 的 `auxFileNote` 不看 `aux.error`（读失败时 `aux.diff` 是 null，回空串），Diff 行这一句红；文件 行要的本来就是空串，不红。 */
       expect(noteOf(page.root, tab)).toBe(note);
       expect(rowsOf(page.root, tab)).toEqual([]);
       /* 具名改坏: `boot.ts` 的 `readAuxPanel` 吞错不调 `logReadError`；Diff 行这一句红。 */
@@ -368,7 +367,7 @@ describe('E3U Main right panel: 文件 and Diff', () => {
         await waitFor(() => callsOf(log, 'files/list', before).some((call) => call.reply !== undefined));
         await quietPage(log);
         /* 具名改坏: `boot.ts` 的 `readUncommittedPage` 不判空、照发 `paths: []`；这一句红（“读取失败。”）。 */
-        expect(noteOf(page.root, tab)).toBe(tab === '文件' ? '工作区 · 改动 0 个文件' : '还没接通');
+        expect(noteOf(page.root, tab)).toBe('工作区 · 改动 0 个文件');
       }
       expect(countRoute(log, 'files/uncommitted')).toBe(0);
     });

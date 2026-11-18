@@ -45,6 +45,7 @@ import type {
 import type { RoleLineOperationReadPort } from '../core/work-graph/views/role-line-operations-read.js';
 import type { RoleLineReadPort } from '../core/work-graph/views/role-line-read.js';
 import type { VerificationRoundReadPort } from '../core/work-graph/views/verification-round-read.js';
+import type { ChecksConfirmationPort } from '../core/work-graph/model/initialization-adoption-contracts.js';
 import type { AutonomyRulePort } from '../core/work-graph/tasks/autonomy-rule-service.js';
 import type { GoalAdviserQueuePort } from '../core/work-graph/tasks/goal-adviser-queue-service.js';
 import type { SessionLifecyclePort } from '../core/work-graph/sessions/lifecycle-contracts.js';
@@ -268,6 +269,8 @@ export type CoreRouteBindings = {
     ctx: CoreCallContext, request: Parameters<UnknownCallReviewPort['releaseHold']>[1],
   ) => Promise<WriteResult<UnknownCallReviewReleaseHoldValue>>;
   readContinuationBrief: NonNullable<RuntimeExecutionPort['readContinuationBrief']>;
+  /** P1（决定 121-147）：一次 Work Run 或 Query 轮的步骤。 */
+  readRunSteps: NonNullable<RuntimeExecutionPort['readRunSteps']>;
   // A.2 step 5.5 (G7): the Goal control with its fan-out, and the Goal display, through the Host driver.
   setGoalControl: GoalControlPort['setGoalControl'];
   readGoalDisplay: GoalControlPort['readGoalDisplay'];
@@ -281,6 +284,8 @@ export type CoreRouteBindings = {
   reverifyRound: NonNullable<EvidencePort['reverifyRound']>;
   /** UI1: one formal verification round with its chain and delivery projection. */
   readVerificationRound: VerificationRoundReadPort['readVerificationRound'];
+  /** 检查轮实际会跑的那些检查。 */
+  readInstalledChecks: NonNullable<CoreRoutePlatform['confirmInstalledChecks']>;
   // Slice 1 (spec §4.4): the Session facts, corrections and archive entries.
   // `archiveLine`/`continueArchiveLine` stay optional on `WorkflowPort` for the
   // old narrow doubles; the real composition always publishes them.
@@ -482,7 +487,7 @@ export type CoreRoutePlatform = {
   runtime: Pick<RuntimeExecutionPort,
     'capabilities' | 'createSession' | 'readSessionHistory' | 'readTaskExecutionHistory' | 'startRun' | 'deliverControl'>
     & Required<Pick<RuntimeExecutionPort, 'prepareQuery' | 'startQuery' | 'observeQuery'>>
-    & Pick<RuntimeExecutionPort, 'readContinuationBrief' | 'cancelQuery'>;
+    & Pick<RuntimeExecutionPort, 'readContinuationBrief' | 'cancelQuery' | 'readRunSteps'>;
   /**
    * A.2 step 5.4: the requeue owner; a narrow platform without it answers
    * `unsupported`. K3 L21 D9: `readTaskRequeueByIdentity` is the optional
@@ -596,6 +601,8 @@ export type CoreRoutePlatform = {
   /** UI1: the verification round read owner; internal like the other owner groups, so a narrow platform
    * without it answers `unsupported`. */
   verification?: VerificationRoundReadPort;
+  /** 检查轮查已装检查用的那个读；窄平台上没有。 */
+  confirmInstalledChecks?: ChecksConfirmationPort['confirmInstalledChecks'];
   /** KLS-2c: the knowledge operations; internal like the other owner groups, so a narrow platform answers `unsupported`. */
   knowledge?: Pick<KnowledgeOpsPort, 'problems' | 'recover' | 'recoveryItems' | 'status' | 'commit'>;
   /** KC-1 G2: the proposal owner's batch file list, internal like the plain proposal read. */
@@ -751,6 +758,8 @@ export const CORE_ROUTE_SPECS: Record<
   // A.2 step 5.4 (spec §4.3 "公开入口与操作者", §6.1 (e)).
   'tasks/requeue': { kind: 'graph_write', binding: 'requeueTask', owner: 'claims.requeueTask' },
   'executions/brief': { kind: 'plain', binding: 'readContinuationBrief', owner: 'runtime.readContinuationBrief' },
+  // P1 (decision 121-147): one Work Run's or Query round's steps, `{ ref, after, limit }`.
+  'executions/steps': { kind: 'plain', binding: 'readRunSteps', owner: 'runtime.readRunSteps' },
   // A.2 step 5.5 (spec §2.6 Host route `goals/control`, §2.3 fan-out, §2.1 display).
   'goals/control': { kind: 'graph_write', binding: 'setGoalControl', owner: 'goalControl.setGoalControl' },
   'goals/display': { kind: 'plain', binding: 'readGoalDisplay', owner: 'goalControl.readGoalDisplay' },
@@ -765,6 +774,8 @@ export const CORE_ROUTE_SPECS: Record<
   'verification/reverify': { kind: 'graph_write', binding: 'reverifyRound', owner: 'evidence.reverifyRound' },
   // UI1: the read-only round/chain/delivery read beside the reverify write.
   'verification/round': { kind: 'plain', binding: 'readVerificationRound', owner: 'verification.readVerificationRound' },
+  // 命令页的已装检查：和检查轮读的是同一张登记表。
+  'verification/installed-checks': { kind: 'plain', binding: 'readInstalledChecks', owner: 'platform.confirmInstalledChecks' },
   // Slice 1 (spec §4.4): the eleven Session facts / corrections / archive routes.
   'sessions/archive-line': { kind: 'graph_write', binding: 'archiveLine', owner: 'workflow.archiveLine' },
   'sessions/archive-continue': { kind: 'plain', binding: 'continueArchiveLine', owner: 'workflow.continueArchiveLine' },
@@ -1274,6 +1285,9 @@ export function createPlatformCoreRouteBindings(
     readContinuationBrief: platform.runtime.readContinuationBrief === undefined
       ? unsupported('the Host Runtime does not publish the continuation brief read')
       : platform.runtime.readContinuationBrief.bind(platform.runtime),
+    readRunSteps: platform.runtime.readRunSteps === undefined
+      ? unsupported('the Host Runtime does not publish the Run steps read')
+      : platform.runtime.readRunSteps.bind(platform.runtime),
     setGoalControl: async (ctx, request) => {
       if (goalControl === undefined) {
         return unsupported<GoalControlPort['setGoalControl']>(
@@ -1306,6 +1320,9 @@ export function createPlatformCoreRouteBindings(
     readVerificationRound: platform.verification === undefined
       ? unsupported('the Host does not publish the verification round read')
       : platform.verification.readVerificationRound.bind(platform.verification),
+    readInstalledChecks: platform.confirmInstalledChecks === undefined
+      ? unsupported('the Host does not publish the installed-check read')
+      : platform.confirmInstalledChecks.bind(platform),
     // Slice 1 (spec §4.4): the new owners. `archiveLine`/`continueArchiveLine`
     // are optional only for an old narrow Workflow double; the real composition
     // publishes them, and `readUndeliveredReplies` likewise.
@@ -1845,6 +1862,7 @@ export async function dispatchCoreRoute(
       case 'network/read': return bindings.readRunNetwork(ctx, plain.input as never);
       case 'tasks/requeue': return bindings.requeueTask(ctx, graphWrite.request as never);
       case 'executions/brief': return bindings.readContinuationBrief(ctx, plain.input as never);
+      case 'executions/steps': return bindings.readRunSteps(ctx, plain.input as never);
       case 'goals/control': return bindings.setGoalControl(ctx, graphWrite.request as never);
       case 'goals/display': return bindings.readGoalDisplay(ctx, plain.input as never);
       // The person's gate release and the Goal's gate page.
@@ -1856,6 +1874,7 @@ export async function dispatchCoreRoute(
       case 'executions/running-commands': return bindings.readRunningCommands(ctx, plain.input as never);
       case 'verification/reverify': return bindings.reverifyRound(ctx, graphWrite.request as never);
       case 'verification/round': return bindings.readVerificationRound(ctx, plain.input as never);
+      case 'verification/installed-checks': return bindings.readInstalledChecks(ctx, plain.input as never);
       // Slice 1 (spec §4.4): explicit arms, one per new suffix.
       case 'sessions/archive-line': return bindings.archiveLine(ctx, graphWrite.request as never);
       case 'sessions/archive-continue': return bindings.continueArchiveLine(ctx, plain.input as never);

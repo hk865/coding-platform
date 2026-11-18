@@ -26,6 +26,16 @@ function sourceReadPathOf(output: readonly unknown[]): string | null {
 }
 
 /**
+ * “成功的读”这一条判断：`read` 成功即算；`read_source` 成功且成功 JSON 的路径和调用的路径相同才算。
+ * 见证和 Run 步骤（P1）共用；见证自己的配对不变。
+ */
+export function isSuccessfulRead(name: string, path: string, result: { status: string; output: readonly unknown[] }): boolean {
+  if (result.status !== 'success') return false;
+  if (name === 'read') return true;
+  return name === 'read_source' && sourceReadPathOf(result.output) === path;
+}
+
+/**
  * The Turn's successful reads in history order, `tool.started` paired with
  * `tool.completed` by callId: native `read` takes `arguments.path`;
  * `read_source` counts only when its success JSON names the same path. Search,
@@ -46,9 +56,7 @@ export function successfulReadPathsOf(decoded: readonly DecodedKernelRecord[]): 
     if (event.type !== 'tool.completed') continue;
     const completed = event.payload as { callId: string; result: { status: string; output: readonly unknown[] } };
     const call = started.get(completed.callId);
-    if (call === undefined || completed.result.status !== 'success') continue;
-    if (call.name === 'read') { paths.push(call.path); continue; }
-    if (call.name === 'read_source' && sourceReadPathOf(completed.result.output) === call.path) paths.push(call.path);
+    if (call !== undefined && isSuccessfulRead(call.name, call.path, completed.result)) paths.push(call.path);
   }
   return paths;
 }

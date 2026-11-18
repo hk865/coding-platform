@@ -17,7 +17,7 @@ import type { EvidenceOutcome } from '../../contracts/evidence.js';
 import type { RunRef } from '../../contracts/dispatch.js';
 import type { TaskExecutionRecord } from '../../contracts/execution-read.js';
 import type { TaskRow } from '../../contracts/task-graph.js';
-import type { UncommittedFileV1, UncommittedFilesV1 } from '../../contracts/workspace-files.js';
+import type { UncommittedFileListV1, UncommittedFileV1 } from '../../contracts/workspace-files.js';
 import type { CheckHostActor } from '../../contracts/verification.js';
 import { asText } from '../values.js';
 import { goalHref, type NavData } from './nav.js';
@@ -178,7 +178,7 @@ export type DoneSource = {
   taskFiles: Record<string, string[]>;
   taskFilesIncomplete: boolean;
   /** `files/uncommitted` for the shown paths; `null` is the ruled "numbers only". */
-  files: UncommittedFilesV1 | null;
+  files: UncommittedFileListV1 | null;
   runs: TaskExecutionRecord[];
   /** A continuing Run's brief; `null` is "no continuation brief". */
   briefs: Record<string, ContinuationBriefV1 | null>;
@@ -257,7 +257,7 @@ function policyNote(policy: DonePolicyRead | null): string {
     + String(content.minimumRequiredRequirementsPerObligation) + ' 个必需检查';
 }
 
-function uncommittedAt(files: UncommittedFilesV1 | null, path: string): UncommittedFileV1 | null {
+function uncommittedAt(files: UncommittedFileListV1 | null, path: string): UncommittedFileV1 | null {
   if (files === null || files.repository !== 'git') return null;
   return files.files.find((row) => row.path === path) ?? null;
 }
@@ -449,8 +449,8 @@ function doneCard(source: DoneSource, delivery: DoneDelivery | null, ordinal: nu
 function inboxRowsOf(nav: NavData): DoneData['inboxRows'] {
   const href = goalHref('Main.dc.html', nav.selectedGoalId);
   return [
-    { href, title: '在主对话里处理', sq: 'sq z10 s-decide', name: '需要你决定', n: String(nav.inbox.decideN) },
-    { href, title: '在主对话里查看', sq: 'sq z10 s-waiting', name: '请知悉', n: String(nav.inbox.noticeN) },
+    { href, title: '在主对话里处理', sq: 'sq z10 s-decide', name: '需要你决定', n: nav.inbox.decideText },
+    { href, title: '在主对话里查看', sq: 'sq z10 s-waiting', name: '请知悉', n: nav.inbox.noticeText },
   ];
 }
 

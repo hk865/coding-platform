@@ -483,7 +483,9 @@ export type DecisionQueueReadV1 = {
   seenThrough: Partial<Record<NoticeCategoryV1, NoticePositionV1>>;
   displayToken: string | null;
   capabilities: { source: DecisionSourceV1['kind'] | NoticeCategoryV1;
-    availability: 'available' | 'not_available' }[];
+    availability: 'available' | 'not_available' | 'read_failed';
+    /** 只在 read_failed 上：这一种第一次读失败的原因（原样）。 */
+    reason?: string }[];
 };
 
 export type GoalConflictReadV1 = {
@@ -530,14 +532,15 @@ export type ConflictArchitectureRead = {
  * files, read before the window is fixed: the conflicts' architecture (`null`
  * when the queue reads no conflicts) and, in `attempt`, what the card sources'
  * `prepareWindow` read for the subjects, listed once. Internal only.
- * `conflictsUnavailable` (stk16, lead 11-12): the architecture read failed but not
- * on a write in flight (the 2a-1 read-back gate: a bad file, a duplicate id, a
- * dangling reference); the queue reads without the conflict cards and says
- * `goal_conflict` is `not_available`.
+ * `readFailed` (121-146): a card source whose read failed in this preparation
+ * (the 2a-1 read-back gate refused the conflicts' architecture: a bad file, a
+ * duplicate id, a dangling reference; or a source's own `prepareWindow`). The
+ * queue reads without that source and marks it `read_failed`; a write in flight
+ * and a cancelled read still fail the whole queue.
  */
 export type DecisionQueuePreparation = {
   architecture: ConflictArchitectureRead | null;
-  conflictsUnavailable: boolean;
+  readFailed: { source: DecisionSourceV1['kind']; reason: string }[];
   attempt: DecisionSourceAttempt;
 };
 /**

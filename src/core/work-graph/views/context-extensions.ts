@@ -125,6 +125,16 @@ function decisionRows(
     });
   }
   for (const capability of capabilities) {
+    // 121-146：卡来源读失败都写一行（不限九种，通知不降级所以见到的都是卡来源）。
+    if (capability.availability === 'read_failed') {
+      rows.push({
+        key: `decision:read_failed:${capability.source}`,
+        node: { kind: 'goal', ref: request.goalRef },
+        text: `${PLATFORM_PROMPT_PACK_V1.strings['contextExtension.readFailedPrefix']}${capability.source}`,
+        sources: [],
+      });
+      continue;
+    }
     if (!CARD_SOURCE_KINDS.includes(capability.source as DecisionSourceV1['kind'])) continue;
     if (capability.availability !== 'not_available') continue;
     rows.push({
@@ -148,6 +158,22 @@ function decisionRows(
   return {
     rows: [...byKey.values()].sort((left, right) => (left.key < right.key ? -1 : left.key > right.key ? 1 : 0)),
   };
+}
+
+/**
+ * 121-146：分页队列每页都重新装配全部来源，所以一页的 `read_failed` 可能只在某一页出现；并起来，任一页有就算，
+ * 后面的页不再把它改回 `available` 或 `not_available`。
+ */
+function mergePageCapabilities(
+  into: DecisionQueueReadV1['capabilities'],
+  page: DecisionQueueReadV1['capabilities'],
+): DecisionQueueReadV1['capabilities'] {
+  const merged = new Map(into.map((entry) => [entry.source, entry]));
+  for (const entry of page) {
+    if (merged.get(entry.source)?.availability === 'read_failed') continue;
+    merged.set(entry.source, entry);
+  }
+  return [...merged.values()];
 }
 
 /** A `not_implemented` extension with no rows, fresh for every result. */
@@ -374,6 +400,7 @@ export function createContextExtensionsReader(deps: ContextExtensionsDependencie
           const prepared = { read: await deps.decisions.prepareDecisionQueue(hostCtx, queueInput),
             last: attempt === WINDOW_MAX_ATTEMPTS };
           cards.length = 0;
+          capabilities = [];
           let sourceCursor: DecisionQueueReadV1['sourceCursor'] | null = null;
           let cursor: string | undefined;
           for (;;) {
@@ -391,10 +418,10 @@ export function createContextExtensionsReader(deps: ContextExtensionsDependencie
             if (read.status !== 'ready') return read;
             if (sourceCursor === null) {
               sourceCursor = read.value.sourceCursor;
-              capabilities = read.value.capabilities;
             } else if (read.value.sourceCursor !== sourceCursor) {
               return rejection('unavailable', 'decision_queue_window_changed: the decision queue pages did not share one ledger window');
             }
+            capabilities = mergePageCapabilities(capabilities, read.value.capabilities);
             for (const card of read.value.waitingAnswer) {
               if (card.state !== 'waiting_answer') continue;
               cards.push(card);

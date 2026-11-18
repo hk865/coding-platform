@@ -2337,8 +2337,8 @@ class Component extends DCLogic {
     const inboxGoal = D.goal === null ? null : D.goal.id;
     const inboxHref = 'Main.dc.html' + (inboxGoal === null ? '' : '?goal=' + encodeURIComponent(inboxGoal));
     const inboxRows = [
-      { href: inboxHref, title: '在主对话里处理', sq: 'sq z10 s-decide', name: '需要你决定', n: String(D.inbox.decideN) },
-      { href: inboxHref, title: '在主对话里查看', sq: 'sq z10 s-waiting', name: '请知悉', n: String(D.inbox.noticeN) },
+      { href: inboxHref, title: '在主对话里处理', sq: 'sq z10 s-decide', name: '需要你决定', n: D.inbox.decideText },
+      { href: inboxHref, title: '在主对话里查看', sq: 'sq z10 s-waiting', name: '请知悉', n: D.inbox.noticeText },
     ];
 
     /* right panel: the line's records grouped by task */
@@ -2641,7 +2641,7 @@ class Component extends DCLogic {
         head: '工作中 0 · 待命 0', headTip: '', line: null, ownKey: null, ownName: '', trace: [],
         changes: { repository: 'git', files: [], note: '' }, write: null,
         startup: { show: false, count: 0, groups: [], error: null },
-        inbox: { decideN: 0, noticeN: 0, hasDecide: false, hasNotice: false, none: true } };
+        inbox: { decideN: 0, decideText: '0', noticeN: 0, noticeText: '0', hasDecide: false, hasNotice: false, none: true } };
       return this.memberDataVals(data || none, s, set, DUTY, read);
     }
     const theme = s.theme || this.props.theme || 'dark';

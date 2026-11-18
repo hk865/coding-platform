@@ -19,6 +19,7 @@ const temporary: string[] = [];
 let host: LocalWorkbenchHost | undefined;
 let base = '';
 let token = '';
+let head = '';
 
 beforeAll(async () => {
   const temp = async (name: string): Promise<string> => { const d = await mkdtemp(join(tmpdir(), `e37-${name}-`)); temporary.push(d); return d; };
@@ -31,6 +32,7 @@ beforeAll(async () => {
   await writeFile(at('src/committed.ts'), 'v2\n');
   gitIn(gitRoot, 'add', '-A');
   gitIn(gitRoot, 'commit', '-q', '-m', 'second');
+  head = gitIn(gitRoot, 'rev-parse', 'HEAD').trim();
   /* the uncommitted changes: plain disk writes, the way a shell or an editor makes them (spec §1) */
   for (const path of ['src/gone.ts', 'src/link.ts', 'src/dir']) await rm(at(path), { recursive: true }); // the link itself, the whole dir
   const now: Record<string, string | Buffer> = { 'src/mod.ts': 'a\nB\nc\nd\n', 'src/bin.dat': Buffer.from([0, 1, 10]), 'src/big.ts': big('b'),
@@ -93,7 +95,7 @@ describe('E37-R files/uncommitted', () => {
       ['../outside.ts', { state: 'unknown' }], // not a normal path: answered, not refused (spec §5)
     ];
     expect(await uncommitted(ws1, { workspace: refOf(ws1), paths: rows.map(([path]) => path) }))
-      .toEqual({ status: 'ready', value: { repository: 'git', files: rows.map(([path, rest]) => ({ path, ...rest })) } });
+      .toEqual({ status: 'ready', value: { repository: 'git', head, files: rows.map(([path, rest]) => ({ path, ...rest })) } });
   });
 
   /* Named mutation: the real path not checked against the read prefixes before the bytes are read (this row
@@ -101,7 +103,7 @@ describe('E37-R files/uncommitted', () => {
   it('E37-R1 a path through a directory link out of the read prefixes answers unknown, no lines (ruling 20)', async () => {
     // src/outside -> ../private: the path asked for is under 'src', the file it reaches is not
     expect(await uncommitted(ws1, { workspace: refOf(ws1), paths: ['src/outside/a.txt'] }))
-      .toEqual({ status: 'ready', value: { repository: 'git', files: [{ path: 'src/outside/a.txt', state: 'unknown' }] } });
+      .toEqual({ status: 'ready', value: { repository: 'git', head, files: [{ path: 'src/outside/a.txt', state: 'unknown' }] } });
   });
 
   /* Named mutation: the parent directory not resolved with realpath and checked against the read prefixes
@@ -109,7 +111,7 @@ describe('E37-R files/uncommitted', () => {
   it('E37-R1 a missing file through a directory link out of the read prefixes answers unknown, not clean (ruling 24)', async () => {
     // neither in HEAD nor under private/: only the read prefixes may answer, and they do not allow private/
     expect(await uncommitted(ws1, { workspace: refOf(ws1), paths: ['src/outside/none.ts'] }))
-      .toEqual({ status: 'ready', value: { repository: 'git', files: [{ path: 'src/outside/none.ts', state: 'unknown' }] } });
+      .toEqual({ status: 'ready', value: { repository: 'git', head, files: [{ path: 'src/outside/none.ts', state: 'unknown' }] } });
   });
 
   /* Named mutation: a root that is not git's top level answered path by path (files: one unknown). */

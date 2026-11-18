@@ -114,7 +114,7 @@ describe('E3M-8 the Member page on a waiting line', () => {
         .toBe('waiting_reply');
       /* The frozen row (`clk-current.md:221`) expects the rail to keep 等回复 after the
          reopen: the line's own `waiting_reply` wins over the Goal interruption's
-         `decide` (`src/ui/adapters/nav.ts:158-162`); the wait and `deadline` above are
+         `decide` (`src/ui/adapters/nav.ts:163-167`); the wait and `deadline` above are
          the public facts. */
       expect(textOf(findClass(row!, 'row-sub'))).toBe('等回复');
       expect(mainHeadTitle(page.root)).toBe('执行者');

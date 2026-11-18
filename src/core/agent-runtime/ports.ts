@@ -24,6 +24,7 @@ import type { QueryRunRef } from '../../contracts/query-job.js';
 import type { PromptRecordReadV1 } from '../../contracts/prompts/prompt-set.js';
 import type { CreateSessionRequest, SessionHistoryEntry, SessionHistoryRequest } from './session-operations.js';
 import type { RunActivityRead } from './run-activity-reader.js';
+import type { RunStepsReadV1, RunStepsRequestV1 } from '../../contracts/run-steps.js';
 import type { ConsultationHistoryFailureV1 } from '../work-graph/queries/platform-facts.js';
 
 /**
@@ -174,6 +175,12 @@ export interface RuntimeExecutionPort {
    */
   countQueryActivity?(ctx: CoreCallContext, input: { queryRunRef: QueryRunRef; maxPages?: number }):
     Promise<ReadResult<RunActivityRead | { kind: 'not_entered' }>>;
+  /**
+   * P1（决定 121-147）`executions/steps`：一次 Work Run 或 Query 轮的步骤（思考、读、编辑、命令、
+   * 消息、其它工具），按 Kernel 位置分页，正在跑的也能读。只读 Kernel，不写任何记录。
+   * Optional like the members above; `createAgentRuntime` always publishes it.
+   */
+  readRunSteps?(ctx: CoreCallContext, input: RunStepsRequestV1): Promise<ReadResult<RunStepsReadV1>>;
 }
 
 /** What the agent factory itself publishes. The five Session/capability members

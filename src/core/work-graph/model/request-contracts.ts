@@ -13,7 +13,7 @@ import type { RoleBindingRefV1 } from '../../../contracts/dispatch.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type {
-  GoalCardDraftV1, QueryCloseDetailV1, QueryJobIntentV1, QueryJobRef, QueryRoundKind, RequestCommandReceiptV1,
+  GoalCardDraftV1, QueryCloseDetailV1, QueryJobIntentV1, QueryJobRef, QueryRoundKind, QueryRunRef, RequestCommandReceiptV1,
   RequestInterventionSourceV1, RequestReferenceV1, RequestUnderstandingCommandV1,
 } from '../../../contracts/query-job.js';
 import type { RuntimeBudget } from '../../../contracts/runtime-budget.js';
@@ -102,6 +102,8 @@ export type GoalCardDraftRowsV1 = GoalCardDraftViewV1[];
 
 export type RequestRoundViewV1 = {
   ref: QueryJobRef;
+  /** P1：这一轮的 QueryRun（Job 记着的那一次），读它的步骤用 `executions/steps`；路由轮是 null。 */
+  runRef: QueryRunRef | null;
   kind: QueryRoundKind;
   status: RequestRoundStatus;
   input: string;

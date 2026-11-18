@@ -2,7 +2,9 @@
   "now": "2026-11-07T09:00:00+08:00",
   "routes": {
     "bootstrap":
-      {"workspaces":[{"scope":{"projectId":"e3w-scene","workspaceId":"e3w-scene"},"name":"E3W scene","workspaceRevision":1}],"review":null,"execution":{},"changesHead":"c0000000001"},
+      {"workspaces":[{"scope":{"projectId":"e3w-scene","workspaceId":"e3w-scene"},"name":"E3W scene","workspaceRevision":1,"commandsAllowed":true}],"review":null,"execution":{},"changesHead":"c0000000001"},
+    "verification/installed-checks":
+      {"status":"ready","value":{"configurationRevision":"e3w-scene-checks@1","contentDigest":"e3w-scene-checks","settings":null,"checks":[{"checkId":"scene-typecheck","kind":"static","command":"npm run typecheck","cwd":".","timeoutMs":60000,"taskIds":"all"},{"checkId":"scene-tests","kind":"static","command":"npm test","cwd":".","timeoutMs":60000,"taskIds":"all"}]}},
     "goals/list":
       {"status":"ready","value":{"goals":[{"ref":{"aggregateType":"Goal","projectId":"e3w-scene","goalId":"scene-goal"},"revision":1,"since":"c0000000001","ordinal":1,"objective":"场景目标","desiredState":"active","desiredStateRevision":1,"order":1,"autonomy":"after_plan_confirmation","waitForGoalRef":null,"activePlanRevision":{"planId":"scene-plan","revision":1},"display":{"phase":"RUNNING"}},{"ref":{"aggregateType":"Goal","projectId":"e3w-scene","goalId":"scene-goal-2"},"revision":1,"since":"c0000000001","ordinal":2,"objective":"场景目标二","desiredState":"paused","desiredStateRevision":1,"order":2,"autonomy":"after_plan_confirmation","waitForGoalRef":null,"activePlanRevision":null,"display":{"phase":"PAUSED"}},{"ref":{"aggregateType":"Goal","projectId":"e3w-scene","goalId":"scene-goal-3"},"revision":1,"since":"c0000000001","ordinal":3,"objective":"场景目标三","desiredState":"active","desiredStateRevision":1,"order":3,"autonomy":"after_plan_confirmation","waitForGoalRef":null,"activePlanRevision":null,"display":{"phase":"PLANNING"}}],"sourceCursor":"c0000000001"}},
     "goals/read":
@@ -36,7 +38,7 @@
     "files/list":
       {"status":"ready","value":{"paths":["README.md","src/app/core-routes.ts","src/ui/views.ts"],"partial":false}},
     "files/uncommitted":
-      {"status":"ready","value":{"repository":"git","files":[{"path":"README.md","state":"clean"},{"path":"src/app/core-routes.ts","state":"uncommitted","lines":{"added":4,"deleted":0}},{"path":"src/ui/views.ts","state":"uncommitted","lines":{"added":12,"deleted":3}}]}},
+      {"status":"ready","value":{"repository":"git","head":"c000000000000000000000000000000000000000","files":[{"path":"README.md","state":"clean"},{"path":"src/app/core-routes.ts","state":"uncommitted","lines":{"added":4,"deleted":0}},{"path":"src/ui/views.ts","state":"uncommitted","lines":{"added":12,"deleted":3}}]}},
     "files/read":
       {"status":"ready","value":{"path":"src/ui/views.ts","content":"export function views(list) {\n  return list.map((item) => item.name);\n}\n","digest":"34d1a1ff6f54c06e59420dafe535855d992c6878d03a4a40527db877e56aa061","sizeBytes":72,"digestBasis":"raw_bytes","version":{"kind":"working_tree"},"readAt":"2026-11-07T01:00:00.000Z"}}
   }

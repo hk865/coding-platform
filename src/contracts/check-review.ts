@@ -6,7 +6,8 @@ import { rejected } from './core/rejections.js';
 import type { CoreRejection } from './core/results.js';
 import { canonicalJson, sha256Hex, type JsonValue } from './fingerprint.js';
 import type { GoalRef } from './ledger.js';
-import { truncateUtf8, utf8ByteLength } from './utf8.js';
+// 末尾截取和截断标记（lead 11-17 裁定 5）在 utf8.ts，Run 步骤的命令输出也用。
+import { streamTail, truncateUtf8, utf8Tail } from './utf8.js';
 import { hasOnlyKeys, isPos, isRecord, isSha256Hex, nonEmpty, parseObject } from './validation/common.js';
 import type { CheckProcessObservation, RegisteredCommandCheck } from './verification.js';
 
@@ -204,35 +205,10 @@ export function checkDigestOf(check: RegisteredCommandCheck): string {
   return sha256Hex(canonicalJson(check as unknown as JsonValue));
 }
 
-/** 文字末尾不超过 `maxBytes` 字节的一段，不切开一个字。 */
-function utf8Tail(text: string, maxBytes: number): string {
-  const chars = Array.from(text);
-  let start = chars.length;
-  let bytes = 0;
-  while (start > 0) {
-    const size = utf8ByteLength(chars[start - 1]!);
-    if (bytes + size > maxBytes) break;
-    bytes += size;
-    start -= 1;
-  }
-  return chars.slice(start).join('');
-}
-
 /** 没跑成的那一种：没有进程输出，原因写进 `stderrTail`。 */
 export function checkBaselineNotStarted(check: RegisteredCommandCheck, ranAt: string, reason: string): CheckBaselineV1 {
   return { checkId: check.checkId, checkDigest: checkDigestOf(check), ranAt, outcome: 'not_started', exitCode: null,
     stdoutTail: '', stderrTail: utf8Tail(reason, CHECK_BASELINE_TAIL_BYTES) };
-}
-
-/**
- * lead 11-17 裁定 5：Kernel 每路输出只收前 32 KiB，超过的部分丢掉；这时取到的只是前段的末尾，要让批准者知道。
- * 真正保留进程输出末尾要改 Kernel（走受管补丁流程），记进待办。
- */
-const TRUNCATED_MARK = '（输出超过上限，这里只是前段的末尾）';
-
-function streamTail(stream: { text: string; truncated: boolean }): string {
-  if (!stream.truncated) return utf8Tail(stream.text, CHECK_BASELINE_TAIL_BYTES);
-  return TRUNCATED_MARK + utf8Tail(stream.text, CHECK_BASELINE_TAIL_BYTES - utf8ByteLength(TRUNCATED_MARK));
 }
 
 /** 把检查沙盒的观察换成改动前的事实；被调用方取消的进程不在这里（调用方回 `cancelled`，下一轮重跑）。 */
@@ -245,5 +221,6 @@ export function checkBaselineOf(check: RegisteredCommandCheck, ranAt: string,
       : exitCode !== null && Number.isInteger(exitCode) && !observation.cancelled ? 'failed'
         : 'killed';
   return { checkId: check.checkId, checkDigest: checkDigestOf(check), ranAt, outcome, exitCode,
-    stdoutTail: streamTail(observation.stdout), stderrTail: streamTail(observation.stderr) };
+    stdoutTail: streamTail(observation.stdout, CHECK_BASELINE_TAIL_BYTES),
+    stderrTail: streamTail(observation.stderr, CHECK_BASELINE_TAIL_BYTES) };
 }

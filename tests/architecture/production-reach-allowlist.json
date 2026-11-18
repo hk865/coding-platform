@@ -1215,12 +1215,6 @@
     },
     {
       "file": "src/core/agent-runtime/runtime.ts",
-      "name": "rejected",
-      "reason": "kept-for",
-      "note": "slice 6 of the orchestration design (decision 83, prompts and context): builds the rejection of RuntimeExecutionPort.readPromptRecord; E3 adds the route."
-    },
-    {
-      "file": "src/core/agent-runtime/runtime.ts",
       "name": "sameQueryRunRef",
       "reason": "kept-for",
       "note": "slice 6 of the orchestration design (decision 83, prompts and context): checks the Query Run identity in RuntimeExecutionPort.readPromptRecord; E3 adds the route."

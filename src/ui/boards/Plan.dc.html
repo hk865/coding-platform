@@ -5158,7 +5158,7 @@ class Component extends DCLogic {
     };
     const inbox = Object.assign({}, base.inbox, {
       local: !!data.inbox.local, remote: !!data.inbox.remote,
-      decideN: data.inbox.decideN, noticeN: data.inbox.noticeN,
+      decideN: data.inbox.decideText, noticeN: data.inbox.noticeText,
       decideHref: hrefOf(selectedId), decideTip: '在主画面处理', noticeHref: hrefOf(selectedId), open: openFirst
     });
     const lines = (data.lines || []).map((L) => this.planLineRow(L));
@@ -5184,7 +5184,7 @@ class Component extends DCLogic {
       word: selected ? selected.word : '状态未读',
       why: read && read.stale && read.staleText ? String(read.staleText) : selected ? selected.why : '',
       item: progress.done + '/' + progress.total + ' 已满足',
-      hasDecide: !!data.inbox.local, decideN: data.inbox.decideN, openDecide: openFirst,
+      hasDecide: !!data.inbox.local, decideN: data.inbox.decideText, openDecide: openFirst,
       canPause: !!data.gb.canPause, canResume: !!data.gb.canResume,
       canCancel: !!data.gb.canCancel, canRequeue: !!data.gb.canRequeue,
       confirm: !!s.confirmCancel,
@@ -5546,7 +5546,7 @@ class Component extends DCLogic {
       goals: [], selectedGoalId: null, selectedGoalRevision: null, selectedDisplay: null,
       lines: [], archived: [], archivedText: '没有已归档的工作线', head: '工作中 0 · 待命 0',
       headTip: '', counts: { working: 0, standby: 0, archived: 0 },
-      inbox: { decideN: 0, noticeN: 0, hasDecide: false, hasNotice: false, none: true, local: false, remote: false },
+      inbox: { decideN: 0, decideText: '0', noticeN: 0, noticeText: '0', hasDecide: false, hasNotice: false, none: true, local: false, remote: false },
       detail: null, tasks: null, hasGoal: false, phaseRevision: null, scope: null,
       decisions: null, conversation: [], older: null, track: null, progress: { done: 0, total: 0 },
       line: null, aux: null, goalCard: { draft: null, confirmed: [] }, plan: null, versions: [],

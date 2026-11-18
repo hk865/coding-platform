@@ -57,8 +57,13 @@ import { readonlyCommandSandboxOptions } from './readonly-command-tool.js';
 import { WORKSPACE_DENIED_PREFIXES } from '../workspace/denied-prefixes.js';
 import type { WorkspaceRef } from '../../contracts/ledger.js';
 import type { AgentRuntimePort, AgentRuntimeService, RuntimeExecutionPort } from './ports.js';
-import { readRunActivityFacts, unknownFacts, type RunActivityRead } from './run-activity-reader.js';
-import { provenNotEnteredKernel, type RunActivityBound } from '../../contracts/run-activity.js';
+import {
+  advanceResume, readRunActivityFacts, readTurnWindow, unknownFacts, type RunActivityRead, type RunActivityResume,
+} from './run-activity-reader.js';
+import { provenNotEnteredKernel, type RunActivityBound, type RunActivityFactsV1 } from '../../contracts/run-activity.js';
+import { RUN_STEPS_PAGE_LIMIT, type RunStepsReadV1 } from '../../contracts/run-steps.js';
+import { buildRunSteps } from './run-steps.js';
+import type { KernelExecutionBinding } from '../work-graph/model/execution-entry-contracts.js';
 import { isRunExecutionHistoryV1 } from '../work-graph/persistence/execution-history-codecs.js';
 
 const unsupported = (reason: string) => ({
@@ -862,6 +867,159 @@ export function createAgentRuntime(requestedDeps?: RuntimeExecutionDependencies)
     return { kind: 'answer', value: { kind: 'facts', facts: unknownFacts('history_read_failed', bounds.reason) } };
   }
   /**
+   * P1（C1）：计数和 Run 步骤共用的定位。校验 ref、读 Run、找位置记录、探测 Kernel、选上界，
+   * 得到一段读窗，或一个现成的回答。`count` 模式的回答和今天的计数一字不变；`steps` 模式多一种
+   * `not_started`（还没进 Kernel 的 Run 或 Query 轮），并允许读没结束的。
+   */
+  type Located =
+    | { kind: 'window'; session: SessionRecord; kernel: KernelExecutionBinding; fromPosition: number;
+        through: { position: number; bound: Exclude<RunActivityBound, 'kernel_tail'> } | 'kernel_tail'; runEnded: boolean }
+    | { kind: 'not_started' }
+    | { kind: 'answer'; value: ReadResult<RunActivityRead | { kind: 'not_entered' }> };
+  const READER_NAME = { count: { run: 'countRunActivity', query: 'countQueryActivity' },
+    steps: { run: 'readRunSteps', query: 'readRunSteps' } } as const;
+  const hasIdFields = (value: unknown, fields: readonly string[]): boolean =>
+    fields.every((field) => typeof (value as Record<string, unknown>)[field] === 'string'
+      && ((value as Record<string, unknown>)[field] as string).length > 0);
+  /**
+   * Slice 2B L6 (backfill) 的定位部分：没有位置记录的 Run，只有平台证明它没进 Kernel（L7）
+   * 才答 `not_entered`，否则是明确的 `unknown('no_history_locator')`；`steps` 模式下没结束的答
+   * `not_started`。上界是共用的 `activityUpperBound`；Run 存下的核对观察是它 `interrupted_clean`
+   * 的最后位置或 `unresolved` 的水位。
+   */
+  async function locateRunWindow(ctx: CoreCallContext, runRefRaw: unknown, mode: 'count' | 'steps'): Promise<Located> {
+    if (typeof runRefRaw !== 'object' || runRefRaw === null || (runRefRaw as { aggregateType?: unknown }).aggregateType !== 'Run'
+      || !hasIdFields(runRefRaw, ['projectId', 'goalId', 'runId'])) {
+      return { kind: 'answer', value: { status: 'rejected', code: 'invalid',
+        reason: `${READER_NAME[mode].run} requires a complete RunRef` } };
+    }
+    const runRef = runRefRaw as RunRef;
+    if (runRef.projectId !== ctx.projectId) {
+      return { kind: 'answer', value: { status: 'rejected', code: 'forbidden', reason: 'the Run belongs to another project' } };
+    }
+    const read = await deps.executions.readExecution(ctx, runRef);
+    if (read.status !== 'ready') return { kind: 'answer', value: read };
+    const record = read.value;
+    const run = record.run;
+    const locator = run.executionHistory;
+    if (locator === undefined || !isRunExecutionHistoryV1(locator)) {
+      // P1：没结束、还没有位置记录的 Run 还没进 Kernel（领取、准备、starting）。
+      if (mode === 'steps' && run.status !== 'ended') return { kind: 'not_started' };
+      // R5: the ONE shared L7 predicate (V2 authorization without a Kernel
+      // identity, or no authorization on/after the recording epoch).
+      if (provenNotEnteredKernel(run, null)) {
+        return { kind: 'answer', value: { status: 'ready', value: { kind: 'not_entered' } } };
+      }
+      // L7/2B-42: a Run with no locator, no authorization and no `startedAt`
+      // (claimed then cancelled before it entered, ended before the recording
+      // epoch) is NOT proved not-entered here. Only the V2 authorized/revoked
+      // binding proves non-entry; this one is a backfill candidate and must
+      // produce an explicit `unknown('no_history_locator')`, never 0/empty.
+      return { kind: 'answer', value: { status: 'ready', value: { kind: 'facts',
+        facts: unknownFacts('no_history_locator', 'the Run has no position record; its Kernel history is not indexed (F11)') } } };
+    }
+    if (locator.sessionRef.projectId !== ctx.projectId
+      || locator.kernel.kernelSessionId !== record.session.kernel.kernelSessionId) {
+      return { kind: 'answer', value: { status: 'ready', value: { kind: 'facts',
+        facts: unknownFacts('history_read_failed', 'the persisted locator disagrees with the claim Session mapping') } } };
+    }
+    // L6/R6: the mandatory probe runs BEFORE any bound is resolved. A missing or
+    // damaged mapping is a definite `kernel_unreadable`; a transient, Host
+    // configuration or cancellation outcome proves nothing, so it is
+    // `retry_later` and nothing is written. Doing this first keeps a probe
+    // failure from surfacing as a bounds-read failure (`history_read_failed` /
+    // `kernel_unreadable`) and keeps a cancellation around the bounds read.
+    const probe = await historyCursorOwner.probe({ session: record.session, signal: ctx.signal });
+    if (probe.verdict === 'missing' || probe.verdict === 'damaged') {
+      return { kind: 'answer', value: { status: 'ready', value: { kind: 'facts', facts: unknownFacts('kernel_unreadable', probe.reason) } } };
+    }
+    if (probe.verdict !== 'ready') {
+      return { kind: 'answer', value: { status: 'ready', value: { kind: 'retry_later', reason: probe.reason } } };
+    }
+    const observation = run.reconciliation?.observation;
+    const reconciled = observation?.kind === 'interrupted_clean' ? observation.lastPosition
+      : observation?.kind === 'unresolved' ? observation.observedThroughPosition : null;
+    const bound = await activityUpperBound(ctx, { session: record.session, kernelRunId: locator.kernel.runId,
+      endPosition: locator.endPosition, reconciledThrough: reconciled ?? null });
+    if (bound.kind === 'answer') return { kind: 'answer', value: { status: 'ready', value: bound.value } };
+    return { kind: 'window', session: record.session, kernel: locator.kernel, fromPosition: locator.startPosition,
+      through: bound.through, runEnded: run.status === 'ended' };
+  }
+  /**
+   * Slice 6A L16 的定位部分：先按确切的 ref 读 QueryRun。结束了、却没有执行状态、没有固定入口或
+   * 结果是 `not_entered` 的 QueryRun 没进过 Kernel（QRR-01/02，丢弃或领取前就结束），答 `not_entered`，
+   * 不答 0。否则读执行它的 Session，窗口从存下的起点（窗口丢了就从 0）到共用的 `activityUpperBound`，
+   * 结束了的才拿存下的核对水位作上界。
+   *
+   * 结束：`count` 模式只认 `endedAt`（今天的）；`steps` 模式也认 phase `unknown`（QRR-05 之后状态还是
+   * running、`endedAt` 还是 null，按结束读，没结果的调用才不会一直读成在跑）。没结束的：`count` 回
+   * `invalid`；`steps` 还没进 Kernel（`history` 还是 null）回 `not_started`，进了以后上界不用进 Kernel
+   * 那一刻的水位，Turn 没结束就读到 Kernel 尾部。
+   */
+  async function locateQueryWindow(ctx: CoreCallContext, runRefRaw: unknown, mode: 'count' | 'steps'): Promise<Located> {
+    if (typeof runRefRaw !== 'object' || runRefRaw === null || (runRefRaw as { aggregateType?: unknown }).aggregateType !== 'QueryRun'
+      || !hasIdFields(runRefRaw, ['projectId', 'workspaceId', 'queryJobId', 'runId'])) {
+      return { kind: 'answer', value: { status: 'rejected', code: 'invalid',
+        reason: `${READER_NAME[mode].query} requires a complete QueryRunRef` } };
+    }
+    const queryRunRef = runRefRaw as QueryRunRef;
+    if (queryRunRef.projectId !== ctx.projectId || queryRunRef.workspaceId !== ctx.workspaceId) {
+      return { kind: 'answer', value: { status: 'rejected', code: 'forbidden', reason: 'the QueryRun is outside the Host call scope' } };
+    }
+    const loaded = await deps.sourceAuthority().load(queryRunRef);
+    if (loaded.status === 'not_found') return { kind: 'answer', value: { status: 'not_found' } };
+    if (loaded.status !== 'found') {
+      return { kind: 'answer', value: { status: 'rejected', code: 'unavailable',
+        reason: `the QueryRun could not be read: ${loaded.reason}` } };
+    }
+    if (loaded.snapshot.ref.aggregateType !== 'QueryRun') {
+      return { kind: 'answer', value: { status: 'rejected', code: 'unavailable', reason: 'the QueryRun read answered another aggregate' } };
+    }
+    const run = (loaded.snapshot as QueryRunSnapshot).run;
+    const state = run.executionState;
+    const ended = run.endedAt !== null || (mode === 'steps' && state?.phase === 'unknown');
+    if (!ended && mode === 'count') {
+      return { kind: 'answer', value: { status: 'rejected', code: 'invalid', reason: 'countQueryActivity requires an ended QueryRun' } };
+    }
+    if (!ended && (state === undefined || state.entry === null || state.history === null)) return { kind: 'not_started' };
+    if (state === undefined || state.entry === null || run.outcome === 'not_entered') {
+      return { kind: 'answer', value: { status: 'ready', value: { kind: 'not_entered' } } };
+    }
+    const entry = state.entry;
+    if (deps.queryExecution === undefined) {
+      return { kind: 'answer', value: { status: 'rejected', code: 'unsupported',
+        reason: 'the Query activity read needs the trusted QueryExecutionPort' } };
+    }
+    // The executing Session, whose Kernel mapping the window is read through.
+    const read = await deps.queryExecution.readQueryExecution(ctx, queryRunRef);
+    if (read.status !== 'ready') return { kind: 'answer', value: read };
+    const record = read.value;
+    const history = state.history;
+    if (history !== null
+      && (history.sessionRef.projectId !== ctx.projectId
+        || history.kernel.kernelSessionId !== record.session.kernel.kernelSessionId)) {
+      return { kind: 'answer', value: { status: 'ready', value: { kind: 'facts',
+        facts: unknownFacts('history_read_failed', 'the persisted history disagrees with the claim Session mapping') } } };
+    }
+    // The mandatory probe runs before the window read, as the Run tally does: a
+    // missing or damaged mapping is a definite `kernel_unreadable`, and a probe
+    // that proves nothing writes nothing.
+    const probe = await historyCursorOwner.probe({ session: record.session, signal: ctx.signal });
+    if (probe.verdict === 'missing' || probe.verdict === 'damaged') {
+      return { kind: 'answer', value: { status: 'ready', value: { kind: 'facts', facts: unknownFacts('kernel_unreadable', probe.reason) } } };
+    }
+    if (probe.verdict !== 'ready') {
+      return { kind: 'answer', value: { status: 'ready', value: { kind: 'retry_later', reason: probe.reason } } };
+    }
+    const kernel = history?.kernel ?? entry.kernel;
+    // 正在跑的 Query 的 observedThroughPosition 是进 Kernel 那一刻的位置，不能当上界（P1 C1）。
+    const bound = await activityUpperBound(ctx, { session: record.session, kernelRunId: kernel.runId,
+      endPosition: history?.endPosition ?? null, reconciledThrough: ended ? history?.observedThroughPosition ?? null : null });
+    if (bound.kind === 'answer') return { kind: 'answer', value: { status: 'ready', value: bound.value } };
+    return { kind: 'window', session: record.session, kernel, fromPosition: history === null ? 0 : history.startPosition,
+      through: bound.through, runEnded: ended };
+  }
+  /**
    * Slice 2B L6 (backfill): read one ended Run's activity window and tally it.
    * A Run with no position record is `not_entered` only when the platform can
    * prove it never entered the Kernel (L7); otherwise it is an explicit
@@ -874,63 +1032,13 @@ export function createAgentRuntime(requestedDeps?: RuntimeExecutionDependencies)
       return { status: 'rejected', code: 'forbidden', reason: 'the activity read requires the Host principal' };
     }
     const raw = input as unknown as { runRef?: unknown; maxPages?: unknown } | null | undefined;
-    const runRefRaw = raw?.runRef;
-    if (typeof runRefRaw !== 'object' || runRefRaw === null || (runRefRaw as { aggregateType?: unknown }).aggregateType !== 'Run'
-      || !['projectId', 'goalId', 'runId'].every((field) => typeof (runRefRaw as Record<string, unknown>)[field] === 'string'
-        && ((runRefRaw as Record<string, unknown>)[field] as string).length > 0)) {
-      return { status: 'rejected', code: 'invalid', reason: 'countRunActivity requires a complete RunRef' };
-    }
-    const runRef = runRefRaw as RunRef;
-    if (runRef.projectId !== ctx.projectId) {
-      return { status: 'rejected', code: 'forbidden', reason: 'the Run belongs to another project' };
-    }
+    const located = await locateRunWindow(ctx, raw?.runRef, 'count');
+    // not_started 只在 steps 模式出现。
+    if (located.kind !== 'window') return (located as Extract<Located, { kind: 'answer' }>).value;
     const maxPages = typeof raw?.maxPages === 'number' && Number.isSafeInteger(raw.maxPages) && raw.maxPages >= 1
       ? raw.maxPages : undefined;
-    const read = await deps.executions.readExecution(ctx, runRef);
-    if (read.status !== 'ready') return read;
-    const record = read.value;
-    const run = record.run;
-    const locator = run.executionHistory;
-    if (locator === undefined || !isRunExecutionHistoryV1(locator)) {
-      // R5: the ONE shared L7 predicate (V2 authorization without a Kernel
-      // identity, or no authorization on/after the recording epoch).
-      if (provenNotEnteredKernel(run, null)) {
-        return { status: 'ready', value: { kind: 'not_entered' } };
-      }
-      // L7/2B-42: a Run with no locator, no authorization and no `startedAt`
-      // (claimed then cancelled before it entered, ended before the recording
-      // epoch) is NOT proved not-entered here. Only the V2 authorized/revoked
-      // binding proves non-entry; this one is a backfill candidate and must
-      // produce an explicit `unknown('no_history_locator')`, never 0/empty.
-      return { status: 'ready', value: { kind: 'facts',
-        facts: unknownFacts('no_history_locator', 'the Run has no position record; its Kernel history is not indexed (F11)') } };
-    }
-    if (locator.sessionRef.projectId !== ctx.projectId
-      || locator.kernel.kernelSessionId !== record.session.kernel.kernelSessionId) {
-      return { status: 'ready', value: { kind: 'facts',
-        facts: unknownFacts('history_read_failed', 'the persisted locator disagrees with the claim Session mapping') } };
-    }
-    // L6/R6: the mandatory probe runs BEFORE any bound is resolved. A missing or
-    // damaged mapping is a definite `kernel_unreadable`; a transient, Host
-    // configuration or cancellation outcome proves nothing, so it is
-    // `retry_later` and nothing is written. Doing this first keeps a probe
-    // failure from surfacing as a bounds-read failure (`history_read_failed` /
-    // `kernel_unreadable`) and keeps a cancellation around the bounds read.
-    const probe = await historyCursorOwner.probe({ session: record.session, signal: ctx.signal });
-    if (probe.verdict === 'missing' || probe.verdict === 'damaged') {
-      return { status: 'ready', value: { kind: 'facts', facts: unknownFacts('kernel_unreadable', probe.reason) } };
-    }
-    if (probe.verdict !== 'ready') {
-      return { status: 'ready', value: { kind: 'retry_later', reason: probe.reason } };
-    }
-    const observation = run.reconciliation?.observation;
-    const reconciled = observation?.kind === 'interrupted_clean' ? observation.lastPosition
-      : observation?.kind === 'unresolved' ? observation.observedThroughPosition : null;
-    const bound = await activityUpperBound(ctx, { session: record.session, kernelRunId: locator.kernel.runId,
-      endPosition: locator.endPosition, reconciledThrough: reconciled ?? null });
-    if (bound.kind === 'answer') return { status: 'ready', value: bound.value };
-    const result = await readRunActivityFacts(historyCursorOwner, { session: record.session, kernel: locator.kernel,
-      fromPosition: locator.startPosition, through: bound.through, probeFirst: false, signal: ctx.signal,
+    const result = await readRunActivityFacts(historyCursorOwner, { session: located.session, kernel: located.kernel,
+      fromPosition: located.fromPosition, through: located.through, probeFirst: false, signal: ctx.signal,
       ...(maxPages === undefined ? {} : { maxPages }) });
     return { status: 'ready', value: result };
   };
@@ -948,68 +1056,82 @@ export function createAgentRuntime(requestedDeps?: RuntimeExecutionDependencies)
     if (ctx.principal.kind !== 'host') {
       return { status: 'rejected', code: 'forbidden', reason: 'the activity read requires the Host principal' };
     }
-    const raw = input as unknown as { queryRunRef?: unknown; maxPages?: unknown } | null | undefined;
-    const runRefRaw = raw?.queryRunRef;
-    if (typeof runRefRaw !== 'object' || runRefRaw === null || (runRefRaw as { aggregateType?: unknown }).aggregateType !== 'QueryRun'
-      || !['projectId', 'workspaceId', 'queryJobId', 'runId'].every((field) => typeof (runRefRaw as Record<string, unknown>)[field] === 'string'
-        && ((runRefRaw as Record<string, unknown>)[field] as string).length > 0)) {
-      return { status: 'rejected', code: 'invalid', reason: 'countQueryActivity requires a complete QueryRunRef' };
-    }
-    const queryRunRef = runRefRaw as QueryRunRef;
-    if (queryRunRef.projectId !== ctx.projectId || queryRunRef.workspaceId !== ctx.workspaceId) {
-      return { status: 'rejected', code: 'forbidden', reason: 'the QueryRun is outside the Host call scope' };
-    }
+    const raw = input as unknown as { queryRunRef?: unknown } | null | undefined;
+    const located = await locateQueryWindow(ctx, raw?.queryRunRef, 'count');
+    // not_started 只在 steps 模式出现。
+    if (located.kind !== 'window') return (located as Extract<Located, { kind: 'answer' }>).value;
     // Passed on as given: the window reader rejects a bound that is not a positive safe integer.
     const maxPages = input.maxPages;
-    const loaded = await deps.sourceAuthority().load(queryRunRef);
-    if (loaded.status === 'not_found') return { status: 'not_found' };
-    if (loaded.status !== 'found') {
-      return { status: 'rejected', code: 'unavailable', reason: `the QueryRun could not be read: ${loaded.reason}` };
-    }
-    if (loaded.snapshot.ref.aggregateType !== 'QueryRun') {
-      return { status: 'rejected', code: 'unavailable', reason: 'the QueryRun read answered another aggregate' };
-    }
-    const run = (loaded.snapshot as QueryRunSnapshot).run;
-    if (run.endedAt === null) {
-      return { status: 'rejected', code: 'invalid', reason: 'countQueryActivity requires an ended QueryRun' };
-    }
-    const state = run.executionState;
-    if (state === undefined || state.entry === null || run.outcome === 'not_entered') {
-      return { status: 'ready', value: { kind: 'not_entered' } };
-    }
-    const entry = state.entry;
-    if (deps.queryExecution === undefined) {
-      return { status: 'rejected', code: 'unsupported', reason: 'the Query activity read needs the trusted QueryExecutionPort' };
-    }
-    // The executing Session, whose Kernel mapping the window is read through.
-    const read = await deps.queryExecution.readQueryExecution(ctx, queryRunRef);
-    if (read.status !== 'ready') return read;
-    const record = read.value;
-    const history = state.history;
-    if (history !== null
-      && (history.sessionRef.projectId !== ctx.projectId
-        || history.kernel.kernelSessionId !== record.session.kernel.kernelSessionId)) {
-      return { status: 'ready', value: { kind: 'facts',
-        facts: unknownFacts('history_read_failed', 'the persisted history disagrees with the claim Session mapping') } };
-    }
-    // The mandatory probe runs before the window read, as the Run tally does: a
-    // missing or damaged mapping is a definite `kernel_unreadable`, and a probe
-    // that proves nothing writes nothing.
-    const probe = await historyCursorOwner.probe({ session: record.session, signal: ctx.signal });
-    if (probe.verdict === 'missing' || probe.verdict === 'damaged') {
-      return { status: 'ready', value: { kind: 'facts', facts: unknownFacts('kernel_unreadable', probe.reason) } };
-    }
-    if (probe.verdict !== 'ready') {
-      return { status: 'ready', value: { kind: 'retry_later', reason: probe.reason } };
-    }
-    const kernel = history?.kernel ?? entry.kernel;
-    const bound = await activityUpperBound(ctx, { session: record.session, kernelRunId: kernel.runId,
-      endPosition: history?.endPosition ?? null, reconciledThrough: history?.observedThroughPosition ?? null });
-    if (bound.kind === 'answer') return { status: 'ready', value: bound.value };
-    const result = await readRunActivityFacts(historyCursorOwner, { session: record.session, kernel,
-      fromPosition: history === null ? 0 : history.startPosition, through: bound.through, probeFirst: false, signal: ctx.signal,
+    const result = await readRunActivityFacts(historyCursorOwner, { session: located.session, kernel: located.kernel,
+      fromPosition: located.fromPosition, through: located.through, probeFirst: false, signal: ctx.signal,
       ...(maxPages === undefined ? {} : { maxPages }) });
     return { status: 'ready', value: result };
+  };
+  /**
+   * P1 第二段裁定 (a)：最长 Turn 的一次读量出来约 1.1 秒（大头是 Kernel 归约），所以留最近读过的
+   * `STEPS_RESUME_KEPT` 个 Run（含 Query 轮）的 `RunActivityResume`，按最近使用淘汰：同一个 Run 的第二页起、
+   * 正在跑的块再读，都从上次读到的地方接着读，只归约新记录；不在表里的照旧从头读。读的时候先取出来
+   * （并发的两次读不共用一份），读出步骤才放回去。只在本进程内存里，重启就没了；答案和从头读一样
+   * （`RunActivityResume` 的约定）。
+   */
+  const STEPS_RESUME_KEPT = 16;
+  const stepsResume = new Map<string, RunActivityResume>();
+  const resumeKeyOf = (ref: RunRef | QueryRunRef): string => ref.aggregateType === 'Run'
+    ? JSON.stringify(['Run', ref.projectId, ref.goalId, ref.runId])
+    : JSON.stringify(['QueryRun', ref.projectId, ref.workspaceId, ref.queryJobId, ref.runId]);
+  /**
+   * P1（决定 121-147）`executions/steps`：一次 Work Run 或 Query 轮的步骤。定位和计数共用，读窗
+   * 也共用，再交给纯函数 `buildRunSteps` 分类、截文字、分页。每次都按整个窗切页，和计数一样有界
+   * （最多 `RUN_ACTIVITY_MAX_PAGES` 页）；最近读过的从上次读到的地方接着读（上面的 `stepsResume`）。只读。
+   * 不做主体检查（lead 裁定）：HTTP 进来的一律是 Host 主体（core-call-context.ts）。
+   */
+  const readRunSteps: NonNullable<RuntimeExecutionPort['readRunSteps']> = async (ctx, input) => {
+    const raw = (typeof input === 'object' && input !== null ? input : {}) as { ref?: unknown; after?: unknown; limit?: unknown };
+    const { after, limit } = raw;
+    // 契约：after 是 null 或非负整数（Kernel 位置）；limit 是 1..RUN_STEPS_PAGE_LIMIT，一页才有界。
+    if (!(after === null || (typeof after === 'number' && Number.isSafeInteger(after) && after >= 0))
+      || typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 1 || limit > RUN_STEPS_PAGE_LIMIT) {
+      return rejected('invalid', `readRunSteps requires after (null or a non-negative integer) and limit (1..${String(RUN_STEPS_PAGE_LIMIT)})`);
+    }
+    const kind = typeof raw.ref === 'object' && raw.ref !== null ? (raw.ref as { aggregateType?: unknown }).aggregateType : undefined;
+    if (kind !== 'Run' && kind !== 'QueryRun') return rejected('invalid', 'readRunSteps requires a complete RunRef or QueryRunRef');
+    const located = kind === 'Run' ? await locateRunWindow(ctx, raw.ref, 'steps') : await locateQueryWindow(ctx, raw.ref, 'steps');
+    // 稍后重读就好的回 unavailable，读了也读不出的回 unknown 带原因；读不到的不答成空列表。
+    const unreadable = (read: RunActivityRead): ReadResult<RunStepsReadV1> => {
+      if (ctx.signal.aborted) return rejected('cancelled', 'the steps read was cancelled');
+      if (read.kind === 'retry_later') return rejected('unavailable', read.reason);
+      // 定位和读窗只会给出 unknown 的计数（counted 只来自 buildRunSteps）。
+      const facts = read.facts as Extract<RunActivityFactsV1, { status: 'unknown' }>;
+      return { status: 'ready', value: { kind: 'unknown', reason: facts.reason, detail: facts.detail } };
+    };
+    if (located.kind === 'not_started') return { status: 'ready', value: { kind: 'not_started' } };
+    if (located.kind === 'answer') {
+      const answer = located.value;
+      if (answer.status !== 'ready') return answer;
+      if (answer.value.kind === 'not_entered') return { status: 'ready', value: { kind: 'not_entered' } };
+      return unreadable(answer.value);
+    }
+    // 取出这次读用的那一份，不在表里就从头读。
+    const key = resumeKeyOf(raw.ref as RunRef | QueryRunRef);
+    const resume = stepsResume.get(key) ?? { decoded: [], position: null, reduced: null };
+    stepsResume.delete(key);
+    const read = await readTurnWindow(historyCursorOwner, { session: located.session, fromPosition: located.fromPosition,
+      through: located.through, probeFirst: false, signal: ctx.signal, resume });
+    if (read.kind !== 'records') return unreadable(read);
+    if (ctx.signal.aborted) return rejected('cancelled', 'the steps read was cancelled');
+    const reduced = advanceResume(resume, read, located.kernel);
+    const steps = buildRunSteps({ decoded: read.decoded, kernel: located.kernel,
+      window: { fromPosition: located.fromPosition, throughPosition: read.throughPosition,
+        bound: located.through === 'kernel_tail' ? 'kernel_tail' : located.through.bound },
+      runEnded: located.runEnded, after, limit, ...(reduced === undefined ? {} : { reducedTurn: reduced }) });
+    if (steps.kind === 'steps') {
+      // 放回最近用过的一头；超了就淘汰最久没用的那一份（Map 按放进去的先后排）。
+      // 并发读同一个 Run 时，另一次读可能已经把它放回去了；先删再放，才会挪到最近用过的一头（Codex p1cr 应改 1）。
+      stepsResume.delete(key);
+      stepsResume.set(key, resume);
+      if (stepsResume.size > STEPS_RESUME_KEPT) stepsResume.delete(stepsResume.keys().next().value!);
+    }
+    return { status: 'ready', value: steps };
   };
   const observation = createExecutionObservation({ ...deps, control });
   /**
@@ -1069,6 +1191,7 @@ export function createAgentRuntime(requestedDeps?: RuntimeExecutionDependencies)
     readAttentionGraph: (ctx, request) => contextAssembler.readAttentionGraph(ctx, request),
     countRunActivity: (ctx, input) => countRunActivity(ctx, input),
     countQueryActivity: (ctx, input) => countQueryActivity(ctx, input),
+    readRunSteps: (ctx, input) => readRunSteps(ctx, input),
     wouldCompactNext: (ctx, input) => readWouldCompactNext(ctx, input),
   };
   // M1: without the injected closure dependency the port does not publish the

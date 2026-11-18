@@ -2289,8 +2289,8 @@ class Component extends DCLogic {
     const inboxGoal = D.goal === null ? '' : D.goal.id;
     const inboxHref = 'Main.dc.html' + (inboxGoal === '' ? '' : '?goal=' + encodeURIComponent(inboxGoal));
     const inboxRows = [
-      { href: inboxHref, title: '在主对话里处理', sq: 'sq z10 s-decide', name: '需要你决定', n: String(D.inbox.decideN) },
-      { href: inboxHref, title: '在主对话里查看', sq: 'sq z10 s-waiting', name: '请知悉', n: String(D.inbox.noticeN) }
+      { href: inboxHref, title: '在主对话里处理', sq: 'sq z10 s-decide', name: '需要你决定', n: D.inbox.decideText },
+      { href: inboxHref, title: '在主对话里查看', sq: 'sq z10 s-waiting', name: '请知悉', n: D.inbox.noticeText }
     ];
     const hsTitle = D.task === null ? (D.line === null ? '执行链' : D.line.name) : D.task.title;
     const hs = {
@@ -2375,7 +2375,7 @@ class Component extends DCLogic {
     const read = this.props.readState === undefined ? null : this.props.readState;
     const data = this.props.data && Array.isArray(this.props.data.attempts) ? this.props.data : null;
     if (data !== null || read !== null) {
-      const none = { goal: null, goals: [], inbox: { decideN: 0, noticeN: 0 }, goalWaiting: null, ownKey: null, ownName: '',
+      const none = { goal: null, goals: [], inbox: { decideText: '0', noticeText: '0' }, goalWaiting: null, ownKey: null, ownName: '',
         rail: { head: '工作中 0 · 待命 0', rows: [], archived: [], counts: { working: 0, standby: 0, archived: 0 }, archName: '已归档', archSub: '' },
         line: null, task: null, attempts: [], trace: [], bar: { show: false, sq: 'sq z10 s-notyet', word: '', why: '', reworkText: '自动返工 —',
           canPause: false, canResume: false, canCancel: false, canRequeue: false, tip: { pause: '', resume: '', cancel: '' }, confirmText: '' } };

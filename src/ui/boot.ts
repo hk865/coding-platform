@@ -6,6 +6,7 @@ import {
 } from './host-client.js';
 import { asRecord, asText } from './values.js';
 import { qualifyProjectPath, splitWorkspacePath } from '../contracts/workspace-path.js';
+import type { ChecksConfirmationV1 } from '../contracts/initialization-adoption.js';
 import { createAutoRefresh, type RefreshRead, type RefreshSnapshot, type RefreshSources } from './refresh.js';
 import { adaptNav, completionRevisionOf, goalHref, type LineKey, type NavData, type NavLineDetail } from './adapters/nav.js';
 import {
@@ -27,9 +28,10 @@ import {
   type PlanProposalShape, type PlanVersionRow,
 } from './adapters/plan.js';
 import {
-  auxChangedRowsOf, auxFileListOf, auxFilePageOf, auxLeafCountsOf, auxTaskDetailOf, catalogArchTree, goalTaskTree,
-  goalTreeNodeOf,
-  type AuxDemand, type AuxFilePage, type AuxPanelData, type AuxTab, type AuxTaskData, type AuxWorkspaceFile,
+  auxChangedRowsOf, auxCommandViewOf, auxDiffViewOf, auxFileListOf, auxFilePageOf, auxLeafCountsOf, auxTaskDetailOf,
+  catalogArchTree, goalTaskTree, goalTreeNodeOf,
+  type AuxCommandHandle, type AuxCommandRow, type AuxCommandView,
+  type AuxDemand, type AuxDiffView, type AuxFilePage, type AuxPanelData, type AuxTab, type AuxTaskData, type AuxWorkspaceFile,
   type GoalsTaskNode,
 } from './adapters/aux-panel.js';
 import { adaptGoals, conflictSelectionOf, goalOrderOf, type GoalsData } from './adapters/goals.js';
@@ -53,7 +55,7 @@ import type { TaskExecutionRecord } from '../contracts/execution-read.js';
 import type { ArtifactRecord } from '../contracts/artifact.js';
 import type { RunRef } from '../contracts/dispatch.js';
 import type { TaskGraph, TaskRow } from '../contracts/task-graph.js';
-import type { UncommittedFileV1, UncommittedFilesV1 } from '../contracts/workspace-files.js';
+import type { UncommittedFileListV1, UncommittedFileV1, UncommittedFilesV1 } from '../contracts/workspace-files.js';
 import type { MemberCopySource } from './adapters/member.js';
 import type { ArchitectureChangeScopeV1, ArchitectureWorkScopeV1 } from '../contracts/architecture-search.js';
 import type { NoteAnchorV1 } from '../contracts/note.js';
@@ -63,6 +65,7 @@ import type { RequestReferenceInputV1 } from '../contracts/query-job.js';
 import type { QueryJobRef } from '../contracts/query-job.js';
 import {
   NO_PLAN_TEXT, adaptTaskMap, adaptTaskMapCalendar, adaptTaskMapDecisionCards, adaptTaskMapDetail, adaptTaskMapTime,
+  decisionCardCountPartial,
   isFinishedGoalDisplayPhase, localShortAt, moduleNamesOf, type GoalDisplayPhaseCode, type TaskMapQueueRead,
   type TaskMapData, type TaskMapDetailTaskRead, type TaskMapDisplayRead, type TaskMapGoalRead,
   type TaskMapGraphRead, type TaskMapHoverRead, type TaskMapLineRead, type TaskMapNodeDetailData,
@@ -165,7 +168,12 @@ export type BoardReadDemand = TaskMapReadDemand & {
   noteAnchor?: NoteAnchorV1 | null;
   /** Done: expanding one requirement's report reads its `materials/open` once. */
   doneReport?: string | null;
+  /** 只给 Main：本页自己的命令句柄，键是 `projectId/workspaceId|<行键>`。 */
+  commandRuns?: Map<string, { scope: CoreScope; commandId: string } | 'gone'>;
 };
+
+/** 本页命令表的键前缀，一个范围一个；`runCommand`、`stopCommand`、`readMain` 共用。 */
+const commandRunPrefix = (scope: CoreScope): string => scope.projectId + '/' + scope.workspaceId + '|';
 
 /** The one action surface `pageProps` gives every board. TaskMap uses
  * `readMore`/`pinLine`; Main also uses `pickGoal`, `openLine` and the shared
@@ -237,6 +245,10 @@ export type BoardActions = {
   interveneLine: (text: string) => Promise<void>;
   /** E3 Main B §2.5: one `files/save` CAS write; the page passes the digest it read. */
   saveFile: (path: string, content: string, expectedRevision: string | null) => Promise<void>;
+  /** 121-147：给一行命令发一次 `commands/start`；句柄按行键记下。 */
+  runCommand: (rowKey: string, row: { command: string; cwd: string; timeoutMs: number }) => Promise<void>;
+  /** 121-147：给这一行自己最近的那个句柄发一次 `commands/stop`。 */
+  stopCommand: (rowKey: string) => Promise<void>;
 };
 
 /**
@@ -303,13 +315,19 @@ export async function bootBoardPage(): Promise<void> {
     }
     const next = readPlatformTokenText(await fetchPageText(location.href));
     if (next === null) throw new Error('the served page carries no platform token');
+    /* 令牌变了就是换了 Host 实例：旧句柄已经没了，旧号可能已是别的命令，
+       所以全部标成“没了”、不再读。 */
+    if (next !== token) for (const key of commandRuns.keys()) commandRuns.set(key, 'gone');
     token = next;
     client = createHostClient(token);
     return token;
   }
+  /* 121-147 Q6：本页自己的命令句柄。只有 `runCommand` 写句柄号，
+   * `tokenOf` 把它们标成“没了”；刷新页面这张表就没了。 */
+  const commandRuns = new Map<string, { scope: CoreScope; commandId: string } | 'gone'>();
   /* Ruling 3 "默认页": opening the board reads the DAG's today track and today
    * hour calendar, not only the six base reads. */
-  const demand: BoardReadDemand = { track: true, win: 'today' };
+  const demand: BoardReadDemand = { track: true, win: 'today', commandRuns };
   /* Main B §2.1: the panel opens on 任务图, so its first read is `auxTab:'task'`. */
   if (boardName === 'Main') demand.auxTab = 'task';
   if ((boardName === 'Member' || boardName === 'Chain')
@@ -1067,6 +1085,32 @@ export async function bootBoardPage(): Promise<void> {
       }
       await refresh.reread();
     },
+    async runCommand(rowKey: string, row: { command: string; cwd: string; timeoutMs: number }): Promise<void> {
+      const scope = latestNavScope;
+      if (scope === null) throw new Error(writeTextOf(new Error('no navigation scope')));
+      try {
+        const reply = await client.post('commands/start', scope, {
+          requestId: crypto.randomUUID(), command: row.command, cwd: row.cwd, timeoutMs: row.timeoutMs,
+        });
+        const commandId = readyRouteValue<{ commandId: string }>(reply, 'commands/start').commandId;
+        commandRuns.set(commandRunPrefix(scope) + rowKey, { scope, commandId });
+      } catch (error) {
+        throw new Error(commandWriteTextOf(error));
+      }
+      await refresh.reread();
+    },
+    async stopCommand(rowKey: string): Promise<void> {
+      const scope = latestNavScope;
+      if (scope === null) throw new Error(writeTextOf(new Error('no navigation scope')));
+      const run = commandRuns.get(commandRunPrefix(scope) + rowKey) ?? 'gone';
+      if (run === 'gone') return;
+      try {
+        await client.post('commands/stop', run.scope, { commandId: run.commandId });
+      } catch (error) {
+        throw new Error(commandWriteTextOf(error));
+      }
+      await refresh.reread();
+    },
   };
   const sources: RefreshSources<unknown> = {
     read: async () => await reader(client, goalId, demand),
@@ -1321,7 +1365,7 @@ export async function readDone(
     const parsed = splitWorkspacePath(file.path);
     return { workspaceId: parsed.workspaceId ?? scope.workspaceId, path: parsed.path };
   });
-  let files: UncommittedFilesV1 | null = null;
+  let files: UncommittedFileListV1 | null = null;
   if (paths.length > 0) {
     const read = await readUncommittedByWorkspace(client, scope, paths);
     files = read.repository === 'git' ? { repository: 'git', files: read.files }
@@ -1508,7 +1552,7 @@ type GoalListRead = { goals: Array<Record<string, unknown>> };
 type ArchivedLineRead = { rows?: unknown[]; nextCursor?: string | null };
 
 /** `decisions/queue`'s value: the counts are taken before paging (§2.11). */
-type QueueCountsRead = { counts?: unknown };
+type QueueCountsRead = { counts?: unknown; capabilities?: unknown };
 
 /**
  * E3-NAV §2.2/§2.4/§2.7/§2.11: the chrome read of Main and of every board that
@@ -2041,14 +2085,16 @@ export async function readChain(
   }
 
   let goalWaiting: number | null = null;
+  let goalWaitingPartial = false;
   if (nav.selectedGoalId !== null) {
     try {
-      const queue = readyRouteValue<{ counts?: { waitingAnswer?: unknown } }>(
+      const queue = readyRouteValue<TaskMapQueueRead>(
         await client.post('decisions/queue', scope, {
           workspace: scope, sections: ['waiting_answer', 'notices'], page: { limit: 1 },
           goalRef: chainGoalRefOf(nav.selectedGoalId),
         }), 'decisions/queue');
       if (typeof queue.counts?.waitingAnswer === 'number') goalWaiting = queue.counts.waitingAnswer;
+      goalWaitingPartial = decisionCardCountPartial(queue);
     } catch (error) {
       /* The rail's own waiting count already read; a per-Goal count that
          cannot be read stays `null`, not a made-up 0. */
@@ -2183,19 +2229,38 @@ export async function readChain(
       section: 'executions', segments, scope: 'indexed', items: tail, nextCursor: null,
       sourceCursor: sourceCursor ?? ('' as never),
     },
-    runs, histories, briefs, rounds, tasks, goalWaiting, controls,
+    runs, histories, briefs, rounds, tasks, goalWaiting, goalWaitingPartial, controls,
   };
   return { data: adaptChain(source, { selected: key, ownKey, dens: '标准', theme: 'dark' }), cursor };
 }
 
-/** §2.4: one `files/read` of the working tree; the page's `maxBytes` limit. */
+/** §2.4：一次 `files/read`，读工作区或一个固定提交；`maxBytes` 同文件页。 */
 async function readAuxFile(
   client: ReturnType<typeof createHostClient>, scope: CoreScope, path: string,
+  version: { kind: 'working_tree' } | { kind: 'git'; commit: string } = { kind: 'working_tree' },
 ): Promise<AuxFilePage> {
   return auxFilePageOf(readyRouteValue<AuxWorkspaceFile>(await client.post('files/read', scope, {
     workspace: { aggregateType: 'Workspace', projectId: scope.projectId, workspaceId: scope.workspaceId },
-    path, maxBytes: 1_048_576, version: { kind: 'working_tree' },
+    path, maxBytes: 1_048_576, version,
   }), 'files/read'));
+}
+
+/**
+ * P3 Diff 页一侧的正文，读法同 readAuxFile。`not_found` 是这一侧没有，`content` 为 null（新文件没有 HEAD 一侧，
+ * 删掉的文件没有工作区一侧）；`unsupported` 是不是文本（N2）；其余失败照旧往外抛，归页签自己的读失败。
+ * 正文包一层再回，不和 `'not_text'` 并成一个字符串：正文恰好是 not_text 的文件不会被当成不是文本。
+ */
+async function readDiffSide(
+  client: ReturnType<typeof createHostClient>, scope: CoreScope, path: string, version: Parameters<typeof readAuxFile>[3],
+): Promise<{ content: string | null } | 'not_text'> {
+  try {
+    return { content: (await readAuxFile(client, scope, path, version)).content };
+  } catch (error) {
+    if (!(error instanceof RouteReadError)) throw error;
+    if (error.code === 'not_found') return { content: null };
+    if (error.code === 'unsupported') return 'not_text';
+    throw error;
+  }
 }
 
 /**
@@ -2230,10 +2295,11 @@ async function readUncommittedPage(
  */
 export async function readAuxPanel(
   client: ReturnType<typeof createHostClient>, scope: CoreScope, nav: NavData, demand: AuxDemand & { auxTab: AuxTab },
+  commands: { allowed: boolean; runs: Record<string, string | 'gone'> },
 ): Promise<AuxPanelData> {
   const tab = demand.auxTab;
   const empty: AuxPanelData = {
-    tab, task: null, arch: null, files: null, file: null, diff: null, error: null,
+    tab, task: null, arch: null, files: null, file: null, diff: null, commands: null, error: null,
   };
   const goal = nav.selectedGoalId === null ? null
     : nav.goals.find((row) => row.goalId === nav.selectedGoalId) ?? null;
@@ -2311,7 +2377,7 @@ export async function readAuxPanel(
       }
       return {
         ...empty, files: auxFileListOf(page.paths), file,
-        diff: { files: page.files, checkedFirst: page.checkedFirst, rows: auxChangedRowsOf(page.files) },
+        diff: { files: page.files, checkedFirst: page.checkedFirst, rows: auxChangedRowsOf(page.files), view: null },
       };
     }
     if (tab === 'file') {
@@ -2326,9 +2392,63 @@ export async function readAuxPanel(
     }
     if (tab === 'diff') {
       const page = await readUncommittedPage(client, scope);
-      return { ...empty, diff: { files: page.files, checkedFirst: page.checkedFirst, rows: auxChangedRowsOf(page.files) } };
+      const rows = auxChangedRowsOf(page.files);
+      /* 选中行照画板自己的规则（Main.dc.html）：点过的路径还在清单里就用它，否则第一行；清单外的路径不读。 */
+      const row = rows.find((entry) => entry.path === demand.auxPath) ?? rows[0] ?? null;
+      let view: AuxDiffView | null = null;
+      if (row !== null && page.files !== null && page.files.repository === 'git') {
+        if (row.added === null) {
+          view = auxDiffViewOf(row, null);
+        } else {
+          /* 先读 HEAD、再读工作区（readDiffSide）；HEAD 一侧不是文本就停读，不再读工作区（N2）。 */
+          const before = await readDiffSide(client, scope, row.path, { kind: 'git', commit: page.files.head });
+          const after = before === 'not_text' ? 'not_text'
+            : await readDiffSide(client, scope, row.path, { kind: 'working_tree' });
+          view = auxDiffViewOf(row, before === 'not_text' || after === 'not_text' ? 'not_text'
+            : { before: before.content, after: after.content });
+        }
+      }
+      return { ...empty, diff: { files: page.files, checkedFirst: page.checkedFirst, rows, view } };
     }
-    /* 命令页 has no backend: no route, no command list (B-07). */
+    if (tab === 'commands') {
+      /* 121-147：和检查轮读同一张已装检查的登记表。 */
+      const confirmation = readyRouteValue<ChecksConfirmationV1>(
+        await client.post('verification/installed-checks', scope, { scope }),
+        'verification/installed-checks',
+      );
+      const rows: AuxCommandRow[] = confirmation.checks.map((check) => ({
+        checkId: check.checkId,
+        command: check.command,
+        cwd: check.cwd,
+        timeoutMs: check.timeoutMs,
+        line: check.cwd === '.' ? check.command : check.command + ' · 目录 ' + check.cwd,
+      }));
+      const runs: Record<string, AuxCommandView> = {};
+      for (const [rowKey, commandId] of Object.entries(commands.runs)) {
+        if (commandId === 'gone') {
+          runs[rowKey] = auxCommandViewOf('gone');
+          continue;
+        }
+        try {
+          const handle = readyRouteValue<AuxCommandHandle>(
+            await client.post('commands/read', scope, { commandId }), 'commands/read',
+          );
+          /* 页面只按码给字；原始 reason 只进日志。 */
+          if (handle.error !== null) console.error('commands/read', handle.error.code, handle.error.reason);
+          runs[rowKey] = auxCommandViewOf(handle);
+        } catch (error) {
+          if (error instanceof RouteReadError && error.code === 'not_found') {
+            runs[rowKey] = auxCommandViewOf('gone');
+            continue;
+          }
+          throw error;
+        }
+      }
+      return {
+        ...empty,
+        commands: { rows, allowed: commands.allowed, idle: auxCommandViewOf(null), runs },
+      };
+    }
     return empty;
   } catch (error) {
     if (error instanceof RouteReadError) {
@@ -2457,7 +2577,9 @@ export async function readMain(
   client: ReturnType<typeof createHostClient>, goalId: string | null,
   demand: BoardReadDemand = {},
 ): Promise<RefreshRead<MainData>> {
-  const navRead = await readNav(client, goalId, demand);
+  /* R1：整次读只读一次 bootstrap；`readNav` 用的就是这一份回答。 */
+  const boot = await client.bootstrap();
+  const navRead = await readNav(client, goalId, demand, boot);
   if (navRead.data === null) return { data: null, cursor: navRead.cursor };
   const nav = navRead.data;
   const scope = nav.scope;
@@ -2483,6 +2605,15 @@ export async function readMain(
     };
   }
   /* §2.4 step 7: only the open tab is read; `null` means the panel is closed. */
+  const allowed = boot.workspaces.some((workspace) =>
+    workspace.scope.projectId === scope.projectId && workspace.scope.workspaceId === scope.workspaceId
+    && workspace.commandsAllowed === true);
+  const runPrefix = commandRunPrefix(scope);
+  const runs: Record<string, string | 'gone'> = {};
+  for (const [key, run] of demand.commandRuns ?? []) {
+    if (!key.startsWith(runPrefix)) continue;
+    runs[key.slice(runPrefix.length)] = run === 'gone' ? 'gone' : run.commandId;
+  }
   const aux = demand.auxTab === null || demand.auxTab === undefined
     ? null
     : await readAuxPanel(client, scope, nav, {
@@ -2490,7 +2621,7 @@ export async function readMain(
       auxPath: demand.auxPath ?? null,
       detailTaskId: demand.detailTaskId ?? null,
       workOnly: demand.workOnly === true,
-    });
+    }, { allowed, runs });
   return {
     data: adaptMain({ nav, pages, decisions, older: cursor, track, line, aux }),
     cursor: navRead.cursor,
@@ -3085,6 +3216,14 @@ function writeTextOf(error: unknown): string {
   const code = error instanceof RouteReadError ? error.code : '';
   const reason = error instanceof RouteReadError ? error.reason : '';
   return WRITE_ERROR_TEXT[code + ':' + reason] ?? WRITE_ERROR_TEXT[code] ?? '写入失败。';
+}
+
+/** 命令页两个写口（`runCommand`、`stopCommand`）的失败文字：`unsupported` 是“这台 Host 跑不了命令”，
+ * 只给命令页用、不进 `WRITE_ERROR_TEXT`（K7）；其余照 `writeTextOf`。 */
+function commandWriteTextOf(error: unknown): string {
+  return error instanceof RouteReadError && error.code === 'unsupported'
+    ? '这台 Host 现在跑不了命令（命令沙箱不可用，或 Host 正在关闭）。'
+    : writeTextOf(error);
 }
 
 /** A35 (§2.6, §2.7; lead ruling 4): the outer `committed` of `tasks/requeue`

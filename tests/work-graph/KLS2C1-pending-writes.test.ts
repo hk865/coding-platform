@@ -5,9 +5,10 @@
  * line it reads answers `unavailable` (no waiting), and a writer on that line is refused with "有未确认的知识写"; an
  * `unconfirmed` log (a recovery item 2c-1b1's reconciliation handed to the person) stops neither. The notes window
  * moves on the log of a note it reads (R2, the builder's D-2 moved here; lead after the merge). The decision queue
- * isolates one bad note instead of failing whole (a bad note another card names included; a notes folder that cannot
- * be listed still fails it, Astra d 1–2), and a module file the 2a-1 read-back gate refuses takes only the cards that
- * read the architecture (stk16 ruling 1: Q3, Q4), unless the read was cancelled (Q6). Platform level, memory
+ * isolates one bad note or one unreadable source instead of failing whole (a bad note another card names included; a
+ * notes folder that cannot be listed marks `note_review` `read_failed` and the other cards still read, Astra d 1–2),
+ * and a module file the 2a-1 read-back gate refuses takes only the cards that read the architecture (stk16 ruling 1:
+ * Q3, Q4), which are then `goal_conflict` `read_failed`, unless the read was cancelled (Q6). Platform level, memory
  * (business rows, S3): `openKLS2AWorld` with the Host's `knowledgeWriteHold` seam armed by the row (`armedSeam`):
  * `hold()` keeps one write between its commit and its first file, `fail()` stops one there for good. Waiting
  * reviews come from the world's real executor Run; the project notice from a real reconciliation (Astra d 4: a
@@ -259,16 +260,18 @@ describe('KLS2C1 the decision queue isolates one bad note', () => {
     expect([pending[0], pending[1]].filter(noteId => JSON.stringify(read.waitingAnswer).includes(noteId!))).toEqual([]);
   });
 
-  // Astra d 2：注记目录列不出是整次读失败，不是“没有待审卡”。
-  it('Q5 a notes folder that cannot be listed: the queue is unavailable, never ready without the cards', async () => {
+  // 121-146：注记目录列不出只把 `note_review` 标成暂时读不到，不是整张读失败，也不是“没有待审卡”。
+  it('Q5 a notes folder that cannot be listed: the queue is ready, `note_review` is read_failed, and no note card appears', async () => {
     const world = await knowledgeWorld();
     await reviewWorld(world, 1);
     const folder = join(world.root, '.workbench/notes/kls2c1-q5');
     mkdirSync(folder);
     chmodSync(folder, 0o000);
     try {
-      // 具名改坏：批量读失败后逐条重读、读不成就略过（删掉的那段放回去）→ 红在这一句（ready，没有卡）。
-      expect(await queueRead(world)).toMatchObject({ status: 'rejected', code: 'unavailable' });
+      // 具名改坏：注记来源读失败照旧整次返回（去掉按来源降级）→ 红在 readyQueue（整张 unavailable）。
+      const read = await readyQueue(world);
+      expect(read.capabilities.find(entry => entry.source === 'note_review')?.availability).toBe('read_failed');
+      expect(reviewed(read)).toEqual([]);
     } finally {
       chmodSync(folder, 0o755);
     }
@@ -276,13 +279,13 @@ describe('KLS2C1 the decision queue isolates one bad note', () => {
 
   // stk16 裁定第 1 条（调查第三节 A）：读回闸门拒了当前架构读，只拿掉目标冲突卡；冲突之前就有的、不读架构的卡和通知照出。
   it('Q3 a person breaks the module file: the queue is ready without the conflict cards (`goal_conflict` '
-    + 'not_available); a card made before that reads no architecture, and it and the notice are there', async () => {
+    + 'read_failed); a card made before that reads no architecture, and it and the notice are there', async () => {
     const world = await knowledgeWorld();
     const { pending, notice } = await reviewWorld(world, 1, [1]);
     await breakModuleFile(world);
     // 具名改坏：架构读 unavailable 就整次返回（去掉 A）→ 红在 readyQueue（整张 unavailable）。
     const read = await readyQueue(world);
-    expect([reviewed(read), noticed(read), conflictCards(read)]).toEqual([pending, [notice], 'not_available']);
+    expect([reviewed(read), noticed(read), conflictCards(read)]).toEqual([pending, [notice], 'read_failed']);
   });
 
   // stk16 裁定第 1 条（调查第三节 B）：锚在模块上的处置目标要读架构，这一条的理由不进卡；只靠它的卡不出，别的卡照出。
@@ -291,9 +294,9 @@ describe('KLS2C1 the decision queue isolates one bad note', () => {
     const world = await knowledgeWorld();
     const { pending, notice } = await reviewWorld(world, 2, [2]);
     await breakModuleFile(world);
-    // 具名改坏：锚在模块上的目标照旧读架构、读不成就拒（去掉 B）→ 红在 readyQueue（注记来源回 unavailable，整张 unavailable）。
+    // 具名改坏：冲突来源读失败不降级、整张返回 → 红在 readyQueue（整张 unavailable）。
     const read = await readyQueue(world);
-    expect([reviewed(read), noticed(read), conflictCards(read)]).toEqual([[pending[1]], [notice], 'not_available']);
+    expect([reviewed(read), noticed(read), conflictCards(read)]).toEqual([[pending[1]], [notice], 'read_failed']);
   });
 
   // stk16 叠树修回复之后第 2 条：被取消的读照原样整次返回，不降成“只少目标冲突卡”。
@@ -305,7 +308,7 @@ describe('KLS2C1 the decision queue isolates one bad note', () => {
     const read = await world.platform.decisions.queryDecisionQueue({ ...world.ctx('host', 'ws2'),
       signal: AbortSignal.abort() }, { workspace: { projectId: world.projectId, workspaceId: 'ws2' },
       sections: ['waiting_answer'], page: { limit: 100 } });
-    // 具名改坏：降级点不看这次读的取消信号 → 红在这一句（ready，goal_conflict not_available）。
+    // 具名改坏：降级点不看这次读的取消信号 → 红在这一句（ready，goal_conflict read_failed）。
     expect(read).toMatchObject({ status: 'rejected', reason: expect.stringContaining('cancelled') });
   });
 });

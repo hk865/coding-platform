@@ -30,7 +30,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { CommitCursor } from '../../src/contracts/command-event.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
-import type { QueryJobRef } from '../../src/contracts/query-job.js';
+import type { QueryJobRef, QueryRunRef } from '../../src/contracts/query-job.js';
 import type { DecisionCardV1 } from '../../src/core/work-graph/model/decision-contracts.js';
 import type { RequestCoreViewV1 } from '../../src/core/work-graph/model/request-contracts.js';
 import {
@@ -91,10 +91,20 @@ async function sinceOf(workspace: S6ACardsWorkspace, request: S6ARequest): Promi
   return asRecord((view['rounds'] as unknown[])[0])['since'] as CommitCursor;
 }
 
-/** The commit positions of several requests, read one by one before the page under test. */
-async function sincesOf(workspace: S6ACardsWorkspace, requests: readonly S6ARequest[]): Promise<Map<string, CommitCursor>> {
-  const since = new Map<string, CommitCursor>();
-  for (const request of requests) since.set(request.requestRoot.queryJobId, await sinceOf(workspace, request));
+/**
+ * A request round's two public facts the view repeats: its commit position (from the request's own read) and its
+ * QueryRun, issued with the Job at submit and read through `queries/read` (P1: the round view carries `runRef`).
+ */
+type RoundFacts = { since: CommitCursor; runRef: QueryRunRef };
+async function roundFactsOf(workspace: S6ACardsWorkspace, request: S6ARequest): Promise<RoundFacts> {
+  const job = ready<{ job: { job: { runRef: QueryRunRef } } }>(await workspace.route('queries/read', request.round), 'queries/read');
+  return { since: await sinceOf(workspace, request), runRef: job.job.job.runRef };
+}
+
+/** The round facts of several requests, read one by one before the page under test. */
+async function sincesOf(workspace: S6ACardsWorkspace, requests: readonly S6ARequest[]): Promise<Map<string, RoundFacts>> {
+  const since = new Map<string, RoundFacts>();
+  for (const request of requests) since.set(request.requestRoot.queryJobId, await roundFactsOf(workspace, request));
   return since;
 }
 
@@ -102,16 +112,16 @@ async function sincesOf(workspace: S6ACardsWorkspace, requests: readonly S6ARequ
  * A request's view, from its submit receipt: one request round, queued (the driver is off), owned and assigned to
  * the receipt's secretary, so processing; a request with a waiting candidate names it and has the `candidate` reason.
  */
-function requestView(made: S6ARequest, since: CommitCursor, candidate: S6ACandidate | null = null,
+function requestView(made: S6ARequest, round: RoundFacts, candidate: S6ACandidate | null = null,
   references: unknown[] = []): RequestCoreViewV1 {
   return {
     requestRoot: made.requestRoot, goalId: made.goalId, effectiveGoalId: made.goalId,
     owner: made.secretary, ownerState: 'owned', processing: true, assignment: 'assigned', waitReason: null,
     reasons: candidate === null ? ['round'] : ['round', 'candidate'],
     rounds: [{
-      ref: made.round, kind: 'request', status: 'queued', input: made.text, answer: null, ideas: [], goalCardDrafts: [],
-      selectedIdea: null, assignedSession: made.secretary, session: null, absorbedInto: null, closeCode: null,
-      closeDetail: null, closeMessage: null, since, references,
+      ref: made.round, runRef: round.runRef, kind: 'request', status: 'queued', input: made.text, answer: null, ideas: [],
+      goalCardDrafts: [], selectedIdea: null, assignedSession: made.secretary, session: null, absorbedInto: null,
+      closeCode: null, closeDetail: null, closeMessage: null, since: round.since, references,
     } as unknown as RequestCoreViewV1['rounds'][number]],
     candidate: candidate === null ? null : { proposalRef: candidate.proposal.ref, state: 'candidate', stale: false },
   };
@@ -316,7 +326,7 @@ describe.each(BACKENDS)('main/read and requests/read (%s)', backend => {
       round: result['round'] as QueryJobRef, secretary: result['secretary'] as S6ARequest['secretary'],
       created: result['created'] as boolean,
     };
-    const since = await sinceOf(cards.main, made);
+    const since = await roundFactsOf(cards.main, made);
     const page = await readMain(cards.main, goal.goalId);
     const found = page.requests.find(request => request.requestRoot.queryJobId === made.requestRoot.queryJobId);
     expect(found).toEqual({ ...requestView(made, since, null, references), cardKeys: queueOrder(pointerCausesOf(goal)) });

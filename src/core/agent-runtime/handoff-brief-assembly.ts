@@ -354,6 +354,13 @@ async function readOpenDecisions(
       return thrownRead(error, signal, `the open decisions of ${goalRef.goalId}`);
     }
     if (read.status !== 'ready') return readHandoffRejection(read, `the open decisions of ${goalRef.goalId}`);
+    // 121-146：说明会当成完整的记忆留给接手的参谋，缺一种卡的清单不能被当成全的；照整张读失败回 unavailable。
+    const readFailed = read.value.capabilities
+      .filter((entry) => entry.availability === 'read_failed')
+      .map((entry) => entry.source);
+    if (readFailed.length > 0) {
+      return rejected('unavailable', `the open decisions of ${goalRef.goalId} are incomplete: ${readFailed.join(', ')}`);
+    }
     for (const card of read.value.waitingAnswer) {
       const key = `${card.source.kind}:${card.source.key}`;
       if (seen.has(key)) continue;

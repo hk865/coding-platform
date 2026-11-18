@@ -134,7 +134,7 @@ import {
   type GoalConflictAssemblerPort,
   type GoalTerminalState,
 } from './goal-conflicts.js';
-import { readCatalogPointerRevision } from '../architecture/catalog-service.js';
+import { KNOWLEDGE_WRITE_UNCONFIRMED, readCatalogPointerRevision } from '../architecture/catalog-service.js';
 import { runRefOfPins, taskRefOfPins } from './decision-card-refs.js';
 import { compareNoticePositions, mergeNoticePages, type NoticeSourceItemsV1 } from './notice-position.js';
 import { groupNotices, noticePage, seenThroughOfNotices, type NoticeLineV1 } from './notice-grouping.js';
@@ -202,6 +202,7 @@ export interface DecisionWholePageReader {
 }
 
 type CardAction = DecisionCardV1['actions'][number];
+type CapabilityState = { availability: 'available' | 'not_available' | 'read_failed'; reason?: string };
 
 const CARD_KINDS: readonly DecisionSourceV1['kind'][] = [
   'message', 'goal_cause', 'candidate', 'note_review', 'planning_question', 'goal_conflict', 'message_release',
@@ -1185,6 +1186,46 @@ function queueScopeProblem(ctx: CoreCallContext, input: QueuePreparationInput): 
  * before each attempt; lines/list and the context's pages prepare before their
  * own window.
  */
+/**
+ * 121-146：一种卡来源读失败，只把这一种标成“暂时读不到”。窗口移动照旧整窗重读；被取消的读整次返回、
+ * 在途写照旧整张拒（121-105）。返回 null 表示按今天的写法处理：窗移动回 `WINDOW_MOVED`，其余原样返回。
+ */
+function degradableSourceFailure(ctx: CoreCallContext, result: ReadResult<unknown>): CoreRejection | null {
+  if (result.status !== 'rejected') return null;
+  if (result.reason === DECISION_WINDOW_MOVED_REASON) return null;
+  if (result.code === 'cancelled' || ctx.signal?.aborted === true) return null;
+  if (result.reason.endsWith(KNOWLEDGE_WRITE_UNCONFIRMED)) return null;
+  return result;
+}
+
+/**
+ * R3 第 8 条：收尾补读里 `message_release`、`role_line_change` 自己的来源读失败；能降级就标这一种、留下原来的卡
+ * （不合并 live），返回 null；不能降级的把读失败原样交回调用方，照旧让整张失败。抛出来的不是读失败结果
+ * （程序错，Q8）就照旧往外抛，由外层的 catch 让整张失败，不降级。
+ */
+function degradeSourceReadFailure(
+  ctx: CoreCallContext, capabilities: Map<string, CapabilityState>, source: string, error: unknown,
+): ReadFailure | null {
+  const failure = thrownReadFailure(error);
+  if (failure === null) throw error;
+  const degradable = degradableSourceFailure(ctx, failure);
+  if (degradable === null) return failure;
+  observeAvailability(capabilities, source, { availability: 'read_failed', reason: degradable.reason });
+  return null;
+}
+
+/** 不是 `ready` 的读结果：`rejected`、`not_ready`、`not_found`。 */
+type ReadFailure = Exclude<ReadResult<never>, { status: 'ready' }>;
+
+/**
+ * 121-146/Q8：抛出来的值是正式的读失败结果（`ReadResult` 形状）才交给 R1 判断，`rejected`、`not_ready` 原样保留；
+ * 别的抛出（例如普通的 `Error`）是程序错，返回 null，由调用方照旧往外抛、整张失败。
+ */
+function thrownReadFailure(error: unknown): ReadFailure | null {
+  return isRecord(error) && (error.status === 'rejected' || error.status === 'not_ready' || error.status === 'not_found')
+    ? error as ReadFailure : null;
+}
+
 async function prepareQueueWindow(
   deps: DecisionReadModelDependencies,
   ctx: CoreCallContext,
@@ -1195,13 +1236,17 @@ async function prepareQueueWindow(
   const workspace = input.workspace;
   const wantsCards = input.sections.some((section) => section !== 'notices');
   let architecture: ConflictArchitectureRead | null = null;
-  let conflictsUnavailable = false;
+  const readFailed: DecisionQueuePreparation['readFailed'] = [];
   if (wantsCards && !deps.cardSources.some((source) => source.kind === 'goal_conflict')) {
     const read = await deps.conflicts.readCurrentArchitecture(ctx);
     if (read.status === 'ready') architecture = read.value;
-    // stk16 (lead after the fix reply, 2): a read this attempt's caller cancelled is answered whole, never as the gate.
-    else if (conflictArchitectureRefused(read) && ctx.signal?.aborted !== true) conflictsUnavailable = true;
-    else return read;
+    else {
+      // R1 决定降不降；`conflictArchitectureRefused` 是读回闸门拒的既有判断（在途写不算），一起用，
+      // 保证只把真正的闸门拒绝记成 `goal_conflict` 暂时读不到。
+      const failure = degradableSourceFailure(ctx, read);
+      if (failure === null || !conflictArchitectureRefused(read)) return read;
+      readFailed.push({ source: 'goal_conflict', reason: failure.reason });
+    }
   }
   const attempt: DecisionSourceAttempt = { cache: new Map() };
   const preparing = wantsCards ? deps.cardSources.filter(source => source.prepareWindow !== undefined) : [];
@@ -1221,10 +1266,65 @@ async function prepareQueueWindow(
     for (const source of preparing) {
       const prepared = await source.prepareWindow?.(ctx, { workspace, goals: subjects,
         project: input.goalRef === undefined, attempt });
-      if (prepared !== undefined && prepared.status !== 'ready') return prepared;
+      if (prepared === undefined || prepared.status === 'ready') continue;
+      const failure = degradableSourceFailure(ctx, prepared);
+      if (failure === null) return prepared;
+      readFailed.push({ source: source.kind, reason: failure.reason });
     }
   }
-  return { status: 'ready', value: { architecture, conflictsUnavailable, attempt } };
+  return { status: 'ready', value: { architecture, readFailed, attempt } };
+}
+
+type GoalCandidateCards = {
+  watermark: CommitCursor | null;
+  cards: { proposal: PlanProposal; successor: boolean; sourceWithdrawn: boolean }[];
+};
+
+/**
+ * 121-146/121-147：一个 Goal 的候选来源整段读成一次结果，失败时只降级这一种。里面的读和以前一样；
+ * 撤回读只对活的、没有因指针过期的候选做（初始和后续采用都要重证来源）。
+ */
+async function readGoalCandidateCards(
+  deps: DecisionReadModelDependencies,
+  ctx: CoreCallContext,
+  goal: GoalSnapshot,
+): Promise<ReadResult<GoalCandidateCards>> {
+  try {
+    // §2.4/§4.2: the reader-backed enumeration of one Goal's live candidates
+    // (a discarded window/truncation is a real failure, never an empty page).
+    const candidateRead = await enumerateCandidates(deps.records, goal.ref,
+      deps.lookupPageLimit === undefined ? undefined : { lookupPageLimit: deps.lookupPageLimit });
+    if (candidateRead.status !== 'ready') return candidateRead;
+    // §4.2 source 3 CLOSED history: `accepted`/`not_adopted` request candidates
+    // keep the same per-request card identity as their live card, so an answered
+    // card merges with its closure instead of vanishing from `history`.
+    const closedRead = await enumerateClosedCandidates(deps.records, goal.ref,
+      deps.lookupPageLimit === undefined ? undefined : { lookupPageLimit: deps.lookupPageLimit });
+    if (closedRead.status !== 'ready') return closedRead;
+    const proposals = [...candidateRead.proposals, ...closedRead.proposals];
+    // §6.3.1: ONE lineage pass over this Goal's already-read candidates. A
+    // candidate with a `planfix:` successor is replaced by it, so the old
+    // candidate leaves the queue whether it reads live or as closed history.
+    const successorParents = await successorParentsOf(ctx, deps.lineage, proposals);
+    if (successorParents.status !== 'ready') return successorParents;
+    const cards: GoalCandidateCards['cards'] = [];
+    for (const proposal of proposals) {
+      const pointerStale = candidatePointerStale(proposal, goal);
+      cards.push({
+        proposal,
+        successor: successorParents.value.has(planProposalRefKey(proposal.ref)),
+        sourceWithdrawn: await candidateSourceWithdrawn(deps.records, proposal, pointerStale),
+      });
+    }
+    return { status: 'ready', value: {
+      watermark: later(candidateRead.readThrough, closedRead.readThrough), cards,
+    } };
+  } catch (error) {
+    // Q8：正式的读失败原样交回，由调用方过 R1；别的抛出是程序错，照旧往外抛、整张失败。
+    const failure = thrownReadFailure(error);
+    if (failure === null) throw error;
+    return failure;
+  }
 }
 
 async function readDecisionQueueWindow(
@@ -1257,10 +1357,16 @@ async function readDecisionQueueWindow(
   // §2.6/§4.2: the advertised capability starts from the wired adapter and is
   // then DOWNGRADED by what a real read reports. An injected adapter whose
   // provider answers `not_available` must never be advertised as available.
-  const capabilities = new Map<string, 'available' | 'not_available'>();
-  for (const kind of CARD_KINDS) capabilities.set(kind, cardSourceAvailability(kind, injectedCards));
-  for (const category of NOTICE_CATEGORIES) capabilities.set(category, noticeSourceAvailability(category, injectedNotices));
-  if (prepared.value.conflictsUnavailable) capabilities.set('goal_conflict', 'not_available');
+  // 121-146: a source that was wired but whose read failed is `read_failed`; it
+  // stays so for this read even if a later page answers otherwise.
+  const capabilities = new Map<string, CapabilityState>();
+  for (const kind of CARD_KINDS) capabilities.set(kind, { availability: cardSourceAvailability(kind, injectedCards) });
+  for (const category of NOTICE_CATEGORIES) {
+    capabilities.set(category, { availability: noticeSourceAvailability(category, injectedNotices) });
+  }
+  for (const failure of prepared.value.readFailed) {
+    observeAvailability(capabilities, failure.source, { availability: 'read_failed', reason: failure.reason });
+  }
 
   // §4.1 line 772 / §3.3: the read window is fixed FIRST, at the first Goal
   // listing's horizon; `sourceCursor` is that window, never a later watermark.
@@ -1354,38 +1460,23 @@ async function readDecisionQueueWindow(
     for (const goal of scopedGoals) {
       // §2.4/§4.2: the reader-backed enumeration of one Goal's live candidates
       // (a discarded window/truncation is a real failure, never an empty page).
-      let candidateRead: Awaited<ReturnType<typeof enumerateGoalCandidates>>;
-      try {
-        candidateRead = await enumerateCandidates(deps.records, goal.ref,
-          deps.lookupPageLimit === undefined ? undefined : { lookupPageLimit: deps.lookupPageLimit });
-      } catch (error) {
-        return storeFailureToRejection(error as { code: string; reason: string });
+      // 121-146: the whole per-Goal candidate read is one result, so its failure
+      // degrades only this source instead of the whole queue.
+      const candidateRead = await readGoalCandidateCards(deps, ctx, goal);
+      if (candidateRead.status !== 'ready') {
+        const failure = degradableSourceFailure(ctx, candidateRead);
+        if (failure === null) {
+          return candidateRead.status === 'rejected' && candidateRead.reason === DECISION_WINDOW_MOVED_REASON
+            ? WINDOW_MOVED : candidateRead;
+        }
+        observeAvailability(capabilities, 'candidate', { availability: 'read_failed', reason: failure.reason });
+        continue;
       }
-      if (candidateRead.status !== 'ready') return candidateRead;
-      watermark = later(watermark, candidateRead.readThrough);
-      // §4.2 source 3 CLOSED history: `accepted`/`not_adopted` request
-      // candidates keep the same per-request card identity as their live card,
-      // so an answered card merges with its closure instead of vanishing from
-      // `history`.
-      let closedRead: Awaited<ReturnType<typeof enumerateClosedGoalCandidates>>;
-      try {
-        closedRead = await enumerateClosedCandidates(deps.records, goal.ref,
-          deps.lookupPageLimit === undefined ? undefined : { lookupPageLimit: deps.lookupPageLimit });
-      } catch (error) {
-        return storeFailureToRejection(error as { code: string; reason: string });
-      }
-      if (closedRead.status !== 'ready') return closedRead;
-      watermark = later(watermark, closedRead.readThrough);
-      // §6.3.1: ONE lineage pass over this Goal's already-read candidates. A
-      // candidate with a `planfix:` successor is replaced by it, so the old
-      // candidate leaves the queue whether it reads live or as closed history.
-      const successorParents = await successorParentsOf(ctx, deps.lineage,
-        [...candidateRead.proposals, ...closedRead.proposals]);
-      if (successorParents.status !== 'ready') return successorParents;
-      for (const proposal of [...candidateRead.proposals, ...closedRead.proposals]) {
-        const card = candidateCard(proposal, goal);
+      watermark = later(watermark, candidateRead.value.watermark);
+      for (const { proposal, successor, sourceWithdrawn } of candidateRead.value.cards) {
+        const card = candidateCard(proposal, goal, sourceWithdrawn);
         if (card === null) continue;
-        if (successorParents.value.has(planProposalRefKey(proposal.ref))) {
+        if (successor) {
           collected.delete(card.source.key);
           continue;
         }
@@ -1396,8 +1487,11 @@ async function readDecisionQueueWindow(
 
   // ---- injected card sources (goal_cause, planning_question, future ones) --
   if (wantsCards) {
+    // 121-146：准备阶段失败的来源在窗里不读（它的文件没进 attempt），这一种已经标了 read_failed。
+    const unprepared = new Set(prepared.value.readFailed.map((failure) => failure.source));
     for (const source of deps.cardSources) {
       if (source.kind === 'message' || source.kind === 'candidate' || source.kind === 'goal_conflict') continue;
+      if (unprepared.has(source.kind)) continue;
       // Every Goal in scope for a goal-serving source, then — for a
       // project-serving source — the project ONCE (no `goalRef`), also in a
       // workspace with zero Goals. A read filtered to one Goal never shows a
@@ -1418,9 +1512,13 @@ async function readDecisionQueueWindow(
               ...(input.page.atLeastCursor === undefined ? {} : { atLeastCursor: input.page.atLeastCursor }),
               attempt } });
           if (result.status !== 'ready') {
-            return result.status === 'rejected' && result.reason === DECISION_WINDOW_MOVED_REASON ? WINDOW_MOVED : result;
+            if (result.status === 'rejected' && result.reason === DECISION_WINDOW_MOVED_REASON) return WINDOW_MOVED;
+            const failure = degradableSourceFailure(ctx, result);
+            if (failure === null) return result;
+            observeAvailability(capabilities, source.kind, { availability: 'read_failed', reason: failure.reason });
+            break;
           }
-          observeAvailability(capabilities, source.kind, result.value.availability);
+          observeAvailability(capabilities, source.kind, { availability: result.value.availability });
           if (result.value.availability !== 'available') break;
           for (const card of result.value.items) add(card);
           const next = result.value.nextCursor;
@@ -1436,8 +1534,13 @@ async function readDecisionQueueWindow(
     const conflicts = await deps.conflicts.queryGoalConflicts(ctx, { workspace,
       architecture: conflictArchitecture.architecture,
       ...(input.page.atLeastCursor === undefined ? {} : { atLeastCursor: input.page.atLeastCursor }) });
-    if (conflicts.status !== 'ready') return conflicts;
-    for (const card of conflicts.value.cards) add(card);
+    if (conflicts.status !== 'ready') {
+      const failure = degradableSourceFailure(ctx, conflicts);
+      if (failure === null) return conflicts;
+      observeAvailability(capabilities, 'goal_conflict', { availability: 'read_failed', reason: failure.reason });
+    } else {
+      for (const card of conflicts.value.cards) add(card);
+    }
   }
 
   // ---- finalize cards against each Goal's current control state ------------
@@ -1458,22 +1561,32 @@ async function readDecisionQueueWindow(
     try {
       // book :428–:430: the queue merges the same live facts the single card carries.
       if (raw.source.kind === 'message_release' && raw.messageRelease === undefined) {
-        const live = await deriveOpenCard(deps, ctx, raw.source, goal, null);
-        if (live !== null) raw = mergeCards(raw, live);
+        try {
+          const live = await deriveOpenCard(deps, ctx, raw.source, goal, null);
+          if (live !== null) raw = mergeCards(raw, live);
+        } catch (error) {
+          const rejection = degradeSourceReadFailure(ctx, capabilities, 'message_release', error);
+          if (rejection !== null) return rejection;
+        }
       }
       // An answered role-line change reads its operation once: one that left `waiting` (approved and carried on, or
       // not carried out) is the resolved source, so an answer the owner already acted on is history, not "待应用".
       // `deriveOpenCard` has no project arm, so a project card reads the source by key in the bound workspace.
       if (raw.source.kind === 'role_line_change' && raw.answer !== null && raw.closedReason === null) {
-        let live: DecisionCardV1 | null = null;
-        if (rawGoalRef !== null) {
-          live = await deriveOpenCard(deps, ctx, raw.source, goal, null);
-        } else {
-          const byKey = await injectedCards.get('role_line_change')?.readByKey?.(ctx, { workspace, source: raw.source });
-          if (byKey?.status === 'ready') live = byKey.value;
-          else if (byKey !== undefined && byKey.status !== 'not_found') throw byKey;
+        try {
+          let live: DecisionCardV1 | null = null;
+          if (rawGoalRef !== null) {
+            live = await deriveOpenCard(deps, ctx, raw.source, goal, null);
+          } else {
+            const byKey = await injectedCards.get('role_line_change')?.readByKey?.(ctx, { workspace, source: raw.source });
+            if (byKey?.status === 'ready') live = byKey.value;
+            else if (byKey !== undefined && byKey.status !== 'not_found') throw byKey;
+          }
+          if (live !== null) raw = mergeCards(raw, live);
+        } catch (error) {
+          const rejection = degradeSourceReadFailure(ctx, capabilities, 'role_line_change', error);
+          if (rejection !== null) return rejection;
         }
-        if (live !== null) raw = mergeCards(raw, live);
       }
       source = await refreshSourcePins(deps.records, raw.source);
     } catch (error) {
@@ -1516,7 +1629,7 @@ async function readDecisionQueueWindow(
               ...(input.page.atLeastCursor === undefined ? {} : { atLeastCursor: input.page.atLeastCursor }),
               attempt } });
           if (result.status !== 'ready') return result;
-          observeAvailability(capabilities, category, result.value.availability);
+          observeAvailability(capabilities, category, { availability: result.value.availability });
           if (result.value.availability !== 'available') break;
           pages.push({ category, items: result.value.items });
           count += result.value.items.length;
@@ -1591,7 +1704,9 @@ async function readDecisionQueueWindow(
   }
 
   const capabilityList: DecisionQueueReadV1['capabilities'] = [...capabilities]
-    .map(([source, availability]) => ({ source: source as DecisionSourceV1['kind'] | NoticeCategoryV1, availability }));
+    .map(([source, state]) => ({ source: source as DecisionSourceV1['kind'] | NoticeCategoryV1,
+      availability: state.availability,
+      ...(state.reason === undefined ? {} : { reason: state.reason }) }));
   return { status: 'ready', value: {
     waitingAnswer: displayedCards.filter((card) => card.state === 'waiting_answer'),
     answeredPendingApplication: displayedCards.filter((card) => card.state === 'answered_pending_application'),
@@ -1980,7 +2095,7 @@ async function readCardTerminalState(
  * once per call and passes it to `deriveOpenCard`, so the saved-answer branch
  * and the live branch share the same successor set.
  */
-type CandidateCardRead = { proposal: PlanProposal | null; successor: boolean };
+type CandidateCardRead = { proposal: PlanProposal | null; successor: boolean; sourceWithdrawn: boolean };
 
 async function readCandidateCardSource(
   deps: DecisionReadModelDependencies,
@@ -1996,7 +2111,10 @@ async function readCandidateCardSource(
   const successorParents = await successorParentsOf(ctx, deps.lineage, enumerated.proposals);
   if (successorParents.status !== 'ready') throw successorParents;
   const proposal = await findCandidateProposal(deps.records, identity, goal, deps.lookupPageLimit);
-  return { proposal, successor: proposal !== null && successorParents.value.has(planProposalRefKey(proposal.ref)) };
+  const sourceWithdrawn = proposal === null ? false
+    : await candidateSourceWithdrawn(deps.records, proposal, candidatePointerStale(proposal, goal));
+  return { proposal, successor: proposal !== null && successorParents.value.has(planProposalRefKey(proposal.ref)),
+    sourceWithdrawn };
 }
 
 async function deriveOpenCard(
@@ -2008,7 +2126,7 @@ async function deriveOpenCard(
 ): Promise<DecisionCardV1 | null> {
   if (source.kind === 'candidate') {
     if (candidate === null || goal === null) return null;
-    return candidate.proposal === null ? null : candidateCard(candidate.proposal, goal);
+    return candidate.proposal === null ? null : candidateCard(candidate.proposal, goal, candidate.sourceWithdrawn);
   }
   if (source.kind === 'goal_conflict') {
     const workspace = goal === null ? null : { projectId: goal.workspaceRef.projectId, workspaceId: goal.workspaceRef.workspaceId };
@@ -2109,7 +2227,36 @@ function syntheticAnswerCard(message: SessionMessage): DecisionCardV1 | null {
   };
 }
 
-function candidateCard(proposal: PlanProposal, goal: GoalSnapshot): DecisionCardV1 | null {
+/** §4.2 source 3：活的候选的 `basedOn` 不是当前计划指针（`stale` 的一半；另一半是来源已撤回）。 */
+function candidatePointerStale(proposal: PlanProposal, goal: GoalSnapshot): boolean {
+  if (proposal.status !== 'candidate' || proposal.basedOn === null) return false;
+  const active = goal.activePlanRevision;
+  return active === null
+    || canonicalJson(proposal.basedOn as unknown as JsonValue) !== canonicalJson(active as unknown as JsonValue);
+}
+
+/**
+ * 121-147：活着的候选，来源消息被人撤回后不再给 `adopt`。初始候选和后续候选都只在写出时证过一次来源，采用时还会
+ * 再证（`proveFutureAdoptionSource`）；这里只读撤回事实，和 `messageConsumptionProblem` 同一个字段。读失败、解不开
+ * 照 `readOne` 抛出去：在队列里由候选来源的降级处理，在单卡读里原样返回。
+ */
+async function candidateSourceWithdrawn(
+  records: DecisionReadRecordsPort, proposal: PlanProposal, pointerStale: boolean,
+): Promise<boolean> {
+  if (proposal.status !== 'candidate' || pointerStale || proposal.sourceMessageRef === null) return false;
+  const record = await readOne(records, sessionMessageRefKey(proposal.sourceMessageRef));
+  if (record === null) {
+    throw { status: 'rejected', code: 'unavailable',
+      reason: 'the source message of the candidate was not found' } as CoreRejection;
+  }
+  const decoded = decodeSessionMessageRecord(record);
+  if (decoded.status !== 'decoded') {
+    throw { status: 'rejected', code: 'unavailable', reason: decoded.reason } as CoreRejection;
+  }
+  return decoded.value.withdrawnAt !== null;
+}
+
+function candidateCard(proposal: PlanProposal, goal: GoalSnapshot, sourceWithdrawn: boolean): DecisionCardV1 | null {
   if (proposal.kind !== 'candidate_v2') return null;
   // §4.2 source 3: a live `candidate` is waiting (possibly stale); `accepted` and
   // `not_adopted` are the stored terminal statuses and read as closed history.
@@ -2119,9 +2266,8 @@ function candidateCard(proposal: PlanProposal, goal: GoalSnapshot): DecisionCard
     ? ({ kind: 'candidate', goalRef: goal.ref, proposalRef: proposal.ref } as const)
     : ({ kind: 'candidate', goalRef: goal.ref, requestRef } as const);
   const key = decisionSourceKey(identity);
-  const active = goal.activePlanRevision;
-  const stale = proposal.status === 'candidate' && proposal.basedOn !== null
-    && (active === null || canonicalJson(proposal.basedOn as unknown as JsonValue) !== canonicalJson(active as unknown as JsonValue));
+  const pointerStale = candidatePointerStale(proposal, goal);
+  const stale = pointerStale || (proposal.status === 'candidate' && sourceWithdrawn);
   const closed = proposal.status !== 'candidate';
   const pins = [
     { ref: goal.ref, revision: goal.revision },
@@ -2139,7 +2285,8 @@ function candidateCard(proposal: PlanProposal, goal: GoalSnapshot): DecisionCard
     subject: { kind: 'goal', goalRef: goal.ref }, senderSessionRef: null, requestRef,
     objects: pins.map(pin => ({ kind: 'aggregate' as const, pin: structuredClone(pin), label: 'candidate' })), options: [],
     answerMessageRef: null, answer: null, application: null,
-    candidateStatus: closed ? null : stale ? 'stale' : 'candidate', staleReason: stale ? 'basedOn is not the active Plan pointer' : null,
+    candidateStatus: closed ? null : stale ? 'stale' : 'candidate',
+    staleReason: pointerStale ? 'basedOn is not the active Plan pointer' : stale ? '来源已撤回' : null,
     closedReason: closed ? 'source_resolved' : null, openedAt: null, readOnly: closed, actions,
     taskRef: taskRefOfPins(pins), runRef: runRefOfPins(pins),
     ...(proposal.checks === undefined ? {} : { proposedChecks: structuredClone(proposal.checks) }),
@@ -2223,8 +2370,9 @@ export async function candidateCardFacts(
     return { status: 'rejected', code: 'not_found', reason: 'the candidate does not belong to this Goal' };
   }
   // The candidate's own source identity is the existing assembly's, so the
-  // canonical read answers exactly this proposal's card.
-  const projected = candidateCard(proposal, goal);
+  // canonical read answers exactly this proposal's card. Only the identity is
+  // used here; the withdrawn fact belongs to the canonical read below.
+  const projected = candidateCard(proposal, goal, false);
   if (projected === null) {
     return { status: 'rejected', code: 'not_found', reason: 'the proposal is not a candidate card' };
   }
@@ -3189,15 +3337,19 @@ function isUserDecisionResponse(response: SessionMessage['response']): response 
 /**
  * §2.6/§4.2: fold a real source read back into the advertised capability. A
  * `not_available` answer is sticky for the whole query; an adapter presence
- * default is only ever downgraded, never upgraded to a lie.
+ * default is only ever downgraded, never upgraded to a lie. 121-146: a
+ * `read_failed` already set by this read is never changed back.
+ * 121-146：读失败传 `{ availability: 'read_failed', reason }`，留下这一种第一次读失败的原因，这次读里不再改，
+ * `not_available` 也不盖掉它；普通读传 `{ availability }`，照旧。
  */
 function observeAvailability(
-  capabilities: Map<string, 'available' | 'not_available'>,
+  capabilities: Map<string, CapabilityState>,
   source: string,
-  availability: 'available' | 'not_available',
+  next: CapabilityState,
 ): void {
-  if (availability === 'not_available') capabilities.set(source, 'not_available');
-  else if (!capabilities.has(source)) capabilities.set(source, 'available');
+  const current = capabilities.get(source);
+  if (current?.availability === 'read_failed') return;
+  if (next.availability !== 'available' || current === undefined) capabilities.set(source, next);
 }
 
 function cardSourceAvailability(kind: DecisionSourceV1['kind'], injected: ReadonlyMap<string, DecisionCardSourcePort>): 'available' | 'not_available' {

@@ -13,8 +13,8 @@
 做 Runtime 装配、执行端口和 Work/Query 驱动接线的去这组。
 - `index.ts` — 包入口，只导出 `createAgentRuntime` 与 capability 类型。
 - `contracts.ts` — capability 词汇（`RuntimeCapabilities`）。
-- `ports.ts` — `RuntimeExecutionPort`/`AgentRuntimePort`/`AgentRuntimeService`：整个执行面的正式端口；可选的 `cancelQuery` 停一轮已经 `entered` 的 Query 的模型 Turn（只停这一轮，Kernel 按现有取消收束成 `cancelled`）；`countRunActivity` 与 `countQueryActivity` 是并排的只读活动计数；可选的只读 `wouldCompactNext` 答这条线下一轮会不会先压缩（`runtime.ts` 按线的工作区解析它自己的 Host 绑定取窗口和比例，解析不到答 false）。
-- `runtime.ts` — `createAgentRuntime`：装配并发布端口；无依赖时只给显式 unsupported/unavailable，不伪造能力。`countQueryActivity` 先按 ref 读已结束的 QueryRun：没有执行状态、没有固定入口或结果是 `not_entered` 的答 `not_entered`；其余再读执行 Session，窗口上界与 `countRunActivity` 共用一个选择（`endPosition` → Turn 终点 → 保存的对账观察 → Kernel 尾部），丢失窗口时从位置 0 读起；`maxPages` 原样交给窗口读取器校验。
+- `ports.ts` — `RuntimeExecutionPort`/`AgentRuntimePort`/`AgentRuntimeService`：整个执行面的正式端口；可选的 `cancelQuery` 停一轮已经 `entered` 的 Query 的模型 Turn（只停这一轮，Kernel 按现有取消收束成 `cancelled`）；`countRunActivity` 与 `countQueryActivity` 是并排的只读活动计数；`readRunSteps`（P1，`executions/steps`）是一次 Work Run 或 Query 轮的步骤读；可选的只读 `wouldCompactNext` 答这条线下一轮会不会先压缩（`runtime.ts` 按线的工作区解析它自己的 Host 绑定取窗口和比例，解析不到答 false）。
+- `runtime.ts` — `createAgentRuntime`：装配并发布端口；无依赖时只给显式 unsupported/unavailable，不伪造能力。`countQueryActivity` 先按 ref 读已结束的 QueryRun：没有执行状态、没有固定入口或结果是 `not_entered` 的答 `not_entered`；其余再读执行 Session，窗口上界与 `countRunActivity` 共用一个选择（`endPosition` → Turn 终点 → 保存的对账观察 → Kernel 尾部），丢失窗口时从位置 0 读起；`maxPages` 原样交给窗口读取器校验。两个计数的定位（校验 ref、读 Run、位置记录、探测、上界）抽成 `locateRunWindow`、`locateQueryWindow`，计数和步骤读共用，`count` 模式的回答一字不变。`readRunSteps`（P1）不做主体检查（HTTP 进来的一律是 Host）：`after` 是 null 或非负整数、`limit` 是 1..`RUN_STEPS_PAGE_LIMIT`，否则 `invalid`；还没进 Kernel 的答 `not_started`（Work Run 没结束、没有位置记录；Query 轮没结束、`history` 还是 null），结束了、证明没进的答 `not_entered`；Query 的“结束”也认 phase `unknown`（QRR-05），没结束的 Query 上界不用进 Kernel 那一刻的水位、读到 Kernel 尾部；稍后重读的回 `unavailable`、读了也读不出的回 `unknown` 带原因，取消回 `cancelled`。每次都按整个窗切页，和计数一样有界；留最近读过的 16 个 Run（含 Query 轮）的 `RunActivityResume`，按最近使用淘汰，同一个 Run 的第二页起、正在跑的块再读，都只读上次之后的新记录。限制：表里没有的 Run 头一次要从 Turn 开头归约整个窗，G6 第九次最长的 Turn（221 条记录）约 1.1 秒，P2 显示“读取中”。
 - `execution-contracts.ts` — 执行与 Query 的 prepare/start/observe 请求、结果和 `RuntimeExecutionDependencies` 依赖束（KLS-3b：`ReadonlyCommandAccessInput.line` 是 Goal 的线，审查能力探测 `reviewCapability` 按它解析根，Host 的两处转发原样传）；`messages` 是完整 `SessionMessageCommandPort`。 `evidence` 是 `request_recheck` 只取 `reverifyRound` 的返工 owner seam；`memberCreation` 是 `create_member` 的成员请求 owner；可选的 `roleSplit` 是 `propose_role_split` 的唯一 owner，缺了选中这个名字就在模型前 `unsupported`。`ResolvedRuntimeConfiguration.compaction?` 是启动配置的三个压缩比例；可选的 `workRunRefsOf` 列线的 Work 领取的 RunRef，缺了桩的读回一律用固定文字。可选的 `commandSandbox`（NET-B，121-112）是 Host 的工具链和按 Run 建 route 的入口（`CommandRoute`：`source` 就是 Kernel 的 `NetworkProxySource`），缺了命令照旧不联网、用默认 PATH。
 - `execution-history-contracts.ts` — 原历史分页与图执行历史的请求/端口类型。
 - `execution-control.ts` — 内部安全点控制协调器：pause/cancel 的 live handle 与退出证明。
@@ -36,8 +36,9 @@
 ### Kernel 适配与模型调用
 做 Kernel 模型/工具循环、Turn 解码、Session 存储映射和原历史分页的去这组。
 - `observed-model-run.ts` — 唯一的 Kernel 模型/工具循环。Kernel 工作区选项只在这一跳加两样：项目库 `.workbench/local` 进拒绝前缀，知识目录 `.workbench` 和 `.git` 进只拒写的 `writeDeniedPrefixes`（KLS-2：文件工具能读，写和改回 `permission_denied`；Kernel 两种前缀都不分大小写地比较，`.WORKBENCH/x`、`.WORKBENCH/local/x`、`.GIT/hooks/x` 也被拒。`.git` 原来只由 Kernel 权限策略按原样大小写拒写，加进来是为了不区分大小写的根）。Host 的工具链和这个 Run 的 route（`commandSandbox`）也只在这一跳经 `withCommandSandbox` 并进进程沙箱选项，同 `resourceCaps`（NET-B）。
-- `kernel-turn-facts.ts` — Kernel SessionRecord 解码与单个 Turn 归约；`finalAssistantMessageOf` 是“`finalMessageId` → 最终 assistant message”的唯一实现，缺失回 null，由调用方各自映射（交接 brief 记 `no_formal_final_answer`，见证记 absent）。
-- `witness-facts.ts` — B06 见证事实的唯一 Runtime 读取 `readWitnessFacts`（组合根把它包成 `WitnessFactsPort`，只给 Evidence owner）：按 Run 的历史从头逐页读到底（每页 200），首页核对 Run/Turn，用同一对 `decodeKernelEntry`/`reduceTurnFromStart` 归约，给出最终文字（原文不 trim；空或全空白、Turn 完成但找不到 message 是 absent）和成功读取集（原生 `read`，以及成功且路径一致的 `read_source`；零读取是已知的空集）。读不到、解不开、抛错都把两项记 unknown，没有拒绝通道。
+- `kernel-turn-facts.ts` — Kernel SessionRecord 解码与单个 Turn 归约；`finalAssistantMessageOf` 是“`finalMessageId` → 最终 assistant message”的唯一实现，缺失回 null，由调用方各自映射（交接 brief 记 `no_formal_final_answer`，见证记 absent）。P1 起也是按事件读一个固定 Turn 的读点（决定 121-51，活动计数和 Run 步骤共用）：`turnEventsOf`（上界以内、自己 turn.started 之后的事件）、`turnCallsOf`（tool.started 和结果、结果未知配成一次调用，按开始顺序）、`turnReasoningOf`（非空白的 `reasoningContent`，原样）、`callStatusOf`（调用状态表：结果未知优先；没结果的，结束了是 unknown、没结束是 running）、`commandOutputOf`（`shell`/`run_readonly_command` 结果里的退出码、stdout、stderr 和 Kernel 的截断标记；没有那段 JSON 是 null）、`editLinesOf`（单次 `edit` 的行数，结果未知先看）、`callTargetOf`（调用目标的挑法，续接简报也用）。
+- `run-steps.ts` — P1 的纯函数 `buildRunSteps`：按工具名把调用分成 read/edit/command/message/tool，加上思考，按 Kernel 位置排好、截文字（思考 16,000 字节、消息 4,000、路径/命令行/目标/错误 500，从头截；命令输出用 `streamTail` 取末尾 2,000）、分页；头行 `summary` 用 `tallyTurnActivity` 的 Turn 起止、是否结束和改动文件（个数照活动视图）。不直接读 Kernel 格式。
+- `witness-facts.ts` — B06 见证事实的唯一 Runtime 读取 `readWitnessFacts`（组合根把它包成 `WitnessFactsPort`，只给 Evidence owner）：按 Run 的历史从头逐页读到底（每页 200），首页核对 Run/Turn，用同一对 `decodeKernelEntry`/`reduceTurnFromStart` 归约，给出最终文字（原文不 trim；空或全空白、Turn 完成但找不到 message 是 absent）和成功读取集（原生 `read`，以及成功且路径一致的 `read_source`；零读取是已知的空集）。读不到、解不开、抛错都把两项记 unknown，没有拒绝通道。“成功的读”这一条判断是导出的 `isSuccessfulRead`，Run 步骤的 `summary.reads` 也用它。
 - `kernel-store-locator.ts` — Session 到 Kernel store 的固定映射注册表。一个（工作区, 线）一份库：`forWorkspace` 是工作区自己的库（主线和没有线的工作区），`forLine(workspace, folder)` 是别的线的（`KernelStoreEntry.lineFolder`，kls-design §2.3.3）。
 - `session-operations.ts` — Session 创建（KLS-3a：`sessions/create` 顶层可选 `lineFolder`，原样交给准入；Kernel 库不在准入前选，每次准入传 `SessionAdmissionPorts`，准入在回执、定线之后经 `kernelStoreFor` 选这条线的库（主线 `forWorkspace`，别的线 `forLine`），和线一起存在创建动作上，执行和恢复只按存下的 `kernelStore` 取库）、原历史分页、cursor owner 与 Kernel DB 状态；`readConsultationHistory` 用同一个 `readPositionWindow` 有界读完冻结前缀，并在 `mapHistoryFailure` 展平之前保留 missing/corrupt/transient/cancelled 分类。历史条目多一类 `context_compacted`（压缩记录，正文是记录原样）；原记录照旧逐条读出，不套压缩（`observation-recovery.ts` 的 `kernelKind` 同一档）。压缩读这条线自己的 Kernel 记录也只在这里（决定 121-51）：`readRecordAfterCursor` 读游标后第一条（压缩记录带它基于的位置），`scanCompactionHistory` 经 `readPositionWindow` 按 `(lo, end]`、每块 200 往回读到最新摘要的位置或头，按 `turn.started` 分轮，给每轮的记录字符数、成功结果的字符数、最后报的输入和起点依据，以及压缩视图和失败记录的位置（最新一轮的输入没到给定值就不再往前读）。原历史一页的条目 `SessionHistoryEntry` 的正本在 `contracts/session-activity.ts`，这里转出。
 - `compaction.ts` — 两轮之间的压缩（slice-K2-SPEC L10–L20）：轮开始、建 `sessionContext` 之前，入口只认本 Session 自己的 `session_history`（没有 `sourceSessionId`）。游标后第一条是基于游标的压缩记录就复用它的位置，是别的记录就不压；什么都没有才经 `session-operations.ts` 的 `scanCompactionHistory` 往回读这条线自己的记录（刚结束这一轮的输入没到触发值时不再往前读），本文件只按读出的轮算大小和省下的字，不解读 Kernel 记录格式。`compactionBasis` 是唯一的纯判断：上一轮最后报的输入到 `triggerRatio × W`；已有压缩视图且到换手阈值（`min(500000, floor(0.8 × W))`）就不压；尾部预算 `tailRatio × targetRatio × W`，最新一轮总留、往前装到装不下的那一轮的终点是边界；只算新进桩范围的成功结果省下的字（`max(0, JSON 字符数 − 600) × 0.29`），估算到目标以下写只带桩的 `compacted`（读回文字：Work 轮 `look_graph {"mode":"history","runRef":…}`，按线的 Work 领取找 RunRef；别的是固定文字），否则 `runSummaryCall` 在临时 Kernel Session 里用本轮的模型、提示词、工具、计量和许可做一次摘要调用（只挂拦所有工具的 hook，许可绑本轮 input digest；许可被拒成 `busy` 或被中止不写记录），检查六段和 `outputTokens ≤ 8192` 后写摘要或 `failed`。探测头失败或读失败是 `unavailable`（这一轮不开始），追加的其余结果一律不压。`wouldCompactNext` 是同一判断的只读版，刚结束这一轮从失败记录开始时答 false；读失败也答 false。
@@ -92,12 +93,12 @@
 - `observation-recovery.ts` — 按 Kernel run/turn 过滤的精确原历史读取。
 - `graph-execution-history.ts` — WorkGraph locator 到 RT7 原历史的适配。
 - `continuation-brief-assembly.ts` — continuation brief 的事实读取与纯装配。
-- `handoff-brief-assembly.ts` — 交接 brief 的材料装配（只读、不写记录 5）：执行者取按 Plan 顺序交出的任务（phase 与最近一次已结束 Run 的结果都来自同一次 `readCanonicalTaskFacts`，不是 Plan 采用的 phase）、源 Run 的正式结论（`outcome.finalMessageId` 指向的 assistant 正文，缺失为 `no_formal_final_answer`，绝不取 thinking/中间回答）、模块注记索引与源 Run 的理解指针；参谋按整个项目的每个 Goal 经 `readGoalPlanWindow` 取任务/注记索引/未决决定，再取源 Session 最近三条已结束 Query 回答（每条截到 2 KiB）。工具交接的输入带接受时存下的 `understanding`，两臂直接采用该版本、不再重扫；manual/too_long 传 `null`，仍读源 Run 的当前版本。读失败整份 `unavailable`，取消传 `cancelled`，`not_entered` 是具名 absent；不把失败折成空材料。
+- `handoff-brief-assembly.ts` — 交接 brief 的材料装配（只读、不写记录 5）：执行者取按 Plan 顺序交出的任务（phase 与最近一次已结束 Run 的结果都来自同一次 `readCanonicalTaskFacts`，不是 Plan 采用的 phase）、源 Run 的正式结论（`outcome.finalMessageId` 指向的 assistant 正文，缺失为 `no_formal_final_answer`，绝不取 thinking/中间回答）、模块注记索引与源 Run 的理解指针；参谋按整个项目的每个 Goal 经 `readGoalPlanWindow` 取任务/注记索引/未决决定，再取源 Session 最近三条已结束 Query 回答（每条截到 2 KiB）。工具交接的输入带接受时存下的 `understanding`，两臂直接采用该版本、不再重扫；manual/too_long 传 `null`，仍读源 Run 的当前版本。未决决定列表里只要有一种卡来源 `read_failed` 就整份 `unavailable`（121-146：说明会被当成完整记忆留下）。读失败整份 `unavailable`，取消传 `cancelled`，`not_entered` 是具名 absent；不把失败折成空材料。
 - `run-reconcile.ts` — 启动与进程内 Run/Query 对账分类器；QRR-04 用已读窗口写活动计数，QRR-06 的 attestation 事实带计数（Kernel 不可读或无固定 Turn 时是显式 `unknown`）。重建的 yielded continuation 只写 `kind: 'wait_reply'`，`expiry`/`intervention` 是 claim 的选择，不由 yield 写入。
 - `session-anomaly-facts.ts` — 归档异常锚点旁的变更文件快照。
 - `unknown-call-draft.ts` — unknown-call review 草稿读取与工作区捕获；接了 `readRunNetwork` 时把这个 Run 的主机记录拷前 32 条进草稿的 `network`（121-112），没接或读失败就不写这一项，不当成“没连过”。
-- `run-activity-reader.ts` — 有界活动窗口读取；`unknownFacts` 从 `src/contracts/run-activity.ts` 的正本转出。同一个窗口反复读的调用方（Run 里改文件后的检查）带 `RunActivityResume`，只读上次之后的新记录、对全部记录计数，答案和整段重读相同。
-- `run-activity-tally.ts` — 纯 Turn 活动计数。
+- `run-activity-reader.ts` — 有界活动窗口读取；`unknownFacts` 从 `src/contracts/run-activity.ts` 的正本转出。同一个窗口反复读的调用方（Run 里改文件后的检查）带 `RunActivityResume`，只读上次之后的新记录、对全部记录计数，答案和整段重读相同。翻页解码抽成 `readTurnWindow`（P1），读不出时的回答和计数一样，Run 步骤读也用它。
+- `run-activity-tally.ts` — 纯 Turn 活动计数；Turn 的事件和调用配对用 `kernel-turn-facts.ts` 的 `turnEventsOf`/`turnCallsOf`，单次 `edit` 的行数用 `editLinesOf`（规则版本不变）。
 
 ### 查询与来源绑定
 做 Query 驱动和源码捕获/来源绑定的去这组。
@@ -111,7 +112,7 @@
 ## 可以复用的能力
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
-| `createAgentRuntime` | `src/core/agent-runtime/runtime.ts:600` | 装配并发布整套执行端口；无依赖时只给显式 unsupported/unavailable，不伪造能力 | 组合根构造 Runtime 的唯一入口 |
+| `createAgentRuntime` | `src/core/agent-runtime/runtime.ts:605` | 装配并发布整套执行端口；无依赖时只给显式 unsupported/unavailable，不伪造能力 | 组合根构造 Runtime 的唯一入口 |
 | `createContextAssembler` | `src/core/agent-runtime/context-assembler.ts:27` | 按调用种类装配一次上下文 | prepare 需要正式上下文时，别自己拼 |
 | `assembleSecretaryContext` | `src/core/agent-runtime/context-secretary-recipe.ts:198` | 按冻结的秘书准备事实渲染 `secretary-round` 并生成合法绑定；可选的 `handoff` 材料渲染后加在 task 段开头 | 秘书请求轮装配；经 `assembleQuery` 自动进入 |
 | `SecretaryHandoffPromptFactsV1` | `src/core/agent-runtime/context-secretary-recipe.ts:150` | 秘书轮要 prepend 的交接材料：旧秘书 understanding 轮的目标清单，或继任者首轮的一份交接 brief | 调用方已从冻结 manifest 或交接 brief 端口读到材料时，交给 `handoff`；准备阶段已经这么做（见 `query-preparation.ts`） |
@@ -152,20 +153,25 @@
 | `createGraphExecutionHistoryReader` | `src/core/agent-runtime/graph-execution-history.ts:170` | 图 locator 到原始历史的分页读取 | 读某 Run 的 Kernel 历史 |
 | `createExecutionHistoryReader` | `src/core/agent-runtime/observation-recovery.ts:243` | 按 run/turn 过滤原历史页 | 精确原历史读取 |
 | `createArchiveChangedFilesReader` | `src/core/agent-runtime/session-anomaly-facts.ts:111` | 归档锚点旁的变更文件快照 | `readArchiveChangedFiles` |
-| `decodeKernelEntry` | `src/core/agent-runtime/kernel-turn-facts.ts:28` | 解码一条 Kernel SessionRecord | 所有 Kernel 历史读取 |
-| `reduceTurnFromStart` | `src/core/agent-runtime/kernel-turn-facts.ts:53` | 从 turn 起点归约 `RunState` | 观察、对账、brief |
-| `applyTurnEvents` | `src/core/agent-runtime/kernel-turn-facts.ts:76` | 在已归约状态上应用增量 | 增量观察 |
-| `finalAssistantMessageOf` | `src/core/agent-runtime/kernel-turn-facts.ts:61` | 一个 Turn 的最终 assistant message，缺失为 null | 交接 brief 的执行者结论、见证的最终文字；不要另写 transcript 查找 |
-| `readWitnessFacts`、`successfulReadPathsOf` | `src/core/agent-runtime/witness-facts.ts:63`、`src/core/agent-runtime/witness-facts.ts:34` | 见证事实（最终文字、成功读取集）的唯一读取，失败只记 unknown；成功读取集的唯一口径（原生 `read`，成功且路径一致的 `read_source`），导出给纯表格测 | 组合根的 `witnessFacts` 注入；不要另写分页或读取口径 |
-| `unresolvedToolCallIds` | `src/core/agent-runtime/kernel-turn-facts.ts:95` | 列未闭合工具调用 | 判断 Turn 能否完成 |
-| `readRunActivityFacts` | `src/core/agent-runtime/run-activity-reader.ts:58` | 显式窗口内的有界活动事实 | 结束 Run 的活动计数 |
-| `tallyTurnActivity` | `src/core/agent-runtime/run-activity-tally.ts:147` | 纯 Turn 活动计数 | 已有解码 Turn 时 |
-| `countQueryActivity` | `src/core/agent-runtime/runtime.ts:947` | 已结束 QueryRun 的只读活动计数；从未进入 Kernel（没有执行状态、没有固定入口或 `not_entered`）答 `not_entered`，上界与 Run 计数同一选择，不写记录 | Query 活动 backfill 的读侧 |
+| `decodeKernelEntry` | `src/core/agent-runtime/kernel-turn-facts.ts:29` | 解码一条 Kernel SessionRecord | 所有 Kernel 历史读取 |
+| `reduceTurnFromStart` | `src/core/agent-runtime/kernel-turn-facts.ts:54` | 从 turn 起点归约 `RunState` | 观察、对账、brief |
+| `applyTurnEvents` | `src/core/agent-runtime/kernel-turn-facts.ts:77` | 在已归约状态上应用增量 | 增量观察 |
+| `finalAssistantMessageOf` | `src/core/agent-runtime/kernel-turn-facts.ts:65` | 一个 Turn 的最终 assistant message，缺失为 null | 交接 brief 的执行者结论、见证的最终文字；不要另写 transcript 查找 |
+| `readWitnessFacts`、`successfulReadPathsOf`、`isSuccessfulRead` | `src/core/agent-runtime/witness-facts.ts:71`、`src/core/agent-runtime/witness-facts.ts:44`、`src/core/agent-runtime/witness-facts.ts:32` | 见证事实（最终文字、成功读取集）的唯一读取，失败只记 unknown；成功读取集的唯一口径（原生 `read`，成功且路径一致的 `read_source`），导出给纯表格测；`isSuccessfulRead` 是“成功的读”这一条判断 | 组合根的 `witnessFacts` 注入；Run 步骤的 `summary.reads`；不要另写分页或读取口径 |
+| `unresolvedToolCallIds` | `src/core/agent-runtime/kernel-turn-facts.ts:96` | 列未闭合工具调用 | 判断 Turn 能否完成 |
+| `turnEventsOf`、`turnCallsOf`、`turnReasoningOf` | `src/core/agent-runtime/kernel-turn-facts.ts` | 按事件读一个固定 Turn：上界以内的事件、配好结果的调用（按开始顺序）、非空白的思考 | 活动计数和 Run 步骤；不要另写 tool.started 与结果的配对 |
+| `callStatusOf`、`commandOutputOf`、`editLinesOf`、`callTargetOf` | `src/core/agent-runtime/kernel-turn-facts.ts` | 单次调用的状态和错误、命令输出、`edit` 行数、调用目标 | Run 步骤、活动计数的行数、续接简报的目标；Kernel 结果格式只在这里读 |
+| `readTurnWindow`、`advanceResume` | `src/core/agent-runtime/run-activity-reader.ts:61`、`src/core/agent-runtime/run-activity-reader.ts:151` | 读窗的翻页解码（失败的回答和计数一样）；接着读时把新记录归约进 `RunActivityResume` | 计数和 Run 步骤共用 |
+| `readRunActivityFacts` | `src/core/agent-runtime/run-activity-reader.ts:133` | 显式窗口内的有界活动事实 | 结束 Run 的活动计数 |
+| `tallyTurnActivity` | `src/core/agent-runtime/run-activity-tally.ts:113` | 纯 Turn 活动计数 | 已有解码 Turn 时 |
+| `buildRunSteps` | `src/core/agent-runtime/run-steps.ts` | 一个 Turn 的一页步骤和头行数字（纯函数） | `readRunSteps`；不要另写分类或截断 |
+| `countQueryActivity` | `src/core/agent-runtime/runtime.ts:1055` | 已结束 QueryRun 的只读活动计数；从未进入 Kernel（没有执行状态、没有固定入口或 `not_entered`）答 `not_entered`，上界与 Run 计数同一选择，不写记录 | Query 活动 backfill 的读侧 |
+| `readRunSteps`（`locateRunWindow`、`locateQueryWindow`） | `src/core/agent-runtime/runtime.ts:1088`（`:890`、`:959`） | 一次 Work Run 或 Query 轮的步骤读；定位和计数共用 | `executions/steps` |
 | `readPreviousTurn` | `src/core/agent-runtime/continuation-brief-assembly.ts:537` | 读上一 Turn 的真实证据 | requeue brief |
-| `assembleContinuationBrief` | `src/core/agent-runtime/continuation-brief-assembly.ts:798` | 纯函数装配 continuation brief | requeue Run 准备 |
-| `assembleHandoffBrief` | `src/core/agent-runtime/handoff-brief-assembly.ts:542` | 读完整交接材料（executor/adviser 两臂）并返回 `HandoffBriefMaterialV1`；adviser 臂把生产者给的 handedScope 原样冻结进材料（整个项目或拆出的一块）；不创建记录 5、不提交，失败整份拒绝 | 交接 successor 的 create/select 步；组合根注入 `HandoffBriefAssemblyDeps` |
+| `assembleContinuationBrief` | `src/core/agent-runtime/continuation-brief-assembly.ts:795` | 纯函数装配 continuation brief | requeue Run 准备 |
+| `assembleHandoffBrief` | `src/core/agent-runtime/handoff-brief-assembly.ts:549` | 读完整交接材料（executor/adviser 两臂）并返回 `HandoffBriefMaterialV1`；adviser 臂把生产者给的 handedScope 原样冻结进材料（整个项目或拆出的一块）；不创建记录 5、不提交，失败整份拒绝 | 交接 successor 的 create/select 步；组合根注入 `HandoffBriefAssemblyDeps` |
 | `HandoffBriefAssemblyDeps`、`AssembleHandoffBriefInput` | `src/core/agent-runtime/handoff-brief-assembly.ts:77`、`:77` | 材料装配的注入端口（历史 owner、记录读、Note 页、决定队列、Query 执行读）与两臂输入（源/源 Run/workspace/signal，executor 另带源记录与交出的任务） | 组合根接线与 H-brief-material 行 |
-| `createHandoffBriefMaterialAssembler`、`HandoffBriefMaterialSources` | `src/core/agent-runtime/handoff-brief-assembly.ts:567`、`:551` | successor 步的材料适配工厂：定位源 Run（最近已结束的，否则当前 claim 以得具名 `not_entered`），再调 `assembleHandoffBrief`；已定位 Run 的读失败是 `unavailable`，只有成功读取证明源从未有 Run 才是 `null` | 组合根与 6B 共享场景调同一个工厂 |
+| `createHandoffBriefMaterialAssembler`、`HandoffBriefMaterialSources` | `src/core/agent-runtime/handoff-brief-assembly.ts:576`、`:560` | successor 步的材料适配工厂：定位源 Run（最近已结束的，否则当前 claim 以得具名 `not_entered`），再调 `assembleHandoffBrief`；已定位 Run 的读失败是 `unavailable`，只有成功读取证明源从未有 Run 才是 `null` | 组合根与 6B 共享场景调同一个工厂 |
 | `reconcileRunAtStartup` | `src/core/agent-runtime/run-reconcile.ts:226` | 启动时分类一个 Run 并提交一次对账 | 启动恢复 |
 | `reconcileQueryRunAtStartup` | `src/core/agent-runtime/run-reconcile.ts:578` | QueryRun 启动对账 | Query 恢复 |
 | `reconcileRunControlsAtStartup` | `src/core/agent-runtime/run-reconcile.ts:529` | 启动时结清排队控制与已接受的 steer | 控制意图恢复 |
@@ -201,7 +207,7 @@
 | `rejected` | `src/contracts/core/rejections.ts:5` | **正本**：带 code/reason 的拒绝结果形状 | 拒绝输入或读失败时；本层只调本正本 |
 
 ### 同名能力
-- `messageOf` 正本在 `src/contracts/error-message.ts`；本层 `runtime.ts:69`、`:70` 的 `messageOf`/`rejected` 只是这两个正本的本地常量别名（签名不变，因为生产可达性白名单记着这两个节点），新代码直接 import 正本。`isRecord`/`nonEmpty`/`utf8Bytes` 用 `src/contracts/validation/common.ts`，`rejected` 用 `src/contracts/core/rejections.ts`。
+- `messageOf` 正本在 `src/contracts/error-message.ts`；本层 `runtime.ts:74`、`:75` 的 `messageOf`/`rejected` 只是这两个正本的本地常量别名（签名不变，因为生产可达性白名单记着这两个节点），新代码直接 import 正本。`isRecord`/`nonEmpty`/`utf8Bytes` 用 `src/contracts/validation/common.ts`，`rejected` 用 `src/contracts/core/rejections.ts`。
 - 通用文本限制：`queryTextProblem`（`src/core/work-graph/queries/query-job-service.ts:96`）是 Query 文本的正本；本层的字节/条数上限是各协议固定值，不要另造通用校验器。
 
 ## 内部用

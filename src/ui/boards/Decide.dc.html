@@ -251,6 +251,9 @@ textarea.dc-input { min-height: 52px; }
         </sc-if>
 
         <div class="dq">
+          <sc-if value="{{hasUnreadable}}" hint-placeholder-val="{{ false }}">
+            <p class="empty">{{unreadableText}}</p>
+          </sc-if>
           <sc-for list="{{groups}}" as="gr" hint-placeholder-count="2">
             <div class="dq-sec" role="group" aria-label="{{gr.name}}">
               <div class="dq-label"><span>{{gr.name}}</span></div>
@@ -3286,8 +3289,13 @@ class Component extends DCLogic {
        empty state) are the only body. */
     const emptyNav = { goals: [], lines: [], archived: [], archivedText: '没有已归档的工作线',
       head: '工作中 0 · 待命 0', headTip: '', counts: { working: 0, standby: 0, archived: 0 },
-      inbox: { decideN: 0, noticeN: 0, hasDecide: false, hasNotice: false, none: true }, detail: null };
+      inbox: { decideN: 0, decideText: '0', noticeN: 0, noticeText: '0', hasDecide: false, hasNotice: false, none: true }, detail: null };
     const data = this.props.data || { nav: emptyNav, sections: [], history: [], doneTotal: 0, answerBodies: {} };
+    /* 121-146：有卡的来源暂时读不到时，计数是下限；那一行写清是哪几种，空状态不再说“没有”。 */
+    const unreadable = Array.isArray(data.unreadable) ? data.unreadable : [];
+    const unreadableText = unreadable.length > 0
+      ? '暂时读不到：' + unreadable.join('、') + '。其余照常显示。' : '';
+    const countsPartial = data.counts ? data.counts.complete === false : false;
     const err = read !== null && read.status === 'error' ? String(read.message || '') : '';
     const A = this.props.actions || {};
     const s = this.state || {};
@@ -3318,7 +3326,7 @@ class Component extends DCLogic {
     const nNotice = nav.inbox.noticeN;
     const onQueue = !isDoneTab && !gf && !s.line;
     const inbox = {
-      decideN: nDecide, noticeN: nNotice,
+      decideN: nav.inbox.decideText, noticeN: nav.inbox.noticeText,
       decideCls: 'row' + (onQueue ? ' is-on' : ''), decideCur: onQueue ? 'page' : null,
       decideSq: 'sq z10 ' + (nDecide ? 's-decide' : 's-idle'),
       noticeSq: 'sq z10 ' + (nNotice ? 's-waiting' : 's-idle'),
@@ -3339,7 +3347,8 @@ class Component extends DCLogic {
       const on = gf === g.goalId;
       return {
         ord: typeof g.ordinal === 'number' ? g.ordinal : i + 1, name: g.objective,
-        sq: 'sq z10 s-' + g.st, sub: g.sub, hasSub: g.hasSub, n: n, hasN: n > 0,
+        sq: 'sq z10 s-' + g.st, sub: g.sub, hasSub: g.hasSub,
+        n: countsPartial && n > 0 ? '至少 ' + n : n, hasN: n > 0,
         on: on ? 'true' : 'false', cls: 'row' + (on ? ' is-on' : ''),
         tip: on ? '再点一次看全部目标' : '只看这个目标的事',
         pick: () => {
@@ -3441,8 +3450,9 @@ class Component extends DCLogic {
       };
     };
     const groups = data.sections.map((sec) => ({ name: sec.name, items: sec.rows.map((row) => rowView(row)) }));
-    const emptyOpen = !isDoneTab && list.length === 0 && err === '';
-    const emptyDone = isDoneTab && list.length === 0 && err === '';
+    const hasUnreadable = unreadable.length > 0;
+    const emptyOpen = !isDoneTab && list.length === 0 && err === '' && !hasUnreadable;
+    const emptyDone = isDoneTab && list.length === 0 && err === '' && !hasUnreadable;
 
     /* ---------- the card or the notice (D18/D19/D28) ---------- */
     const peersOf = (row) => list.filter((entry) => entry.level === row.level);
@@ -3686,6 +3696,7 @@ class Component extends DCLogic {
       clearFilter: () => { set({ gf: null, dec: null, cardClosed: false, step: null, form: {}, ask: null, facts: false });
         A.readMore({ decideGoal: null, decideDone: isDoneTab }); },
       last: { show: false, text: '', t: '' }, groups: groups,
+      hasUnreadable: hasUnreadable, unreadableText: unreadableText,
       emptyOpen: emptyOpen, emptyDone: emptyDone,
       blank: { show: err !== '', text: err, canRetry: err !== '' && !!read && typeof read.retry === 'function',
         retry: read && typeof read.retry === 'function' ? read.retry : noop },

@@ -1618,7 +1618,7 @@ button.bq-ref:hover { color: var(--text); }
             <div class="cmd">
               <span class="cmd-name">{{c.name}}</span>
               <span class="cmd-acts">
-                <sc-if value="{{c.canRun}}" hint-placeholder-val="{{ true }}"><button class="btn btn-sm btn-line" type="button" onClick="{{c.run}}">{{c.runLabel}}</button></sc-if>
+                <sc-if value="{{c.canRun}}" hint-placeholder-val="{{ true }}"><button class="btn btn-sm btn-line" type="button" onClick="{{c.run}}" aria-disabled="{{c.runOff}}" title="{{c.runTip}}">{{c.runLabel}}</button></sc-if>
                 <sc-if value="{{c.canCancel}}" hint-placeholder-val="{{ false }}"><button class="btn btn-sm btn-line" type="button" onClick="{{c.cancel}}">取消</button></sc-if>
                 <sc-if value="{{c.hasOut}}" hint-placeholder-val="{{ false }}"><button class="btn btn-sm" type="button" onClick="{{c.toggle}}" aria-expanded="{{c.shown}}">{{c.toggleLabel}}</button></sc-if>
               </span>
@@ -3173,7 +3173,7 @@ class Component extends DCLogic {
       goals: [], selectedGoalId: null, selectedGoalRevision: null, selectedDisplay: null,
       lines: [], archived: [], archivedText: '没有已归档的工作线', head: '工作中 0 · 待命 0',
       headTip: '', counts: { working: 0, standby: 0, archived: 0 },
-      inbox: { decideN: 0, noticeN: 0, hasDecide: false, hasNotice: false, none: true }, detail: null, hasGoal: false,
+      inbox: { decideN: 0, decideText: '0', noticeN: 0, hasDecide: false, hasNotice: false, none: true }, detail: null, hasGoal: false,
       decisions: null, conversation: [], older: null, track: null, progress: { done: 0, total: 0 }
     };
     return this.auxRenderVals(this.mainRenderVals(this.navRenderVals(base, data), data), data);
@@ -3210,7 +3210,7 @@ class Component extends DCLogic {
       }
     }));
     const inbox = {
-      hasDecide: !!data.inbox.hasDecide, decideN: data.inbox.decideN,
+      hasDecide: !!data.inbox.hasDecide, decideN: data.inbox.decideText,
       hasNotice: !!data.inbox.hasNotice, noticeN: data.inbox.noticeN,
       none: !!data.inbox.none
     };
@@ -3356,7 +3356,7 @@ class Component extends DCLogic {
       word: this.goalWord(),
       why: read && read.stale && read.staleText ? String(read.staleText) : selected ? selected.why : '',
       whyTip: null,
-      hasDecide: !!data.inbox.hasDecide, decideN: data.inbox.decideN,
+      hasDecide: !!data.inbox.hasDecide, decideN: data.inbox.decideText,
       canPause: selected !== null && !finished && phase !== 'PAUSED',
       canResume: phase === 'PAUSED',
       canCancel: selected !== null && !finished,
@@ -3399,6 +3399,8 @@ class Component extends DCLogic {
     for (const row of decideRows) {
       if (row.level === 'decide' && row.goalId) nBy[row.goalId] = (nBy[row.goalId] || 0) + 1;
     }
+    /* 121-146/U4：队列有卡的来源暂时读不到时，每个目标的数是下限。 */
+    const countsPartial = !!(decisions && decisions.counts.complete === false);
 
     /* A06/L01/L02: the Goal bar and the inbox count the same read; the inbox stays
        the workspace's own total (Y1), the Goal bar counts only the selected Goal. */
@@ -3409,7 +3411,7 @@ class Component extends DCLogic {
     });
     const goals = base.goals.map((row, i) => {
       const n = nBy[data.goals[i].goalId] || 0;
-      return Object.assign({}, row, { n: n, hasN: n > 0, pick: () => {
+      return Object.assign({}, row, { n: countsPartial && n > 0 ? '至少 ' + n : n, hasN: n > 0, pick: () => {
         set({ mainPages: 1, dcOpen: false, picked: null, facts: false, pending: [] });
         row.pick();
       } });
@@ -3504,10 +3506,11 @@ class Component extends DCLogic {
           : (data.counts.working || 0) > 0 ? data.counts.working + ' 条工作线工作中'
             : '没有工作线在工作';
     const goalIndex = decideRows.findIndex((row) => row.level === 'decide' && row.goalId === selectedId);
+    const goalN = selectedId ? (nBy[selectedId] || 0) : 0;
     const gb = Object.assign({}, base.gb, {
       why: why, whyTip: null,
       done: progress.done + '/' + progress.total,
-      hasDecide: goalIndex >= 0, decideN: selectedId ? (nBy[selectedId] || 0) : 0,
+      hasDecide: goalIndex >= 0, decideN: countsPartial && goalN > 0 ? '至少 ' + goalN : goalN,
       openDecide: () => openAt(goalIndex),
       requeueCls: 'btn btn-sm',
       requeue: () => {
@@ -5257,8 +5260,15 @@ class Component extends DCLogic {
     const F = aux && aux.file;
     if (F) files[F.path] = { from: 1, total: F.lines.length, loaded: F.readAtText, lines: F.lines, eol: F.eol,
       digest: F.digest, digestBasis: F.digestBasis, disk: { at: '', by: '', add: 0, del: 0, lines: F.lines } };
-    const changed = aux && aux.diff ? aux.diff.rows.map((f) => ({ path: f.path, add: f.added, del: f.deleted, by: '', hunks: [], note: '' })) : [];
-    const repo = { files: files, changed: changed, cmds: [] };
+    const view = aux && aux.diff ? aux.diff.view : null;
+    const changed = aux && aux.diff ? aux.diff.rows.map((f) => ({ path: f.path, add: f.added, del: f.deleted, by: '',
+      hunks: view !== null && view.path === f.path && view.hunks !== null ? view.hunks : [], note: '' })) : [];
+    /* 121-147：命令页列的是检查轮会跑的那些检查。 */
+    const cmds = aux && aux.commands ? aux.commands.rows.map((r) => ({
+      id: r.checkId, name: r.checkId, line: r.line,
+      command: r.command, cwd: r.cwd, timeoutMs: r.timeoutMs,
+    })) : [];
+    const repo = { files: files, changed: changed, cmds: cmds };
     this._auxR = { version: version, repo: repo };
     return repo;
   }
@@ -5306,7 +5316,7 @@ class Component extends DCLogic {
     if (key === 'task' || key === 'arch' || key === 'files' || key === 'diff') {
       const st = this.state || {};
       /* ruling 6: 任务图 keeps the selected task's detail */
-      return { auxTab: key, auxPath: null, detailTaskId: key === 'task' ? st.sel || null : null,
+      return { auxTab: key, auxPath: key === 'diff' ? st.axDiff || null : null, detailTaskId: key === 'task' ? st.sel || null : null,
         workOnly: key === 'arch' ? st.ascope !== 'all' : false };
     }
     if (key === 'cmd' || /^cmd:/.test(String(key))) {
@@ -5314,6 +5324,9 @@ class Component extends DCLogic {
     }
     if (String(key).indexOf('f:') === 0) {
       return { auxTab: 'file', auxPath: String(key).slice(2), detailTaskId: null, workOnly: false };
+    }
+    if (String(key).indexOf('d:') === 0) {
+      return { auxTab: 'diff', auxPath: String(key).slice(2), detailTaskId: null, workOnly: false };
     }
     return null;
   }
@@ -5714,8 +5727,29 @@ class Component extends DCLogic {
     }
     /* ---- commands */
     const cmdKey = (id) => (cmdN(ptab) ? ptab + '/' + id : id);   /* 命令 keeps the old keys; 命令 2 … key by page */
+    const cmdData = this.dataMode() && this.auxData() ? this.auxData().commands : null;
     const cmds = repo.cmds.map((c0) => {
       const ck = cmdKey(c0.id);
+      if (cmdData) {
+        /* 121-147：读到数据时这一行只记 `shown`；视图取运行表里的，
+           本页还没运行过这一行时取未运行的视图。 */
+        const st = (s.axCmd || {})[ck] || { shown: false };
+        const view = cmdData.runs[ck] || cmdData.idle;
+        const upd = (p) => { const all = Object.assign({}, cur().axCmd || {}); all[ck] = Object.assign({}, all[ck] || { shown: false }, p); set({ axCmd: all }); };
+        const runOff = cmdData.allowed ? 'false' : 'true';
+        const runTip = cmdData.allowed ? '' : '这个工作区没有开“跑命令”的授权';
+        const hasOut = view.out !== '';
+        const runFailed = (e) => set({ err: String(e && e.message ? e.message : e) });
+        return { id: c0.id, name: c0.name, line: c0.line, word: view.word, dot: view.dot,
+          canRun: view.phase === 'idle' || view.phase === 'ended', canCancel: view.phase === 'running',
+          runLabel: view.phase === 'idle' ? '运行' : '再运行', runOff: runOff, runTip: runTip,
+          run: () => { if (!cmdData.allowed) return; Promise.resolve(actions.runCommand(ck, { command: c0.command, cwd: c0.cwd, timeoutMs: c0.timeoutMs })).then(() => upd({ shown: true })).catch(runFailed); },
+          cancel: () => { Promise.resolve(actions.stopCommand(ck)).catch(runFailed); },
+          hasOut: hasOut, shown: hasOut && !!st.shown, kept: hasOut && !st.shown,
+          keptText: '输出已隐藏，仍然保留（' + view.outLines + ' 行）',
+          toggleLabel: st.shown ? '隐藏输出' : '显示输出', toggle: () => upd({ shown: !st.shown }),
+          out: view.out, outLines: view.outLines };
+      }
       const st = (s.axCmd || {})[ck] || { st: 'idle', shown: false, n: 0 };
       const upd = (p) => { const all = Object.assign({}, cur().axCmd || {}); all[ck] = Object.assign({}, all[ck] || { st: 'idle', shown: false, n: 0 }, p); set({ axCmd: all }); };
       const hasOut = st.st !== 'idle';
@@ -5723,6 +5757,7 @@ class Component extends DCLogic {
       const out = st.st === 'cancelled' ? c0.out.concat(['已取消']) : c0.out;
       return { id: c0.id, name: c0.name, line: c0.line, word: word, dot: 'dot ' + (st.st === 'running' ? 's-running' : st.st === 'cancelled' ? 's-cancelled' : st.st === 'done' ? 's-satisfied' : 's-idle'),
         canRun: st.st !== 'running', canCancel: st.st === 'running', runLabel: st.st === 'idle' ? '运行' : '再运行',
+        runOff: 'false', runTip: '',
         run: () => upd({ st: c0.long ? 'running' : 'done', shown: true, n: (st.n || 0) + 1 }), cancel: () => upd({ st: 'cancelled', shown: true }),
         hasOut: hasOut, shown: hasOut && !!st.shown, kept: hasOut && !st.shown, keptText: '输出已隐藏，仍然保留（' + out.length + ' 行）',
         toggleLabel: st.shown ? '隐藏输出' : '显示输出', toggle: () => upd({ shown: !st.shown }), out: out.join('\n'), outLines: out.length };
@@ -5730,7 +5765,8 @@ class Component extends DCLogic {
     /* ---- diff: Git ↔ working tree, or (from a conflict) the disk ↔ your draft */
     const cmpPath = s.axCmp && repo.files[s.axCmp] && repo.files[s.axCmp].disk ? s.axCmp : null;
     const dfiles = repo.changed.map((f) => ({ path: f.path, name: f.path.split('/').pop(), dir: f.path.split('/').slice(0, -1).join('/'), add: f.add === null ? '' : '+' + f.add, del: f.del === null ? '' : '−' + f.del,
-      cls: 'frow d0' + (!cmpPath && s.axDiff === f.path ? ' is-on' : ''), go: () => set({ axDiff: f.path, axCmp: null }) }));
+      cls: 'frow d0' + (!cmpPath && s.axDiff === f.path ? ' is-on' : ''),
+      go: () => { set({ axDiff: f.path, axCmp: null }); if (this.dataMode()) this.axRead('d:' + f.path); } }));
     let drows = []; let dnote = ''; let dhead = ''; let dPath = null;
     if (cmpPath) {
       const F = repo.files[cmpPath]; const mine = ((s.axDraft || {})[cmpPath] !== undefined ? s.axDraft[cmpPath].split('\n') : F.lines);
@@ -5750,11 +5786,23 @@ class Component extends DCLogic {
       if (f && !f.hunks.length) dnote = (f.note ? f.note + '；' : '') + '逐行内容在原型里没有收录。';
       if (this.dataMode() && ptab === 'diff') {
         const aux = this.auxData();
-        /* READS-3/SPEC-16 (B-09): a failed Diff read writes its text here, never 还没接通 over an empty list */
-        dnote = aux && aux.error && aux.tab === 'diff' ? aux.error.text : '还没接通' + this.auxCheckedNote();
-        /* the per-line read has no backend (S23/S37, B-06): the line area is
-           only the note, never sample hunks or placeholder rows. */
-        drows = [];
+        const view = aux && aux.diff ? aux.diff.view : null;
+        const checked = this.auxCheckedNote().replace(/^ · /, '');
+        if ((aux && aux.error && aux.tab === 'diff') || f === null) {
+          /* READS-3/SPEC-16 (B-09): a failed Diff read writes its text here, never 还没接通 over an empty list */
+          dnote = this.auxFileNote(repo);
+          drows = [];
+        } else if (view !== null && view.path === f.path && view.hunks !== null) {
+          /* 逐行区已由上面共用的 f.hunks 循环画好；这里只写核对注 */
+          dnote = checked;
+        } else if (view !== null && view.path === f.path) {
+          dnote = view.note + this.auxCheckedNote();
+          drows = [];
+        } else {
+          /* 点行后的读还没回来：不画旧行、不写旧注 */
+          dnote = '';
+          drows = [];
+        }
       }
     }
     /* ---- quotes in the composer */
@@ -5774,7 +5822,12 @@ class Component extends DCLogic {
         : 'coding-platform · 分支 feat/reliability-and-structure · 改动 ' + repo.changed.length + ' 个文件',
       fp: fp || { rows: [], parts: [] },
       cmds: cmds, cmdNote: this.dataMode()
-        ? ((this.auxData() && this.auxData().error) ? this.auxData().error.text : '还没接通')
+        ? (() => { const aux = this.auxData(); if (aux && aux.error) return aux.error.text;
+          const cmd = aux && aux.commands;
+          if (!cmd) return '';   /* 命令页还没读到（切页签的那一下）：什么都不写，同 auxFileNote */
+          if (!cmd.rows.length) return '这个工作区还没有登记的检查命令。初始化或采用计划时批准的检查，会列在这里。';
+          if (!cmd.allowed) return '这个工作区没有开“跑命令”的授权：命令能看，不能在这里运行。';
+          return '命令在 Host 的工作区里运行；这里不是终端，没有输入。'; })()
         : '命令在 Host 的工作区里运行；这里不是终端，没有输入。',
       dfiles: dfiles, drows: drows, dhead: dhead, dnote: dnote, hasDnote: !!dnote, isCmp: !!cmpPath,
       /* READS-6/SPEC-11 (S37): 比较 left the demand on the file page, so going back reads files/uncommitted again */

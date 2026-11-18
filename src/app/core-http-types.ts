@@ -40,6 +40,7 @@ import type { AutonomyRulePort } from '../core/work-graph/tasks/autonomy-rule-se
 import type { GoalAdviserQueuePort } from '../core/work-graph/tasks/goal-adviser-queue-service.js';
 import type { RoleLineReadPort } from '../core/work-graph/views/role-line-read.js';
 import type { VerificationRoundReadPort } from '../core/work-graph/views/verification-round-read.js';
+import type { ChecksConfirmationPort } from '../core/work-graph/model/initialization-adoption-contracts.js';
 import type { CoreRouteBindings, HostRunningCommandsPort } from './core-routes.js';
 // Slice 1 (spec §4.4, §0.2 L5): the owner ports of the eleven new suffixes.
 import type { SessionLifecyclePort } from '../core/work-graph/sessions/lifecycle-contracts.js';
@@ -283,6 +284,8 @@ export type CoreRouteSuffix =
   // continuation brief pinned to a requeue Run.
   | 'tasks/requeue'
   | 'executions/brief'
+  // P1 (decision 121-147): one Work Run's or Query round's steps (think/read/edit/command/message/tool).
+  | 'executions/steps'
   // A.2 step 5.5 (G7): the Goal pause/resume/cancel with its per-Run fan-out,
   // and the Goal display reduction (GOAL-17..30 with runStops).
   | 'goals/control'
@@ -299,6 +302,7 @@ export type CoreRouteSuffix =
   | 'verification/reverify'
   // UI1: one formal round, its subject chain and the adopted Plan's delivery read.
   | 'verification/round'
+  | 'verification/installed-checks'
   // Slice 1 (spec §4.4, §0.2 L5): the Session facts, corrections and archive
   // suffixes. `CoreRouteSuffix` is declared ONLY here; `core-routes.ts` adds the
   // table rows, binding types and dispatch cases.
@@ -869,9 +873,15 @@ export type RoleLineCoreRouteDto = {
 // three-way (roundRef/taskRef/subjectRunRef) shape.
 export type VerificationRoundReadBody = PlainBody<VerificationRoundReadPort['readVerificationRound']>;
 export type VerificationRoundReadResponse = RouteResponse<VerificationRoundReadPort['readVerificationRound']>;
+// 命令页的已装检查：和检查轮用的是同一个确认端口。
+export type VerificationInstalledChecksBody = PlainBody<ChecksConfirmationPort['confirmInstalledChecks']>;
+export type VerificationInstalledChecksResponse = RouteResponse<ChecksConfirmationPort['confirmInstalledChecks']>;
 /** The typed assembly of the verification suffixes; `CORE_ROUTE_SPECS`'s annotation names it. */
 export type VerificationCoreRouteDto = {
   'verification/round': { body: VerificationRoundReadBody; response: VerificationRoundReadResponse };
+  'verification/installed-checks': {
+    body: VerificationInstalledChecksBody; response: VerificationInstalledChecksResponse;
+  };
 };
 
 /** The compile-time typed assembly of the two secretary lifecycle suffixes. */
@@ -966,9 +976,13 @@ export type ExecutionsHistoryResponse = RouteResponse<RuntimeExecutionPort['read
 // SHT-2 (121-112): the Host's in-memory running-command read; it carries no model/record shape of its own.
 export type ExecutionsRunningCommandsBody = PlainBody<HostRunningCommandsPort['readRunningCommands']>;
 export type ExecutionsRunningCommandsResponse = RouteResponse<HostRunningCommandsPort['readRunningCommands']>;
-/** SHT-2: the running-command read's typed assembly; `CORE_ROUTE_SPECS`'s annotation names it. */
+// P1 (decision 121-147): the Run steps read, derived from the Runtime owner method.
+export type ExecutionsStepsBody = PlainBody<NonNullable<RuntimeExecutionPort['readRunSteps']>>;
+export type ExecutionsStepsResponse = RouteResponse<NonNullable<RuntimeExecutionPort['readRunSteps']>>;
+/** SHT-2: the running-command read's typed assembly; `CORE_ROUTE_SPECS`'s annotation names it. P1 adds the steps read. */
 export type ExecutionsCoreRouteDto = {
   'executions/running-commands': { body: ExecutionsRunningCommandsBody; response: ExecutionsRunningCommandsResponse };
+  'executions/steps': { body: ExecutionsStepsBody; response: ExecutionsStepsResponse };
 };
 
 // ---------------------------------------------------------------------------

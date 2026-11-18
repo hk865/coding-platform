@@ -15,7 +15,7 @@ import type { PlanRevisionDraft } from '../../contracts/plan.js';
 import type { GoalAutonomyV1 } from '../../contracts/goal-decisions.js';
 import { asRecord, asText } from '../values.js';
 import { AUTONOMY_TEXT, taskStageOf } from './goals.js';
-import { goalControlsOf, type NavInbox } from './nav.js';
+import { decideTextOf, goalControlsOf, type NavInbox } from './nav.js';
 import {
   lastAnsweredRoundOf, requestRootKey, type MainData, type MainPageCursorV1, type MainPageV1, type MainRequestRead, type MainRoundRead,
 } from './main.js';
@@ -227,11 +227,15 @@ function inboxOf(main: MainData): PlanData['inbox'] {
     .flatMap((section) => section.rows)
     .filter((row) => row.level === 'decide' && row.goalId === main.selectedGoalId);
   const local = rows.length > 0;
+  /* 121-146：队列整次没读到（`decisions` 为 null）也是下限，远端那一行写“暂时读不到”，不写 0。 */
+  const partial = main.decisions === null || !main.decisions.counts.complete;
   return {
     ...main.inbox,
     local,
     remote: !local,
     decideN: rows.length,
+    /* 121-146/U4：这个目标自己的行数是下限时写“至少”，0 张时写“暂时读不到”（和左栏同一条规则）。 */
+    decideText: decideTextOf(rows.length, partial),
     hasDecide: local,
   };
 }

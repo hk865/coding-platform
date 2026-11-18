@@ -16,7 +16,7 @@
  *   （`plan-service.ts:1658-1672`），目标等在 `adoption_rejected` 上，`sendRoundOf` 发不出系统轮（调试时读到的原因是
  *   `adoption_rejected: forbidden: the candidate brings checks that are not installed yet (…)`）。包落地后 PL 的采用分支先
  *   请批（B1b 的 `send` → `send_system_round`），`sendRoundOf` 发出的就是给审阅者的 `checkreview:`。
- *   D4b 今天红在同一步，原因不同：工作区一条检查都没装，PL 的机械诊断读不到覆盖（`decision-read-model.ts:2229-2231`，
+ *   D4b 今天红在同一步，原因不同：工作区一条检查都没装，PL 的机械诊断读不到覆盖（`decision-read-model.ts:2463-2465`，
  *   已装检查读成 `null`，`create-platform.ts:1895-1901`），pass 之后目标等在 `plan_candidate_waiting: diagnosis`，
  *   连采用都不试。lead 补充裁定 ①：覆盖 = 已装的检查 + 计划自带的检查，没配置时已装的按空清单算；修好后 D4b 和 D4 走
  *   同一条路，绿。

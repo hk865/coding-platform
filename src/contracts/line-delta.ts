@@ -81,3 +81,69 @@ export function lineDelta(
   const counts = lineEditCounts(contentLines(previous), after)!;
   return { added: counts.added, deleted: counts.deleted, totalLines: after.length };
 }
+
+/** 编辑距离超过这个数就停止 Myers 搜索：未提交读（`files/uncommitted`）不给加减行，Diff 页不给逐行。 */
+export const LINE_DIFF_MAX_DISTANCE = 1000;
+
+/** P3 Diff：两份行列表之间改动最少的逐行脚本，每行一个记号（' ' 保留、'-' 删、'+' 加），按顺序；
+ *  每一段连续的改动里删的行在前、加的行在后（git 的写法）：照 lineEditCounts 的前沿规则，删的行自然排在加的行前面，不另重排。
+ *  头尾相同的行直接保留，不搜；两边中间都不空时用 Myers 搜，编辑距离超过 maxDistance 就回 null。
+ *  上限和 lineEditCounts 不同：那边只在 Myers 一支（超过 25 万格）用上限，LCS 一支没有上限；这里总用上限。 */
+export function lineEditScript(
+  before: readonly string[], after: readonly string[], maxDistance: number,
+): Array<' ' | '-' | '+'> | null {
+  let prefix = 0;
+  while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) prefix += 1;
+  let suffix = 0;
+  while (suffix < before.length - prefix && suffix < after.length - prefix
+    && before[before.length - 1 - suffix] === after[after.length - 1 - suffix]) suffix += 1;
+  const a = before.slice(prefix, before.length - suffix);
+  const b = after.slice(prefix, after.length - suffix);
+  const script: Array<' ' | '-' | '+'> = [];
+  for (let index = 0; index < prefix; index += 1) script.push(' ');
+  const middle: Array<' ' | '-' | '+'> = [];
+  if (a.length === 0) {
+    for (let index = 0; index < b.length; index += 1) middle.push('+');
+  } else if (b.length === 0) {
+    for (let index = 0; index < a.length; index += 1) middle.push('-');
+  } else {
+    /* 前沿照 lineEditCounts 的规则（平局走删除）；每一轮存下 [-d, d] 这一段，好倒着走回脚本。 */
+    const trace: Array<Map<number, number>> = [];
+    const frontier = new Map<number, number>([[1, 0]]);
+    const limit = Math.min(maxDistance, a.length + b.length);
+    let found = -1;
+    for (let distance = 0; distance <= limit; distance += 1) {
+      trace.push(new Map(frontier));
+      for (let diagonal = -distance; diagonal <= distance; diagonal += 2) {
+        const left = frontier.get(diagonal - 1) ?? -1;
+        const right = frontier.get(diagonal + 1) ?? -1;
+        let x = diagonal === -distance || (diagonal !== distance && left < right) ? right : left + 1;
+        let y = x - diagonal;
+        while (x < a.length && y < b.length && a[x] === b[y]) { x += 1; y += 1; }
+        frontier.set(diagonal, x);
+        if (x >= a.length && y >= b.length) { found = distance; break; }
+      }
+      if (found >= 0) break;
+    }
+    if (found < 0) return null;
+    let x = a.length;
+    let y = b.length;
+    for (let distance = found; distance >= 0; distance -= 1) {
+      const saved = trace[distance]!;
+      const diagonal = x - y;
+      const left = saved.get(diagonal - 1) ?? -1;
+      const right = saved.get(diagonal + 1) ?? -1;
+      const previous = diagonal === -distance || (diagonal !== distance && left < right) ? diagonal + 1 : diagonal - 1;
+      const previousX = saved.get(previous) ?? 0;
+      const previousY = previousX - previous;
+      while (x > previousX && y > previousY) { middle.push(' '); x -= 1; y -= 1; }
+      if (distance > 0) {
+        if (x === previousX) { middle.push('+'); y -= 1; } else { middle.push('-'); x -= 1; }
+      }
+    }
+    middle.reverse();
+  }
+  script.push(...middle);
+  for (let index = 0; index < suffix; index += 1) script.push(' ');
+  return script;
+}

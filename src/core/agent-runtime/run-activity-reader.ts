@@ -42,32 +42,24 @@ export type RunActivityResume = { decoded: DecodedKernelRecord[]; position: numb
 
 const PAGE_LIMIT = 200;
 
+/** 一段读窗：位置、上界、是否先探测、页数上限，和接着读时手里已有的记录。 */
+export type TurnWindowInput = {
+  session: SessionRecord;
+  fromPosition: number;
+  through: { position: number; bound: Exclude<RunActivityBound, 'kernel_tail'> } | 'kernel_tail';
+  probeFirst: boolean;
+  signal: AbortSignal;
+  maxPages?: number;
+  /** 只读它已有的记录和位置，从那之后接着读；不改它。 */
+  resume?: RunActivityResume;
+};
+
 /**
- * L6: read the explicit window and tally it.
- *
- * Errors:
- * - `missing`/`damaged` probe → `unknown('kernel_unreadable')`;
- * - `transient`/`host_config`/`cancelled` probe, or a rejected read coded
- *   `unavailable`/`cancelled` → `retry_later` (nothing is written);
- * - any other read failure → `unknown('history_read_failed')`;
- * - a damaged or non-contiguous record → `unknown('history_damaged')`;
- * - more than `maxPages` pages → `unknown('capacity')`;
- * - no `turn.started` of the fixed identity → `unknown('turn_not_found')`
- *   (the pure tally makes that decision).
+ * 读窗的翻页解码（活动计数和 Run 步骤共用）：读到的记录、冻住的上界和最后一条的位置；
+ * 读不出时的回答和计数完全一样（见下面 `readRunActivityFacts` 的错误表），`turn_not_found` 由用的一方判。
  */
-export async function readRunActivityFacts(
-  owner: SessionHistoryCursorOwner,
-  input: {
-    session: SessionRecord;
-    kernel: KernelExecutionBinding;
-    fromPosition: number;
-    through: { position: number; bound: Exclude<RunActivityBound, 'kernel_tail'> } | 'kernel_tail';
-    probeFirst: boolean;
-    signal: AbortSignal;
-    maxPages?: number;
-    resume?: RunActivityResume;
-  },
-): Promise<RunActivityRead> {
+export async function readTurnWindow(owner: SessionHistoryCursorOwner, input: TurnWindowInput): Promise<
+  { kind: 'records'; decoded: DecodedKernelRecord[]; throughPosition: number; lastPosition: number } | RunActivityRead> {
   const maxPages = input.maxPages ?? RUN_ACTIVITY_MAX_PAGES;
   if (!Number.isSafeInteger(maxPages) || maxPages < 1) {
     return { kind: 'retry_later', reason: 'maxPages must be a positive safe integer' };
@@ -79,7 +71,6 @@ export async function readRunActivityFacts(
     }
     if (probe.verdict !== 'ready') return { kind: 'retry_later', reason: probe.reason };
   }
-  const bound: RunActivityBound = input.through === 'kernel_tail' ? 'kernel_tail' : input.through.bound;
   // The whole window holds at most `maxPages` pages; a resumed read counts the records it already holds.
   const cap = maxPages * PAGE_LIMIT;
   const decoded: DecodedKernelRecord[] = [...(input.resume?.decoded ?? [])];
@@ -117,23 +108,55 @@ export async function readRunActivityFacts(
       return { kind: 'facts', facts: unknownFacts('capacity', `the activity window exceeds ${String(maxPages)} pages`) };
     }
     if (!window.value.hasMore) {
-      const resume = input.resume;
-      // The Kernel reducer is a left fold, so applying the new events to the kept state is the full reduction.
-      const reduced = resume === undefined ? undefined : resume.reduced === null ? reduceTurnFromStart(decoded, input.kernel)
-        : applyTurnEvents(resume.reduced.state, decoded, input.kernel, resume.reduced.position);
-      if (resume !== undefined) {
-        resume.decoded = decoded;
-        resume.position = expected - 1;
-        resume.reduced = reduced == null ? null : { state: reduced, position: expected - 1 };
-      }
-      const facts = tallyTurnActivity(decoded, input.kernel, {
-        fromPosition: input.fromPosition, throughPosition: throughPosition ?? input.fromPosition, bound,
-      }, reduced);
-      return { kind: 'facts', facts };
+      return { kind: 'records', decoded, throughPosition: throughPosition ?? input.fromPosition, lastPosition: expected - 1 };
     }
     if (page === maxPages - 1) {
       return { kind: 'facts', facts: unknownFacts('capacity', `the activity window exceeds ${String(maxPages)} pages`) };
     }
   }
   return { kind: 'facts', facts: unknownFacts('capacity', `the activity window exceeds ${String(maxPages)} pages`) };
+}
+
+/**
+ * L6: read the explicit window and tally it.
+ *
+ * Errors:
+ * - `missing`/`damaged` probe → `unknown('kernel_unreadable')`;
+ * - `transient`/`host_config`/`cancelled` probe, or a rejected read coded
+ *   `unavailable`/`cancelled` → `retry_later` (nothing is written);
+ * - any other read failure → `unknown('history_read_failed')`;
+ * - a damaged or non-contiguous record → `unknown('history_damaged')`;
+ * - more than `maxPages` pages → `unknown('capacity')`;
+ * - no `turn.started` of the fixed identity → `unknown('turn_not_found')`
+ *   (the pure tally makes that decision).
+ */
+export async function readRunActivityFacts(
+  owner: SessionHistoryCursorOwner,
+  input: TurnWindowInput & { kernel: KernelExecutionBinding },
+): Promise<RunActivityRead> {
+  const read = await readTurnWindow(owner, input);
+  if (read.kind !== 'records') return read;
+  const reduced = advanceResume(input.resume, read, input.kernel);
+  const bound: RunActivityBound = input.through === 'kernel_tail' ? 'kernel_tail' : input.through.bound;
+  const facts = tallyTurnActivity(read.decoded, input.kernel, {
+    fromPosition: input.fromPosition, throughPosition: read.throughPosition, bound,
+  }, reduced);
+  return { kind: 'facts', facts };
+}
+
+/**
+ * 接着读的那一步（活动计数和 Run 步骤共用）：把这次读到的记录归约进 `resume` 手里的 Turn 状态，
+ * 再把 `resume` 推到这次读到的位置。没有 `resume` 时是 undefined，由计数自己从头归约。
+ */
+export function advanceResume(resume: RunActivityResume | undefined,
+  read: { decoded: DecodedKernelRecord[]; lastPosition: number }, kernel: KernelExecutionBinding,
+): ReturnType<typeof reduceTurnFromStart> | undefined {
+  if (resume === undefined) return undefined;
+  // The Kernel reducer is a left fold, so applying the new events to the kept state is the full reduction.
+  const reduced = resume.reduced === null ? reduceTurnFromStart(read.decoded, kernel)
+    : applyTurnEvents(resume.reduced.state, read.decoded, kernel, resume.reduced.position);
+  resume.decoded = read.decoded;
+  resume.position = read.lastPosition;
+  resume.reduced = reduced === null ? null : { state: reduced, position: read.lastPosition };
+  return reduced;
 }

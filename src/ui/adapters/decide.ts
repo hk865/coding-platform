@@ -14,7 +14,7 @@
  */
 
 import { asRecord, asText } from '../values.js';
-import { goalDisplayState, localShortAt, stopWordOf, taskState } from './task-map.js';
+import { decisionCardCountPartial, goalDisplayState, localShortAt, stopWordOf, taskState } from './task-map.js';
 import type { NavData } from './nav.js';
 import type { WorkspaceScope } from '../../contracts/core/identity.js';
 import type {
@@ -65,7 +65,7 @@ export type DecisionQueueReadV1 = {
   sourceCursor: unknown;
   seenThrough: Partial<Record<NoticeCategoryV1, NoticePositionV1>>;
   displayToken: string | null;
-  capabilities: unknown[];
+  capabilities: Array<{ source?: unknown; availability?: unknown }>;
 };
 
 /** One read's inputs; each field is one route's value (`null` = not read). */
@@ -100,6 +100,8 @@ export type DecideData = {
   sections: DecideSection[];
   history: DecideRow[];
   counts: { waitingAnswer: number; notices: number; answeredPendingApplication: number; complete: boolean };
+  /** 121-146：所有页里 `read_failed` 的来源，按 capabilities 顺序去重，用中文种类词；为空时页面不写那一行。 */
+  unreadable: string[];
   /** 已处理页签的行数 (`answeredPendingApplication` + `history`); 0 when not read. */
   doneTotal: number;
   card: DecideCard | null;
@@ -223,6 +225,7 @@ const CATEGORY_WORD: Record<string, string> = {
 
 const KIND_WORD: Record<string, string> = {
   message: '消息', candidate: '计划候选', note_review: '注记复核', planning_question: '规划问题',
+  goal_cause: '目标原因', goal_conflict: '目标冲突',
   message_release: '消息放行', unknown_call_review: '未知结果待核对', command_rerun_request: '命令重跑',
   member_creation: '成员创建', rework_request: '返工请求', handoff_approval: '交接确认',
   adviser_creation: '参谋创建', module_maintainer_assignment: '模块维护者指派',
@@ -634,12 +637,23 @@ export function adaptDecide(source: DecideSource, ui: DecideUi): DecideData {
   const first = source.queue[0];
   const noticeCounts = asRecord(asRecord(first?.counts).notices);
   const noticesN = Object.keys(noticeCounts).reduce((sum, key) => sum + (typeof noticeCounts[key] === 'number' ? noticeCounts[key] as number : 0), 0);
+  /* 121-146/U1：所有页里读失败的来源；`note_review` 既是卡又是通知，这一行只写“注记”。 */
+  const unreadable: string[] = [];
+  for (const page of source.queue) {
+    for (const row of page.capabilities) {
+      if (row.availability !== 'read_failed') continue;
+      const kind = asText(row.source);
+      const word = kind === 'note_review' ? CATEGORY_WORD.note_review! : KIND_WORD[kind] ?? kind;
+      if (!unreadable.includes(word)) unreadable.push(word);
+    }
+  }
   const counts = {
     waitingAnswer: typeof asRecord(first?.counts).waitingAnswer === 'number' ? asRecord(first?.counts).waitingAnswer as number : 0,
     notices: noticesN,
     answeredPendingApplication: typeof asRecord(first?.counts).answeredPendingApplication === 'number'
       ? asRecord(first?.counts).answeredPendingApplication as number : 0,
-    complete: first?.countsComplete !== false,
+    /* 121-146/U2：和“至少”同一个判断，看所有页；不再取 `countsComplete`（它在真实 Host 上永远为 false）。 */
+    complete: !source.queue.some((page) => decisionCardCountPartial(page)),
   };
   const plans: Record<string, unknown> = {};
   for (const [goalId, value] of Object.entries(source.tasks)) {
@@ -667,6 +681,7 @@ export function adaptDecide(source: DecideSource, ui: DecideUi): DecideData {
     sections,
     history: ui.tab === 'done' ? done : [],
     counts,
+    unreadable,
     doneTotal: done.length,
     card: selectedRow?.view ?? null,
     task: goalId === null || selectedTask === null ? null

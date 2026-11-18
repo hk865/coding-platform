@@ -366,6 +366,7 @@ export const PLATFORM_PROMPT_PACK_V1 = {
     "contextExtension.decisionPrefix": "待决定：",
     "contextExtension.sourceSeparator": "；source=",
     "contextExtension.unavailablePrefix": "待决来源尚未接入：",
+    "contextExtension.readFailedPrefix": "待决来源暂时读不到：",
     "contextExtension.interruption.retiredArchive": "因线退役被归档中断",
     "contextExtension.interruption.archive": "被归档中断",
     "contextExtension.anchorPrefix": "中断，待核对：任务 ",

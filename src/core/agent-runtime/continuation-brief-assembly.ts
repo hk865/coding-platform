@@ -32,7 +32,7 @@ import type {
 import type { ContinuationBasis, TaskExecutionRecord } from '../work-graph/model/execution-read-contracts.js';
 import { roundFailureFacts, runFailureOrigin } from '../work-graph/state/no-progress.js';
 import { deriveReworkClass, runErrorOf } from '../work-graph/state/task-failure.js';
-import { decodeKernelEntry, reduceTurnFromStart, type DecodedKernelRecord } from './kernel-turn-facts.js';
+import { callTargetOf, decodeKernelEntry, reduceTurnFromStart, type DecodedKernelRecord } from './kernel-turn-facts.js';
 import type { SessionHistoryCursorOwner } from './session-operations.js';
 
 /** One session message part the Kernel accepted into the Turn (`run.input_accepted`), with the accepted text. */
@@ -635,13 +635,10 @@ function boundedBody(entry: { body: string | null; truncated: boolean } | undefi
   return entry.truncated ? { text: text.text, truncated: true } : text;
 }
 
-/** A tool call's target: its path, file or command argument, when it has one. */
+/** A tool call's target: its path, file or command argument, when it has one（挑法在 kernel-turn-facts.ts 的 callTargetOf）. */
 function targetOf(args: Record<string, unknown>): BoundedTextV1 | null {
-  for (const key of ['path', 'file', 'filePath', 'command']) {
-    const value = args[key];
-    if (typeof value === 'string' && value.length > 0) return bounded(value);
-  }
-  return null;
+  const target = callTargetOf(args);
+  return target === null ? null : bounded(target);
 }
 
 type ToolFacts = { calls: ContinuationBriefV1['toolCalls']; confirmedPaths: string[]; possiblePaths: string[]; unknownCount: number;

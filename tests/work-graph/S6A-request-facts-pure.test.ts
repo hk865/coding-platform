@@ -187,7 +187,9 @@ describe('deriveRequestCore: one round', () => {
     const job = round('qj-root', 1);
     const view = derive([job], [runOf(job)]);
     expect(view.rounds[0]).toEqual({
-      ref: ROOT_REF, kind: 'request', status: 'queued', input: 'what next?', answer: null, ideas: [],
+      ref: ROOT_REF,
+      runRef: { aggregateType: 'QueryRun', projectId: 'p1', workspaceId: 'w1', queryJobId: 'qj-root', runId: 'run-qj-root' },
+      kind: 'request', status: 'queued', input: 'what next?', answer: null, ideas: [],
       goalCardDrafts: [], selectedIdea: null, assignedSession: SESSION_A, session: null, absorbedInto: null,
       closeCode: null, closeDetail: null, closeMessage: null, since: makeCommitCursor(1), references: [],
     });

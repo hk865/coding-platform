@@ -13,7 +13,8 @@
 
 import type { TaskGraph } from '../../contracts/task-graph.js';
 import { asRecord, asText } from '../values.js';
-import { goalDisplayState, isFinishedGoalDisplayPhase, type GoalDisplayPhaseCode } from './task-map.js';
+import { decisionCardCountPartial, goalDisplayState, isFinishedGoalDisplayPhase,
+  type GoalDisplayPhaseCode, type TaskMapQueueRead } from './task-map.js';
 import type { LineReadValue } from './line-shared.js';
 
 /** The eleven line own states (`LineOwnStateV1`) in the boards' words. One
@@ -95,7 +96,11 @@ export type NavLine = {
 
 export type NavInbox = {
   decideN: number;
+  /** 121-146/U3：给人看的那个数；来源暂时读不到时是“至少 n”或“暂时读不到”。 */
+  decideText: string;
   noticeN: number;
+  /** 121-146：给人看的“请知悉”的数；队列整次没读到时是“暂时读不到”，不写 0。 */
+  noticeText: string;
   hasDecide: boolean;
   hasNotice: boolean;
   none: boolean;
@@ -236,6 +241,15 @@ function archivedTextOf(count: number): string {
   return count === 0 ? '没有已归档的工作线' : '已归档 ' + String(count);
 }
 
+/** 121-146：读不到时给人看的字。 */
+const UNREADABLE_TEXT = '暂时读不到';
+
+/** 121-146/U3：给人看的“需要你决定”的数。`partial` 是下限（有卡的来源读不到，或队列整次没读到）时
+ * 写“至少 n”，下限又是 0 时写“暂时读不到”。左栏、Plan、Chain 共用这一条。 */
+export function decideTextOf(n: number, partial: boolean): string {
+  return !partial ? String(n) : n > 0 ? '至少 ' + String(n) : UNREADABLE_TEXT;
+}
+
 /** The one chrome conversion of this package. `selectedGoalId` is the Goal the
  * URL/state chose; the list's rows still show that choice, and a `null` phase
  * is not a state word (§2.7). */
@@ -253,6 +267,13 @@ export function adaptNav(
   const noticeCounts = asRecord(asRecord(queue.counts).notices);
   const noticeN = Object.keys(noticeCounts).reduce((sum, key) => sum + (typeof noticeCounts[key] === 'number' ? (noticeCounts[key] as number) : 0), 0);
   const decideN = typeof asRecord(queue.counts).waitingAnswer === 'number' ? asRecord(queue.counts).waitingAnswer as number : 0;
+  /* 121-146/U3：队列读到了、但有卡的来源暂时读不到时，0 也说“暂时读不到”，不能当成没有。
+     队列整次没读到（null）时 `none` 不为真；Main 按 `hasDecide`、`hasNotice` 把两行藏起来，
+     其余常显左栏的画板两行都写“暂时读不到”，不写 0（lead 11-18）。 */
+  const queueRead = reads.queue !== null && reads.queue !== undefined;
+  const decidePartial = decisionCardCountPartial(reads.queue as TaskMapQueueRead);
+  const decideText = decideTextOf(decideN, decidePartial || !queueRead);
+  const noticeText = queueRead ? String(noticeN) : UNREADABLE_TEXT;
   const goals: NavGoal[] = goalRows.map((entry) => {
     const row = asRecord(entry);
     const ref = asRecord(row.ref);
@@ -316,7 +337,9 @@ export function adaptNav(
     headTip: '工作中：有执行、检查、咨询或对话正在进行；待命：其余没有归档的工作线；已归档：任务已满足超过一天的执行者工作线。一条工作线是一个工作记录，加上中断后接着它的工作记录；执行者每个任务开一条',
     counts: { working, standby, archived: archivedCount },
     inbox: {
-      decideN, noticeN, hasDecide: decideN > 0, hasNotice: noticeN > 0, none: decideN + noticeN === 0,
+      decideN, decideText, noticeN, noticeText,
+      hasDecide: decidePartial || decideN > 0, hasNotice: noticeN > 0,
+      none: queueRead && !decidePartial && decideN + noticeN === 0,
     },
     detail,
     tasks: reads.tasks === undefined || reads.tasks === null ? null : reads.tasks as TaskGraph,

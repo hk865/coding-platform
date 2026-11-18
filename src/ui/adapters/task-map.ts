@@ -107,14 +107,26 @@ export type TaskMapQueueRead = {
   capabilities?: Array<{ source?: unknown; availability?: unknown }>;
 };
 
-/* The twelve notice categories (`NoticeCategoryV1`). A notice kind the Host
-   has no source for never hides a card, so only an unavailable card source
-   (or a source this page does not know) makes the count partial; the queue's
-   own `countsComplete` also waits on every notice kind and is never true on a
-   real Host. The page keeps its own copy of the names (it imports no contract
-   values). */
-const NOTICE_CATEGORIES = new Set(['member_notice', 'second_expiry', 'handoff', 'note_review', 'undelivered_reply',
+/* The eleven notice-only categories (`NoticeCategoryV1`, without `note_review`):
+   a notice kind the Host has no source for never hides a card, so only an
+   unavailable card source (or a source this page does not know) makes the count
+   partial; the queue's own `countsComplete` also waits on every notice kind and
+   is never true on a real Host. `note_review` is both a card kind and a notice
+   category, and its card read shares the same capability key, so a failed one
+   makes the card count partial too. The page keeps its own copy of the names
+   (it imports no contract values). */
+const NOTICE_ONLY_CATEGORIES = new Set(['member_notice', 'second_expiry', 'handoff', 'undelivered_reply',
   'automatic_rework', 'continuation', 'disconnect', 'member_created', 'project_notice', 'plan_adoption', 'plan_notice']);
+
+/** 121-146/U2: whether any card source is not fully available, so a card count is a lower bound. A notice-only
+ * category that is not connected does not count; `note_review` counts as a card. */
+export function decisionCardCountPartial(read: TaskMapQueueRead | null): boolean {
+  const capabilities = asRecord(read).capabilities;
+  return (Array.isArray(capabilities) ? capabilities : []).some((entry) => {
+    const row = asRecord(entry);
+    return row.availability !== 'available' && !NOTICE_ONLY_CATEGORIES.has(asText(row.source));
+  });
+}
 
 /** HO:2051: the number of this Goal's cards waiting for an answer; a zero or
  * an unreadable count is no item (a complete 0 needs nothing, a partial 0 is
@@ -122,12 +134,7 @@ const NOTICE_CATEGORIES = new Set(['member_notice', 'second_expiry', 'handoff', 
 export function adaptTaskMapDecisionCards(read: TaskMapQueueRead | null): { n: number; atLeast: boolean } | null {
   const n = asRecord(asRecord(read).counts).waitingAnswer;
   if (typeof n !== 'number' || n <= 0) return null;
-  const capabilities = asRecord(read).capabilities;
-  const atLeast = (Array.isArray(capabilities) ? capabilities : []).some((entry) => {
-    const row = asRecord(entry);
-    return row.availability === 'not_available' && !NOTICE_CATEGORIES.has(asText(row.source));
-  });
-  return { n, atLeast };
+  return { n, atLeast: decisionCardCountPartial(read) };
 }
 
 /** Ruling item 2: the ten formal display phases, worded as the board's own goal

@@ -246,17 +246,16 @@ describe('dispatch basis facts', () => {
       world, { kind: 'task', planRef: plan.ref, ref: { ...goal, taskId: task.taskId } }, goal);
     expect(taskCard.dispatchBasis).toBeNull();
 
-    // A2: the platform's own captured records object fails the pointer read once; the failure is the graph
-    // read's rejection, never a null field.
+    // A2: the platform's own captured records object fails every pointer read of this one look; the failure is
+    // the graph read's rejection, never a null field.
+    // 121-146（Q）：卡片读先读上下文索引（graph-context-reader.ts 的 readIndexes），索引里决定队列的
+    // message_release 来源也读这份依据；来源读失败现在标 read_failed、不让整次读失败。只失败一次会被这个来源
+    // 用掉，卡片自己的依据读就读成了；所以这次读里每次指针读都失败，测的仍是卡片依据读失败时整页拒。
     const platformRecords = captured.platformRecords as GoalRecordTransactionPort;
     const pointerRefKey = pointerKeys(goal).refKey;
     const original = platformRecords.readMany;
-    let failed = false;
     platformRecords.readMany = async (keys) => {
-      if (!failed && keys.includes(pointerRefKey)) {
-        failed = true;
-        throw new Error('S7A: the platform pointer read failed once');
-      }
+      if (keys.includes(pointerRefKey)) throw new Error('S7A: the platform pointer read failed');
       return original(keys);
     };
     try {
@@ -266,7 +265,7 @@ describe('dispatch basis facts', () => {
       });
       expect(failedLook).toMatchObject({
         status: 'rejected', code: 'unavailable',
-        reason: expect.stringContaining('the platform pointer read failed once'),
+        reason: expect.stringContaining('the platform pointer read failed'),
       });
     } finally {
       platformRecords.readMany = original;

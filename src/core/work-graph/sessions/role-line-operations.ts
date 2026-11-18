@@ -1046,6 +1046,10 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
     const fresh = await readRoleLineRecord(runCtx, saved.ref);
     if (fresh.status !== 'ready') return fresh;
     const current = fresh.value;
+    // RL-11（lead 11-18 裁定甲）：工具一侧（startRoleLineSplit）和 Host 生命周期遍历可能同时推同一笔 planned 拆线。
+    // 两边都在上限被拒时，先写 failed 的一方回拒绝；后读到 failed 的一方以前走下面的 RACE-01 重入回 ready/done，
+    // 工具一侧因此回 accepted。失败不能说成成功：本次自己也被上限拒、又读到 failed，就回自己这次的拒绝（带 episode）。
+    if (line.status === 'capacity_blocked' && current.phase === 'failed') return capacityRefusal(line);
     // RACE-01 (11-04): another continuation may have moved the split past `admitted` while this one waited on the
     // line; go on from the phase just read and never write an earlier phase over it.
     if (current.phase === 'completed' || current.phase === 'failed'

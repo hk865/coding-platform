@@ -2680,7 +2680,7 @@ class Component extends DCLogic {
     const emptyNav = { goals: [], selectedGoalId: null, selectedGoalRevision: null, selectedDisplay: null,
       lines: [], archived: [], archivedText: '没有已归档的工作线', head: '工作中 0 · 待命 0', headTip: '',
       counts: { working: 0, standby: 0, archived: 0 },
-      inbox: { decideN: 0, noticeN: 0, hasDecide: false, hasNotice: false, none: true },
+      inbox: { decideN: 0, decideText: '0', noticeN: 0, hasDecide: false, hasNotice: false, none: true },
       detail: null, tasks: null, hasGoal: false, phaseRevision: null, scope: null };
     const nav = data && data.nav ? data.nav : emptyNav;
     const selected = nav.selectedDisplay || null;
@@ -2830,7 +2830,7 @@ class Component extends DCLogic {
       sq: 'sq z10 s-' + (selected ? selected.st : 'pending'),
       word: selected ? selected.word : '状态未读',
       why: read && read.stale && read.staleText ? String(read.staleText) : selected ? selected.why : '',
-      hasDecide: nav.inbox.hasDecide, decideN: nav.inbox.decideN, decideHref: inboxRows[0].href,
+      hasDecide: nav.inbox.hasDecide, decideN: nav.inbox.decideText, decideHref: inboxRows[0].href,
       done: data ? data.progress.done + '/' + data.progress.total : '0/0',
       canView: phase === 'COMPLETED' && (s.pane || 'chat') === 'chat',
       canPause: selected !== null && !finished && phase !== 'PAUSED',

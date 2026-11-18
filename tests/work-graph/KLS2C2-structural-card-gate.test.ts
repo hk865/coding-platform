@@ -6,7 +6,7 @@
  * line and propose tool, the real queue read).
  * Merge ruling 3 (as 121-105 isolates the conflict cards): a staged repair behind a settled PASS reads the current
  * catalog for its footprint; the gate refusing it takes only the repair cards away (`repair_approval` is
- * `not_available`), the other cards and the notices are read. W-A is tests/helpers/S8C-repair-world.ts (the real Work
+ * `read_failed`), the other cards and the notices are read. W-A is tests/helpers/S8C-repair-world.ts (the real Work
  * Run's `record_note`, the real check round, the real `decisions/queue`).
  */
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -58,6 +58,6 @@ it('merge ruling 3: the gate refusing a PASS repair\'s footprint catalog takes a
   expect(await read()).toEqual({ cards: ['repair_approval', 'candidate'], notices: ['plan_adoption'],
     repair: 'available' });
   copyModuleFile(w.world.root);
-  // 具名改坏「足迹读到闸门拒绝时照旧回拒绝」→ 整个队列回 unavailable，红在 read 里的 ready。
-  expect(await read()).toEqual({ cards: ['candidate'], notices: ['plan_adoption'], repair: 'not_available' });
+  // 具名改坏「修补来源的读失败不降级、整张返回」→ read 的 ready 红（整张 unavailable）。
+  expect(await read()).toEqual({ cards: ['candidate'], notices: ['plan_adoption'], repair: 'read_failed' });
 });

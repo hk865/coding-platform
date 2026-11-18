@@ -291,10 +291,38 @@ export async function answerCard(ctx, project, card, selection, text = '', rec =
   return answer?.status === 'ready' && answer.value?.answer?.status === 'committed' ? answer.value : false;
 }
 
-export async function waitingCards(project, goalRef = null) {
+/** 待答的卡；给了 `rec` 就把这次暂时读不到的卡来源记进场景记录（`noteUnreadable`）。 */
+export async function waitingCards(project, goalRef = null, rec = null) {
+  return (await readWaiting(project, goalRef, rec)).cards;
+}
+
+/** 121-146：读一次待答的卡，带上这次暂时读不到的卡来源；整张没读到时 `unreadable` 是 null。 */
+async function readWaiting(project, goalRef, rec) {
   const queue = ready(await project.host.client.read('decisions/queue', project.scope, {
     workspace: project.scope, ...(goalRef === null ? {} : { goalRef }), sections: ['waiting_answer'], page: { limit: 50 } }));
-  return queue?.waitingAnswer ?? [];
+  noteUnreadable(rec, queue);
+  return { cards: queue?.waitingAnswer ?? [], unreadable: queue === null ? null : unreadableSources(queue) };
+}
+
+/** 121-146：队列里暂时读不到的卡来源；驱动据此不把“这一种读不到”当成全貌。 */
+function unreadableSources(queue) {
+  return (Array.isArray(queue?.capabilities) ? queue.capabilities : [])
+    .filter(entry => entry?.availability === 'read_failed');
+}
+
+/** 每份场景记录已记过的“暂时读不到”来源组合，同一组只记一次，免得每轮都刷同一条。 */
+const unreadableNoted = new WeakMap();
+
+/** 121-146：把队列里暂时读不到的卡来源和原因记进场景记录（报告的 notes）。 */
+function noteUnreadable(rec, queue) {
+  const unreadable = unreadableSources(queue);
+  const group = unreadable.map(entry => entry.source).join('、');
+  if (rec === null || group === '') return;
+  const seen = unreadableNoted.get(rec) ?? new Set();
+  unreadableNoted.set(rec, seen);
+  if (seen.has(group)) return;
+  seen.add(group);
+  rec.note(`决定队列暂时读不到：${group}（${unreadable.map(entry => entry.reason ?? '').join('、')}）`);
 }
 
 /**
@@ -313,6 +341,7 @@ export async function waitGoal(ctx, project, goalRef, { until = TERMINAL, timeou
     const display = ready(await project.host.client.read('goals/display', project.scope, { goalRef }));
     const queue = ready(await project.host.client.read('decisions/queue', project.scope, { workspace: project.scope, goalRef,
       sections: ['waiting_answer', 'answered_pending_application'], page: { limit: 50 } }));
+    noteUnreadable(rec, queue);
     // The cards the person still has in hand: answered and not yet applied, or waiting and taken by `answer`.
     let open = queue?.answeredPendingApplication?.length ?? 0;
     for (const card of queue?.waitingAnswer ?? []) {
@@ -355,7 +384,8 @@ export async function waitGoal(ctx, project, goalRef, { until = TERMINAL, timeou
  *     project moves it), so it is not compared. The reason names the last phase, cause and driver wait reason seen.
  */
 async function endedEarly(ctx, project, goalRef, { display, queue, open, quiet }) {
-  if (display === null || queue === null) return null;
+  // 121-146：有卡的来源暂时读不到时，队列不是全貌，和“队列没答”一样不算证据。
+  if (display === null || queue === null || unreadableSources(queue).length > 0) return null;
   const { phase, cause } = display.display;
   const { sourceCursor: _watermark, ...goalFacts } = display;
   const seen = JSON.stringify({ display: goalFacts, cards: [...queue.waitingAnswer, ...queue.answeredPendingApplication]
@@ -728,16 +758,24 @@ export async function proposeAndApply(ctx, project, goalRef, draft, reasonText, 
 
 /** `role-lines/open` (`core-routes.ts:867`); a line that waits on a card gets the person's approval, then one retry. */
 export async function openRoleLine(ctx, project, duty, scope, rec) {
+  let unreadable = [];
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const opened = committed(await project.host.client.write('role-lines/open', project.scope, { duty, scope }, []));
     if (opened?.session !== null && opened?.session !== undefined) {
       rec.link('session', opened.session);
       return opened.session;
     }
-    for (const card of await waitingCards(project)) {
+    const waiting = await readWaiting(project, null, rec);
+    unreadable = waiting.unreadable;
+    for (const card of waiting.cards) {
       const selection = approve(card);
       if (selection !== null) await answerCard(ctx, project, card, selection, '', rec);
     }
+  }
+  // 121-146：最后一次读队列时整张没读到，或有卡的来源暂时读不到，是人看不到要答的卡，不能说成人已经答过。
+  if (unreadable === null) throw broken(ctx, `role-lines/open ${duty}：没开出工作线；决定队列读不到，看不到要答的卡`);
+  if (unreadable.length > 0) {
+    throw broken(ctx, `role-lines/open ${duty}：没开出工作线；决定队列暂时读不到 ${unreadable.map(entry => entry.source).join('、')}，看不到这几种要答的卡`);
   }
   throw broken(ctx, `role-lines/open ${duty}: no line opened after the person approved its cards`);
 }
@@ -802,7 +840,7 @@ const partsText = value => (typeof value === 'string' ? value : Array.isArray(va
   : JSON.stringify(value ?? ''));
 
 /**
- * Raw history entries split by turn identity (Kernel `runId` + `turnId`, `kernel-turn-facts.ts:36-80`), so each
+ * Raw history entries split by turn identity (Kernel `runId` + `turnId`, `kernel-turn-facts.ts:40-84`), so each
  * criterion is judged only on the part it is about (lead ruling 11-14 #9):
  * - `input`: what the turn actually received (`turn.started` user message, `run.input_accepted` / `run.yielded`);
  * - `calls`: the model's tool calls with their arguments and, once settled, their status;
@@ -973,5 +1011,6 @@ export async function finalState(project, goalRef) {
     runOutcome: Object.fromEntries(runs.map(item => [item.run.ref.runId, item.run.outcome ?? item.run.status])),
     lineState: (await lines(project)).map(row => ({ session: row.key.sessionId, duty: row.duty, status: row.status?.own ?? row.status })),
     queueCounts: queue?.counts ?? null,
+    queueUnreadable: unreadableSources(queue).map(entry => ({ source: entry.source, reason: entry.reason ?? null })),
   };
 }

@@ -2179,6 +2179,8 @@ async function readDecisionQueue(deps: WorkLineReaderDeps, ctx: CoreCallContext,
   if (deps.decisions === undefined) return { cards: [], complete: true, problem: null };
   const listPageLimit = deps.listPageLimit ?? 100;
   const cards: DecisionCardV1[] = [];
+  // 121-146：队列每页都会重新装配全部来源，read_failed 可能在某一页出现；并起来，任一页有就算。
+  const unreadableSources = new Set<string>();
   try {
     let cursor: string | undefined;
     for (;;) {
@@ -2190,6 +2192,9 @@ async function readDecisionQueue(deps: WorkLineReaderDeps, ctx: CoreCallContext,
       if (read.status !== 'ready') {
         return { cards: [], complete: false,
           problem: `decision_queue_read_failed: ${read.status === 'rejected' ? read.reason : read.status}` };
+      }
+      for (const capability of read.value.capabilities) {
+        if (capability.availability === 'read_failed') unreadableSources.add(capability.source);
       }
       for (const card of read.value.waitingAnswer) {
         if (card.state === 'waiting_answer') cards.push(card);
@@ -2234,7 +2239,10 @@ async function readDecisionQueue(deps: WorkLineReaderDeps, ctx: CoreCallContext,
       if (decoded.status === 'decoded') messages.set(record.refKey, decoded.value);
     }
   }
-  return { cards: cards.map((card) => toQueueCard(card, messages)), complete: true, problem: null };
+  // 121-146：读到的卡照常给线；有一种卡来源暂时读不到时，这一列不完整，并写明是哪一种。
+  const unreadable = [...unreadableSources];
+  return { cards: cards.map((card) => toQueueCard(card, messages)), complete: unreadable.length === 0,
+    problem: unreadable.length === 0 ? null : `decision_queue_source_read_failed: ${unreadable.join(', ')}` };
 }
 
 function toQueueCard(card: DecisionCardV1, messages: ReadonlyMap<string, SessionMessage>): QueueCard {

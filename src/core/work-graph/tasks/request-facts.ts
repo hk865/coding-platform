@@ -127,6 +127,7 @@ export function deriveRequestCore(
     if (kind === null) throw new Error('deriveRequestCore: a request round has no roundKind');
     views.push({
       ref: { ...round.ref },
+      runRef: runRef === null ? null : { ...runRef },
       kind: kind as QueryRoundKind,
       status: roundStatus(round, run, coveredKeys.has(canonicalJson(round.ref as unknown as JsonValue))),
       input: round.job.intent.question,
