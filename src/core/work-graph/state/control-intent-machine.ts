@@ -132,7 +132,9 @@ export type NotEnteredEntryPhase = 'none' | 'authorized' | 'revoked';
 export type ControlIntentEvent =
   /** U/P (§7.2): R1–R4, G7. `intentRef` is derived by the service from the request identity. */
   | { type: 'control_submitted'; target: 'run' | 'query_run'; intentRef: ControlIntentRef;
-      kind: ControlIntentKindV1; reason: string | null }
+      kind: ControlIntentKindV1; reason: string | null;
+      /** 动作请求落实的控制带这个标记（缺省是调用方自己的控制）；意图记录不存它。 */
+      source?: 'action_request' }
   /** P, CTL-02 (D-7): submitted and applied in one commit because the Run never entered. */
   | { type: 'control_applied_not_entered'; intentRef: ControlIntentRef; kind: 'pause' | 'cancel' | 'resume';
       reason: string | null; entryPhase: NotEnteredEntryPhase; runRevision: number; observedAt: string }
@@ -236,6 +238,8 @@ export function controlSubmissionProblem(input: {
   pointerIntent: ControlPointerIntent | null;
   /** D-9: the Goal's desired state (§2). */
   goal: ControlGuardContext['goal']['desiredState'];
+  /** 控制的来源：缺省是调用方自己的控制；`action_request` 是动作请求的落实。 */
+  source?: 'action_request' | undefined;
 }): CoreRejection | null {
   if (input.yielded && input.continuationConsumed) {
     return busy('a successor Run already consumed the yielded wait continuation; no new control intent is accepted');
@@ -251,6 +255,10 @@ export function controlSubmissionProblem(input: {
   }
   if (input.kind === 'resume' && input.goal !== 'active') {
     return busy(`the Goal is ${input.goal}; a single Run is not resumed while its Goal is not active`);
+  }
+  // 人的控制优先（C19）：人暂停了这个 Run，动作请求的落实就不替人送控制；人自己在暂停时 steer 照旧排队。
+  if (input.source === 'action_request' && input.pointer === 'paused') {
+    return busy('the Run is paused by a person; an action request does not submit a control while it stays paused');
   }
   return controlSubmitProblem(input.pointer, input.kind);
 }
@@ -517,7 +525,8 @@ const SUBMIT_GUARDS: readonly GuardRow<ControlSubmissionEvent>[] = [
   { row: '7.4 RD-8, steer text, resume needs applied pause, D-9 Goal, pointer fence', check: (event, ctx) => {
     const problem = controlSubmissionProblem({ kind: event.kind, reason: event.reason, pointer: ctx.run.pointer,
       yielded: runControlClassOf(ctx.run.node) === 'yielded', continuationConsumed: ctx.run.continuationConsumed,
-      pointerIntent: ctx.pointerIntent, goal: ctx.goal.desiredState });
+      pointerIntent: ctx.pointerIntent, goal: ctx.goal.desiredState,
+      source: event.type === 'control_submitted' ? event.source : undefined });
     return problem === null ? null : reject('guard_failed', problem.code, problem.reason);
   } },
 ];

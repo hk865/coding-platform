@@ -14,7 +14,6 @@ import { deriveMessageDelivery } from '../model/communication-contracts.js';
 import type {
   SessionMessage, SessionMessageOutboxPageV1, SessionMessageReadPageV1, SessionMessageStatus, UndeliveredReplyV1,
 } from '../model/communication-contracts.js';
-import type { SecretaryQueryRunV1 } from '../model/secretary-query-run-contracts.js';
 import { SESSION_BY_PROVENANCE_LOOKUP, SESSION_REPLY_BY_HANDLER_LOOKUP } from '../model/session-facts-contracts.js';
 import type { SessionPage, SessionPageRequest } from '../model/session-contracts.js';
 import { decodeNoticeOrigin } from '../persistence/decision-record-codecs.js';
@@ -33,7 +32,7 @@ import {
   atLeastCursorOf, internalHostContext, isRunRef, isUserRecipient, mapBatchFailure, ownContext, pageProblem, presenceOf,
   readProgress, recipientLineFacts, sameSessionRefAs,
 } from './mailbox-common.js';
-import { readWorkRunIdentity, secretaryReader } from './mailbox-identity.js';
+import { queryRunReader, readWorkRunIdentity, secretaryReader, type QueryRunReaderV1 } from './mailbox-identity.js';
 import type {
   InboxCursorV1, InboxPage, MailboxContext, OutboxCursorV1, Owned, ReplyCursorV1, SecretaryOutboxCursorV1, Unknown,
 } from './mailbox-types.js';
@@ -172,11 +171,11 @@ async function readInboxPage(mailbox: MailboxContext, owned: Owned, input: {
     return reject('invalid', 'the inbox cursor must be a non-empty string');
   }
   let messageWorkspaceId = owned.workspaceId;
-  let secretary: { round: SecretaryQueryRunV1; reader: SessionRef } | null = null;
+  let queryReader: QueryRunReaderV1 | null = null;
   if (owned.principal.kind === 'query_run') {
-    const reading = await secretaryReader(mailbox, owned);
+    const reading = await queryRunReader(mailbox, owned);
     if (!reading.ok) return reading.rejection;
-    secretary = reading;
+    queryReader = reading.value;
   }
   let callerKey: string;
   if (owned.principal.kind === 'host') {
@@ -195,12 +194,14 @@ async function readInboxPage(mailbox: MailboxContext, owned: Owned, input: {
     messageWorkspaceId = identity.session.workspaceId;
     callerKey = canonicalOf({ kind: 'work_run', sessionRef, runRef: identity.run.ref }) ?? '';
   } else {
-    if (secretary === null) return reject('forbidden', 'the secretary inbox was not resolved');
-    if (!sameSessionRefAs(secretary.reader, recipient)) {
+    if (queryReader === null) return reject('forbidden', 'the secretary inbox was not resolved');
+    if (!sameSessionRefAs(queryReader.reader, recipient)) {
       return reject('forbidden', 'a query_run inbox is limited to the resolved round Session');
     }
-    callerKey = canonicalOf({ kind: 'query_run', sessionRef: secretary.reader,
-      queryRunRef: secretary.round.run }) ?? '';
+    // 非请求问答轮的信在线的工作区（同做事轮规则 W）；秘书轮照旧是调用方的工作区。
+    messageWorkspaceId = queryReader.workspaceId;
+    callerKey = canonicalOf({ kind: 'query_run', sessionRef: queryReader.reader,
+      queryRunRef: queryReader.run }) ?? '';
   }
   let decodedCursor: InboxCursorV1 | null = null;
   if (page.rawCursor !== undefined) {
@@ -271,7 +272,7 @@ async function readInboxPage(mailbox: MailboxContext, owned: Owned, input: {
     callerKey,
     after: pageResult.value.next,
   });
-  return { status: 'ready', value: { items, cursors, nextCursor, sourceCursor: readThrough, recipient } };
+  return { status: 'ready', value: { items, cursors, nextCursor, sourceCursor: readThrough, recipient, messageWorkspaceId } };
 }
 
 export async function readInbox(mailbox: MailboxContext, ctx: CoreCallContext, input: {
@@ -296,9 +297,11 @@ export async function readInboxView(mailbox: MailboxContext, ctx: CoreCallContex
   if (!owned.ok) return owned.rejection;
   const page = await readInboxPage(mailbox, owned, input);
   if (page.status !== 'ready') return page;
-  const { items, nextCursor, sourceCursor, recipient } = page.value;
+  const { items, nextCursor, sourceCursor, recipient, messageWorkspaceId } = page.value;
   if (items.length === 0) return { status: 'ready', value: { items: [], nextCursor, sourceCursor } };
-  const line = await recipientLineFacts(mailbox.deps, internalHostContext(mailbox, owned), recipient);
+  // 收件线按信所在的工作区读（问答轮、做事轮的信都在线的工作区，规则 W），同单条读 `readMessageView`。
+  const lineOwned = messageWorkspaceId === owned.workspaceId ? owned : { ...owned, workspaceId: messageWorkspaceId };
+  const line = await recipientLineFacts(mailbox.deps, internalHostContext(mailbox, lineOwned), recipient);
   if (!line.ok) return line.rejection;
   return { status: 'ready', value: {
     items: items.map((message) => ({ message, ...deriveMessageDelivery(message, line.value), releaseBlock: null })),
@@ -481,6 +484,9 @@ export async function readOutbox(mailbox: MailboxContext, ctx: CoreCallContext, 
     if (since.status !== 'decoded' || since.value.since === undefined) {
       return reject('unavailable', 'an outbox candidate has no commit origin');
     }
+    // 问答轮自己发的信也进按发件 Session 的索引；发件箱页暂不收它（收进页、回复占位和送达一起做），
+    // 所有读者都跳过它，不让这条线的整页读失败。
+    if (message.sender.kind === 'query_run') continue;
     // The person reads the Session's whole outbox, including what its
     // secretary round sent; a work_run keeps only its own work_run messages.
     if (senderRun === undefined && message.sender.kind === 'secretary_round'

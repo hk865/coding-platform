@@ -19,6 +19,9 @@
  * secretary resolver. It performs no admission itself; each resolver still
  * validates its own round.
  *
+ * 读链本身（QueryRun → QueryJob → manifest，以及本轮 Session 和职责）在 `query-round.ts`，和问答轮身份
+ * `resolveQueryRound` 共用一份。
+ *
  * `readProposerFacts` is the proposal owner's `query_run` proposer read over the
  * same chain: a stored, entered `role_exploration` round and its Session and role.
  *
@@ -40,14 +43,9 @@ import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
 import type { SessionMailboxPort } from '../model/communication-contracts.js';
 import type { SecretaryQueryRunPort, SecretaryQueryRunV1 } from '../model/secretary-query-run-contracts.js';
 import type { QueryExecutionDependencies } from '../queries/contracts.js';
-import { loadQueryManifest } from '../queries/query-execution.js';
-import { decodeQueryJobSnapshot, decodeQueryRunSnapshotRecord } from '../queries/query-record-codecs.js';
 import type { SessionRef, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { SessionRoleFactsV1 } from '../../../contracts/role-lines.js';
-import {
-  decodeSessionOperationRecord, decodeSessionRecord, operationRefKey, plainSessionRefToAggregate,
-  sessionAggregateRefKey,
-} from '../sessions/session-record-codecs.js';
+import { decodeSessionOperationRecord, operationRefKey } from '../sessions/session-record-codecs.js';
 import { sessionRoleFactsCodec } from '../sessions/role-line-record-codecs.js';
 import { coldStartOperationRef, type ColdStartActionV1 } from '../state/cold-start.js';
 import type { ColdStartExplorationQueryRefV1, RoleLineActionV1, WorkspaceJoinActionV1 } from '../state/role-line-action.js';
@@ -57,6 +55,7 @@ import {
 } from '../state/role-exploration.js';
 import { sessionRoleFactsRef } from '../state/role-facts.js';
 import { readOwnerRecord } from '../persistence/owner-record-read.js';
+import { readRoundExecution, readRoundSessionDuty, roundFactsOf, type RoundExecutionRead } from './query-round.js';
 import type { ProposalQueryRunFactResolver } from '../architecture/proposal-service.js';
 import { repairNoticeOf } from '../sessions/exploration-followup-service.js';
 
@@ -110,66 +109,14 @@ export type PlanningQueryRunPort = {
 
 const unavailable = (reason: string): CoreRejection => rejected('unavailable', reason);
 
-/**
- * The shared QueryRun→QueryJob→manifest read chain: one QueryRun single-record
- * read, its QueryJob's `intent.execution`, and the manifest bound by
- * `prepared.bundleRef`/`inputDigest`. It never copies fields onto the QueryRun.
- */
-async function readPlanningExecution(
-  ctx: CoreCallContext, deps: Pick<PlanningQueryRunDependencies, 'records' | 'bodies'>,
-  queryRunRef: QueryRunRef,
-) {
-  const runRead = await readOwnerRecord({ store: deps.records,
-    refKey: canonicalJson(queryRunRef as unknown as JsonValue),
-    decode: decodeQueryRunSnapshotRecord, readError: unavailable });
-  if (!runRead.ok) {
-    return 'notFound' in runRead
-      ? { status: 'notFound' as const }
-      : { status: 'failed' as const, rejection: runRead.rejection };
-  }
-  const run = runRead.value;
-  const execution = run.run.executionState;
-  if (execution === undefined || execution.phase !== 'entered' || execution.prepared === null) {
-    return { status: 'notEntered' as const, run };
-  }
-  const jobRead = await readOwnerRecord({ store: deps.records,
-    refKey: canonicalJson(run.run.queryJobRef as unknown as JsonValue),
-    decode: decodeQueryJobSnapshot, readError: unavailable });
-  if (!jobRead.ok) {
-    return 'notFound' in jobRead
-      ? { status: 'failed' as const, rejection: unavailable('the round QueryJob is not stored') }
-      : { status: 'failed' as const, rejection: jobRead.rejection };
-  }
-  const job = jobRead.value;
-  const bound = await loadQueryManifest(deps.bodies, { queryRunRef,
-    bundleRef: execution.prepared.bundleRef, inputDigest: execution.prepared.inputDigest });
-  if (bound.status !== 'ready') {
-    return { status: 'failed' as const,
-      rejection: unavailable(`the round manifest cannot be read: ${'reason' in bound ? bound.reason : bound.status}`) };
-  }
-  return { status: 'read' as const, run, execution, job: job.job, manifest: bound.value.manifest };
-}
-
-type PlanningExecutionRead = Extract<Awaited<ReturnType<typeof readPlanningExecution>>, { status: 'read' }>;
+type PlanningExecutionRead = RoundExecutionRead;
 
 /** The one ready value both resolvers build from the read chain: the round's frozen facts and its duty. */
 function toPlanningFacts(
   principal: Extract<CorePrincipal, { kind: 'query_run' }>, read: PlanningExecutionRead,
   duty: PlanningQueryRunV1['duty'],
 ): PlanningQueryRunV1 {
-  const { run, execution, manifest } = read;
-  return {
-    principal,
-    session: execution.sessionRef,
-    duty,
-    scope: { projectId: run.ref.projectId, workspaceId: run.ref.workspaceId },
-    round: run.run.queryJobRef,
-    run: principal.queryRunRef,
-    effectiveGoalId: manifest.goal === null ? null : manifest.goal.ref.goalId,
-    planRef: manifest.focusPlan === null ? null : manifest.focusPlan.ref,
-    sessionGeneration: execution.sessionGeneration,
-    goals: [],
-  };
+  return { ...roundFactsOf(principal, read), duty, goals: [] };
 }
 
 /** The planning resolver's own admission (spec §5.2.8(2)). */
@@ -181,7 +128,7 @@ async function resolvePlanningQueryRun(
     return rejected('forbidden', 'only a running QueryRun may write a planning note');
   }
   const queryRunRef = principal.queryRunRef;
-  const read = await readPlanningExecution(ctx, deps, queryRunRef);
+  const read = await readRoundExecution(deps, queryRunRef);
   if (read.status === 'notFound') {
     return rejected('forbidden', 'the caller QueryRun is not the stored running round');
   }
@@ -224,23 +171,11 @@ async function resolvePlanningQueryRun(
     }
   }
 
-  const sessionRead = await readOwnerRecord({ store: deps.records,
-    refKey: sessionAggregateRefKey(plainSessionRefToAggregate(execution.sessionRef)),
-    decode: decodeSessionRecord, readError: unavailable });
-  if (!sessionRead.ok) {
-    return unavailable('notFound' in sessionRead ? 'the round Session is missing'
-      : `the round Session cannot be read: ${sessionRead.rejection.reason}`);
-  }
-  let dutyRead;
-  try {
-    dutyRead = await deps.duties(sessionRead.value.role, ctx);
-  } catch {
-    return unavailable('the round Session duty cannot be read');
-  }
-  if (dutyRead.status !== 'ready') return unavailable('the round Session duty cannot be read');
+  const line = await readRoundSessionDuty(ctx, deps, execution.sessionRef);
+  if (line.status !== 'ready') return line;
   // Coordination: a note's source names its author's duty and scope, so the round's shape and the Session's duty
   // must agree — the scribe writes only from its own review round, an adviser or secretary from a planning round.
-  const duty = dutyRead.value;
+  const duty = line.duty;
   const admitted = answerShape === 'scribe_review' ? (duty === 'scribe' ? duty : null)
     : duty === 'adviser' || duty === 'secretary' ? duty : null;
   if (admitted === null) {
@@ -385,7 +320,7 @@ export async function resolveNoteQueryRun(
   if (principal.kind !== 'query_run') {
     return rejected('forbidden', 'only a running QueryRun may write a note');
   }
-  const read = await readPlanningExecution(ctx, deps, principal.queryRunRef);
+  const read = await readRoundExecution(deps, principal.queryRunRef);
   if (read.status === 'failed') return read.rejection;
   if (read.status === 'read') {
     const intent = read.job.intent.execution;
@@ -429,7 +364,7 @@ export async function resolveNoteQueryRun(
 /** The proposal owner's trusted `query_run` proposer: only a stored, entered `role_exploration` round. */
 async function readProposerFacts(ctx: CoreCallContext, deps: PlanningQueryRunDependencies, queryRunRef: QueryRunRef):
   ReturnType<ProposalQueryRunFactResolver> {
-  const read = await readPlanningExecution(ctx, deps, queryRunRef);
+  const read = await readRoundExecution(deps, queryRunRef);
   if (read.status === 'failed') return read.rejection;
   if (read.status !== 'read') return rejected('forbidden', 'the caller QueryRun is not a stored running round');
   if (read.job.intent.execution.kind !== 'role_exploration') {

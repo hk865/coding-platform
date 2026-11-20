@@ -76,6 +76,14 @@ export function toolCommitRequestId(input: Pick<ToolCommitLookupInput, 'origin' 
 }
 
 /**
+ * 一条线的 agent 身份号：做事轮的 `agentActorOf` 和问答轮请求者（动作请求、返工）的 actor 都按线取这一个号，
+ * 同一条线在两种轮里是同一个 agent。
+ */
+export function lineAgentIdOf(sessionRef: SessionRef): string {
+  return 'session:' + sha256Hex(canonicalJson({ projectId: sessionRef.projectId, sessionId: sessionRef.sessionId }));
+}
+
+/**
  * K3 L4 / decision 72 (U1): the ONE Agent actor id both the plan writer
  * (`plan-write-admission.ts`, from the claim Session) and the plan lookup
  * (`plan-service.ts`, from the rebuilt origin) build. The session id is the
@@ -85,7 +93,7 @@ export function toolCommitRequestId(input: Pick<ToolCommitLookupInput, 'origin' 
 export function agentActorOf(sessionRef: SessionRef, runRef: RunRef): Extract<ActorRef, { kind: 'agent' }> {
   return {
     kind: 'agent',
-    id: 'session:' + sha256Hex(canonicalJson({ projectId: sessionRef.projectId, sessionId: sessionRef.sessionId })),
+    id: lineAgentIdOf(sessionRef),
     runRef: { aggregateType: 'Run', projectId: runRef.projectId, goalId: runRef.goalId, runId: runRef.runId },
   };
 }

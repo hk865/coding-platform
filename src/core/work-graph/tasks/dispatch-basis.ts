@@ -46,6 +46,18 @@ type CursorCheck =
   | { kind: 'null' }
   | { kind: 'disagree' };
 
+/** The three dispatch values are equal only when all three agree. */
+export function sameBasis(left: DispatchBasisV1, right: DispatchBasisV1): boolean {
+  return left.planRevision === right.planRevision
+    && left.pointerRevision === right.pointerRevision
+    && left.dispatchSequence === right.dispatchSequence;
+}
+
+/** The one consistent read's values plus its own cursor; the caller re-reads at it. */
+export function dispatchCurrentOf(facts: DispatchBasisFactsV1): DispatchBasisV1 & { readCursor: CommitCursor } {
+  return { ...facts.values, readCursor: facts.readCursor };
+}
+
 /** The counter's address: its full ref, never the bare goal id (`canonicalJson` keys the record). */
 function counterRefKey(goalRef: GoalRef): string {
   return canonicalJson({

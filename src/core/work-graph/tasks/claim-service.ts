@@ -75,7 +75,7 @@ import {
 import type { Rejected as Refusal } from '../state/transition.js';
 import {
   consumedWaitProblem, encodeDispatchOutboxEntry, encodeTaskAttemptSnapshot,
-  encodeTaskClaimedEvent, taskClaimedEventFromEvent, type TaskClaimedEvent,
+  encodeTaskClaimedEvent, taskClaimedEventFromEvent, taskClaimHoldCodec, type TaskClaimedEvent,
 } from './claim-record-codecs.js';
 import { sessionMessageRefProblem } from './codec-shape-checks.js';
 import {
@@ -101,6 +101,21 @@ import { isNonNeg as isSafeRevision, isPos as isPositiveBudget, isRecord, nonEmp
 import { isolatedWriteOf, trustedContextOf } from './trusted-context.js';
 import { taskPhaseFactsOf } from './task-phase-facts.js';
 import { createSessionFactsService, liveWaitMessage, readWaitMessage } from './session-facts.js';
+import { checkShape } from '../../../contracts/validation/data-format.js';
+import { ActionRequestRefShape } from '../../../contracts/data-format-refs.js';
+import {
+  applyDispatchRequest, actionRequestSnapshotOf, type ActionRequestV1, type PendingActionRequestV1,
+} from '../state/action-request.js';
+import {
+  holdBlockerOf, nextTaskClaimHold, releaseAllHoldReasons, yieldHoldPointer, type PendingTaskClaimHoldV1,
+  type TaskClaimHoldV1,
+} from '../state/task-claim-hold.js';
+import type { DispatchBasisFactsV1 } from '../model/dispatch-basis-contracts.js';
+import { firstDispatch, nextDispatch } from '../state/dispatch-counter.js';
+import { dispatchCounterCodec } from '../persistence/dispatch-counter-codecs.js';
+import { mergeGuards } from '../persistence/record-guards.js';
+import { actionRequestChangedCodec, actionRequestCodec, readActionRequestRecord } from './action-request-codecs.js';
+import { readTaskClaimHold } from './claim-holds.js';
 
 const RUN_SCHEMA_ID = 'RunSnapshot@1';
 const TASK_LEASE_SCHEMA_ID = 'TaskLeaseSnapshot@1';
@@ -206,6 +221,17 @@ function unreadReview(reviewRef: UnknownCallReviewRef): ReviewClaimFacts {
 /** The Attempt and Outbox of a claim are created with no paired Run yet (§5.2: `Absent` only while claiming). */
 const CLAIMING: AttemptGuardContext = { runNode: 'Absent', runLastEventSeq: 0, ownsSession: false, ownsLease: false };
 
+/**
+ * 按请求领取和干预领取的两个标记：只在出现时进指纹（两种指纹共用），旧调用的指纹和回执不变；同一 requestId 换了
+ * 标记是另一次请求（`idempotency_conflict`）。
+ */
+function requestMarksOf(input: ClaimTaskInput): Record<string, unknown> {
+  return {
+    ...(input.servedRequest === undefined ? {} : { servedRequest: input.servedRequest }),
+    ...(input.intervention === undefined ? {} : { intervention: input.intervention }),
+  };
+}
+
 /** First claim, W2 continuation, a claim after a TaskRequeue (D-3, TASK-03) or a review claim (TASK-03r, L10). */
 function claimBasisOf(input: ClaimTaskInput, review: UnknownCallReviewV1 | null): AttemptClaimBasis {
   if (input.consumedWait !== undefined) return { kind: 'continuation', consumedWait: input.consumedWait, previousRun: null };
@@ -226,7 +252,7 @@ function claimBasisOf(input: ClaimTaskInput, review: UnknownCallReviewV1 | null)
  * neither Run nor Reduction, and the TaskRequeue covering the selected Run
  * (P4). `null` when the read lacks the Run or Reduction it selected.
  */
-function claimPhaseFacts(task: RuntimeTask, state: CanonicalTaskState, read: CanonicalTaskFacts): TaskPhaseFacts | null {
+export function claimPhaseFacts(task: RuntimeTask, state: CanonicalTaskState, read: CanonicalTaskFacts): TaskPhaseFacts | null {
   const execution = state.execution;
   const selectedRun = execution === null ? null
     : (read.runsByTaskId.get(task.taskId) ?? []).find(run => sameRef(run.ref, execution)) ?? null;
@@ -596,6 +622,24 @@ function validateInputShape(input: ClaimTaskInput, scope: WorkspaceScope): CoreR
     const acknowledgementProblem = sessionMessageRefProblem(input.acknowledgement, 'claimTask acknowledgement');
     if (acknowledgementProblem !== null) return reject('invalid', acknowledgementProblem);
   }
+  if (input.servedRequest !== undefined) {
+    // 按请求领取：点名的必须是这个任务的一条派活请求和一个正的版本；是不是 `openDispatch` 那条由读后判。
+    const served = input.servedRequest as unknown;
+    if (!isRecord(served) || checkShape(ActionRequestRefShape, served['ref'], 'stored') !== null
+      || !Number.isSafeInteger(served['revision']) || (served['revision'] as number) < 1) {
+      return reject('invalid', 'claimTask servedRequest must be {ref: a complete ActionRequestRef, revision: a positive integer}');
+    }
+    const ref = input.servedRequest.ref;
+    if (ref.projectId !== scope.projectId || ref.goalId !== goalRef['goalId'] || ref.taskId !== input.taskId) {
+      return reject('invalid', 'the servedRequest names another Task');
+    }
+  }
+  if (input.intervention !== undefined) {
+    const intervention = input.intervention as unknown;
+    const messageProblem = sessionMessageRefProblem(isRecord(intervention) ? intervention['messageRef'] : undefined,
+      'claimTask intervention.messageRef');
+    if (messageProblem !== null) return reject('invalid', messageProblem);
+  }
   return null;
 }
 
@@ -806,6 +850,7 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
       // 7A §3.5: part of the fingerprint only when present, so an old call keeps
       // its fingerprint and its result.
       ...(input.acknowledgement === undefined ? {} : { acknowledgement: input.acknowledgement }),
+      ...requestMarksOf(input),
       expected: expectedCanonical,
     } as unknown as JsonValue));
     return { identityKey, fingerprint };
@@ -841,6 +886,7 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
       // 7A §3.5: the acknowledged request is a different request, so the same
       // requestId with another acknowledgement (or none) is an idempotency conflict.
       ...(input.acknowledgement === undefined ? {} : { acknowledgement: input.acknowledgement }),
+      ...requestMarksOf(input),
       expected: expectedCanonical,
     } as unknown as JsonValue));
     return { identityKey, fingerprint };
@@ -894,6 +940,28 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
     };
   }
 
+  /**
+   * 暂缓卡位 `openDispatch` 指着的派活请求（卡位空着是 `null`）。按请求领取点名的必须就是它、版本相等，否则
+   * `revision_conflict` 带当前版本（请求已被了结、撤回或改过，目标循环重读即可）。
+   */
+  async function openDispatchOf(hold: TaskClaimHoldV1 | null, servedRequest: ClaimTaskInput['servedRequest']):
+  Promise<{ request: ActionRequestV1 | null } | CoreRejection> {
+    const pointer = hold?.openDispatch ?? null;
+    if (servedRequest !== undefined && (pointer === null || !sameRef(pointer, servedRequest.ref))) {
+      return reject('revision_conflict', 'the servedRequest is not the open dispatch request of the Task',
+        hold === null ? undefined : [{ ref: hold.ref, revision: hold.revision }]);
+    }
+    if (pointer === null) return { request: null };
+    const read = await readActionRequestRecord(records, pointer);
+    if (read.status !== 'ready') return read;
+    if (read.record === null) return unavailable('the open dispatch request of the Task cannot be read');
+    if (servedRequest !== undefined && read.record.revision !== servedRequest.revision) {
+      return reject('revision_conflict', 'the servedRequest changed since that revision',
+        [{ ref: read.record.ref, revision: read.record.revision }]);
+    }
+    return { request: read.record };
+  }
+
   async function claimTask(ctx: CoreCallContext, request: GraphWrite<ClaimTaskInput>):
   Promise<EffectWriteResultV1<TaskClaim>> {
     const ownedCtx = ownCallContext(ctx);
@@ -906,6 +974,10 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
     const scope: WorkspaceScope = { projectId: scopeCtx.projectId, workspaceId: scopeCtx.workspaceId! };
     const shape = validateInputShape(input, scope);
     if (shape !== null) return shape;
+    const dispatchBasis = input.servedRequest === undefined ? null : deps.dispatchBasis ?? null;
+    if (input.servedRequest !== undefined && dispatchBasis === null) {
+      return reject('unsupported', 'a claim with servedRequest needs the dispatch basis reader');
+    }
     const canonicalInput = canonicalizeRequest(input, expected);
     if (canonicalInput !== null) return canonicalInput;
     const workspaceRef = { aggregateType: 'Workspace' as const, projectId: scope.projectId, workspaceId: scope.workspaceId };
@@ -1083,6 +1155,21 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
     if (state === undefined || phaseFacts === null) return incomplete('the directed task state was not read');
     const taskState = taskMachineStateOf(definition, phaseFacts);
     subject = taskState;
+    // 暂缓（设计 3.3、A4）：所有领取都读本任务的暂缓一次（只读这一个键），提交守读到的版本，不存在守“仍不存在”。
+    // 挡不挡按这次提交要写的那一版判：干预领取（Q6a）先撤全部原因，只剩在等的叫停卡挡。
+    const dispatchTask: TaskTriple = { projectId: scope.projectId, goalId: input.goalRef.goalId, taskId: input.taskId };
+    const holdRead = await readTaskClaimHold(records, dispatchTask);
+    if (holdRead.status !== 'ready') return holdRead;
+    if (scopeCtx.signal.aborted) return reject('cancelled', 'the Task claim was cancelled during the claim hold read');
+    const currentHold = holdRead.hold;
+    const releasesHolds = input.intervention !== undefined && currentHold !== null
+      && currentHold.reasons.some((reason) => reason.state === 'held');
+    let holdAfter: PendingTaskClaimHoldV1 | null = currentHold === null ? null
+      : nextTaskClaimHold(currentHold, { ref: currentHold.ref, workspaceId: currentHold.workspaceId });
+    if (releasesHolds && holdAfter !== null) {
+      holdAfter = releaseAllHoldReasons(holdAfter, { kind: 'intervention', messageRef: input.intervention!.messageRef });
+    }
+    const claimHold = holdBlockerOf(holdAfter);
     // The SAME shared eligibility rule queryReadyTasks uses decides plan_only /
     // missing assignment BEFORE the role-binding and occupancy checks, so a
     // structural `incomplete` is never masked by a `forbidden`/`busy`.
@@ -1181,12 +1268,23 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
     }
     refused = judge({ structuralProblem: structuralProblemOf(eligibility), lease: state.lease,
       taskHasRun: facts.taskHasRun === true, prior, requeue, review,
-      ...(reviewBlocker === undefined ? {} : { reviewBlocker }) });
+      ...(reviewBlocker === undefined ? {} : { reviewBlocker }),
+      ...(claimHold === null ? {} : { claimHold }) });
     if (refused !== null) return refused;
+    // 读到 `openDispatch`：这次领取了结那条派活请求（AR-03）。按请求领取点名的必须就是它、版本相等。
+    const served = await openDispatchOf(holdRead.hold, input.servedRequest);
+    if ('status' in served) return served;
+    // 按请求领取读派工三值（同一个 `dispatchBasis`），它的守卫和计数器 +1 进这次提交。
+    let basisFacts: DispatchBasisFactsV1 | null = null;
+    if (dispatchBasis !== null) {
+      const basisRead = await dispatchBasis.readDispatchFacts(scopeCtx, { goalRef: input.goalRef });
+      if (basisRead.status !== 'ready') return mapReadResult(basisRead);
+      if (scopeCtx.signal.aborted) return reject('cancelled', 'the Task claim was cancelled during the dispatch basis read');
+      basisFacts = basisRead.value;
+    }
     // S1-DISPATCH-01: the direct Work claim refuses a copy provenance, a pending
     // archive request and a Work wait here, not only in `chooseSession`. The ONE
     // consumed-wait exception must name exactly this Task/Run/message.
-    const dispatchTask: TaskTriple = { projectId: scope.projectId, goalId: input.goalRef.goalId, taskId: input.taskId };
     const dispatch = await claimDispatchProblem(scopeCtx, input.sessionRef, dispatchTask, consumedWait,
       target?.workspaceId ?? scope.workspaceId);
     if ('rejection' in dispatch) return dispatch.rejection;
@@ -1303,6 +1401,19 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
       if (decided.next === null) throw new Error('round_claimed must write the review record');
       reviewRecordAfter = decided.next;
     }
+    // AR-03（2.5）：读到的派活请求在这次领取里了结，记领到的线和 Run，清卡位；不重绑请求的受理游标。按请求领取的那次
+    // `byRequest: true`，派工序号 +1（Q5c：没有来源消息）；别的领取不读三值、不加序号。
+    const servedRecord = served.request;
+    let appliedRequest: PendingActionRequestV1 | null = null;
+    if (servedRecord !== null) {
+      const applied = applyDispatchRequest(servedRecord, { session: input.sessionRef, run: runRef,
+        byRequest: input.servedRequest !== undefined }, { commandId: requestId, at: claimedAt });
+      if ('status' in applied) return applied;
+      appliedRequest = applied;
+      holdAfter = yieldHoldPointer(holdAfter!, 'openDispatch', servedRecord.ref);
+    }
+    const counted = basisFacts === null ? null : basisFacts.counter.record === null
+      ? firstDispatch(basisFacts.goal.ref, null) : nextDispatch(basisFacts.counter.record, null);
     const event: TaskClaimedEvent = { eventId, eventType: 'TaskClaimed', schemaVersion: 1, occurredAt: claimedAt,
       identityKey, actor, fingerprint, claim,
       // 7A §3.5 rule 3: the effect event carries the key only when present.
@@ -1333,7 +1444,18 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
     if (selectedReviewGuard !== null) addGuard(selectedReviewGuard.refKey, selectedReviewGuard.expectedRevision);
     // 2C item 10: the link row's own CAS (null when the Session never held one).
     if (nextResponsibleLink !== null) addGuard(responsibleLinkKey, currentResponsibleLink?.revision ?? null);
-    const guards: RecordGuard[] = [...guardMap].map(([refKey, expectedRevision]) => ({ refKey, expectedRevision }));
+    // 暂缓守读到的版本（不存在守“仍不存在”），了结的派活请求守读到的版本。
+    addGuard(holdRead.guard.refKey, holdRead.guard.expectedRevision);
+    if (servedRecord !== null) addGuard(refKeyOf(servedRecord.ref), servedRecord.revision);
+    let guards: RecordGuard[] = [...guardMap].map(([refKey, expectedRevision]) => ({ refKey, expectedRevision }));
+    // 按请求领取（2.5）：上面的守卫加三值读交出的守卫（不是领取自己读窗的）和计数器，一起过 `mergeGuards`，同键不同
+    // 版本是 `revision_conflict`。不按请求的领取照旧只用 `addGuard`（归 GL）。
+    if (basisFacts !== null && counted !== null) {
+      const merged = mergeGuards([...guards, ...basisFacts.guards,
+        { refKey: basisFacts.counter.refKey, expectedRevision: counted.expectedRevision }]);
+      if (!merged.ok) return merged.rejection;
+      guards = merged.guards;
+    }
 
     const linkRecords: EncodedRecord[] = nextResponsibleLink === null ? [] : [encodePendingSessionWorkLink(nextResponsibleLink)];
     const linkBindings: CommitCursorBinding[] = nextResponsibleLink === null ? [] : [{ refKey: responsibleLinkKey, field: 'since' }];
@@ -1343,14 +1465,24 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
       schemaVersion: UNKNOWN_CALL_REVIEW_EVENT_SCHEMA_VERSION, occurredAt: claimedAt, identityKey, fingerprint,
       actor, requestId, change: 'round_claimed', review: reviewRecordAfter,
     })];
+    // 了结的派活请求、改过的暂缓（清卡位或干预撤全部）、+1 的计数器都在这次提交里写；请求的变化事件用领取自己的身份。
+    const settleRecords: EncodedRecord[] = [
+      ...(appliedRequest === null ? [] : [actionRequestCodec.encode(appliedRequest)]),
+      ...(appliedRequest !== null || releasesHolds ? [taskClaimHoldCodec.encode(holdAfter!)] : []),
+      ...(counted === null ? [] : [dispatchCounterCodec.encode(counted.record)]),
+    ];
+    const settleEvents = appliedRequest === null ? [] : [actionRequestChangedCodec.encode({
+      eventId: `${eventId}:ar:0`, eventType: 'ActionRequestChanged', schemaVersion: 1, occurredAt: claimedAt,
+      identityKey, fingerprint, change: 'applied', request: actionRequestSnapshotOf(appliedRequest) })];
     const prepared: PreparedCommit = { identityKey, fingerprint, guards,
       records: [written.lease, written.attempt, written.run, written.outbox, written.session, ...linkRecords,
-        ...reviewRecords],
+        ...reviewRecords, ...settleRecords],
       claims: [], indexGuards: [], indexChanges: [],
       // The link record rides the claim commit (SES-15 interval, `since` bound
       // to the commit cursor); the claim event stays last so the receipt cursor
-      // names it (a review claim prepends its `UnknownCallReviewChanged`).
-      events: [...reviewEvents, encodeTaskClaimedEvent(event)],
+      // names it (a review claim prepends its `UnknownCallReviewChanged`, a claim that settles a dispatch request
+      // its `ActionRequestChanged`).
+      events: [...reviewEvents, ...settleEvents, encodeTaskClaimedEvent(event)],
       ...(linkBindings.length === 0 ? {} : { commitCursorBindings: linkBindings }) };
 
     if (scopeCtx.signal.aborted) return reject('cancelled', 'the Task claim was cancelled before commit');

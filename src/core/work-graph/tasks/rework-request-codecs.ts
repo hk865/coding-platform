@@ -9,18 +9,32 @@
 import type { InferEvent } from '../../../contracts/data-format.js';
 import { defineEvent, f } from '../../../contracts/data-format.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
+import type { QueryRoundActorV1 } from '../../../contracts/task-requeue.js';
+import { isRecord } from '../../../contracts/validation/common.js';
+import { reworkActorProblem } from '../persistence/rework-codecs.js';
 import { ReworkRequestRefShape } from '../../../contracts/data-format-refs.js';
 import { canonicalKey } from '../../../contracts/fingerprint.js';
 import type { DecodeResult, EncodedDomainEvent, PreparedCommit, RecordBackendSchemas } from '../../record-store/ports.js';
 import { createEventCodec, createRecordCodec, formatSchemas } from '../persistence/field-table-codec.js';
 import {
-  REWORK_REQUEST_ACTOR_FIELDS, REWORK_REQUEST_FORMAT, REWORK_REQUEST_OUTCOME_FIELDS,
-  type PendingReworkRequestV1,
+  REWORK_REQUEST_FORMAT, REWORK_REQUEST_OUTCOME_FIELDS, type PendingReworkRequestV1,
 } from '../state/rework-request.js';
+
+/**
+ * 两个事件的 `actor` 是请求者的 agent actor：做事轮 `{kind:'agent', id, runRef}` 或参谋规划轮 `{kind:'agent', id,
+ * queryRunRef}`，恰好一个（Q10a 甲，lead 补裁）。字段表的并集只按标签分，这两臂同为 `agent`，所以字段存 JSON，由事件规则
+ * 判（同返工这一族的 `reworkActorProblem`，两个都有或都没有拒）；带 `runRef` 的旧事件照样能读。
+ */
+export type ReworkRequesterActorV1 = Extract<ActorRef, { kind: 'agent' }> | QueryRoundActorV1;
+function requesterActorRule(value: unknown): string | null {
+  const actor = isRecord(value) ? value['actor'] : undefined;
+  if (!isRecord(actor) || actor['kind'] !== 'agent') return 'the rework request event actor must be an agent';
+  return reworkActorProblem(actor, 'the rework request event actor');
+}
 
 const REWORK_REQUEST_RECORDED_FIELDS = {
   identityKey: f.string({ min: 1, unit: 'codePoints' }),
-  actor: f.object(REWORK_REQUEST_ACTOR_FIELDS),
+  actor: f.json(),
   fingerprint: f.string({ min: 1, unit: 'codePoints' }),
   request: f.ref(ReworkRequestRefShape),
 };
@@ -30,14 +44,16 @@ const REWORK_REQUEST_RECORDED_FORMAT = defineEvent({
   eventType: 'ReworkRequestRecorded',
   schemaVersion: 1,
   fields: REWORK_REQUEST_RECORDED_FIELDS,
+  rules: [requesterActorRule],
 });
 
 /** The request branch's one event: the requester agent, the committed identity/fingerprint and the request ref. */
-export type ReworkRequestRecorded = InferEvent<'ReworkRequestRecorded', typeof REWORK_REQUEST_RECORDED_FIELDS>;
+export type ReworkRequestRecorded = Omit<InferEvent<'ReworkRequestRecorded', typeof REWORK_REQUEST_RECORDED_FIELDS>, 'actor'>
+  & { actor: ReworkRequesterActorV1 };
 
 const REWORK_REQUEST_CLOSED_FIELDS = {
   identityKey: f.string({ min: 1, unit: 'codePoints' }),
-  actor: f.object(REWORK_REQUEST_ACTOR_FIELDS),
+  actor: f.json(),
   fingerprint: f.string({ min: 1, unit: 'codePoints' }),
   request: f.ref(ReworkRequestRefShape),
   state: f.enumOf(['rejected', 'stale'] as const),
@@ -49,10 +65,12 @@ const REWORK_REQUEST_CLOSED_FORMAT = defineEvent({
   eventType: 'ReworkRequestClosed',
   schemaVersion: 1,
   fields: REWORK_REQUEST_CLOSED_FIELDS,
+  rules: [requesterActorRule],
 });
 
 /** The close event: the same request ref and actor, the close `state`, and the record's outcome arms. */
-export type ReworkRequestClosed = InferEvent<'ReworkRequestClosed', typeof REWORK_REQUEST_CLOSED_FIELDS>;
+export type ReworkRequestClosed = Omit<InferEvent<'ReworkRequestClosed', typeof REWORK_REQUEST_CLOSED_FIELDS>, 'actor'>
+  & { actor: ReworkRequesterActorV1 };
 
 export const reworkRequestCodec = createRecordCodec(REWORK_REQUEST_FORMAT);
 export const reworkRequestRecordedCodec = createEventCodec(REWORK_REQUEST_RECORDED_FORMAT);
@@ -77,7 +95,7 @@ export function reworkRequestRecordedFragment(input: {
   eventId: string;
   occurredAt: string;
   identityKey: string;
-  actor: Extract<ActorRef, { kind: 'agent' }>;
+  actor: ReworkRequesterActorV1;
   fingerprint: string;
 }): ReworkRequestRecordedFragment {
   const event: ReworkRequestRecorded = {
@@ -95,10 +113,10 @@ export function reworkRequestRecordedFragment(input: {
 
 /** Decodes a stored/replayed `ReworkRequestRecorded`; a foreign event or a bad payload fails closed. */
 export function reworkRequestRecordedEventFromEvent(event: EncodedDomainEvent): DecodeResult<ReworkRequestRecorded> {
-  return reworkRequestRecordedCodec.decode(event);
+  return reworkRequestRecordedCodec.decode(event) as DecodeResult<ReworkRequestRecorded>;
 }
 
 /** Decodes a stored/replayed `ReworkRequestClosed`; a foreign event or a bad payload fails closed. */
 export function reworkRequestClosedEventFromEvent(event: EncodedDomainEvent): DecodeResult<ReworkRequestClosed> {
-  return reworkRequestClosedCodec.decode(event);
+  return reworkRequestClosedCodec.decode(event) as DecodeResult<ReworkRequestClosed>;
 }

@@ -7,6 +7,7 @@ import type { DispatchBasisV1, GoalRef, GoalSnapshot } from '../../../contracts/
 import type { RecordBatchRead, EncodedRecord, RecordGuard, StoreResult } from '../../record-store/ports.js';
 import type { MessageSender, SendMessageResultV1, SessionMessage, SessionMessageSendInputV1 } from '../model/communication-contracts.js';
 import type { DispatchBasisFactsV1 } from '../model/dispatch-basis-contracts.js';
+import type { QueryRoundV1 } from '../model/query-round-contracts.js';
 import type { SecretaryQueryRunV1 } from '../model/secretary-query-run-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 import type { MessageGuardContext } from '../state/message-machine.js';
@@ -25,7 +26,9 @@ import { canSendUserMessage, decisionActionPolicy } from '../state/decision-poli
 import { createSessionMessageRecord, messageRecipientProjectProblem, messageSendFlagsProblem } from '../state/message-machine.js';
 import { sameBasis, dispatchCurrentOf, basisPinsOf, releasedMessageCompanions, basisConflictCurrent } from './mailbox-basis.js';
 import { isGoalRef, mapReadResult, ownContext, ownWrite, normalizeText, guardRejection, judge, refusalOf, followupConnects, senderIdentityOf, identityKeyOf, fingerprintOf, messageIdOf, internalHostContext, loadMessage } from './mailbox-common.js';
-import { readWorkRunIdentity, deriveWorkRunSender, authorizeNewWorkRunAction, resolveSecretaryRound } from './mailbox-identity.js';
+import {
+  readWorkRunIdentity, deriveWorkRunSender, authorizeNewWorkRunAction, nonRequestQueryRound, resolveSecretaryRound,
+} from './mailbox-identity.js';
 import { replayMessage, recheckAfterMiss, refuse, writeMessage } from './mailbox-write.js';
 
 /** An agent's goal-bearing `action_request` sent without the dispatch basis it read (decision 49). */
@@ -363,11 +366,34 @@ export async function sendMessage(mailbox: MailboxContext, ctx: CoreCallContext,
   if (existing.status === 'ready') return sendStatusOf(mailbox, await replayMessage(mailbox, existing.value));
   if (existing.code !== 'not_found') return sessionStoreFailureToRejection(existing);
 
+  // 非请求问答轮自己发信，也在查回执之后解析（`nonRequestQueryRound` 一处分流）：发件人是本轮 Session、QueryRun
+  // 和代数，信放线的工作区，目标是本轮冻结的目标，提交守本轮读到的 QueryRun 和 Session 版本。没配、解析失败、
+  // 请求轮的 `query_run` 照旧走下面的秘书路径，原文不变。
+  let queryRound: QueryRoundV1 | null = null;
+  if (owned.principal.kind === 'query_run') {
+    const routed = await nonRequestQueryRound(mailbox, owned);
+    if (!routed.ok) return refuseSend(mailbox, routed.rejection, identityKey, fingerprint);
+    queryRound = routed.round;
+    if (queryRound !== null) {
+      // 副本不冒充原线，永不发信。
+      if (queryRound.readOnlyCopy) {
+        return refuseSend(mailbox, reject('forbidden', 'a read-only copy never sends a Session message'), identityKey, fingerprint);
+      }
+      // 等待只给做事轮：问答轮没有可让出、可接续的运行。
+      if (send.waitAfterSend) {
+        return refuseSend(mailbox, reject('invalid', 'a query round cannot set waitAfterSend: it has no Run to yield '
+          + 'and resume; send without waiting, and the reply arrives in your next round'), identityKey, fingerprint);
+      }
+      sender = { kind: 'query_run', sessionRef: { ...queryRound.session }, queryRunRef: { ...queryRound.run },
+        generation: queryRound.sessionGeneration };
+    }
+  }
+
   // The secretary's one admission, only after the receipt miss: the resolved
   // round must be this QueryRun, in this scope, and it supplies the persisted
   // sender and the trusted goal. A NEW secretary path needs all three
   // injections; it never reads open executions.
-  if (owned.principal.kind === 'query_run') {
+  if (owned.principal.kind === 'query_run' && queryRound === null) {
     if (mailbox.deps.secretaryRounds === undefined || mailbox.deps.requestOwners === undefined
       || mailbox.deps.recipientExecutions === undefined) {
       return reject('unsupported', 'the secretary send is not configured');
@@ -395,7 +421,8 @@ export async function sendMessage(mailbox: MailboxContext, ctx: CoreCallContext,
   const committedSender: MessageSender = sender;
   // Rule W: a Work Run's message belongs to the sending line's workspace, not
   // the Run's. Host and secretary sends keep the caller's workspace.
-  const lineWorkspaceId = workRunSessionWorkspaceId ?? owned.workspaceId;
+  // 问答轮的信同样放线的工作区：规划 Query 在目标的工作区，线可能在别处，放 Query 那边它就读不到自己的信。
+  const lineWorkspaceId = workRunSessionWorkspaceId ?? queryRound?.lineWorkspaceId ?? owned.workspaceId;
   const lineCtx = lineWorkspaceId === owned.workspaceId
     ? internalHostContext(mailbox, owned)
     : { ...internalHostContext(mailbox, owned), workspaceId: lineWorkspaceId };
@@ -474,7 +501,8 @@ export async function sendMessage(mailbox: MailboxContext, ctx: CoreCallContext,
       return refuseSend(mailbox, reject('invalid', 'the send goalRef disagrees with the sender Session\'s trusted Goal'), identityKey, fingerprint);
     }
   } else {
-    const effectiveGoalId = secretaryRound === null ? null : secretaryRound.effectiveGoalId;
+    const effectiveGoalId = secretaryRound !== null ? secretaryRound.effectiveGoalId
+      : queryRound !== null ? queryRound.effectiveGoalId : null;
     trustedGoal = effectiveGoalId === null
       ? null : { aggregateType: 'Goal', projectId: owned.projectId, goalId: effectiveGoalId };
     if (send.goalRef !== null && (trustedGoal === null
@@ -642,6 +670,8 @@ export async function sendMessage(mailbox: MailboxContext, ctx: CoreCallContext,
   const written = await writeMessage(mailbox, sent, {
     owned, identityKey, fingerprint, requestId: write.requestId, actor: committedSender, admission: authorized,
     cancelled: 'the send was cancelled before commit',
+    // 问答轮守它这一读窗的 QueryRun 和 Session 版本：读和提交之间这一轮结束或换代就是冲突。
+    ...(queryRound === null ? {} : { extraGuards: queryRound.guards }),
     companions,
     body: { messageRef, text: text.text, answerSource: null },
     record: (createdAt, bodyRef) => createSessionMessageRecord({

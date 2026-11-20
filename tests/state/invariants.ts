@@ -50,7 +50,7 @@ import type { SessionAnomalyAnchorV1 } from '../../src/contracts/session-anomaly
 import type { TaskPhaseCauseV1 } from '../../src/contracts/task-failure.js';
 import {
   GOAL_FAN_OUT_ACTOR, MAX_AUTO_REWORK_LIMIT, reworkActorClassOf, type ReworkActorClass, type TaskAutomationPolicyV1,
-  type TaskRequeueRef, type TaskRequeueSnapshotV1, type TaskReworkRefusalSnapshotV1,
+  type ReworkActorV1, type TaskRequeueRef, type TaskRequeueSnapshotV1, type TaskReworkRefusalSnapshotV1,
 } from '../../src/contracts/task-requeue.js';
 import { ROUND_CHAIN_MAX, type RoundSnapshot } from '../../src/contracts/verification.js';
 import { loadPreparedManifest, rehydratePreparedExecution } from '../../src/core/agent-runtime/execution-preparation.js';
@@ -636,11 +636,11 @@ function queryUnresolved(query: QueryRunSnapshot): boolean {
 }
 
 /** `actorClass(x)`: `reworkActorClassOf` on a recorded actor. */
-function actorClassOf(actor: ActorRef): ReworkActorClass {
+function actorClassOf(actor: ReworkActorV1): ReworkActorClass {
   return reworkActorClassOf(null, actor) ?? 'human';
 }
 
-function isGoalFanOut(actor: ActorRef): boolean {
+function isGoalFanOut(actor: ReworkActorV1): boolean {
   return actor.kind === GOAL_FAN_OUT_ACTOR.kind && actor.id === GOAL_FAN_OUT_ACTOR.id;
 }
 

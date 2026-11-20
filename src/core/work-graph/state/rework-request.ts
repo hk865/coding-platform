@@ -10,7 +10,7 @@
  */
 import { defineRecord, f, type InferPending, type InferRecord } from '../../../contracts/data-format.js';
 import {
-  ReworkRequestRefShape, RunRefShape, SessionRefShape, TaskTripleShape, VerificationRoundRefShape,
+  QueryRunRefShape, ReworkRequestRefShape, RunRefShape, SessionRefShape, TaskTripleShape, VerificationRoundRefShape,
 } from '../../../contracts/data-format-refs.js';
 import type { TaskRequeueRef } from '../../../contracts/task-requeue.js';
 import type { VerificationRoundRef } from '../../../contracts/verification.js';
@@ -22,6 +22,30 @@ export const REWORK_REQUEST_ACTOR_FIELDS = {
   runRef: f.ref(RunRefShape),
 };
 
+/**
+ * 问答轮请求者的 actor（Q10a）：按线派生的 agent 号（`model/tool-commit-arguments.ts` `lineAgentIdOf`，和这条线做事轮的
+ * agent 同号）加这一轮的 QueryRun。它没有 `runRef`，所以不是 `ActorRef`。
+ */
+export const QUERY_ROUND_REQUESTER_ACTOR_FIELDS = {
+  kind: f.literal('agent'),
+  id: f.string({ min: 1, unit: 'codePoints' }),
+  queryRunRef: f.ref(QueryRunRefShape),
+};
+/**
+ * agent 发起的请求（动作请求、返工请求）共用的请求者：做事轮一臂、问答轮一臂。记录上的请求者是批准后落实认的
+ * 原始授权，所以只从可信身份填，从不取模型输入。
+ */
+export const AGENT_REQUESTER_FIELD = f.union('kind', {
+  work_run: {
+    kind: f.literal('work_run'), actor: f.object(REWORK_REQUEST_ACTOR_FIELDS), session: f.ref(SessionRefShape),
+    run: f.ref(RunRefShape), duty: f.enumOf(['executor', 'adviser'] as const),
+  },
+  query_run: {
+    kind: f.literal('query_run'), actor: f.object(QUERY_ROUND_REQUESTER_ACTOR_FIELDS), session: f.ref(SessionRefShape),
+    queryRun: f.ref(QueryRunRefShape), duty: f.enumOf(['secretary', 'adviser'] as const),
+  },
+});
+
 const REQUEUE_INPUT_FIELDS = {
   kind: f.literal('requeue'),
   value: f.json(),
@@ -29,12 +53,6 @@ const REQUEUE_INPUT_FIELDS = {
 const RECHECK_INPUT_FIELDS = {
   kind: f.literal('recheck'),
   value: f.json(),
-};
-const REQUESTER_FIELDS = {
-  actor: f.object(REWORK_REQUEST_ACTOR_FIELDS),
-  session: f.ref(SessionRefShape),
-  run: f.ref(RunRefShape),
-  duty: f.enumOf(['executor', 'adviser'] as const),
 };
 /** The record's and the close event's outcome; `applied` names the requeue or the successor round. */
 export const REWORK_REQUEST_OUTCOME_FIELDS = {
@@ -53,7 +71,8 @@ export const REWORK_REQUEST_FIELDS = {
     run: { kind: f.literal('run'), run: f.ref(RunRefShape) },
     round: { kind: f.literal('round'), round: f.ref(VerificationRoundRefShape) },
   }),
-  requester: f.object(REQUESTER_FIELDS),
+  // 请求者（和动作请求共用一张表）：做事轮一臂，参谋规划轮一臂（Q10a 甲）；做事轮臂带 `kind`，不留兼容。
+  requester: AGENT_REQUESTER_FIELD,
   // The two owners' input checks stay authoritative: no second byte cap and no truncator here.
   reason: f.string(),
   requestedAt: f.isoTime(), // the card's `openedAt`; the owner's `now()`

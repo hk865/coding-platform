@@ -116,6 +116,8 @@ function legacyDecisionActionPolicy(input: {
       return everyStep ? 'needs_decision' : 'automatic_notice';
     case 'secretary_action':
     case 'secretary_inquiry':
+    case 'agent_dispatch':
+    case 'agent_stop':
       return everyStep ? 'needs_decision' : 'automatic';
     case 'short_handoff':
       return everyStep ? 'needs_decision' : 'automatic_notice';

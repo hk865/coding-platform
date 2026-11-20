@@ -125,7 +125,8 @@ export function planningAnswerShapeOf(
     sender:
       | { kind: 'host'; actor: { kind: 'human' | 'system'; id: string } }
       | { kind: 'work_run' }
-      | { kind: 'secretary_round' };
+      | { kind: 'secretary_round' }
+      | { kind: 'query_run' };
     intent?: 'notify' | 'inquiry' | 'action_request' | 'decision_request';
   },
   duty: PlatformDutyV1 | null,

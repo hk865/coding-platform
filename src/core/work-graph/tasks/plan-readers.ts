@@ -2618,11 +2618,14 @@ export type OpenResponsibilityLineV1 = { session: SessionRef; link: SessionWorkL
  */
 export async function readOpenResponsibilityLines(
   records: GoalRecordTransactionPort & RecordLookupPort, ctx: CoreCallContext,
-  input: { goalRef: GoalRef } | { projectId: string }, duty: SessionDutyReadPort,
+  input: { goalRef: GoalRef } | { projectId: string } | { projectScope: string }, duty: SessionDutyReadPort,
 ): Promise<ReadResult<readonly OpenResponsibilityLineV1[]>> {
+  // `projectScope`：项目范围的负责链接（秘书建线时带的那条），同一个索引，目标种类换成 `project`。
   const [index, values] = 'goalRef' in input
     ? [SESSION_LINKS_BY_GOAL_LOOKUP, [input.goalRef.projectId, 'goal', input.goalRef.goalId, 'responsible', null]] as const
-    : [SESSION_LINKS_BY_PROJECT_TARGET_LOOKUP, [input.projectId, 'module', 'responsible', null]] as const;
+    : 'projectScope' in input
+      ? [SESSION_LINKS_BY_PROJECT_TARGET_LOOKUP, [input.projectScope, 'project', 'responsible', null]] as const
+      : [SESSION_LINKS_BY_PROJECT_TARGET_LOOKUP, [input.projectId, 'module', 'responsible', null]] as const;
   let batch;
   try {
     batch = await lookupAll(records, index, values);

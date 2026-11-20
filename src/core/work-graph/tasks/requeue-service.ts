@@ -59,7 +59,8 @@ import type { PlanRevisionSnapshot, RuntimeTask } from '../../../contracts/plan.
 import type { ArchiveRequeueOriginV1, SessionAnomalyAnchorV1 } from '../../../contracts/session-anomaly.js';
 import {
   DEFAULT_TASK_AUTOMATION_POLICY, GOAL_FAN_OUT_ACTOR, TASK_REWORK_REASON_MAX_CHARS, reworkActorClassOf,
-  type ReworkActorClass, type TaskAutomationPolicyV1, type TaskRequeueOutcomeV1, type TaskRequeueTriggerV1,
+  type QueryRoundActorV1, type ReworkActorClass, type ReworkActorV1, type TaskAutomationPolicyV1, type TaskRequeueOutcomeV1,
+  type TaskRequeueTriggerV1,
   type TaskReworkRefusalCode, type TaskReworkRefusalRef, type TaskReworkRefusalSnapshotV1,
 } from '../../../contracts/task-requeue.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
@@ -112,13 +113,19 @@ import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
 import { loadReplayEvent, mapStoreFailure, mergeGuards } from './execution-entry-service.js';
 import { lookupCommittedReceipt } from '../persistence/receipt-lookup.js';
 import { readOwnerRecord } from './owner-record-read.js';
+import type { QueryRunRef } from '../../../contracts/query-job.js';
+import { decodeQueryRunSnapshotRecord } from '../queries/query-record-codecs.js';
 import {
   applyReworkRequest, newReworkRequest, type PendingReworkRequestV1, type ReworkRequestV1,
 } from '../state/rework-request.js';
 import {
-  reworkRequestCodec, reworkRequestRecordedEventFromEvent, reworkRequestRecordedFragment,
+  reworkRequestCodec, reworkRequestRecordedEventFromEvent, reworkRequestRecordedFragment, type ReworkRequesterActorV1,
 } from './rework-request-codecs.js';
 import { executeReworkRequestClose } from './rework-requests.js';
+import {
+  admitPlanningRework, queryRoundActorOf, queryRoundRequesterOf, readTaskClaimHold, type ClaimHoldDependencies,
+} from './claim-holds.js';
+import { scribeStopHeld } from '../state/task-claim-hold.js';
 import {
   readCanonicalTaskFacts, readGoal, readGoalRunsForCount, readPlan, readPointerIntents, readRunRoundChain, sameCursor,
   type CanonicalTaskFacts, type CanonicalTaskState,
@@ -162,6 +169,10 @@ export type TaskRequeueDependencies = {
   goalSettings?: GoalSettingsPort;
   /** W2/TD-6: the delegated-write admission an Agent requeue goes through; absent refuses an Agent. */
   delegatedWrites?: PlanDelegatedWriteDependencies;
+  /**
+   * 参谋规划轮请返工（2.8）的准入读：问答轮身份（同一个 `queryRounds`）和线的职责。没配时问答轮调用方 forbidden。
+   */
+  planningRounds?: Pick<ClaimHoldDependencies, 'queryRounds' | 'duty'>;
   now(): string;
   eventId(): string;
 };
@@ -219,14 +230,15 @@ function refKeyOf(value: unknown): string {
 /** LD-25: the approved application runs the same path under the stored requester and its rebuilt provenance. */
 type RequeueAuthority = {
   caller: Caller;
-  provenance: DelegatedWriteProvenanceV1;
+  /** `null` for an adviser planning round's request (Q10a). */
+  provenance: DelegatedWriteProvenanceV1 | null;
   approved: { record: ReworkRequestV1; commandId: string };
   /** The person's card answer the approved commit proves. */
   answerRef: SessionMessageRef;
 };
 /** The guards a standalone request close needs; `approved` is the stored pending request it closes. */
 type CloseBase = {
-  owned: OwnedCall; identity: string; fingerprint: string; actor: ActorRef; goalRef: GoalRef; window: RequeueWindow;
+  owned: OwnedCall; identity: string; fingerprint: string; actor: ReworkActorV1; goalRef: GoalRef; window: RequeueWindow;
   admissionGuards: readonly RecordGuard[]; acknowledgement: SessionMessageRef | null;
   approved: { record: ReworkRequestV1; commandId: string } | null;
 };
@@ -247,10 +259,12 @@ type CommitBase = CloseBase & {
 // Caller and request isolation
 // --------------------------------------------------------------------------
 
-/** The caller as the requeue sees it: a Host operator/automation actor, or an Agent's formal writer. */
+/** The caller as the requeue sees it: a Host operator/automation actor, an Agent's formal writer, or an adviser
+ * planning round (2.8, Q10a: its own round actor and its line's Session; no Run, no provenance). */
 type Caller =
   | { kind: 'host'; actor: Extract<ActorRef, { kind: 'human' | 'system' }> }
-  | { kind: 'agent'; writer: AgentPlanWriter };
+  | { kind: 'agent'; writer: AgentPlanWriter }
+  | { kind: 'query'; actor: QueryRoundActorV1; session: SessionRef };
 
 type OwnedCall = { ctx: CoreCallContext; scope: { projectId: string; workspaceId: string }; signal: AbortSignal;
   principal: CorePrincipal };
@@ -277,8 +291,9 @@ function ownCall(ctx: CoreCallContext): { ok: true; value: OwnedCall } | Rejecte
   } catch {
     return { ok: false, rejection: reject('invalid', 'the call context identity cannot be isolated from the caller') };
   }
-  if (!isRecord(principal) || (principal['kind'] !== 'host' && principal['kind'] !== 'work_run')) {
-    return { ok: false, rejection: reject('forbidden', 'a requeue requires a Host or work-run principal') };
+  if (!isRecord(principal) || (principal['kind'] !== 'host' && principal['kind'] !== 'work_run'
+    && principal['kind'] !== 'query_run')) {
+    return { ok: false, rejection: reject('forbidden', 'a requeue requires a Host, work-run or query-round principal') };
   }
   return { ok: true, value: {
     ctx: { projectId, workspaceId, principal: principal as CorePrincipal,
@@ -424,7 +439,7 @@ function sortedPins(expected: readonly VersionPin[]): { ref: VersionPin['ref']; 
 }
 
 /** The one `task-requeue` receipt fingerprint: write, replay and the read-only commit lookup share it. */
-function taskRequeueFingerprintOf(actor: ActorRef, scope: { projectId: string; workspaceId: string },
+function taskRequeueFingerprintOf(actor: ReworkActorV1, scope: { projectId: string; workspaceId: string },
   input: unknown, expected: readonly VersionPin[]): string {
   return sha256Hex(canonicalJson({ kind: 'task-requeue', actor, projectId: scope.projectId,
     workspaceId: scope.workspaceId, input, expected: sortedPins(expected) } as unknown as JsonValue));
@@ -534,12 +549,16 @@ function selectedReviewBlockerOf(
  * another project or workspace is `forbidden` before any read; without the
  * mailbox owner it is `unsupported`). Shared by the requeue and the reverify
  * owner (`evidence-service.ts` `reverifyRound`).
+ *
+ * `callerLine` 是带线的调用方那条线的 Session（做事轮的 `AgentPlanWriter.sessionRef`、问答轮的 `round.session`），Host 是
+ * `null`：回复人是这条线时记 `repliedByCaller`，由 `newBasisInputProblem` 判（Q10b 甲）。
  */
 export async function newBasisInputsProblem(
   reads: { materials: Pick<MaterialPort, 'openArtifact'>; messages: Pick<SessionMailboxPort, 'readMessage'> | undefined },
   ctx: CoreCallContext,
   scope: { projectId: string; workspaceId: string },
   inputs: readonly NewBasisInputRefV1[],
+  callerLine: SessionRef | null,
 ): Promise<Rejection | null> {
   for (const input of inputs) {
     let observed: NewBasisInputObservationV1;
@@ -559,8 +578,12 @@ export async function newBasisInputsProblem(
         }
         if (reads.messages === undefined) return reject('unsupported', 'a session-message new input needs the mailbox owner');
         const read = await reads.messages.readMessage(ctx, input.ref);
-        if (read.status === 'ready') observed = { kind: 'session_message', status: read.value.status };
-        else if (read.status === 'not_found') observed = { kind: 'not_found' };
+        if (read.status === 'ready') {
+          const response = read.value.response;
+          observed = { kind: 'session_message', status: read.value.status,
+            ...(callerLine === null ? {} : { repliedByCaller: response !== null && 'sessionRef' in response.sender
+              && sameRef(response.sender.sessionRef, callerLine) }) };
+        } else if (read.status === 'not_found') observed = { kind: 'not_found' };
         else if (read.status === 'rejected') return reject(read.code, read.reason, read.current);
         else return reject('incomplete', 'the session message is not readable at the required watermark');
         break;
@@ -574,6 +597,22 @@ export async function newBasisInputsProblem(
     if (problem !== null) return reject('invalid', problem);
   }
   return null;
+}
+
+/**
+ * 重放约定（`src/AGENTS.md` §3）：参谋规划轮的 actor 只从可信 principal 和 QueryRun 冻结的线（`executionState.sessionRef`，
+ * 这一轮结束后仍在）还原，不判这一轮还在不在跑。返工、重验用它算身份和指纹、查回执，命中原样回，未命中才准入。
+ * QueryRun 不在或没有冻结的线是 `null`：不会有它的回执。
+ */
+export async function planningRoundActorOf(
+  records: Pick<GoalRecordTransactionPort, 'readMany'>, queryRunRef: QueryRunRef,
+): Promise<{ status: 'ready'; value: { actor: QueryRoundActorV1; session: SessionRef } | null } | Rejection> {
+  const read = await readOwnerRecord({ store: records, refKey: refKeyOf(queryRunRef), decode: decodeQueryRunSnapshotRecord,
+    readError: (message) => reject('unavailable', message) });
+  if ('rejection' in read) return read.rejection;
+  const session = 'notFound' in read ? undefined : read.value.run.executionState?.sessionRef;
+  return { status: 'ready', value: session === undefined ? null
+    : { actor: queryRoundActorOf({ session, run: queryRunRef }), session } };
 }
 
 /**
@@ -670,7 +709,7 @@ export function createTaskRequeueService(
   const records = deps.records;
   const policyOf = (): TaskAutomationPolicyV1 => deps.automationPolicy?.() ?? DEFAULT_TASK_AUTOMATION_POLICY;
 
-  function identityOf(actor: ActorRef, scope: { projectId: string; workspaceId: string }, requestId: string): string {
+  function identityOf(actor: ReworkActorV1, scope: { projectId: string; workspaceId: string }, requestId: string): string {
     return REQUEUE_IDENTITY_PREFIX + sha256Hex(canonicalJson({ actor: { kind: actor.kind, id: actor.id },
       projectId: scope.projectId, workspaceId: scope.workspaceId, requestId } as unknown as JsonValue));
   }
@@ -730,13 +769,13 @@ export function createTaskRequeueService(
 
   /** Receipt replay: the recorded `TaskRequeued` or `TaskReworkRefused` restores the original value. */
   async function replay(
-    receipt: Extract<StoreCommitReceipt, { status: 'committed' }>, identity: string, fingerprint: string, actor: ActorRef,
+    receipt: Extract<StoreCommitReceipt, { status: 'committed' }>, identity: string, fingerprint: string, actor: ReworkActorV1,
     acknowledgement: SessionMessageRef | null,
   ): Promise<ReworkOwnerResultV1<TaskRequeueOutcomeV1>> {
     const loaded = await loadReplayEvent(records, receipt);
     if (!loaded.ok) return loaded.rejection;
     const event = loaded.event;
-    let decoded: { identityKey: string; fingerprint: string; actor: ActorRef; value: TaskRequeueOutcomeV1 };
+    let decoded: { identityKey: string; fingerprint: string; actor: ReworkActorV1; value: TaskRequeueOutcomeV1 };
     if (event.eventType === TASK_REQUEUED_EVENT_TYPE) {
       const requeued = taskRequeuedEventFromEvent(event);
       if (requeued.status !== 'decoded') return reject('unavailable', `the recorded requeue event is not decodable: ${requeued.reason}`);
@@ -783,8 +822,10 @@ export function createTaskRequeueService(
   }
 
   /** ND-9: what the owner read for each requested new input; `newBasisInputProblem` judges. */
-  async function newInputProblem(owned: OwnedCall, inputs: readonly NewBasisInputRefV1[]): Promise<Rejection | null> {
-    return newBasisInputsProblem({ materials: deps.materials, messages: deps.messages }, owned.ctx, owned.scope, inputs);
+  async function newInputProblem(owned: OwnedCall, inputs: readonly NewBasisInputRefV1[], callerLine: SessionRef | null):
+  Promise<Rejection | null> {
+    return newBasisInputsProblem({ materials: deps.materials, messages: deps.messages }, owned.ctx, owned.scope, inputs,
+      callerLine);
   }
 
   /** TASK-16 guards Workspace@rev: the key's source stamp names this revision's root. */
@@ -978,10 +1019,13 @@ export function createTaskRequeueService(
       return rejectedWithNonEmptyCurrent('revision_conflict', `the rework request is ${record.state}`,
         [{ ref: record.ref, revision: record.revision }]);
     }
-    const writer: AgentPlanWriter = { actor: approval.actor, runRef: approval.actor.runRef,
-      sessionRef: approval.provenance.sessionRef, goalRef: { aggregateType: 'Goal', projectId: task.projectId, goalId: task.goalId },
-      workspaceId: owned.scope.workspaceId, roleBinding: approval.provenance.roleBinding };
-    const applied = await runRequeue(owned, ownedRequest.value, { caller: { kind: 'agent', writer },
+    // 参谋规划轮的请求（Q10a）没有 Run 和 provenance：请求者就是记下的那一轮和它的线。
+    const caller: Caller = approval.provenance === null
+      ? { kind: 'query', actor: approval.actor, session: record.requester.session }
+      : { kind: 'agent', writer: { actor: approval.actor, runRef: approval.actor.runRef,
+        sessionRef: approval.provenance.sessionRef, goalRef: { aggregateType: 'Goal', projectId: task.projectId, goalId: task.goalId },
+        workspaceId: owned.scope.workspaceId, roleBinding: approval.provenance.roleBinding } };
+    const applied = await runRequeue(owned, ownedRequest.value, { caller,
       provenance: approval.provenance, approved: { record, commandId: approval.commandId },
       answerRef: approval.answerRef });
     return applied as EffectWriteResultV1<TaskRequeueOutcomeV1>;
@@ -1008,6 +1052,8 @@ export function createTaskRequeueService(
     let agentProvenance: DelegatedWriteProvenanceV1 | null = null;
     let agentDuty: 'executor' | 'adviser' | null = null;
     let admissionGuards: readonly RecordGuard[] = [];
+    // 参谋规划轮的准入：查回执未命中之后才跑（重放约定）。
+    let admitPlanning: (() => ReturnType<typeof admitPlanningRework>) | null = null;
     if (authority !== null) {
       caller = authority.caller;
       agentProvenance = authority.provenance;
@@ -1015,6 +1061,22 @@ export function createTaskRequeueService(
       const host = hostActorOf(owned);
       if (!host.ok) return host.rejection;
       caller = { kind: 'host', actor: host.actor };
+    } else if (owned.principal.kind === 'query_run') {
+      // 2.8 和重放约定：参谋规划轮的身份只从冻结的线还原（轮结束后照样读得出），查回执之后才准入。
+      if (deps.planningRounds === undefined) {
+        return reject('forbidden', 'adviser planning round requeues are not admitted by this Host');
+      }
+      const planningRounds = deps.planningRounds;
+      admitPlanning = () => admitPlanningRework(owned.ctx, { records, ...planningRounds }, goalRef, 'request a rework');
+      const frozen = await planningRoundActorOf(records, owned.principal.queryRunRef);
+      if (frozen.status !== 'ready') return frozen;
+      if (frozen.value === null) {
+        // QueryRun 不存在，或还没进入、没有冻结的线（没有 `executionState`）：不会有它的回执。直接交准入，
+        // 拒绝原文由准入给（准入只放行已进入的轮）。
+        const admitted = await admitPlanning();
+        return admitted.status === 'ready' ? reject('unavailable', 'the QueryRun has no frozen line') : admitted;
+      }
+      caller = { kind: 'query', ...frozen.value };
     } else {
       if (deps.delegatedWrites === undefined) return reject('forbidden', 'Agent requeues are not admitted by this Host');
       const writer = await identifyDelegatedWriter(deps.delegatedWrites, owned.ctx, owned.scope);
@@ -1023,7 +1085,7 @@ export function createTaskRequeueService(
       }
       caller = { kind: 'agent', writer: writer.value };
     }
-    const actor: ActorRef = caller.kind === 'host' ? caller.actor : caller.writer.actor;
+    const actor: ReworkActorV1 = caller.kind === 'agent' ? caller.writer.actor : caller.actor;
     let identity: string;
     let fingerprint: string;
     try {
@@ -1037,6 +1099,13 @@ export function createTaskRequeueService(
     // An approved application already carries the stored requester (LD-25): no fresh admission.
     const actorClass: ReworkActorClass | null = authority !== null ? 'agent' : reworkActorClassOf(owned.principal, actor);
     if (actorClass === null) return reject('forbidden', 'the caller cannot rework this Task');
+    if (admitPlanning !== null) {
+      // 参谋规划轮在查回执之后才准入（重放约定）：entered、非副本、职责参谋、形状 `plan_round`、负责这个目标，
+      // 守这一轮和链接的版本。
+      const admitted = await admitPlanning();
+      if (admitted.status !== 'ready') return admitted;
+      admissionGuards = admitted.value.guards;
+    }
     if (authority === null && caller.kind === 'agent') {
       // TD-6: the same Goal, then the current delegated-write admission (Run entered and running, Session,
       // Lease, the manifest's `request_rework` grant, Host/Role recheck).
@@ -1132,6 +1201,15 @@ export function createTaskRequeueService(
     if (reviewBlocker === 'held' && !hasArchiveOrigin) {
       return reject('busy', 'unknown_call_review_held: 点“继续”（release-hold）接着做');
     }
+    // 书记原因挡平台自动返工（2.6、A14）：读这个任务的暂缓，提交守读到的版本（不存在守“仍不存在”）。只有 `system` 类遇
+    // held 的书记原因 busy（门读之后、这里读之前放下的也挡住）；agent 和人照写，撤不撤由他们定。
+    const holdRead = await readTaskClaimHold(records, task);
+    if (holdRead.status !== 'ready') return holdRead;
+    if (actorClass === 'system' && scribeStopHeld(holdRead.hold)) {
+      return reject('busy', 'scribe_stop_held: the scribe stopped this Task; an automatic requeue waits until the '
+        + 'responsible adviser or the person releases that claim hold');
+    }
+    admissionGuards = [...admissionGuards, holdRead.guard];
     const execution = await deps.reads.readExecution(internalReadContext(owned), afterRun.ref);
     if (execution.status !== 'ready') {
       return execution.status === 'rejected' ? reject(execution.code, execution.reason)
@@ -1197,7 +1275,8 @@ export function createTaskRequeueService(
       }
     }
     const requestedInputs = input.newInputRefs ?? [];
-    const inputProblemFound = await newInputProblem(owned, requestedInputs);
+    const inputProblemFound = await newInputProblem(owned, requestedInputs,
+      caller.kind === 'agent' ? caller.writer.sessionRef : caller.kind === 'query' ? caller.session : null);
     if (inputProblemFound !== null) return inputProblemFound;
     if (owned.signal.aborted) return reject('cancelled', 'the requeue was cancelled after the input checks');
 
@@ -1247,7 +1326,7 @@ export function createTaskRequeueService(
         cap: automation.cap ?? Number.MAX_SAFE_INTEGER,
       });
       if (verdict === 'needs_decision') {
-        if (caller.kind !== 'agent') {
+        if (caller.kind === 'host') {
           // Record 3's requester is the agent that asked (book-7c.md:1089, :716): an automatic system requeue has
           // no such requester, so the person's decision still refuses with zero writes.
           return reject('forbidden', 'the Goal autonomy requires a user decision before an automatic requeue');
@@ -1256,8 +1335,11 @@ export function createTaskRequeueService(
           goalId: task.goalId, taskId: task.taskId, requestId: identity };
         const pending = newReworkRequest({ ref: requestRef, workspaceId: owned.scope.workspaceId, kind: 'requeue', task,
           subject: { kind: 'run', run: afterRun.ref },
-          requester: { actor: caller.writer.actor, session: caller.writer.sessionRef, run: caller.writer.runRef,
-            duty: agentDuty! },
+          // 做事轮或参谋规划轮（2.8：「每步确认」下问答轮也出卡）。
+          requester: caller.kind === 'agent'
+            ? { kind: 'work_run', actor: caller.writer.actor, session: caller.writer.sessionRef, run: caller.writer.runRef,
+              duty: agentDuty! }
+            : queryRoundRequesterOf(caller.actor, caller.session, 'adviser'),
           reason: input.reason, requestedAt: deps.now(),
           input: { kind: 'requeue', value: input as unknown as JsonValue },
           pins: expected as unknown as JsonValue[],
@@ -1631,7 +1713,7 @@ export function createTaskRequeueService(
     if (!merged.ok) return merged.rejection;
     const prepared: PreparedCommit = { identityKey: base.identity, fingerprint: base.fingerprint, guards: merged.guards,
       ...reworkRequestRecordedFragment({ record, eventId: deps.eventId(), occurredAt: record.requestedAt,
-        identityKey: base.identity, actor: base.actor as Extract<ActorRef, { kind: 'agent' }>,
+        identityKey: base.identity, actor: base.actor as ReworkRequesterActorV1,
         fingerprint: base.fingerprint }),
       indexGuards: [], indexChanges: [] };
     if (base.owned.signal.aborted) return reject('cancelled', 'the requeue was cancelled before its request commit');

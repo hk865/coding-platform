@@ -31,7 +31,7 @@ import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js
 import type { DelegatedWriteProvenanceV1 } from '../../../contracts/delegated-write.js';
 import { principalIdentity } from '../../../contracts/core/call-context.js';
 import type { CoreCallContext, CorePrincipal, MaterialReader } from '../../../contracts/core/call-context.js';
-import type { VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
+import type { SessionRef, VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { EffectWriteResultV1, SessionMessageRef } from '../../../contracts/core/session-message.js';
 import { messageOf } from '../../../contracts/error-message.js';
@@ -54,7 +54,8 @@ import type { PlanRevisionRef, PlanRevisionSnapshot, RuntimeTask } from '../../.
 import type { RunRef, RunSnapshot, SourceRefV1, TaskTriple } from '../../../contracts/dispatch.js';
 import {
     DEFAULT_TASK_AUTOMATION_POLICY, GOAL_FAN_OUT_ACTOR, MAX_AUTO_REWORK_LIMIT, TASK_REWORK_REASON_MAX_CHARS, reworkActorClassOf,
-    type ReworkActorClass, type TaskAutomationPolicyV1, type TaskReworkRefusalRef, type TaskReworkRefusalSnapshotV1,
+    type QueryRoundActorV1, type ReworkActorClass, type ReworkActorV1, type TaskAutomationPolicyV1, type TaskReworkRefusalRef,
+    type TaskReworkRefusalSnapshotV1,
 } from '../../../contracts/task-requeue.js';
 import { MIB } from '../../../contracts/resource-caps.js';
 import type {
@@ -107,7 +108,7 @@ import {
 import {
     authorizeDelegatedWrite, identifyDelegatedWriter, type AgentPlanWriter, type PlanDelegatedWriteDependencies,
 } from '../tasks/plan-write-admission.js';
-import { REWORK_NOTE_CONTENT_TYPE, newBasisInputsProblem } from '../tasks/requeue-service.js';
+import { REWORK_NOTE_CONTENT_TYPE, newBasisInputsProblem, planningRoundActorOf } from '../tasks/requeue-service.js';
 import type { RunActivityPort } from '../tasks/run-activity-service.js';
 import { readOwnerRecord } from '../tasks/owner-record-read.js';
 import { executeReworkRequestClose } from '../tasks/rework-requests.js';
@@ -164,8 +165,11 @@ import {
     applyReworkRequest, newReworkRequest, type PendingReworkRequestV1, type ReworkRequestV1,
 } from '../state/rework-request.js';
 import {
-    reworkRequestCodec, reworkRequestRecordedEventFromEvent, reworkRequestRecordedFragment,
+    reworkRequestCodec, reworkRequestRecordedEventFromEvent, reworkRequestRecordedFragment, type ReworkRequesterActorV1,
 } from '../tasks/rework-request-codecs.js';
+import {
+    admitPlanningRework, queryRoundRequesterOf, type ClaimHoldDependencies,
+} from '../tasks/claim-holds.js';
 import { sessionMessageRefProblem } from '../tasks/codec-shape-checks.js';
 
 export type Records = GoalRecordTransactionPort & RecordLookupPort;
@@ -733,30 +737,33 @@ function chainRefusal(refusal: Rejected, chain: RoundChainHeadV1): CoreRejection
 // VR-14 request helpers (C5, VD-12)                                           //
 // -------------------------------------------------------------------------- //
 
-/** A reverify caller: a Host principal (operator or platform automation) or an Agent's `work_run` principal. */
+/** A reverify caller: a Host principal (operator or platform automation), an Agent's `work_run` principal, or an
+ * adviser planning round's `query_run` principal (2.8). */
 type ReverifyCaller =
     | { kind: 'host'; ctx: CoreCallContext; scope: { projectId: string; workspaceId: string }; signal: AbortSignal; actor: HostActor }
-    | { kind: 'work_run'; ctx: CoreCallContext; scope: { projectId: string; workspaceId: string }; signal: AbortSignal };
+    | { kind: 'work_run' | 'query_run'; ctx: CoreCallContext; scope: { projectId: string; workspaceId: string }; signal: AbortSignal };
 /** LD-25: the approved recheck runs the same path under the stored requester and its rebuilt provenance. */
 type ReverifyAuthority = {
-    caller: { kind: 'agent'; actor: Extract<ActorRef, { kind: 'agent' }> };
-    provenance: DelegatedWriteProvenanceV1;
+    caller: { kind: 'agent'; actor: ReworkRequesterActorV1 };
+    /** `null` for an adviser planning round's request (Q10a). */
+    provenance: DelegatedWriteProvenanceV1 | null;
     approved: { record: ReworkRequestV1; commandId: string };
     /** The person's card answer the approved commit proves. */
     answerRef: SessionMessageRef;
 };
 /** The guards a standalone request close needs. */
 type ReverifyCloseBase = {
-    identity: string; fingerprint: string; signal: AbortSignal; actor: ActorRef; principal: JsonValue;
+    identity: string; fingerprint: string; signal: AbortSignal; actor: ReworkActorV1; principal: JsonValue;
     goalRef: GoalRef; task: TaskTriple; run: RunSnapshot; readSet: readonly RecordGuard[];
     approved: { record: ReworkRequestV1; commandId: string };
 };
 
-/** Bind the caller synchronously before the first await (Host: `bindTrustedContext`; work_run: its own scope and signal). */
+/** Bind the caller synchronously before the first await (Host: `bindTrustedContext`; work_run, query_run: its own scope and signal). */
 function bindReverifyCaller(ctx: CoreCallContext): ReverifyCaller | CoreRejection {
     const raw = ctx as unknown as { projectId?: unknown; workspaceId?: unknown; principal?: unknown;
         materialReader?: unknown; signal?: unknown } | null | undefined;
-    if (raw === null || raw === undefined || !isRecord(raw.principal) || raw.principal['kind'] !== 'work_run') {
+    const kind = raw === null || raw === undefined || !isRecord(raw.principal) ? null : raw.principal['kind'];
+    if (raw === null || raw === undefined || (kind !== 'work_run' && kind !== 'query_run')) {
         const bound = bindTrustedContext(ctx);
         if (!bound.ok) return bound.rejection;
         return { kind: 'host', ctx: bound.ctx, scope: bound.scope, signal: bound.signal, actor: bound.actor };
@@ -775,7 +782,7 @@ function bindReverifyCaller(ctx: CoreCallContext): ReverifyCaller | CoreRejectio
         return invalid('the call context identity cannot be isolated from the caller');
     }
     const bound = signal as unknown as AbortSignal;
-    return { kind: 'work_run', scope: { projectId, workspaceId }, signal: bound, ctx: { projectId, workspaceId,
+    return { kind, scope: { projectId, workspaceId }, signal: bound, ctx: { projectId, workspaceId,
         principal: principal as CorePrincipal, materialReader: materialReader as MaterialReader, signal: bound } };
 }
 
@@ -952,6 +959,8 @@ export type EvidenceServiceDependencies = {
     automaticReverifyPolicy?: AutomaticReverifyPolicyV1;
     /** VR-14 step 2: the delegated-write admission an Agent reverify goes through; absent refuses an Agent. */
     delegatedWrites?: PlanDelegatedWriteDependencies;
+    /** 参谋规划轮请重验（2.8）的准入读：问答轮身份（同一个 `queryRounds`）和线的职责。没配时问答轮调用方 forbidden。 */
+    planningRounds?: Pick<ClaimHoldDependencies, 'queryRounds' | 'duty'>;
     /**
      * ND-9: a session-message new input is read through the mailbox owner; absent refuses one (`unsupported`). Slice 9
      * VR-16 finds the review round's message through the Host's own send receipt (`readHostSendMessageRef`).
@@ -2202,8 +2211,8 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         identity: string;
         fingerprint: string;
         signal: AbortSignal;
-        /** The real requester: an operator, a platform automation actor or an Agent. */
-        actor: ActorRef;
+        /** The real requester: an operator, a platform automation actor, an Agent or an adviser planning round (Q10a). */
+        actor: ReworkActorV1;
         principal: JsonValue;
         /** The Host identity the successor's event records; the Agent stays in `chain.reverify.requestedBy` (VR-14). */
         eventActor: HostActor | null;
@@ -2375,7 +2384,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
      * already-computed identity/fingerprint, the same read-set guards and the Store-bound `since`.
      */
     async function commitReverifyReworkRequest(base: {
-        identity: string; fingerprint: string; signal: AbortSignal; actor: ActorRef; goalRef: GoalRef;
+        identity: string; fingerprint: string; signal: AbortSignal; actor: ReworkActorV1; goalRef: GoalRef;
         readSet: readonly RecordGuard[]; acknowledgement: SessionMessageRef | null;
     }, record: PendingReworkRequestV1, value: ReworkRequestedV1): Promise<ReworkOwnerResultV1<ReverifyOutcomeV1>> {
         const key = canonicalOf(record.ref);
@@ -2384,7 +2393,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         if (!merged.ok) return merged.rejection;
         const prepared: PreparedCommit = { identityKey: base.identity, fingerprint: base.fingerprint, guards: merged.guards,
             ...reworkRequestRecordedFragment({ record, eventId: deps.newId(), occurredAt: record.requestedAt,
-                identityKey: base.identity, actor: base.actor as Extract<ActorRef, { kind: 'agent' }>,
+                identityKey: base.identity, actor: base.actor as ReworkRequesterActorV1,
                 fingerprint: base.fingerprint }),
             indexGuards: [], indexChanges: [] };
         if (base.signal.aborted) return cancelled('the reverify was cancelled before its request commit');
@@ -2518,12 +2527,36 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
 
         // 1–2. The requester and the receipt; an Agent's identity is the formal writer (W2). An approved
         // application carries the stored requester and its rebuilt provenance instead of a fresh admission.
-        let actor: ActorRef;
+        let actor: ReworkActorV1;
         let agentWriter: AgentPlanWriter | null = null;
+        // 参谋规划轮（2.8 和重放约定）：actor 和线只从冻结的线还原（轮结束后照样读得出），查回执之后才准入，守卫进准入守卫槽。
+        let planningRound: { actor: QueryRoundActorV1; session: SessionRef } | null = null;
+        let admitPlanning: (() => ReturnType<typeof admitPlanningRework>) | null = null;
+        let admissionGuards: readonly RecordGuard[] = [];
         if (authority !== null) {
             actor = authority.caller.actor;
         } else if (caller.kind === 'host') {
             actor = caller.actor;
+        } else if (caller.kind === 'query_run') {
+            const planningRounds = deps.planningRounds;
+            if (planningRounds === undefined) {
+                return forbidden('adviser planning round reverifies are not admitted by this Host');
+            }
+            const callerCtx = caller.ctx;
+            admitPlanning = () => admitPlanningRework(callerCtx, { records, ...planningRounds },
+                { aggregateType: 'Goal', projectId: task.projectId, goalId: task.goalId }, 'request a recheck');
+            // `bindReverifyCaller` 按 principal 的种类定了 `query_run`。
+            const frozen = await planningRoundActorOf(records,
+                (callerCtx.principal as Extract<CorePrincipal, { kind: 'query_run' }>).queryRunRef);
+            if (frozen.status !== 'ready') return frozen;
+            if (frozen.value === null) {
+                // QueryRun 不存在，或还没进入、没有冻结的线（没有 `executionState`）：不会有它的回执。直接交准入，
+                // 拒绝原文由准入给（准入只放行已进入的轮）。
+                const admitted = await admitPlanning();
+                return admitted.status === 'ready' ? unavailable('the QueryRun has no frozen line') : admitted;
+            }
+            planningRound = frozen.value;
+            actor = planningRound.actor;
         } else {
             if (deps.delegatedWrites === undefined) return forbidden('Agent reverifies are not admitted by this Host');
             const writer = await identifyDelegatedWriter(deps.delegatedWrites, caller.ctx, scope);
@@ -2546,7 +2579,13 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         }
         const actorClass = authority !== null ? 'agent' : reworkActorClassOf(caller.ctx.principal, actor);
         if (actorClass === null) return forbidden('the caller cannot rework this Task');
-        let admissionGuards: readonly RecordGuard[] = [];
+        if (admitPlanning !== null) {
+            // 参谋规划轮在查回执之后才准入（重放约定）：entered、非副本、职责参谋、形状 `plan_round`、负责这个目标，
+            // 守这一轮和链接的版本。
+            const admitted = await admitPlanning();
+            if (admitted.status !== 'ready') return admitted;
+            admissionGuards = admitted.value.guards;
+        }
         let agentDuty: 'executor' | 'adviser' | null = null;
         if (authority === null && agentWriter !== null) {
             if (agentWriter.goalRef.goalId !== task.goalId) return forbidden('an Agent reworks only Tasks of its own Goal');
@@ -2657,7 +2696,8 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         // Step 5 (ND-9): every new input as the owner reads it.
         const requestedInputs = input.newInputRefs ?? [];
         const inputProblem = await newBasisInputsProblem({ materials: deps.materials, messages: deps.messages }, caller.ctx,
-            scope, requestedInputs);
+            scope, requestedInputs, authority !== null ? authority.approved.record.requester.session
+                : agentWriter?.sessionRef ?? planningRound?.session ?? null);
         if (inputProblem !== null) return inputProblem;
         if (signal.aborted) return cancelled('the reverify was cancelled after the input checks');
 
@@ -2716,7 +2756,12 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
                 : decisionActionPolicy({ autonomy: goalSettingsOf(goal).autonomy, action: 'auto_reverify',
                     actorClass, countedNext, cap });
             if (verdict === 'needs_decision') {
-                if (caller.kind !== 'work_run' || agentWriter === null) {
+                // 做事轮或参谋规划轮（2.8：「每步确认」下问答轮也出卡）。
+                const requester = agentWriter !== null
+                    ? { kind: 'work_run' as const, actor: agentWriter.actor, session: agentWriter.sessionRef, run: agentWriter.runRef,
+                        duty: agentDuty! }
+                    : planningRound === null ? null : queryRoundRequesterOf(planningRound.actor, planningRound.session, 'adviser');
+                if (requester === null) {
                     // Record 3's requester is the agent that asked (book-7c.md:1089, :716): an automatic system
                     // reverify has no such requester, so the person's decision still refuses with zero writes.
                     return forbidden('the Goal autonomy requires a user decision before an automatic reverify');
@@ -2725,8 +2770,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
                     goalId: task.goalId, taskId: task.taskId, requestId: identity };
                 const pending = newReworkRequest({ ref: requestRef, workspaceId: scope.workspaceId, kind: 'recheck', task,
                     subject: { kind: 'round', round: predecessor.ref },
-                    requester: { actor: agentWriter.actor, session: agentWriter.sessionRef, run: agentWriter.runRef,
-                        duty: agentDuty! },
+                    requester,
                     reason: input.reason ?? '', requestedAt: deps.now(),
                     input: { kind: 'recheck', value: input as unknown as JsonValue },
                     pins: owned.expected as unknown as JsonValue[],

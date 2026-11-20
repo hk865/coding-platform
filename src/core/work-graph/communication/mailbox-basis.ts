@@ -1,4 +1,3 @@
-import type { CommitCursor } from '../../../contracts/command-event.js';
 import { canonicalOf } from '../../../contracts/fingerprint.js';
 import type { SessionRef, VersionPin } from '../../../contracts/core/identity.js';
 import type { SendRejectionV1, SessionMessageIntentV1, SessionMessageRef } from '../../../contracts/core/session-message.js';
@@ -14,6 +13,7 @@ import { firstDispatch, nextDispatch } from '../state/dispatch-counter.js';
 import { dispatchCounterCodec } from '../persistence/dispatch-counter-codecs.js';
 import { activityGuardOf, planSessionActivityAdvance } from '../sessions/session-activity.js';
 import { messageReleaseBlockEligible } from '../tasks/message-release-card.js';
+import { dispatchCurrentOf, sameBasis } from '../tasks/dispatch-basis.js';
 import { internalHostContext, mapReadResult } from './mailbox-common.js';
 import type { MailboxContext, Owned } from './mailbox-types.js';
 
@@ -21,17 +21,9 @@ import type { MailboxContext, Owned } from './mailbox-types.js';
 // Message machine calls (STATE-MACHINES-SPEC §10)
 // --------------------------------------------------------------------------
 
-/** The three dispatch values are equal only when all three agree. */
-export function sameBasis(left: DispatchBasisV1, right: DispatchBasisV1): boolean {
-  return left.planRevision === right.planRevision
-    && left.pointerRevision === right.pointerRevision
-    && left.dispatchSequence === right.dispatchSequence;
-}
-
-/** The one consistent read's values plus its own cursor; the caller re-reads at it. */
-export function dispatchCurrentOf(facts: DispatchBasisFactsV1): DispatchBasisV1 & { readCursor: CommitCursor } {
-  return { ...facts.values, readCursor: facts.readCursor };
-}
+// 三值比较和“当前三值”住在 `tasks/dispatch-basis.ts`（派活请求的受理也用，`tasks` 不能依赖 `communication`）；
+// 邮箱照旧从这里取。
+export { dispatchCurrentOf, sameBasis };
 
 /** The version pins of the two records whose revisions the read knows: the Goal and the counter. */
 export function basisPinsOf(facts: DispatchBasisFactsV1): VersionPin[] {

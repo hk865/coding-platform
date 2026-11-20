@@ -48,7 +48,14 @@ export const MAX_NEW_BASIS_INPUT_REFS = 16;
  */
 export type NewBasisInputObservationV1 =
   | { kind: 'not_found' }
-  | { kind: 'session_message'; status: 'pending' | 'read' | 'responded' }
+  | {
+    kind: 'session_message'; status: 'pending' | 'read' | 'responded';
+    /**
+     * 回复这条信的就是调用方这条线（设计 3.5、S10：自己答自己不算新依据，Q10b 甲）。只对带线的调用方算（做事轮、
+     * 问答轮）；Host 不带，缺省是否。
+     */
+    repliedByCaller?: boolean;
+  }
   /** The Artifact store returned a record for exactly this ref. */
   | { kind: 'artifact' };
 
@@ -66,6 +73,9 @@ export function newBasisInputProblem(input: NewBasisInputRefV1, observed: NewBas
       if (observed.kind !== 'session_message') return `session message ${input.ref.messageId} was not found`;
       if (observed.status !== 'responded') {
         return `session message ${input.ref.messageId} is ${observed.status}; only a responded message is a new basis`;
+      }
+      if (observed.repliedByCaller === true) {
+        return `session message ${input.ref.messageId} was answered by the caller's own line; an own reply is not a new basis`;
       }
       return null;
     default: {

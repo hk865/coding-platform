@@ -51,14 +51,24 @@ export type MessageQueryAnswerSenderRecord = {
 };
 
 /**
- * A reply lives in the ORIGINAL message's single response slot. It never
- * produces a second inbox message and never fabricates a sender Session. The
- * original message `sender` stays restricted to host/work_run/secretary_round;
- * only the response slot additionally accepts the derived `query_run` Answer
- * source. The response slot is written once.
+ * 问答轮（非秘书请求轮）自己发信、自己回复时的发件人：本轮 Session、QueryRun 和 Session 代数，全由问答轮身份解析
+ * 得出，不取调用方输入。它和正式答复的发件人同为 `query_run`，但不带 `answerRef`：正式答复照旧必带，两种分开。
+ */
+export type MessageQueryRoundSenderRecord = {
+  kind: 'query_run';
+  sessionRef: SessionRef;
+  queryRunRef: QueryRunRef;
+  generation: number;
+  answerRef?: never;
+};
+
+/**
+ * 回复放在原消息唯一的回复槽里，不生成第二条收件箱消息，也不编造发件 Session；槽只写一次。原消息的发件人是
+ * host、work_run、secretary_round，或问答轮自己发信时不带 `answerRef` 的 `query_run`。回复槽收三种：做事轮的回复、
+ * 平台从正式答复派生的 `query_run`（带 `answerRef`），以及问答轮自己的文字回复（不带 `answerRef`）。
  */
 export type MessageResponseRecord = {
-  sender: MessageWorkRunSenderRecord | MessageQueryAnswerSenderRecord;
+  sender: MessageWorkRunSenderRecord | MessageQueryAnswerSenderRecord | MessageQueryRoundSenderRecord;
   bodyRef: ArtifactRef;
   sourceRef: SourceRefV1;
   respondedAt: string;
@@ -132,7 +142,8 @@ export type SessionMessageRecord = {
   ref: SessionMessageRef;
   schemaVersion: 1;
   revision: number;
-  sender: MessageHostSenderRecord | MessageWorkRunSenderRecord | MessageSecretaryRoundSenderRecord;
+  sender: MessageHostSenderRecord | MessageWorkRunSenderRecord | MessageSecretaryRoundSenderRecord
+    | MessageQueryRoundSenderRecord;
   recipient: MessageRecipient;
   bodyRef: ArtifactRef;
   sourceRef: SourceRefV1;

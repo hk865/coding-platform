@@ -1,3 +1,4 @@
+import type { ActionRequestRef } from "./action-request.js";
 import type { ActorRef } from "./command-event.js";
 import type { RunExecutionHistoryV1 } from "./core/execution-history.js";
 import type { RunOutcome, RunRef } from "./dispatch.js";
@@ -111,7 +112,14 @@ export type SubmitControlInput = {
     runRef: RunRef;
     kind: ControlIntentKindV1;
     reason: string | null;
+    /**
+     * 这次控制由哪条动作请求落实（叫停请求放行后送的收尾 steer）。带它时重放指纹不含版本钉（版本只作 CAS），
+     * 遇到人的暂停就拒（人的控制优先）。缺省是调用方自己的控制，照旧。意图记录不存它。
+     */
+    source?: ControlSubmissionSourceV1;
 };
+/** 动作来源：落实的是哪条动作请求。 */
+export type ControlSubmissionSourceV1 = { kind: "action_request"; actionRef: ActionRequestRef };
 /** The exact value returned by a successful `submitControl`. */
 export type SubmittedControl = {
     intent: ControlIntentSnapshotV1;

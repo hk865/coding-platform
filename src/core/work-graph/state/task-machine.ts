@@ -27,7 +27,6 @@
  *
  * Pure: imports only `src/contracts` and this directory (§14.4).
  */
-import type { ActorRef } from '../../../contracts/command-event.js';
 import type { ControlIntentKindV1, ControlIntentRef } from '../../../contracts/control-intent.js';
 import type { CoreRejection } from '../../../contracts/core/results.js';
 import type { TaskClaim } from '../../../contracts/core/task-claim.js';
@@ -47,13 +46,14 @@ import type {
 import type { ArchiveRequeueOriginV1 } from '../../../contracts/session-anomaly.js';
 import type { TaskPhaseCauseCode, TaskPhaseCauseDetailV1, TaskPhaseCauseV1 } from '../../../contracts/task-failure.js';
 import {
-  MAX_AUTO_REWORK_LIMIT, TASK_REWORK_REASON_MAX_CHARS, reworkActorClassOf,
-  type ReworkActorClass, type ReworkFailureClass, type TaskAutomationPolicyV1, type TaskRequeueAutomationV1,
+  MAX_AUTO_REWORK_LIMIT, TASK_REWORK_REASON_MAX_CHARS, isQueryRoundActor, reworkActorClassOf,
+  type ReworkActorClass, type ReworkActorV1, type ReworkFailureClass, type TaskAutomationPolicyV1, type TaskRequeueAutomationV1,
   type TaskRequeueBasisComparison, type TaskRequeueRef, type TaskRequeueSnapshotV1, type TaskRequeueTriggerV1,
   type TaskReworkRefusalSnapshotV1,
 } from '../../../contracts/task-requeue.js';
 import type { RoundSnapshot, VerificationRoundRef } from '../../../contracts/verification.js';
 import type { AttemptClaimBasis } from './attempt-machine.js';
+import type { HoldBlockerV1 } from './task-claim-hold.js';
 import { runFailureOrigin } from './no-progress.js';
 import { tracedDispositionChangeProblem, type TracedTaskFactsV1 } from './plan-machine.js';
 import {
@@ -292,6 +292,11 @@ export type TaskClaimFacts = {
    * refuses `unavailable` (L7 fail-closed).
    */
   reviewBlocker?: 'pending' | 'held' | 'unreadable';
+  /**
+   * 暂缓领取（设计 3.3、A4）：这次提交要写的那一版暂缓里挡着的那一条（`holdBlockerOf`）；不挡或还没读时不带。所有领取
+   * （首领、接续、返工、审查）都挡，原文见 `claimHoldProblem`。
+   */
+  claimHold?: HoldBlockerV1;
   /** The continuation prior Run, as RUN-01 reads it (`:590-638`); absent until the claim reads it. */
   prior?: RunClaimContext['prior'];
   /** TASK-03: the TaskRequeue the claim's `requeueRef` names; null when it names none of this Task. */
@@ -540,8 +545,8 @@ export type NewTaskRequeueInput = {
   pointerIntent: StopIntentV1 | null;
   /** `roundChainHead` of the afterRun's work chain. */
   chain: RoundChainHeadV1;
-  /** The real actor: human, system (a platform automation actor) or agent (with its `runRef`). */
-  requestedBy: ActorRef;
+  /** The real actor: human, system (a platform automation actor), agent (with its `runRef`) or an adviser planning round (with its `queryRunRef`, Q10a). */
+  requestedBy: ReworkActorV1;
   requestedAt: string;
   reason: string;
   basis: NoProgressKeyV1;
@@ -639,7 +644,7 @@ function taskRequeueChainProblem(chain: RoundChainHeadV1, row: string): string |
  * - the chain is valid, its head finalized and not a clean PASS (clause 2;
  *   FC-13: finalize first);
  * - the no-progress key describes the afterRun outcome;
- * - `agentProvenance` exactly for an agent;
+ * - `agentProvenance` exactly for an agent with a `runRef` (a work run; an adviser planning round has none, Q10a);
  * - the §4.3 matrix with the human-stop fence (`reworkPermission`; the Goal is
  *   active, the step-local clause the owner guards): `check_incomplete` only
  *   for a human, `cancelled` never for an agent, a paused interruption only
@@ -658,8 +663,8 @@ function taskRequeueCombinationProblem(
   const chainProblem = taskRequeueChainProblem(input.chain, derivation.row);
   if (chainProblem !== null) return chainProblem;
   if (input.basis.failure.outcome !== afterRun.outcome) return 'the no-progress key was computed for another outcome';
-  if ((input.agentProvenance !== null) !== (actorClass === 'agent')) {
-    return 'agent provenance is recorded exactly for an agent requeue';
+  if ((input.agentProvenance !== null) !== (actorClass === 'agent' && !isQueryRoundActor(input.requestedBy))) {
+    return 'agent provenance is recorded exactly for a work-run agent requeue';
   }
   const refusal = requeuePermission(afterRun, input.pointerIntent, derivation, input.requestedBy, actorClass, 'active',
     { trigger: input.trigger !== null, budget: input.budget !== null });
@@ -683,7 +688,7 @@ function taskRequeueCombinationProblem(
  */
 function requeuePermission(
   afterRun: RunSnapshot, pointerIntent: StopIntentV1 | null, derivation: Extract<ReworkClassDerivationV1, { kind: 'class' }>,
-  requestedBy: ActorRef, actorClass: ReworkActorClass, goalDesiredState: GoalDesiredState,
+  requestedBy: ReworkActorV1, actorClass: ReworkActorClass, goalDesiredState: GoalDesiredState,
   request: { trigger: boolean; budget: boolean },
 ): Rejected | null {
   return reworkPermission({ operation: 'requeue', goalDesiredState, failureClass: derivation.failureClass,
@@ -895,6 +900,10 @@ export function taskClaimProblem(
   if (task.taskKind !== 'work') return reject('illegal', 'invalid', 'only a work task can be claimed');
   if (task.disposition !== 'active') return reject('guard_failed', 'invalid', 'the Task disposition is not active');
   if (facts.structuralProblem !== null) return rejected(facts.structuralProblem);
+  // 暂缓挡所有领取，审查领取也挡（lead 裁定 3：暂缓就是“先别在这个任务上开轮”，审查领取也开 Run），所以放在下面
+  // 审查豁免之前。
+  const holdProblem = claimHoldProblem(facts.claimHold);
+  if (holdProblem !== null) return holdProblem;
   // K3 L11 (D3): the selected Run's review record blocks an ordinary claim
   // BEFORE the phase and lease guards (the record is checked first, §3.4); the
   // review claim (TASK-03r) is the only basis that passes.
@@ -910,6 +919,23 @@ export function taskClaimProblem(
     return reject('guard_failed', 'busy', `task already has an active lease (holder run ${facts.lease.holderRunId})`);
   }
   return claimBasisProblem(claimBasis, facts);
+}
+
+/**
+ * 暂缓挡领取的拒绝（`busy`）：held 的原因说清谁放的、理由（看的人知道去找谁撤）；在等的叫停卡说清是哪一张。
+ */
+function claimHoldProblem(blocker: HoldBlockerV1 | undefined): Rejected | null {
+  if (blocker === undefined) return null;
+  if (blocker.kind === 'stop_pending') {
+    return reject('guard_failed', 'busy', `the Task has a pending stop request ${blocker.actionRef.requestId}; `
+      + 'it is not claimed until that request is answered or withdrawn');
+  }
+  const placedBy = blocker.reason.placedBy;
+  const placer = placedBy.kind === 'agent' ? `the ${placedBy.duty} line ${placedBy.session.sessionId}`
+    : placedBy.kind === 'action' ? `stop request ${placedBy.actionRef.requestId}`
+      : `the platform (operation ${placedBy.operationId})`;
+  return reject('guard_failed', 'busy',
+    `the Task is under a claim hold placed by ${placer}: ${blocker.reason.reason}; it is not claimed until that hold is released`);
 }
 
 /** TASK-01..03: `taskClaimProblem`, then the claim's records in one commit. */

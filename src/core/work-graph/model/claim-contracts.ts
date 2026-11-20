@@ -2,6 +2,7 @@
  * Expected pins are exactly Goal, Workspace and the selected Session; immutable
  * accepted Plan is separately read and guarded. No scope reservation is required.
  */
+import type { ActionRequestRef } from '../../../contracts/action-request.js';
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
@@ -17,13 +18,16 @@ import type { DecisionChangeProofV1 } from '../../../contracts/goal-decisions.js
 import type { NewBasisInputRefV1 } from '../../../contracts/no-progress.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
 import type { ReworkRequestRef } from '../../../contracts/rework-request.js';
-import type { TaskRequeueOutcomeV1, TaskRequeueRef, TaskRequeueSnapshotV1, TaskRequeueTriggerV1 } from '../../../contracts/task-requeue.js';
+import type {
+  QueryRoundActorV1, TaskRequeueOutcomeV1, TaskRequeueRef, TaskRequeueSnapshotV1, TaskRequeueTriggerV1,
+} from '../../../contracts/task-requeue.js';
 import type { ArchiveRequeueOriginV1 } from '../../../contracts/session-anomaly.js';
 import type { UnknownCallReviewRef } from '../../../contracts/unknown-call-review.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import type { RawArtifactStorePort } from '../../record-store/body-ports.js';
 import type { RoleBindingFactsPort } from './configuration-contracts.js';
+import type { DispatchBasisFactsPort } from './dispatch-basis-contracts.js';
 import type { GraphWrite } from './task-contracts.js';
 import type { DispatchOutboxRecord } from '../state/attempt-machine.js';
 
@@ -81,6 +85,17 @@ export type ClaimTaskInput = {
    * key returns its result unchanged.
    */
   acknowledgement?: SessionMessageRef;
+  /**
+   * 按请求领取（设计 3.2 第 5 步）：目标循环领被派活请求点名的任务时带上读到的那条请求和它的版本。它必须是暂缓记录
+   * `openDispatch` 指着的那条、版本相等，否则 `revision_conflict`；领取在同一次提交里了结它（AR-03，`byRequest: true`）
+   * 并让派工序号 +1。可以和 `requeueRef` 同带（Q13 甲）。只在出现时进指纹。
+   */
+  servedRequest?: { ref: ActionRequestRef; revision: number };
+  /**
+   * 你的直接干预领取（Q6a 甲，设计 3.9、3.10）：领取在同一次提交里撤掉这个任务全部暂缓原因（含书记原因），撤的人记成这条
+   * 干预消息；在等你批的叫停卡照挡。只在出现时进指纹。
+   */
+  intervention?: { messageRef: SessionMessageRef };
 };
 /**
  * Owner request of `requeueTask` (spec §4.1). `reason` is non-empty and
@@ -127,12 +142,14 @@ export type ReworkOwnerResultV1<T> = EffectWriteResultV1<T> | ReworkRequestedV1;
 export type ApprovedReworkApplyV1 = {
   request: ReworkRequestRef;
   revision: number;
-  actor: Extract<ActorRef, { kind: 'agent' }>;
-  provenance: DelegatedWriteProvenanceV1;
   commandId: string;
   /** The person's card answer; the approved commit's formal proof is bound to it. */
   answerRef: SessionMessageRef;
-};
+} & (
+  | { actor: Extract<ActorRef, { kind: 'agent' }>; provenance: DelegatedWriteProvenanceV1 }
+  /** 参谋规划轮的请求（Q10a 甲）：没有 Run，不重建 provenance。 */
+  | { actor: QueryRoundActorV1; provenance: null }
+);
 /**
  * E5 (§2.3 S:622, L-d): the already committed `TaskRequeue` of a `(Task,
  * afterRun)` pair with the cursor of its original `TaskRequeued` event, so the
@@ -199,6 +216,11 @@ export type TaskClaimDependencies = {
    * already takes it). Optional so an old narrower double stays compatible.
    */
   bodies?: RawArtifactStorePort;
+  /**
+   * 按请求领取读派工三值的那一个实例（组合根的 `dispatchBasis`）。只有带 `servedRequest` 的领取用它；没配时那种领取
+   * `unsupported`，别的领取照旧。
+   */
+  dispatchBasis?: DispatchBasisFactsPort;
   now(): string;
   newId(): string;
 };

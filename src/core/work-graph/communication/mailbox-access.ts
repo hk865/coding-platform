@@ -7,14 +7,13 @@ import { canonicalOf } from '../../../contracts/fingerprint.js';
 import { isRecord as isObject } from '../../../contracts/validation/common.js';
 import { deriveMessageDelivery } from '../model/communication-contracts.js';
 import type { SessionMessage, SessionMessageReadV1 } from '../model/communication-contracts.js';
-import type { SecretaryQueryRunV1 } from '../model/secretary-query-run-contracts.js';
 import { decodeStoredMessageBody, decodeStoredUserDecisionBody, isUserDecisionAnswerPart } from '../sessions/message-body-envelope.js';
 import { releaseBlockOf } from './mailbox-basis.js';
 import {
   internalHostContext, isUserRecipient, isolatedContext, loadMessage, mapReadResult, normalizeMessageRef,
   ownContext, recipientLineFacts, sameSessionRefAs, scopeOfMessageRef,
 } from './mailbox-common.js';
-import { deriveWorkRunSender, readWorkRunIdentity, secretaryReader } from './mailbox-identity.js';
+import { deriveWorkRunSender, queryRunReader, readWorkRunIdentity, type QueryRunReaderV1 } from './mailbox-identity.js';
 import type { MailboxContext, Owned, ReadRight, Unknown } from './mailbox-types.js';
 
 // ---- read authority -----------------------------------------------------
@@ -36,6 +35,10 @@ async function canReadMessage(mailbox: MailboxContext, owned: Owned, reader: Ses
     return { ok: true, allowed: true };
   }
   if (message.sender.kind === 'secretary_round' && sameSessionRefAs(message.sender.sessionRef, reader)) {
+    return { ok: true, allowed: true };
+  }
+  // 问答轮自己发的信：发件 Session 是读者。
+  if (message.sender.kind === 'query_run' && sameSessionRefAs(message.sender.sessionRef, reader)) {
     return { ok: true, allowed: true };
   }
   // Slice 1 §2.5: the effective reply handler may read the original message
@@ -73,17 +76,17 @@ export function ownsInbox(mailbox: MailboxContext, sessionRef: SessionRef, messa
 /**
  * The one single-message read right shared by `readMessage`, `readMessageBody`
  * and `readMessageView` (R7A1-09): a Host inside its workspace, a Work Run
- * through its own derived sender, or a secretary round through its resolved
- * Session; the per-message check is `canReadMessage`. `null` means allowed.
+ * through its own derived sender, or a query round (a non-request round or a
+ * secretary round) through its resolved Session; the per-message check is `canReadMessage`. `null` means allowed.
  */
 async function messageReadRight(mailbox: MailboxContext, owned: Owned, message: SessionMessage,
-  secretary: { round: SecretaryQueryRunV1; reader: SessionRef } | null,
+  queryReader: QueryRunReaderV1 | null,
   workReader: SessionRef | null = null): Promise<CoreRejection | null> {
   if (owned.principal.kind === 'host') return null;
   let reader: SessionRef;
   if (owned.principal.kind === 'query_run') {
-    if (secretary === null) return reject('forbidden', 'the secretary read was not resolved');
-    reader = secretary.reader;
+    if (queryReader === null) return reject('forbidden', 'the secretary read was not resolved');
+    reader = queryReader.reader;
   } else if (workReader !== null) {
     reader = workReader;
   } else {
@@ -105,17 +108,17 @@ export async function readMessage(mailbox: MailboxContext, ctx: CoreCallContext,
   if (!owned.ok) return owned.rejection;
   // A read has no receipt to miss: a `query_run` caller's round is resolved on
   // every read, before any record read.
-  let secretary: { round: SecretaryQueryRunV1; reader: SessionRef } | null = null;
+  let queryReader: QueryRunReaderV1 | null = null;
   if (owned.principal.kind === 'query_run') {
-    const reading = await secretaryReader(mailbox, owned);
+    const reading = await queryRunReader(mailbox, owned);
     if (!reading.ok) return reading.rejection;
-    secretary = reading;
+    queryReader = reading.value;
   }
   const normalized = normalizeMessageRef(ref);
   if (!normalized.ok) return reject('invalid', normalized.reason);
-  // Rule W/M4: a Work Run's message belongs to the sending line's workspace, not the Run's.
+  // Rule W/M4: a Work Run's (or a query round's) message belongs to the sending line's workspace, not the Run's.
   let workReader: SessionRef | null = null;
-  let messageWorkspaceId = owned.workspaceId;
+  let messageWorkspaceId = queryReader?.workspaceId ?? owned.workspaceId;
   if (owned.principal.kind === 'work_run') {
     const identity = await readWorkRunIdentity(mailbox, owned, owned.principal, owned.principal.runRef);
     if (!identity.ok) return identity.rejection;
@@ -126,7 +129,7 @@ export async function readMessage(mailbox: MailboxContext, ctx: CoreCallContext,
   if (scopeProblem !== null) return scopeProblem;
   const loaded = await loadMessage(mailbox, owned, normalized.ref);
   if (loaded.status !== 'ready') return loaded;
-  const right = await messageReadRight(mailbox, owned, loaded.value, secretary, workReader);
+  const right = await messageReadRight(mailbox, owned, loaded.value, queryReader, workReader);
   if (right !== null) return right;
   return loaded;
 }
@@ -136,11 +139,11 @@ export async function readMessage(mailbox: MailboxContext, ctx: CoreCallContext,
 export async function readMessageBody(mailbox: MailboxContext, ctx: CoreCallContext, input: { messageRef: SessionMessageRef; part: 'message' | 'response' }): Promise<ReadResult<import('../model/communication-contracts.js').MessageBody>> {
   const owned = ownContext(ctx);
   if (!owned.ok) return owned.rejection;
-  let secretary: { round: SecretaryQueryRunV1; reader: SessionRef } | null = null;
+  let queryReader: QueryRunReaderV1 | null = null;
   if (owned.principal.kind === 'query_run') {
-    const reading = await secretaryReader(mailbox, owned);
+    const reading = await queryRunReader(mailbox, owned);
     if (!reading.ok) return reading.rejection;
-    secretary = reading;
+    queryReader = reading.value;
   }
   let raw: Unknown;
   try {
@@ -156,9 +159,9 @@ export async function readMessageBody(mailbox: MailboxContext, ctx: CoreCallCont
   if (part !== 'message' && part !== 'response') return reject('invalid', 'readMessageBody part must be message or response');
   const normalized = normalizeMessageRef(raw['messageRef']);
   if (!normalized.ok) return reject('invalid', normalized.reason);
-  // Rule W/M4: the message and its stored body belong to the sending line's workspace.
+  // Rule W/M4: the message and its stored body belong to the sending line's workspace (a work Run's or a query round's).
   let workReader: SessionRef | null = null;
-  let messageWorkspaceId = owned.workspaceId;
+  let messageWorkspaceId = queryReader?.workspaceId ?? owned.workspaceId;
   if (owned.principal.kind === 'work_run') {
     const identity = await readWorkRunIdentity(mailbox, owned, owned.principal, owned.principal.runRef);
     if (!identity.ok) return identity.rejection;
@@ -170,7 +173,7 @@ export async function readMessageBody(mailbox: MailboxContext, ctx: CoreCallCont
   const loaded = await loadMessage(mailbox, owned, normalized.ref);
   if (loaded.status !== 'ready') return loaded;
   const message = loaded.value;
-  const right = await messageReadRight(mailbox, owned, message, secretary, workReader);
+  const right = await messageReadRight(mailbox, owned, message, queryReader, workReader);
   if (right !== null) return right;
   const bodyRef = part === 'message' ? message.bodyRef : message.response?.bodyRef;
   const sourceRef = part === 'message' ? message.sourceRef : message.response?.sourceRef;
@@ -209,23 +212,26 @@ export async function readMessageBody(mailbox: MailboxContext, ctx: CoreCallCont
 export async function readMessageView(mailbox: MailboxContext, ctx: CoreCallContext, ref: SessionMessageRef): Promise<ReadResult<SessionMessageReadV1>> {
   const owned = ownContext(ctx);
   if (!owned.ok) return owned.rejection;
-  let secretary: { round: SecretaryQueryRunV1; reader: SessionRef } | null = null;
+  let queryReader: QueryRunReaderV1 | null = null;
   if (owned.principal.kind === 'query_run') {
-    const reading = await secretaryReader(mailbox, owned);
+    const reading = await queryRunReader(mailbox, owned);
     if (!reading.ok) return reading.rejection;
-    secretary = reading;
+    queryReader = reading.value;
   }
   const normalized = normalizeMessageRef(ref);
   if (!normalized.ok) return reject('invalid', normalized.reason);
-  const scopeProblem = scopeOfMessageRef(owned, normalized.ref);
+  // 问答轮的信在线的工作区（规则 W）：范围检查和派生读都按那里；其余调用方照旧按调用方的工作区。
+  const viewOwned = queryReader === null || queryReader.workspaceId === owned.workspaceId
+    ? owned : { ...owned, workspaceId: queryReader.workspaceId };
+  const scopeProblem = scopeOfMessageRef(viewOwned, normalized.ref);
   if (scopeProblem !== null) return scopeProblem;
   const loaded = await loadMessage(mailbox, owned, normalized.ref);
   if (loaded.status !== 'ready') return loaded;
-  const right = await messageReadRight(mailbox, owned, loaded.value, secretary);
+  const right = await messageReadRight(mailbox, owned, loaded.value, queryReader);
   if (right !== null) return right;
-  const line = await recipientLineFacts(mailbox.deps, internalHostContext(mailbox, owned), loaded.value.recipient);
+  const line = await recipientLineFacts(mailbox.deps, internalHostContext(mailbox, viewOwned), loaded.value.recipient);
   if (!line.ok) return line.rejection;
-  const block = await releaseBlockOf(mailbox, owned, loaded.value);
+  const block = await releaseBlockOf(mailbox, viewOwned, loaded.value);
   if (block.status !== 'ready') return block;
   return { status: 'ready', value: { message: loaded.value, ...deriveMessageDelivery(loaded.value, line.value), releaseBlock: block.value } };
 }

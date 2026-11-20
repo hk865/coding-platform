@@ -48,7 +48,7 @@ import type {
 } from '../../../contracts/task-failure.js';
 import {
   GOAL_FAN_OUT_ACTOR, TASK_REWORK_REASON_MAX_CHARS, WORKFLOW_AUTOMATION_ACTOR, reworkActorClassOf,
-  type ReworkActorClass, type ReworkFailureClass, type StopRequester, type TaskAutomationPolicyV1,
+  type ReworkActorClass, type ReworkActorV1, type ReworkFailureClass, type StopRequester, type TaskAutomationPolicyV1,
   type TaskRequeueAutomationV1, type TaskRequeueHistorySourceV1, type TaskRequeueRef, type TaskRequeueSnapshotV1,
   type TaskReworkOperation,
   type TaskReworkRefusalCode, type TaskReworkRefusalRef, type TaskReworkRefusalSnapshotV1,
@@ -119,7 +119,7 @@ export function stopRequesterOf(intent: Pick<ControlIntentRequestV1, 'kind' | 'r
 }
 
 /** The actor is canonically `GOAL_FAN_OUT_ACTOR` (kind and id; never decided by the kind alone). */
-export function isGoalFanOutActor(actor: ActorRef): boolean {
+export function isGoalFanOutActor(actor: ReworkActorV1): boolean {
   return sameActor(actor, GOAL_FAN_OUT_ACTOR);
 }
 
@@ -1370,7 +1370,7 @@ export type NewTaskReworkRefusalInputV1 = {
   basisDigest: string | null;
   source: SourceStampV1 | null;
   matchedRequeueRef: TaskRequeueRef | null;
-  requestedBy: ActorRef;
+  requestedBy: ReworkActorV1;
   refusedAt: string;
   /** `countEndedGoalRuns` read before any source capture (ND-7). */
   goalEndedRunsAtRefusal: number;

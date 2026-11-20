@@ -6,13 +6,15 @@ import type { ConsumedWaitV1, RunRef } from '../../../contracts/dispatch.js';
 import type { JsonValue } from '../../../contracts/fingerprint.js';
 import type { QueryJobAnswerRef, QueryRunRef } from '../../../contracts/query-job.js';
 import type { RecordGuard } from '../../record-store/ports.js';
-import type { MessageSender, SessionMessage, SessionMessageRespondInputV1 } from '../model/communication-contracts.js';
+import type {
+  MessageQueryRoundSender, MessageSender, MessageWorkRunSender, SessionMessage, SessionMessageRespondInputV1,
+} from '../model/communication-contracts.js';
 import type { SessionMessageCommitCompanions, SessionMessageWriteCommandV1 } from '../model/decision-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 import type { TaskExecutionRecord } from '../model/execution-read-contracts.js';
 import type { WriteCommand } from '../persistence/command-executor.js';
 import type { MessageGuardContext } from '../state/message-machine.js';
-import type { MailboxContext, Unknown, WithdrawFacts, WithdrawDecision, ReleaseFacts, ReleaseDecision, Owned, QueryAnswerFacts } from './mailbox-types.js';
+import type { AuthOutcome, MailboxContext, Unknown, WithdrawFacts, WithdrawDecision, ReleaseFacts, ReleaseDecision, Owned, QueryAnswerFacts } from './mailbox-types.js';
 import { sameActorIdentity as sameActor } from '../../../contracts/actor-equality.js';
 import { principalIdentity } from '../../../contracts/core/call-context.js';
 import { rejectedWithCurrent as reject } from '../../../contracts/core/rejections.js';
@@ -26,7 +28,7 @@ import { SESSION_MESSAGE_MAX_TEXT_BYTES } from '../sessions/message-record-codec
 import { effectiveReplyHandler, inputObserverProblem, nextSessionMessageRecord, waitFactsOfRecord } from '../state/message-machine.js';
 import { ownsInbox } from './mailbox-access.js';
 import { isUserRecipient, mapReadResult, internalHostContext, ownContext, ownWrite, normalizeText, normalizeMessageRef, scopeOfMessageRef, guardRejection, principalRefusal, pinsOf, judge, refusalOf, sameSessionRefAs, senderIdentityOf, identityKeyOf, fingerprintOf, eventIdOf, loadMessage, loadMessageForWrite, acceptedMessage } from './mailbox-common.js';
-import { readFreshWorkRunFacts, readWorkRunIdentity, deriveWorkRunSender, authorizeNewWorkRunAction, loadQueryRun, readQueryAnswerFacts, resolveSecretaryRound, interventionSourceFormallyEnded } from './mailbox-identity.js';
+import { readFreshWorkRunFacts, readWorkRunIdentity, deriveWorkRunSender, authorizeNewWorkRunAction, loadQueryRun, readQueryAnswerFacts, resolveSecretaryRound, interventionSourceFormallyEnded, nonRequestQueryRound } from './mailbox-identity.js';
 import { replayMessage, refuse, writeMessage, prepareSessionMessage, releaseDecidedChange, messageWriteResult, withdrawnResult, releaseDecidedResult } from './mailbox-write.js';
 
 // ---- ackMessage ---------------------------------------------------------
@@ -89,15 +91,17 @@ export async function ackMessage(mailbox: MailboxContext, ctx: CoreCallContext, 
 
 // ---- respondMessage -----------------------------------------------------
 
-export async function respondMessage(mailbox: MailboxContext, ctx: CoreCallContext, request: SessionMessageRespondInputV1): Promise<WriteResult<SessionMessage>> {
-  const owned = ownContext(ctx);
-  if (!owned.ok) return owned.rejection;
-  if (owned.principal.kind !== 'work_run') return principalRefusal(owned.principal, { type: 'message_responded', via: 'text' });
-  if (owned.signal.aborted) return reject('cancelled', 'the response was cancelled before validation');
+type RespondArm = { reject: true; reason: string; text?: never } | { text: string; reject?: never; reason?: never };
+
+/** The respond payload with its one message pin (T's ONE respond payload model). */
+function respondInputOf(request: SessionMessageRespondInputV1): { ok: true; value: {
+  requestId: string; expected: Extract<ReturnType<typeof ownWrite>, { ok: true }>['expected'];
+  messageRef: SessionMessageRef; arm: RespondArm;
+} } | { ok: false; rejection: CoreRejection } {
   const write = ownWrite(request);
-  if (!write.ok) return write.rejection;
+  if (!write.ok) return write;
   const raw = write.input as unknown as Unknown | null | undefined;
-  if (!isObject(raw)) return reject('invalid', 'respondMessage requires an input object');
+  if (!isObject(raw)) return { ok: false, rejection: reject('invalid', 'respondMessage requires an input object') };
   // T's ONE respond payload model: the version is the single message pin in
   // `meta.expected` (never a body key), so the normalized value is decoded
   // with it and the fingerprint payload keeps only `{messageRef, ...body}`.
@@ -106,20 +110,34 @@ export async function respondMessage(mailbox: MailboxContext, ctx: CoreCallConte
   const normalized = normalizeRespondMessageInput({
     ...raw, expectedRevision: pin === null ? undefined : pin['revision'],
   });
-  if (normalized.status === 'not_found') return reject('not_found', 'the requested record does not exist');
-  if (normalized.status === 'not_ready') return reject('incomplete', 'the response payload is not readable');
-  if (normalized.status === 'rejected') return normalized;
+  if (normalized.status === 'not_found') return { ok: false, rejection: reject('not_found', 'the requested record does not exist') };
+  if (normalized.status === 'not_ready') return { ok: false, rejection: reject('incomplete', 'the response payload is not readable') };
+  if (normalized.status === 'rejected') return { ok: false, rejection: normalized };
   const value = normalized.value;
-  const messageRef = value.messageRef;
-  const arm = 'reject' in value
+  const arm: RespondArm = 'reject' in value
     ? { reject: true as const, reason: value.reason }
     : { text: value.text };
+  return { ok: true, value: { requestId: write.requestId, expected: write.expected, messageRef: value.messageRef, arm } };
+}
+
+export async function respondMessage(mailbox: MailboxContext, ctx: CoreCallContext, request: SessionMessageRespondInputV1): Promise<WriteResult<SessionMessage>> {
+  const owned = ownContext(ctx);
+  if (!owned.ok) return owned.rejection;
+  // 配了问答轮身份时，`query_run` 调用方先查回执再解析：非请求问答轮写它自己的文字回复，其余照旧拒。
+  if (owned.principal.kind === 'query_run' && mailbox.deps.queryRounds !== undefined) {
+    return respondAsQueryRound(mailbox, owned, owned.principal.queryRunRef, request);
+  }
+  if (owned.principal.kind !== 'work_run') return principalRefusal(owned.principal, { type: 'message_responded', via: 'text' });
+  if (owned.signal.aborted) return reject('cancelled', 'the response was cancelled before validation');
+  const input = respondInputOf(request);
+  if (!input.ok) return input.rejection;
+  const { messageRef, arm } = input.value;
   const identity = await readWorkRunIdentity(mailbox, owned, owned.principal, owned.principal.runRef);
   if (!identity.ok) return identity.rejection;
   // Rule W/M4: the message is in the sending line's workspace; the Run identity stays the Run's.
   const scopeProblem = scopeOfMessageRef(owned, messageRef, identity.session.workspaceId);
   if (scopeProblem !== null) return scopeProblem;
-  const pins = pinsOf(write.expected, messageRef);
+  const pins = pinsOf(input.value.expected, messageRef);
   if (!pins.ok) return pins.rejection;
   // The reason is the refusal's reply body; a `response` part is always held to the ordinary 16 KiB.
   const saved = normalizeText(arm.reject === true ? arm.reason : arm.text, SESSION_MESSAGE_MAX_TEXT_BYTES);
@@ -129,8 +147,8 @@ export async function respondMessage(mailbox: MailboxContext, ctx: CoreCallConte
   if (!derived.ok) return derived.rejection;
   const sender = derived.sender;
   const senderIdentity = senderIdentityOf(sender);
-  const identityKey = identityKeyOf('respond', owned, senderIdentity, write.requestId);
-  const fingerprint = fingerprintOf('respond', owned, senderIdentity, { messageRef, ...arm }, write.expected);
+  const identityKey = identityKeyOf('respond', owned, senderIdentity, input.value.requestId);
+  const fingerprint = fingerprintOf('respond', owned, senderIdentity, { messageRef, ...arm }, input.value.expected);
   if (owned.signal.aborted) return reject('cancelled', 'the response was cancelled before the idempotency lookup');
   const existing = await mailbox.records.lookupCommit({ identityKey, fingerprint });
   if (existing.status === 'ready') return replayMessage(mailbox, existing.value);
@@ -138,17 +156,70 @@ export async function respondMessage(mailbox: MailboxContext, ctx: CoreCallConte
   const authorized = await authorizeNewWorkRunAction(mailbox, {
     owned, principal: owned.principal, operationToolName: 'respond_session_message',
   });
+  return commitTextResponse(mailbox, owned, { requestId: input.value.requestId, messageRef, arm, text: saved.text,
+    pins: pins.pins, sender, identityKey, fingerprint, authorized });
+}
+
+/**
+ * 非请求问答轮回复它收到的信：回复人是本轮 Session、QueryRun 和代数（不带 `answerRef`，正式答复另走 MSG-06）；
+ * 收件人才能回（`ownsInbox`）；守本轮读到的 QueryRun 和 Session 版本和消息 CAS。身份只认字面 QueryRun，
+ * 先查回执再解析；解析不出非请求轮的照今天拒。回复槽归谁写（这一轮的来源由这一轮的结论回）不在这里判。
+ */
+async function respondAsQueryRound(mailbox: MailboxContext, owned: Owned, queryRunRef: QueryRunRef,
+  request: SessionMessageRespondInputV1):
+  Promise<WriteResult<SessionMessage>> {
+  if (owned.signal.aborted) return reject('cancelled', 'the response was cancelled before validation');
+  const input = respondInputOf(request);
+  if (!input.ok) return input.rejection;
+  const { messageRef, arm } = input.value;
+  const pins = pinsOf(input.value.expected, messageRef);
+  if (!pins.ok) return pins.rejection;
+  const saved = normalizeText(arm.reject === true ? arm.reason : arm.text, SESSION_MESSAGE_MAX_TEXT_BYTES);
+  if (!saved.ok) return saved.rejection;
+  const senderIdentity = { kind: 'query_run', queryRunRef: { ...queryRunRef } };
+  const identityKey = identityKeyOf('respond', owned, senderIdentity, input.value.requestId);
+  const fingerprint = fingerprintOf('respond', owned, senderIdentity, { messageRef, ...arm }, input.value.expected);
+  if (owned.signal.aborted) return reject('cancelled', 'the response was cancelled before the idempotency lookup');
+  const existing = await mailbox.records.lookupCommit({ identityKey, fingerprint });
+  if (existing.status === 'ready') return replayMessage(mailbox, existing.value);
+  if (existing.code !== 'not_found') return sessionStoreFailureToRejection(existing);
+  const routed = await nonRequestQueryRound(mailbox, owned);
+  if (!routed.ok) return routed.rejection;
+  const round = routed.round;
+  if (round === null) return principalRefusal(owned.principal, { type: 'message_responded', via: 'text' });
+  // 副本不冒充原线，永不回复。
+  if (round.readOnlyCopy) return reject('forbidden', 'a read-only copy never replies to a Session message');
+  // 问答轮收到的信在线的工作区（规则 W）。
+  const scopeProblem = scopeOfMessageRef(owned, messageRef, round.lineWorkspaceId);
+  if (scopeProblem !== null) return scopeProblem;
+  const sender: MessageQueryRoundSender = { kind: 'query_run', sessionRef: { ...round.session },
+    queryRunRef: { ...round.run }, generation: round.sessionGeneration };
+  return commitTextResponse(mailbox, owned, { requestId: input.value.requestId, messageRef, arm, text: saved.text,
+    pins: pins.pins, sender, identityKey, fingerprint, authorized: null, extraGuards: round.guards });
+}
+
+/**
+ * MSG-04/05 的读、判、写，做事轮和问答轮共用：准入没过就不读消息；回复人是收件人（`ownsInbox`）才收；
+ * 守消息 CAS，加上调用方带来的守卫（做事轮的准入事实由状态机的效果带上，问答轮带它这一读窗的版本）。
+ */
+async function commitTextResponse(mailbox: MailboxContext, owned: Owned, input: {
+  requestId: string; messageRef: SessionMessageRef; arm: RespondArm; text: string; pins: MessageGuardContext['pins'];
+  sender: MessageWorkRunSender | MessageQueryRoundSender; identityKey: string; fingerprint: string;
+  authorized: AuthOutcome | null; extraGuards?: readonly RecordGuard[];
+}): Promise<WriteResult<SessionMessage>> {
+  const { arm, sender, identityKey, fingerprint, authorized } = input;
   // MSG-04/05. A refused admission never reads the message.
-  const read = authorized.ok ? await loadMessageForWrite(mailbox, owned, messageRef) : { ok: true as const, message: null };
+  const read = authorized === null || authorized.ok
+    ? await loadMessageForWrite(mailbox, owned, input.messageRef) : { ok: true as const, message: null };
   if (!read.ok) return read.rejection;
   const message = read.message;
   const { decided, ctx: messageCtx } = judge(owned.principal, message,
     arm.reject === true
       ? { type: 'message_responded', via: 'text', rejected: true }
       : { type: 'message_responded', via: 'text' }, {
-    workRunAuthorization: authorized.ok ? 'ok' : authorized.rejection,
+    workRunAuthorization: authorized === null ? null : authorized.ok ? 'ok' : authorized.rejection,
     callerIsRecipient: message === null ? null : ownsInbox(mailbox, sender.sessionRef, message),
-    pins: pins.pins,
+    pins: input.pins,
     bodyBounded: true, // `normalizeText` held with the request
   });
   // See the acknowledgement: this exact identity's committed receipt is
@@ -156,9 +227,10 @@ export async function respondMessage(mailbox: MailboxContext, ctx: CoreCallConte
   if (!decided.ok) return refuse(mailbox, decided, messageCtx, identityKey, fingerprint);
   const current = acceptedMessage(message);
   return writeMessage(mailbox, decided, {
-    owned, identityKey, fingerprint, requestId: write.requestId, actor: sender, admission: authorized,
+    owned, identityKey, fingerprint, requestId: input.requestId, actor: sender, admission: authorized,
     cancelled: 'the response was cancelled before commit',
-    body: { messageRef: current.ref, text: saved.text, answerSource: null },
+    body: { messageRef: current.ref, text: input.text, answerSource: null },
+    ...(input.extraGuards === undefined ? {} : { extraGuards: input.extraGuards }),
     ...(arm.reject === true ? { acceptedRejectedAt: true as const } : {}),
     // A refusal and an application share one first-wins slot; the time is
     // this commit's own instant.

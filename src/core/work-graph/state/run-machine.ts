@@ -419,7 +419,9 @@ export type RunEvent =
   | { kind: 'pause_not_entered'; source: 'U'; intentRef: ControlIntentRef }
   | { kind: 'resume_not_entered'; source: 'U'; intentRef: ControlIntentRef }
   /** RUN-12..15 (U): the Run side of §7 CTL-01; `intentRef` is derived from the request identity. */
-  | { kind: 'control_submitted'; intentRef: ControlIntentRef; control: ControlIntentKindV1; reason: string | null }
+  | { kind: 'control_submitted'; intentRef: ControlIntentRef; control: ControlIntentKindV1; reason: string | null;
+      /** 动作请求落实的控制（缺省是调用方自己的控制）。 */
+      source?: 'action_request' }
   /** RUN-23 (K/R, 新增). */
   | { kind: 'stop_paused'; claim: TaskClaim; cancelIntentRef: ControlIntentRef; basis: RunReconciliationBasisV1;
       turn: RunTurnFacts; recordedAt: string; factEventId: string }
@@ -1856,9 +1858,10 @@ function onUnresolvedTerminal(
  * resume rule, D-9 Goal, pointer fence), so the Run record and the intent
  * record never disagree about a submission.
  */
-function submitGuards(run: RunSnapshot, kind: ControlIntentKindV1, reason: string | null, yielded: boolean, ctx: RunGuardContext): Rejected | null {
+function submitGuards(run: RunSnapshot, kind: ControlIntentKindV1, reason: string | null, yielded: boolean, ctx: RunGuardContext,
+  source?: 'action_request'): Rejected | null {
   const problem = controlSubmissionProblem({ kind, reason, pointer: run.controlState?.desiredState ?? 'none', yielded,
-    continuationConsumed: ctx.continuationConsumed, pointerIntent: ctx.pointerIntent, goal: ctx.goal.desiredState });
+    continuationConsumed: ctx.continuationConsumed, pointerIntent: ctx.pointerIntent, goal: ctx.goal.desiredState, source });
   return problem === null ? null : rejected(problem);
 }
 
@@ -1891,6 +1894,7 @@ const NOT_ENTERED_KIND = { stop_not_entered: 'cancel', pause_not_entered: 'pause
  */
 export function controlSubmissionRunEvent(
   run: RunSnapshot, intentRef: ControlIntentRef, kind: ControlIntentKindV1, reason: string | null, recordedAt: string,
+  source?: 'action_request',
 ): Extract<RunEvent, { kind: 'stop_not_entered' | 'pause_not_entered' | 'resume_not_entered' | 'control_submitted' }> {
   if (kind !== 'steer' && controlClassOf(runControlNodeOf(run)) === 'not_entered') {
     switch (kind) {
@@ -1900,7 +1904,7 @@ export function controlSubmissionRunEvent(
       default: return unreachable(kind, 'not-entered control kind');
     }
   }
-  return { kind: 'control_submitted', intentRef, control: kind, reason };
+  return { kind: 'control_submitted', intentRef, control: kind, reason, ...(source === undefined ? {} : { source }) };
 }
 
 /**
@@ -2010,7 +2014,7 @@ function onControlSubmitted(
       break;
     default: return unreachable(cls, 'control class');
   }
-  const problem = submitGuards(run, event.control, event.reason, cls === 'yielded', ctx);
+  const problem = submitGuards(run, event.control, event.reason, cls === 'yielded', ctx, event.source);
   if (problem !== null) return problem;
   return queuedSubmission(run, event.control, event.intentRef, ctx);
 }

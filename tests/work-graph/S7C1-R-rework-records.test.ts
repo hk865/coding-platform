@@ -32,7 +32,7 @@ function requeueInput(reason = 'the change missed the edge'): NewReworkRequestIn
     kind: 'requeue',
     task: TASK,
     subject: { kind: 'run', run: RUN },
-    requester: { actor: ACTOR, session: SESSION, run: RUN, duty: 'executor' },
+    requester: { kind: 'work_run', actor: ACTOR, session: SESSION, run: RUN, duty: 'executor' },
     reason,
     requestedAt: AT,
     input: { kind: 'requeue', value: { taskRef: TASK, afterRunRef: RUN, reason } },
@@ -48,7 +48,7 @@ function recheckInput(): NewReworkRequestInputV1 {
     kind: 'recheck',
     task: TASK,
     subject: { kind: 'round', round: ROUND },
-    requester: { actor: ACTOR, session: SESSION, run: RUN, duty: 'executor' },
+    requester: { kind: 'work_run', actor: ACTOR, session: SESSION, run: RUN, duty: 'executor' },
     reason: 'the evidence moved',
     requestedAt: AT,
     input: { kind: 'recheck', value: { predecessorRoundRef: ROUND, reason: 'the evidence moved' } },
@@ -116,5 +116,15 @@ describe('R-records: the two replay events', () => {
     expect(encoded.eventType).toBe('ReworkRequestClosed');
     const decoded = reworkRequestClosedEventFromEvent(encoded);
     expect(decoded).toEqual({ status: 'decoded', value: CLOSED });
+  });
+
+  it('R-RECORDS-07: the actor of an adviser planning round (queryRunRef, no runRef) round-trips; both or neither is refused', () => {
+    const queryRunRef = { aggregateType: 'QueryRun', projectId: 'p', workspaceId: 'w', queryJobId: 'job-1', runId: 'qrun-1' } as const;
+    const recorded: ReworkRequestRecorded = { ...RECORDED, actor: { kind: 'agent', id: 'agent-1', queryRunRef } };
+    expect(reworkRequestRecordedEventFromEvent(reworkRequestRecordedCodec.encode(recorded)))
+      .toEqual({ status: 'decoded', value: recorded });
+    for (const actor of [{ ...ACTOR, queryRunRef }, { kind: 'agent', id: 'agent-1' }]) {
+      expect(reworkRequestRecordedCodec.check({ ...RECORDED, actor })).not.toBeNull();
+    }
   });
 });

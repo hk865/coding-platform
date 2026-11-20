@@ -140,7 +140,9 @@ export type DecisionActionV1 =
   | 'refine_future' | 'system_requeue' | 'agent_requeue' | 'auto_reverify' | 'minor_semantic_patch'
   | 'structural_patch' | 'change_goal' | 'exceed_budget' | 'escalate' | 'secretary_action' | 'secretary_inquiry'
   | 'short_handoff' | 'secretary_too_long' | 'long_handoff' | 'change_duty' | 'role_line_split' | 'role_line_reuse'
-  | 'create_member' | 'role_line_add' | 'module_maintainer' | 'goal_queue_assign' | 'short_change_duty';
+  | 'create_member' | 'role_line_add' | 'module_maintainer' | 'goal_queue_assign' | 'short_change_duty'
+  // 问答轮的派活、叫停请求（通信与权限拆开）：出厂默认同 `secretary_action`；进规则可放的闭集（`RULE_ACTIONS`）随工具一起做。
+  | 'agent_dispatch' | 'agent_stop';
 
 // ------------------------------------------------------------------------ //
 // Exact content bases, control rebases, footprints and change proofs (§2.8) //
@@ -335,7 +337,9 @@ export function decisionSourceKey(identity: DecisionSourceIdentityV1): string {
  */
 export type RuleActionV1 = Exclude<DecisionActionV1,
   | 'confirm_goal' | 'adopt_first_plan' | 'remember_user_preference'
-  | 'structural_patch' | 'change_goal' | 'exceed_budget' | 'escalate' | 'long_handoff' | 'change_duty'>;
+  | 'structural_patch' | 'change_goal' | 'exceed_budget' | 'escalate' | 'long_handoff' | 'change_duty'
+  // 派活、叫停进规则可放的闭集随工具一起做（改名 `secretary_action`、删 `secretary_inquiry` 同一步）；在那之前规则不放它们。
+  | 'agent_dispatch' | 'agent_stop'>;
 export const RULE_ACTIONS = ['refine_future', 'system_requeue', 'agent_requeue', 'auto_reverify',
   'minor_semantic_patch', 'secretary_action', 'secretary_inquiry', 'short_handoff', 'secretary_too_long',
   'create_member', 'role_line_add', 'module_maintainer', 'role_line_split', 'role_line_reuse', 'goal_queue_assign',

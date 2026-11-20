@@ -74,6 +74,18 @@ export const VerificationRoundRefShape = defineShape({
 export const ReworkRequestRefShape = defineShape({ name: 'ReworkRequestRef', fields: {
   aggregateType: f.literal('ReworkRequest'), projectId: id, goalId: id, taskId: id, requestId: id,
 } });
+export const ActionRequestRefShape = defineShape({ name: 'ActionRequestRef', fields: {
+  aggregateType: f.literal('ActionRequest'), projectId: id, goalId: id, taskId: id, requestId: id,
+} });
+export const TaskClaimHoldRefShape = defineShape({ name: 'TaskClaimHoldRef', fields: {
+  aggregateType: f.literal('TaskClaimHold'), projectId: id, goalId: id, taskId: id,
+} });
+export const TaskLeaseRefShape = defineShape({ name: 'TaskLeaseRef', fields: {
+  aggregateType: f.literal('TaskLease'), projectId: id, goalId: id, taskId: id,
+} });
+export const ControlIntentRefShape = defineShape({ name: 'ControlIntentRef', fields: {
+  aggregateType: f.literal('ControlIntent'), projectId: id, workspaceId: id, intentId: id,
+} });
 export const ModuleOverlapGateRefShape = defineShape({ name: 'ModuleOverlapGateRef', fields: {
   aggregateType: f.literal('ModuleOverlapGate'), projectId: id, goalId: id, taskId: id, moduleId: id,
 } });

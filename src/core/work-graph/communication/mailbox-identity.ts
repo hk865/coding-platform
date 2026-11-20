@@ -14,6 +14,7 @@ import type { MessageQueryAnswerSender, MessageWorkRunSender, SessionMessage } f
 import { interventionGoalRefOf } from '../model/communication-contracts.js';
 import type { TaskClaimOutbox } from '../model/claim-contracts.js';
 import type { TaskExecutionRecord } from '../model/execution-read-contracts.js';
+import type { QueryRoundV1 } from '../model/query-round-contracts.js';
 import type { SecretaryQueryRunV1 } from '../model/secretary-query-run-contracts.js';
 import { decodeQueryJobAnswerSnapshot, decodeQueryJobSnapshot, decodeQueryRunSnapshotRecord } from '../queries/query-record-codecs.js';
 import { decodeRun } from '../materials/run-snapshot-decoder.js';
@@ -582,6 +583,46 @@ export async function secretaryReader(mailbox: MailboxContext, owned: Owned): Pr
   const resolved = await resolveSecretaryRound(mailbox, owned);
   if (!resolved.ok) return resolved;
   return { ok: true, round: resolved.round, reader: { ...resolved.round.session } };
+}
+
+/**
+ * `query_run` 调用方的一处分流，发信、读箱、回复三个口共用：配了 `queryRounds`、解析就绪、又不是秘书请求轮的，
+ * 交出这一轮，走问答轮自己的分支；其中职责读成 `unknown` 的拒（`forbidden`）：认不出职责就不知道这条线该有哪些
+ * 能力，不给它邮箱；其余（没配、解析失败、请求轮）回 `round: null`，调用方照旧走秘书路径，原文不变。解析只认字面
+ * principal 指名的 QueryRun，项目和工作区已由 `ownContext` 对过。
+ */
+export async function nonRequestQueryRound(mailbox: MailboxContext, owned: Owned): Promise<
+  { ok: true; round: QueryRoundV1 | null } | { ok: false; rejection: CoreRejection }
+> {
+  if (owned.principal.kind !== 'query_run' || mailbox.deps.queryRounds === undefined) return { ok: true, round: null };
+  const resolved = await mailbox.deps.queryRounds.resolveQueryRound(isolatedContext(owned));
+  if (resolved.status !== 'ready' || resolved.value.requestRound) return { ok: true, round: null };
+  if (resolved.value.duty === 'unknown') {
+    return { ok: false, rejection: reject('forbidden',
+      'the duty of this query round\'s Session was not recognized (unknown), so the round has no mailbox access') };
+  }
+  return { ok: true, round: resolved.value };
+}
+
+/** 问答轮调用方读信时的读者、它的 QueryRun 和信所在的工作区。 */
+export type QueryRunReaderV1 = { reader: SessionRef; run: QueryRunRef; workspaceId: string };
+
+/**
+ * 问答轮的读者（收件箱页、三个单条读）：非请求轮读的是本轮 Session，信在线的工作区（同做事轮的规则 W）；
+ * 其余照旧由秘书读者给，工作区是调用方的。
+ */
+export async function queryRunReader(mailbox: MailboxContext, owned: Owned): Promise<
+  { ok: true; value: QueryRunReaderV1 } | { ok: false; rejection: CoreRejection }
+> {
+  const routed = await nonRequestQueryRound(mailbox, owned);
+  if (!routed.ok) return routed;
+  const round = routed.round;
+  if (round !== null) {
+    return { ok: true, value: { reader: { ...round.session }, run: { ...round.run }, workspaceId: round.lineWorkspaceId } };
+  }
+  const reading = await secretaryReader(mailbox, owned);
+  if (!reading.ok) return reading;
+  return { ok: true, value: { reader: reading.reader, run: { ...reading.round.run }, workspaceId: owned.workspaceId } };
 }
 
 /**

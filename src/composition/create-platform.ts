@@ -145,6 +145,7 @@ import { createProjectSecretaryScope, createSecretarySelection } from '../core/w
 import { createEffectiveScopeReader } from '../core/work-graph/views/role-scope-reader.js';
 import { createSecretaryQueryRun } from '../core/work-graph/tasks/secretary-query-run.js';
 import { createPlanningQueryRun } from '../core/work-graph/tasks/planning-query-run.js';
+import { createQueryRoundResolver } from '../core/work-graph/tasks/query-round.js';
 import { createRecipientExecutions } from '../core/work-graph/sessions/recipient-executions.js';
 import type { SecretaryProfilePort } from '../core/work-graph/model/request-contracts.js';
 import { createEvidenceService } from '../core/work-graph/evidence/evidence-service.js';
@@ -199,6 +200,10 @@ import { hostRolePermissionsAdmitted, projectRunPermissions } from '../core/work
 import { createMemberService, type MemberRequestPortV1, type MemberServiceDependenciesV1 } from '../core/work-graph/tasks/member-service.js';
 import { createReworkRequestService } from '../core/work-graph/tasks/rework-requests.js';
 import { REWORK_REQUEST_RECORD_SCHEMAS } from '../core/work-graph/tasks/rework-request-codecs.js';
+import { ACTION_REQUEST_RECORD_SCHEMAS } from '../core/work-graph/tasks/action-request-codecs.js';
+import { createActionRequestService } from '../core/work-graph/tasks/action-requests.js';
+import { createClaimHoldService } from '../core/work-graph/tasks/claim-holds.js';
+import type { ActionRequestPort, ClaimHoldPort } from '../core/work-graph/model/action-request-contracts.js';
 import { createOverlapGateService, type OverlapGatePort } from '../core/work-graph/tasks/overlap-gates.js';
 import { decisionSourceKey, decisionSubjectGoalRef, decisionSubjectKey } from '../contracts/goal-decisions.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../contracts/prompts/platform-pack.generated.js';
@@ -1178,7 +1183,7 @@ export function platformRecordSchemas() {
       ...DISPATCH_COUNTER_SCHEMAS.records, ...GOAL_CONFIRM_SCHEMAS.records, ...GOAL_COPY_RECORD_SCHEMAS.records,
       ...GOAL_INTERRUPTION_SCHEMAS.records,
       ...MODULE_OVERLAP_GATE_SCHEMAS.records,
-      ...REWORK_REQUEST_RECORD_SCHEMAS.records,
+      ...REWORK_REQUEST_RECORD_SCHEMAS.records, ...ACTION_REQUEST_RECORD_SCHEMAS.records,
       ...INITIALIZATION_ADOPTION_SCHEMAS.records, ...HANDOFF_BRIEF_RECORD_SCHEMAS.records,
       ...ROLE_LINE_RECORD_SCHEMAS.records, ...ROLE_LINE_ORCHESTRATION_SCHEMAS.records, ...KNOWLEDGE_RECORD_SCHEMAS.records,
       ...TASK_NODE_COMMIT_SCHEMAS.records, ...LINE_RECORD_SCHEMAS.records, ...GOAL_DELIVERY_SCHEMAS.records],
@@ -1199,7 +1204,7 @@ export function platformRecordSchemas() {
       ...DISPATCH_COUNTER_SCHEMAS.events, ...GOAL_CONFIRM_SCHEMAS.events, ...GOAL_COPY_RECORD_SCHEMAS.events,
       ...GOAL_INTERRUPTION_SCHEMAS.events,
       ...MODULE_OVERLAP_GATE_SCHEMAS.events,
-      ...REWORK_REQUEST_RECORD_SCHEMAS.events,
+      ...REWORK_REQUEST_RECORD_SCHEMAS.events, ...ACTION_REQUEST_RECORD_SCHEMAS.events,
       ...INITIALIZATION_ADOPTION_SCHEMAS.events, ...HANDOFF_BRIEF_RECORD_SCHEMAS.events,
       ...ROLE_LINE_RECORD_SCHEMAS.events, ...ROLE_LINE_ORCHESTRATION_SCHEMAS.events, ...KNOWLEDGE_RECORD_SCHEMAS.events,
       ...TASK_NODE_COMMIT_SCHEMAS.events, ...LINE_RECORD_SCHEMAS.events, ...GOAL_DELIVERY_SCHEMAS.events],
@@ -1220,7 +1225,7 @@ export function platformRecordSchemas() {
       ...DISPATCH_COUNTER_SCHEMAS.lookups ?? [], ...GOAL_CONFIRM_SCHEMAS.lookups ?? [],
       ...GOAL_INTERRUPTION_SCHEMAS.lookups ?? [],
       ...MODULE_OVERLAP_GATE_SCHEMAS.lookups ?? [],
-      ...REWORK_REQUEST_RECORD_SCHEMAS.lookups ?? [],
+      ...REWORK_REQUEST_RECORD_SCHEMAS.lookups ?? [], ...ACTION_REQUEST_RECORD_SCHEMAS.lookups ?? [],
       ...GOAL_COPY_RECORD_SCHEMAS.lookups ?? [], ...INITIALIZATION_ADOPTION_SCHEMAS.lookups ?? [],
       ...HANDOFF_BRIEF_RECORD_SCHEMAS.lookups ?? [], ...ROLE_LINE_RECORD_SCHEMAS.lookups ?? [], ...ROLE_LINE_ORCHESTRATION_SCHEMAS.lookups ?? [],
       ...KNOWLEDGE_RECORD_SCHEMAS.lookups ?? [], ...TASK_NODE_COMMIT_SCHEMAS.lookups ?? [], ...LINE_RECORD_SCHEMAS.lookups ?? []],
@@ -1595,6 +1600,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     // second resolver and no second owner.
     const secretaryQueryRun = createSecretaryQueryRun({
       records: backend.records, duties: sessionDutyResolver, bodies });
+    // 问答轮身份的一个实例：邮箱的问答轮分支（以后各动作口）读它；它不依赖邮箱，所以先建。
+    const queryRounds = createQueryRoundResolver({ records: backend.records, duties: sessionDutyResolver, bodies });
     // The ONE initialization binding reader. The request facts, the Plan owner, the decision sources, the
     // planning-question reader, the draft confirmation and the published `bindings` all read this instance; the
     // request facts fill a request card's `confirmedGoalRef` from it.
@@ -1617,7 +1624,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       // An absent duration is the platform's day; the owner keeps no second
       // default and a caller-named duration always wins.
       defaultInquiryDeadlineMs: 86_400_000,
-      secretaryRounds: secretaryQueryRun, requestOwners: rawRequestFacts, recipientExecutions, dispatchBasis,
+      secretaryRounds: secretaryQueryRun, requestOwners: rawRequestFacts, recipientExecutions, dispatchBasis, queryRounds,
       ...(authorizeConfiguration === undefined ? {} : { runtimeAdmission: { bodies, authorizeConfiguration } }) };
     const mailbox = createSessionMailbox(mailboxDependencies);
     // G8B B5：候选卡读“谁提的、人的原话”用的口，PL 读的和路由读的是同一个。
@@ -2229,8 +2236,9 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     // before the Runtime dependencies because Q's `read_requests` tool receives this owner.
     const rawMainSurface = createMainSurfaceReadModel({ records: backend.records, requests: rawRequestFacts,
       decisions: rawDecisionReads });
+    // 按请求领取读派工三值用同一个 `dispatchBasis`（邮箱、图读者、动作 owner 共用的那一个）。
     const claimService = createTaskClaimService({ records: backend.records, roles: roleService,
-      bodies, now, newId: randomUUID });
+      bodies, dispatchBasis, now, newId: randomUUID });
     // The ONE verification workspace reader: the evidence owner captures rounds
     // with it and the requeue owner takes its digest-only source (LA-5).
     const verificationWorkspaceReader = new VerificationWorkspaceReader();
@@ -2254,6 +2262,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       ...(authorizeConfiguration === undefined ? {} : {
         delegatedWrites: { reads: executionReader, roles: roleService, bodies, authorizeConfiguration },
       }),
+      // 2.8：参谋规划轮请返工的准入读同一个问答轮身份和职责解析。
+      planningRounds: { queryRounds, duty: sessionDutyResolver },
       automationPolicy: currentAutomationPolicy,
       now, eventId: randomUUID });
     // The handoff facts' condition check enters through this holder because the facts are built after the owners
@@ -2477,6 +2487,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       ...(authorizeConfiguration === undefined ? {} : {
         delegatedWrites: { reads: executionReader, roles: roleService, bodies, authorizeConfiguration },
       }),
+      // 2.8：参谋规划轮请重验的准入读同一个问答轮身份和职责解析。
+      planningRounds: { queryRounds, duty: sessionDutyResolver },
       runActivity, pythonSyntax,
       now, newId: randomUUID,
     });
@@ -4991,6 +5003,34 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     // reads and O5a-2's two readers share it.
     const responsibilityRecipient = createResponsibilityRecipient({
       records: backend.records, duty: sessionDutyResolver, catalog, allocation: roleLineAllocation });
+    // 通信与权限拆开（121-152）：动作请求和暂缓领取两个 owner。问答轮身份用同一个 `queryRounds`，派活三值用同一个
+    // `dispatchBasis`，书记原因的负责参谋用上面这个 L35 解析，送停交 control owner；调用方（工具、答卡、目标循环）随 P2 接。
+    const claimHoldOwner = createClaimHoldService({ records: backend.records, queryRounds, duty: sessionDutyResolver,
+      recipients: responsibilityRecipient, ...(operatorActor === undefined ? {} : { operatorActor }), now,
+      eventId: randomUUID });
+    const actionRequestOwner = createActionRequestService({ records: backend.records, queryRounds,
+      duty: sessionDutyResolver, dispatchBasis, autonomyRules, control: rawControls,
+      ...(operatorActor === undefined ? {} : { operatorActor }), now, eventId: randomUUID });
+    const actionRequests: ActionRequestPort = {
+      requestDispatch: (...args) => trackedCall(() => actionRequestOwner.requestDispatch(...args), unavailable),
+      requestStop: (...args) => trackedCall(() => actionRequestOwner.requestStop(...args), unavailable),
+      approve: (...args) => trackedCall(() => actionRequestOwner.approve(...args), unavailable),
+      deny: (...args) => trackedCall(() => actionRequestOwner.deny(...args), unavailable),
+      withdraw: (...args) => trackedCall(() => actionRequestOwner.withdraw(...args), unavailable),
+      settle: (...args) => trackedCall(() => actionRequestOwner.settle(...args), unavailable),
+      deliverStop: (...args) => trackedCall(() => actionRequestOwner.deliverStop(...args), unavailable),
+      readRequest: (...args) => trackedCall(() => actionRequestOwner.readRequest(...args), unavailable),
+    };
+    const claimHolds: ClaimHoldPort = {
+      place: (...args) => trackedCall(() => claimHoldOwner.place(...args), unavailable),
+      placeScribeStop: (...args) => trackedCall(() => claimHoldOwner.placeScribeStop(...args), unavailable),
+      release: (...args) => trackedCall(() => claimHoldOwner.release(...args), unavailable),
+      releaseAll: (...args) => trackedCall(() => claimHoldOwner.releaseAll(...args), unavailable),
+      readHold: (...args) => trackedCall(() => claimHoldOwner.readHold(...args), unavailable),
+    };
+    // 2.6：task-gate 的 `requeue_task` 在门上读同一个暂缓 owner 的书记原因（门在调用时读 `deps.claimHolds`）。Workflow 拿原始
+    // owner，不拿公开面的 `trackedCall` 包装：关停排空时在跑的门不能被“platform is closing”拒成读不出（同上面邮箱、放行的规矩）。
+    workflowDependencies.claimHolds = { readHold: (...args) => claimHoldOwner.readHold(...args) };
     const projectNoticeWriter = (input: Parameters<typeof notifyProject>[1]): ReturnType<typeof notifyProject> =>
       trackedCall(() => notifyProject({ records: backend.records, now }, input), unavailable);
     // 7D2 WD: the one withdraw/remove owner over this project's registration, reconcile candidates, region links,
@@ -5195,6 +5235,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       // route table binds `modules/assign-maintainer` to it. Internal like the
       // other owner groups, and every call drains through `trackedCall` above.
       moduleMaintainers,
+      // 动作请求和暂缓领取两个 owner（内部，不进公开键表）；每次调用都经 `trackedCall`。
+      actionRequests, claimHolds,
       // The Host's two recipient resolvers (adviser and the Goal's current secretary): the SAME duty/goal-secretary
       // instances the rest of the root uses, published as one internal read group through the close-tracking path.
       recipients: {
@@ -5349,7 +5391,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       'repairs', 'readArchitectureProposal', 'readProposalBatchFiles', 'overlapGates',
       'requestIntake', 'requestRounds', 'requestFacts', 'secretaryProfiles', 'mainSurface', 'memberCreations', 'sessionHandoff',
       'reworkNotices', 'recipients', 'roleLimits', 'roleLineAllocation', 'projectNoticeWriter', 'autonomyRules',
-      'moduleMaintainers',
+      'moduleMaintainers', 'actionRequests', 'claimHolds',
       'sessionArchive', 'readHandoffFence', 'listUnfinishedOperations', 'readSecretaryHandoffBasis',
       'bindings', 'initializationAdoption', 'confirmInstalledChecks', 'messageRelease', 'messageForwarding', 'disconnect', 'messageExpiry',
       'consumableSessions', 'readCandidateCard', 'roleLineOperations', 'roleLines', 'roleLineOperationsRead',

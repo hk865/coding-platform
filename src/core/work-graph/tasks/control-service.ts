@@ -49,6 +49,8 @@ import { canonicalJson, canonicalOf, sameJson as sameRef, sha256Hex, type JsonVa
 import type { GoalRef } from '../../../contracts/ledger.js';
 import { isAutomationActor } from '../../../contracts/task-requeue.js';
 import { isPos as isPositiveSafeInteger } from '../../../contracts/validation/common.js';
+import { checkShape } from '../../../contracts/validation/data-format.js';
+import { ActionRequestRefShape } from '../../../contracts/data-format-refs.js';
 import type {
   EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreCommitReceipt,
 } from '../../record-store/ports.js';
@@ -134,8 +136,15 @@ function reasonProblem(value: unknown): string | null {
 }
 function submitControlInputProblem(value: unknown): string | null {
   if (!isRecord(value)) return 'a control submission requires an input object';
-  if (Object.keys(value).some(key => key !== 'runRef' && key !== 'kind' && key !== 'reason')) {
+  if (Object.keys(value).some(key => key !== 'runRef' && key !== 'kind' && key !== 'reason' && key !== 'source')) {
     return 'the control submission carries unknown fields';
+  }
+  // 动作来源只有一种形状：落实的动作请求的完整引用。
+  const source = value['source'];
+  if (source !== undefined && (!isRecord(source) || source['kind'] !== 'action_request'
+    || Object.keys(source).some(key => key !== 'kind' && key !== 'actionRef')
+    || checkShape(ActionRequestRefShape, source['actionRef'], 'stored') !== null)) {
+    return 'the control source must be {kind: "action_request", actionRef: a complete ActionRequestRef}';
   }
   if (!isRunRef(value['runRef'])) return 'the control submission requires a complete RunRef';
   if (value['kind'] !== 'pause' && value['kind'] !== 'cancel'
@@ -285,7 +294,8 @@ function submissionEventOf(
 ): ControlSubmissionEvent {
   const entryPhase = run === null ? null : notEnteredEntryPhase(runControlNodeOf(run));
   if (run === null || entryPhase === null || input.kind === 'steer') {
-    return { type: 'control_submitted', target: 'run', intentRef, kind: input.kind, reason: input.reason };
+    return { type: 'control_submitted', target: 'run', intentRef, kind: input.kind, reason: input.reason,
+      ...(input.source === undefined ? {} : { source: 'action_request' as const }) };
   }
   return { type: 'control_applied_not_entered', intentRef, kind: input.kind, reason: input.reason, entryPhase,
     runRevision: run.revision + 1, observedAt };
@@ -622,10 +632,15 @@ export function createRunControlService(deps: RunControlServiceDependencies): Ru
     try {
       intentId = identityDigest(actor, scope.projectId, scope.workspaceId, owned.requestId);
       identity = CONTROL_SUBMIT_PREFIX + intentId;
-      fingerprint = fingerprintOf({ kind: 'r4-control-submit', actor: { kind: actor.kind, id: actor.id },
-        runRef: input.runRef, control: input.kind, reason: input.reason,
-        expected: [{ ref: runPin.ref, revision: runPin.revision },
-          ...(goalFence === null ? [] : [{ ref: goalFence.ref, revision: goalFence.revision }])] });
+      // 动作来源的控制：指纹只认请求、原 Run 和原理由，不含版本钉；同一请求换着新读的版本重送，拿回原回执
+      // （版本只在提交时作 CAS）。调用方自己的控制照旧把版本钉算进指纹。
+      fingerprint = fingerprintOf(input.source !== undefined
+        ? { kind: 'r4-control-submit', actor: { kind: actor.kind, id: actor.id },
+          runRef: input.runRef, control: input.kind, reason: input.reason, source: input.source }
+        : { kind: 'r4-control-submit', actor: { kind: actor.kind, id: actor.id },
+          runRef: input.runRef, control: input.kind, reason: input.reason,
+          expected: [{ ref: runPin.ref, revision: runPin.revision },
+            ...(goalFence === null ? [] : [{ ref: goalFence.ref, revision: goalFence.revision }])] });
     } catch {
       return invalid('the control request is not canonicalizable JSON');
     }
@@ -708,7 +723,8 @@ export function createRunControlService(deps: RunControlServiceDependencies): Ru
       }
       // CTL-01/02 refused an absent Run (`not_found`) above.
       const run = read!;
-      const runEvent = controlSubmissionRunEvent(run, intentRef, input.kind, input.reason, nowIso);
+      const runEvent = controlSubmissionRunEvent(run, intentRef, input.kind, input.reason, nowIso,
+        input.source === undefined ? undefined : 'action_request');
       const steers = runEvent.kind === 'stop_not_entered' ? await readQueuedSteers(records, run) : { ok: true as const, value: [] };
       if (!steers.ok) return steers.rejection;
       const runCtx = submissionRunContext(controlCtx, facts, steers.value, actor);

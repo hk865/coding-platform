@@ -315,7 +315,10 @@ export function judge(principal: MailboxPrincipal, message: SessionMessage | nul
   const ctx: MessageGuardContext = {
     // The machine's send row only distinguishes the fresh work_run admission;
     // a resolved secretary send is a trusted non-work sender, like a Host.
-    principal: principal.kind === 'work_run' ? 'work_run' : 'host',
+    // 问答轮只在文字回复上映成 `query_run`（它只走到解析就绪的问答轮回复分支）；发信照旧当可信的非做事发件人。
+    principal: principal.kind === 'work_run' ? 'work_run'
+      : principal.kind === 'query_run' && event.type === 'message_responded' && event.via === 'text' ? 'query_run'
+      : 'host',
     workRunAuthorization: null,
     callerIsRecipient: null,
     recipientScope: null,
@@ -387,7 +390,7 @@ export function readProgress(
 
 /** The Session a message's sender is, when its sender kind names one. */
 export function messageSenderSessionOf(message: SessionMessage): SessionRef | null {
-  if (message.sender.kind === 'work_run' || message.sender.kind === 'secretary_round') {
+  if (message.sender.kind !== 'host') {
     return { projectId: message.sender.sessionRef.projectId, sessionId: message.sender.sessionRef.sessionId };
   }
   return null;
@@ -404,7 +407,7 @@ export function followupConnects(message: SessionMessage, sender: MessageSender,
   if (isUserRecipient(addressed)) return false;
   const to: SessionRef = { projectId: addressed.projectId, sessionId: addressed.sessionId };
   const from = messageSenderSessionOf(message);
-  if (sender.kind === 'work_run' || sender.kind === 'secretary_round') {
+  if (sender.kind !== 'host') {
     return (sameSessionRefAs(from, sender.sessionRef) && sameSessionRefAs(to, recipient))
       || (sameSessionRefAs(from, recipient) && sameSessionRefAs(to, sender.sessionRef));
   }
@@ -429,7 +432,10 @@ export function senderIdentityOf(sender: MessageSender | MessageQueryAnswerSende
       generation: sender.generation,
     };
   }
-  if (sender.kind === 'secretary_round') return { kind: 'query_run', queryRunRef: { ...sender.queryRunRef } };
+  // 秘书轮和问答轮自己发信的身份都只认字面 QueryRun（读前就能定，同 `sendMessage` 解析前的身份）。
+  if (sender.kind === 'secretary_round' || sender.answerRef === undefined) {
+    return { kind: 'query_run', queryRunRef: { ...sender.queryRunRef } };
+  }
   return {
     kind: 'query_run',
     sessionRef: { ...sender.sessionRef },

@@ -67,7 +67,8 @@ import type { SourceRefV1, TaskTriple } from '../../../contracts/dispatch.js';
 import type { DispatchBasisV1, GoalDesiredState, GoalRef } from '../../../contracts/ledger.js';
 import type {
   MessageAcceptedInput, MessageConsultationDerivation, MessageDeliveryEvidenceV1, MessageDeliveryV1,
-  MessageHostSenderRecord, MessageResponseRecord, MessageSecretaryRoundSenderRecord, MessageWorkRunSenderRecord,
+  MessageHostSenderRecord, MessageQueryRoundSenderRecord, MessageResponseRecord, MessageSecretaryRoundSenderRecord,
+  MessageWorkRunSenderRecord,
   SessionMessageRecord, SessionMessageStatus,
 } from '../../../contracts/mailbox.js';
 import type { QueryJobRef } from '../../../contracts/query-job.js';
@@ -79,7 +80,8 @@ import { accept, reject, unreachable, type Rejected, type Transition } from './t
 
 export type {
   MessageAcceptedInput, MessageConsultationDerivation, MessageDeliveryEvidenceV1, MessageDeliveryV1,
-  MessageHostSenderRecord, MessageQueryAnswerSenderRecord, MessageResponseRecord, MessageResponseRejectV1,
+  MessageHostSenderRecord, MessageQueryAnswerSenderRecord, MessageQueryRoundSenderRecord, MessageResponseRecord,
+  MessageResponseRejectV1,
   MessageSecretaryRoundSenderRecord, MessageWorkRunSenderRecord, SessionMessageRecord, SessionMessageStatus,
 } from '../../../contracts/mailbox.js';
 
@@ -226,7 +228,11 @@ export type MessageDecisionApplicationFacts = {
 
 /** §10.1. IO stays in the service; it fills in what it read and authorized. */
 export type MessageGuardContext = {
-  principal: 'host' | 'work_run' | 'other';
+  /**
+   * `query_run` 是解析就绪的非请求问答轮用文字回复：只有文字回复行收它，不经做事轮准入、不守做事轮事实
+   * （服务层守这一轮自己的版本）。`other` 是各行都不收的调用方。
+   */
+  principal: 'host' | 'work_run' | 'query_run' | 'other';
   /** `authorizeNewWorkRunAction` (`mailbox-service.ts:782-908`); `null` for a Host call. */
   workRunAuthorization: 'ok' | CoreRejection | null;
   /** ack/respond: the caller Session is the recipient. */
@@ -410,9 +416,10 @@ export function messagePrincipalProblem(
         return principal === 'host' ? null
           : reject('guard_failed', 'forbidden', 'only the Host may associate an official Query answer with a message');
       }
-      return principal === 'work_run' ? null : reject('guard_failed', 'forbidden', principal === 'host'
-        ? 'a Host cannot respond to a message'
-        : 'only a work_run may respond to a message');
+      return principal === 'work_run' || principal === 'query_run' ? null
+        : reject('guard_failed', 'forbidden', principal === 'host'
+          ? 'a Host cannot respond to a message'
+          : 'only a work_run may respond to a message');
     case 'consultation_derived':
       return principal === 'host' ? null : reject('guard_failed', 'forbidden', 'only the Host may record a consultation derivation');
     default:
@@ -536,6 +543,8 @@ function onMessageSent(state: MessageMachineState, ctx: MessageGuardContext): Me
       workRun = true;
       break;
     }
+    // 发信行不收 `query_run`：问答轮发信由服务映成可信的非做事发件人（同 Host）。
+    case 'query_run':
     case 'other':
       // :1091-1093
       return reject('illegal', 'unsupported', 'the mailbox sender principal is not supported');
@@ -642,7 +651,8 @@ function onTextResponse(
     // :1642-1643 — text normalization runs before the pin and the receipt lookup.
     () => textBodyProblem(ctx),
     () => messagePinProblem(ctx.pins),
-    () => workRunAuthorizationProblem(ctx),
+    // 问答轮没有做事轮准入：服务层守它自己读到的 QueryRun 和 Session 版本。
+    () => ctx.principal === 'query_run' ? null : workRunAuthorizationProblem(ctx),
   );
   if (problem !== null) return problem;
   switch (state.status) {
@@ -660,7 +670,7 @@ function onTextResponse(
         { kind: 'write_message', change: 'responded' },
         { kind: 'append_event', eventType: 'SessionMessageResponded' },
         { kind: 'guard_message', expectedRevision: pinnedRevision(ctx) },
-        { kind: 'guard_work_run_facts' },
+        ...(ctx.principal === 'query_run' ? [] : [{ kind: 'guard_work_run_facts' } as const]),
       ]);
     case 'responded':
       // :1669 runs before :1670-1675; the single slot is first-come.
@@ -1494,7 +1504,8 @@ export function transitionMessage(state: MessageMachineState, event: MessageEven
 
 export type NewSessionMessageInput = {
   ref: SessionMessageRef;
-  sender: MessageHostSenderRecord | MessageWorkRunSenderRecord | MessageSecretaryRoundSenderRecord;
+  sender: MessageHostSenderRecord | MessageWorkRunSenderRecord | MessageSecretaryRoundSenderRecord
+    | MessageQueryRoundSenderRecord;
   recipient: MessageRecipient;
   bodyRef: ArtifactRef;
   sourceRef: SourceRefV1;

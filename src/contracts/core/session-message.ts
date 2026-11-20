@@ -21,6 +21,7 @@ import type {
 } from '../goal-decisions.js';
 import type { AggregateRef, DispatchCurrentV1 } from '../ledger.js';
 import type { QueryRunRef } from '../query-job.js';
+import type { ReworkActorV1 } from '../task-requeue.js';
 import type { CoreRejection, WriteResult } from './results.js';
 import type { SessionRef, VersionPin } from './identity.js';
 
@@ -131,7 +132,8 @@ export type MessageReadDispositionV1 =
   | { kind: 'undelivered'; reason: 'recipient_archived' | 'recipient_retired' };
 
 export type DecisionApplicationV1 = {
-  schemaVersion: 1; actor: ActorRef; appliedAt: string;
+  // `actor` 是落实这次决定的那次提交的 actor；批准参谋规划轮的返工请求时是那一轮（Q10a，返工这一族的形状）。
+  schemaVersion: 1; actor: ReworkActorV1; appliedAt: string;
   receipt: DecisionApplicationReceiptV1;
   changes: { before: VersionPin; after: VersionPin }[]; basisRebases?: GoalControlRebaseV1[];
 };

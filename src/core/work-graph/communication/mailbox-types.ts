@@ -247,6 +247,8 @@ export type ReadRight = { ok: true; allowed: boolean } | { ok: false; rejection:
 export type InboxPage = {
   items: SessionMessage[]; cursors: CommitCursor[]; nextCursor: string | null;
   sourceCursor: CommitCursor; recipient: SessionRef;
+  /** 这一页的信所在的工作区（做事轮、问答轮是线的工作区，规则 W）；读收件线要按它。 */
+  messageWorkspaceId: string;
 };
 
 export type DurableArchiveRequestRead =

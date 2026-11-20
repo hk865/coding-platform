@@ -40,7 +40,7 @@
 - `receipt-lookup.ts` — 唯一的已提交回执存储查找：按 identity/fingerprint 精确 `lookupCommit` 并分类 found/missing/conflict/invalid/unavailable（抛错也记为 unavailable）；另有只按 identity 的 `lookupCommittedReceiptByIdentity`（found/missing/invalid/unavailable，坏行→unavailable）。导出 `CommittedReceipt`（`receipt-lookup.ts:4`）、`ReceiptLookup`（`receipt-lookup.ts:6`）、`lookupCommittedReceipt`（`receipt-lookup.ts:18`）。
 - `record-guards.ts` — 全仓唯一的 guard 合并：同 key 不同 revision 立即 `revision_conflict`，绝不静默去重。
 - `record-codecs.ts` — Goal 家族记录/事件 codec、`canonicalRefKey`、Goal/Workspace 设置校验。
-- `rework-codecs.ts` — 返工/引用/notice origin 等纯形状校验（actor、Run、Session、Task 等 ref）。
+- `rework-codecs.ts` — 返工/引用/notice origin 等纯形状校验（actor、Run、Session、Task 等 ref）。`reworkActorProblem` 是返工这一族的请求者形状（`ActorRef`，或参谋规划轮的 `{kind:'agent', id, queryRunRef}`，agent 恰好带 `runRef`、`queryRunRef` 之一，Q10a）：TaskRequeue、返工拒绝和两个事件、重验轮的 `requestedBy`、返工请求事件、决定落实的 actor 都经它判。
 - `run-activity-codecs.ts` — `RunActivity`/`ActivityRecording` 记录与事件 codec；`ActivityRecording` 的当前格式带 `querySince`（null = 还没有 Query epoch），facts/span/ref 校验器导出供 Query codec 复用；两种记录的 SessionRef 都用 `rework-codecs.ts` 的正本 `sessionRefProblem`。
 - `run-record-codecs.ts` — `RunSnapshot@1`/`QueryRunSnapshot@1` 的纯校验唯一实现：两个 schema id、Run/QueryRun 形状检查、`decodeRun` 与 `Decoded`，以及 Run、任务 manifest、envelope 共用的工作区 pin 校验 `runWorkspacePinProblem`（带 `line`，经 `contracts/line.ts` 的 `lineRefProblem`）；`materials/record-readers.ts` 只保留注册和同名委托，`materials/run-snapshot-decoder.ts` 只保留 `decodeRun` 再导出。
 
@@ -76,10 +76,11 @@
 | `normalizeCallerGoalPins` | `src/core/work-graph/persistence/commit-compiler.ts:195` | 校验并归一化调用方 Goal pins | 组装 Goal 创建提交前 |
 | `compareCallerGoalPins` | `src/core/work-graph/persistence/commit-compiler.ts:247` | 比较 caller pins 与观察到的版本，返回不一致项 | 提交前核对 pins |
 | `createGoalGraphRepository` | `src/core/work-graph/persistence/graph-repository.ts:121` | 在 `GoalRecordTransactionPort` 上提供读快照/幂等查找/提交/重放 | Goal 图写入 owner |
-| `actorRefProblem` | `src/core/work-graph/persistence/rework-codecs.ts:98` | 校验 human/system/agent actor 的完整形状（agent 带 RunRef）；**正本** | actor 字段或嵌套 actor；旧副本见“不要做” |
-| `runRefProblem` | `src/core/work-graph/persistence/rework-codecs.ts:114` | 校验完整 Work RunRef | Work Run 字段，注意不是 QueryRunRef |
-| `sessionRefProblem` | `src/core/work-graph/persistence/rework-codecs.ts:154` | 校验完整的普通 `{projectId,sessionId}` SessionRef；**正本** | 普通 SessionRef 输入及嵌套字段；旧副本见“不要做”（CS-11、M1-31） |
-| `taskTripleProblem` | `src/core/work-graph/persistence/rework-codecs.ts:107` | 校验 Task 三元组（project/goal/task） | 需要 Task 身份时 |
+| `actorRefProblem` | `src/core/work-graph/persistence/rework-codecs.ts:100` | 校验 human/system/agent actor 的完整形状（agent 带 RunRef）；**正本** | actor 字段或嵌套 actor；旧副本见“不要做” |
+| `reworkActorProblem` | `src/core/work-graph/persistence/rework-codecs.ts:113` | 返工这一族的请求者形状（`ActorRef` 或参谋规划轮 actor，恰好一个 `runRef`/`queryRunRef`） | 返工、重验、返工请求、决定落实记录的请求者；不要另写 |
+| `runRefProblem` | `src/core/work-graph/persistence/rework-codecs.ts:127` | 校验完整 Work RunRef | Work Run 字段，注意不是 QueryRunRef |
+| `sessionRefProblem` | `src/core/work-graph/persistence/rework-codecs.ts:167` | 校验完整的普通 `{projectId,sessionId}` SessionRef；**正本** | 普通 SessionRef 输入及嵌套字段；旧副本见“不要做”（CS-11、M1-31） |
+| `taskTripleProblem` | `src/core/work-graph/persistence/rework-codecs.ts:120` | 校验 Task 三元组（project/goal/task） | 需要 Task 身份时 |
 | `aggregateRefProblem` | `src/core/work-graph/persistence/decision-record-codecs.ts:190` | 校验已知聚合判别式与全部身份字段 | VersionedRef/card 引用 |
 | `isWorkLinkRelation`、`checkTarget`、`checkWorkLinkRef` | `src/core/work-graph/persistence/decision-record-codecs.ts:211`、`src/core/work-graph/persistence/decision-record-codecs.ts:214`、`src/core/work-graph/persistence/decision-record-codecs.ts:253` | 五个 `WorkLinkTarget` 臂的关系/目标/完整 ref 校验 | 会话链接与角色线目标校验；不要另写本地判别 |
 | `versionPinProblem` | `src/core/work-graph/persistence/decision-record-codecs.ts:276` | VersionPin 的唯一校验：`{ref,revision}` 的 ref 已知、revision 为正整数；`allowAbsence` 允许 0（变更证明的 before） | 需要校验 `{ref,revision}` pin 时；不要另写本地 pin 检查 |

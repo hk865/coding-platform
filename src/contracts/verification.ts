@@ -35,7 +35,7 @@ import type { NewBasisInputRefV1, NoProgressCheckFactV1, SourceStampV1 } from ".
 import type { ResourceCapsReportV1 } from "./resource-caps.js";
 import { canonicalJson, type JsonValue } from "./canonical-json.js";
 import { isRecord, nonEmpty } from "./validation/common.js";
-import type { ReworkActorClass, ReworkFailureClass } from "./task-requeue.js";
+import type { ReworkActorClass, ReworkActorV1, ReworkFailureClass } from "./task-requeue.js";
 import type { FailingCheckFactV1 } from "./task-failure.js";
 
 /** Trusted Host actor for a check: a real human/system application host. */
@@ -194,7 +194,8 @@ export type ReverifyBasisV1 = {
 };
 /** Who opened a successor round and why (C8: who, class, reason, which time). */
 export type RoundReverifyFactV1 = {
-    requestedBy: ActorRef;
+    /** 人、平台、做事轮 agent，或参谋规划轮（Q10a）。 */
+    requestedBy: ReworkActorV1;
     /** Derived by `reworkActorClassOf`; never an input. */
     actorClass: ReworkActorClass;
     /** `reverifyFailureClass(predecessor)`: `check_failed` or `check_incomplete`. */

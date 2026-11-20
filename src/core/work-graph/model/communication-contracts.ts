@@ -43,6 +43,7 @@ import type { DispatchBasisFactsPort } from './dispatch-basis-contracts.js';
 import type { MaterialPort } from './material-contracts.js';
 import type { SessionDirectoryPort, SessionPage, SessionPageRequest } from './session-contracts.js';
 import type { GraphWrite } from './task-contracts.js';
+import type { QueryRoundPort } from './query-round-contracts.js';
 import type { SecretaryQueryRunPort } from './secretary-query-run-contracts.js';
 import type { RecipientExecutionsPort, DeliveryEligibilityFactsV1 } from './session-facts-contracts.js';
 import type { ExecutionEntryDependencies } from './execution-entry-contracts.js';
@@ -51,7 +52,8 @@ import { effectiveReplyHandler, isWaitMessage, messageFactsOfRecord, waitFactsOf
   type DeliveryFactsV1 } from '../state/message-machine.js';
 import { sameRef } from '../state/ref-equality.js';
 import type {
-  MessageAcceptedInput, MessageQueryAnswerSenderRecord, MessageSecretaryRoundSenderRecord, MessageWorkRunSenderRecord,
+  MessageAcceptedInput, MessageQueryAnswerSenderRecord, MessageQueryRoundSenderRecord, MessageSecretaryRoundSenderRecord,
+  MessageWorkRunSenderRecord,
   SessionMessageRecord, SessionMessageStatus,
 } from '../state/message-machine.js';
 
@@ -68,10 +70,13 @@ export type MessageHostSender = DecisionHostSenderV1;
 
 export type MessageWorkRunSender = MessageWorkRunSenderRecord;
 
-export type MessageSender = MessageHostSender | MessageWorkRunSender | MessageSecretaryRoundSender;
+export type MessageSender = MessageHostSender | MessageWorkRunSender | MessageSecretaryRoundSender | MessageQueryRoundSender;
 
 /** The trusted secretary sender the mailbox writes; every identity field comes from the resolver, never input. */
 export type MessageSecretaryRoundSender = MessageSecretaryRoundSenderRecord;
+
+/** 问答轮（非秘书请求轮）自己发信、回复时的发件人：身份全由问答轮解析得出；不带 `answerRef`，和正式答复分开。 */
+export type MessageQueryRoundSender = MessageQueryRoundSenderRecord;
 
 /** The stable identity of one persisted source part; shared by Kernel supply and mailbox consumption. */
 export function deriveSessionInputId(
@@ -533,6 +538,9 @@ export type SessionMailboxDependencies = {
   defaultInquiryDeadlineMs?: number;
   /** The one resolver; called only after a receipt miss; absent: a NEW secretary path is `unsupported`. */
   secretaryRounds?: SecretaryQueryRunPort;
+  /** 问答轮身份（`tasks/query-round.ts`）；`query_run` 调用方先经它：解析就绪且不是秘书请求轮的走问答轮自己的发件、读箱、
+   *  回复分支；没配、解析失败、请求轮照旧走秘书路径，原文不变。 */
+  queryRounds?: QueryRoundPort;
   /** The request's owner read (model's `RequestOwnerReadPort`, satisfied by `W/tasks/request-facts.ts`);
    * absent: a NEW secretary path is `unsupported`; the owner is never guessed from the sending secretary. */
   requestOwners?: RequestOwnerReadPort;

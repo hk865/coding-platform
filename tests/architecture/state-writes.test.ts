@@ -221,6 +221,13 @@ const PROTECTED_TYPES: readonly ProtectedType[] = [
   { file: 'src/contracts/role-lines.ts', name: 'ProjectNoticeV1', kind: 'record',
     fields: ['subject', 'kind', 'summary', 'operation', 'since', 'revision'],
     use: 'state/project-notice.ts projectNoticeNext' },
+  // 通信与权限拆开（121-152）P1：动作请求和暂缓领取两张记录，每个字段只由各自的 state/ 构造器写。
+  { file: 'src/core/work-graph/state/action-request.ts', name: 'ActionRequestV1', kind: 'record', fields: 'all',
+    use: 'state/action-request.ts newDispatchRequest, newStopRequest, approveDispatchRequest, releaseStopRequest, '
+      + 'applyDispatchRequest, voidActionRequest, denyActionRequest, withdrawActionRequest or recordStopNotSent' },
+  { file: 'src/core/work-graph/state/task-claim-hold.ts', name: 'TaskClaimHoldV1', kind: 'record', fields: 'all',
+    use: 'state/task-claim-hold.ts nextTaskClaimHold, placeHoldReason, releaseHoldReason, releaseAllHoldReasons, '
+      + 'occupyHoldPointer or yieldHoldPointer' },
 ];
 
 // -------------------------------------------------------------------------- //

@@ -14,6 +14,8 @@ import { MAX_NEW_BASIS_INPUT_REFS } from '../../../contracts/no-progress.js';
 import { MAX_AUTO_REWORK_LIMIT, REWORK_FAILURE_CLASSES } from '../../../contracts/task-requeue.js';
 import { ROUND_CHECK_INCOMPLETE_CAUSES } from '../../../contracts/verification.js';
 import { hasOnlyKeys, isNonNeg, isPos, isRecord, isSha256Hex, nonEmpty } from '../../../contracts/validation/common.js';
+import { checkShape } from '../../../contracts/validation/data-format.js';
+import { QueryRunRefShape } from '../../../contracts/data-format-refs.js';
 import { isArtifactRef } from '../../record-store/body-codec.js';
 
 type UnknownRecord = Record<string, unknown>;
@@ -103,6 +105,17 @@ export function actorRefProblem(value: unknown, label: string): Problem {
   if (value['kind'] !== 'agent') return `${label} kind must be human, system or agent`;
   if (!hasOnlyKeys(value, ['kind', 'id', 'runRef'])) return `${label} carries unknown fields`;
   return runRefProblem(value['runRef'], `${label}.runRef`);
+}
+/**
+ * 返工这一族（TaskRequeue、返工拒绝、重验轮、返工请求和它们的事件）记的请求者（Q10a 甲）：`ActorRef`，或问答轮的
+ * `{kind:'agent', id, queryRunRef}`。agent 恰好带 `runRef` 或 `queryRunRef` 之一，两个都有或都没有拒。
+ */
+export function reworkActorProblem(value: unknown, label: string): Problem {
+  if (!isRecord(value) || value['kind'] !== 'agent' || !('queryRunRef' in value)) return actorRefProblem(value, label);
+  if (!nonEmpty(value['id']) || !hasOnlyKeys(value, ['kind', 'id', 'queryRunRef'])) {
+    return `${label} must carry exactly one of runRef and queryRunRef`;
+  }
+  return checkShape(QueryRunRefShape, value['queryRunRef'], 'stored') === null ? null : `${label}.queryRunRef must be a QueryRunRef`;
 }
 export function taskTripleProblem(value: unknown, label: string): Problem {
   if (!isRecord(value) || !hasOnlyKeys(value, ['projectId', 'goalId', 'taskId'])

@@ -40,7 +40,7 @@ import {
 import { MIB, type ResourceCapUnavailableReasonV1 } from '../../../contracts/resource-caps.js';
 import type { FinalizedChecks } from '../model/evidence-contracts.js';
 import {
-    actorRefProblem, incompleteCauseProblem, isSha256Hex, newBasisInputRefsProblem, reverifyBasisProblem,
+    incompleteCauseProblem, isSha256Hex, newBasisInputRefsProblem, reverifyBasisProblem, reworkActorProblem,
     noticeOriginFieldsProblem, NOTICE_ORIGIN_COMMIT_CURSOR_FIELDS, type NoticeOriginWireV1,
 } from './rework-codecs.js';
 import { encodeEventEnvelope } from './event-envelope.js';
@@ -226,7 +226,7 @@ function reverifyFactProblem(value: unknown): string | null {
         'exemption', 'sourceChanged', 'newInputRefs', 'reason'])) {
         return 'a round chain reverify must be a RoundReverifyFactV1';
     }
-    const actor = actorRefProblem(value['requestedBy'], 'a round chain reverify requestedBy');
+    const actor = reworkActorProblem(value['requestedBy'], 'a round chain reverify requestedBy');
     if (actor !== null) return actor;
     if (!ACTOR_CLASSES.includes(value['actorClass'] as string)) return 'a round chain reverify actorClass is not a ReworkActorClass';
     if (!REVERIFY_FAILURE_CLASSES.includes(value['failureClass'] as string)) {

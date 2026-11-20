@@ -1111,7 +1111,9 @@ export function createDecisionMessageService(
 
     const next = nextSessionMessageRecord(message, { kind: 'decision_applied', application });
     const appliedAt = deps.now();
-    const eventActor: ActorRef = actor ?? application.actor;
+    // 走到这里的调用方过了上面的准入（Host 或做事轮，`actor` 不为 null），`application.actor` 只是原来的兜底；它在批准
+    // 参谋规划轮的返工请求时是那一轮（Q10a，没有 Run），那时 `actor` 是答卡的 Host，所以兜底只会是 `ActorRef`。
+    const eventActor: ActorRef = actor ?? application.actor as ActorRef;
     return persistDecisionMessage(owned, {
       before: message, next, guards: [], claims: [],
       event: decisionEvent('SessionMessageDecisionApplied', identityKey, requestId, owned, appliedAt, eventActor, next),

@@ -26,7 +26,7 @@ import type {
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { DecisionChangeProofV1 } from '../../../contracts/goal-decisions.js';
 import {
-  TASK_REWORK_REASON_MAX_CHARS, TASK_REWORK_REFUSAL_CODES,
+  TASK_REWORK_REASON_MAX_CHARS, TASK_REWORK_REFUSAL_CODES, type ReworkActorV1,
   type TaskRequeueRef, type TaskRequeueSnapshotV1, type TaskReworkRefusalRef, type TaskReworkRefusalSnapshotV1,
 } from '../../../contracts/task-requeue.js';
 import { invalid, isRecord, nonEmpty, parseObject } from '../../../contracts/validation/common.js';
@@ -39,13 +39,17 @@ import { WORK_EXECUTION_BY_SESSION_LOOKUP } from '../model/session-facts-contrac
 import { encodeEventEnvelope } from '../persistence/event-envelope.js';
 import { taskDispatchStateProblem } from '../persistence/execution-entry-codecs.js';
 import {
-  actorRefProblem, controlIntentRefProblem, delegatedWriteProvenanceProblem, goalRefProblem, hasOnlyKeys,
+  controlIntentRefProblem, delegatedWriteProvenanceProblem, goalRefProblem, hasOnlyKeys, reworkActorProblem,
   isNonNegativeSafeInteger, isPositiveSafeInteger, isSha256Hex, newBasisInputRefsProblem, noProgressKeyProblem,
   noticeOriginFieldsProblem, NOTICE_ORIGIN_COMMIT_CURSOR_FIELDS, type NoticeOriginWireV1,
   planRevisionRefProblem, reworkFailureClassProblem, runRefProblem, sameJson, sessionRefProblem, sourceStampProblem,
   taskAttemptRefProblem, taskBudgetProblem, taskRequeueRefProblem, taskTripleProblem, verificationRoundRefProblem,
 } from '../persistence/rework-codecs.js';
 import { sessionMessageRefProblem as messageRefProblem } from './codec-shape-checks.js';
+import { defineEvent, f, type InferEvent } from '../../../contracts/data-format.js';
+import { TaskClaimHoldRefShape } from '../../../contracts/data-format-refs.js';
+import { createEventCodec, createRecordCodec } from '../persistence/field-table-codec.js';
+import { TASK_CLAIM_HOLD_FORMAT } from '../state/task-claim-hold.js';
 
 /** Encoding selectors for the new records. Reuse the existing @1 convention. */
 export const TASK_ATTEMPT_SCHEMA_ID = 'TaskAttemptSnapshot@1';
@@ -94,7 +98,7 @@ export type TaskClaimedEvent = {
 /**
  * `TaskRequeued` (TASK-16/17/27, GOAL-29): the replay source of a requeue
  * receipt. `actor` is the requester (`requeue.requestedBy`): an operator, a
- * platform automation actor or an Agent.
+ * platform automation actor, an Agent, or an adviser planning round (Q10a).
  */
 export type TaskRequeuedEvent = {
   eventId: string;
@@ -102,7 +106,7 @@ export type TaskRequeuedEvent = {
   schemaVersion: typeof TASK_REWORK_EVENT_SCHEMA_VERSION;
   occurredAt: string;
   identityKey: string;
-  actor: ActorRef;
+  actor: ReworkActorV1;
   fingerprint: string;
   requeue: TaskRequeueSnapshotV1;
   /** 7A §3.5: the acknowledged message; written only when the requeue carried one. */
@@ -121,7 +125,7 @@ export type TaskReworkRefusedEvent = {
   schemaVersion: typeof TASK_REWORK_EVENT_SCHEMA_VERSION;
   occurredAt: string;
   identityKey: string;
-  actor: ActorRef;
+  actor: ReworkActorV1;
   fingerprint: string;
   refusal: TaskReworkRefusalSnapshotV1;
 };
@@ -571,7 +575,7 @@ export function taskRequeueSnapshotProblem(value: unknown): string | null {
   }
   const reasonProblem = boundedReasonProblem(value['reason'], 'TaskRequeue reason');
   if (reasonProblem !== null) return reasonProblem;
-  const actorProblem = actorRefProblem(value['requestedBy'], 'TaskRequeue requestedBy');
+  const actorProblem = reworkActorProblem(value['requestedBy'], 'TaskRequeue requestedBy');
   if (actorProblem !== null) return actorProblem;
   if (!nonEmpty(value['requestedAt'])) return 'TaskRequeue requestedAt is required';
   if (value['agentProvenance'] !== null) {
@@ -678,7 +682,7 @@ export function taskReworkRefusalSnapshotProblem(value: unknown): string | null 
       return 'TaskReworkRefusal matchedRequeueRef belongs to another Task';
     }
   }
-  const actorProblem = actorRefProblem(value['requestedBy'], 'TaskReworkRefusal requestedBy');
+  const actorProblem = reworkActorProblem(value['requestedBy'], 'TaskReworkRefusal requestedBy');
   if (actorProblem !== null) return actorProblem;
   if (!nonEmpty(value['refusedAt'])) return 'TaskReworkRefusal refusedAt is required';
   if (!isNonNegativeSafeInteger(value['goalEndedRunsAtRefusal'])) {
@@ -773,7 +777,7 @@ function reworkEventBody(event: EncodedDomainEvent, eventType: string): Record<s
   }
   if (!nonEmpty(body['identityKey'])) return `${eventType} identityKey is required`;
   if (!nonEmpty(body['fingerprint'])) return `${eventType} fingerprint is required`;
-  const actorProblem = actorRefProblem(body['actor'], `${eventType} actor`);
+  const actorProblem = reworkActorProblem(body['actor'], `${eventType} actor`);
   if (actorProblem !== null) return actorProblem;
   return body;
 }
@@ -860,8 +864,34 @@ function validateReworkRefusedEvent(event: EncodedDomainEvent): DecodeResult<Enc
   return decoded.status === 'decoded' ? { status: 'decoded', value: event } : decoded;
 }
 
+// -------------------------------------------------------------------------- //
+// 暂缓领取（设计 3.3）：和领取记录一组注册（Q4a），领取、返工每次都读它          //
+// -------------------------------------------------------------------------- //
+
+const holdId = f.string({ min: 1, unit: 'codePoints' });
+const TASK_CLAIM_HOLD_CHANGED_FIELDS = {
+  identityKey: holdId,
+  fingerprint: holdId,
+  change: f.enumOf(['placed', 'released', 'released_all'] as const),
+  hold: f.ref(TaskClaimHoldRefShape),
+  revision: f.revision({ min: 1 }),
+  /** 放下或点名撤的那条原因；撤全部没有。 */
+  reasonId: f.nullable(holdId),
+};
+const TASK_CLAIM_HOLD_CHANGED_FORMAT = defineEvent({
+  name: 'TaskClaimHoldChanged',
+  eventType: 'TaskClaimHoldChanged',
+  schemaVersion: 1,
+  fields: TASK_CLAIM_HOLD_CHANGED_FIELDS,
+});
+/** 暂缓 owner 自己那次提交的事件（动作请求、领取顺带改暂缓时用它们自己的事件）。 */
+export type TaskClaimHoldChanged = InferEvent<'TaskClaimHoldChanged', typeof TASK_CLAIM_HOLD_CHANGED_FIELDS>;
+export const taskClaimHoldCodec = createRecordCodec(TASK_CLAIM_HOLD_FORMAT);
+export const taskClaimHoldChangedCodec = createEventCodec(TASK_CLAIM_HOLD_CHANGED_FORMAT);
+
 export const TASK_CLAIM_RECORD_SCHEMAS: RecordBackendSchemas = {
   records: [
+    taskClaimHoldCodec.registration,
     { schemaId: TASK_ATTEMPT_SCHEMA_ID, aggregateType: 'TaskAttempt', validate: validateAttemptRecord },
     { schemaId: TASK_CLAIM_OUTBOX_SCHEMA_ID, aggregateType: 'DispatchOutboxEntry', validate: validateOutboxRecord },
     { schemaId: TASK_REQUEUE_SCHEMA_ID, aggregateType: 'TaskRequeue', validate: validateRequeueRecord,
@@ -872,6 +902,7 @@ export const TASK_CLAIM_RECORD_SCHEMAS: RecordBackendSchemas = {
     { eventType: TASK_CLAIMED_EVENT_TYPE, schemaVersion: TASK_CLAIMED_EVENT_SCHEMA_VERSION, validate: validateClaimedEvent },
     { eventType: TASK_REQUEUED_EVENT_TYPE, schemaVersion: TASK_REWORK_EVENT_SCHEMA_VERSION, validate: validateRequeuedEvent },
     { eventType: TASK_REWORK_REFUSED_EVENT_TYPE, schemaVersion: TASK_REWORK_EVENT_SCHEMA_VERSION, validate: validateReworkRefusedEvent },
+    taskClaimHoldChangedCodec.registration,
   ],
   lookups: [
     { name: WORK_EXECUTION_BY_SESSION_LOOKUP, aggregateType: 'DispatchOutboxEntry',

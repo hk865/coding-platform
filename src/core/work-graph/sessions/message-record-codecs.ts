@@ -52,6 +52,7 @@ import type {
 } from '../model/communication-contracts.js';
 import type { NoticeOriginWireV1 } from '../persistence/decision-record-codecs.js';
 import { aggregateRefProblem } from '../persistence/decision-record-codecs.js';
+import { reworkActorProblem } from '../persistence/rework-codecs.js';
 import { encodeEventEnvelope } from '../persistence/event-envelope.js';
 import { createEventCodec } from '../persistence/event-codec-factory.js';
 
@@ -545,7 +546,19 @@ export function checkMessageSender(value: unknown): Problem {
     if (!isPos(value['generation'])) return 'secretary_round sender generation must be a positive integer';
     return null;
   }
-  return 'message sender kind must be host, work_run or secretary_round';
+  if (value['kind'] === 'query_run') {
+    // 问答轮自己发的信、写的回复：本轮 Session、QueryRun 和代数，不带 `answerRef`（带的是正式答复，另一种）。
+    if (!hasOnlyKeys(value, ['kind', 'sessionRef', 'queryRunRef', 'generation'])) {
+      return 'query_run sender carries unknown fields';
+    }
+    const session = checkPlainSessionRef(value['sessionRef']);
+    if (session !== null) return `query_run sender session: ${session}`;
+    const run = checkQueryRunRef(value['queryRunRef']);
+    if (run !== null) return `query_run sender run: ${run}`;
+    if (!isPos(value['generation'])) return 'query_run sender generation must be a positive integer';
+    return null;
+  }
+  return 'message sender kind must be host, work_run, secretary_round or query_run';
 }
 
 function checkQueryRunRef(value: unknown): Problem {
@@ -591,10 +604,13 @@ export function checkQueryAnswerSender(value: unknown): Problem {
 }
 
 /** A response slot accepts the original work_run reply or the derived
- * query_run Answer reply. The message `sender` itself stays host/work_run. */
+ * query_run Answer reply. The message `sender` itself stays host/work_run.
+ * 问答轮自己的文字回复也是 `query_run`，但不带 `answerRef`：按有没有这个键分两种查。 */
 export function checkResponseSender(value: unknown): Problem {
   if (!isRecord(value)) return 'message response sender must be an object';
-  if (value['kind'] === 'query_run') return checkQueryAnswerSender(value);
+  if (value['kind'] === 'query_run') {
+    return 'answerRef' in value ? checkQueryAnswerSender(value) : checkMessageSender(value);
+  }
   const workRun = checkMessageSender(value);
   if (workRun !== null) return workRun;
   if (value['kind'] !== 'work_run') return 'message response sender must be a work_run or query_run sender';
@@ -881,7 +897,9 @@ function checkDecisionApplicationShape(value: unknown): Problem {
     return 'decision application carries unknown fields';
   }
   if (value['schemaVersion'] !== 1) return 'decision application schemaVersion must be 1';
-  const actor = checkActorRefShape(value['actor']);
+  // 批准参谋规划轮的返工请求时 actor 是那一轮（Q10a）；别的照旧是 ActorRef，原文不变。
+  const actor = isRecord(value['actor']) && 'queryRunRef' in value['actor']
+    ? reworkActorProblem(value['actor'], 'actor') : checkActorRefShape(value['actor']);
   if (actor !== null) return `decision application actor: ${actor}`;
   if (!nonEmpty(value['appliedAt'])) return 'decision application requires appliedAt';
   const receipt = value['receipt'];

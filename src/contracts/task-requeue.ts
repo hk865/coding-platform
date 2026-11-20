@@ -19,6 +19,8 @@ import type { ArchiveRequeueOriginV1 } from './session-anomaly.js';
 import type { GoalRef } from './ledger.js';
 import type { NewBasisInputRefV1, NoProgressKeyV1, SourceStampV1 } from './no-progress.js';
 import type { PlanRevisionRef } from './plan.js';
+import type { QueryRunRef } from './query-job.js';
+import { sameJson } from './fingerprint.js';
 import type { VerificationRoundRef } from './verification.js';
 
 // ------------------------------------------------------------------------ //
@@ -70,31 +72,46 @@ export function isAutomationActor(actor: ActorRef): boolean {
 }
 
 /**
+ * 问答轮请求者的 actor（Q10a 甲）：按线派生的 agent 号（和这条线做事轮的 agent 同号）加这一轮的 QueryRun。它没有
+ * `runRef`，所以不是 `ActorRef`，只在返工这一族（TaskRequeue、返工拒绝、重验轮、返工请求和它们的事件、批准落实）出现；
+ * 全局 `ActorRef` 不动。
+ */
+export type QueryRoundActorV1 = { kind: 'agent'; id: string; queryRunRef: QueryRunRef };
+/** 返工这一族记的请求者：人、平台、做事轮的 agent（带 `runRef`），或参谋规划轮（带 `queryRunRef`）。 */
+export type ReworkActorV1 = ActorRef | QueryRoundActorV1;
+
+/** 问答轮请求者：它没有 Run，读 Run、取 provenance 的地方先用这个判。 */
+export function isQueryRoundActor(actor: ReworkActorV1): actor is QueryRoundActorV1 {
+  return actor.kind === 'agent' && 'queryRunRef' in actor;
+}
+
+/**
  * Rework actor class (spec §1, §4 TD-6). Never decided by `ActorRef.kind`
  * alone: a Host started with a `kind:'system'` actor is still an operator.
  *
  * - `work_run` principal → `agent` (the actor must be that Run's agent actor);
  * - `host` principal → `system` when the actor is a platform automation actor,
  *   otherwise `human` (the actor must be the principal's own actor);
+ * - `query_run` principal → `agent` only with this round's own actor (Q10a 甲：参谋规划轮请返工、重验；配人、配带
+ *   `runRef` 的 agent 仍是 null);
  * - `null` principal classifies a recorded actor (`requestedBy`, a disposition
  *   record `actor`, `desiredStateRequestedBy`) by the same rule (§11 `actorClass`).
  *
- * Returns null for a principal that can never perform rework (`query_run`) or
- * an actor that does not belong to the principal.
+ * Returns null for an actor that does not belong to the principal.
  */
-export function reworkActorClassOf(principal: CorePrincipal | null, actor: ActorRef): ReworkActorClass | null {
+export function reworkActorClassOf(principal: CorePrincipal | null, actor: ReworkActorV1): ReworkActorClass | null {
   if (principal === null) {
     if (actor.kind === 'agent') return 'agent';
     return isAutomationActor(actor) ? 'system' : 'human';
   }
   switch (principal.kind) {
     case 'work_run':
-      return actor.kind === 'agent' && sameRunRef(actor.runRef, principal.runRef) ? 'agent' : null;
+      return actor.kind === 'agent' && !isQueryRoundActor(actor) && sameRunRef(actor.runRef, principal.runRef) ? 'agent' : null;
     case 'host':
       if (actor.kind === 'agent' || actor.kind !== principal.actor.kind || actor.id !== principal.actor.id) return null;
       return isAutomationActor(actor) ? 'system' : 'human';
     case 'query_run':
-      return null;
+      return isQueryRoundActor(actor) && sameJson(actor.queryRunRef, principal.queryRunRef) ? 'agent' : null;
     default: {
       const unknownPrincipal: never = principal;
       void unknownPrincipal;
@@ -201,10 +218,10 @@ export type TaskRequeueSnapshotV1 = {
   /** When non-null the TASK-03 claim budget must equal it. */
   budget: TaskBudgetV1 | null;
   reason: string;
-  /** human, system or agent (agent carries its runRef). */
-  requestedBy: ActorRef;
+  /** human, system or agent (agent carries its runRef; an adviser planning round carries its queryRunRef, Q10a). */
+  requestedBy: ReworkActorV1;
   requestedAt: string;
-  /** Non-null only when the actor class is `agent`. */
+  /** Non-null only for an agent with a `runRef` (a work run); an adviser planning round has none (Q10a). */
   agentProvenance: DelegatedWriteProvenanceV1 | null;
   automation: TaskRequeueAutomationV1;
   historySource: TaskRequeueHistorySourceV1 | null;
@@ -256,7 +273,7 @@ export type TaskReworkRefusalSnapshotV1 = {
   source: SourceStampV1 | null;
   /** requeue `no_new_basis`: the TaskRequeue with the same key; otherwise null. */
   matchedRequeueRef: TaskRequeueRef | null;
-  requestedBy: ActorRef;
+  requestedBy: ReworkActorV1;
   refusedAt: string;
   /** `countEndedGoalRuns` read before source capture; staleness watermark. */
   goalEndedRunsAtRefusal: number;

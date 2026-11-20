@@ -16,6 +16,7 @@ import { lastHolderOf } from '../../core/work-graph/state/unknown-call-review.js
 import { automationConfirmationCause } from '../../core/work-graph/state/decision-policy.js';
 import { reverifyExemptionOfFacts, successorAutoCount } from '../../core/work-graph/state/verification-machine.js';
 import { isUnenteredReviewRoundForCancellation, reviewRoundEndedKnown } from '../../core/work-graph/state/review-lease.js';
+import { scribeStopHeld } from '../../core/work-graph/state/task-claim-hold.js';
 import type {
   GoalWaitBasisV1, WorkflowAdvanceResult, WorkflowOperation, WorkflowSessionRequeue, WorkflowSessionReview,
 } from './contracts.js';
@@ -61,7 +62,7 @@ export type TaskGateDependencies = {
   workflow: Pick<WorkflowDependencies,
     'unknownCallReviews' | 'sourceAuthority' | 'decisionMessages' | 'runtime' | 'claims' | 'evidence' | 'plans'
     | 'taskInputs' | 'decisionReads' | 'pendingMemberCreations' | 'pendingReworkRequests'
-    | 'pendingHandoffApprovals'>;
+    | 'pendingHandoffApprovals' | 'claimHolds'>;
   bindingForRole(config: WorkflowHostConfiguration, projectId: string, workspaceId: string, role: string): Binding | null;
   isUnadmittedStarting(owned: Owned, runRef: RunRef): Promise<boolean>;
   claimContinuation(owned: Owned, base: Base, goal: GoalSnapshot, planRef: PlanRevisionRef, task: RuntimeTask,
@@ -715,6 +716,23 @@ export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
       } else if (read.status !== 'not_found') {
         return waitingResult(null, 'unknown_call_review_unreadable: the selected Run\'s review record blocks this requeue',
           undefined, goalWaitBasisOf(goalRead.value.goal, ['unknown_call_review:unreadable'], ['UnknownCallReview', 'Goal']));
+      }
+    }
+    // 2.6（A14）：书记硬停过这个任务、那条暂缓原因还 held，平台的 `requeue_task` 等、不写；读不出也等（不当成没有，
+    // 同上面审查记录读不出）。重验不看它（Q9）。没接读口时跳过，返工 owner 自己还会挡 `system` 类。
+    if (operation.kind === 'requeue_task' && deps.claimHolds !== undefined) {
+      const goal = goalRead.value.goal;
+      const holdUnreadable = () => waitingResult(null, 'claim_hold_unreadable: the Task\'s claim hold blocks this requeue',
+        undefined, goalWaitBasisOf(goal, ['claim_hold:unreadable'], ['TaskClaimHold', 'Goal']));
+      let hold;
+      try {
+        hold = await deps.claimHolds.readHold(owned.ctx,
+          { taskRef: { projectId: row.ref.projectId, goalId: row.ref.goalId, taskId: row.ref.taskId } });
+      } catch { return holdUnreadable(); }
+      if (hold.status !== 'ready' && hold.status !== 'not_found') return holdUnreadable();
+      if (hold.status === 'ready' && scribeStopHeld(hold.value)) {
+        return waitingResult(null, 'scribe_stop_held: the scribe stopped this Task; the requeue waits until its claim hold is released',
+          undefined, goalWaitBasisOf(goal, ['claim_hold:scribe_stop'], ['TaskClaimHold', 'Goal']));
       }
     }
     return await automationConfirmation(base, goalRead.value.goal, row, operation);

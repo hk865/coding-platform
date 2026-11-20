@@ -45,13 +45,13 @@
 - `session-anomaly.ts` — Session 异常锚点的构造/迁移/读取与 Task 归档状态派生。
 - `request-rounds.ts` — 请求轮构造：新请求、路由轮（普通路由与 `routing: null` 的归属臂）、未开始结束、新尝试、吸收、intake、entered；归属臂把 `goalAttribution.goalId` 同时写进 `job.goalId` 与 `job.goalAttribution`（下游按字符串比较），`understanding` 保持 `null`，普通路由臂不变；理解命令的合法状态迁移 `live → closed|consumed`、当前 generation 读取，以及冻结材料列表上仍有效授权集的唯一纯规则（每条命令按自己的 operation 判 generation/state/root owner，按 Goal 去重并保持轮次顺序）。
 - `review-lease.ts` — 复查租约释放、可证明未进入的复查取消、复查轮已知结束。
-- `control-intent-machine.ts` — ControlIntent 机器：一次暂停/取消/恢复/steer 请求的归宿，以及提交前检查。
+- `control-intent-machine.ts` — ControlIntent 机器：一次暂停/取消/恢复/steer 请求的归宿，以及提交前检查。 `control_submitted` 可带来源标记 `source: 'action_request'`（动作请求落实的控制，缺省是调用方自己的）；`controlSubmissionProblem` 的可选 `source` 让动作来源的控制遇人的暂停指针 `busy`（人自己在暂停时 steer 照旧排队）；意图记录不加字段。
 
 ### Run/Attempt/Query
 
 做 Run、Attempt/Lease/Outbox、Query 生命周期、活动替换与无进展判定的去这组。
 
-- `run-machine.ts` — Run 机器：status/outcome、V2 入口相位、控制指针；每次写入整条 Run。
+- `run-machine.ts` — Run 机器：status/outcome、V2 入口相位、控制指针；每次写入整条 Run。 Run 的 `control_submitted` 事件同样可带 `source`，`controlSubmissionRunEvent` 收可选第六参，RUN-12..15 把它传给 `controlSubmissionProblem`；`line-status.ts` 不传。
 - `attempt-machine.ts` — TaskAttempt / TaskLease / DispatchOutboxEntry 三部机器与 Run 事件映射；与 Run 事件同一提交。outbox 记录 `DispatchOutboxRecord` 和 `DispatchStateV1` 的正本在 `contracts/execution-read.ts`，这里转出。
 - `query-run-recovery.ts` — QueryRun/QueryJob 生命周期构造与恢复：claimed/prepared/entering/entered/unknown/settled。
 - `running-admission.ts` — 运行中并发的纯规则：`runningGroupOf` 是五职责到四组的唯一映射（reviewer → executor，没有职责依据的 `unknown` 也按 executor 计）；`countsRunningAdmission`/`emptyRunningCounts`/`countRunningAdmission` 只算 entering/entered/unknown 且每个占用 Session 一次；`admitModelCall` 是唯一判定；不读存储、不保存计数。
@@ -66,8 +66,8 @@
 
 - `task-node-commit.ts` — 节点级审核（决定 121-45）的纯规则：`nodeReviewProblem`（哪个节点要人审：`every_step`、非 plan-only 的 work、适用的归约已 satisfied、有文件；不审时给原因）、`taskNodePending`（要审且该归约修订号还没有审核事实）、`taskNodeFilesOf`（节点自己 Run 的执行文件，去掉 `.workbench/`，definite 在前、按路径去重）、`taskAwaitsReview`（NR-24：S9 的 review-packet 开轮且检查都结了、K3 的 `awaiting_advice`/`awaiting_approval`/`needs_decision`，都算 live）、`nodeInFlight`（work 节点 Run 已结束、检查和完成还没落成归约，即 `verifying`：`every_step` 期间不领新 Task，它自己的轮次链照推）、`reviewedContentProblem`（人读到的路径集和 blob 与现在逐个比）和唯一构造 `taskNodeCommitOf`/`taskNodeCommitRefOf`。
 
-- `task-machine.ts` — Task 机器：相位投影（P1..P20）与写入合法性（TASK-01..30）、缩减/重排队记录。关口的处置照旧冻结，G8B B5 只放过人采用的计划按 R1 合规取代的关口（`TaskDispositionFacts.gateReplaced`，由计划校验的 `replacedGateIdsOf` 在采用时算好传进来，状态机不另判）。
-- `task-failure.ts` — Task 失败事实：失败分类、重做权限与围栏、自动化裁决、refusal 记录、`modelServiceOf` 与 `permissionInterruptionOf`。
+- `task-machine.ts` — Task 机器：相位投影（P1..P20）与写入合法性（TASK-01..30）、缩减/重排队记录。关口的处置照旧冻结，G8B B5 只放过人采用的计划按 R1 合规取代的关口（`TaskDispositionFacts.gateReplaced`，由计划校验的 `replacedGateIdsOf` 在采用时算好传进来，状态机不另判）。领取的 `TaskClaimFacts.claimHold`（暂缓里挡着的那一条）由 `taskClaimProblem` 在审查豁免之前判，审查领取也挡，拒绝原文在 `claimHoldProblem`（held：`claim hold` + 放的人和理由；叫停卡：`stop request`）。`TaskRequeue.agentProvenance` 恰在带 `runRef` 的 agent（做事轮）时有；参谋规划轮的请求者（`QueryRoundActorV1`）记 `null`（Q10a）。
+- `task-failure.ts` — Task 失败事实：失败分类、重做权限与围栏、自动化裁决、refusal 记录、`modelServiceOf` 与 `permissionInterruptionOf`。返工拒绝的 `requestedBy` 和 `isGoalFanOutActor` 收返工这一族的请求者（`ReworkActorV1`，含参谋规划轮）。
 - `goal-confirm.ts` — `goals/confirm-draft` 的纯规则：`decideGoalConfirm` 的拒绝顺序（不是最新已答轮 → `revision_conflict`；草稿下标越界 → `invalid`；同一 `(answerRef, draftIndex)` 已确认 → `revision_conflict`）、确认后的 objective 文本 `confirmObjectiveText`（正文与每条完成标准都经 `normalizeObjective`），以及不可变 `InitializationBinding@1` 的唯一构造 `newInitializationBinding`（ref 指 answer+draft，revision 与 goalRevision 都是 1，顺序和重复原样保留）。无 I/O、无时钟、无 id；服务只编码它并放进自己的一次提交。
 - `goal-copy.ts` — 复制的纯决定：只有 `cancelled` 源可复制；确认带回 `expectedSourceRevision` 时先核对源 revision；勾选的干预必须是 owner 读到的、可选的候选，同一 ref 勾选两次被 `invalid` 拒绝（6B 没有读端口时候选集为空，非空勾选被拒而不是被信任）；出生设置保留源的 autonomy 与 order、清空「等前一个」和并行风险，再由 `isLegalSettings` 查形状；决定给出 `continuedFrom`、`copiedInterventions`（勾中的候选 ref，按勾选顺序）、`retract`（未勾中的候选 ref，按候选顺序）与 `selection`（`retract` 非空即 `retraction_pending`）。`planReanchorHook` 包 7D1 的 `planReanchor`，复制的出生提交按职责各调一次（入参、结果是 `PlanReanchorHookInputV1`、`PlanReanchorHookResultV1`）。
 - `goal-machine.ts` — Goal 机器：目标状态、计划指针、完成记录；fan-out/resume 身份与展示归约；re-export `GOAL_FAN_OUT_ACTOR`。
@@ -76,11 +76,11 @@
 - `plan-machine.ts` — PlanProposal 机器与 PlanRevision 派生：candidate→accepted 与 Goal 指针同一提交；候选与提案事件带必填可空的 `sourceMessageRef`（干预消息，其他写者为 `null`）。
 - `architecture-proposal-machine.ts` — `ArchitectureProposal` 状态机：写入时 `pending`，之后只改 `state`（`pending → applied | rejected | stale`）与一次进入冻结批的 `batchRef`；内容（pin/ops/moves/reason/proposer/operation ref）不可变，`ARCHITECTURE_PROPOSAL_STATES` 是闭集，`newArchitectureProposalRecord`/`transitionArchitectureProposal` 只复制记录并改 revision/state/batchRef；无存储、时钟或 id。
 - `plan-candidate.ts` — 计划候选的纯决定与机械诊断（§6.1.3、§6.2）：`decidePlanCandidate` 按审阅/修复读与采用策略给出请求审阅、请求修复、采用、出卡或等待（首次匹配即返回，不读存储；G8B B5：降低或改变关口标准的候选排第一行，直接出人的卡）；`taskVerificationCoverage` 是一个任务的检查轮的唯一覆盖（只取映射它的义务、只用适用于它的检查：`taskIds` 为 `"all"`，或列出它，闸门还算它覆盖的工作任务，`gateCoveredTaskIds`），开轮编译、交表、采用和候选诊断都经它；`planCoverageGaps` 对每个必需义务映射的活动任务各算一次，报出缺口（带任务）；`diagnosePlanCandidate` 按缺口逐条报 `no_registered_check`（同一要求在几个任务上缺只报一条；审阅类要求由 `review-packet` 项覆盖，第 9 片起不再报），`checks: null` 是覆盖未知、永不采用，`checks: []` 是已配置但没有注册检查（B06 G2 起生产的 `planChecks` 总带内置见证能力，零命令检查得到 `[platform:witness]`）。
-- `verification-machine.ts` — VerificationRound / round-check / TaskEvidenceIndex 机器与链、折叠、重验证、证据索引。第 9 片加 VR-16 `review_recorded`（`RoundEventHead`、`RoundEvent` 各一臂）：`roundOnReviewRecorded`（`src/core/work-graph/state/verification-machine.ts:1475`）恰四条 effect：`guard_round_unchanged`、`admit_verdict_evidence`（每个 pair 一条、同一个 ref）、`append_task_evidence_index`、`emit_event VerificationReviewEvidenceRecorded`，不写 Round；`pendingRoundChecks` 与 `foldSteps` 跳过 `satisfactionPath:'review-packet'` 项；`roundReviewerEvidenceProblem` 对任何个数回 null（审阅 ref 由 owner 读完事实后归属）。B06 G2 加见证臂：`pendingRoundChecks` 按计划的见证项合成 pending 检查（定义只带 `requiredReadPaths`，不查配置）；`CheckEvent`、`CheckEventHead`、`CheckPhaseChange` 各一条见证臂；`checkEventAdmission` 在执行中表之前判见证结果，两个方向的种类错配都是 `invalid`（一个检查只有一个结果写入者），见证只从 pending 一步到 finished；`transitionCheck` 直接写 owner 读出的结果（不调 `outcomeFor`），见证不带 `resourceCapHit`。
+- `verification-machine.ts` — VerificationRound / round-check / TaskEvidenceIndex 机器与链、折叠、重验证、证据索引。第 9 片加 VR-16 `review_recorded`（`RoundEventHead`、`RoundEvent` 各一臂）：`roundOnReviewRecorded`（`src/core/work-graph/state/verification-machine.ts:1475`）恰四条 effect：`guard_round_unchanged`、`admit_verdict_evidence`（每个 pair 一条、同一个 ref）、`append_task_evidence_index`、`emit_event VerificationReviewEvidenceRecorded`，不写 Round；`pendingRoundChecks` 与 `foldSteps` 跳过 `satisfactionPath:'review-packet'` 项；`roundReviewerEvidenceProblem` 对任何个数回 null（审阅 ref 由 owner 读完事实后归属）。B06 G2 加见证臂：`pendingRoundChecks` 按计划的见证项合成 pending 检查（定义只带 `requiredReadPaths`，不查配置）；`CheckEvent`、`CheckEventHead`、`CheckPhaseChange` 各一条见证臂；`checkEventAdmission` 在执行中表之前判见证结果，两个方向的种类错配都是 `invalid`（一个检查只有一个结果写入者），见证只从 pending 一步到 finished；`transitionCheck` 直接写 owner 读出的结果（不调 `outcomeFor`），见证不带 `resourceCapHit`。重验轮的 `requestedBy` 收返工这一族的请求者（`ReworkActorV1`，含参谋规划轮，Q10a）。
 - `witness-check.ts` — 见证检查的纯判定（B06 G1）：`effectsOf` 只从已存 `RunActivityFactsV1` 判 Run 的三态 effects（`status:'unknown'` → unknown；已确认改动 → changed；仅可能改动/窗口未终结/未决调用 → unknown；`changedLines.complete` 不参与判 none，不重新 tally）；`runWitnessCheck` 由三态输入给 `EvidenceOutcome`（`knownFailure` 四支判 FAIL 且优先，`hasGap` 六支判 INCONCLUSIVE，`incompleteCause` 只在 INCONCLUSIVE、Run 适用且来源不是 matched 时是 `source_not_matched`，`missingPaths` 只取 absent 且不落库）。不读存储、不调 `outcomeFor`；见证 owner `recordWitness` 调用它们。
 - `autonomy-rules.ts` — 自主规则的纯半边：`validateAutonomyRule`（唯一校验：先查 actions/scope 是数组、limits/limits.open 是对象，再查 actions 非空且都是 `RuleActionV1`（否则 `invalid/rule_action_fixed`）、scope 非空、每职责上限不超过项目 `open` 上限（否则 `invalid/rule_limit_over_cap`）、`expiresAt` 是 ISO 时间或 null）、`matchAutonomyRule`（active、未到期、动作在列、每个责任对象在规则 scope 和调用方责任上限内、工具与建成员授权、动作之后的计数不超过规则的每职责上限）、`nextAutonomyRuleSetRevision`；记录与 codec 在 contracts 和 sessions，三个写命令在 `tasks/autonomy-rule-service.ts`。
 - `role-capacity-episode.ts` — 容量 episode 的三个纯函数：`nextCapacityEpisode`（同一项目同一职责的下一个编号）、`capacityEpisodeCloses`（回到上限以下，或上限变了就关）、`closeCapacityEpisode`（revision 加一、写 `closedAt`）；记录格式是 contracts 的 `RoleCapacityEpisodeFormat`。
-- `decision-policy.ts` — 五层动作策略 `decisionActionPolicy`（`DecisionPolicyInputV1` 只在旧入参上做加法，结果是 `DecisionPolicyVerdictV1`）：总是问你的九个动作 → 同一动作已有待答卡 → 匹配到的自主规则（`automatic_notice`）→ 出厂默认（四个角色线动作与 `create_member`/`short_change_duty` 有一个受影响目标是每步问就出卡，否则人做直接做、别的调用方发通知；`module_maintainer` 照旧；其余旧动作照旧表）→ 越界出卡；另有用户消息准入、自动化确认原因、gate 覆盖与修复判定。
+- `decision-policy.ts` — 五层动作策略 `decisionActionPolicy`（`DecisionPolicyInputV1` 只在旧入参上做加法，结果是 `DecisionPolicyVerdictV1`）：总是问你的九个动作 → 同一动作已有待答卡 → 匹配到的自主规则（`automatic_notice`）→ 出厂默认（四个角色线动作与 `create_member`/`short_change_duty` 有一个受影响目标是每步问就出卡，否则人做直接做、别的调用方发通知；`module_maintainer` 照旧；其余旧动作照旧表；问答轮的派活、叫停请求 `agent_dispatch`、`agent_stop` 出厂默认同 `secretary_action`（每步确认出卡，否则自动），进规则可放的闭集随工具一起做）→ 越界出卡；另有用户消息准入、自动化确认原因、gate 覆盖与修复判定。
 - `line-status.ts` — 工作线的纯派生：状态、注意、标记、桶、归档标签、控制项、排序键；线的 `wait` 取最早未消费等待的状态，决定“等回复”（open/answered）与已消费标记（consumed）；待命原因多一个 `unassigned`（链上没有开着的负责链接），行带名额等待 `runningCap`。
 - `line-pin-machine.ts` — Workspace 工作线置顶机器（一次原子增删）。
 - `line-machine.ts` — 线记录的唯一构造器 `newLineRecord`（KLS-3a）：出生 `open`、revision 1、`forkPoint` 是建线时的 HEAD。KLS-3b：`nextLineStatus(line, facts)` 是线结束的唯一判定（纯函数，事实 `LineStatusFacts` 由 Host 读）：工作区已移出、文件夹（Host 确认检出真没了才给 false）或分支没了 → `removed`（121-90）；不是 base 线（工作区的第一条）、HEAD 离开了分叉点、是 base HEAD 的祖先、工作树干净 → `merged`（L10、R11）；base 线自己不合回（R19），刚开的线（HEAD 在分叉点）和没有分叉点的线不判，git 答不出的事实（null）什么都不判，已关闭的线不再动。`nextLineIdentity` 是同一文件夹换了分支（或第一个提交）时的新版本（还是这条线，`forkPoint` 重置为切换时的 HEAD，裁定 7）；`nextLineClosed` 是线结束的记录（`closedAt` 只在这里写）。
@@ -92,13 +92,15 @@
 
 - `note-machine.ts` — 注记状态机：写入准入、授权、处置目标、版本与现行指针；纯 `secretaryNoteScope`（普通注记取本轮冻结的有效 Goal，目标或 stage 理解停在有效 Goal 内，只有授权的 Goal 理解可用该 Goal 作主锚点，项目理解与修复拒绝）。写入事实 `structuralAutoApproved`（121-106、121-109）：开关开着时，智能体只因结构性待审的理解直接收下，还有别的原因的照旧待审；`noticeClassOf` 把这样收下的那一版也归到 `structural`。`newNoteHeadRecord` 照传修补头的 `structuralAutoApproved`（只在为真时写）。
 - `secretary-note.ts` — 纯的 Query 注记准入（`secretaryNoteAdmission`，`src/core/work-graph/state/secretary-note.ts:41`）：只有请求轮（有冻结的请求根）是秘书轮，给六个通用写入种类加 `understanding`、`link`、`flow`、`withdraw: true` 和被授权的 Goal id；普通 Query 与副本得到 `none`。`QueryNoteAdmissionV1` 唯一的声明在本文件，消费方经 `model/secretary-note-contracts.ts` 的再导出引用。
-- `message-machine.ts` — SessionMessage 机器：pending<read<responded、等待满足与记录构造；7A-1 的投递与证据值、秘书轮发送方记录、拒绝回复、四个生命周期变更与事件类型（M-1 已激活）；7B-1：等待事实 `waitFactsOfRecord` 与完整的接续判定 `messageSatisfiesWait`、唯一的到期决定 `decideExpiry`（含 `ExpirySkipReason`）、到期状态字段 `expiredAt`、事件 `MessageExpiredEventV1`/`SessionMessageEventType` 的 `SessionMessageExpired`、变更 `MessageExpiredChangeV1` 与迁移 `onExpired`；等待状态和投递资格（纯规则）。持久消息记录 `SessionMessageRecord` 和它的发送方、回复、投递值、已接受输入、派生等小类型的正本在 `contracts/mailbox.ts`，这里转出。
+- `message-machine.ts` — SessionMessage 机器：pending<read<responded、等待满足与记录构造；7A-1 的投递与证据值、秘书轮发送方记录、拒绝回复、四个生命周期变更与事件类型（M-1 已激活）；7B-1：等待事实 `waitFactsOfRecord` 与完整的接续判定 `messageSatisfiesWait`、唯一的到期决定 `decideExpiry`（含 `ExpirySkipReason`）、到期状态字段 `expiredAt`、事件 `MessageExpiredEventV1`/`SessionMessageEventType` 的 `SessionMessageExpired`、变更 `MessageExpiredChangeV1` 与迁移 `onExpired`；等待状态和投递资格（纯规则）。持久消息记录 `SessionMessageRecord` 和它的发送方、回复、投递值、已接受输入、派生等小类型的正本在 `contracts/mailbox.ts`，这里转出。 守卫上下文的 `principal` 多一个 `query_run`：只有文字回复行收它（非请求问答轮的回复），不经做事轮准入、不出 `guard_work_run_facts`；`other` 照旧拒；构造器的发件人收问答轮自己的 `query_run`（不带 `answerRef`）。
 - `copy-intervention.ts` — 复制取消的纯候选规则：`copyInterventionCandidateOf` 按书的表序（先两项排除，再投递/未投递）判一条消息是不是候选、可选/可撤回及原因；事实形状 `CopyInterventionFactsV1`，不读存储、不写、无游标。
 - `goal-interruption.ts` — 目标中断记录的地址 `interruptionRefOf`（每个目标一条）和两个纯迁移：`pendingGoalInterruption`（缺失/`resumed` → revision+1 的 `pending`，已 `pending` → null 保留）与 `resumedGoalInterruption`（`pending` → `resumed`，缺失/已 `resumed` → null）；返回记录与 `expectedRevision`，不构造 guard。
-- `dispatch-counter.ts` — 派工计数器的纯构造：`firstDispatch` 从缺失生成 sequence/revision 1，`nextDispatch` 递增两者；返回记录与 `expectedRevision`，不构造 RecordStore guard。
+- `dispatch-counter.ts` — 派工计数器的纯构造：`firstDispatch` 从缺失生成 sequence/revision 1，`nextDispatch` 递增两者；返回记录与 `expectedRevision`，不构造 RecordStore guard。来源消息可为 `null`：按派活请求领取的那次没有消息（Q5c）。
 - `notice-settings-machine.ts` — Workspace 通知已读位置机器。
 - `command-rerun-request.ts` — `CommandRerunRequest` 机器与“同一别名只开一个请求”的 helper。121-110：新请求先交负责的参谋（`awaiting_advice@1`；`commandRerunAdviserStageOf` 一处判四种：每步确认、核对记录的连续第二次中断直接到人，没有参谋到人并记 `no_adviser`）；`adviser_answer_applied` 把参谋的答复落成一次性允许、这一轮不允许，或带建议的人卡（参谋上报、改成每步确认）；`escalated` 不带建议到人（没有参谋、参谋没答）；`awaiting_advice` 也算开着的请求，能追加改写、能关闭。参谋的这两个事件从已存的记录出发，`transitionCommandRerunRequest` 对它们的返回类型收窄成记录，owner 直接提交 `next`。
-- `rework-request.ts` — `ReworkRequest`（record 3）的唯一字段表与格式：`REWORK_REQUEST_FIELDS`/`REWORK_REQUEST_FORMAT`（`REWORK_REQUEST_ACTOR_FIELDS`/`REWORK_REQUEST_OUTCOME_FIELDS` 是与事件共用的两个子表），`rework-request-by-goal` 只有三个等值键（不含 `state`）并按 `since` 排序；`newReworkRequest` 返回未绑定 `since` 的 pending 记录，`applyReworkRequest`/`closeReworkRequestRecord` 产出下一版 pending 记录（revision、state、outcome、closedBy），`since` 只由提交的 `commitCursorBindings` 绑定。输入类型从字段表派生，本文件不 import `model/`，两个 owner 的 `RequeueTaskInput`/`ReverifyRoundInput` 留在调用侧。
+- `rework-request.ts` — `ReworkRequest`（record 3）的唯一字段表与格式：`REWORK_REQUEST_FIELDS`/`REWORK_REQUEST_FORMAT`（`REWORK_REQUEST_ACTOR_FIELDS`/`REWORK_REQUEST_OUTCOME_FIELDS` 是与事件共用的两个子表），`rework-request-by-goal` 只有三个等值键（不含 `state`）并按 `since` 排序；`newReworkRequest` 返回未绑定 `since` 的 pending 记录，`applyReworkRequest`/`closeReworkRequestRecord` 产出下一版 pending 记录（revision、state、outcome、closedBy），`since` 只由提交的 `commitCursorBindings` 绑定。输入类型从字段表派生，本文件不 import `model/`，两个 owner 的 `RequeueTaskInput`/`ReverifyRoundInput` 留在调用侧。 agent 发起的请求共用的请求者字段 `AGENT_REQUESTER_FIELD`（做事轮臂、问答轮臂；问答轮的 actor 是 `QUERY_ROUND_REQUESTER_ACTOR_FIELDS`：按线派生的 agent 号加这一轮的 QueryRun，Q10a）也在这里，动作请求和返工请求的 `requester` 都用它（返工请求的做事轮臂带 `kind`，不留兼容）。
+- `action-request.ts` — 动作请求 `ActionRequest`（问答轮的派活、叫停，通信与权限拆开的设计 3.1–3.4）：字段表 `ACTION_REQUEST_FIELDS`（文件内；事件快照是去掉 `since` 的 `ACTION_REQUEST_BODY_FIELDS`）、格式 `ACTION_REQUEST_FORMAT`、受理那一轮的原始事实 `ROUND_BASIS_FIELDS`（Q4b，只存不推）、派活回执的挡着原因 `DISPATCH_BLOCKER_FIELD` 和变化词表 `ACTION_REQUEST_CHANGES`；迁移表 AR-01…07 的纯构造器（`newDispatchRequest`、`newStopRequest`、`approveDispatchRequest`、`releaseStopRequest`、`applyDispatchRequest`、`voidActionRequest`、`denyActionRequest`、`withdrawActionRequest`、`recordStopNotSent`），表外一律 `tableOutside`（`revision_conflict` 带当前版本）；“放行了、还没送停”只在 `awaitsStopDelivery` 判（送停入口和 AR-07 共用）；`since` 是受理游标，只在新建时由提交绑定，之后的版本原样带着。两条纯判定：`dispatchTaskProblem`（派活只拒永远等不到的：不在计划、门任务、不启用、已完成 invalid，P5/P18 在等回复、任务的 Lease 还被持有（在跑、审查 Run 持有，或结果未知、等审查）busy，上个 Run 结束且不是 P4 invalid）和 `stopReleaseOf`（叫停放行取第一条：目标取消、租约换人作废；你动过指针放行不写暂缓；书记硬停或 Run 已结束放行写暂缓不送；其余放行待送），送停前的判定 `stopRunCheckOf` 和它共用（“谁动的指针”按意图提交者认，`WORKFLOW_AUTOMATION_ACTOR` 当已结束）。
+- `task-claim-hold.ts` — 暂缓领取 `TaskClaimHold`（设计 3.3）：每个任务一条（`taskClaimHoldRefOf`），字段表 `TASK_CLAIM_HOLD_FIELDS`/`TASK_CLAIM_HOLD_REASON_FIELDS`（文件内）、格式 `TASK_CLAIM_HOLD_FORMAT`；原因列表加两个卡位 `pendingStop`（挡领取）和 `openDispatch`（不挡，给领取了结派活）。一次提交从 `nextTaskClaimHold`（读到的 +1，或空的第一版）起叠：`placeHoldReason`（同放的人同来源 held 就原样）、`releaseHoldReason`（点名撤，已撤原样）、`releaseAllHoldReasons`（你撤全部或干预领取撤全部，`pendingStop` 不动）、`occupyHoldPointer`/`yieldHoldPointer`；`holdBlockerOf` 是领取挡不挡的唯一判法（held 原因 → 叫停卡 → 不挡）。`scribeStopHeld`（有 held 的书记原因）是 task-gate 等待和返工 owner 拒 `system` 类的唯一判法（2.6；重验不看它，Q9）。每个原因的 `since` 是放下那次的提交游标（`reasons[].since` 嵌套绑定，`holdAwaitsCursor` 说要不要带绑定）。
 - `command-normalization.ts` — 命令文本规范化、sha256、action key 与 shell 动作解析（纯）。
 - `context-input.ts` — 上下文/声明输入的纯守卫：冻结段序、结构、渲染区间、字节数、Goal 段、平台职责；`secretary` 调用必须有 `goal` 和 `task` 两段（没有目标时 `goal` 段照旧渲染 Workspace、目标列表和 `secretary.noGoal`）。
 - `unknown-call-kinds.ts` — 固定工具种类表（自上而下首个匹配）与主机停止/清理接管判定；7C-1 的平台写工具行加入 `create_member`、`request_rework`、`request_recheck` 与 `withdraw_session_message`；只读行加入 `check_links`、`web_search`、`web_fetch`（只读，不查提交回执）。
@@ -110,7 +112,13 @@
 
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
-| `firstDispatch`、`nextDispatch`、`DispatchCounterWriteV1` | `src/core/work-graph/state/dispatch-counter.ts:10`、`src/core/work-graph/state/dispatch-counter.ts:28`、`src/core/work-graph/state/dispatch-counter.ts:4` | 首次与后续派工的计数器记录和版本期待 | 发送 owner 在同一次提交中写计数器并构造 guard 时 |
+| `firstDispatch`、`nextDispatch`、`DispatchCounterWriteV1` | `src/core/work-graph/state/dispatch-counter.ts:12`、`src/core/work-graph/state/dispatch-counter.ts:30`、`src/core/work-graph/state/dispatch-counter.ts:4` | 首次与后续派工的计数器记录和版本期待 | 发送 owner 在同一次提交中写计数器并构造 guard 时 |
+| `stopReleaseOf`、`stopRunCheckOf` | `src/core/work-graph/state/action-request.ts:304`、`:289` | 叫停的放行判定（目标取消、租约换人作废；你动过指针不写暂缓；书记硬停或 Run 已结束写暂缓不送；其余待送）和送停前的同一段判定 | 动作请求 owner 当场放行、批准叫停、送停时；不要另写“谁动的指针”或“在不在跑” |
+| `dispatchTaskProblem` | `src/core/work-graph/state/action-request.ts:247` | 派活受理只拒永远等不到的（相位读法同领取：`taskMachineStateOf` 的行号） | 派活受理；以后的派活入口也调它，不要另写相位判断 |
+| `applyDispatchRequest`、`actionRequestSnapshotOf`、`tableOutside` | `src/core/work-graph/state/action-request.ts:171`、`:315`、`:217` | AR-03 了结派活请求（记线、Run、`byRequest`）、事件快照（去 `since`）、表外迁移的 `revision_conflict` | 领取 owner 在领取那次提交里了结 `openDispatch`；写 `ActionRequestChanged` 时 |
+| `holdBlockerOf`、`nextTaskClaimHold`、`releaseAllHoldReasons`、`yieldHoldPointer`、`holdAwaitsCursor` | `src/core/work-graph/state/task-claim-hold.ts:185`、`:91`、`:142`、`:154`、`:162` | 领取挡不挡的唯一判法、下一版暂缓、撤全部、让卡位、新原因要不要带 `reasons[].since` 绑定 | 领取 owner（挡领取、干预领取撤全部、清 `openDispatch`）和两个动作 owner；不要另写 |
+| `scribeStopHeld` | `src/core/work-graph/state/task-claim-hold.ts:170` | 书记原因还 held（平台自动返工要等） | task-gate 的 `requeue_task` 等待、返工 owner 的 `system` 拒绝；不要另写 |
+| `AGENT_REQUESTER_FIELD`、`QUERY_ROUND_REQUESTER_ACTOR_FIELDS` | `src/core/work-graph/state/rework-request.ts:38`、`:29` | agent 请求者的唯一字段表（做事轮臂、问答轮臂） | 动作请求、返工请求的 `requester`；不要另写请求者形状 |
 | `nodeInFlight` | `src/core/work-graph/state/task-node-commit.ts:92` | `every_step` 下 work 节点还在检查/完成途中（`verifying`） | Workflow 的领取挡（`selectOrdinary` 的 `claimHold`）；不要另写这条判断 |
 | `nodeReviewProblem`、`taskNodePending`、`taskNodeFilesOf`、`taskAwaitsReview`、`reviewedContentProblem`、`taskNodeCommitOf`、`taskNodeCommitRefOf` | `src/core/work-graph/state/task-node-commit.ts:55`、`src/core/work-graph/state/task-node-commit.ts:64`、`src/core/work-graph/state/task-node-commit.ts:27`、`src/core/work-graph/state/task-node-commit.ts:76`、`src/core/work-graph/state/task-node-commit.ts:100`、`src/core/work-graph/state/task-node-commit.ts:129`、`src/core/work-graph/state/task-node-commit.ts:116` | 节点审核的判定、节点文件、等审阅算 live、blob 比对和审核事实的构造 | 节点审核 owner 的读和写；不要另写“哪些节点要审”或第二个构造 |
 | `interruptionRefOf`、`pendingGoalInterruption`、`resumedGoalInterruption`、`GoalInterruptionWriteV1` | `src/core/work-graph/state/goal-interruption.ts:9`、`src/core/work-graph/state/goal-interruption.ts:22`、`src/core/work-graph/state/goal-interruption.ts:38`、`src/core/work-graph/state/goal-interruption.ts:9` | 目标中断记录的地址，pending/resumed 迁移与版本期待（已 pending 保留、已 resumed 不再写） | 启动对账记录候选、驱动开始时结清、显示读记录时；不要另写记录地址，不要绕过状态层写记录 |
@@ -141,14 +149,14 @@
 | `transitionCommandRerunRequest` | `src/core/work-graph/state/command-rerun-request.ts:141` | 重跑请求迁移，含同身份同指纹重放 | 处理/重放重跑请求 |
 | `frozenSectionOrderProblem` | `src/core/work-graph/state/context-input.ts:98` | 检查冻结的段序 | 校验 ContextAssemblyBinding |
 | `contextAssemblyProblem` | `src/core/work-graph/state/context-input.ts:286` | G-CTX 总检查：结构、区间、字节、段、来源 | 读取或写入上下文绑定时 |
-| `pointerAfterSubmit` | `src/core/work-graph/state/control-intent-machine.ts:185` | 提交后 Run 控制指针的变化 | 与意图同一提交写 Run 指针 |
-| `controlSubmissionProblem` | `src/core/work-graph/state/control-intent-machine.ts:230` | 控制提交两机器共用的检查 | 提交 pause/cancel/resume/steer |
-| `newQueuedControlIntentRecord` | `src/core/work-graph/state/control-intent-machine.ts:364` | 建 Queued@1 意图记录 | 接受控制请求 |
-| `controlIntentStateOf` | `src/core/work-graph/state/control-intent-machine.ts:333` | 意图快照的机器状态 | 迁移前 |
-| `transitionControlIntent` | `src/core/work-graph/state/control-intent-machine.ts:886` | 意图主迁移（Queued→Applied/Superseded/OutcomeUnknown） | 控制请求提交与观测 |
+| `pointerAfterSubmit` | `src/core/work-graph/state/control-intent-machine.ts:187` | 提交后 Run 控制指针的变化 | 与意图同一提交写 Run 指针 |
+| `controlSubmissionProblem` | `src/core/work-graph/state/control-intent-machine.ts:232` | 控制提交两机器共用的检查 | 提交 pause/cancel/resume/steer |
+| `newQueuedControlIntentRecord` | `src/core/work-graph/state/control-intent-machine.ts:372` | 建 Queued@1 意图记录 | 接受控制请求 |
+| `controlIntentStateOf` | `src/core/work-graph/state/control-intent-machine.ts:341` | 意图快照的机器状态 | 迁移前 |
+| `transitionControlIntent` | `src/core/work-graph/state/control-intent-machine.ts:895` | 意图主迁移（Queued→Applied/Superseded/OutcomeUnknown） | 控制请求提交与观测 |
 | `decisionActionPolicy`、`DecisionPolicyInputV1`、`DecisionPolicyVerdictV1` | `src/core/work-graph/state/decision-policy.ts:60`、`:35`、`:34` | 五层策略的唯四值表：总是问你 → 已有待答卡 → 匹配的规则 → 出厂默认（按受影响目标的档位） → 越界出卡；旧调用方的旧入参照收 | owner、工具、Workflow、路由都查它；平台的调用写 `actorClass: 'system'` |
-| `canSendUserMessage` | `src/core/work-graph/state/decision-policy.ts:140` | S5-AU-04 的 notify/decision_request 准入 | 准备向用户发消息 |
-| `automationConfirmationCause` | `src/core/work-graph/state/decision-policy.ts:187` | 从策略与已存受影响 refs 派生确认原因 | 需要 automation_confirmation_required 时 |
+| `canSendUserMessage` | `src/core/work-graph/state/decision-policy.ts:142` | S5-AU-04 的 notify/decision_request 准入 | 准备向用户发消息 |
+| `automationConfirmationCause` | `src/core/work-graph/state/decision-policy.ts:189` | 从策略与已存受影响 refs 派生确认原因 | 需要 automation_confirmation_required 时 |
 | `validateAutonomyRule`、`AutonomyRuleLimitsV1`、`matchAutonomyRule`、`nextAutonomyRuleSetRevision` | `src/core/work-graph/state/autonomy-rules.ts:104`、`:18`、`:73`、`:104` | 自主规则的唯一校验（两个具名拒绝 `rule_action_fixed`、`rule_limit_over_cap`）、唯一匹配（委托的 `writeScope` 是路径表，不当责任范围比）和规则集的下一个 revision | 规则服务的三个写与策略入口匹配规则时；不要另写校验或匹配 |
 | `nextCapacityEpisode`、`capacityEpisodeCloses`、`closeCapacityEpisode` | `src/core/work-graph/state/role-capacity-episode.ts:20`、`:15`、`:20` | 容量 episode 的编号、关闭判定与关闭后的记录 | 容量服务开、关 episode 时；不要另算编号或关闭条件 |
 | `decideGoalCopy`、`DecideGoalCopy` | `src/core/work-graph/state/goal-copy.ts:30` | 复制的唯一纯决定：源必须 `cancelled`；`revision_conflict`/`invalid` 的拒绝文案都出自这里，同一 ref 勾选两次也是 `invalid`；产出新 Goal 的 `objective`、`settings`、`continuedFrom`、`copiedInterventions`（勾中的候选 ref，按勾选顺序）、`retract`（未勾中的候选 ref，按候选顺序）与 `selection`（`selection_only`/`retraction_pending`，`retract` 非空即后者） | 复制确认在提交前判；不要在服务里另判源状态、revision 或勾选 |
@@ -175,20 +183,20 @@
 | `lineRunningCapOf` | `src/core/work-graph/state/line-status.ts:413` | 由持有者的 Query 标记或 Run 的持久 `starting`+`authorized` 形状派生运行名额等待（`running_cap` 或 null） | 画线的名额等待；不要另写判定 |
 | `deriveLineControls` | `src/core/work-graph/state/line-status.ts:496` | 由事实与状态派生可用控制项 | 画工作线操作 |
 | `deriveAttentionAll` | `src/core/work-graph/state/line-status.ts:744` | 一条线上所有注意项及来源 | 需要完整注意清单时 |
-| `transitionMessage` | `src/core/work-graph/state/message-machine.ts:1443` | SessionMessage 主迁移 | 消息读/回/派生 |
-| `createSessionMessageRecord` | `src/core/work-graph/state/message-machine.ts:1609` | 建新消息记录 | 收到用户或系统消息 |
-| `nextSessionMessageRecord` | `src/core/work-graph/state/message-machine.ts:1690` | 按变更生成下一条消息记录 | 读、回、绑定答复 |
-| `messageConsumptionProblem` | `src/core/work-graph/state/message-machine.ts:893` | 消息能否被消费的唯一规则：撤回 → `invalid`；`release` 为 awaiting/approved/denied → `busy`；null/released 可消费 | 读正文、读回复、咨询、提交咨询、接续等待之前 |
-| `messageFactsOfRecord` | `src/core/work-graph/state/message-machine.ts:901` | 从消息记录取消费规则的三项事实 | 拿着记录的消费方 |
-| `messageFactsOfState` | `src/core/work-graph/state/message-machine.ts:907` | 从机器状态取同样的三项事实；absent 为 null | `messageSatisfiesWait` 和其它按状态判断的消费方 |
-| `messageSatisfiesWait` | `src/core/work-graph/state/message-machine.ts:932` | 接续等待的唯一判定：先过 `messageConsumptionProblem`；`intervention` 直接满足（该臂不消费）；已消费的等待答 `busy`；`expiry` 要求记录存在、没有回复（`reply_present`）且已过期；`wait_reply` 保持正式答复的 `responseRef` 与工作区检查 | K 的 claim 续作判定；`MessageGuardContext.consumedWait` 只走这一份 |
-| `WAIT_INTENTS`、`isWaitMessage` | `src/core/work-graph/state/message-machine.ts:925`、`src/core/work-graph/state/message-machine.ts:928` | 可等待意图的闭集（`inquiry`/`action_request`）与一条消息是否成等待（`waitAfterSend` 且意图在这个闭集里） | 等待处置、到期与转发判定共用这一份；不要另写意图列表 |
-| `waitFactsOfRecord` | `src/core/work-graph/state/message-machine.ts:1055` | 从消息记录已存的 accepted-input 投影读 `WaitFactsV1`（等待是否已被消费）；不读 holder claim | 到期判定、等待读取与接续等待之前；不要另扫 `acceptedInputs` |
-| `waitStateOf` | `src/core/work-graph/state/message-machine.ts:986` | 等待的状态：已消费、撤回、取消等待、已回复、已到期、仍开着，先中先算 | 等待读取、到期投递与接续判断之前 |
-| `decideExpiry`、`ExpirySkipReason`、`MessageExpiredChangeV1` | `src/core/work-graph/state/message-machine.ts:1164`、`:1160`、`:1161` | 到期投递的唯一决定：未释放、不是 `waitAfterSend` 的询问、未到 deadline、等待不 open 各给一个跳过原因，否则给带 `at` 的 `expired` 变更 | 到期投递在提交前据此判；不要另写条件或跳过原因 |
-| `MessageExpiredEventV1`、`SessionMessageEventType` 的 `SessionMessageExpired`、`MessageMachineState` 的 `expiredAt`、`onExpired` | `src/core/work-graph/state/message-machine.ts:117`、`:332`、`:141`、`:1430` | 到期的事件体与事件类型、机器状态的到期时刻，以及 `message_expired` 迁移：`onExpired` 只产出 `expired` 变更与事件，记录构造写 `expiredAt`；已到期再迁移是 `illegal/invalid`，答复过的等待不能到期 | 到期事件编码与迁移；只在 `transitionMessage` 的 `message_expired` 臂里用 `onExpired`，不要另造事件名或字段 |
-| `deliveryEligibility` | `src/core/work-graph/state/message-machine.ts:1023` | 投递资格的唯一规则：先调 `messageConsumptionProblem`，再看 Goal、任务阻塞、对方结果未知、本部分事实 | 邮件箱投递、回复与到期投递之前 |
-| `forwardMessageProblem`、`disposeWaitProblem`、`destinationProblem`、`FORWARD_DESTINATION_GONE` | `src/core/work-graph/state/message-machine.ts:1105`、`:1142`、`:1076`、`:1074` | 转发与等待处置的纯拒绝表（固定顺序的 code/reason）；`destinationProblem` 是同工作区、资格、职责共用的目的地规则；`FORWARD_DESTINATION_GONE` 是服务端归档/退休/归档申请预检的拒绝 detail | 转发/等待处置 owner 提交前判；P 用该 detail 判“待指定收件线”，不要另写表或目的地规则 |
+| `transitionMessage` | `src/core/work-graph/state/message-machine.ts:1453` | SessionMessage 主迁移 | 消息读/回/派生 |
+| `createSessionMessageRecord` | `src/core/work-graph/state/message-machine.ts:1620` | 建新消息记录 | 收到用户或系统消息 |
+| `nextSessionMessageRecord` | `src/core/work-graph/state/message-machine.ts:1701` | 按变更生成下一条消息记录 | 读、回、绑定答复 |
+| `messageConsumptionProblem` | `src/core/work-graph/state/message-machine.ts:903` | 消息能否被消费的唯一规则：撤回 → `invalid`；`release` 为 awaiting/approved/denied → `busy`；null/released 可消费 | 读正文、读回复、咨询、提交咨询、接续等待之前 |
+| `messageFactsOfRecord` | `src/core/work-graph/state/message-machine.ts:911` | 从消息记录取消费规则的三项事实 | 拿着记录的消费方 |
+| `messageFactsOfState` | `src/core/work-graph/state/message-machine.ts:917` | 从机器状态取同样的三项事实；absent 为 null | `messageSatisfiesWait` 和其它按状态判断的消费方 |
+| `messageSatisfiesWait` | `src/core/work-graph/state/message-machine.ts:942` | 接续等待的唯一判定：先过 `messageConsumptionProblem`；`intervention` 直接满足（该臂不消费）；已消费的等待答 `busy`；`expiry` 要求记录存在、没有回复（`reply_present`）且已过期；`wait_reply` 保持正式答复的 `responseRef` 与工作区检查 | K 的 claim 续作判定；`MessageGuardContext.consumedWait` 只走这一份 |
+| `WAIT_INTENTS`、`isWaitMessage` | `src/core/work-graph/state/message-machine.ts:935`、`src/core/work-graph/state/message-machine.ts:938` | 可等待意图的闭集（`inquiry`/`action_request`）与一条消息是否成等待（`waitAfterSend` 且意图在这个闭集里） | 等待处置、到期与转发判定共用这一份；不要另写意图列表 |
+| `waitFactsOfRecord` | `src/core/work-graph/state/message-machine.ts:1065` | 从消息记录已存的 accepted-input 投影读 `WaitFactsV1`（等待是否已被消费）；不读 holder claim | 到期判定、等待读取与接续等待之前；不要另扫 `acceptedInputs` |
+| `waitStateOf` | `src/core/work-graph/state/message-machine.ts:996` | 等待的状态：已消费、撤回、取消等待、已回复、已到期、仍开着，先中先算 | 等待读取、到期投递与接续判断之前 |
+| `decideExpiry`、`ExpirySkipReason`、`MessageExpiredChangeV1` | `src/core/work-graph/state/message-machine.ts:1174`、`:1170`、`:1171` | 到期投递的唯一决定：未释放、不是 `waitAfterSend` 的询问、未到 deadline、等待不 open 各给一个跳过原因，否则给带 `at` 的 `expired` 变更 | 到期投递在提交前据此判；不要另写条件或跳过原因 |
+| `MessageExpiredEventV1`、`SessionMessageEventType` 的 `SessionMessageExpired`、`MessageMachineState` 的 `expiredAt`、`onExpired` | `src/core/work-graph/state/message-machine.ts:119`、`:338`、`:143`、`:1440` | 到期的事件体与事件类型、机器状态的到期时刻，以及 `message_expired` 迁移：`onExpired` 只产出 `expired` 变更与事件，记录构造写 `expiredAt`；已到期再迁移是 `illegal/invalid`，答复过的等待不能到期 | 到期事件编码与迁移；只在 `transitionMessage` 的 `message_expired` 臂里用 `onExpired`，不要另造事件名或字段 |
+| `deliveryEligibility` | `src/core/work-graph/state/message-machine.ts:1033` | 投递资格的唯一规则：先调 `messageConsumptionProblem`，再看 Goal、任务阻塞、对方结果未知、本部分事实 | 邮件箱投递、回复与到期投递之前 |
+| `forwardMessageProblem`、`disposeWaitProblem`、`destinationProblem`、`FORWARD_DESTINATION_GONE` | `src/core/work-graph/state/message-machine.ts:1115`、`:1152`、`:1086`、`:1084` | 转发与等待处置的纯拒绝表（固定顺序的 code/reason）；`destinationProblem` 是同工作区、资格、职责共用的目的地规则；`FORWARD_DESTINATION_GONE` 是服务端归档/退休/归档申请预检的拒绝 detail | 转发/等待处置 owner 提交前判；P 用该 detail 判“待指定收件线”，不要另写表或目的地规则 |
 | `noProgressKey` | `src/core/work-graph/state/no-progress.ts:191` | requeue 的无进展键，存进 TaskRequeue.basis | 重排队守卫与比较 |
 | `reverifyBasis` | `src/core/work-graph/state/no-progress.ts:223` | successor 轮的重验证键 | VR-14 比较链上 basisDigests |
 | `roundFailureFacts` | `src/core/work-graph/state/no-progress.ts:108` | 一轮的非 PASS 检查与 gap codes；E09F：读者传进审查结论（`RoundReviewFactV1`，`:51`）时，不是 PASS 的审查也按一条已完成的检查列入 | 两套键、失败事实读模型、接续说明；接续说明、人的卡（失败事实）和返工依据（requeue 的无进展键）都传审查结论，successor 轮的重验证键不传 |
@@ -236,15 +244,15 @@
 | `leaseReleasedForContinuation` | `src/core/work-graph/state/review-lease.ts:25` | 租约是否由 afterRun 或其复查轮释放 | 续作前置检查 |
 | `isUnenteredReviewRoundForCancellation` | `src/core/work-graph/state/review-lease.ts:41` | 可证明未进入 Kernel 的复查 Run | UR3h 取消判定 |
 | `reviewRoundEndedKnown` | `src/core/work-graph/state/review-lease.ts:63` | 复查 Run 是否已知结束 | 判断可续作 |
-| `newRunRecord` | `src/core/work-graph/state/run-machine.ts:858` | 建 Run 记录；`workspaceSnapshot.line` 取 claim 事件里 Goal 的线 | claim/开跑 |
-| `withBoundStart` | `src/core/work-graph/state/run-machine.ts:880` | 首次 entry 成功后把提交游标绑到返回的 Run；已有的值不替换 | entered/result 返回 Run 时 |
-| `transitionRun` | `src/core/work-graph/state/run-machine.ts:1398` | Run 主迁移，返回整条下一条 Run | 任何 Run 生命周期写入 |
+| `newRunRecord` | `src/core/work-graph/state/run-machine.ts:860` | 建 Run 记录；`workspaceSnapshot.line` 取 claim 事件里 Goal 的线 | claim/开跑 |
+| `withBoundStart` | `src/core/work-graph/state/run-machine.ts:882` | 首次 entry 成功后把提交游标绑到返回的 Run；已有的值不替换 | entered/result 返回 Run 时 |
+| `transitionRun` | `src/core/work-graph/state/run-machine.ts:1400` | Run 主迁移，返回整条下一条 Run | 任何 Run 生命周期写入 |
 | `runStateOf` | `src/core/work-graph/state/run-machine.ts:149` | Run 快照的机器状态 | Run 迁移前 |
-| `messageMachineStateOf` | `src/core/work-graph/state/message-machine.ts:369` | 消息记录的机器状态；缺失为 absent | 消息迁移前 |
+| `messageMachineStateOf` | `src/core/work-graph/state/message-machine.ts:375` | 消息记录的机器状态；缺失为 absent | 消息迁移前 |
 | `isPausedInterrupted` | `src/core/work-graph/state/run-machine.ts:209` | 是否 paused/interrupted 的结束 | 重排队与展示 |
 | `runUnresolvedBlocker` | `src/core/work-graph/state/run-machine.ts:223` | 未解决工具调用的阻塞原因 | 未知调用审查 |
-| `claimHoldGuard` | `src/core/work-graph/state/run-machine.ts:1131` | claim 时 Session/Lease 的持有检查 | claim 提交 |
-| `entryPermitGuard` | `src/core/work-graph/state/run-machine.ts:1226` | 进入许可与持久 claim 的一致性检查 | 进入 Kernel 前 |
+| `claimHoldGuard` | `src/core/work-graph/state/run-machine.ts:1133` | claim 时 Session/Lease 的持有检查 | claim 提交 |
+| `entryPermitGuard` | `src/core/work-graph/state/run-machine.ts:1228` | 进入许可与持久 claim 的一致性检查 | 进入 Kernel 前 |
 | `newSessionAnomalyAnchorRecord` | `src/core/work-graph/state/session-anomaly.ts:24` | 建异常锚点（每 Run 至多一个，不可变） | 发现异常时 |
 | `transitionSessionAnomaly` | `src/core/work-graph/state/session-anomaly.ts:27` | 异常锚点首次写入迁移 | 记录异常 |
 | `deriveSessionAnomalyView` | `src/core/work-graph/state/session-anomaly.ts:55` | 由锚点与后续事实派生异常视图 | 读异常 |
@@ -282,16 +290,16 @@
 | `runErrorOf` | `src/core/work-graph/state/task-failure.ts:700` | 从终态负载与对账取错误与来源 | 统一错误展示 |
 | `attemptOrdinalOf` | `src/core/work-graph/state/task-failure.ts:1339` | Run 在它的链上是第几次尝试（从 1）：链上每个带 `requeueRef` 的 Run 开一次新尝试，接续（`previousRun`）留在同一次；复用 `chainRunIds` 防环 | 轨道横条 `attempt.ordinal` 与 `TaskRow.attemptOrdinal`；不要另写走链 |
 | `taskReworkRefusalEffects` | `src/core/work-graph/state/task-failure.ts:1500` | 拒绝重做的 effects | 拒绝记录同一提交 |
-| `controlIntentRecordOf` | `src/core/work-graph/state/control-intent-machine.ts:380` | 由请求与 next 生成意图记录 | 控制提交 |
+| `controlIntentRecordOf` | `src/core/work-graph/state/control-intent-machine.ts:388` | 由请求与 next 生成意图记录 | 控制提交 |
 | `projectTaskPhase` | `src/core/work-graph/state/task-machine.ts:241` | 相位 + 原因的精简投影 | 展示/守卫 |
 | `taskMachineStateOf` | `src/core/work-graph/state/task-machine.ts:255` | Task 定义的机器状态 | Task 迁移前 |
-| `transitionTask` | `src/core/work-graph/state/task-machine.ts:802` | Task 写入合法性（TASK-01..30） | claim、完成、处置、重排队 |
-| `taskRequeueStateProblem` | `src/core/work-graph/state/task-machine.ts:1169` | 当前状态能否重排队 | 重排队前 |
-| `newTaskRequeueRecord` | `src/core/work-graph/state/task-machine.ts:716` | 建 TaskRequeue 记录 | 重排队提交 |
+| `transitionTask` | `src/core/work-graph/state/task-machine.ts:807` | Task 写入合法性（TASK-01..30） | claim、完成、处置、重排队 |
+| `taskRequeueStateProblem` | `src/core/work-graph/state/task-machine.ts:1195` | 当前状态能否重排队 | 重排队前 |
+| `newTaskRequeueRecord` | `src/core/work-graph/state/task-machine.ts:721` | 建 TaskRequeue 记录 | 重排队提交 |
 | `effectivePlatformDuty` | `src/core/work-graph/state/context-input.ts:611` | 解析有效平台职责 | 判断平台/职责时 |
 | `normalizeCommandText` | `src/core/work-graph/state/command-normalization.ts:29` | 规范化命令文本 | 比较/算指纹前 |
 | `declaredInputProblem` | `src/core/work-graph/state/context-input.ts:480` | 检查声明输入 | 校验工具/上下文输入时 |
-| `observationPairingProblem` | `src/core/work-graph/state/control-intent-machine.ts:294` | 意图与观察的配对检查 | 提交观察结果前 |
+| `observationPairingProblem` | `src/core/work-graph/state/control-intent-machine.ts:302` | 意图与观察的配对检查 | 提交观察结果前 |
 | `unreachable` | `src/core/work-graph/state/transition.ts:53` | 穷尽检查的兜底 | switch 的 never 分支 |
 | `UNKNOWN_CALL_KIND_TABLE` | `src/core/work-graph/state/unknown-call-kinds.ts:19` | 固定工具种类表，首个匹配生效；含 `create_member`、`request_rework`、`request_recheck`、`withdraw_session_message` 与只读的 `check_links`、`web_search`、`web_fetch` | 分类未知调用 |
 | `unknownCallKindOf` | `src/core/work-graph/state/unknown-call-kinds.ts:50` | 按 Kernel 工具名取种类，默认值在表里 | 未知调用审查 |

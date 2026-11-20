@@ -30,12 +30,15 @@ type BoundCursorName = 'since' | 'until' | 'unavailableSince' | 'responseSince' 
   | 'openedAt' | 'closedAt';
 const BOUND_CURSOR_NAMES: readonly BoundCursorName[] = ['since', 'until', 'unavailableSince', 'responseSince',
   'startedSince', 'openedAt', 'closedAt'];
-/** The three nested array element cursors a role-line record binds. */
-type RoleLineCursorField = 'holders[].since' | 'reservations[].reservedAt' | 'entries[].enqueuedAt';
+/**
+ * The four nested array element cursors: three a role-line record binds, and `reasons[].since`, each claim-hold
+ * reason's placing commit (`TaskClaimHold`).
+ */
+type RoleLineCursorField = 'holders[].since' | 'reservations[].reservedAt' | 'entries[].enqueuedAt' | 'reasons[].since';
 /** Every field the Store may fill with the commit cursor: a top-level name or a nested array element path. */
 export type BoundCursorField = BoundCursorName | RoleLineCursorField;
 export const BOUND_CURSOR_FIELDS: readonly BoundCursorField[] = Object.freeze([...BOUND_CURSOR_NAMES,
-  'holders[].since', 'reservations[].reservedAt', 'entries[].enqueuedAt']);
+  'holders[].since', 'reservations[].reservedAt', 'entries[].enqueuedAt', 'reasons[].since']);
 /** The four envelope keys every event carries outside its own fields. */
 const ENVELOPE_KEYS: readonly string[] = ['eventId', 'eventType', 'schemaVersion', 'occurredAt'];
 
@@ -240,7 +243,8 @@ function holdsBoundCursor(field: Field): boolean {
 const NESTED_CURSOR_PATHS: Readonly<Record<string, { array: string; element: string }>> = {
   'holders[].since': { array: 'holders', element: 'since' },
   'reservations[].reservedAt': { array: 'reservations', element: 'reservedAt' },
-  'entries[].enqueuedAt': { array: 'entries', element: 'enqueuedAt' } };
+  'entries[].enqueuedAt': { array: 'entries', element: 'enqueuedAt' },
+  'reasons[].since': { array: 'reasons', element: 'since' } };
 /**
  * The Store fills a bound cursor on a record's top-level field of the same name or on an array element's known nested
  * path (`commitCursorFields`), so it may sit only there, directly or under `f.nullable` (the only way to store `null`

@@ -7,7 +7,6 @@
  * (`state/task-failure.ts`). They live in contracts because `state/` imports
  * only contracts, and Workflow, Goal display and the UI read the same shapes.
  */
-import type { ActorRef } from './command-event.js';
 import type { ArtifactRef } from './artifact.js';
 import type { SessionRef } from './core/identity.js';
 import type { ControlIntentRef, ControlIntentRequestV1 } from './control-intent.js';
@@ -16,7 +15,7 @@ import type { ModelServiceFailureCode, RunOutcome, RunRef, TaskAttemptRef, TaskB
 import type { EvidenceOutcome } from './evidence.js';
 import type { NoProgressCheckFactV1, RunFailureOrigin, SourceStampV1 } from './no-progress.js';
 import type {
-  ReworkActorClass, ReworkFailureClass, StopRequester, TaskRequeueRef, TaskReworkOperation,
+  ReworkActorClass, ReworkActorV1, ReworkFailureClass, StopRequester, TaskRequeueRef, TaskReworkOperation,
   TaskReworkRefusalCode, TaskReworkRefusalRef,
 } from './task-requeue.js';
 import type { RoundSnapshot, VerificationRoundRef } from './verification.js';
@@ -130,7 +129,7 @@ export type TaskReworkRefusalFactV1 = {
   revision: number;
   code: TaskReworkRefusalCode;
   reason: string;
-  requestedBy: ActorRef;
+  requestedBy: ReworkActorV1;
   refusedAt: string;
   stale: boolean;
 };
@@ -219,7 +218,7 @@ export type TaskReworkSummaryEntryV1 = {
   ref: TaskRequeueRef;
   afterRunRef: RunRef;
   failureClass: ReworkFailureClass;
-  requestedBy: ActorRef;
+  requestedBy: ReworkActorV1;
   automatic: boolean;
   autoCount: number;
   reason: string;

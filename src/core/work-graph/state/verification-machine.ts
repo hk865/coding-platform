@@ -57,7 +57,7 @@ import type { NewBasisInputRefV1, SourceStampV1 } from '../../../contracts/no-pr
 import type { GoalDesiredState } from '../../../contracts/ledger.js';
 import type { Disposition, PlanRevisionRef } from '../../../contracts/plan.js';
 import type {
-  ReworkActorClass, ReworkFailureClass, TaskRequeueSnapshotV1, TaskReworkRefusalCode,
+  ReworkActorClass, ReworkActorV1, ReworkFailureClass, TaskRequeueSnapshotV1, TaskReworkRefusalCode,
 } from '../../../contracts/task-requeue.js';
 import type {
   CheckHostActor, CheckProcessObservation, ReverifyBasisV1, ReverifyExemption, RoundChainV1,
@@ -295,7 +295,7 @@ export type RoundSuccessorV1 = {
   build: SuccessorRoundBuildV1;
   /** `reverifyBasis` over the predecessor, this capture and the configuration the successor freezes (§13.7 point 1). */
   basis: ReverifyBasisV1;
-  requestedBy: ActorRef;
+  requestedBy: ReworkActorV1;
   requestedAt: string;
   /** Verified by `newBasisInputProblem` (ND-9); a stored human `note` is one of them. */
   newInputRefs: readonly NewBasisInputRefV1[];
@@ -633,7 +633,7 @@ export type SuccessorRoundInputV1 = {
   roundId: string;
   build: SuccessorRoundBuildV1;
   reverify: {
-    requestedBy: ActorRef;
+    requestedBy: ReworkActorV1;
     /** `reworkActorClassOf(principal, actor)`. */
     actorClass: ReworkActorClass;
     requestedAt: string;

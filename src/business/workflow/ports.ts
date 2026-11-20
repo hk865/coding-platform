@@ -21,6 +21,7 @@ import type { CheckCapabilityV1, RegisteredCommandCheck, RoundSnapshot } from '.
 import type { FailingCheckOutputV1 } from '../../contracts/check-output.js';
 import type { NotifyProjectInputV1, ProjectNoticeV1 } from '../../contracts/role-lines.js';
 import type { GoalTaskPort } from '../../core/work-graph/model/task-contracts.js';
+import type { ClaimHoldPort } from '../../core/work-graph/model/action-request-contracts.js';
 import type { TaskRow } from '../../core/work-graph/model/plan-contracts.js';
 import type {
   PlanProposal, PlanProposalRef, PlanServicePort, PlanTaskPort,
@@ -331,6 +332,11 @@ export type WorkflowDependencies = {
    * `pass` and the owner guards still decide.
    */
   unknownCallReviews?: UnknownCallReviewPort & UnknownCallReviewReadPort;
+  /**
+   * 暂缓领取的读口（同一个暂缓 owner 的 `readHold`）：`requeue_task` 在门上先看书记原因，held 就等、不写（2.6）。
+   * 可选：没接时门照旧跳过这一步，返工 owner 自己还会挡 `system` 类。
+   */
+  claimHolds?: Pick<ClaimHoldPort, 'readHold'>;
   /** P's chooser reads (`session-chooser.ts`); the composition supplies the activity, goal-Run and pre-claim
    *  authorization facts. Absent keeps today's order and no authorization filter. */
   pick?: PickReadsV1;

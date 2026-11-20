@@ -85,7 +85,7 @@ lead 让 Codex 在同一步按新读法列出每一处实例，新版本从下�
   这一行断言拒绝，并通过公共读取断言什么都没变。
   每一行只放一个错误，所以移除被测的检查会让这一行失败。
 - **A7 具名 helper。** 由 lead 维护的清单（最多 10 条，每条带 file:line 和理由），
-  列出可以做 A1–A6 与 A8 未覆盖之事的 helper。共四条（第四条只给 6A-3 用）。
+  列出可以做 A1–A6 与 A8 未覆盖之事的 helper。共五条（第四条只给 6A-3 用；第五条到 P2/P4 为止）。
   1. **进程沙箱替身**，`tests/scenarios/support/process-sandbox-standin.ts:22`
      （`createProcessSandboxStandin`，对
      `vendor/coding-agent/dist/sandbox/process/process-sandbox.js` 的模块 mock）。
@@ -127,6 +127,14 @@ lead 让 Codex 在同一步按新读法列出每一处实例，新版本从下�
       （`tests/work-graph/S6A-query-activity-read-checks.test.ts`）。
       理由：check 只能在一次 check run 里开始，而 6A-3 的行一次 check 都不跑；
       旧的日历 check 行本来就用同一个夹具。6A-3 没有别的行用这三个。
+  5. **P1 平台入口。** `tests/helpers/P1-platform-entry.ts:1`（文件头写明范围，此外不放别的）：
+     以平台自动化身份调 `placeScribeStop`、`deliverStop`、`settle` 和 Workflow 自己停住的自动返工；
+     以配置的操作者调 `releaseAll`、`withdraw`（C4 用本世界不托管的项目 `P1_OTHER_PROJECT` 的上下文当“别的项目”）；
+     以不是操作者的 Host 身份调操作者的 `withdraw`、`releaseAll`，只给拒绝行用；
+     以 Host 身份调 `claims.claimTask`，只在带 `servedRequest` 或干预标记时，普通领取走公开的 `workflow/advance`。
+     入参只用前面公开步骤回过的值。“不是平台自动化、不是操作者”的拒绝行，直接用调用方自己的上下文（人或那一轮）调 owner，不经这个文件。
+     理由：P1 只建 owner、还没有生产调用方（决定 121-152），这些调用今天只有平台或 Host 自己做（P1 lead 裁定 T1）。
+     期限：P2/P4 接上真实调用方后，挪到真实入口或删掉。
 - **A8 Host 输入。** Host 自己从其配置提供给平台的输入：
   workspace 根（测试创建的真实目录）及其 revision、该根内路径的授权决定、
   带脚本化模型 provider 的 runtime 配置（步骤从不调用的 model client 可以是占位符）、

@@ -28,7 +28,7 @@ import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type { GoalRecordTransactionPort, PreparedCommit, RecordGuard } from '../../record-store/ports.js';
 import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import type { EvidencePort } from '../model/evidence-contracts.js';
-import type { RequeueTaskInput, TaskClaimPort } from '../model/claim-contracts.js';
+import type { ApprovedReworkApplyV1, RequeueTaskInput, TaskClaimPort } from '../model/claim-contracts.js';
 import type { ReverifyOutcomeV1, ReverifyRoundInput } from '../model/evidence-contracts.js';
 import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
 import type { ExecutionEntryDependencies } from '../model/execution-entry-contracts.js';
@@ -147,7 +147,7 @@ export async function executeReworkRequestClose(
         eventId: input.eventId(), eventType: 'ReworkRequestClosed', schemaVersion: 1,
         occurredAt: decision.at,
         identityKey: keys.identityKey,
-        actor: closed.requester.actor as Extract<ActorRef, { kind: 'agent' }>,
+        actor: closed.requester.actor,
         fingerprint: keys.fingerprint,
         request: closed.ref,
         state: input.outcome,
@@ -333,8 +333,37 @@ export function createReworkRequestService(deps: ReworkRequestServiceDependencie
       return rejectedWithNonEmptyCurrent('revision_conflict', `the rework request is ${record.state}`,
         [{ ref: record.ref, revision: record.revision }]);
     }
-    // Provenance is rebuilt from the persisted Run; never a fresh admission (the requester Run may have ended).
-    const executionRead = await deps.reads.readExecution(ctx, record.requester.run);
+    const answerRef = raw['answerRef'] as SessionMessageRef;
+    const requester = record.requester;
+    // 参谋规划轮的请求（Q10a 甲）：没有 Run 可读，也不重建 provenance（记 null）；落实照样不重新准入。
+    const approval: ApprovedReworkApplyV1 | CoreRejection = requester.kind === 'query_run'
+      ? { request: record.ref, revision: record.revision, actor: requester.actor, provenance: null, commandId, answerRef }
+      : await workRunApproval(ctx, record, requester, commandId, answerRef);
+    if ('status' in approval) return approval;
+    const meta = {
+      requestId: commandId,
+      // The record table stores pins as JSON; the two owners' existing pin checks validate every one, so no
+      // second validator is written here.
+      expected: record.pins as unknown as readonly VersionPin[],
+    };
+    const result = record.kind === 'requeue'
+      ? await deps.requeues.requeueApprovedByCard(ctx,
+        { input: record.input.value as RequeueTaskInput, meta }, approval)
+      : await deps.evidence.reverifyApprovedByCard(ctx,
+        { input: record.input.value as ReverifyRoundInput, meta }, approval);
+    // R-03: a real `source_stale` from the owner applies as a stale close; every other result is returned as-is.
+    if (result.status === 'rejected' && result.code === 'source_stale') {
+      return await closeReworkRequest(ctx, { request: record.ref, commandId, outcome: 'stale', reason: result.reason });
+    }
+    return result;
+  }
+
+  /** 做事轮请求的批准：provenance 从存下的 Run 重建，不重新准入（请求方的 Run 可能已结束）。 */
+  async function workRunApproval(
+    ctx: CoreCallContext, record: ReworkRequestV1, requester: Extract<ReworkRequestV1['requester'], { kind: 'work_run' }>,
+    commandId: string, answerRef: SessionMessageRef,
+  ): Promise<ApprovedReworkApplyV1 | CoreRejection> {
+    const executionRead = await deps.reads.readExecution(ctx, requester.run);
     if (executionRead.status !== 'ready') {
       return rejected('unavailable', executionRead.status === 'rejected'
         ? executionRead.reason : 'the requester Run is not readable for the approved rework application');
@@ -362,27 +391,7 @@ export function createReworkRequestService(deps: ReworkRequestServiceDependencie
       authorizationRevision: authorization.revision,
       configurationRevision: stored.value.manifest.hostConfigurationRevision,
     };
-    const actor = record.requester.actor;
-    const approval = {
-      request: record.ref, revision: record.revision, actor, provenance, commandId,
-      answerRef: raw['answerRef'] as SessionMessageRef,
-    };
-    const meta = {
-      requestId: commandId,
-      // The record table stores pins as JSON; the two owners' existing pin checks validate every one, so no
-      // second validator is written here.
-      expected: record.pins as unknown as readonly VersionPin[],
-    };
-    const result = record.kind === 'requeue'
-      ? await deps.requeues.requeueApprovedByCard(ctx,
-        { input: record.input.value as RequeueTaskInput, meta }, approval)
-      : await deps.evidence.reverifyApprovedByCard(ctx,
-        { input: record.input.value as ReverifyRoundInput, meta }, approval);
-    // R-03: a real `source_stale` from the owner applies as a stale close; every other result is returned as-is.
-    if (result.status === 'rejected' && result.code === 'source_stale') {
-      return await closeReworkRequest(ctx, { request: record.ref, commandId, outcome: 'stale', reason: result.reason });
-    }
-    return result;
+    return { request: record.ref, revision: record.revision, actor: requester.actor, provenance, commandId, answerRef };
   }
 
   // ---- standalone close ---------------------------------------------------
