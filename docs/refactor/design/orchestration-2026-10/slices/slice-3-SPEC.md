@@ -435,6 +435,14 @@ Query 读取 Session 的接线必须单列：当前 `sessions/session-directory.
 
 `tasks/run-state-service.ts:ownCallContext` 同样只接受 Host，views 不得把 Work/Query 原 context 直接传给 `executions.readExecution/listExecutions`。增加私有 `resolveGraphExecutionReadContext(ctx:CoreCallContext,goalRef:GoalRef):Promise<ReadResult<CoreCallContext>>`：Host 沿原 context；Query 复用上述完整核验后获得的内部 context；Work 按精确 RunRef 读 canonical Run（复用 `materials/run-snapshot-decoder.ts:decodeRun`），核 Run.ref/Run.task.goalId/Run.workspaceSnapshot.workspaceId 和 canonical Goal.workspaceRef 与原 ctx、目标 Goal 一致，才构造同 scope、actor=deps.hostActor、相同 materialReader.actor 的内部 Host context。请求的执行 ref 必须属于已核 Goal；只查已有候选索引和原 final-window reader，不绕过其 incomplete/unavailable/busy/水位规则。未开始的候选为空仍 ready；绑定 Run 不存在 not_found、损坏 unavailable、跨scope forbidden。Session 的 Work 读取继续传原 work_run。这里不核运行许可/新 lease、不给写权限，不阻断 archived/busy Session 的历史事实读取。
 
+2026-11-20 补注（决定 121-151、121-156，A9）：上面两段写两座桥只给 Session 读、执行读用。现在 look 的节点属于调用方冻结目标以外的目标时（同一工作区），也先用这两座桥按调用方**自己的**目标核过调用方，再用桥给的同范围内部 Host 上下文读那个目标的 Goal、Plan、Session、Run、Round。
+- 调用方有目标时用 `resolveReadContexts(ctx, 自己的目标)` 的执行读上下文：Host 原样；Query 是核过的内部 Host，actor 是原提交人；Work 是核过的内部 Host，actor 是 `deps.hostActor`。调用方没有目标时用 `resolveGraphSessionReadContext(ctx, null)`。核不过照原样拒。
+- 节点的目标：goal 是它自己；task、run、round 取引用里的目标号；stage 读计划记录取它的目标；module、session 和 path 写法照旧按调用轮的目标读。节点在不在那个目标里由后面的读核实，不在回 `not_found`。
+- 读那个目标只读目标记录，不经 owner 的目标详情组装：不存在 → `not_found`；不在本工作区 → `forbidden`，原句 `the Goal is outside the requested workspace`。越项目、round 引用写别的工作区，照旧在任何读之前拒。
+- 卡上的注记材料按调用轮冻结的目标给，不按被读的目标：调用轮有目标、读别的目标时，卡上不带注记材料，决定行不给点名注记的两种卡（`note_review`、`repair_approval`，请求带 `omitNoteCards`）；调用轮没有目标时带项目和那个目标的理解。免得别的目标待审的注记经卡漏出来。
+- 原因：原上下文读别的目标会被 owner 拒（Query 的 Job 目标、Work 的 Run 目标都只认自己的）；点名读 Goal 原来就是先核调用方、再用内部 Host 上下文读，现在推广到所有带目标的节点。
+- 代码 `src/core/work-graph/views/graph-context-reader.ts:505`-`:521`（`nodeGoalOf`）、`:1697`-`:1724`（目标块）、`:1734`、`:1738`（用核过的上下文读）、`:1798`-`:1803`（注记材料）；`src/core/work-graph/views/context-extensions.ts:115`（决定行）。原文保留。
+
 `createGraphContextReader(deps):GraphContextReadPort` 的唯一实例也实现 readAttentionFacts；nullable Goal 时只读 adopted architecture，非 null 时读同一任务/架构事实及版本。`AttentionGraphReadRequestV1`、`GraphAttentionFactsV1` 和 detail/change DTO 是 Contracts 纯类型（§4.5 给出字段），禁止 Runtime/WorkGraph import app 的 GraphAttentionStamp。app 的 stamp 作为旧结构兼容 wrapper。readContextFacts.executions 只含 focus 任务的 canonical selected Run；接续祖先走原 readContinuationBasis，完整 Run 列表走 executions relation 分页。Round 解码复用 `persistence/evidence-record-codecs.ts:decodeVerificationRoundSnapshot`，Message 解码复用 `sessions/message-record-codecs.ts:decodeSessionMessageRecord`，不绕到上层 evidence/communication。
 
 includeInputs 缺省false；只有 Work/continuation prepare 显式true才调用 inputs.readTaskInputs 并装载输入。普通 card/find/attention 只读声明和摘要，不打开材料；实际正文消费走 look input。Query 当前 copy/planning 两种装配不含inputs段，binding.inputSelections=[]，不能自动读完所有focus任务的材料；Query之后用look input得到的版本只记在那次工具结果。Query调用 G-CTX 时旧selectedTaskInputs参数传[]，与空inputSelections一致；不向Query manifest加一个不存在的旧数组。
@@ -442,6 +450,8 @@ includeInputs 缺省false；只有 Work/continuation prepare 显式true才调用
 查询只读真实记录，不按 UI 缓存或列表候选证明权限。卡片以精确 goal/plan/ModuleRef 定位，paths 用采用架构的 `ModuleDefinition.paths`，summary 是其 responsibility（不从源码猜一句话）。路径不能有盘符、反斜线、空段、`..`、NUL；项目根 `'.'` 只作为显式根定位允许。多个模块同一路径返回多个 card，不猜赢家。
 
 分页 limit `1..100`；cursor 是 base64url JSON `{v:1,scopeKey:string,queryKey:string,basisKey:string,offset:number}`。三个 key 分别 hash 完整 project/workspace/goal/原 principal identity（Host actor、RunRef 或 QueryRunRef；不是内部桥接的Host actor）、正规化请求（不含 cursor）、实际 Plan+Architecture+所用来源版本，包括本次 Session 候选的 ref/revision。跨 scope/principal/query cursor `invalid`；basis 已换 `revision_conflict`，current 带新 Plan/Workspace pins；查不到起始节点 `not_found`。原历史单独使用 RT8 原 cursor，不能把这类 cursor 转送给 history。
+
+2026-11-20 补注（决定 121-151、121-156，A9）：look 的 `scopeKey` 里的 goal 是**被读的目标**：节点带目标时是节点所属的目标（stage 读计划取目标），否则是调用轮的目标。principal 照旧是原调用方身份，不是桥的 Host。先后：坏游标（`page.afterCursor is not a valid graph cursor`）和别的查询的游标（`queryKey` 不同）在第一次读记录之前就拒；别的范围的游标（`scopeKey` 不同）要等定了被读的目标才比得了（stage 要先读计划），在那之后拒。后两种都是 `invalid`，原句 `the graph cursor belongs to another scope or query`。find 的游标不变。代码 `src/core/work-graph/views/graph-context-reader.ts:1686`-`:1693`、`:1725`-`:1729`（`scopeKeyOf` 在 `:366`）。原文保留。
 
 找只 `String.includes`，大小写敏感，needle 不 trim/case-fold，长度 `1..256` Unicode code points。名字、paths、summary 三字段命中任一即一条；不查注记正文、不检索 Kernel 正文、不相关性排序。稳定顺序是 node kind 的固定顺序 `goal,stage,task,module,session,run,round`，kind 内 canonical node key 字符码序 `<` 比较；这是分页次序，不是检索排名。不用机器 locale 决定字节。默认域包含全部七类：Goal/Stage/Task取选定Goal，Module取采用catalog，Run/Round取该Goal的任务，Session用现有 findSessions 的同workspace定向分页（includeArchived=true）；不扫描整个RecordStore，不读Kernel/材料正文。Session.name=sessionId、summary=完整role ref的规范JSON；Run.name=runId、summary=`status/outcome`；Round.name=roundId、summary=`status/outcome`，未有outcome用`(none)`。不拿chat正文作一句话语义。旧 findSessions/RT8 的工作区读取边界不额外收紧；卡片里的链接源自正式worklinks或claim。
 
@@ -551,6 +561,15 @@ type LookArgs =
 
 2026-11-18 补注（决定 121-149）：node 写法的 `mode` 可以省，有 `target` 就只可能是 node。node、path 两种写法收顶层 `limit`（1..100），当 `page.limit` 用；`limit` 和 `page.limit` 都给时回 `invalid_arguments`：`limit is an alias of page.limit; send only page.limit`，不替模型挑。原因：Kernel 发给模型的 schema 是拍平的，根必须是对象，必填只留各写法都要的字段，模型看不出 `mode` 必填，还在顶层看得到 history 写法的 `limit`（G6 第十一次 `look_graph` 被拒 61 次里，缺 `mode` 22 次、`limit` 放顶层 17 次）。其余照旧：path、history、input 仍要 `mode`；history 仍不收 `page`；多一个不认识的键仍拒；记忆写法和图写法不能混。代码 `src/core/agent-runtime/graph-tools.ts:257`-`:285`（schema）、`:467`（两处都给）。参数不合时的报错另见取舍 015。原文保留。
 
+2026-11-20 补注（决定 121-153、121-156，B15）：计划审阅轮（`answerShape === 'plan_review'`）和批检查轮（`'check_review'`，参谋、审阅者的都算）里，下面两种写法拒：
+- **history 写法**照旧留在 schema 里（模型看到的 schema 和工具说明都不变），调了就拒。拒绝在读口之前返回，不读历史，也不读 Run 卡。
+- **input 写法**读回的页，来源是平台操作存下的产物（`selection.source.kind === 'artifact'` 且 `provenance.kind === 'platform_operation'`，检查报告等）时拒。要先读回页才知道来源，所以拒在读之后、回结果之前，页里的正文不进工具结果。Run 产生的普通产物照常分页；来源是一次检查的声明照旧只回来源摘要。
+- 两种拒绝同一个形状：工具结果 `status: 'error'`、`error.code: 'execution_failed'`；输出 `{ status: 'rejected', code: 'forbidden', reason }`。message 和 reason 是同一句 `a plan review or check review round cannot read execution history or evidence (B15)`。
+- 原因：B15 写计划候选审阅“不读执行历史或证据”（`docs/MVP-BEHAVIOR.md` B15），批检查和计划审阅是同一个材料范围。history 写法留在 schema 里，模型调了能看到写明理由的拒绝，而不是派发器的 `Unrecognized key …`。
+- 执行审阅、ucr、crr 照旧：`look_graph` 不含 history 写法，只经 `read_execution_history` 读被审 Run。其余问答轮照旧能读本目标 Run 的历史，input 写法也照旧。
+- 代码 `src/core/agent-runtime/graph-tools.ts:93`（`lookHistory?: false | 'refused'`）、`:134`（那一句）、`:453`-`:456`（history）、`:478`-`:482`（input）；哪两种轮由 `query-execution.ts:577`-`:578` 定。
+- 这两种轮还有两条路读得到执行记录，不在这里收：同一审阅线上一轮的 Session 历史会接进这一轮的首个请求（通信拆分 P2 收）；`run_readonly_command` 能读 `.git` 下的项目库（121-106 用户接受 Run 读 `.git`，记为已知限制）。原文保留。
+
 node/path默认 card,page20；history limit默认50、范围1..200，调用原 `readTaskExecutionHistory(ctx,{runRef,afterCursor,limit})`；不绕 busy/archived，也不 ack消息、不读整 Session 转录。每页同scope校验，保留原 scannedCount/basis。`GraphToolsConfig.history` 是 driver 内部的窄代理，**不是**把 tool 的 work_run/query_run 原 context 直接交给 Host-only 的 RT8/RT7。每次代理先用 `graph.lookGraph` 对原 tool context 和该 Run 的 card 校验；canonical scope/身份拒绝立即返回。然后以 driver 已持有的同scope可信 Host context 调用现有 RT8；Work 用原 startRun 的 Host context，Query 的 actor 用 `queryExecution.readPreparationFacts` 返回的原 initiator，principal/materialReader 两处必须相同；原 signal换成本次工具 signal。代理不对外暴露 Host context，不接受模型传 Host/Kernel identity；不能把 RT8 的 source_stale/cursor 检查转换成成功。【lead 改：C2】沿用已有的必填字段 `RuntimeExecutionDependencies.graphHistory`（`execution-contracts.ts:182`，RT8），不新增字段；不新建 Kernel Store 或改 RT8 文件。查询 canonical facts 在新工具 factory 选择前读取并核验，不能从 question/manifest文字猜 initiator。
 
 2026-11-18 补注（决定 121-149），history 写法和 `read_execution_history` 两个历史读（上文“沿旧白板读工具的 definition”那一段 48 KiB 整页拒的规则对它们改了一处）：
@@ -558,6 +577,8 @@ node/path默认 card,page20；history limit默认50、范围1..200，调用原 `
 - **减半重读。** 整个工具结果（带句柄）放不进 48 KiB，就把条数减半再从同一个 `afterCursor` 读，直到放得下；少给几条不算截断，`nextCursor` 接着这一页。读到 1 条还放不下，照旧 `rejected/capacity`。读口回的不是 `ready` 时立刻原样回。node、path、input 页和记忆读照旧整页拒。
 - 代码 `src/core/agent-runtime/graph-tools.ts:419`（`readHistory`；前缀和原文 `:130`-`:131`、句柄表 `:398`）。`executions/history` 路由和 `readTaskExecutionHistory` 不变，照旧给 UI、驱动和见证读长游标。
 - 还挡着：单条历史超过 48 KiB 时，减半到 1 条仍是 `capacity`，没有 `nextCursor`，这个 Run 在这一条之后的历史两个历史读都读不到（记在以后）。原文保留。
+
+2026-11-20 补注（决定 121-151、121-156，A9）：A9 放开的是读节点，不是历史。history 写法和 `read_execution_history` 照旧只读工具冻结目标的 Run，上文“每次代理先用 `graph.lookGraph` 对原 tool context 和该 Run 的 card 校验”之前多一步：代理先比目标，同项目、别的目标的 Run 直接 `forbidden`，原句 `the requested Run is not in the bound Goal`，Run 在不在都一样；别的项目的 Run 照旧交给读卡，回决定 121-149 的原句。原因：A9 之后读卡会放行同工作区别的目标的 Run，先比目标就不为一个注定要拒的历史读去读别的目标的卡，回的也总是同一句。代码 `src/core/agent-runtime/tool-group-assembly.ts:150`-`:152`（读卡在 `:159`）。读同工作区别的目标的 Run 历史今天还挡着，和 B15 的范围一起再定。原文保留。
 
 input maxBytes默认2048、范围1..4096，转 `inputs.readTaskInputPage(ctx,request)`；返回 `TaskInputPageV1`。cursor绑定 scope/consumer/plan/declaration/candidate/digest/UTF8字节offset；跨声明 cursor 为 `invalid`，该声明不再容许原 source 为 `revision_conflict`；后续正文仍读 cursor 固定版本，不换成新选择；不截断UTF8字符。maxBytes 小于下一字符长度时 `capacity`，不返回无进度空页。结果中 source/usage每页都有，不给“当前有效”的标签。
 

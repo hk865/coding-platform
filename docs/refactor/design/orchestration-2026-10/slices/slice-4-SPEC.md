@@ -195,6 +195,9 @@
   - 读不写：读从不改注记、消息、执行状态或已读位置。
 - **L13 “看”“找”的记忆分支。**【lead 定，待审】不加新的公开工具（Q2）。两个工具的参数加一个有版本的分支：`look_graph` 收 `{ memory: { v: 1, op: 'lookup' | 'neighbors' | 'history' | 'conflicts', … } }`，`find_graph` 收 `{ memory: { v: 1, op: 'find' | 'stale', … } }`；schema 是**旧图参数和 `{ memory: … }` 的严格 union**，先按 `memory` 在不在分派，再走旧校验；参数和返回形状不变；匹配规则按本条改（G-02；用户 2026-10-15 第 11 条）。可信的范围、身份、目标照旧由适配层带（F9）。具体字段和返回见 §2 的六个请求类型。（第一轮审查第 16 条）
   - **“找”的匹配（改第 3 片的行为）**：名字、路径、说明两边都先 NFC + ASCII 小写（不再区分大小写）。路径查询时，模块的某条路径和查询相等、或是查询的最长前缀归属者（按目录边界，和 `mapExecutedFilesToModules` 同一条规则）、或者位于查询目录之下（`查询 + '/'` 前缀），都算命中；参数和结果形状不变。（用户 2026-10-15 第 11 条）
+  - 2026-11-20 补注（决定 121-151、121-152、121-156，A8）：挂了“看”“找”的每一轮都接记忆读口。做事轮、秘书轮、探索轮照旧；参谋规划轮、书记审查轮、审阅者的计划审阅和执行审阅、批检查、ucr/crr、执行者规划轮、问一问副本和各种文字轮新接上。原因：注记是架构图的一部分，书记的本职就是审注记；原来这些轮挂着读图工具，一调记忆写法就失败（`the note memory read port is not bound for this Run`）。
+    - 读口在配置类型里必填（`src/core/agent-runtime/graph-tools.ts:79`，`tool-group-assembly.ts:228` 做事轮、`:527` 问答轮），这条失败没有了。读口缺了算图读依赖没绑：开轮时、进模型之前回 `unsupported`（`the Run selects graph read tools but no graph read dependency is bound: …`，`tool-group-assembly.ts:316`、`:810`）。这个判断问答轮在 `query-execution.ts:390`、做事轮在 `execution-driver.ts:577` 各算一次。组合根总是填上，生产里走不到，只有直接拼依赖的测试替身会。
+    - 问答轮工具上下文的主体带这一轮的目标（`query-execution.ts:534`-`:544`）：秘书轮是请求冻结的目标（可能还没有）；其余问答轮是任务的规范目标，和图工具读的目标是同一个值；没有目标的轮（探索轮、无目标的问副本）为空。这个目标只有注记读模型读（`note-read-model.ts:902`），不进命令身份，也不进任何记录。记忆读按它分本目标和别的目标，规则照 §11.3（同日补注改了不挂目标的已接受注记那一支）。原文保留。
 - **L14 “记”工具。**【lead 定，待审】一个新的平台工具 `record_note`，参数按 `op` 严格分三支：
   - `op: 'write'`（执行者、参谋、书记、秘书）：`kind`（八种之一，见 L4 第 1 条）、`anchor`、`extraAnchors`（文件锚点可带 `symbolRequest: { language, name, range? }`，平台解析成 `NoteBodyV1` 的 `symbol` 定位）、`topic`、`conclusion`、`body`（非 understanding）或 `sections`（understanding；给错 → `invalid`，见 L4 第 1 条）、`facts`、`basisFiles`（路径列表，摘要和符号由平台读，不信模型给）、`replaces`、`contradicts`、`coexistWith`、`structural`、`expectedPointerRevision`（只对当前理解）。（第二轮审查第 3 条；用户 2026-10-15 第 1、4 条）
   - `op: 'review'`（**只有书记**）：`noteId`、`expectedVersion`、`verdict: 'review' | 'accept' | 'reject'`、`reason`、`expectedPointerRevision`（注记是当前理解时）。`review` = `accepted → reviewed`；`accept`/`reject` 只对 `pending_review` 且只剩 `quota_full` 的收下/拒绝；有 `structural`/`contradiction` 的书记收不了（`forbidden`）。（第二轮审查第 6 条）
@@ -824,6 +827,12 @@ export const SCRIBE_PENDING_THRESHOLD = 10, SCRIBE_UPDATE_DUE_THRESHOLD = 5;
 - **`stale`：** 照 L12 的问题列表和 R6 的候选（已收下、已审）；删掉走不到的 `item.invalid` 判断（只有暂存的修复会是 invalid，`note-views.ts:934`）。
 - **历史、相邻、冲突：** 不筛状态、不筛目标。
 - **游标：** `RULE_VERSION` 升到 2，所有读法一起（同一游标在新规则下页内容会变）。旧游标回 `cursor_mismatch`。
+
+2026-11-20 补注（决定 121-155）：上面“其余的已收下：`own || confirmedByUser`”改成 `own || confirmedByUser || head.goalId === null`，不挂目标的已接受注记对所有调用方默认可见，带目标的轮在书记审过、人确认之前也看得到。
+- 原因：冷启动探索写的项目级注记多半不挂目标，原规则把它当成“别的目标的”。带目标的轮在书记审过之前都读不到：做事轮早就这样；问答轮的主体带上这一轮的目标以后（L13 同日补注），带目标的参谋规划、审阅、书记等问答轮也这样，而这些正是参谋做计划最需要的。
+- 只改已收下这一支，`own` 不改：不挂目标的待审、暂存注记照旧只给没有目标的调用方看；书记已审照旧都给。“找”没词时按状态读的那条路照旧（带目标的调用方在别的目标槽只读已收下、书记已审），读到的仍过这个判断。
+- 代码 `src/core/work-graph/notes/note-read-model.ts:929`（判断在 `:923`-`:934`）。取舍见 [016](../../../tradeoffs/016-goalless-notes-visible.md)。
+- 另：上面“查询 Run 没有目标，`own` 恒真”现在只对没有目标的问答轮成立（探索轮、无目标的问副本）。问答轮的主体现在带这一轮的目标，带目标的问答轮和做事轮一样按自己的目标判（`note-read-model.ts:900`-`:904`）。原文保留。
 
 ### 11.4 项目的当前理解（决定 67 第 3 条）
 
