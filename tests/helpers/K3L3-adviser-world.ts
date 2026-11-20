@@ -13,6 +13,7 @@
 import type { WorkflowAdvanceInput, WorkflowStepReceipt } from '../../src/business/workflow/contracts.js';
 import type { PreparedQueryManifestV1 } from '../../src/contracts/core/prepared-execution.js';
 import type { RunRef, TaskTriple } from '../../src/contracts/dispatch.js';
+import type { WorkspaceScope } from '../../src/contracts/core/identity.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import { decisionSourceKey } from '../../src/contracts/goal-decisions.js';
 import type { UnknownCallReviewV1 } from '../../src/contracts/unknown-call-review.js';
@@ -223,8 +224,9 @@ export async function adviserManifestOf(w: K3L3World, round: SessionMessage): Pr
 }
 
 /** The tool result the adviser line's (or `line`'s) model was served for `callId` (read off its model requests). */
-export async function adviserToolResult(w: K3L3World, callId: string, line: S6ASession = w.adviser): Promise<S9ToolResult> {
-  for (const request of await w.world.scripted.requests(line)) {
+export async function adviserToolResult(w: Pick<K3L3World, 'world' | 'adviser'>, callId: string,
+  line: S6ASession = w.adviser, scope?: WorkspaceScope): Promise<S9ToolResult> {
+  for (const request of await w.world.scripted.requests(line, scope)) {
     const message = request.messages.find(candidate => candidate.role === 'tool' && candidate.callId === callId);
     if (message !== undefined && message.role === 'tool') return message.result as unknown as S9ToolResult;
   }

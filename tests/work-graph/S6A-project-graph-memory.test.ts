@@ -11,7 +11,7 @@
  * exactly that goal's own universe; the project memory material is the project
  * understanding plus the norms and nothing goal-scoped.
  *
- * The refusal rows use the real Goal, the real Plan (with its Stage), the real
+ * The goal-owned read rows use the real Goal, the real Plan (with its Stage), the real
  * Task and the real Run that public steps produced: a plan draft through
  * `plans/propose` + `plans/apply`, then the Workflow's own advance of that Task
  * on a Work Session. The round row's Host also has a valid check configuration
@@ -149,6 +149,21 @@ const STATIC_CHECKS: TrustedCheckConfiguration = {
   sourceAccess: 'verification_workspace', processAccess: 'all_except_denied', deniedPrefixes: ['.git'],
   checks: [{ checkId: 's6a-static', kind: 'static', command: 'true', cwd: '.', timeoutMs: 60_000, taskIds: 'all' }],
 };
+
+/** A9 rows: stage, task, Run and round reads of the first Goal with no bound goal and with the second Goal bound. */
+type GoalNodeCase = readonly [
+  kind: 'stage' | 'task' | 'run' | 'round',
+  goalLabel: string,
+  goalOf: (world: S6AHostWorld) => GoalRef | null,
+];
+const GOAL_NODE_CASES: readonly GoalNodeCase[] = [
+  ['stage', 'null', () => null],
+  ['task', 'null', () => null],
+  ['run', 'null', () => null],
+  ['run', 'second', world => world.goals.second],
+  ['round', 'null', () => null],
+  ['round', 'second', world => world.goals.second],
+];
 
 /** A Goal's real Plan, Stage, Task and Run, each made by a public step: the
  * plan draft through its proposal and application, then the Workflow's own
@@ -339,67 +354,34 @@ describe.each(BACKENDS)('a request round with no goal on the %s backend', backen
   });
 });
 
-describe.each(BACKENDS)('rejects: a graph operation that needs a goal with no goal on the %s backend', backend => {
-  it('rejects a look whose target is a stage', async () => {
-    const { world } = await seededHostWorld(backend);
-    const objects = await realObjects(world);
-    const beforeSettings = await goalSettings(world, world.goals.first);
-    const beforeNotes = await acceptedNotes(world, world.goals.first.goalId);
-    const answer = await look(world, {
-      goalRef: null,
-      target: { kind: 'node', node: { kind: 'stage', planRef: objects.planRef, stageId: objects.stageId } },
-      relation: 'card', page,
-    });
-    expect(rejection(answer)).toEqual({ status: 'rejected', code: 'invalid', reason: 'this request has no goal' });
-    expect((await goalSettings(world, world.goals.first)).revision).toBe(beforeSettings.revision);
-    expect(await acceptedNotes(world, world.goals.first.goalId)).toEqual(beforeNotes);
-  });
-
-  it('rejects a look whose target is a task', async () => {
-    const { world } = await seededHostWorld(backend);
-    const objects = await realObjects(world);
-    const beforeSettings = await goalSettings(world, world.goals.first);
-    const beforeNotes = await acceptedNotes(world, world.goals.first.goalId);
-    const answer = await look(world, {
-      goalRef: null,
-      target: { kind: 'node', node: { kind: 'task',
-        ref: { projectId: S6A_SCOPE.projectId, goalId: world.goals.first.goalId, taskId: objects.taskId },
-        planRef: objects.planRef } },
-      relation: 'card', page,
-    });
-    expect(rejection(answer)).toEqual({ status: 'rejected', code: 'invalid', reason: 'this request has no goal' });
-    expect((await goalSettings(world, world.goals.first)).revision).toBe(beforeSettings.revision);
-    expect(await acceptedNotes(world, world.goals.first.goalId)).toEqual(beforeNotes);
-  });
-
-  it('rejects a look whose target is a run', async () => {
-    const { world } = await seededHostWorld(backend);
-    const objects = await realObjects(world);
-    const beforeSettings = await goalSettings(world, world.goals.first);
-    const beforeNotes = await acceptedNotes(world, world.goals.first.goalId);
-    const answer = await look(world, {
-      goalRef: null, target: { kind: 'node', node: { kind: 'run', ref: objects.runRef } }, relation: 'card', page,
-    });
-    expect(rejection(answer)).toEqual({ status: 'rejected', code: 'invalid', reason: 'this request has no goal' });
-    expect((await goalSettings(world, world.goals.first)).revision).toBe(beforeSettings.revision);
-    expect(await acceptedNotes(world, world.goals.first.goalId)).toEqual(beforeNotes);
-  });
-
-  it('rejects a look whose target is a verification round', async () => {
-    const { world } = await seededHostWorld(backend, { actor: ROUND_ACTOR, extraHostOptions: { checks: STATIC_CHECKS } });
+describe.each(BACKENDS)('a look reads a goal-owned node in its own goal on the %s backend', backend => {
+  it.each(GOAL_NODE_CASES)('reads a %s of the first goal (goalRef: %s)', async (kind, _goalLabel, goalOf) => {
+    const round = kind === 'round';
+    const { world } = await seededHostWorld(backend, round
+      ? { actor: ROUND_ACTOR, extraHostOptions: { checks: STATIC_CHECKS } } : {});
     const receipts: WorkflowStepReceipt[] = [];
-    await realObjects(world, receipts);
-    const roundRef = openedRound(receipts);
+    const objects = await realObjects(world, receipts);
+    const node = kind === 'stage'
+      ? { kind: 'stage' as const, planRef: objects.planRef, stageId: objects.stageId }
+      : kind === 'task'
+        ? { kind: 'task' as const,
+          ref: { projectId: S6A_SCOPE.projectId, goalId: world.goals.first.goalId, taskId: objects.taskId },
+          planRef: objects.planRef }
+        : kind === 'run'
+          ? { kind: 'run' as const, ref: objects.runRef }
+          : { kind: 'round' as const, ref: openedRound(receipts) };
     const beforeSettings = await goalSettings(world, world.goals.first);
     const beforeNotes = await acceptedNotes(world, world.goals.first.goalId);
-    const answer = await look(world, {
-      goalRef: null, target: { kind: 'node', node: { kind: 'round', ref: roundRef } }, relation: 'card', page,
-    });
-    expect(rejection(answer)).toEqual({ status: 'rejected', code: 'invalid', reason: 'this request has no goal' });
+    const result = readValue<GraphReadPageV1<NodeCardV1>>(await look(world, {
+      goalRef: goalOf(world), target: { kind: 'node', node }, relation: 'card', page,
+    }));
+    expect(result.items.map(item => item.node)).toEqual([node]);
     expect((await goalSettings(world, world.goals.first)).revision).toBe(beforeSettings.revision);
     expect(await acceptedNotes(world, world.goals.first.goalId)).toEqual(beforeNotes);
   });
+});
 
+describe.each(BACKENDS)('rejects: a graph operation that needs a goal with no goal on the %s backend', backend => {
   it('rejects the executions relation', async () => {
     const { world } = await seededWorld(backend);
     const beforeSettings = await goalSettings(world, world.goals.first);

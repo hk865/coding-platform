@@ -8,7 +8,7 @@
  * project candidate set; the card/hover `paths` are the DISPLAY path
  * (`ws/2/src`), never the internal prefix and never a bare `src`.
  *
- * Named mutations (`src/core/work-graph/views/graph-context-reader.ts:1542–:1558`):
+ * Named mutations (`src/core/work-graph/views/graph-context-reader.ts:1547–:1563`):
  * 1. the name/summary branch only walks the request workspace's candidates
  *    (`catalogForWorkspace` then `matchedNodes`) → the main workspace's
  *    `graph/find('second-mod')` no longer hits `M2` (assertion 2 red);

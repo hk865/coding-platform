@@ -106,7 +106,7 @@ describe.each(BACKENDS)('the Query tools and the Query principal on the %s backe
     });
   });
 
-  it('runs a real look_graph with the plain Query principal and its trusted goal', async () => {
+  it('runs a real look_graph with the plain Query principal and the goal it carries', async () => {
     const looks: { principal: unknown; goalRef: unknown }[] = [];
     const original = readerModule.createGraphContextReader;
     const spy = vi.spyOn(readerModule, 'createGraphContextReader').mockImplementation(deps => {
@@ -139,13 +139,13 @@ describe.each(BACKENDS)('the Query tools and the Query principal on the %s backe
     expect(await world.scripted.requests(session)).toHaveLength(2);
     expect(looks).toHaveLength(1);
     expect(looks[0]?.goalRef).toEqual(world.goals.first);
-    // A plain Query's principal names no goal; the Runtime must not add the key.
-    expect(Object.prototype.hasOwnProperty.call(looks[0]?.principal, 'goalId')).toBe(false);
+    // A plain Query's principal carries the round's trusted goal (P0 §3).
     expect(looks[0]?.principal).toEqual({
       kind: 'query_run',
       queryRunRef: { aggregateType: 'QueryRun', ...S6A_SCOPE,
         queryJobId: refs.queryJobRef.queryJobId, runId: refs.queryRunRef.runId },
       initiator: HUMAN,
+      goalId: world.goals.first.goalId,
     });
   });
 

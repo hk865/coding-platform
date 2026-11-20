@@ -332,7 +332,7 @@ export type S6AScriptedModel = {
   /** Replies of the Session's queue not consumed yet. */
   pending(session: S6ASession): Promise<number>;
   /** The model requests served from the Session's queue, in order. */
-  requests(session: S6ASession): Promise<ModelRequest[]>;
+  requests(session: S6ASession, scope?: WorkspaceScope): Promise<ModelRequest[]>;
   /** Model calls an abandoned Host started after its crash (refused, never served). */
   abandonedCalls(): readonly S6AAbandonedCall[];
   /** Every model request of the Session at the model boundary, held or cancelled ones too, with its call's signal. */
@@ -653,7 +653,7 @@ export async function openS6AHostWorld(options: S6AHostWorldOptions): Promise<S6
         for (const reply of replies) script.push(reply);
       },
       async pending(session) { return (await scriptOf(session)).pending(); },
-      async requests(session) { return structuredClone((await scriptOf(session)).model.requests); },
+      async requests(session, scope) { return structuredClone((await scriptOf(session, scope)).model.requests); },
       abandonedCalls: () => [...abandonedCalls],
       async boundary(session) { return [...(boundaryLog.get(await kernelSessionOf(session)) ?? [])]; },
     },

@@ -111,6 +111,8 @@ function decisionRows(
   const focus = new Set(request.focusTaskIds);
   const rows: ContextIndexRowV1[] = [];
   for (const card of cards) {
+    // 别的目标待审、staged 的注记只给那个目标的轮看（A9）：读别的目标时不投影点名注记的卡。
+    if (request.omitNoteCards === true && (card.source.kind === 'note_review' || card.source.kind === 'repair_approval')) continue;
     const tasks = taskTriplesOf(card);
     if (focus.size > 0 && tasks.length > 0
       && !tasks.some((task) => task.projectId === request.goalRef.projectId

@@ -126,7 +126,8 @@ export const XWS2A_ADVISER_TOOLS = ['read', 'send_session_message', 'respond_ses
  * this is added only when the world is opened with `scribe: true`.
  */
 export const XWS2A_SCRIBE_WORK: S6AExtraBinding = {
-  binding: bindingOf('xws2a-scribe-binding', S6A_SCRIBE_ROLE, 'XWS2A scribe guidance', ['read', 'record_note']),
+  binding: bindingOf('xws2a-scribe-binding', S6A_SCRIBE_ROLE, 'XWS2A scribe guidance',
+    ['read', 'record_note', 'look_graph', 'find_graph']),
   workflow: { workspace: S6A_SCOPE, sessionRole: S6A_SCRIBE_ROLE, roleBinding: S6A_SCRIBE_ROLE_BINDING,
     budget: { tokenBudget: 1_000_000, deadline: null } },
   queryProfile: { id: 'xws2a-scribe-query-profile', label: 'XWS2A scribe query', scope: S6A_SCOPE,

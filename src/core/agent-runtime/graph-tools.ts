@@ -74,9 +74,9 @@ export type GraphToolsConfig = {
   context: CoreCallContext; goalRef: GoalRef | null;
   graph: GraphContextReadPort; inputs: TaskContextInputPort;
   history: GraphExecutionHistoryReadPort;
-  /** Slice 4C L13: `platform.notes`' six reads for the `{ memory: ... }` branch.
-   * Absent, a memory call fails closed before any note owner is reached. */
-  notes?: NoteMemoryReadPort;
+  /** `platform.notes` 的六个读，给 `{ memory: ... }` 写法；注记是架构图的一部分，
+   * 挂图工具的每一轮都接（A8）。 */
+  notes: NoteMemoryReadPort;
   /** The platform tools' model-facing texts; defaults to the generated pack. */
   texts?: Readonly<Record<string, ToolTextV1>>;
   /**
@@ -85,11 +85,12 @@ export type GraphToolsConfig = {
    */
   subjectRunRef?: RunRef;
   /**
-   * Slice 9: `false` leaves the history mode out of `look_graph`'s
-   * schema, so the exec review Query reads history only through its own tool.
-   * Absent keeps today's schema.
+   * `false`：执行审阅、ucr、crr 只经自己的 `read_execution_history` 读历史（slice 9），`look_graph` 的 schema 不含 history 写法。
+   * `'refused'`：计划审阅、批检查轮不读执行历史或证据（B15，MVP-BEHAVIOR:300）。history 写法留在 schema 里，调了回写明理由的拒绝；
+   *   input 写法读回的页来源是平台操作存下的产物（检查报告等）时，同样拒。
+   * 不给：今天的 schema 和读法。
    */
-  lookHistory?: false;
+  lookHistory?: false | 'refused';
 };
 
 type HistoryArgs = { afterCursor?: string | null; limit?: number };
@@ -129,6 +130,8 @@ const MAX_INPUT_MAX_BYTES = 4096;
 /** 模型看到的历史游标：完整游标约 2.7 KB，模型常抄错（G6 第十一次 65 次错 30 次）。 */
 const HISTORY_HANDLE_PREFIX = 'hc_';
 const HISTORY_HANDLE_UNKNOWN = 'afterCursor is not a nextCursor this Run was given (it may have expired with a Host restart); read again with afterCursor null';
+/** B15 的拒绝：工具结果的 message 和输出的 reason 是同一句。 */
+const HISTORY_REFUSED_IN_REVIEW = 'a plan review or check review round cannot read execution history or evidence (B15)';
 
 function noneEffects(): ToolResult['effects'] {
   return { sideEffect: 'none', changedPaths: [], workspaceRevision: null, artifactRefs: [] };
@@ -397,6 +400,8 @@ export function createGraphTools(config: GraphToolsConfig): {
   // 句柄 -> 完整游标。只在这个工具组（这个 Run）里认；Host 重启或重建工具组后从第一页重读。
   const historyHandles = new Map<string, string>();
   const fixedLookSchema = config.lookHistory === false ? lookSchemaWithoutHistory : lookSchema;
+  // 和 fixedLookSchema 一样在建工厂时冻结：配置事后被改也不变。
+  const refuseHistory = config.lookHistory === 'refused';
   const toolNames: readonly ((typeof GRAPH_TOOL_NAMES)[number] | ExecutionHistoryToolName)[] =
     fixedSubjectRunRef === null ? GRAPH_TOOL_NAMES : [...GRAPH_TOOL_NAMES, ...EXECUTION_HISTORY_TOOL_NAMES];
 
@@ -443,7 +448,14 @@ export function createGraphTools(config: GraphToolsConfig): {
   }
 
   async function dispatchLook(callId: string, args: LookArgs, context: CoreCallContext): Promise<ToolResult> {
-    if (args.mode === 'history') return readHistory(callId, args.runRef, args, context);
+    if (args.mode === 'history') {
+      // 拒绝在 readHistory 之前返回：不碰 history 读口，也不读 Run 卡。
+      if (refuseHistory) {
+        return rejectedResult(callId, { status: 'rejected', code: 'forbidden', reason: HISTORY_REFUSED_IN_REVIEW },
+          HISTORY_REFUSED_IN_REVIEW);
+      }
+      return readHistory(callId, args.runRef, args, context);
+    }
     if (args.mode === 'input') {
       // A task input page belongs to one Task of one Goal. With no trusted Goal
       // there is no Task to check the request against, so refuse here instead
@@ -461,6 +473,13 @@ export function createGraphTools(config: GraphToolsConfig): {
         maxBytes: args.maxBytes ?? DEFAULT_MAX_BYTES,
       };
       const result = await config.inputs.readTaskInputPage(context, request);
+      // B15：平台操作存下的产物（检查报告等）声明成输入也不回正文；Run 产生的普通产物照常分页。
+      // 先读回页才知道来源，拒在读之后、回结果之前，页里的正文不进工具结果。
+      if (refuseHistory && result.status === 'ready' && result.value.selection.source?.kind === 'artifact'
+        && result.value.selection.source.provenance.kind === 'platform_operation') {
+        return rejectedResult(callId, { status: 'rejected', code: 'forbidden', reason: HISTORY_REFUSED_IN_REVIEW },
+          HISTORY_REFUSED_IN_REVIEW);
+      }
       return mapRead(callId, result, 'the exact task input page could not be read');
     }
     if (args.limit !== undefined && args.page?.limit !== undefined) {
@@ -481,11 +500,10 @@ export function createGraphTools(config: GraphToolsConfig): {
   /**
    * L13 memory branch. The six note reads all receive the SAME snapshotted
    * trusted context as the old graph reads (never a model-supplied identity or
-   * scope). `config.notes` absent fails closed before the note owner is reached.
+   * scope). 注记读口是图的一部分（A8），由类型保证存在。
    */
   async function dispatchLookMemory(callId: string, memory: MemoryLookArgs, context: CoreCallContext): Promise<ToolResult> {
     const notes = config.notes;
-    if (notes === undefined) return failure(callId, 'execution_failed', 'the note memory read port is not bound for this Run');
     const limit = memory.limit ?? MEMORY_PAGE_DEFAULT;
     const cursor = memory.cursor ?? null;
     if (memory.op === 'lookup') {
@@ -519,7 +537,6 @@ export function createGraphTools(config: GraphToolsConfig): {
 
   async function dispatchFindMemory(callId: string, memory: MemoryFindArgs, context: CoreCallContext): Promise<ToolResult> {
     const notes = config.notes;
-    if (notes === undefined) return failure(callId, 'execution_failed', 'the note memory read port is not bound for this Run');
     const limit = memory.limit ?? MEMORY_PAGE_DEFAULT;
     const cursor = memory.cursor ?? null;
     if (memory.op === 'stale') {

@@ -58,6 +58,7 @@ import { valueOf } from '../helpers/S6B3-fixture.js';
 import { listed } from '../helpers/S7B-fixture.js';
 import { withConfiguredHost } from '../helpers/S7C-member-fixture.js';
 import { openS7D2RoleLineWorld, runS7D2Work } from '../helpers/S7D2-role-line-world.js';
+import { expectNoteRead, p0Lookup } from '../helpers/G8B-world.js';
 import { XWS2A_SCRIBE_WORK } from '../helpers/XWS2A-world.js';
 import { waitFor } from '../scenarios/harness.js';
 
@@ -157,7 +158,8 @@ it('S1 normal: one scr: round on the Task, the scribe\'s note and answer kept, n
   await r.world.scripted.script(r.scribe, [{ kind: 'calls', calls: [{ callId: 's1-note', name: 'record_note', args: {
     op: 'write', kind: 'decision', topic: 'scrv-s1-build', conclusion: reason, body: 'SCRV S1', anchor: SRC,
     extraAnchors: [], facts: [], basisFiles: [], replaces: [], contradicts: [], coexistWith: [], structural: false } }],
-  usage: usageOf(1_000) }, reviewReply('s1-normal', normal), reviewReply('s1-normal-2', normal)]);
+  usage: usageOf(1_000) }, reviewReply('s1-normal', normal),
+  { kind: 'calls', calls: [p0Lookup('s1-mem', 'src')], usage: usageOf(1_000) }, reviewReply('s1-normal-2', normal)]);
   const startedAt = await r.start();
   r.world.clock.advance(PAST_LINE);
   const first = await roundsAfter(r, 1);
@@ -184,6 +186,14 @@ it('S1 normal: one scr: round on the Task, the scribe\'s note and answer kept, n
   // The inbox lists the newest first; sorted, `:1:` comes before `:2:`.
   expect((await roundsAfter(r, 2)).map(round => round.text.split('\n')[0]).sort())
     .toEqual([head, head.replace(':1:', ':2:')]);
+  // A8（P0）：书记的第二轮用记忆写法读回第一轮自己写的注记（锚点是行里的 `SRC`）。
+  const written = await adviserToolResult(r.k, 's1-note');
+  const noteId = (written.output?.[0] as { value?: { write?: { noteId?: string } } } | undefined)?.value?.write?.noteId;
+  if (noteId === undefined) throw new Error('S1: the first round returned no note id');
+  const memo = await waitFor(async () => {
+    try { return await adviserToolResult(r.k, 's1-mem'); } catch { return undefined; }
+  }, value => value !== undefined, 'S1: the second round read the note');
+  expectNoteRead(memo, noteId, 'S1: the second round');
   expect(await commands(r)).toHaveLength(1);
   // ⑤ the note is the scribe's own, written in the first round.
   const notes = valueOf<{ items: NoteItemV1[] }>((await r.world.post('notes/list', plain(S6A_SCOPE,

@@ -570,6 +570,14 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
       }
       const blockedBinding = manifest.blockedCommands ?? [];
       const reviewPurpose = record.run.purpose?.kind === 'unknown_call_review' ? record.run.purpose : null;
+      // 在 finalToolNamesOf 之前算一次，owners.graph 和下面的 graph 依赖包共用（同一个判断只写一处）。
+      // 注记是架构图的一部分（A8）：少了注记读口，图读依赖就算没绑。
+      // Work uses the ORIGINAL startRun Host context; the proxy swaps only this
+      // tool call's signal in and never exposes it to the model.
+      const graphDeps = deps.graphContext === undefined || deps.taskInputs === undefined || deps.notes?.memory === undefined
+        ? undefined
+        : { graphContext: deps.graphContext, taskInputs: deps.taskInputs, graphHistory: deps.graphHistory,
+            hostContext: owned, notes: deps.notes.memory };
       const startToolNames = finalToolNamesOf({
         callKind: 'work',
         noteAdmission: { class: 'none' },
@@ -585,7 +593,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
           applicationReceipt: deps.applicationReceipt !== undefined,
           sessions: deps.sessions !== undefined,
           plans: deps.plans !== undefined,
-          graph: deps.graphContext !== undefined && deps.taskInputs !== undefined,
+          graph: graphDeps !== undefined,
           notes: deps.notes?.write !== undefined && deps.notes?.check !== undefined,
           linkCheck: deps.notes?.check !== undefined,
           webLookup: hostConfig.model.webLookup !== undefined,
@@ -670,16 +678,7 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         goalRef,
         requestIdForCall,
         onWaitRegistered,
-        ...(deps.graphContext === undefined || deps.taskInputs === undefined ? {} : {
-          graph: {
-            graphContext: deps.graphContext,
-            taskInputs: deps.taskInputs,
-            graphHistory: deps.graphHistory,
-            // Work uses the ORIGINAL startRun Host context; the proxy swaps only
-            // this tool call's signal in and never exposes it to the model.
-            hostContext: owned,
-          },
-        }),
+        ...(graphDeps === undefined ? {} : { graph: graphDeps }),
         ...(deps.notes === undefined ? {} : { notes: deps.notes }),
         ...(deps.handoffs === undefined ? {} : { handoffs: deps.handoffs }),
         ...(deps.maintainerAssignments === undefined ? {} : {

@@ -25,8 +25,8 @@
  * Guard audit at the frozen checkout:
  * S1-workflow-archive-fixture.ts:243-474 bootstraps through real writers;
  * :535-596 claims through the real owner; :702-739 authorize/begin/enter.
- * graph-context-reader.ts:690-721 needs EVIDENCE_RECORD_SCHEMAS even for no rounds;
- * :973-988 emits Goal/Plan/baseline/focus-Run sources (NO Workspace source).
+ * graph-context-reader.ts:695-726 needs EVIDENCE_RECORD_SCHEMAS even for no rounds;
+ * :978-993 emits Goal/Plan/baseline/focus-Run sources (NO Workspace source).
  * execution-preparation.ts:145-259 validates the unbound claim/Role/Host/Plan;
  * context-assembler.ts:785-938 obtains real graph facts and builds the binding.
  * execution-entry-service.ts:1100-1157 checks shape, Workspace then declarations;

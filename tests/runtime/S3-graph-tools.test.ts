@@ -292,7 +292,7 @@ function buildTools(options: BuildOptions = {}) {
   const config: GraphToolsConfig = {
     context, goalRef: options.goalRef ?? GOAL_REF,
     graph: ports.graph, inputs: ports.inputs, history: ports.history,
-    ...(options.notes === undefined ? {} : { notes: options.notes }),
+    notes: options.notes ?? recordingNotes().memory,
   };
   const handle = createGraphTools(config);
   options.mutate?.(config);
@@ -308,7 +308,8 @@ function buildTools(options: BuildOptions = {}) {
 describe('S3 graph tools', () => {
   it('GT01 publishes exactly look_graph and find_graph with read_only effect classes', () => {
     const ports = recordingPorts();
-    const handle = createGraphTools({ context: workContext(signal()), goalRef: GOAL_REF, graph: ports.graph, inputs: ports.inputs, history: ports.history });
+    const handle = createGraphTools({ context: workContext(signal()), goalRef: GOAL_REF, graph: ports.graph, inputs: ports.inputs, history: ports.history,
+      notes: recordingNotes().memory });
     expect(handle.names).toEqual(['look_graph', 'find_graph']);
     expect(handle.names).toEqual([...GRAPH_TOOL_NAMES]);
     const definitions = handle.create(null as unknown as WorkspaceSandbox);
@@ -352,7 +353,8 @@ describe('S3 graph tools', () => {
     const original = new AbortController();
     const ports = recordingPorts();
     const context = workContext(original.signal);
-    const config: GraphToolsConfig = { context, goalRef: { ...GOAL_REF }, graph: ports.graph, inputs: ports.inputs, history: ports.history };
+    const config: GraphToolsConfig = { context, goalRef: { ...GOAL_REF }, graph: ports.graph, inputs: ports.inputs, history: ports.history,
+      notes: recordingNotes().memory };
     const handle = createGraphTools(config);
     context.projectId = 'mutated-project';
     context.workspaceId = 'mutated-workspace';
@@ -693,14 +695,6 @@ describe('S3 graph tools', () => {
     await byName('find_graph').handler.execute(toolCall('find_graph', 'gt17-stale', {
       memory: { v: 1, op: 'stale', goalId: G, limit: 3, cursor: 'c1' } }), { signal: signal() });
     expect(notes.calls.stale[0]?.request).toEqual({ v: 1, op: 'stale', goalId: G, limit: 3, cursor: 'c1' });
-  });
-
-  it('GT18 a memory call with no notes port fails closed and reaches no note owner', async () => {
-    const { byName, calls } = buildTools();
-    const result = await byName('look_graph').handler.execute(toolCall('look_graph', 'gt18', {
-      memory: { v: 1, op: 'lookup', anchor: { kind: 'project' } } }), { signal: signal() });
-    expect(result).toMatchObject({ status: 'error', error: { code: 'execution_failed' } });
-    for (const [port, recorded] of Object.entries(calls)) expect(recorded, `${port} must stay unread`).toHaveLength(0);
   });
 
   it('GT19 C1.3 a real work Run is granted the registered record_note tool', async () => {

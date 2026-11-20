@@ -9,7 +9,7 @@
 
 ## 文件
 
-- `call-context.ts` — 受信 Host/工具适配器绑定的调用身份与范围：`CorePrincipal`、`MaterialReader`、`PlatformMaterialOrigin`、`CoreCallContext`；`query_run` 主体可带冻结的 `goalId`（只由 Runtime 从 manifest 设置）；命令身份里的主体 `principalIdentity` 与 Host 调用者检查 `hostPrincipalOf`。
+- `call-context.ts` — 受信 Host/工具适配器绑定的调用身份与范围：`CorePrincipal`、`MaterialReader`、`PlatformMaterialOrigin`、`CoreCallContext`；`query_run` 主体带这一轮冻结的 `goalId`（秘书轮是请求的目标，其余问答轮是任务的目标，只由 Runtime 从 manifest/任务事实设置）；命令身份里的主体 `principalIdentity` 与 Host 调用者检查 `hostPrincipalOf`。
 - `execution-history.ts` — `RunExecutionHistoryV1`：Run 在 Kernel Session 里的起止/已观察位置。
 - `identity.ts` — 作用域、版本 pin、命令元数据，以及 `SessionRef`、`ModuleRef`、`WorkLinkTarget`、`RoleConfigurationRef` 等身份。
 - `operations.ts` — `OperationRef`：跨 Store 与 Kernel 效果的操作身份。

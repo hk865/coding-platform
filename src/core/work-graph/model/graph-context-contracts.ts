@@ -29,6 +29,8 @@ export type ContextReadRequestV1 = {
   planRef?: PlanRevisionRef;
   focusTaskIds: string[];
   includeInputs?: boolean;
+  /** A9：lookGraph 在调用轮有目标、读别的目标的节点时传；决定行里不给点名注记的两种卡（note_review、repair_approval）。 */
+  omitNoteCards?: true;
 };
 /** The extensions read of a request with no Goal: the project understanding
  * and norms only. The Goal-owned extensions are skipped, and the full context
@@ -79,7 +81,7 @@ export type NodeCardV1 = {
   evidence?: EvidenceV1[];
 };
 export type GraphLookRequestV1 = {
-  /** `null` is the project branch (no goal); Goal-owned targets and relations then refuse. */
+  /** `null` 是项目分支（不带目标）；带目标的节点按它自己的目标读（A9）；节点和调用轮都没有目标时 `executions`/`checks` 拒。 */
   goalRef: GoalRef | null;
   target: { kind: 'node'; node: GraphNodeRefV1 } | { kind: 'path'; path: string };
   relation: 'card' | 'children' | 'neighbours' | 'executions' | 'checks' | 'evidence';

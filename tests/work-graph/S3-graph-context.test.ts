@@ -891,6 +891,21 @@ async function revisionOf(records: Records, refKey: string): Promise<number | nu
 const taskNode = (ref: TaskTriple): GraphLookRequestV1['target'] => ({ kind: 'node', node: { kind: 'task', ref, planRef } });
 const stageNode: GraphLookRequestV1['target'] = { kind: 'node', node: { kind: 'stage', planRef, stageId } };
 
+/** A9 (decision 121-151): the same cross-Goal look from each caller kind. */
+type X1Caller = {
+  readonly label: string;
+  readonly ctxOf: (fixture: S3GraphFixture) => CoreCallContext;
+  readonly principalOf: (fixture: S3GraphFixture) => JsonValue;
+};
+const X1_CALLERS: readonly X1Caller[] = [
+  { label: 'host', ctxOf: fixture => fixture.ctx,
+    principalOf: () => ({ kind: 'host', actor: { kind: 'human', id: 'u' } }) },
+  { label: 'query_run', ctxOf: fixture => fixture.queryCtx,
+    principalOf: () => ({ kind: 'query_run', queryRunRef }) },
+  { label: 'work_run', ctxOf: fixture => fixture.workCtx,
+    principalOf: fixture => ({ kind: 'work_run', runRef: fixture.runs.b }) },
+];
+
 describe.each(['memory', 'sqlite'] as const)('S3 graph context reader (%s)', kind => {
   it('GR01 tB card carries oB/vB/Implement B and the p1@1 source', async () => {
     const fixture = await createFixture(kind);
@@ -1313,5 +1328,47 @@ describe.each(['memory', 'sqlite'] as const)('S3 graph context reader (%s)', kin
       { kind: 'module', ref: moduleM1.ref },
       { kind: 'module', ref: moduleM2.ref },
     ]);
+  });
+
+  /**
+   * A9 (decision 121-151): a look reads the node's own Goal in the same
+   * workspace for every caller. Expected values are §2.6's hand-computed p2g
+   * page; the cursor binds the READ Goal g2, not the caller's frozen g.
+   * Today: ①/② are `not_found` and ③ is `forbidden` "the Task node is outside
+   * the requested goal".
+   */
+  it.each(X1_CALLERS)('X1 a $label look reads another Goal of the same workspace (A9)', async caller => {
+    const fixture = await createFixture(kind);
+    const goalOf = fixture.planTwoGoalRef;
+    const stage: GraphLookRequestV1['target'] = { kind: 'node', node: {
+      kind: 'stage', planRef: goalOf, stageId: fixture.stageTwoId } };
+    const first = await fixture.graph.lookGraph(caller.ctxOf(fixture),
+      nodeRequest(fixture.goalRef, stage, 'children', 1));
+    expect(first).toMatchObject({ status: 'ready' });
+    if (first.status !== 'ready') return;
+    expect(first.value.items.map(item => item.node)).toEqual([
+      { kind: 'task', ref: { projectId: 'p', goalId: 'g2', taskId: 'tA' }, planRef: goalOf },
+    ]);
+    expect(first.value.nextCursor).not.toBeNull();
+    const expectedScopeKey = H(canonicalJson({
+      projectId: 'p', workspaceId: 'w', goalId: 'g2', principal: caller.principalOf(fixture),
+    } as unknown as JsonValue));
+    expect(cursorScopeKey(first.value.nextCursor!)).toBe(expectedScopeKey);
+    const second = await fixture.graph.lookGraph(caller.ctxOf(fixture),
+      nodeRequest(fixture.goalRef, stage, 'children', 1, first.value.nextCursor));
+    expect(second).toMatchObject({ status: 'ready' });
+    if (second.status !== 'ready') return;
+    expect(second.value.items.map(item => item.node)).toEqual([
+      { kind: 'task', ref: { projectId: 'p', goalId: 'g2', taskId: 'tB' }, planRef: goalOf },
+    ]);
+    expect(second.value.nextCursor).toBeNull();
+    const cardTarget: GraphLookRequestV1['target'] = { kind: 'node', node: {
+      kind: 'task', ref: { projectId: 'p', goalId: 'g2', taskId: 'tB' }, planRef: goalOf } };
+    const card = await fixture.graph.lookGraph(caller.ctxOf(fixture),
+      nodeRequest(fixture.goalRef, cardTarget, 'card'));
+    expect(card).toMatchObject({ status: 'ready' });
+    if (card.status !== 'ready') return;
+    expect(card.value.items[0]!.node).toEqual(cardTarget.node);
+    expect(card.value.items[0]!.task).not.toBeNull();
   });
 });

@@ -10,11 +10,13 @@
  *  - `resolveGraphSessionReadContext`: Host/work_run pass through; a QueryRun is
  *    fully verified against its canonical QueryJob/QueryRun, request Goal and
  *    ORIGINAL submission initiator before a same-scope internal Host context is
- *    built for `sessions.findSessions/readSession` only.
+ *    built for `sessions.findSessions/readSession` and the A9 reads below.
  *  - `resolveGraphExecutionReadContext`: Host passes through; Query reuses that
  *    verified context; a work_run's canonical Run is verified before a
  *    same-scope internal Host context carrying `deps.hostActor` is built for
- *    `executions.readExecution/listExecutions` only.
+ *    `executions.readExecution/listExecutions` and the A9 reads below.
+ * A9（决定 121-151）：look 的节点属于调用方冻结目标以外的目标时，先用这两座桥按调用方自己的目标核过，
+ *  再用桥给的同范围内部 Host 上下文读那个目标的记录；游标照旧绑原调用方。
  */
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext, MaterialReader } from '../../../contracts/core/call-context.js';
@@ -75,6 +77,9 @@ import {
   decodeQueryJobSnapshot, decodeQueryJobSubmittedEvent, decodeQueryRunSnapshotRecord,
 } from '../queries/query-record-codecs.js';
 import { decodeGoalSnapshot, canonicalRefKey } from '../persistence/record-codecs.js';
+import { goalRefFor } from '../persistence/commit-compiler.js';
+import { sameRef } from '../state/ref-equality.js';
+import { readGoal, readPlan } from '../tasks/plan-readers.js';
 import { isBasisUnsupported, planTaskFacts } from '../tasks/plan-task-basis.js';
 
 export type GraphContextReaderDependencies = {
@@ -289,32 +294,14 @@ function nodeShapeProblem(node: unknown): string | null {
   }
 }
 /** `null` means in scope; a non-null reason is a `forbidden` refusal.
- * A null goal is the project branch: only project-owned nodes are in scope. */
-function nodeScopeProblem(node: GraphNodeRefV1, projectId: string, workspaceId: string | undefined, goal: GoalRef | null): string | null {
+ * 节点的目标不在这里判：look 按节点所属的目标读（决定 121-151 的 A9），那个目标在不在本工作区由读它的地方判。 */
+function nodeScopeProblem(node: GraphNodeRefV1, projectId: string, workspaceId: string | undefined): string | null {
   // 决定 121-149（照 96-2）：节点不在调用方的项目里，原文写出调用方自己的项目号（只有这一个合法值）。
   const nodeProjectId = node.kind === 'stage' ? node.planRef.projectId : node.ref.projectId;
   if (nodeProjectId !== projectId) return `the ${node.kind} node belongs to another project; this project is ${projectId}`;
-  switch (node.kind) {
-    case 'goal':
-      return node.ref.projectId === projectId && (goal === null || node.ref.goalId === goal.goalId)
-        ? null : 'the Goal node is outside the requested goal';
-    case 'stage':
-      return node.planRef.projectId === projectId ? null : 'the Stage node is outside the requested project';
-    case 'task':
-      return node.ref.projectId === projectId && (goal === null || node.ref.goalId === goal.goalId)
-        ? null : 'the Task node is outside the requested goal';
-    case 'module':
-      return node.ref.projectId === projectId ? null : 'the Module node is outside the requested project';
-    case 'session':
-      return node.ref.projectId === projectId ? null : 'the Session node is outside the requested project';
-    case 'run':
-      return node.ref.projectId === projectId && (goal === null || node.ref.goalId === goal.goalId)
-        ? null : 'the Run node is outside the requested goal';
-    case 'round':
-      return node.ref.projectId === projectId && (goal === null || node.ref.goalId === goal.goalId)
-        && (workspaceId === undefined || node.ref.workspaceId === workspaceId)
-        ? null : 'the Round node is outside the requested scope';
-  }
+  // 检查轮的引用自带工作区：别的工作区的检查轮在读之前就拒（原句）。
+  return node.kind === 'round' && workspaceId !== undefined && node.ref.workspaceId !== workspaceId
+    ? 'the Round node is outside the requested scope' : null;
 }
 /** The ONE project-path grammar (a workspace-relative path or the prefixed form). */
 function pathProblem(path: unknown): string | null {
@@ -513,6 +500,24 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
         readThrough: result.value.readThrough,
       },
     };
+  }
+
+  /** 决定 121-151 的 A9：节点所属的目标。goal、task、run、round 的引用自带目标号；stage 只带计划，读计划记录取它的目标；
+   * module、session 属于项目，回 null。目标号只决定读哪个目标，节点在不在那个目标里由后面的读核实。 */
+  async function nodeGoalOf(node: GraphNodeRefV1): Promise<ReadResult<GoalRef | null>> {
+    switch (node.kind) {
+      case 'goal':
+        return { status: 'ready', value: node.ref };
+      case 'task': case 'run': case 'round':
+        return { status: 'ready', value: goalRefFor(node.ref.projectId, node.ref.goalId) };
+      case 'stage': {
+        const read = await readPlan(deps.records, node.planRef);
+        if (read.status !== 'ready') return read.code === 'not_found' ? { status: 'not_found' } : read;
+        return { status: 'ready', value: read.plan.goalRef };
+      }
+      default:
+        return { status: 'ready', value: null };
+    }
   }
 
   // ---------------------------------------------------------------------- //
@@ -1675,59 +1680,57 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
     } else {
       const nodeReason = nodeShapeProblem(target.node);
       if (nodeReason !== null) return rejected('invalid', `lookGraph: ${nodeReason}`);
-      const scopeReason = nodeScopeProblem(target.node, ctx.projectId, ctx.workspaceId, request.goalRef);
+      const scopeReason = nodeScopeProblem(target.node, ctx.projectId, ctx.workspaceId);
       if (scopeReason !== null) return rejected('forbidden', scopeReason);
     }
-    // A request that names no goal is the project branch. A Goal target may
-    // still name one goal of the workspace, read-only; a Goal-owned node or
-    // relation has nothing to read and refuses instead of borrowing another
-    // goal's universe.
-    let goalRef = request.goalRef;
-    let namedGoal = false;
-    if (goalRef === null) {
-      if (target.kind === 'node') {
-        if (request.relation === 'executions' || request.relation === 'checks') {
-          return rejected('invalid', 'this request has no goal');
-        }
-        if (target.node.kind !== 'goal' && target.node.kind !== 'module' && target.node.kind !== 'session') {
-          return rejected('invalid', 'this request has no goal');
-        }
-        if (target.node.kind === 'goal') {
-          const goalRead = await deps.goals.queryGoal(ctx, target.node.ref);
-          if (goalRead.status !== 'ready') return propagate(goalRead);
-          if (goalRead.value.goal.workspaceRef.workspaceId !== ctx.workspaceId) {
-            return rejected('forbidden', 'the Goal is outside the requested workspace');
-          }
-          goalRef = goalRead.value.goal.ref;
-          namedGoal = true;
-        }
-      }
-    }
-    const scopeKey = scopeKeyOf(ctx, goalRef);
+    // 坏游标、别的查询的游标在第一次读记录之前就拒（文件头的规则）；游标是不是这个范围的，要等下面定了读哪个目标才比得了。
     const queryKey = lookQueryKey(request);
-    let afterOffset = 0;
-    let cursorBasis: string | null = null;
+    let decoded: PageCursor | null = null;
     if (page.afterCursor !== null) {
-      const decoded = decodeCursor(page.afterCursor);
+      decoded = decodeCursor(page.afterCursor);
       if (decoded === null) return rejected('invalid', 'page.afterCursor is not a valid graph cursor');
-      if (decoded.scopeKey !== scopeKey || decoded.queryKey !== queryKey) {
-        return rejected('invalid', 'the graph cursor belongs to another scope or query');
-      }
-      afterOffset = decoded.offset;
-      cursorBasis = decoded.basisKey;
+      if (decoded.queryKey !== queryKey) return rejected('invalid', 'the graph cursor belongs to another scope or query');
     }
+    // A9（决定 121-151）：节点带目标就按节点的目标读，同工作区的别的目标也读；调用轮没有目标时，任何目标都算别的目标。
+    // 先按调用方自己冻结的目标核调用方，再用核过的同范围 Host 上下文读那个目标：原上下文读别的目标会被 owner 拒
+    // （Query 的 Job 目标、Work 的 Run 目标都只认自己的）。module、session 节点和 path 照旧按调用轮的目标读。
+    let goalRef = request.goalRef;
+    let readCtx = ctx;
+    if (target.kind === 'node') {
+      const owned = await nodeGoalOf(target.node);
+      if (owned.status !== 'ready') return propagate(owned);
+      if (owned.value !== null && !sameRef(owned.value, request.goalRef)) {
+        let verified: ReadResult<CoreCallContext>;
+        if (request.goalRef === null) {
+          verified = await resolveGraphSessionReadContext(ctx, null);
+        } else {
+          const contexts = await resolveReadContexts(ctx, request.goalRef);
+          verified = contexts.status === 'ready' ? { status: 'ready', value: contexts.value.executionCtx } : propagate(contexts);
+        }
+        if (verified.status !== 'ready') return propagate(verified);
+        // 只读同一工作区的目标。直接读目标记录比工作区，不经 owner 的目标详情组装（那里读候选时目标变了会先回
+        // source_stale，到不了这句），原句沿用。
+        const goalRead = await readGoal(deps.records, owned.value);
+        if (goalRead.status !== 'ready') return goalRead.code === 'not_found' ? { status: 'not_found' } : goalRead;
+        if (goalRead.goal.workspaceRef.workspaceId !== ctx.workspaceId) {
+          return rejected('forbidden', 'the Goal is outside the requested workspace');
+        }
+        goalRef = goalRead.goal.ref;
+        readCtx = verified.value;
+      } else if (goalRef === null && (request.relation === 'executions' || request.relation === 'checks')) {
+        // 调用轮和节点都没有目标：执行和检查只在某个目标里有。
+        return rejected('invalid', 'this request has no goal');
+      }
+    }
+    // 游标绑原调用方和被读的目标。
+    const scopeKey = scopeKeyOf(ctx, goalRef);
+    if (decoded !== null && decoded.scopeKey !== scopeKey) {
+      return rejected('invalid', 'the graph cursor belongs to another scope or query');
+    }
+    const afterOffset = decoded?.offset ?? 0;
+    const cursorBasis = decoded?.basisKey ?? null;
     const planHint = planHintOfTarget(target);
     if (goalRef !== null) {
-      // A request with no goal that names a Goal first validates the ORIGINAL
-      // Query against its own (null) goal; the named Goal's universe is then
-      // read on that verified internal context. Cursor identity stays the
-      // original caller context (the scope key above).
-      let readCtx = ctx;
-      if (namedGoal) {
-        const verified = await resolveGraphSessionReadContext(ctx, null);
-        if (verified.status !== 'ready') return propagate(verified);
-        readCtx = verified.value;
-      }
       const loaded = await loadUniverse(readCtx, goalRef, { sessions: true,
         ...(planHint === undefined ? {} : { planHint }), ...(request.base === undefined ? {} : { base: request.base }) });
       if (loaded.status !== 'ready') return propagate(loaded);
@@ -1789,17 +1792,18 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
         .map(candidate => candidate.ref);
       const resolvedListed = await ensureRuns(universe, listedRuns, ctx, goalRef);
       if (resolvedListed.status !== 'ready') return propagate(resolvedListed);
-      // A named Goal is read through the same extensions read as a request
-      // that carries the goal itself; `includeInputs: false` is what asks the
-      // note reader for the understanding and norms (a Query's material).
-      const indexes = namedGoal
+      // 卡上的注记材料按调用轮冻结的目标给，不按被读的目标（免得放开别的目标待审的注记，A9）：调用轮没有目标时，
+      // 项目和那个目标的理解都算本轮可见，读法同项目分支（`includeInputs: false`）；调用轮有目标时不读注记材料，
+      // 和读本目标的卡一样，注记经 `memory` 读口按本轮目标判可见；读的是别的目标时，决定行里点名注记的卡也不给。
+      const indexes = request.goalRef === null
         ? await readIndexes(deps.extensions, readCtx, { goalRef, focusTaskIds: [], includeInputs: false })
         : await readIndexes(deps.extensions, readCtx, {
           goalRef, focusTaskIds: [], ...(planHint === undefined ? {} : { planRef: planHint }),
+          ...(sameRef(goalRef, request.goalRef) ? {} : { omitNoteCards: true }),
         });
       if (indexes.status !== 'ready') return propagate(indexes);
       const basisKey = basisKeyOf(universe);
-      if (cursorBasis !== null && cursorBasis !== basisKey) return revisionConflict(universe, ctx, goalRef);
+      if (cursorBasis !== null && cursorBasis !== basisKey) return revisionConflict(universe, readCtx, goalRef);
       return pageOfMatches(universe, relationNodes, indexes.value, scopeKey, queryKey, afterOffset, page.limit, basisKey, ctx, goalRef,
         request.relation === 'evidence' ? executionCtx : null);
     }

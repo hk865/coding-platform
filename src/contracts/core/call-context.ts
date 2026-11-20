@@ -23,7 +23,7 @@ export type CorePrincipal = {
 } | {
     kind: 'query_run';
     queryRunRef: QueryRunRef;
-    /** The frozen request goal of a secretary round; never a model argument. */
+    /** 这一轮冻结的目标：秘书轮是请求的目标，其余问答轮是任务的目标；从不来自模型参数。 */
     goalId?: string | null;
     initiator: Extract<ActorRef, {
         kind: 'human' | 'system';

@@ -30,8 +30,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { DecisionQueueReadV1 } from '../../src/core/work-graph/model/decision-contracts.js';
 import { g8Check, g8PlanCall, g8PlanForm, type G8Check } from '../helpers/G8-world.js';
 import {
-  G8B_ROLE, G8B_TEMPLATE, g8bCheckReview, g8bSubjectOf, openG8BWorld,
+  expectB15, G8B_ROLE, G8B_TEMPLATE, g8bCheckReview, g8bSubjectOf, openG8BWorld, p0History,
+  P0_REVIEWER_TOOLS, p0ToolNames,
 } from '../helpers/G8B-world.js';
+import { adviserToolResult } from '../helpers/K3L3-adviser-world.js';
 import type { S6AReply } from '../helpers/S6A-host-fixture.js';
 
 const cleanup: (() => Promise<void>)[] = [];
@@ -43,14 +45,17 @@ const OBJECTIVE = 'G8B 秘书的小改动';
  * 目标有参谋线、有底计划 v1；秘书交一个小改动（只加 `<tag>-work`），带 `check`。返回 Host 自己的计划轮入口返回之后
  * 的世界、两条线、目标、这份候选，以及行开始前这个目标已有的请知悉。
  */
-async function secretaryChange(tag: string, check: G8Check, adviserReplies: S6AReply[]) {
+async function secretaryChange(tag: string, check: G8Check, adviserReplies: S6AReply[], historyCallId?: string) {
   const w = await openG8BWorld(tag);
   cleanup.push(w.close);
   const adviser = await w.line(`${tag}-adviser`, G8B_TEMPLATE.adviser);
   const secretary = await w.line(`${tag}-secretary`, G8B_TEMPLATE.secretary);
   const goal = await w.goal(tag, OBJECTIVE, { adviser, base: true });
   const before = await w.noticeKeys(goal);
-  if (adviserReplies.length > 0) await w.world.scripted.script(adviser, adviserReplies, w.scope);
+  if (adviserReplies.length > 0 || historyCallId !== undefined) await w.world.scripted.script(adviser, [
+    ...(historyCallId === undefined ? [] : [{ kind: 'calls' as const, calls: [p0History(historyCallId, goal)] }]),
+    ...adviserReplies], w.scope);
+  const adviserRequests = (await w.world.scripted.requests(adviser, w.scope)).length;
   await w.world.scripted.script(secretary, [g8PlanCall(`${tag}-plan`, g8PlanForm(tag, G8B_ROLE, [check], true))],
     w.scope);
   const asked = await w.steps.ask(tag, secretary, goal);
@@ -61,7 +66,7 @@ async function secretaryChange(tag: string, check: G8Check, adviserReplies: S6AR
   const card = async () => JSON.stringify((await w.steps.read<DecisionQueueReadV1>('decisions/queue', {
     workspace: w.scope, goalRef: goal, sections: ['waiting_answer'], page: { limit: 100 } })).waitingAnswer
     .find(item => item.source.kind === 'candidate' && item.requestRef?.queryJobId === asked.requestRoot.queryJobId) ?? null);
-  return { w, adviser, secretary, goal, head, before, card };
+  return { w, adviser, secretary, goal, head, before, card, adviserRequests };
 }
 type Change = Awaited<ReturnType<typeof secretaryChange>>;
 
@@ -80,7 +85,8 @@ describe('G8B-1a: a secretary\'s small change brings a new check; the adviser ap
     + 'one notice', async () => {
     const check = g8Check('g8b-d1-check', ['g8b-d1-work'], 'test -f g8b-d1.txt');
     const r = await secretaryChange('g8b-d1', check, [g8bCheckReview('g8b-d1-approve',
-      [{ checkId: 'g8b-d1-check', decision: 'approve', reason: '改动前确实失败，查的正是新任务' }])]);
+      [{ checkId: 'g8b-d1-check', decision: 'approve', reason: '改动前确实失败，查的正是新任务' }])],
+    'g8b-d1-approval-history');
     const head = await r.head();
     // ① 批准轮发给目标的参谋线，作者（秘书线）没收到；第二行是平台写的事实。
     const sent = await r.w.roundsAfter(r.adviser, 'checkreview:');
@@ -92,6 +98,13 @@ describe('G8B-1a: a secretary\'s small change brings a new check; the adviser ap
       baselines: [{ checkId: 'g8b-d1-check', outcome: 'failed', exitCode: 1 }] });
     // ② 参谋答完、平台收尾：计划到 v2，检查装上，记下是参谋（agent）批的、秘书写的、改动前失败的事实。
     expect((await r.w.settled(sent[0]!.message.ref)).response, 'D1: the round was not replied').not.toBeNull();
+    const history = await adviserToolResult({ world: r.w.world, adviser: r.adviser }, 'g8b-d1-approval-history',
+      r.adviser, r.w.scope);
+    expectB15(history, 'D1: the check review');
+    // 第四节手推：参谋名单多 `query_task_graph`、`query_ready_tasks`（`host.ts:477-481`），其余同审阅者。
+    expect([...(await p0ToolNames(r.w, r.adviser, r.adviserRequests))].sort(), 'D1: the check review tool list')
+      .toEqual([...P0_REVIEWER_TOOLS.slice(0, -1), 'query_task_graph', 'query_ready_tasks', 'run_readonly_command',
+        'submit_check_review'].sort());
     expect(await r.w.planRevision(r.goal)).toBe(2);
     const entry = await r.w.steps.settingsEntry();
     expect(entry.checks?.find(item => item.checkId === 'g8b-d1-check')).toMatchObject(check);

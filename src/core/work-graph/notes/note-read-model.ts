@@ -915,8 +915,9 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
   /**
    * §11.3: the one default-visibility predicate shared by `find` and `lookup`.
    * `goalId` is the trusted caller goal (`currentGoalIdOf`), never a request
-   * field; `own` is true for the host and query Runs (no goal), and for a note
-   * in the caller's own goal. The project understanding is visible everywhere
+   * field. `own` 对没有目标的调用方（Host、探索轮、无目标的问副本）为真，对注记在调用方
+   * 自己目标里的也为真；带目标的问答轮和做事轮一样按自己的目标判。项目级（不挂目标的）
+   * 已接受注记对所有调用方默认可见。The project understanding is visible everywhere
    * (§11.4).
    */
   function visibleByDefault(head: NoteHeadSnapshot, goalId: string | null): boolean {
@@ -925,7 +926,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     }
     const own = goalId === null || head.goalId === goalId;
     switch (head.state) {
-      case 'accepted': return own || head.confirmedByUser;
+      case 'accepted': return own || head.confirmedByUser || head.goalId === null;
       case 'reviewed': return true;
       case 'pending_review': return own;
       default: return false;
@@ -947,9 +948,9 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
   }
 
   /**
-   * §11.3's no-terms status route: the states read per goal slot. A work Run
-   * reads accepted + reviewed everywhere and pending_review only for its own
-   * slot; the host and query Runs read pending_review for every slot.
+   * §11.3's no-terms status route: the states read per goal slot. 没有目标的调用方
+   * （Host、探索轮、无目标的问副本）每个目标槽都读 `pending_review`；带目标的调用方
+   * （做事轮、带目标的问答轮）只在自己的槽读。
    */
   function visibleStatusStates(slotGoalId: string | null, callerGoalId: string | null): readonly NoteState[] {
     if (callerGoalId !== null && slotGoalId !== callerGoalId) return ['accepted', 'reviewed'];
@@ -3300,8 +3301,9 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
           for (const goalId of [null, ...goalIds.value] as (string | null)[]) {
             // §11.3: read only the visible states. A work Run gets accepted +
             // reviewed for every slot and pending_review for its own slot only;
-            // the host and query Runs get pending_review for every slot. An
-            // explicit `state` reads exactly that one bucket. These narrower
+            // a caller without a goal (Host, exploration, goal-less copy) reads
+            // pending_review for every slot, a goal-bound caller only in its own.
+            // An explicit `state` reads exactly that one bucket. These narrower
             // reads never seed `HeadCache.goals`.
             const states = input.state !== undefined ? [input.state]
               : visibleStatusStates(goalId, currentGoalId);

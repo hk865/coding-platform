@@ -55,6 +55,7 @@ import {
 } from './compaction.js';
 import { renderTemplate } from '../../contracts/prompts/render-template.js';
 import { createQueryGraphToolGroup, finalToolNamesOf, type ToolGroup } from './tool-group-assembly.js';
+import { goalRefFor } from '../work-graph/persistence/commit-compiler.js';
 import { createLinkCheckTools, LINK_CHECK_TOOL_NAMES } from './link-check-tool.js';
 import { createWebLookupTools, WEB_LOOKUP_TOOL_NAMES } from './web-lookup-tools.js';
 import {
@@ -384,13 +385,11 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
             effectiveGoalId: manifest.request.effectiveGoalId,
             grantedGoalIds: manifest.request.understandingGrants,
           });
-      // A secretary round's `record_note` needs the real write and check owners.
-      // A missing dependency is `unavailable`, never a tool built around a
-      // non-null assertion.
-      const noteOwners = noteOwnersOf(deps.notes);
-      if (noteAdmission.class !== 'none' && noteOwners === null) {
-        return rejected('unavailable', 'the Query round admits notes but no note write/check dependency is bound');
-      }
+      // 注记是架构图的一部分（A8）：少了注记读口，图读依赖就算没绑。这个判断只算一次，
+      // finalToolNamesOf 的 owners.graph 和下面建图工具组共用。
+      const graphDeps = deps.graphContext === undefined || deps.taskInputs === undefined || deps.notes?.memory === undefined
+        ? null
+        : { graph: deps.graphContext, inputs: deps.taskInputs, notes: deps.notes.memory };
       // Ruling 16: the one final tool list, compared with the frozen one before
       // any entry write. A difference is `forbidden`.
       const startToolNames = finalToolNamesOf({
@@ -413,7 +412,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         owners: {
           mailbox: false, decisionMessages: false, applicationReceipt: false,
           sessions: false, plans: true,
-          graph: deps.graphContext !== undefined && deps.taskInputs !== undefined,
+          graph: graphDeps !== null,
           notes: noteAdmission.class !== 'none', unknownCallReviews: false, commandRerunRequests: false,
           linkCheck: deps.notes?.check !== undefined,
           webLookup: hostConfig.model.webLookup !== undefined,
@@ -431,6 +430,14 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         },
       });
       if (!startToolNames.ok) return startToolNames.rejection;
+      // A secretary round's `record_note` needs the real write and check owners.
+      // A missing dependency is `unavailable`, never a tool built around a
+      // non-null assertion. This runs after the graph dependency check (A8), so
+      // a round missing both answers the graph read's `unsupported` first.
+      const noteOwners = noteOwnersOf(deps.notes);
+      if (noteAdmission.class !== 'none' && noteOwners === null) {
+        return rejected('unavailable', 'the Query round admits notes but no note write/check dependency is bound');
+      }
       const frozenToolNames = manifest.promptSet.toolNames;
       const sameToolList = frozenToolNames.length === startToolNames.value.length
         && frozenToolNames.every((name, index) => name === startToolNames.value[index]);
@@ -501,12 +508,6 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       // The round's accepted submit callIds are a closure value: a QueryRun's
       // Kernel Turn runs once, so nothing is persisted.
       const acceptedAnswerCallIds = new Set<string>();
-      const graphDeps = deps.graphContext === undefined || deps.taskInputs === undefined
-        ? null
-        : { graph: deps.graphContext, inputs: deps.taskInputs };
-      if ((grantedGraphNames.length > 0 || historyNames.length > 0) && graphDeps === null) {
-        return rejected('unsupported', `the Query grant selects graph read tools but no graph read dependency is bound: ${[...grantedGraphNames, ...historyNames].join(', ')}`);
-      }
       if (grantedLinkCheckNames.length > 0 && deps.notes?.check === undefined) {
         return rejected('unsupported', `the Query grant selects check_links but no note check dependency is bound: ${grantedLinkCheckNames.join(', ')}`);
       }
@@ -524,17 +525,22 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         // A secretary round may have no goal yet: its tools then read the
         // project, and its current goal is the one frozen in the manifest's
         // request (never a model argument). Every other Query keeps today's
-        // goal requirement and its principal shape.
+        // goal requirement; its principal carries that same task goal (A8).
         const secretary = manifest.contextAssembly.callKind === 'secretary';
         const exploration = manifest.contextAssembly.callKind === 'role_exploration';
         const frozenGoalId = manifest.request === null ? null : manifest.request.effectiveGoalId;
+        // 这一轮的可信目标（A8）：秘书轮是请求冻结的目标（可能还没有），其余问答轮是任务的规范目标。
+        // 工具上下文的主体带它，图工具读它；注记读按它分本目标和别的目标（note-read-model.ts:900-947）。
+        const roundGoalRef: GoalRef | null = secretary
+          ? (frozenGoalId === null ? null : goalRefFor(queryRunRef.projectId, frozenGoalId))
+          : (facts.value.goal === null ? null : facts.value.goal.ref);
         const initiator = structuredClone(facts.value.initiator);
         const toolContext: CoreCallContext = {
           projectId: queryRunRef.projectId,
           workspaceId: queryRunRef.workspaceId,
           principal: {
             kind: 'query_run', queryRunRef: structuredClone(queryRunRef), initiator: structuredClone(initiator),
-            ...(secretary ? { goalId: frozenGoalId } : {}),
+            goalId: roundGoalRef === null ? null : roundGoalRef.goalId,
           },
           materialReader: { kind: 'run', requester: structuredClone(queryRunRef) },
           signal,
@@ -550,34 +556,26 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           signal,
         };
         let graphTools: ToolGroup | null = null;
+        // graphDeps === null 只为收窄类型：依赖不齐的情形 finalToolNamesOf 已经拒了。
         if ((grantedGraphNames.length > 0 || historyNames.length > 0) && graphDeps !== null) {
-          let goalRef: GoalRef | null;
-          if (secretary) {
-            goalRef = frozenGoalId === null
-              ? null
-              : { aggregateType: 'Goal', projectId: queryRunRef.projectId, goalId: frozenGoalId };
-          } else {
-            // The other no-goal rounds are a role_exploration Query (its graph tools read the project)
-            // and a saved-message consultation Query.
-            if (facts.value.goal === null && !exploration && !consultationRound) return rejected('invalid', 'no goal');
-            goalRef = facts.value.goal === null ? null : facts.value.goal.ref;
-          }
+          // The other no-goal rounds are a role_exploration Query (its graph tools read the project)
+          // and a saved-message consultation Query.
+          if (!secretary && roundGoalRef === null && !exploration && !consultationRound) return rejected('invalid', 'no goal');
           graphTools = createQueryGraphToolGroup({
             names: [...grantedGraphNames, ...historyNames],
             context: toolContext,
-            goalRef,
+            goalRef: roundGoalRef,
             graph: graphDeps.graph,
             inputs: graphDeps.inputs,
             history: deps.graphHistory,
             hostContext: trustedHostContext,
-            // The notes read port is bound only for a secretary round and an
-            // exploration round; a plain Query keeps the memory branch's
-            // explicit refusal.
-            ...((secretary || exploration) && deps.notes?.memory !== undefined ? { notes: deps.notes.memory } : {}),
+            notes: graphDeps.notes,
             texts: toolTexts,
             ...(subjectRunRef === null ? {} : { subjectRunRef }),
-            // These rounds read history only through their own tool (slice 9).
-            ...(subjectRunRef !== null ? { lookHistory: false as const } : {}),
+            // 执行审阅、ucr、crr 只经自己的历史读（slice 9）；计划审阅、批检查不读执行历史或证据
+            // （B15，MVP-BEHAVIOR:300；S7 批检查单列）。
+            ...(subjectRunRef !== null ? { lookHistory: false as const }
+              : shape === 'plan_review' || shape === 'check_review' ? { lookHistory: 'refused' as const } : {}),
           });
         }
         // The whiteboard reads read this Query's frozen Goal; the frozen list names them only when there is one.
@@ -595,10 +593,8 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           ? createWebLookupTools({ lookup: hostConfig.model.webLookup, texts: toolTexts })
           : null;
         let noteTools: NoteToolsHandle | null = null;
-        if (noteAdmission.class !== 'none') {
-          if (noteOwners === null) {
-            return rejected('unavailable', 'the Query round admits notes but no note write/check dependency is bound');
-          }
+        // 写入/检查口在开轮时已经查过；这里的 `noteOwners !== null` 只用来收窄类型。
+        if (noteAdmission.class !== 'none' && noteOwners !== null) {
           noteTools = createNoteTools({
             context: toolContext,
             notes: noteOwners.write,

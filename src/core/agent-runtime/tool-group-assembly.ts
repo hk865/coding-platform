@@ -145,6 +145,11 @@ export function createGraphHistoryProxy(input: GraphHistoryProxyInput): GraphExe
       // The Run card is validated in one Goal's universe. With no trusted Goal
       // no Run can be checked, so refuse before either owner is reached.
       if (goalRef === null) return rejected('invalid', 'this request has no goal');
+      // 历史只读本轮目标的 Run（A9 放开的是读节点，不是历史）：同项目别的目标的 Run 在读卡之前就拒，
+      // Run 在不在都一样；别的项目的 Run 交给下面的读卡，回 121-149 的原句。
+      if (request.runRef.projectId === goalRef.projectId && request.runRef.goalId !== goalRef.goalId) {
+        return rejected('forbidden', 'the requested Run is not in the bound Goal');
+      }
       // The Run card is validated under the ORIGINAL tool identity (its own
       // principal and its own signal) against the tool config's trusted Goal:
       // the tool can never widen its own scope to another Goal. The trusted Host
@@ -160,14 +165,10 @@ export function createGraphHistoryProxy(input: GraphHistoryProxyInput): GraphExe
       } catch (error) {
         return rejected('unavailable', `the Run card could not be read before the history read: ${messageOf(error)}`);
       }
-      // A canonical scope/identity rejection from the card read (including a Run
-      // of another Goal) is returned as is; no history owner is reached.
+      // 读卡的范围或身份拒绝原样返回（别的项目的 Run 在这里拒），不到历史 owner。
       if (looked.status !== 'ready') return looked;
       const card = looked.value.items[0];
       if (card === undefined) return rejected('not_found', 'the graph did not return the requested Run card');
-      if (request.runRef.projectId !== goalRef.projectId || request.runRef.goalId !== goalRef.goalId) {
-        return rejected('forbidden', 'the requested Run is not in the bound Goal');
-      }
       const node = card.node;
       if (node.kind !== 'run' || node.ref.projectId !== request.runRef.projectId
         || node.ref.goalId !== request.runRef.goalId || node.ref.runId !== request.runRef.runId) {
@@ -223,10 +224,12 @@ export type WorkToolGroupInput = {
     taskInputs: TaskContextInputPort;
     graphHistory: GraphExecutionHistoryReadPort;
     hostContext: CoreCallContext;
+    /** 注记是图的一部分，图读依赖少了它等于没绑（A8）。 */
+    notes: NoteMemoryReadPort;
   };
-  /** Slice 4C L13/L14: `platform.notes`' reads, write and check ports. A
-   * selection of look/find memory or `record_note` without the needed port
-   * fails closed before the model. */
+  /** Slice 4C L13/L14: `platform.notes`' write and check ports for
+   * `record_note` and `check_links`; absent makes a selected note tool or link
+   * check unregisterable. */
   notes?: RuntimeExecutionDependencies['notes'];
   /** The bound model's platform web lookup; absent makes a selected web name unregisterable. */
   webLookup?: WebLookupPort;
@@ -373,7 +376,7 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
         goalRef: input.goalRef,
         hostContext: graphDeps.hostContext,
       }),
-      ...(input.notes?.memory === undefined ? {} : { notes: input.notes.memory }),
+      notes: graphDeps.notes,
       ...(input.texts === undefined ? {} : { texts: input.texts }),
     }));
   }
@@ -519,15 +522,17 @@ export function createQueryGraphToolGroup(input: {
   inputs: TaskContextInputPort;
   history: GraphExecutionHistoryReadPort;
   hostContext: CoreCallContext;
-  /** The notes read port bound only for a secretary round; absent keeps the
-   * memory branch's explicit refusal. */
-  notes?: NoteMemoryReadPort;
+  /** The `platform.notes` read port; every round that mounts the graph tools
+   * binds it（A8，注记是图的一部分）。 */
+  notes: NoteMemoryReadPort;
   /** The frozen tool texts the graph factory reads. */
   texts?: Readonly<Record<string, ToolTextV1>>;
   /** The exec review packet's subject Run; present only when the frozen list holds the history read. */
   subjectRunRef?: RunRef;
-  /** `false` for the exec review Query: `look_graph` without its history mode. */
-  lookHistory?: false;
+  /** `false` for the exec review Query: `look_graph` without its history mode.
+   * `'refused'` for a plan review or check review round: the history and
+   * platform-artifact input writes stay in the schema but answer B15's refusal. */
+  lookHistory?: false | 'refused';
 }): ToolGroup {
   const names = input.names;
   // The original query_run tool context (spec §4.1: tool inputs never
@@ -544,7 +549,7 @@ export function createQueryGraphToolGroup(input: {
       goalRef: input.goalRef,
       hostContext: input.hostContext,
     }),
-    ...(input.notes === undefined ? {} : { notes: input.notes }),
+    notes: input.notes,
     ...(input.texts === undefined ? {} : { texts: input.texts }),
     ...(input.subjectRunRef === undefined ? {} : { subjectRunRef: input.subjectRunRef }),
     ...(input.lookHistory === undefined ? {} : { lookHistory: input.lookHistory }),

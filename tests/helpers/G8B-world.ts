@@ -16,11 +16,13 @@
  *   的委托 wrapper，原样调用，只记下 Host 自己那次调用返回了什么。
  * 只走公开路由；不读库。
  */
-import { vi } from 'vitest';
+import { expect, vi } from 'vitest';
 import type { PlanRoundEndResultV1, PlanTurnFactsV1 } from '../../src/business/workflow/ports.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { RoleConfigurationRef, WorkspaceScope } from '../../src/contracts/core/identity.js';
 import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
+import type { ArtifactRef } from '../../src/contracts/artifact.js';
+import type { VerificationRoundRef } from '../../src/contracts/verification.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { QueryJobRef } from '../../src/contracts/query-job.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
@@ -33,7 +35,8 @@ import { heartbeatUntil } from './IV-host-fixture.js';
 import { adoptPLPlanDraft } from './PL-workflow-fixture.js';
 import { initializeProject } from './S6A-history-fixture.js';
 import { openS6AHostWorld, type S6AHostWorld } from './S6A-host-fixture.js';
-import type { S6ASession } from './S6A-request-fixture.js';
+import { S6A_SCOPE, type S6ASession } from './S6A-request-fixture.js';
+import { kls2cNoteWrite } from './KLS2C-knowledge-host.js';
 import { committed } from './S7A-fixture.js';
 import { addS7D2SecondWorkspace, type S7D2SecondWorkspace } from './S7D2-role-line-world.js';
 
@@ -176,14 +179,61 @@ export async function openG8BWorld(label: string) {
           target: { kind: 'node', node }, relation: 'checks', page: { afterCursor: null, limit: 10 } });
         const [opened] = (await heartbeatUntil(world, look, found => found.items.length > 0, 40)).items;
         if (opened === undefined) throw new Error(`G8B: no check round of ${taskId}`);
-        return await steps.read<{ outcome: string; checks: { checkId: string; definition: { command?: string } }[];
-          gaps: { coverage?: { requirementId: string } }[] }>('verification/round', { roundRef: opened.round.ref });
+        return await steps.read<{ roundRef: VerificationRoundRef; outcome: string; checks: { checkId: string; definition: { command?: string };
+          reportRef: ArtifactRef | null }[]; gaps: { coverage?: { requirementId: string } }[] }>(
+          'verification/round', { roundRef: opened.round.ref });
       },
     };
   } catch (error) {
     await close();
     throw error;
   }
+}
+
+/** A8（P0）：人经 `notes/write` 写一条挂在模块上的注记（主工作区 scope，`goalId: null`），答回写回执的 `noteId`。 */
+export async function p0PersonNote(w: G8BWorld, commandId: string, moduleId = 's6a-core'): Promise<string> {
+  const answer = await w.world.post('notes/write',
+    kls2cNoteWrite(S6A_SCOPE, commandId, { topic: commandId, anchor: { kind: 'module', moduleId } }));
+  const write = (answer.body as { write?: { status?: string; noteId?: string } }).write;
+  if (write?.status !== 'accepted' || write.noteId === undefined) {
+    throw new Error(`P0: the person's module note was not written: ${JSON.stringify(answer.body)}`);
+  }
+  return write.noteId;
+}
+/** A8（P0）：`{ memory: ... }` 的 lookup 调用（T1、T2、T6、T7、T11 共用）。 */
+export const p0Lookup = (callId: string, moduleId = 's6a-core') => ({ callId, name: 'look_graph',
+  args: { memory: { v: 1, op: 'lookup', anchor: { kind: 'module', moduleId } } } });
+/** B15（P0）：计划审阅、批检查轮的 history 调用；`runId` 指向本目标一个不存在的 Run（T3–T5 共用）。 */
+export const p0History = (callId: string, goal: GoalRef) => ({ callId, name: 'look_graph', args: {
+  mode: 'history', runRef: { aggregateType: 'Run', projectId: goal.projectId, goalId: goal.goalId, runId: 'p0-b15-run' } } });
+/** P0：一轮的首个模型请求里模型看到的工具名（第四节手推的名单，T3–T5）。 */
+export async function p0ToolNames(w: G8BWorld, line: S6ASession, index: number): Promise<string[]> {
+  return (await w.world.scripted.requests(line, w.scope))[index]!.tools.map(tool => tool.name);
+}
+/** 第四节手推：审阅者的读工具（内置授予 `host.ts:484`、`read` 的探索子集 `:217`、DeepSeek 的网页工具 `:513`）。 */
+export const P0_REVIEWER_TOOLS = ['read', 'list_files', 'search', 'symbols', 'code_index', 'project_source',
+  'python_index', 'cpp_index', 'source_excerpt', 'look_graph', 'find_graph', 'check_links', 'web_search', 'web_fetch',
+  'run_readonly_command'];
+/** B15（P0）的同一句：工具结果的 message 和输出的 reason（Q2）。 */
+export const P0_B15 = 'a plan review or check review round cannot read execution history or evidence (B15)';
+
+/** A8（P0）：记忆写法的读回（T1、T2、T6–T8、T11 共用）：结果成功、读回的页 ready、页的 `items` 里有这条注记。 */
+export function expectNoteRead(result: unknown, noteId: string, label: string): Record<string, unknown> {
+  expect.soft(result, `${label}: the note read`).toMatchObject({ status: 'success',
+    output: [{ kind: 'json', value: { status: 'ready' } }] });
+  const page = (result as { output?: { value?: { value?: { items?: unknown[] } } }[] } | undefined)
+    ?.output?.[0]?.value?.value;
+  const item = page?.items?.find(entry => (entry as { noteId?: unknown } | null)?.noteId === noteId);
+  expect.soft(item, `${label}: the note id`).toMatchObject({ noteId });
+  return (item ?? {}) as Record<string, unknown>;
+}
+
+/** B15（P0）：计划审阅、批检查轮的历史或报告读回同一句拒绝（T3–T5、T10 共用）。 */
+export function expectB15(result: unknown, label: string): void {
+  expect.soft(result, `${label}: ${P0_B15}`).toMatchObject({ status: 'error',
+    error: { code: 'execution_failed', message: P0_B15 } });
+  expect.soft((result as { output?: unknown } | undefined)?.output).toEqual([{ kind: 'json',
+    value: { status: 'rejected', code: 'forbidden', reason: P0_B15 } }]);
 }
 
 /** 系统轮第二行 `subject: <json>`（平台写的事实）。 */
@@ -197,10 +247,10 @@ export function g8bCheckReview(callId: string, verdicts: { checkId: string; deci
   return { kind: 'calls' as const, calls: [{ callId, name: 'submit_check_review', args: { verdicts } }] };
 }
 
-/** 人 `plans/propose` + `plans/apply` 一份带 `checks` 的计划（G8A：人采用时装上；D5、G6R2 T3 共用）。 */
+/** 人 `plans/propose` + `plans/apply` 一份带 `checks` 的计划（G8A：人采用时装上；D5、G6R2 T3 共用）。
+ *  `draft` 用来换一份要采用的计划（P0 T10 把检查报告声明成任务输入）。 */
 export async function adoptWithChecks(world: S6AHostWorld, scope: WorkspaceScope, goal: GoalRef, tag: string,
-  checks: object[]) {
-  const { draft } = g8SplitChecks(g8PlanDraft(goal, tag, G8B_ROLE));
+  checks: object[], draft = g8SplitChecks(g8PlanDraft(goal, tag, G8B_ROLE)).draft) {
   const proposed = committed<{ ref: unknown; revision: number }>(await world.post('plans/propose', graphWrite(scope, {
     goalRef: goal, basedOn: null, draft, checks, reason: { text: tag, sources: [] } }, `${tag}-propose`)), `${tag}: propose`);
   committed(await world.post('plans/apply', graphWrite(scope, { proposalRef: proposed.ref,

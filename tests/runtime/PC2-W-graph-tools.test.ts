@@ -10,6 +10,7 @@ type ToolSpecification = { name: string; description: string; inputSchema: unkno
 const definitions = (texts?: Texts): ToolDefinition[] =>
   createGraphTools({ context: { projectId: 'p', workspaceId: 'w', principal: {}, materialReader: {}, signal: new AbortController().signal } as never,
     goalRef: { aggregateType: 'Goal', projectId: 'p', goalId: 'g' }, graph: {} as never, inputs: {} as never, history: {} as never,
+    notes: {} as never,
     ...(texts === undefined ? {} : { texts }) }).create({} as never);
 const specification = (tools: ToolDefinition[]) => tools.map(tool => ({ name: tool.name, description: tool.description, inputSchema: z.toJSONSchema(tool.inputSchema) }));
 
