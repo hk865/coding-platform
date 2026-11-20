@@ -3,7 +3,7 @@
 **当前状态。** 先读 [STATUS](docs/refactor/STATUS.md)（当前状态、缺口和下一步），再读 [HANDOFF 顶部](docs/refactor/HANDOFF.md)（决定 1–121，现行读法见[决定表](docs/refactor/DECISIONS.md)）。整个 MVP 还没有完成。
 - **这段为什么变短。** 2026-11-12 以前，这一段逐包列了落地提交和全量数字，约 45KB。这个文件每个 agent 都会装，所以挪走了（决定 121-94）。
 - **旧内容在哪。** 原文可以用 `git show ba9fe9a7:AGENTS.md` 看第 3、4 行。同样的内容按包记在 HANDOFF 的各条决定和 STATUS 的“已完成”里。
-- **推送。** 按本地的远端跟踪引用，远端 `feat/orchestration-slices` 在 `0aa2ed16`（用户 11-18 推送），`main` 在 `6e7d8a30`；之后的提交等用户推送。远端 `next-main` 不动。
+- **推送。** 按本地的远端跟踪引用（11-21 看），远端 `main` 和 `feat/orchestration-slices` 都在 `b8fbb0e4`（用户 11-20 推送）；之后的提交等用户推送。远端 `next-main` 不动。
   - 11-15 用户把旧的 `main` 改名为 `main-legacy` 保留。那是 09-27 抽出独立仓库之前的旧工程，停在 `ce043a65`，和本线没有共同提交。
   - 同一天用本线新建 `main`，并设为默认分支。
   - 往 `main` 合入只用快进推送，或 GitHub 的 “Create a merge commit”。不用 squash 或 rebase，那样会换提交号，文档里的引用就对不上了。本地主检出目录（`next-main`）11-14 夜已快进到 `2d57508c`（用户要求），之后的提交照旧等快进。
